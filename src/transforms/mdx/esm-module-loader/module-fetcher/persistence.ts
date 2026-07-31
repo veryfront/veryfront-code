@@ -8,11 +8,11 @@ import type { Logger } from "#veryfront/utils";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { cacheModule } from "./module-cache.ts";
-import { writeDistributedCache } from "./distributed-cache.ts";
+import { type MdxPrimaryPublicationPermit, writeDistributedCache } from "./distributed-cache.ts";
+import type { AcknowledgedBundleManifestAuthority } from "../../../esm/http-cache.ts";
 
 type CacheLocalModuleFn = typeof cacheModule;
 type WriteDistributedCacheFn = typeof writeDistributedCache;
-type DistributedCache = Parameters<WriteDistributedCacheFn>[0];
 
 export interface PersistResolvedModuleInput {
   normalizedPath: string;
@@ -24,11 +24,13 @@ export interface PersistResolvedModuleInput {
   reactVersion?: string;
   sourceContentHash?: string;
   importMapFingerprint?: string;
-  distributedCacheWrite?: {
-    distributedCache: DistributedCache;
-    transformCacheKey: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
+  distributedCachePublication?: {
+    publicationPermit: MdxPrimaryPublicationPermit;
     projectId: string;
     contentSourceId: string;
+    bundleManifestAuthority: AcknowledgedBundleManifestAuthority | null;
   };
   cacheLocalModule?: CacheLocalModuleFn;
   writeToDistributedCache?: WriteDistributedCacheFn;
@@ -44,13 +46,13 @@ export async function persistResolvedModule(
   const cacheLocalModule = input.cacheLocalModule ?? cacheModule;
   const moduleCode = ensureFilenameDefaultExport(input.normalizedPath, input.moduleCode);
 
-  if (input.distributedCacheWrite) {
+  if (input.distributedCachePublication) {
     await writeToDistributedCache(
-      input.distributedCacheWrite.distributedCache,
-      input.distributedCacheWrite.transformCacheKey,
-      input.distributedCacheWrite.projectId,
-      input.distributedCacheWrite.contentSourceId,
+      input.distributedCachePublication.publicationPermit,
+      input.distributedCachePublication.projectId,
+      input.distributedCachePublication.contentSourceId,
       moduleCode,
+      input.distributedCachePublication.bundleManifestAuthority,
       input.normalizedPath,
       input.log,
     );
@@ -70,6 +72,8 @@ export async function persistResolvedModule(
     input.reactVersion,
     input.sourceContentHash,
     input.importMapFingerprint,
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
   );
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] cacheModule DONE`, {
     projectSlug: input.projectSlug,

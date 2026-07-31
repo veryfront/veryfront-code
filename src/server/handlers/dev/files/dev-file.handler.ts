@@ -13,8 +13,29 @@ import {
   PRIORITY_MEDIUM_DEV_FILES,
 } from "#veryfront/utils/constants/index.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { HttpStatus } from "#veryfront/http/responses";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+
+const DEPENDENCY_PIN_PATTERN = /^on:[A-Za-z0-9._-]+$/;
+
+type DevFileBundler = (
+  absPath: string,
+  ctx: HandlerContext,
+  dependencySnapshot?: DependencyPinningSnapshot,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
+) => Promise<string>;
 
 export class DevFileHandler extends BaseHandler {
+  constructor(private readonly bundleFile: DevFileBundler = bundleDevFile) {
+    super();
+  }
+
   metadata: HandlerMetadata = {
     name: "DevFileHandler",
     priority: PRIORITY_MEDIUM_DEV_FILES as HandlerPriority,
@@ -64,7 +85,36 @@ export class DevFileHandler extends BaseHandler {
     }
 
     try {
-      const code = await bundleDevFile(absPath, ctx);
+      const requestedPinKeys = new URL(req.url).searchParams.getAll("pins");
+      const requestedPinKey = requestedPinKeys[0];
+      if (
+        requestedPinKeys.length > 1 ||
+        (requestedPinKey !== undefined &&
+          (!DEPENDENCY_PIN_PATTERN.test(requestedPinKey) ||
+            requestedPinKey === "on:unknown"))
+      ) {
+        return this.respondDependencyConflict();
+      }
+
+      const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+      const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
+        dependencyPinningSource,
+        requestedPinKey,
+      );
+      if (
+        !dependencySnapshot ||
+        (requestedPinKey === undefined && dependencySnapshot.cacheKey.startsWith("on:"))
+      ) {
+        return this.respondDependencyConflict();
+      }
+
+      const code = await this.bundleFile(
+        absPath,
+        ctx,
+        dependencySnapshot,
+        dependencyPinningSource,
+        new URL(req.url).origin,
+      );
       const response = this.createResponseBuilder(ctx)
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req)
@@ -84,10 +134,23 @@ export class DevFileHandler extends BaseHandler {
     }
   }
 
+  private respondDependencyConflict(): HandlerResult {
+    return this.respond(
+      this.createErrorModule(
+        "Unknown dependency snapshot",
+        HttpStatus.CONFLICT,
+      ),
+    );
+  }
+
   private createErrorModule(message: string, status: number): Response {
+    const headers: HeadersInit = {
+      "content-type": "application/javascript",
+      ...(status === HttpStatus.CONFLICT ? { "cache-control": "no-store" } : {}),
+    };
     return new Response(`export default null; // ${message}`, {
       status,
-      headers: { "content-type": "application/javascript" },
+      headers,
     });
   }
 }

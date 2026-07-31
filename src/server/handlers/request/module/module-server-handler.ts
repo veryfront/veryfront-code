@@ -4,6 +4,10 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
 import { profilePhase } from "#veryfront/observability";
 import { resolveRequestModuleImportMapIdentity } from "./import-map-identity.ts";
+import {
+  createHandlerDependencyPinningSource,
+  getHandlerDependencyPinningIdentity,
+} from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 export function handleModuleServer(
   req: Request,
@@ -31,19 +35,24 @@ export function handleModuleServer(
           ),
           resolveRequestModuleImportMapIdentity(ctx),
         ]);
-
+        const dependencyIdentity = getHandlerDependencyPinningIdentity(ctx);
+        const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
         const moduleResponse = await profilePhase("module.serve", async () => {
           const { serveModule } = await import("#veryfront/modules/server/index.ts");
           return await serveModule(req, {
-            projectId: ctx.projectId ?? ctx.projectDir,
+            projectId: dependencyIdentity.projectId ?? ctx.projectDir,
             projectDir: ctx.projectDir,
             adapter: ctx.adapter,
             dev: !!ctx.isLocalProject,
-            projectUUID: ctx.projectId,
-            projectSlug: ctx.projectSlug,
-            branch: ctx.parsedDomain?.branch ?? null,
-            releaseId: ctx.releaseId ?? null,
+            projectUUID: dependencyIdentity.projectId,
+            projectSlug: dependencyIdentity.projectSlug,
+            branch: dependencyIdentity.branch ?? null,
+            releaseId: dependencyIdentity.releaseId ?? null,
+            contentSourceId: dependencyIdentity.contentSourceId,
+            dependencyPinningSource,
+            isLocalProject: ctx.isLocalProject,
             allowedImportDirs: requestConfig?.security?.allowedImportDirs,
+            config: requestConfig,
             reactVersion,
             mode: ctx.requestContext?.mode,
             importMapIdentity,

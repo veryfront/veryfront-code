@@ -280,9 +280,11 @@ export interface PipelineConfigIdentityInput {
   ssr: boolean;
   projectDir: string;
   moduleServerUrl?: string;
+  moduleServerOrigin?: string;
   vendorBundleHash?: string;
   apiBaseUrl?: string;
   importMapFingerprint?: string;
+  dependencyPinningCacheKey?: string;
   customPlugins: ReadonlyArray<readonly [number, string, number, string]>;
 }
 
@@ -311,14 +313,16 @@ export async function computePipelineConfigIdentity(
     dev: input.dev,
   });
   const identity = [
-    "veryfront:transform-pipeline:v2",
+    "veryfront:transform-pipeline:v3",
     baseIdentity,
     input.ssr,
     projectDir,
     boundedOption(input.moduleServerUrl, "Module server URL"),
+    boundedOption(input.moduleServerOrigin, "Module server origin"),
     boundedOption(input.vendorBundleHash, "Vendor bundle hash"),
     boundedOption(input.apiBaseUrl, "API base URL"),
     boundedOption(input.importMapFingerprint, "Import map fingerprint"),
+    boundedOption(input.dependencyPinningCacheKey, "Dependency pinning cache key"),
     input.customPlugins,
   ];
   return computeHash(JSONStringify(identity));

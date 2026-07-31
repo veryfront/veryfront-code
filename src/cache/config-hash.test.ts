@@ -3,6 +3,9 @@ import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeConfigHash, computeConfigHashSync } from "./config-hash.ts";
 
+const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
+const CHANGED_CANONICAL_PIN_KEY = "on:z7bg3qnfgtcc";
+
 describe("cache/config-hash", () => {
   describe("computeConfigHash", () => {
     it("should return a 64-char hex hash", async () => {
@@ -24,6 +27,58 @@ describe("cache/config-hash", () => {
       assertNotEquals(h1, h2);
     });
 
+    it("should differ when the emitted module server base changes", async () => {
+      const h1 = await computeConfigHash({
+        moduleServerUrl: "/_vf_modules",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      const h2 = await computeConfigHash({
+        moduleServerUrl: "https://modules.example.test/_vf_modules",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      assertNotEquals(h1, h2);
+    });
+
+    it("should differ when the static module request origin changes", async () => {
+      const h1 = await computeConfigHash({
+        moduleServerOrigin: "https://preview-a.example",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      const h2 = await computeConfigHash({
+        moduleServerOrigin: "https://preview-b.example",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      assertNotEquals(h1, h2);
+    });
+
+    it("should differ when the emitted vendor bundle revision changes", async () => {
+      const h1 = await computeConfigHash({
+        vendorBundleHash: "vendor-a",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      const h2 = await computeConfigHash({
+        vendorBundleHash: "vendor-b",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      assertNotEquals(h1, h2);
+    });
+
+    it("preserves the mainline hash when dependency pinning is off or unset", async () => {
+      const baseConfig = {
+        moduleServerUrl: "https://modules.example.test/_vf_modules",
+        vendorBundleHash: "vendor-a",
+        apiBaseUrl: "https://api.example.test",
+      };
+      const unkeyed = await computeConfigHash(baseConfig);
+      const flagOff = await computeConfigHash({
+        ...baseConfig,
+        moduleServerOrigin: "https://preview.example",
+        dependencyPinningCacheKey: "off",
+      });
+
+      assertEquals(flagOff, unkeyed);
+    });
+
     it("should differ when dev mode changes", async () => {
       const h1 = await computeConfigHash({ dev: false });
       const h2 = await computeConfigHash({ dev: true });
@@ -33,6 +88,14 @@ describe("cache/config-hash", () => {
     it("should differ when studioEmbed changes", async () => {
       const h1 = await computeConfigHash({ studioEmbed: false });
       const h2 = await computeConfigHash({ studioEmbed: true });
+      assertNotEquals(h1, h2);
+    });
+
+    it("should differ when dependency-pin state changes", async () => {
+      const h1 = await computeConfigHash({ dependencyPinningCacheKey: "off" });
+      const h2 = await computeConfigHash({
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
       assertNotEquals(h1, h2);
     });
 
@@ -71,9 +134,63 @@ describe("cache/config-hash", () => {
       assertNotEquals(h1, h2);
     });
 
+    it("should differ when module and vendor URL inputs change", () => {
+      const h1 = computeConfigHashSync({
+        moduleServerUrl: "/_vf_modules",
+        moduleServerOrigin: "https://preview-a.example",
+        vendorBundleHash: "vendor-a",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      const h2 = computeConfigHashSync({
+        moduleServerUrl: "https://modules.example.test/_vf_modules",
+        moduleServerOrigin: "https://preview-b.example",
+        vendorBundleHash: "vendor-b",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      assertNotEquals(h1, h2);
+    });
+
+    it("should differ when the enabled snapshot origin changes", () => {
+      const h1 = computeConfigHashSync({
+        moduleServerOrigin: "https://preview-a.example",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      const h2 = computeConfigHashSync({
+        moduleServerOrigin: "https://preview-b.example",
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      assertNotEquals(h1, h2);
+    });
+
+    it("preserves the mainline sync hash when dependency pinning is off or unset", () => {
+      const baseConfig = {
+        moduleServerUrl: "https://modules.example.test/_vf_modules",
+        vendorBundleHash: "vendor-a",
+        apiBaseUrl: "https://api.example.test",
+      };
+      const unkeyed = computeConfigHashSync(baseConfig);
+      const flagOff = computeConfigHashSync({
+        ...baseConfig,
+        moduleServerOrigin: "https://preview.example",
+        dependencyPinningCacheKey: "off",
+      });
+
+      assertEquals(flagOff, unkeyed);
+    });
+
     it("should include version prefix", () => {
       const hash = computeConfigHashSync({});
       assertEquals(hash.startsWith("v"), true);
+    });
+
+    it("should differ when dependency-pin state changes", () => {
+      const h1 = computeConfigHashSync({
+        dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      });
+      const h2 = computeConfigHashSync({
+        dependencyPinningCacheKey: CHANGED_CANONICAL_PIN_KEY,
+      });
+      assertNotEquals(h1, h2);
     });
 
     for (

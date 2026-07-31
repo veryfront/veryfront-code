@@ -2,9 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 /**
  * Cache Backend Tests
  *
- * Tests core cache backends and the Redis extension backend,
- * isDistributedBackend, createDistributedCacheAccessor, and
- * CacheBackends factory functions.
+ * Tests core cache backends, isDistributedBackend,
+ * createDistributedCacheAccessor, and CacheBackends factory functions.
  *
  * @module cache/backend.test
  */
@@ -17,11 +16,6 @@ import {
   type Span,
   type Tracer,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import { RedisCacheBackend } from "../../extensions/ext-redis/src/cache-backend.ts";
-import type {
-  RedisClient,
-  RedisClientManager,
-} from "../../extensions/ext-redis/src/redis-client-manager.ts";
 import { verifyControlPlaneRequest } from "#veryfront/internal-agents/control-plane-auth.ts";
 import {
   createControlPlaneSignature,
@@ -41,39 +35,7 @@ type RecordedSpan = {
 };
 
 async function importBackend() {
-  return {
-    ...(await import("./backend.ts")),
-    RedisCacheBackend,
-  };
-}
-
-function injectRedisClient(
-  cache: unknown,
-  overrides: Partial<RedisClient>,
-  onDisconnect?: () => void,
-): RedisClient {
-  const client: RedisClient = {
-    connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
-    get: () => Promise.resolve(null),
-    mGet: (keys) => Promise.resolve(keys.map(() => null)),
-    set: () => Promise.resolve("OK"),
-    del: () => Promise.resolve(0),
-    scan: () => Promise.resolve({ cursor: 0, keys: [] }),
-    expire: () => Promise.resolve(0),
-    isOpen: true,
-    ...overrides,
-  };
-  const clientManager: RedisClientManager = {
-    getClient: () => Promise.resolve(client),
-    disconnect: () => {
-      onDisconnect?.();
-      return Promise.resolve();
-    },
-    isConfigured: () => true,
-  };
-  (cache as { clientManager: RedisClientManager }).clientManager = clientManager;
-  return client;
+  return await import("./backend.ts");
 }
 
 async function createVerifiedCacheClaims(options: {
@@ -387,14 +349,13 @@ Deno.test("MemoryCacheBackend setBatch sets multiple entries", async () => {
   assertEquals(cache.size, 3);
 });
 
-Deno.test("cache backends reject batches beyond the shared operation limit", async () => {
-  const { ApiCacheBackend, MemoryCacheBackend, RedisCacheBackend } = await importBackend();
+Deno.test("core cache backends reject batches beyond the shared operation limit", async () => {
+  const { ApiCacheBackend, MemoryCacheBackend } = await importBackend();
   const keys = Array.from({ length: 101 }, (_, index) => `key-${index}`);
   const entries = keys.map((key) => ({ key, value: "value" }));
   const backends = [
     new MemoryCacheBackend(),
     new ApiCacheBackend(),
-    new RedisCacheBackend(),
   ];
 
   for (const backend of backends) {
@@ -1349,517 +1310,6 @@ Deno.test("ApiCacheBackend keeps credentials bound to their trusted project cont
   }
 });
 
-Deno.test("RedisCacheBackend type property", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  assertEquals(cache.type, "distributed");
-});
-
-Deno.test("RedisCacheBackend requires an explicit namespace boundary", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  assertThrows(
-    () => new RedisCacheBackend("vf:ambiguous"),
-    TypeError,
-    "end with ':'",
-  );
-  assertThrows(
-    () => new RedisCacheBackend("vf:unsafe:\n"),
-    TypeError,
-    "control characters",
-  );
-});
-
-Deno.test("RedisCacheBackend returns null without client", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  assertEquals(await cache.get("any-key"), null);
-});
-
-Deno.test("RedisCacheBackend translates Redis TTL sentinel values", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  let ttl = 12;
-  const keys: string[] = [];
-  injectRedisClient(cache, {
-    ttl: (key: string) => {
-      keys.push(key);
-      return Promise.resolve(ttl);
-    },
-  });
-
-  assertEquals(await cache.getRemainingTtlSeconds("key"), 12);
-  ttl = -1;
-  assertEquals(await cache.getRemainingTtlSeconds("key"), Infinity);
-  ttl = -2;
-  assertEquals(await cache.getRemainingTtlSeconds("key"), null);
-  assertEquals(keys, ["vf:cache:test:key", "vf:cache:test:key", "vf:cache:test:key"]);
-});
-
-Deno.test("RedisCacheBackend expires non-positive TTL entries without SET EX 0", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  const store = new Map<string, string>();
-  const setExpiries: number[] = [];
-  injectRedisClient(cache, {
-    get: (key: string) => Promise.resolve(store.get(key) ?? null),
-    mGet: (keys: string[]) => Promise.resolve(keys.map((key) => store.get(key) ?? null)),
-    set: (key: string, value: string, options?: { EX?: number }) => {
-      setExpiries.push(options?.EX ?? Number.NaN);
-      store.set(key, value);
-      return Promise.resolve("OK");
-    },
-    del: (keys: string | string[]) => {
-      let deleted = 0;
-      for (const key of Array.isArray(keys) ? keys : [keys]) {
-        if (store.delete(key)) deleted++;
-      }
-      return Promise.resolve(deleted);
-    },
-  });
-
-  await cache.set("existing", "old", 60);
-  await cache.set("existing", "replacement", 0);
-  await cache.set("fractional", "value", 0.1);
-  await cache.setBatch([
-    { key: "negative", value: "value", ttl: -1 },
-    { key: "positive", value: "value", ttl: 30 },
-    { key: "fractional-batch", value: "value", ttl: 1.01 },
-  ]);
-
-  assertEquals(await cache.get("existing"), null);
-  assertEquals(
-    await cache.getBatch(["negative", "positive"]),
-    new Map([
-      ["negative", null],
-      ["positive", "value"],
-    ]),
-  );
-  assertEquals(setExpiries, [60, 1, 30, 2]);
-});
-
-Deno.test("RedisCacheBackend set rejects without a configured client", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  await assertRejects(() => cache.set("key", "value"), Error, "not configured");
-});
-
-Deno.test("RedisCacheBackend propagates set failures", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  injectRedisClient(cache, {
-    set: () => Promise.reject(new Error("redis set failed")),
-  });
-
-  await assertRejects(
-    () => cache.set("key", "value"),
-    Error,
-    "redis set failed",
-  );
-  await assertRejects(
-    () => cache.setBatch([{ key: "key", value: "value" }]),
-    Error,
-    "redis set failed",
-  );
-});
-
-Deno.test("RedisCacheBackend waits for every batch write before reporting failure", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  let releaseSlowWrite!: () => void;
-  const slowWriteReleased = new Promise<void>((resolve) => {
-    releaseSlowWrite = resolve;
-  });
-  let markSlowWriteStarted!: () => void;
-  const slowWriteStarted = new Promise<void>((resolve) => {
-    markSlowWriteStarted = resolve;
-  });
-  injectRedisClient(cache, {
-    set: async (key) => {
-      if (key.endsWith(":failed")) throw new Error("redis set failed");
-      markSlowWriteStarted();
-      await slowWriteReleased;
-      return "OK";
-    },
-  });
-  let settled = false;
-
-  const write = cache.setBatch([
-    { key: "failed", value: "value" },
-    { key: "slow", value: "value" },
-  ]).then(
-    () => null,
-    (error: unknown) => error,
-  ).finally(() => {
-    settled = true;
-  });
-  await slowWriteStarted;
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const settledBeforeSibling = settled;
-
-  releaseSlowWrite();
-  const error = await write;
-  assertEquals(settledBeforeSibling, false);
-  assertEquals(error instanceof Error ? error.message : null, "redis set failed");
-});
-
-Deno.test("RedisCacheBackend del rejects without a configured client", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  await assertRejects(() => cache.del("key"), Error, "not configured");
-});
-
-Deno.test("RedisCacheBackend delByPattern rejects without a configured client", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  await assertRejects(() => cache.delByPattern("*"), Error, "not configured");
-});
-
-Deno.test("RedisCacheBackend propagates delete failures", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  injectRedisClient(cache, {
-    del: () => Promise.reject(new Error("redis delete failed")),
-  });
-
-  await assertRejects(
-    () => cache.del("key"),
-    Error,
-    "redis delete failed",
-  );
-});
-
-Deno.test("RedisCacheBackend propagates pattern delete failures", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  injectRedisClient(cache, {
-    scan: () => Promise.reject(new Error("redis scan failed")),
-  });
-
-  await assertRejects(
-    () => cache.delByPattern("*"),
-    Error,
-    "redis scan failed",
-  );
-});
-
-Deno.test("RedisCacheBackend reacquires a client after command failure", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  let active = 0;
-  let disconnects = 0;
-  const written: string[] = [];
-  const clients = [
-    injectRedisClient({}, {
-      set: () => Promise.reject(new Error("stale connection")),
-    }),
-    injectRedisClient({}, {
-      set: (key) => {
-        written.push(key);
-        return Promise.resolve("OK");
-      },
-    }),
-  ];
-  const manager: RedisClientManager = {
-    getClient: () => Promise.resolve(clients[Math.min(active, clients.length - 1)]!),
-    disconnect: () => {
-      disconnects++;
-      active++;
-      return Promise.resolve();
-    },
-    isConfigured: () => true,
-  };
-  const cache = new RedisCacheBackend("vf:cache:test:", { clientManager: manager });
-
-  await assertRejects(() => cache.set("page", "first"), Error, "stale connection");
-  await cache.set("page", "second");
-
-  assertEquals(disconnects, 1);
-  assertEquals(written, ["vf:cache:test:page"]);
-});
-
-Deno.test("RedisCacheBackend escapes only its literal prefix in SCAN patterns", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:te*st?:");
-  let match = "";
-  injectRedisClient(cache, {
-    scan: (_cursor, options) => {
-      match = options?.MATCH ?? "";
-      return Promise.resolve({ cursor: 0, keys: [] });
-    },
-  });
-
-  assertEquals(await cache.delByPattern("project:*"), 0);
-  assertEquals(match, "vf:cache:te\\*st\\?:project:*");
-});
-
-Deno.test("RedisCacheBackend rejects repeated SCAN cursors before deleting", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  let deletes = 0;
-  injectRedisClient(cache, {
-    scan: () => Promise.resolve({ cursor: 1, keys: ["vf:cache:test:page"] }),
-    del: () => {
-      deletes++;
-      return Promise.resolve(1);
-    },
-  });
-
-  await assertRejects(
-    () => cache.delByPattern("*"),
-    Error,
-    "repeated a cursor",
-  );
-  assertEquals(deletes, 0);
-});
-
-Deno.test("RedisCacheBackend completes SCAN before bounded deletion", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  let scans = 0;
-  let deletes = 0;
-  injectRedisClient(cache, {
-    scan: () => {
-      scans++;
-      assertEquals(deletes, 0);
-      return Promise.resolve({
-        cursor: scans === 1 ? 7 : 0,
-        keys: [`vf:cache:test:${scans}`],
-      });
-    },
-    del: (keys) => {
-      deletes++;
-      return Promise.resolve(Array.isArray(keys) ? keys.length : 1);
-    },
-  });
-
-  assertEquals(await cache.delByPattern("*"), 2);
-  assertEquals(scans, 2);
-  assertEquals(deletes, 1);
-});
-
-Deno.test("RedisCacheBackend rejects invalid DEL counts", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  injectRedisClient(cache, { del: () => Promise.resolve(2) });
-
-  await assertRejects(() => cache.del("page"), TypeError, "invalid count");
-});
-
-Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded batches", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  let scanCalls = 0;
-  const deleteBatches: string[][] = [];
-  const client = {
-    connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
-    get: () => Promise.resolve(null),
-    mGet: () => Promise.resolve([]),
-    set: () => Promise.resolve(null),
-    del: (keys: string | string[]) => {
-      const batch = Array.isArray(keys) ? [...keys] : [keys];
-      deleteBatches.push(batch);
-      return Promise.resolve(batch.length);
-    },
-    scan: () => {
-      scanCalls += 1;
-      return Promise.resolve({
-        cursor: scanCalls < 1005 ? scanCalls : 0,
-        keys: [`vf:cache:test:${scanCalls}`],
-      });
-    },
-    expire: () => Promise.resolve(0),
-  } satisfies RedisClient;
-
-  injectRedisClient(cache, client);
-
-  const deleted = await cache.delByPattern("*");
-
-  assertEquals(scanCalls, 1005);
-  assertEquals(deleted, 1005);
-  assertEquals(deleteBatches.map((batch) => batch.length), [1000, 5]);
-});
-
-Deno.test("RedisCacheBackend delByPattern keeps Redis delete batches bounded", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  let scanCalls = 0;
-  const deleteBatches: string[][] = [];
-  const client = {
-    connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
-    get: () => Promise.resolve(null),
-    mGet: () => Promise.resolve([]),
-    set: () => Promise.resolve(null),
-    del: (keys: string | string[]) => {
-      const batch = Array.isArray(keys) ? [...keys] : [keys];
-      deleteBatches.push(batch);
-      return Promise.resolve(batch.length);
-    },
-    scan: () => {
-      scanCalls += 1;
-      const keys = Array.from(
-        { length: 250 },
-        (_, index) => `vf:cache:test:${scanCalls}:${index}`,
-      );
-      return Promise.resolve({
-        cursor: scanCalls < 50 ? scanCalls : 0,
-        keys,
-      });
-    },
-    expire: () => Promise.resolve(0),
-  } satisfies RedisClient;
-
-  injectRedisClient(cache, client);
-
-  const deleted = await cache.delByPattern("*");
-
-  assertEquals(scanCalls, 50);
-  assertEquals(deleted, 12500);
-  assertEquals(deleteBatches.every((batch) => batch.length <= 1000), true);
-  assertEquals(deleteBatches.map((batch) => batch.length), [
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    1000,
-    500,
-  ]);
-});
-
-Deno.test("RedisCacheBackend getBatch returns nulls without client", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  const results = await cache.getBatch(["k1", "k2"]);
-  assertEquals(results.get("k1"), null);
-  assertEquals(results.get("k2"), null);
-});
-
-Deno.test("RedisCacheBackend getBatch returns empty map for empty keys", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  const results = await cache.getBatch([]);
-  assertEquals(results.size, 0);
-});
-
-Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  const getCalls: string[] = [];
-  const mGetCalls: string[][] = [];
-  const client = {
-    connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
-    get: (key: string) => {
-      getCalls.push(key);
-      return Promise.resolve(`single:${key}`);
-    },
-    mGet: (keys: string[]) => {
-      mGetCalls.push([...keys]);
-      return Promise.resolve(["value-a", null, "value-c"]);
-    },
-    set: () => Promise.resolve(null),
-    del: () => Promise.resolve(0),
-    scan: () => Promise.resolve({ cursor: 0, keys: [] }),
-    expire: () => Promise.resolve(0),
-  } satisfies RedisClient;
-
-  injectRedisClient(cache, client);
-
-  const results = await cache.getBatch(["a", "b", "c"]);
-
-  assertEquals(mGetCalls, [["vf:cache:test:a", "vf:cache:test:b", "vf:cache:test:c"]]);
-  assertEquals(getCalls, []);
-  assertEquals(results.get("a"), "value-a");
-  assertEquals(results.get("b"), null);
-  assertEquals(results.get("c"), "value-c");
-});
-
-Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend("vf:cache:test:");
-  const getCalls: string[] = [];
-  const client = {
-    connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
-    get: (key: string) => {
-      getCalls.push(key);
-      const values = new Map<string, string | null>([
-        ["vf:cache:test:a", "value-a"],
-        ["vf:cache:test:b", null],
-        ["vf:cache:test:c", "value-c"],
-      ]);
-      return Promise.resolve(values.get(key) ?? null);
-    },
-    mGet: () => Promise.reject(new Error("CROSSSLOT Keys in request do not hash to the same slot")),
-    set: () => Promise.resolve(null),
-    del: () => Promise.resolve(0),
-    scan: () => Promise.resolve({ cursor: 0, keys: [] }),
-    expire: () => Promise.resolve(0),
-  } satisfies RedisClient;
-
-  injectRedisClient(cache, client);
-
-  const results = await cache.getBatch(["a", "b", "c"]);
-
-  assertEquals(getCalls, ["vf:cache:test:a", "vf:cache:test:b", "vf:cache:test:c"]);
-  assertEquals(results.get("a"), "value-a");
-  assertEquals(results.get("b"), null);
-  assertEquals(results.get("c"), "value-c");
-});
-
-Deno.test("RedisCacheBackend setBatch rejects without a configured client", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  await assertRejects(
-    () => cache.setBatch([{ key: "k", value: "v" }]),
-    Error,
-    "not configured",
-  );
-});
-
-Deno.test("RedisCacheBackend validates batch TTLs without an initialized client", async () => {
-  const { RedisCacheBackend } = await importBackend();
-  const cache = new RedisCacheBackend();
-
-  await assertRejects(
-    () => cache.setBatch([{ key: "k", value: "v", ttl: Number.NaN }]),
-    RangeError,
-    "finite number of seconds",
-  );
-  await assertRejects(
-    () =>
-      cache.setBatch([
-        { key: "valid", value: "v", ttl: 60 },
-        { key: "unsafe", value: "v", ttl: MAX_CACHE_TTL_SECONDS + 1 },
-      ]),
-    RangeError,
-    "finite number of seconds at most",
-  );
-});
-
-Deno.test("RedisCacheBackend setBatch is no-op for empty entries", async () => {
-  const { RedisCacheBackend } = await importBackend();
-
-  const cache = new RedisCacheBackend();
-  await cache.setBatch([]); // Should not throw
-});
-
 Deno.test("CacheBackends factory functions exist", async () => {
   const { CacheBackends } = await importBackend();
 
@@ -1891,13 +1341,19 @@ Deno.test({
     const {
       isDistributedBackend,
       MemoryCacheBackend,
-      RedisCacheBackend,
       ApiCacheBackend,
       DiskCacheBackend,
     } = await importBackend();
 
     assertEquals(isDistributedBackend(new MemoryCacheBackend()), false);
-    assertEquals(isDistributedBackend(new RedisCacheBackend()), true);
+    const providerNeutralDistributedBackend = {
+      type: "distributed" as const,
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      del: () => Promise.resolve(),
+    };
+
+    assertEquals(isDistributedBackend(providerNeutralDistributedBackend), true);
     assertEquals(isDistributedBackend(new ApiCacheBackend({})), true);
     assertEquals(isDistributedBackend(new DiskCacheBackend()), false);
   },

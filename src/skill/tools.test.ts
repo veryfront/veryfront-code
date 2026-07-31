@@ -1098,7 +1098,7 @@ Do work.`,
     }
   });
 
-  it("execute_skill_script waits for provider cleanup before returning timeout", async () => {
+  it("execute_skill_script bounds uncooperative provider cleanup after timeout", async () => {
     const scriptPath = "/project/skills/my-skill/scripts/run.sh";
     const adapter = createSkillTestAdapter({ [scriptPath]: "echo provider" });
     registerSkill("my-skill", createTestSkill(adapter));
@@ -1123,14 +1123,16 @@ Do work.`,
         script: "scripts/run.sh",
         timeoutMs: 5,
       });
-      assertEquals((await settleWithin(execution, 30)).kind, "pending");
+      const settlement = await settleWithin(execution, 1_200);
+      assertEquals(settlement.kind, "fulfilled");
       assertEquals(terminationCalls, 1);
-      reporter.resolveTerminal();
-      assertEquals(await execution, {
+      assertEquals(settlement.kind === "fulfilled" ? settlement.value : undefined, {
         stdout: "",
         stderr: "Script execution timed out after 5ms",
         exitCode: 124,
       });
+      reporter.resolveTerminal();
+      await Promise.resolve();
     });
   });
 
@@ -1898,7 +1900,14 @@ Do work.`,
     };
     registerSkill("my-skill", createTestSkill(adapter));
     const controller = new AbortController();
-    const cancellation = new Error("cancel load_skill preflight");
+    const cancellation = new Error(
+      "cancel load_skill preflight at /Users/alice/private/input.json",
+      { cause: new Error("private cancellation cause") },
+    );
+    Object.defineProperty(cancellation, "privateState", {
+      enumerable: true,
+      value: "must not cross",
+    });
 
     const execution = createLoadSkillTool().execute(
       { skillId: "my-skill" },
@@ -1909,7 +1918,20 @@ Do work.`,
     const settlement = await settleWithin(execution);
     assertEquals(settlement.kind, "rejected");
     if (settlement.kind === "rejected") {
-      assertEquals(settlement.error, cancellation);
+      assertEquals(settlement.error === cancellation, false);
+      assertEquals(settlement.error instanceof Error, true);
+      assertEquals(
+        settlement.error instanceof Error ? settlement.error.message : "",
+        "cancel load_skill preflight at <local-path>",
+      );
+      assertEquals(
+        settlement.error instanceof Error ? settlement.error.cause : undefined,
+        undefined,
+      );
+      assertEquals(
+        settlement.error instanceof Error && Object.hasOwn(settlement.error, "privateState"),
+        false,
+      );
     }
   });
 
@@ -1921,7 +1943,9 @@ Do work.`,
     };
     registerSkill("my-skill", createTestSkill(adapter));
     const controller = new AbortController();
-    const cancellation = new Error("cancel reference preflight");
+    const cancellation = new Error(
+      String.raw`cancel reference preflight at C:\Users\Alice\private\guide.md`,
+    );
 
     const execution = createLoadSkillReferenceTool().execute(
       { skillId: "my-skill", reference: "references/guide.md" },
@@ -1932,8 +1956,56 @@ Do work.`,
     const settlement = await settleWithin(execution);
     assertEquals(settlement.kind, "rejected");
     if (settlement.kind === "rejected") {
-      assertEquals(settlement.error, cancellation);
+      assertEquals(settlement.error === cancellation, false);
+      assertEquals(
+        settlement.error instanceof Error ? settlement.error.message : "",
+        "cancel reference preflight at <local-path>",
+      );
     }
+  });
+
+  it("load_skill detaches hostile abort reasons without invoking coercion hooks", async () => {
+    const pending = new Promise<boolean>(() => {});
+    const adapter = {
+      ...createSkillTestAdapter({}),
+      exists: () => pending,
+    };
+    registerSkill("my-skill", createTestSkill(adapter));
+    const controller = new AbortController();
+    let hookCalls = 0;
+    const cancellation = Object.create(null);
+    for (const property of ["message", "name", "stack", "cause"] as const) {
+      Object.defineProperty(cancellation, property, {
+        get() {
+          hookCalls += 1;
+          throw new Error("abort getter must not run");
+        },
+      });
+    }
+    Object.defineProperty(cancellation, Symbol.toPrimitive, {
+      value() {
+        hookCalls += 1;
+        throw new Error("abort coercion must not run");
+      },
+    });
+
+    const execution = createLoadSkillTool().execute(
+      { skillId: "my-skill" },
+      { abortSignal: controller.signal },
+    );
+    controller.abort(cancellation);
+
+    const settlement = await settleWithin(execution);
+    assertEquals(settlement.kind, "rejected");
+    if (settlement.kind === "rejected") {
+      assertEquals(settlement.error === cancellation, false);
+      assertEquals(settlement.error instanceof Error, true);
+      assertEquals(
+        settlement.error instanceof Error ? settlement.error.message : "",
+        "Skill operation failed",
+      );
+    }
+    assertEquals(hookCalls, 0);
   });
 
   it("execute_skill_script applies its timeout to filesystem preflight", async () => {

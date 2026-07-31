@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __destroyRSCHandlerForTests,
+  __getTrackedRSCHandlerKeyCountForTests,
   __injectCacheForTests,
   __resetRSCHandlerForTests,
   getRSCHandler,
@@ -265,11 +266,11 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
 
       getRSCHandler("/dir", "proj-123");
       assertEquals(
-        cache.entries.has('["proj-123",false,"rsc-module","production","app",null]'),
+        cache.entries.has('["proj-123",false,"rsc-module","production","app",null,null]'),
         true,
       );
       assertEquals(
-        cache.entries.has('["/dir",false,"rsc-module","production","app",null]'),
+        cache.entries.has('["/dir",false,"rsc-module","production","app",null,null]'),
         false,
       );
     });
@@ -280,7 +281,7 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
 
       getRSCHandler("/project/dir");
       assertEquals(
-        cache.entries.has('["/project/dir",false,"rsc-module","production","app",null]'),
+        cache.entries.has('["/project/dir",false,"rsc-module","production","app",null,null]'),
         true,
       );
     });
@@ -361,6 +362,45 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
       assertEquals(cache.size, 2);
     });
 
+    it("uses the current configured Veryfront version when only that version changes", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+      const initialConfig = {
+        client: {
+          cdn: {
+            versions: {
+              react: "19.1.1",
+              veryfront: "1.0.0",
+            },
+          },
+        },
+      };
+      const currentConfig = {
+        client: {
+          cdn: {
+            versions: {
+              react: "19.1.1",
+              veryfront: "2.0.0",
+            },
+          },
+        },
+      };
+
+      const veryfront1 = getRSCHandler("/dir", "project", {
+        config: initialConfig,
+      });
+      const veryfront2 = getRSCHandler("/dir", "project", {
+        config: currentConfig,
+      });
+      const currentSource = (veryfront2 as unknown as {
+        dependencyPinningSource: { config?: typeof currentConfig };
+      }).dependencyPinningSource;
+
+      assertEquals(veryfront1 !== veryfront2, true);
+      assertEquals(currentSource.config, currentConfig);
+      assertEquals(cache.size, 2);
+    });
+
     it("isolates production handlers by release and content source", () => {
       const cache = createStubCache();
       __injectCacheForTests(cache);
@@ -431,6 +471,83 @@ describe("server/services/rsc/endpoints/handler-registry", () => {
 
       assertEquals(second !== first, true);
       assertEquals(cache.size, 0);
+    });
+
+    it("does not alias import-map and branch identity fields", async () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+      const importMapIdentity = await createImportMapIdentity({
+        imports: { package: "node:fs" },
+      });
+
+      const mapped = getRSCHandler("/dir", "project", {
+        mode: "development",
+        importMapIdentity,
+      });
+      const branched = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: importMapIdentity.fingerprint,
+        dependencyPinningEnabled: true,
+      });
+
+      assertEquals(branched !== mapped, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("preserves the legacy handler identity for branches when pinning is disabled", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const branchA = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+      });
+      const branchB = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-b",
+        dependencyPinningCacheKey: "off",
+        dependencyPinningEnabled: false,
+      });
+      const branchAWithUntrustedPinKey = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+        dependencyPinningCacheKey: "on:snapshot",
+      });
+
+      assertEquals(branchA, branchB);
+      assertEquals(branchAWithUntrustedPinKey, branchA);
+      assertEquals(cache.size, 1);
+    });
+
+    it("isolates enabled preview page handlers by canonical branch without a pin header", () => {
+      const cache = createStubCache();
+      __injectCacheForTests(cache);
+
+      const branchA = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-a",
+        dependencyPinningEnabled: true,
+      });
+      const branchB = getRSCHandler("/dir", "project", {
+        mode: "development",
+        branch: "feature-b",
+        dependencyPinningEnabled: true,
+      });
+
+      assertEquals(branchA !== branchB, true);
+      assertEquals(cache.size, 2);
+    });
+
+    it("bounds release-source bookkeeping with the handler LRU", () => {
+      for (let index = 0; index <= 50; index++) {
+        getRSCHandler("/dir", "project", {
+          mode: "production",
+          releaseId: `release-${index}`,
+          contentSourceId: `release-source-${index}`,
+        });
+      }
+
+      assertEquals(__getTrackedRSCHandlerKeyCountForTests(), 50);
     });
   });
 

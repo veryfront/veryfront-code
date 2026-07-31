@@ -14,7 +14,8 @@
  */
 
 import { logger } from "#veryfront/utils";
-import type { CacheBackend } from "./types.ts";
+import type { CacheBackend, RevisionedCacheBackend } from "./types.ts";
+import { captureRevisionedCacheBackendMethods } from "./capabilities.ts";
 import { buildBatchResults } from "./batch-results.ts";
 import { assertCacheBatchSize } from "./batch-policy.ts";
 import { assertPortableCode, detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "./paths.ts";
@@ -29,6 +30,12 @@ export interface CodeCacheGateway {
 
   /** Gateway name for logging */
   readonly name: string;
+
+  /** Read raw serialized data with its provider-owned revision, when supported. */
+  readonly getWithRevision?: RevisionedCacheBackend["getWithRevision"];
+
+  /** Apply a raw revision mutation without tokenization, when supported. */
+  readonly compareExchange?: RevisionedCacheBackend["compareExchange"];
 
   /**
    * Get code from cache with automatic detokenization.
@@ -97,6 +104,8 @@ export interface CodeCacheGateway {
 export class TokenizingCacheGateway implements CodeCacheGateway {
   readonly type: CacheBackend["type"];
   readonly name: string;
+  declare readonly getWithRevision?: RevisionedCacheBackend["getWithRevision"];
+  declare readonly compareExchange?: RevisionedCacheBackend["compareExchange"];
 
   constructor(
     private backend: CacheBackend,
@@ -104,6 +113,18 @@ export class TokenizingCacheGateway implements CodeCacheGateway {
   ) {
     this.type = backend.type;
     this.name = name;
+
+    const revisionMethods = captureRevisionedCacheBackendMethods(backend);
+    if (revisionMethods !== null) {
+      this.getWithRevision = (key) =>
+        Reflect.apply(revisionMethods.getWithRevision, backend, [key]);
+      this.compareExchange = (key, expectedRevision, mutation) =>
+        Reflect.apply(revisionMethods.compareExchange, backend, [
+          key,
+          expectedRevision,
+          mutation,
+        ]);
+    }
   }
 
   /**

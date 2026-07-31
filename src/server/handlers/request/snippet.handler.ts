@@ -10,6 +10,10 @@ import {
   VeryfrontError,
 } from "#veryfront/errors";
 import { validatePath } from "#veryfront/security";
+import {
+  createHandlerDependencyPinningSource,
+  getHandlerDependencyPinningIdentity,
+} from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 const logger = serverLogger.component("snippet-handler");
 
@@ -67,13 +71,19 @@ export class SnippetHandler extends BaseHandler {
         const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
         const pageId = url.searchParams.get("page_id") ?? undefined;
         const isDev = !!ctx.isLocalProject;
+        const dependencyIdentity = getHandlerDependencyPinningIdentity(ctx);
 
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
+          adapter: ctx.adapter,
+          isLocalProject: ctx.isLocalProject,
+          projectId: dependencyIdentity.projectId,
+          contentSourceId: dependencyIdentity.contentSourceId,
+          dependencyPinningSource: createHandlerDependencyPinningSource(ctx),
           filePath: admittedPath,
           moduleServerUrl,
-          projectSlug: ctx.projectSlug,
+          projectSlug: dependencyIdentity.projectSlug,
           config: ctx.config,
           pageId,
         });

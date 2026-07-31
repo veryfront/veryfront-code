@@ -294,6 +294,11 @@ export function captureDistributedCacheAdministration(
  */
 export interface DistributedRuntimeProvider {
   readonly id: string;
+  /**
+   * Create a cache backend. Shared transform persistence is enabled only when
+   * the backend supplies the complete optional revision method group and the
+   * caller uses Veryfront's reserved revisioned-key namespace.
+   */
   createCacheBackend(options: DistributedCacheBackendOptions): Promise<CacheBackend>;
   createRenderCacheStore(options: DistributedRenderCacheStoreOptions): RenderCacheStore;
   /**

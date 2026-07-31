@@ -24,6 +24,8 @@
 
 export {
   buildProduction,
+  type BuildProductionOptions,
+  type BuildProductionReleaseAssetProviders,
   cleanupCaches,
   cleanupRenderer,
   logBuildCompletion,

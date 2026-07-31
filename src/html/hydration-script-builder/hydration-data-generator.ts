@@ -6,28 +6,15 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
+import { snapshotHTMLJsonRecord, snapshotHTMLJsonValue } from "../json-snapshot.ts";
+import { resolveCanonicalProjectRelativePath } from "../project-relative-path.ts";
+import { snapshotHTMLHydrationConfig } from "../html-config-snapshot.ts";
 
 type HydrationPageType = NonNullable<HydrationDataStructure["pageType"]>;
-function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
-  if (!absolutePath) return "";
-
-  const normalizedPath = absolutePath.replace(/\\/g, "/");
-
-  if (!projectDir) return normalizedPath.replace(/^\//, "");
-
-  if (!normalizedPath.startsWith("/") && !/^[A-Za-z]:\//.test(normalizedPath)) {
-    const relativePath = normalizedPath.replace(/^\.\//, "");
-    return relativePath === ".." || relativePath.startsWith("../") ? "" : relativePath;
-  }
-
-  const normalizedProjectDir = projectDir.replace(/\\/g, "/").replace(/\/+$/, "") || "/";
-  const projectPrefix = normalizedProjectDir.endsWith("/")
-    ? normalizedProjectDir
-    : `${normalizedProjectDir}/`;
-
-  if (!normalizedPath.startsWith(projectPrefix)) return "";
-  return normalizedPath.slice(projectPrefix.length);
-}
+const NON_JSON_HYDRATION_OPTION_KEYS = new Set(["projectClasses"]);
+const HYDRATION_OPTION_VALUE_PROJECTORS = {
+  config: snapshotHTMLHydrationConfig,
+};
 
 const PAGE_TYPE_EXTENSIONS = new Set(["mdx", "tsx", "jsx", "ts", "js"] as const);
 type PageType = "mdx" | "tsx" | "jsx" | "ts" | "js";
@@ -52,11 +39,22 @@ export function generateHydrationData(
   options: HydrationOptions,
   serializeOptions?: { pretty?: boolean },
 ): string {
+  params = snapshotHTMLJsonValue(params, "Hydration route params");
+  props = snapshotHTMLJsonValue(props, "Hydration component props");
+  options = snapshotHTMLJsonRecord(options, "Hydration options", {
+    omitKeys: NON_JSON_HYDRATION_OPTION_KEYS,
+    projectValues: HYDRATION_OPTION_VALUE_PROJECTORS,
+  }) as HydrationOptions;
+  serializeOptions = serializeOptions === undefined
+    ? undefined
+    : snapshotHTMLJsonRecord(serializeOptions, "Hydration serialization options");
+
   const layouts = (options.nestedLayouts ?? [])
     .map((layout) => {
-      const path = toProjectRelativePath(
+      const path = resolveCanonicalProjectRelativePath(
         layout.path ?? layout.componentPath ?? "",
         options.projectDir,
+        { module: true },
       );
 
       if (!path) return null;
@@ -68,13 +66,25 @@ export function generateHydrationData(
     })
     .filter((layout): layout is NonNullable<typeof layout> => Boolean(layout));
   const appPath = options.appPath
-    ? toProjectRelativePath(options.appPath, options.projectDir) || undefined
+    ? resolveCanonicalProjectRelativePath(
+      options.appPath,
+      options.projectDir,
+      { module: true },
+    )
     : undefined;
   const errorPath = options.errorPath
-    ? toProjectRelativePath(options.errorPath, options.projectDir) || undefined
+    ? resolveCanonicalProjectRelativePath(
+      options.errorPath,
+      options.projectDir,
+      { module: true },
+    )
     : undefined;
   const pagePath = options.pagePath
-    ? toProjectRelativePath(options.pagePath, options.projectDir) || undefined
+    ? resolveCanonicalProjectRelativePath(
+      options.pagePath,
+      options.projectDir,
+      { module: true },
+    )
     : undefined;
   const hydrationModulePaths = [
     pagePath,
@@ -82,6 +92,10 @@ export function generateHydrationData(
     appPath,
     errorPath,
   ].filter((path): path is string => Boolean(path));
+  const buildVersion = snapshotHTMLJsonRecord(
+    createBuildVersion(),
+    "Hydration build version",
+  );
 
   const data: HydrationDataStructure = {
     slug: slug || "",
@@ -90,26 +104,41 @@ export function generateHydrationData(
     layouts,
     appPath,
     errorPath,
-    appRouterRoot: toProjectRelativePath(
+    appRouterRoot: resolveCanonicalProjectRelativePath(
       options.config?.directories?.app ?? "app",
       options.projectDir,
-    ).replace(/^\/+|\/+$/g, ""),
+    ),
     isolatedClientPage: options.isolatedClientPage,
     pagePath,
     // `options.pageType`/`options.environment` are validated against literal
     // enum schemas (see html.schema.ts), but the schema inference widens them
     // to `string`. Narrow back to the real literal unions rather than `any`.
     pageType: (options.pageType as HydrationPageType | undefined) ||
-      inferPageType(options.pagePath),
+      inferPageType(pagePath),
     clientModuleStrategy: options.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
+    ...(options.dependencyPinningCacheKey &&
+        options.dependencyPinningCacheKey !== "off"
+      ? { dependencyPinningCacheKey: options.dependencyPinningCacheKey }
+      : {}),
     releaseId: options.releaseId,
     releaseAssetModules: buildReleaseAssetModules(
       options.releaseAssetManifest,
       { logicalPaths: hydrationModulePaths },
     ),
-    buildVersion: createBuildVersion(),
+    buildVersion,
     frontmatter: options.frontmatter,
-    layoutProps: options.layoutProps,
+    layoutProps: options.layoutProps
+      ? Object.fromEntries(
+        Object.entries(options.layoutProps).flatMap(([path, layoutProps]) => {
+          const canonicalPath = resolveCanonicalProjectRelativePath(
+            path,
+            options.projectDir,
+            { module: true },
+          );
+          return canonicalPath ? [[canonicalPath, layoutProps]] : [];
+        }),
+      )
+      : undefined,
     // In dev mode, client uses createRoot instead of hydrateRoot to avoid
     // hydration mismatches from compilation differences between SSR and client
     dev: options.mode === "development",
@@ -118,5 +147,6 @@ export function generateHydrationData(
   };
 
   const pretty = serializeOptions?.pretty ?? true;
-  return jsonForInlineScript(data, pretty ? 2 : undefined);
+  const snapshot = snapshotHTMLJsonRecord(data, "Hydration data");
+  return jsonForInlineScript(snapshot, pretty ? 2 : undefined);
 }

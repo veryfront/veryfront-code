@@ -7,6 +7,7 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { ProjectFile, VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
@@ -151,7 +152,7 @@ describe("StatOperations", () => {
       assertEquals(info.size, 0);
     });
 
-    it("should throw for non-existent path", async () => {
+    it("should throw a recognized not-found error for a non-existent path", async () => {
       const statOps = createStatOps(
         createMockClient(),
         new PathNormalizer(),
@@ -163,6 +164,7 @@ describe("StatOperations", () => {
         assertEquals(true, false, "Should have thrown");
       } catch (e) {
         assertExists(e);
+        assertEquals(isNotFoundError(e), true);
       }
     });
 

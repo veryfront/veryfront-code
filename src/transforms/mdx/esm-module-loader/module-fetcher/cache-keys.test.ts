@@ -100,6 +100,82 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       );
       assertEquals(first === second, false);
     });
+
+    it("isolates distributed transforms by dependency pinning state", () => {
+      const flagOff = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        undefined,
+        "off",
+      );
+      const unkeyed = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+      );
+      const firstPins = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        undefined,
+        "on:first",
+      );
+      const changedPins = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        undefined,
+        "on:second",
+      );
+
+      assertEquals(new Set([flagOff, firstPins, changedPins]).size, 3);
+      assertEquals(flagOff, unkeyed);
+    });
+
+    it("isolates pin-on distributed transforms by origin", () => {
+      const base = [
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        undefined,
+        "on:snapshot",
+      ] as const;
+      const originA = getTransformCacheKey(...base, "https://a.example");
+      const originB = getTransformCacheKey(...base, "https://b.example");
+      const flagOff = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        undefined,
+        "off",
+      );
+      const flagOffWithOrigin = getTransformCacheKey(
+        "proj",
+        "preview-main",
+        "19.1.1",
+        "lib/utils.ts",
+        "abc123",
+        undefined,
+        "off",
+        "https://a.example",
+      );
+
+      assertEquals(originA === originB, false);
+      assertEquals(flagOffWithOrigin, flagOff);
+    });
   });
 
   describe("getVersionedPathCacheKey", () => {
@@ -107,13 +183,13 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       const key = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
       assertEquals(
         key,
-        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","lib/utils.ts",null,null]`,
+        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","lib/utils.ts",null,null,null]`,
       );
     });
 
     it("handles empty path", () => {
       const key = getVersionedPathCacheKey("", "19.1.1");
-      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","",null,null]`);
+      assertEquals(key, `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","",null,null,null]`);
     });
 
     it("starts with cache namespace prefix", () => {
@@ -137,6 +213,71 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/cache-keys", () => {
       const first = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "hash", "map-a");
       const second = getVersionedPathCacheKey("lib/utils.ts", "19.1.1", "hash", "map-b");
       assertEquals(first === second, false);
+    });
+
+    it("isolates local paths by dependency pinning state", () => {
+      const flagOff = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        undefined,
+        undefined,
+        "off",
+      );
+      const unkeyed = getVersionedPathCacheKey("lib/utils.ts", "19.1.1");
+      const firstPins = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        undefined,
+        undefined,
+        "on:first",
+      );
+      const changedPins = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        undefined,
+        undefined,
+        "on:second",
+      );
+
+      assertEquals(new Set([flagOff, firstPins, changedPins]).size, 3);
+      assertEquals(flagOff, unkeyed);
+    });
+
+    it("isolates pin-on local paths by origin", () => {
+      const originA = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        undefined,
+        undefined,
+        "on:snapshot",
+        "https://a.example",
+      );
+      const originB = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        undefined,
+        undefined,
+        "on:snapshot",
+        "https://b.example",
+      );
+      const flagOff = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        undefined,
+        undefined,
+        "off",
+      );
+      const flagOffWithOrigin = getVersionedPathCacheKey(
+        "lib/utils.ts",
+        "19.1.1",
+        undefined,
+        undefined,
+        "off",
+        "https://a.example",
+      );
+
+      assertEquals(originA === originB, false);
+      assertEquals(flagOffWithOrigin, flagOff);
     });
   });
 });

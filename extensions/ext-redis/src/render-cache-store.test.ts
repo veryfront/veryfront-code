@@ -16,8 +16,10 @@ function createRedisClient(
     mGet: (keys) => Promise.resolve(keys.map(() => null)),
     set: () => Promise.resolve("OK"),
     del: () => Promise.resolve(0),
-    scan: () => Promise.resolve({ cursor: 0, keys: [] }),
+    scan: () => Promise.resolve({ cursor: "0", keys: [] }),
     expire: () => Promise.resolve(1),
+    eval: () => Promise.resolve(null),
+    info: () => Promise.resolve(""),
     isOpen: true,
     ...overrides,
   };
@@ -290,11 +292,11 @@ describe("RedisCacheStore", () => {
       const scanPatterns: string[] = [];
       const client = createRedisClient({
         scan: (
-          _cursor: number,
+          _cursor: string,
           options?: { MATCH?: string; COUNT?: number },
         ) => {
           if (options?.MATCH) scanPatterns.push(options.MATCH);
-          return Promise.resolve({ cursor: 0, keys: [] });
+          return Promise.resolve({ cursor: "0", keys: [] });
         },
       });
       const store = createStore({
@@ -318,7 +320,7 @@ describe("RedisCacheStore", () => {
           scanAttempts++;
           return scanAttempts === 1
             ? Promise.reject(new Error("scan failed"))
-            : Promise.resolve({ cursor: 0, keys: [] });
+            : Promise.resolve({ cursor: "0", keys: [] });
         },
       });
       const store = createStore({
@@ -337,7 +339,7 @@ describe("RedisCacheStore", () => {
           scanAttempts++;
           return scanAttempts === 1
             ? Promise.reject(new Error("clear scan failed"))
-            : Promise.resolve({ cursor: 0, keys: [] });
+            : Promise.resolve({ cursor: "0", keys: [] });
         },
       });
       const store = createStore({
@@ -352,10 +354,10 @@ describe("RedisCacheStore", () => {
     it("finishes and deduplicates a multi-page scan before deleting", async () => {
       const events: string[] = [];
       const deletedBatches: string[][] = [];
-      const pages = new Map<number, { cursor: number; keys: string[] }>([
-        [0, { cursor: 11, keys: ["vf:cache:scan-test:a", "vf:cache:scan-test:b"] }],
-        [11, { cursor: 22, keys: ["vf:cache:scan-test:b", "vf:cache:scan-test:c"] }],
-        [22, { cursor: 0, keys: ["vf:cache:scan-test:d"] }],
+      const pages = new Map<string, { cursor: string; keys: string[] }>([
+        ["0", { cursor: "11", keys: ["vf:cache:scan-test:a", "vf:cache:scan-test:b"] }],
+        ["11", { cursor: "22", keys: ["vf:cache:scan-test:b", "vf:cache:scan-test:c"] }],
+        ["22", { cursor: "0", keys: ["vf:cache:scan-test:d"] }],
       ]);
       const client = createRedisClient({
         scan: (cursor) => {
@@ -388,10 +390,28 @@ describe("RedisCacheStore", () => {
       ]]);
     });
 
+    it("rejects a repeated nonzero string cursor before deleting", async () => {
+      let deletes = 0;
+      const client = createRedisClient({
+        scan: () => Promise.resolve({ cursor: "17", keys: ["vf:cache:scan-test:a"] }),
+        del: () => {
+          deletes++;
+          return Promise.resolve(1);
+        },
+      });
+      const store = createStore({
+        keyPrefix: "vf:cache:scan-test:",
+        clientManager: createClientManager(client),
+      });
+
+      await assertRejects(() => store.clear(), Error, "repeated a cursor");
+      assertEquals(deletes, 0);
+    });
+
     it("rejects SCAN keys outside the requested literal namespace before deleting", async () => {
       let deletes = 0;
       const client = createRedisClient({
-        scan: () => Promise.resolve({ cursor: 0, keys: ["other:tenant:page"] }),
+        scan: () => Promise.resolve({ cursor: "0", keys: ["other:tenant:page"] }),
         del: () => {
           deletes++;
           return Promise.resolve(1);

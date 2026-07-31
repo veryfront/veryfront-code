@@ -217,9 +217,9 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(enforceSkillPolicy("execute_skill_script", ["Read"], false).allowed, false);
     });
 
-    it("allows load_skill_reference only when the active skill advertised references", () => {
+    it("allows load_skill_reference only when policy and active files allow it", () => {
       assertEquals(
-        enforceSkillPolicy("load_skill_reference", ["Read"], false, {
+        enforceSkillPolicy("load_skill_reference", ["Read", "load_skill_reference"], false, {
           skillToolAvailability: {
             hasActiveSkill: true,
             references: ["references/guide.md"],
@@ -239,9 +239,9 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(result.allowed, false);
     });
 
-    it("allows execute_skill_script only when the active skill advertised scripts", () => {
+    it("allows execute_skill_script only when policy and active files allow it", () => {
       assertEquals(
-        enforceSkillPolicy("execute_skill_script", ["Read"], false, {
+        enforceSkillPolicy("execute_skill_script", ["Read", "execute_skill_script"], false, {
           skillToolAvailability: {
             hasActiveSkill: true,
             references: [],
@@ -259,6 +259,47 @@ describe("src/agent/runtime skill policy helpers", () => {
         },
       });
       assertEquals(result.allowed, false);
+    });
+
+    it("keeps advertised skill file tools denied after malformed policy normalization", () => {
+      const active = applySkillActivationResult(
+        {
+          activeSkillId: undefined,
+          activeSkillPolicy: undefined,
+          activeSkillToolAvailability: INACTIVE_SKILL_TOOL_AVAILABILITY,
+          activeSkillDelegationOverrides: undefined,
+        },
+        {
+          skillId: "review",
+          instructions: "# Review",
+          allowedTools: "malformed",
+          references: ["references/guide.md"],
+          scripts: ["scripts/run.sh"],
+        },
+      );
+
+      assertEquals(active.activeSkillPolicy, []);
+      assertEquals(
+        enforceSkillPolicy(
+          "load_skill_reference",
+          active.activeSkillPolicy,
+          false,
+          { skillToolAvailability: active.activeSkillToolAvailability },
+        ).allowed,
+        false,
+      );
+      assertEquals(
+        enforceSkillPolicy(
+          "execute_skill_script",
+          active.activeSkillPolicy,
+          false,
+          { skillToolAvailability: active.activeSkillToolAvailability },
+        ).allowed,
+        false,
+      );
+      assertEquals(enforceSkillPolicy("load_skill", active.activeSkillPolicy, false), {
+        allowed: true,
+      });
     });
 
     it("should allow wildcard-matched tools", () => {

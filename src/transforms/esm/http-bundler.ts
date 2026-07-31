@@ -66,7 +66,7 @@ function requireHttpTimeout(timeoutMs: number): number {
 }
 
 /**
- * NOOP plugin for esbuild.
+ * esbuild plugin that fetches HTTP imports and rewrites esm.sh URLs.
  */
 export function createHTTPPlugin(options: HttpPluginOptions = {}): Plugin {
   const configuredTimeoutMs = options.timeoutMs === undefined

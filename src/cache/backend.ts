@@ -29,6 +29,22 @@ export {
   type RuntimeCacheBackendSelection,
 } from "./backends/index.ts";
 
+export {
+  buildRevisionedCacheKey,
+  isRevisionedCacheBackend,
+  isRevisionedCacheKey,
+  MAX_REVISIONED_CACHE_SOURCE_KEY_LENGTH,
+  requireCacheExchangeResult,
+  REVISIONED_CACHE_KEY_PREFIX,
+  snapshotCacheRevisionResult,
+} from "./capabilities.ts";
+
 // Re-export types
-export type { CacheBackend } from "./types.ts";
+export { MAX_CACHE_REVISION_LENGTH } from "./types.ts";
+export type {
+  CacheBackend,
+  CacheRevisionMutation,
+  CacheRevisionSnapshot,
+  RevisionedCacheBackend,
+} from "./types.ts";
 export type { CodeCacheGateway, TokenizingCacheGateway } from "./backends/index.ts";

@@ -113,13 +113,13 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `DrawerTitle` | Drawer title - 18px medium (Studio Heading-ish). Add `sr-only` to hide. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L70) |
 | `DrawerTrigger` | Trigger - opens the drawer. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L36) |
 | `DropdownMenu` | DropdownMenu root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L30) |
-| `DropdownMenuContent` | Menu surface - rendered below the trigger while open. No border (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L50) |
-| `DropdownMenuGroup` | Groups related items with a tight inner gap (Studio: `gap-px p-0.5`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L164) |
-| `DropdownMenuItem` | A selectable menu item. Icons render at `size-3.5` (14px). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L183) |
-| `DropdownMenuItemMeta` | Trailing metadata text - keyboard shortcuts, counts, badges. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L229) |
-| `DropdownMenuLabel` | Non-interactive section label - full-strength foreground (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L261) |
-| `DropdownMenuSeparator` | Full-width divider between groups (Studio: `-mx-2.5 my-2`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L249) |
-| `DropdownMenuTrigger` | Trigger - toggles the menu. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L35) |
+| `DropdownMenuContent` | Menu surface - rendered below the trigger while open. No border (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L53) |
+| `DropdownMenuGroup` | Groups related items with a tight inner gap (Studio: `gap-px p-0.5`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L167) |
+| `DropdownMenuItem` | A selectable menu item. Icons render at `size-3.5` (14px). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L186) |
+| `DropdownMenuItemMeta` | Trailing metadata text - keyboard shortcuts, counts, badges. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L232) |
+| `DropdownMenuLabel` | Non-interactive section label - full-strength foreground (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L264) |
+| `DropdownMenuSeparator` | Full-width divider between groups (Studio: `-mx-2.5 my-2`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L252) |
+| `DropdownMenuTrigger` | Trigger - toggles the menu; the positioning anchor. `asChild` merges onto the child element, which must forward `ref` to its DOM node. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L38) |
 | `FileType` | Soft-fill badge - rounded square, tinted background, extension label. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L245) |
 | `FileTypeThumb` | Solid-fill thumbnail - full-saturation square with white `.ext` text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L266) |
 | `IconButton` | Render an icon-only button with a hover tooltip. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icon-button.tsx#L20) |
@@ -131,13 +131,13 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `LoadingButton` | Button that pulses subtly while pending and blocks double-submits. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L160) |
 | `Pill` | Render a selection-trigger pill. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/pill.tsx#L49) |
 | `Popover` | Popover root - owns open state and the positioning anchor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L26) |
-| `PopoverActions` | Right-aligned button row, for use inside a footer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L135) |
-| `PopoverBody` | Body content region (Studio: `px-5 last:pb-5 flex flex-col gap-4`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L104) |
-| `PopoverContent` | Popover surface - rendered below the trigger while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L46) |
-| `PopoverFooter` | Footer region; pass `bordered` for a top divider (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L117) |
-| `PopoverHeader` | Small section label inside a popover (Studio: Heading level 5). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L85) |
-| `PopoverTitle` | Primary heading slot at the top of a popover (Studio: Heading level 4). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L66) |
-| `PopoverTrigger` | Trigger - toggles the popover. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L31) |
+| `PopoverActions` | Right-aligned button row, for use inside a footer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L138) |
+| `PopoverBody` | Body content region (Studio: `px-5 last:pb-5 flex flex-col gap-4`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L107) |
+| `PopoverContent` | Popover surface - rendered below the trigger while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L49) |
+| `PopoverFooter` | Footer region; pass `bordered` for a top divider (Studio). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L120) |
+| `PopoverHeader` | Small section label inside a popover (Studio: Heading level 5). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L88) |
+| `PopoverTitle` | Primary heading slot at the top of a popover (Studio: Heading level 4). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L69) |
+| `PopoverTrigger` | Trigger - toggles the popover; the positioning anchor. `asChild` merges onto the child element, which must forward `ref` to its DOM node. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L34) |
 | `ProgressBar` | Render a progress track. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/progress-bar.tsx#L38) |
 | `Radio` | A single radio input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L19) |
 | `RadioField` | A radio paired with a clickable label and optional description. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L47) |
@@ -210,8 +210,8 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `DialogActionProps` | Props accepted by `<DialogAction>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L177) |
 | `DialogProps` | Props accepted by `<Dialog>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dialog.tsx#L25) |
 | `DrawerProps` | Props accepted by `<Drawer>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/drawer.tsx#L23) |
-| `DropdownMenuContentProps` | Props accepted by `<DropdownMenuContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L44) |
-| `DropdownMenuItemProps` | Props accepted by `<DropdownMenuItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L175) |
+| `DropdownMenuContentProps` | Props accepted by `<DropdownMenuContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L47) |
+| `DropdownMenuItemProps` | Props accepted by `<DropdownMenuItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L178) |
 | `DropdownMenuProps` | Props accepted by `<DropdownMenu>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/dropdown-menu.tsx#L22) |
 | `FileTypeProps` | Props accepted by `<FileType>` / `<FileTypeThumb>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L239) |
 | `IconButtonProps` | Props accepted by `<IconButton>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/icon-button.tsx#L12) |
@@ -221,7 +221,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `ListLabelProps` | Props accepted by `ListLabel`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L34) |
 | `ListProps` | Props accepted by `List`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/list.tsx#L24) |
 | `PillProps` | Props accepted by `<Pill>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/pill.tsx#L41) |
-| `PopoverContentProps` | Props accepted by `<PopoverContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L40) |
+| `PopoverContentProps` | Props accepted by `<PopoverContent>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L43) |
 | `PopoverProps` | Props accepted by `<Popover>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/popover.tsx#L18) |
 | `ProgressBarProps` | Props accepted by `<ProgressBar>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/progress-bar.tsx#L30) |
 | `RadioFieldProps` | Props accepted by `<RadioField>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/radio.tsx#L41) |

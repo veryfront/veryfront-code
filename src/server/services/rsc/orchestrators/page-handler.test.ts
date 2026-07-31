@@ -3,6 +3,102 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageHandler } from "./page-handler.ts";
 
+function extractGeneratedFunction(html: string, declaration: string): string {
+  const start = html.indexOf(declaration);
+  assertEquals(start >= 0, true, `${declaration} not found in page handler HTML`);
+  const end = html.indexOf("\n    }", start);
+  assertEquals(end > start, true, `could not find end of ${declaration}`);
+  return html.slice(start, end + "\n    }".length);
+}
+
+async function runGeneratedSnapshotRecovery(
+  html: string,
+  response: Response,
+  reloadDocument: () => void,
+  recoveryState: Record<string, unknown>,
+): Promise<boolean> {
+  const source = [
+    extractGeneratedFunction(
+      html,
+      "function recoverFromDependencySnapshotAdmissionFailure(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "async function isDependencySnapshotConflictResponse(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "async function recoverFromDependencySnapshotConflict(",
+    ),
+  ].join("\n");
+
+  return await new Function(
+    "response",
+    "reloadDocument",
+    "recoveryState",
+    `${source}
+return recoverFromDependencySnapshotConflict(response, reloadDocument, recoveryState);`,
+  )(response, reloadDocument, recoveryState) as boolean;
+}
+
+function runGeneratedSnapshotAdmission(
+  html: string,
+  payload: unknown,
+  response: Response,
+  requestedPinKey: string | undefined,
+  currentPinKey: string | undefined,
+  reloadDocument: () => void,
+  recoveryState: Record<string, unknown>,
+): boolean {
+  const source = [
+    extractGeneratedFunction(
+      html,
+      "function isCanonicalDependencyPinningCacheKey(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "function normalizeExpectedDependencySnapshot(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "function normalizeResponseDependencySnapshot(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "function recoverFromDependencySnapshotAdmissionFailure(",
+    ),
+    extractGeneratedFunction(
+      html,
+      "function admitDependencySnapshot(",
+    ),
+  ].join("\n");
+
+  return new Function(
+    "payload",
+    "response",
+    "requestedPinKey",
+    "currentPinKey",
+    "reloadDocument",
+    "recoveryState",
+    `${source}
+return admitDependencySnapshot(
+  payload,
+  response,
+  requestedPinKey,
+  currentPinKey,
+  reloadDocument,
+  recoveryState,
+);`,
+  )(
+    payload,
+    response,
+    requestedPinKey,
+    currentPinKey,
+    reloadDocument,
+    recoveryState,
+  ) as boolean;
+}
+
 describe("server/services/rsc/orchestrators/page-handler", () => {
   describe("handle", () => {
     it("should return HTML response with correct content type", () => {
@@ -83,6 +179,62 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       assertEquals(html.includes('"dev":false'), true);
     });
 
+    it("preserves application pins and sends the page snapshot as a render header", async () => {
+      const handler = new PageHandler(
+        false,
+        "18.3.1",
+        "rsc-module",
+        "on:pins-a",
+      );
+      const response = handler.handle(
+        "/",
+        new URLSearchParams({ name: "Ada", pins: "on:stale" }),
+      );
+      const html = await response.text();
+
+      assertEquals(
+        html.includes(
+          "/_veryfront/rsc/render/?name=Ada\\u0026pins=on%3Apins-a",
+        ),
+        false,
+      );
+      assertEquals(
+        html.includes(
+          "/_veryfront/rsc/render/?name=Ada\\u0026pins=on%3Astale",
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes('"dependencyPinningCacheKey":"on:pins-a"'),
+        true,
+      );
+      assertEquals(
+        html.includes('"x-veryfront-dependency-pins":"on:pins-a"'),
+        true,
+      );
+      assertEquals(response.headers.get("cache-control"), "no-store");
+    });
+
+    it("preserves application pins without a transport header when pinning is off", async () => {
+      const handler = new PageHandler(false, "18.3.1", "rsc-module", "off");
+      const response = handler.handle(
+        "/",
+        new URLSearchParams({ pins: "application-value" }),
+      );
+      const html = await response.text();
+
+      assertEquals(
+        html.includes("/_veryfront/rsc/render/?pins=application-value"),
+        true,
+      );
+      assertEquals(
+        html.includes('"x-veryfront-dependency-pins":'),
+        false,
+      );
+      assertEquals(html.includes('"dependencyPinningCacheKey":'), false);
+      assertEquals(response.headers.get("cache-control"), null);
+    });
+
     it("should not include legacy hydrate.js import", async () => {
       const handler = new PageHandler();
       const response = handler.handle("/", new URLSearchParams());
@@ -95,6 +247,182 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       const response = handler.handle("/", new URLSearchParams());
       const html = await response.text();
       assertEquals(html.includes("import('/_veryfront/rsc/client.js?hydrate=1')"), true);
+    });
+
+    it("verifies the render snapshot before DOM mutation without overwriting hydration state", async () => {
+      const handler = new PageHandler();
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+
+      assertEquals(
+        html.includes("admitDependencySnapshot("),
+        true,
+      );
+      assertEquals(
+        html.includes("hydrationState.dependencyPinningCacheKey = pinKey"),
+        false,
+      );
+      assertEquals(
+        html.indexOf("if (!admitDependencySnapshot(") <
+          html.indexOf("const safeHtml = validateTrustedHtml"),
+        true,
+      );
+    });
+
+    it("fails closed for missing, malformed, mismatched, and unrequested render snapshots", async () => {
+      const handler = new PageHandler(
+        false,
+        "18.3.1",
+        "rsc-module",
+        "on:1",
+      );
+      const html = await handler.handle("/", new URLSearchParams()).text();
+      const recoveryState: Record<string, unknown> = {};
+      let reloads = 0;
+      const reload = () => {
+        reloads++;
+      };
+      const cases = [
+        {
+          payload: { dependencyPinningCacheKey: "on:1" },
+          response: new Response(null),
+          requested: "on:1",
+          current: "on:1",
+        },
+        {
+          payload: { dependencyPinningCacheKey: "on:1" },
+          response: new Response(null, {
+            headers: { "x-veryfront-dependency-pins": "on:not-canonical" },
+          }),
+          requested: "on:1",
+          current: "on:1",
+        },
+        {
+          payload: { dependencyPinningCacheKey: "on:2" },
+          response: new Response(null, {
+            headers: { "x-veryfront-dependency-pins": "on:1" },
+          }),
+          requested: "on:1",
+          current: "on:1",
+        },
+        {
+          payload: { dependencyPinningCacheKey: "on:1" },
+          response: new Response(null, {
+            headers: { "x-veryfront-dependency-pins": "on:1" },
+          }),
+          requested: undefined,
+          current: undefined,
+        },
+        {
+          payload: { dependencyPinningCacheKey: "on:unknown" },
+          response: new Response(null, {
+            headers: { "x-veryfront-dependency-pins": "on:unknown" },
+          }),
+          requested: "on:unknown",
+          current: "on:unknown",
+        },
+      ] as const;
+
+      for (const testCase of cases) {
+        assertEquals(
+          runGeneratedSnapshotAdmission(
+            html,
+            testCase.payload,
+            testCase.response,
+            testCase.requested,
+            testCase.current,
+            reload,
+            recoveryState,
+          ),
+          false,
+        );
+      }
+      assertEquals(reloads, 1);
+    });
+
+    it("admits exact enabled and legacy flag-off render responses", async () => {
+      const html = await new PageHandler().handle("/", new URLSearchParams()).text();
+
+      assertEquals(
+        runGeneratedSnapshotAdmission(
+          html,
+          { dependencyPinningCacheKey: "on:1" },
+          new Response(null, {
+            headers: { "x-veryfront-dependency-pins": "on:1" },
+          }),
+          "on:1",
+          "on:1",
+          () => {
+            throw new Error("exact admission must not reload");
+          },
+          {},
+        ),
+        true,
+      );
+      assertEquals(
+        runGeneratedSnapshotAdmission(
+          html,
+          {},
+          new Response(null),
+          undefined,
+          undefined,
+          () => {
+            throw new Error("flag-off admission must not reload");
+          },
+          {},
+        ),
+        true,
+      );
+    });
+
+    it("reloads once and stops first render for an exact dependency snapshot conflict", async () => {
+      const handler = new PageHandler(
+        false,
+        "18.3.1",
+        "rsc-module",
+        "on:pins-a",
+      );
+      const html = await handler.handle("/", new URLSearchParams()).text();
+      const recoveryState: Record<string, unknown> = {};
+      let reloads = 0;
+
+      for (let attempt = 0; attempt < 2; attempt++) {
+        assertEquals(
+          await runGeneratedSnapshotRecovery(
+            html,
+            new Response("Unknown dependency snapshot", { status: 409 }),
+            () => {
+              reloads++;
+            },
+            recoveryState,
+          ),
+          true,
+        );
+      }
+
+      assertEquals(reloads, 1);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        true,
+      );
+      assertEquals(
+        await runGeneratedSnapshotRecovery(
+          html,
+          new Response("Application conflict", { status: 409 }),
+          () => {
+            reloads++;
+          },
+          recoveryState,
+        ),
+        false,
+      );
+      assertEquals(reloads, 1);
+      assertEquals(
+        html.includes(
+          "if (payloadResult === DEPENDENCY_SNAPSHOT_RECOVERY_RESULT) return;",
+        ),
+        true,
+      );
     });
 
     it("should add nonce attributes to inline scripts when provided", async () => {

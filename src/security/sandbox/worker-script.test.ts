@@ -16,6 +16,7 @@ import {
   type PreparedWorkerModule,
 } from "./worker-types.ts";
 import {
+  assertIsolatedSsrDependencySnapshotSupported,
   getPreparedModuleRetentionStats,
   loadModule,
   loadPreparedModule,
@@ -543,6 +544,82 @@ describe("worker-script request snapshots", () => {
       nested: { count: 1 },
     });
     assertEquals(snapshot.layoutProps, [{ theme: "dark" }]);
+  });
+
+  it("preserves flag-off renderer identity and fails closed for enabled snapshots", () => {
+    const flagOff = snapshotWorkerRequest({
+      type: "render-ssr",
+      id: "render-ssr-off",
+      pageModulePath: "/project/page.mjs",
+      layoutModulePaths: [],
+      pageProps: {},
+      layoutProps: [],
+      delivery: "string",
+      dependencyPinningCacheKey: "off",
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+    });
+    assertEquals(flagOff.type, "render-ssr");
+    if (flagOff.type !== "render-ssr") {
+      throw new Error("expected render-ssr snapshot");
+    }
+    assertEquals(
+      (flagOff as typeof flagOff & { dependencyPinningCacheKey?: string })
+        .dependencyPinningCacheKey,
+      "off",
+    );
+
+    assertThrows(
+      () =>
+        snapshotWorkerRequest({
+          type: "render-ssr",
+          id: "render-ssr-reserved",
+          pageModulePath: "/project/page.mjs",
+          layoutModulePaths: [],
+          pageProps: {},
+          layoutProps: [],
+          delivery: "string",
+          dependencyPinningCacheKey: "on:unknown",
+          dependencyPinningDependencies: { react: "19.0.0" },
+          sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+        }),
+      TypeError,
+      "Invalid worker request dependencyPinningCacheKey",
+    );
+
+    const dependencies = { react: "19.0.0" };
+    const pinned = snapshotWorkerRequest({
+      type: "render-ssr",
+      id: "render-ssr-pinned",
+      pageModulePath: "/project/page.mjs",
+      layoutModulePaths: [],
+      pageProps: {},
+      layoutProps: [],
+      delivery: "string",
+      dependencyPinningCacheKey: "on:1",
+      dependencyPinningDependencies: dependencies,
+      sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
+    });
+    dependencies.react = "18.2.0";
+    assertEquals(pinned.type, "render-ssr");
+    if (pinned.type !== "render-ssr") {
+      throw new Error("expected render-ssr snapshot");
+    }
+    assertEquals(pinned.dependencyPinningDependencies, {
+      react: "19.0.0",
+    });
+    assertEquals(
+      Object.getPrototypeOf(pinned.dependencyPinningDependencies),
+      null,
+    );
+    assertEquals(
+      Object.isFrozen(pinned.dependencyPinningDependencies),
+      true,
+    );
+    assertThrows(
+      () => assertIsolatedSsrDependencySnapshotSupported(pinned),
+      Error,
+      "Isolated SSR does not support enabled dependency snapshots",
+    );
   });
 });
 

@@ -13,6 +13,24 @@ export type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
 // Import for use in interface
 import type { CacheBackendType, CacheSetBatchEntry } from "./schemas/index.ts";
 
+/** Maximum number of code units in a cache revision identifier. */
+export const MAX_CACHE_REVISION_LENGTH = 256;
+
+/** Serialized logical value and the revision that observed it. */
+export interface CacheRevisionSnapshot {
+  readonly value: string | null;
+  readonly revision: string;
+}
+
+/** Atomic mutation applied when an expected cache revision still matches. */
+export type CacheRevisionMutation =
+  | {
+    readonly kind: "set";
+    readonly value: string;
+    readonly expiresAtMs: number;
+  }
+  | { readonly kind: "delete" };
+
 /**
  * Provides storage operations for memory, disk, API, and extension-backed distributed caches.
  * All cache backends must implement this interface.
@@ -27,6 +45,13 @@ export interface CacheBackend {
    * @returns The cached value or null if not found
    */
   get(key: string): Promise<string | null>;
+
+  /**
+   * Atomically observe a raw serialized value and its provider-owned revision.
+   * An absent value is null and still has a revision. This method is usable
+   * only when compareExchange is also callable.
+   */
+  getWithRevision?(key: string): Promise<CacheRevisionSnapshot>;
 
   /**
    * Get the remaining lifetime in seconds. Returns null when the entry is
@@ -53,6 +78,22 @@ export interface CacheBackend {
   set(key: string, value: string, ttlSeconds?: number): Promise<void>;
 
   /**
+   * Apply a raw mutation when the expected revision matches. expiresAtMs is
+   * the caller's original positive safe-integer Unix epoch millisecond
+   * deadline, not a relative TTL. This method is usable only when
+   * getWithRevision is also callable. A true result advances to a never-reused
+   * revision, including for a same-byte set or absent delete. An accepted set
+   * whose deadline has already passed leaves the logical value absent and
+   * still advances the revision. A false result means the revision did not
+   * match and leaves the logical value unchanged. Backend errors reject.
+   */
+  compareExchange?(
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ): Promise<boolean>;
+
+  /**
    * Set multiple values in the cache in a single batch.
    * A batch may contain at most the shared `MAX_BATCH_SIZE` items.
    * @param entries - Array of {key, value, ttl} objects
@@ -74,4 +115,14 @@ export interface CacheBackend {
 
   /** Current number of entries (for memory backend) */
   readonly size?: number;
+}
+
+/** Cache backend with the complete atomic revision capability. */
+export interface RevisionedCacheBackend extends CacheBackend {
+  getWithRevision(key: string): Promise<CacheRevisionSnapshot>;
+  compareExchange(
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ): Promise<boolean>;
 }

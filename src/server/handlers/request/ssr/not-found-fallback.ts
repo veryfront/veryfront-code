@@ -2,16 +2,39 @@ import type { HandlerContext } from "../../types.ts";
 import type { ResponseBuilder } from "#veryfront/security/index.ts";
 import { join as joinPath } from "#veryfront/compat/path/index.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type DependencyPinningSnapshot,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+
+type AppReservedModule = typeof import("../../../../rendering/app-reserved.ts");
+type ReservedComponentLoader = AppReservedModule["tryLoadReservedInDirs"];
+
+let injectedReservedComponentLoader: ReservedComponentLoader | null = null;
+
+export function __setReservedComponentLoaderForTests(
+  loader: ReservedComponentLoader | null,
+): void {
+  injectedReservedComponentLoader = loader;
+}
 
 export async function tryNotFoundFallback(
   req: Request,
   slug: string,
   ctx: HandlerContext,
   builder: ResponseBuilder,
+  requestedDependencySnapshot?: DependencyPinningSnapshot,
 ): Promise<Response | null> {
   try {
+    const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      requestedDependencySnapshot?.cacheKey,
+      requestedDependencySnapshot?.dependencies,
+    );
     const appRoot = joinPath(
       ctx.projectDir,
       ctx.config?.directories?.app ?? "app",
@@ -30,6 +53,8 @@ export async function tryNotFoundFallback(
     const { collectAncestorDirs, tryLoadReservedInDirs } = await import(
       "../../../../rendering/app-reserved.ts"
     );
+    const loadReservedComponent = injectedReservedComponentLoader ??
+      tryLoadReservedInDirs;
 
     const dirs = await collectAncestorDirs(searchBase, appRoot);
     const contentSourceId = ctx.enriched?.contentSourceId ??
@@ -43,6 +68,9 @@ export async function tryNotFoundFallback(
       resolveProjectReactVersion({
         projectDir: ctx.projectDir,
         config: ctx.config,
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningSource,
       }),
       preloadImportMap(
         ctx.projectDir,
@@ -55,7 +83,7 @@ export async function tryNotFoundFallback(
       ),
     ]);
 
-    const NotFoundComp = await tryLoadReservedInDirs(
+    const NotFoundComp = await loadReservedComponent(
       dirs,
       "notFound",
       ctx.projectDir,
@@ -65,6 +93,11 @@ export async function tryNotFoundFallback(
       contentSourceId,
       reactVersion,
       importMap,
+      undefined,
+      dependencySnapshot.cacheKey,
+      dependencySnapshot.dependencies,
+      dependencyPinningSource,
+      new URL(req.url).origin,
     );
 
     if (!NotFoundComp) return null;

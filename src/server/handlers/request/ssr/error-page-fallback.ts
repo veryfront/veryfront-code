@@ -8,12 +8,20 @@ import { buildErrorPageCacheKey } from "#veryfront/cache";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { generateErrorHtml } from "../../../utils/error-html.ts";
 import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 const logger = serverLogger.component("error-page-fallback");
 
 type ErrorPageType = "404" | "500" | "_error";
+type ComponentLoaderModule = typeof import("#veryfront/modules/react-loader/component-loader.ts");
+type ComponentSourceLoader = ComponentLoaderModule["loadComponentFromSource"];
 
 interface ErrorPageOptions {
   statusCode: number;
@@ -23,6 +31,7 @@ interface ErrorPageOptions {
 
 /** Injected cache repository for testing */
 let injectedCacheRepo: CacheRepository<string> | null = null;
+let injectedComponentSourceLoader: ComponentSourceLoader | null = null;
 
 /**
  * Inject a CacheRepository for testing.
@@ -34,15 +43,28 @@ export function __injectCacheForTests(
   injectedCacheRepo = cacheRepo;
 }
 
+export function __setComponentSourceLoaderForTests(
+  loader: ComponentSourceLoader | null,
+): void {
+  injectedComponentSourceLoader = loader;
+}
+
 export async function tryErrorPageFallback(
   req: Request,
   ctx: HandlerContext,
   builder: ResponseBuilder,
   options: ErrorPageOptions,
+  requestedDependencySnapshot?: DependencyPinningSnapshot,
 ): Promise<Response | null> {
   const { statusCode, error, pathname } = options;
 
   try {
+    const dependencyPinningSource = createHandlerDependencyPinningSource(ctx);
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource,
+      requestedDependencySnapshot?.cacheKey,
+      requestedDependencySnapshot?.dependencies,
+    );
     const pagesDir = joinPath(
       ctx.projectDir,
       ctx.config?.directories?.pages ?? "pages",
@@ -59,6 +81,9 @@ export async function tryErrorPageFallback(
     const reactVersion = await resolveProjectReactVersion({
       projectDir: ctx.projectDir,
       config: ctx.config,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
     });
 
     const specificPage: ErrorPageType | null = statusCode === 404
@@ -73,6 +98,9 @@ export async function tryErrorPageFallback(
         specificPage,
         ctx,
         reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        new URL(req.url).origin,
       );
       if (ErrorComponent) {
         logger.debug(`Found pages/${specificPage}.tsx`);
@@ -94,6 +122,9 @@ export async function tryErrorPageFallback(
       "_error",
       ctx,
       reactVersion,
+      dependencySnapshot,
+      dependencyPinningSource,
+      new URL(req.url).origin,
     );
     if (!GenericErrorComponent) return null;
 
@@ -173,6 +204,9 @@ async function tryLoadErrorPage(
   pageType: ErrorPageType,
   ctx: HandlerContext,
   reactVersion: string,
+  dependencySnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<React.ComponentType<unknown> | null> {
   const cacheKey = buildErrorPageCacheKey(ctx.projectId, ctx.projectDir, pageType);
 
@@ -181,7 +215,14 @@ async function tryLoadErrorPage(
     if (!cachedPath) return null;
 
     try {
-      return await loadErrorComponent(cachedPath, ctx, reactVersion);
+      return await loadErrorComponent(
+        cachedPath,
+        ctx,
+        reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        moduleServerOrigin,
+      );
     } catch (_) {
       // expected: cached path no longer valid, clear and re-resolve
       await deleteCachedPath(cacheKey);
@@ -199,7 +240,14 @@ async function tryLoadErrorPage(
       }
 
       const fullPath = joinPath(ctx.projectDir, resolvedPath);
-      const component = await loadErrorComponent(fullPath, ctx, reactVersion);
+      const component = await loadErrorComponent(
+        fullPath,
+        ctx,
+        reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        moduleServerOrigin,
+      );
       if (component) {
         await setCachedPath(cacheKey, fullPath);
         return component;
@@ -218,7 +266,14 @@ async function tryLoadErrorPage(
       const stat = await ctx.adapter.fs.stat(filePath);
       if (!stat.isFile) continue;
 
-      const component = await loadErrorComponent(filePath, ctx, reactVersion);
+      const component = await loadErrorComponent(
+        filePath,
+        ctx,
+        reactVersion,
+        dependencySnapshot,
+        dependencyPinningSource,
+        moduleServerOrigin,
+      );
       if (component) {
         await setCachedPath(cacheKey, filePath);
         return component;
@@ -236,11 +291,15 @@ async function loadErrorComponent(
   filePath: string,
   ctx: HandlerContext,
   reactVersion: string,
+  dependencySnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<React.ComponentType<unknown> | null> {
   const src = await ctx.adapter.fs.readFile(filePath);
-  const { loadComponentFromSource } = await import(
-    "#veryfront/modules/react-loader/component-loader.ts"
-  );
+  const loadComponentFromSource = injectedComponentSourceLoader ??
+    (await import(
+      "#veryfront/modules/react-loader/component-loader.ts"
+    )).loadComponentFromSource;
 
   const isLocal = !!ctx.isLocalProject;
   const contentSourceId = ctx.enriched?.contentSourceId ??
@@ -271,6 +330,10 @@ async function loadErrorComponent(
       contentSourceId,
       reactVersion,
       importMap,
+      moduleServerOrigin,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
     },
   );
 

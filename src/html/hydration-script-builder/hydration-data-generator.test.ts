@@ -5,6 +5,7 @@ import { generateHydrationData } from "./hydration-data-generator.ts";
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { type HydrationData, HydrationDataSchema } from "../schemas/index.ts";
+import { validateVeryfrontConfig } from "#veryfront/config";
 
 function parseHydrationData(
   slug: string,
@@ -130,6 +131,71 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.layouts, [{ kind: "tsx", path: "app/layout.tsx" }]);
     });
 
+    it("omits non-canonical paths and preserves schema parity", () => {
+      const generated = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        projectDir: "/workspace/project",
+        pagePath: "/workspace/project/app/.%2e/.%2e/secret.tsx",
+        appPath: "/workspace/project/app/%2e./app.tsx",
+        errorPath: "/workspace/project/app/.%2E/error.tsx",
+        nestedLayouts: [
+          { kind: "tsx", path: "/workspace/project/app/.%2e/layout.tsx" },
+          { kind: "tsx", path: "/workspace/project/app/safe-layout.tsx" },
+        ],
+        config: {
+          directories: {
+            app: "src/.%2e/app",
+          },
+        },
+        layoutProps: {
+          "app/%2E./secret-layout.tsx": { unsafe: true },
+          "app/safe-layout.tsx": { safe: true },
+        },
+      });
+
+      const parsed: HydrationData = HydrationDataSchema.parse(generated);
+      assertEquals(parsed.pagePath, undefined);
+      assertEquals(parsed.appPath, undefined);
+      assertEquals(parsed.errorPath, undefined);
+      assertEquals(parsed.layouts, [{
+        kind: "tsx",
+        path: "app/safe-layout.tsx",
+      }]);
+      assertEquals(parsed.appRouterRoot, undefined);
+      assertEquals(parsed.layoutProps, {
+        "app/safe-layout.tsx": { safe: true },
+      });
+    });
+
+    it("rejects mixed encoded-dot segments at every hydration schema path", () => {
+      const base = {
+        slug: "page",
+        props: {},
+        params: {},
+        layouts: [],
+      };
+      for (const segment of [".%2e", "%2e.", ".%2E", "%2E."]) {
+        const modulePath = `app/${segment}/page.tsx`;
+        const routePath = `app/${segment}/root`;
+        for (
+          const candidate of [
+            { ...base, pagePath: modulePath },
+            { ...base, layouts: [{ kind: "tsx", path: modulePath }] },
+            { ...base, layoutProps: { [modulePath]: {} } },
+            {
+              ...base,
+              releaseAssetModules: {
+                [modulePath]: `/_vf/assets/${"a".repeat(64)}.js`,
+              },
+            },
+            { ...base, appRouterRoot: routePath },
+          ]
+        ) {
+          assertThrows(() => HydrationDataSchema.parse(candidate));
+        }
+      }
+    });
+
     it("publishes the configured App Router root", () => {
       const parsed = parseHydrationData("page", {}, {}, {
         ...baseOptions,
@@ -139,6 +205,42 @@ describe("hydration-data-generator", () => {
       }) as { appRouterRoot?: string };
 
       assertEquals(parsed.appRouterRoot, "src/app");
+    });
+
+    it("accepts public config callbacks and extension lifecycle hooks", () => {
+      let callbackCalls = 0;
+      let hookCalls = 0;
+      const config = validateVeryfrontConfig({
+        directories: { app: "src/app" },
+        security: {
+          cors: {
+            origin: (_origin: string) => {
+              callbackCalls++;
+              return true;
+            },
+          },
+        },
+        extensions: [{
+          name: "hydration-config-probe",
+          version: "1.0.0",
+          capabilities: [],
+          setup() {
+            hookCalls++;
+          },
+          teardown() {
+            hookCalls++;
+          },
+        }],
+      });
+
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        config,
+      }) as { appRouterRoot?: string };
+
+      assertEquals(parsed.appRouterRoot, "src/app");
+      assertEquals(callbackCalls, 0);
+      assertEquals(hookCalls, 0);
     });
 
     it("publishes isolated client-page ownership", () => {
@@ -361,6 +463,20 @@ describe("hydration-data-generator", () => {
         clientModuleStrategy?: unknown;
       };
       assertEquals(parsed.clientModuleStrategy, "rsc-module");
+    });
+
+    it("serializes dependency pin state for RSC module cache identity", () => {
+      const parsed = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "on:pins-a",
+      }) as { dependencyPinningCacheKey?: unknown };
+      const flagOff = parseHydrationData("page", {}, {}, {
+        ...baseOptions,
+        dependencyPinningCacheKey: "off",
+      }) as { dependencyPinningCacheKey?: unknown };
+
+      assertEquals(parsed.dependencyPinningCacheKey, "on:pins-a");
+      assertEquals(flagOff.dependencyPinningCacheKey, undefined);
     });
 
     it("should include frontmatter when provided", () => {

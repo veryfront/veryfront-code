@@ -8,9 +8,16 @@ import {
   getDocumentImportMapImports,
   importMapOwnsSpecifier,
 } from "#veryfront/utils/import-map.ts";
-import { FS_PATH_PREFIX, HYDRATION_DATA_ID, RSC_PATH_PREFIX } from "./constants.ts";
+import {
+  FS_PATH_PREFIX,
+  HYDRATION_DATA_ID,
+  RSC_DEPENDENCY_PINNING_HEADER,
+  RSC_PATH_PREFIX,
+} from "./constants.ts";
 import { rscLogger } from "../client/browser-logger.ts";
 import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
+import { isCanonicalDependencyPinningCacheKey } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { admitDependencySnapshot } from "./dependency-snapshot-admission.ts";
 
 export type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 
@@ -41,6 +48,13 @@ export interface ClientRuntimeHydrationData {
    * reseeds with the same server data the server render used.
    */
   props?: Record<string, unknown>;
+  /** Request-scoped dependency snapshot used to version browser module URLs. */
+  dependencyPinningCacheKey?: string;
+}
+
+export interface ClientRuntimeHydrationSnapshot {
+  readonly data: ClientRuntimeHydrationData | null;
+  readonly valid: boolean;
 }
 
 export interface ClientModuleUrlOptions {
@@ -48,6 +62,7 @@ export interface ClientModuleUrlOptions {
   rel: string;
   absPath?: string;
   version?: string;
+  dependencyPinningCacheKey?: string;
   releaseAssetModules?: Record<string, string> | null;
 }
 
@@ -188,6 +203,16 @@ function parseClientRuntimeHydrationData(
         return null;
       }
     }
+    if (
+      value.dependencyPinningCacheKey !== undefined &&
+      value.dependencyPinningCacheKey !== "off" &&
+      (
+        typeof value.dependencyPinningCacheKey !== "string" ||
+        !isCanonicalDependencyPinningCacheKey(value.dependencyPinningCacheKey)
+      )
+    ) {
+      return null;
+    }
     if (value.frontmatter !== undefined && !isRecord(value.frontmatter)) return null;
     if (value.props !== undefined && !isRecord(value.props)) return null;
     validateHydrationParams(value.params);
@@ -218,9 +243,15 @@ export function determineClientModuleStrategy(
 export function readHydrationData(
   doc: Document = document,
 ): ClientRuntimeHydrationData | null {
+  return readHydrationDataSnapshot(doc).data;
+}
+
+export function readHydrationDataSnapshot(
+  doc: Document = document,
+): ClientRuntimeHydrationSnapshot {
   try {
     const el = doc.getElementById(HYDRATION_DATA_ID);
-    if (!el) return null;
+    if (!el) return { data: null, valid: true };
     const serialized = el.textContent || "{}";
     if (
       serialized.length > MAX_HYDRATION_DATA_UTF8_BYTES ||
@@ -228,11 +259,40 @@ export function readHydrationData(
     ) {
       throw new RangeError("Hydration data byte limit was exceeded");
     }
-    return parseClientRuntimeHydrationData(JSON.parse(serialized) as unknown);
+    const data = parseClientRuntimeHydrationData(JSON.parse(serialized) as unknown);
+    if (!data) throw new TypeError("Hydration data failed admission");
+    return { data, valid: true };
   } catch (e) {
     rscLogger.debug("hydration data parse failed", e);
-    return null;
+    return { data: null, valid: false };
   }
+}
+
+/**
+ * Compatibility verifier for callers that previously seeded transport state.
+ * The document is now the request authority and is never overwritten.
+ */
+export function seedHydrationDependencyPins(
+  doc: Document,
+  dependencyPinningCacheKey: string | null | undefined,
+): boolean {
+  if (
+    typeof dependencyPinningCacheKey !== "string" ||
+    !isCanonicalDependencyPinningCacheKey(dependencyPinningCacheKey)
+  ) return false;
+
+  const snapshot = readHydrationDataSnapshot(doc);
+  if (!snapshot.valid) return false;
+  const current = snapshot.data?.dependencyPinningCacheKey;
+  return admitDependencySnapshot(
+    {
+      requestedDependencyPinningCacheKey: current,
+      currentDependencyPinningCacheKey: current,
+      responseHeaderDependencyPinningCacheKey: dependencyPinningCacheKey,
+      requireResponseHeader: true,
+    },
+    () => false,
+  ) !== null;
 }
 
 export function resolveClientModuleStrategy(
@@ -248,6 +308,26 @@ export function appendClientModuleVersion(url: string, version?: string): string
   return `${url}${separator}v=${encodeURIComponent(version)}`;
 }
 
+export function appendClientModuleDependencyPins(
+  url: string,
+  dependencyPinningCacheKey?: string,
+): string {
+  if (!dependencyPinningCacheKey?.startsWith("on:")) return url;
+
+  const hashIndex = url.indexOf("#");
+  const hash = hashIndex === -1 ? "" : url.slice(hashIndex);
+  const withoutHash = hashIndex === -1 ? url : url.slice(0, hashIndex);
+  const queryIndex = withoutHash.indexOf("?");
+  const path = queryIndex === -1 ? withoutHash : withoutHash.slice(0, queryIndex);
+  const params = new URLSearchParams(
+    queryIndex === -1 ? "" : withoutHash.slice(queryIndex + 1),
+  );
+
+  params.set("pins", dependencyPinningCacheKey);
+  const query = params.toString();
+  return `${path}${query ? `?${query}` : ""}${hash}`;
+}
+
 export function buildFsClientModuleUrl(path: string, version?: string): string {
   return appendClientModuleVersion(
     `${FS_PATH_PREFIX}${base64urlEncode(path)}.js`,
@@ -255,9 +335,36 @@ export function buildFsClientModuleUrl(path: string, version?: string): string {
   );
 }
 
-export function buildRSCModuleUrl(rel: string, version?: string): string {
+export function buildRSCModuleUrl(
+  rel: string,
+  version?: string,
+  dependencyPinningCacheKey?: string,
+): string {
   const v = version ? `&v=${encodeURIComponent(version)}` : "";
-  return `${RSC_PATH_PREFIX}module?rel=${encodeURIComponent(rel)}${v}`;
+  return appendClientModuleDependencyPins(
+    `${RSC_PATH_PREFIX}module?rel=${encodeURIComponent(rel)}${v}`,
+    dependencyPinningCacheKey,
+  );
+}
+
+/**
+ * Build headers for fetch-capable RSC transports. Application query parameters
+ * remain application-owned; only dynamic import URLs carry snapshots in their
+ * query string because import() cannot attach request headers.
+ */
+export function buildRSCTransportHeaders(
+  hydrationData: ClientRuntimeHydrationData | null,
+): Record<string, string> {
+  const dependencyPinningCacheKey = hydrationData?.dependencyPinningCacheKey;
+  return dependencyPinningCacheKey?.startsWith("on:")
+    ? { [RSC_DEPENDENCY_PINNING_HEADER]: dependencyPinningCacheKey }
+    : {};
+}
+
+export function buildRSCActionUrl(
+  _hydrationData: ClientRuntimeHydrationData | null,
+): string {
+  return `${RSC_PATH_PREFIX}action`;
 }
 
 function normalizeReleaseAssetModulePath(path: string): string {
@@ -316,7 +423,12 @@ export function resolveReleaseAssetModuleUrl(
 export function buildClientModuleUrl(options: ClientModuleUrlOptions): string | null {
   if (options.strategy === "fs") {
     const fsPath = options.absPath ?? options.rel;
-    return fsPath ? buildFsClientModuleUrl(fsPath, options.version) : null;
+    return fsPath
+      ? appendClientModuleDependencyPins(
+        buildFsClientModuleUrl(fsPath, options.version),
+        options.dependencyPinningCacheKey,
+      )
+      : null;
   }
 
   const releaseAssetUrl = resolveReleaseAssetModuleUrl(
@@ -325,7 +437,11 @@ export function buildClientModuleUrl(options: ClientModuleUrlOptions): string | 
   );
   if (releaseAssetUrl) return releaseAssetUrl;
 
-  return buildRSCModuleUrl(options.rel, options.version);
+  return buildRSCModuleUrl(
+    options.rel,
+    options.version,
+    options.dependencyPinningCacheKey,
+  );
 }
 
 export function getHydrationReactImportSpecifiers(

@@ -3,9 +3,14 @@ import { logger as baseLogger } from "#veryfront/utils";
 import { buildTransformCacheKey } from "#veryfront/cache/keys.ts";
 import { Singleflight, waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
 import {
+  buildRevisionedCacheKey,
   type CacheBackend,
   CacheBackends,
   isDistributedBackend,
+  isRevisionedCacheBackend,
+  requireCacheExchangeResult,
+  type RevisionedCacheBackend,
+  snapshotCacheRevisionResult,
   type TokenizingCacheGateway,
 } from "#veryfront/cache/backend.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
@@ -24,6 +29,7 @@ import type {
   TransformProgressEvent,
   TransformProgressListener,
 } from "#veryfront/transforms/progress.ts";
+import type { DependencyResolutionObservation } from "../import-rewriter/dependency-resolution.ts";
 
 const logger = baseLogger.component("transform-cache");
 
@@ -36,13 +42,17 @@ const MAX_STORED_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_CACHE_KEY_LENGTH = 32 * 1024;
 const MAX_HASH_LENGTH = 1_024;
 const MAX_MANIFEST_ID_LENGTH = 2_048;
+const MAX_DEPENDENCY_OBSERVATIONS = 10_000;
+const MAX_DEPENDENCY_OBSERVATION_FIELD_LENGTH = 4_096;
 const MAX_INFLIGHT_TRANSFORMS = 1_000;
+const MAX_TRANSFORM_WRITE_PERMITS = 1_000;
 const TRANSFORM_CACHE_FORMAT_VERSION = 2;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const STORED_ENTRY_KEYS = new Set([
   "bundleManifestId",
   "code",
   "codeHash",
+  "dependencyResolutionObservations",
   "expiresAt",
   "formatVersion",
   "hash",
@@ -66,6 +76,12 @@ interface TransformCacheEntry {
   codeHash?: string;
   formatVersion: typeof TRANSFORM_CACHE_FORMAT_VERSION;
   bundleManifestId?: string;
+  /**
+   * Inert unresolved imports observed while producing this entry. Presence is
+   * mandatory for dependency-pinning cache entries so legacy entries cannot
+   * bypass retry replay.
+   */
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>;
 }
 
 interface StoredTransformCacheEntry extends TransformCacheEntry {
@@ -76,7 +92,6 @@ let cacheGateway: TokenizingCacheGateway | null = null;
 let cacheInitialized = false;
 let cacheInitPromise: Promise<void> | null = null;
 let transformFlight = new Singleflight<TransformCacheResult>();
-const transformCachePublications = new Map<string, Promise<void>>();
 
 interface TransformProgressState {
   listeners: Set<TransformProgressListener>;
@@ -179,7 +194,11 @@ function estimateEntryBytes(key: string, entry: TransformCacheEntry): number {
   return sizeEncoder.encode(key).byteLength + sizeEncoder.encode(entry.code).byteLength +
     sizeEncoder.encode(entry.hash).byteLength +
     (entry.codeHash ? sizeEncoder.encode(entry.codeHash).byteLength : 0) +
-    (entry.bundleManifestId ? sizeEncoder.encode(entry.bundleManifestId).byteLength : 0) + 64;
+    (entry.bundleManifestId ? sizeEncoder.encode(entry.bundleManifestId).byteLength : 0) +
+    (entry.dependencyResolutionObservations
+      ? sizeEncoder.encode(JSON.stringify(entry.dependencyResolutionObservations)).byteLength
+      : 0) +
+    64;
 }
 
 class BoundedTransformFallback implements LocalFallbackLike<string, TransformCacheEntry> {
@@ -255,6 +274,44 @@ const defaultLocalFallback = new BoundedTransformFallback(
 /** Injected caches for testing. */
 let injectedLocalFallback: LocalFallbackLike<string, TransformCacheEntry> | null = null;
 let injectedCacheGateway: TokenizingCacheGateway | CacheBackend | null | undefined = undefined;
+type TransformCacheGateway = TokenizingCacheGateway | CacheBackend;
+
+const transformCacheWritePermitBrand = Symbol("transform-cache-write-permit");
+
+/**
+ * Opaque authority to publish one transform against the revision observed
+ * before its computation began.
+ *
+ * @internal
+ */
+export interface TransformCacheWritePermit {
+  readonly [transformCacheWritePermitBrand]: true;
+}
+
+interface TransformCacheWritePermitState {
+  readonly permit: TransformCacheWritePermit;
+  readonly key: string;
+  readonly reservedKey: string | null;
+  readonly backend: RevisionedCacheBackend | null;
+  readonly generation: number;
+  readonly timestamp: number;
+  readonly expiresAtMs: number;
+  readonly deleteOnly: boolean;
+  revision?: string;
+  active: boolean;
+}
+
+interface TransformCacheWriteObservation {
+  readonly entry?: TransformCacheEntry;
+  readonly permit: TransformCacheWritePermit;
+}
+
+const transformCacheWritePermitStates = new WeakMap<
+  TransformCacheWritePermit,
+  TransformCacheWritePermitState
+>();
+const transformCacheWritePermitsByKey = new Map<string, TransformCacheWritePermit>();
+let atomicRevisionUnavailableWarningGeneration = -1;
 
 function getLocalFallback(): LocalFallbackLike<string, TransformCacheEntry> {
   return injectedLocalFallback ?? defaultLocalFallback;
@@ -264,12 +321,126 @@ function getEffectiveCacheGateway(): TokenizingCacheGateway | CacheBackend | nul
   return injectedCacheGateway !== undefined ? injectedCacheGateway : cacheGateway;
 }
 
+function warnAtomicRevisionUnavailable(gateway: TransformCacheGateway): void {
+  if (atomicRevisionUnavailableWarningGeneration === cacheLifecycleGeneration) return;
+  atomicRevisionUnavailableWarningGeneration = cacheLifecycleGeneration;
+  logger.warn("Shared transform persistence is unavailable; using the local cache", {
+    backend: gateway.type,
+    reason: "atomic-revision-unavailable",
+  });
+}
+
+function getRevisionedDistributedBackend(
+  gateway: TransformCacheGateway | null,
+  warnIfUnavailable = true,
+): RevisionedCacheBackend | null {
+  if (!gateway || !isDistributedGateway(gateway)) return null;
+  if (isRevisionedCacheBackend(gateway)) return gateway;
+  if (warnIfUnavailable) warnAtomicRevisionUnavailable(gateway);
+  return null;
+}
+
+function getTransformCacheBackendStatus(): string {
+  const gateway = getEffectiveCacheGateway();
+  if (!gateway) return "uninitialized";
+  if (
+    isDistributedGateway(gateway) &&
+    getRevisionedDistributedBackend(gateway, false) === null
+  ) {
+    return gateway.type + ":local-only:atomic-revision-unavailable";
+  }
+  if (!isDistributedGateway(gateway)) return gateway.type + ":local-only";
+  return gateway.type;
+}
+
+function invalidateTransformCacheWritePermit(
+  permit: TransformCacheWritePermit,
+): void {
+  const state = transformCacheWritePermitStates.get(permit);
+  if (!state || !state.active) return;
+  state.active = false;
+  if (transformCacheWritePermitsByKey.get(state.key) === permit) {
+    transformCacheWritePermitsByKey.delete(state.key);
+  }
+}
+
+function invalidateAllTransformCacheWritePermits(): void {
+  for (const permit of transformCacheWritePermitsByKey.values()) {
+    const state = transformCacheWritePermitStates.get(permit);
+    if (state) state.active = false;
+  }
+  transformCacheWritePermitsByKey.clear();
+}
+
+function registerTransformCacheWritePermit(
+  key: string,
+  backend: RevisionedCacheBackend | null,
+  reservedKey: string | null,
+  timestamp: number,
+  expiresAtMs: number,
+  deleteOnly: boolean,
+): TransformCacheWritePermitState {
+  const previous = transformCacheWritePermitsByKey.get(key);
+  if (previous) invalidateTransformCacheWritePermit(previous);
+
+  while (transformCacheWritePermitsByKey.size >= MAX_TRANSFORM_WRITE_PERMITS) {
+    const oldest = transformCacheWritePermitsByKey.keys().next();
+    if (oldest.done) break;
+    const evicted = transformCacheWritePermitsByKey.get(oldest.value);
+    if (evicted) invalidateTransformCacheWritePermit(evicted);
+  }
+
+  const permit = Object.freeze({
+    [transformCacheWritePermitBrand]: true as const,
+  });
+  const state: TransformCacheWritePermitState = {
+    permit,
+    key,
+    reservedKey,
+    backend,
+    generation: cacheLifecycleGeneration,
+    timestamp,
+    expiresAtMs,
+    deleteOnly,
+    active: true,
+  };
+  transformCacheWritePermitStates.set(permit, state);
+  transformCacheWritePermitsByKey.set(key, permit);
+  return state;
+}
+
+function isCurrentTransformCacheWritePermit(
+  state: TransformCacheWritePermitState,
+): boolean {
+  return state.active &&
+    state.generation === cacheLifecycleGeneration &&
+    transformCacheWritePermitsByKey.get(state.key) === state.permit;
+}
+
+function requireTransformCacheWritePermit(
+  permit: TransformCacheWritePermit,
+): TransformCacheWritePermitState {
+  if (
+    permit === null ||
+    (typeof permit !== "object" && typeof permit !== "function")
+  ) {
+    throw new TypeError("Transform cache publication permit is invalid");
+  }
+  const state = transformCacheWritePermitStates.get(permit);
+  if (!state) throw new TypeError("Transform cache publication permit is invalid");
+  return state;
+}
+
+/** Release an unused publication permit after a validated cache hit. @internal */
+export function releaseCachedTransformWritePermit(
+  permit: TransformCacheWritePermit,
+): void {
+  invalidateTransformCacheWritePermit(permit);
+}
+
 function isDistributedGateway(
   gateway: TokenizingCacheGateway | CacheBackend,
 ): boolean {
-  if ("isDistributed" in gateway && typeof gateway.isDistributed === "function") {
-    return gateway.isDistributed();
-  }
   return isDistributedBackend(gateway);
 }
 
@@ -293,6 +464,7 @@ export function __injectCachesForTests(
 /** Reset initialization state for deterministic tests and lifecycle cleanup. */
 export function __resetInitStateForTests(): void {
   cacheLifecycleGeneration++;
+  invalidateAllTransformCacheWritePermits();
   cacheInitialized = false;
   cacheInitPromise = null;
   cacheGateway = null;
@@ -302,11 +474,13 @@ registerCache("transform-cache", () => ({
   name: "transform-cache",
   entries: getLocalFallback().size,
   maxEntries: FALLBACK_MAX_ENTRIES,
-  backend: getEffectiveCacheGateway()?.type ?? "uninitialized",
+  backend: getTransformCacheBackendStatus(),
 }));
 
 export async function initializeTransformCache(): Promise<boolean> {
-  if (cacheInitialized && cacheGateway) return isDistributedGateway(cacheGateway);
+  if (cacheInitialized && cacheGateway) {
+    return getRevisionedDistributedBackend(cacheGateway) !== null;
+  }
 
   if (!cacheInitPromise) {
     const generation = cacheLifecycleGeneration;
@@ -335,7 +509,7 @@ export async function initializeTransformCache(): Promise<boolean> {
     if (cacheInitPromise === pending) cacheInitPromise = null;
   }
 
-  return cacheGateway ? isDistributedGateway(cacheGateway) : false;
+  return getRevisionedDistributedBackend(cacheGateway) !== null;
 }
 
 interface CacheKeyOptions {
@@ -382,6 +556,45 @@ function validateBoundedString(
     value.length <= maxLength && !hasControlCharacters(value);
 }
 
+function validateDependencyObservations(
+  value: unknown,
+): value is ReadonlyArray<DependencyResolutionObservation> {
+  if (!Array.isArray(value) || value.length > MAX_DEPENDENCY_OBSERVATIONS) {
+    return false;
+  }
+  return value.every((observation) => {
+    if (
+      observation === null ||
+      typeof observation !== "object" ||
+      Array.isArray(observation)
+    ) {
+      return false;
+    }
+    const packageName = getOwnData(observation, "packageName");
+    const declaration = getOwnData(observation, "declaration");
+    return validateBoundedString(
+      packageName,
+      MAX_DEPENDENCY_OBSERVATION_FIELD_LENGTH,
+    ) &&
+      (declaration === null ||
+        validateBoundedString(
+          declaration,
+          MAX_DEPENDENCY_OBSERVATION_FIELD_LENGTH,
+          true,
+        ));
+  });
+}
+
+function cloneDependencyObservations(
+  value?: ReadonlyArray<DependencyResolutionObservation>,
+): ReadonlyArray<DependencyResolutionObservation> | undefined {
+  if (value === undefined) return undefined;
+  if (!validateDependencyObservations(value)) {
+    throw new TypeError("Transform dependency observations are invalid");
+  }
+  return value.map((observation) => ({ ...observation }));
+}
+
 function validateCode(code: unknown): code is string {
   if (typeof code !== "string" || code.length === 0 || code.length > MAX_TRANSFORM_CODE_BYTES) {
     return false;
@@ -419,6 +632,10 @@ function parseStoredEntry(raw: string): StoredTransformCacheEntry | undefined {
   const timestamp = getOwnData(value, "timestamp");
   const expiresAt = getOwnData(value, "expiresAt");
   const bundleManifestId = getOwnData(value, "bundleManifestId");
+  const dependencyResolutionObservations = getOwnData(
+    value,
+    "dependencyResolutionObservations",
+  );
 
   if (formatVersion !== TRANSFORM_CACHE_FORMAT_VERSION) return undefined;
   if (!validateCode(code)) return undefined;
@@ -434,6 +651,12 @@ function parseStoredEntry(raw: string): StoredTransformCacheEntry | undefined {
   ) {
     return undefined;
   }
+  if (
+    dependencyResolutionObservations !== undefined &&
+    !validateDependencyObservations(dependencyResolutionObservations)
+  ) {
+    return undefined;
+  }
 
   return {
     formatVersion,
@@ -443,6 +666,11 @@ function parseStoredEntry(raw: string): StoredTransformCacheEntry | undefined {
     timestamp,
     expiresAt,
     ...(bundleManifestId === undefined ? {} : { bundleManifestId }),
+    ...(dependencyResolutionObservations === undefined ? {} : {
+      dependencyResolutionObservations: cloneDependencyObservations(
+        dependencyResolutionObservations,
+      ),
+    }),
   };
 }
 
@@ -461,7 +689,9 @@ function getValidLocalEntry(key: string, now = Date.now()): TransformCacheEntry 
     now >= entry.expiresAt ||
     (entry.codeHash !== undefined && !SHA256_HEX_PATTERN.test(entry.codeHash)) ||
     (entry.bundleManifestId !== undefined &&
-      !validateBoundedString(entry.bundleManifestId, MAX_MANIFEST_ID_LENGTH))
+      !validateBoundedString(entry.bundleManifestId, MAX_MANIFEST_ID_LENGTH)) ||
+    (entry.dependencyResolutionObservations !== undefined &&
+      !validateDependencyObservations(entry.dependencyResolutionObservations))
   ) {
     fallback.delete(key);
     return undefined;
@@ -469,24 +699,61 @@ function getValidLocalEntry(key: string, now = Date.now()): TransformCacheEntry 
   return entry;
 }
 
-async function deleteCacheEntry(key: string): Promise<void> {
-  getLocalFallback().delete(key);
-  const gateway = getEffectiveCacheGateway();
-  if (gateway) await gateway.del(key);
+interface DecodedSharedTransformEntry {
+  readonly entry?: TransformCacheEntry;
+  readonly invalidReason?: string;
 }
 
-async function discardInvalidGatewayEntry(
-  gateway: TokenizingCacheGateway | CacheBackend,
+async function decodeSharedTransformEntry(
+  raw: string,
+): Promise<DecodedSharedTransformEntry> {
+  const entry = parseStoredEntry(raw);
+  if (!entry) return { invalidReason: "invalid payload" };
+  if (await computeHash(entry.code) !== entry.codeHash) {
+    return { invalidReason: "integrity mismatch" };
+  }
+  if (Date.now() >= entry.expiresAt) {
+    return { invalidReason: "expired payload" };
+  }
+
+  let code: string;
+  try {
+    code = detokenizeAllCachePaths(entry.code);
+  } catch {
+    return { invalidReason: "invalid tokenized payload" };
+  }
+  if (!validateCode(code)) {
+    return { invalidReason: "invalid detokenized payload" };
+  }
+  return { entry: { ...entry, code } };
+}
+
+async function getValidLocalEntryWithIntegrity(
   key: string,
+): Promise<TransformCacheEntry | undefined> {
+  const local = getValidLocalEntry(key);
+  if (!local) return undefined;
+  if (local.codeHash && await computeHash(local.code) !== local.codeHash) {
+    getLocalFallback().delete(key);
+    return undefined;
+  }
+  return local;
+}
+
+async function conditionallyDiscardInvalidSharedEntry(
+  backend: RevisionedCacheBackend,
+  reservedKey: string,
+  revision: string,
+  keyLength: number,
   reason: string,
 ): Promise<void> {
-  try {
-    await gateway.del(key);
-  } catch (error) {
-    logger.warn("Failed to remove invalid transform cache entry", {
-      keyLength: key.length,
+  const deleted = requireCacheExchangeResult(
+    await backend.compareExchange(reservedKey, revision, { kind: "delete" }),
+  );
+  if (!deleted) {
+    logger.debug("Skipped stale invalid transform cleanup", {
+      keyLength,
       reason,
-      errorName: error instanceof Error ? error.name : typeof error,
     });
   }
 }
@@ -496,45 +763,117 @@ export async function getCachedTransformAsync(
 ): Promise<TransformCacheEntry | undefined> {
   validateCacheKey(key);
   const gateway = getEffectiveCacheGateway();
+  const backend = getRevisionedDistributedBackend(gateway);
+  if (!backend) return await getValidLocalEntryWithIntegrity(key);
 
-  if (gateway) {
-    try {
-      const raw = await gateway.get(key);
-      if (raw !== null) {
-        const entry = parseStoredEntry(raw);
-        if (!entry) {
-          await discardInvalidGatewayEntry(gateway, key, "invalid payload");
-        } else if (Date.now() >= entry.expiresAt) {
-          await discardInvalidGatewayEntry(gateway, key, "expired payload");
-        } else if (await computeHash(entry.code) !== entry.codeHash) {
-          await discardInvalidGatewayEntry(gateway, key, "integrity mismatch");
-        } else {
-          const code = isDistributedGateway(gateway)
-            ? detokenizeAllCachePaths(entry.code)
-            : entry.code;
-          if (!validateCode(code)) {
-            await discardInvalidGatewayEntry(gateway, key, "invalid detokenized payload");
-          } else {
-            return { ...entry, code };
-          }
-        }
+  const reservedKey = buildRevisionedCacheKey(key);
+  let snapshot;
+  try {
+    snapshot = snapshotCacheRevisionResult(
+      await backend.getWithRevision(reservedKey),
+    );
+  } catch (error) {
+    logger.warn("Transform cache revision read failed", {
+      keyLength: key.length,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    throw error;
+  }
+
+  if (snapshot.value === null) {
+    return await getValidLocalEntryWithIntegrity(key);
+  }
+
+  const decoded = await decodeSharedTransformEntry(snapshot.value);
+  if (decoded.entry) return decoded.entry;
+
+  getLocalFallback().delete(key);
+  await conditionallyDiscardInvalidSharedEntry(
+    backend,
+    reservedKey,
+    snapshot.revision,
+    key.length,
+    decoded.invalidReason ?? "invalid payload",
+  );
+  return undefined;
+}
+
+/**
+ * Observe the shared revision before a transform may begin producing a write.
+ * The returned permit is opaque and remains bound to this exact observation.
+ *
+ * @internal
+ */
+export async function observeCachedTransformForWrite(
+  key: string,
+  ttlSeconds: number = DEFAULT_TTL_SECONDS,
+): Promise<TransformCacheWriteObservation> {
+  validateCacheKey(key);
+  const ttl = resolveTransformTtl(ttlSeconds);
+  const timestamp = Date.now();
+  const deleteOnly = expiresImmediately(ttl);
+  const expiresAtMs = deleteOnly ? timestamp : timestamp + Math.ceil(ttl * 1_000);
+  if (!Number.isSafeInteger(expiresAtMs) || expiresAtMs < 0) {
+    throw new RangeError("Transform cache deadline is invalid");
+  }
+
+  const gateway = getEffectiveCacheGateway();
+  const backend = getRevisionedDistributedBackend(gateway);
+  const reservedKey = backend ? buildRevisionedCacheKey(key) : null;
+  // Registration is deliberately synchronous and precedes the first await.
+  const state = registerTransformCacheWritePermit(
+    key,
+    backend,
+    reservedKey,
+    timestamp,
+    expiresAtMs,
+    deleteOnly,
+  );
+
+  try {
+    if (!backend || !reservedKey) {
+      if (deleteOnly) return Object.freeze({ permit: state.permit });
+      const entry = await getValidLocalEntryWithIntegrity(key);
+      if (!isCurrentTransformCacheWritePermit(state)) {
+        return Object.freeze({ permit: state.permit });
       }
-    } catch (error) {
-      logger.warn("Transform cache backend get failed", {
-        keyLength: key.length,
-        errorName: error instanceof Error ? error.name : typeof error,
-        error: error instanceof Error ? error.message : String(error),
+      return Object.freeze({
+        ...(entry ? { entry } : {}),
+        permit: state.permit,
       });
     }
-  }
 
-  const local = getValidLocalEntry(key);
-  if (!local) return undefined;
-  if (local.codeHash && await computeHash(local.code) !== local.codeHash) {
-    getLocalFallback().delete(key);
-    return undefined;
+    const snapshot = snapshotCacheRevisionResult(
+      await backend.getWithRevision(reservedKey),
+    );
+    state.revision = snapshot.revision;
+    if (!isCurrentTransformCacheWritePermit(state) || deleteOnly) {
+      return Object.freeze({ permit: state.permit });
+    }
+
+    if (snapshot.value === null) {
+      const entry = await getValidLocalEntryWithIntegrity(key);
+      if (!isCurrentTransformCacheWritePermit(state)) {
+        return Object.freeze({ permit: state.permit });
+      }
+      return Object.freeze({
+        ...(entry ? { entry } : {}),
+        permit: state.permit,
+      });
+    }
+
+    const decoded = await decodeSharedTransformEntry(snapshot.value);
+    if (!isCurrentTransformCacheWritePermit(state)) {
+      return Object.freeze({ permit: state.permit });
+    }
+    return Object.freeze({
+      ...(decoded.entry ? { entry: decoded.entry } : {}),
+      permit: state.permit,
+    });
+  } catch (error) {
+    invalidateTransformCacheWritePermit(state.permit);
+    throw error;
   }
-  return local;
 }
 
 /** Synchronous access is intentionally limited to trusted process-local entries. */
@@ -565,6 +904,7 @@ function createEntry(
   expiresAt: number,
   codeHash: string | undefined,
   bundleManifestId?: string,
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>,
 ): TransformCacheEntry {
   if (
     bundleManifestId !== undefined &&
@@ -572,6 +912,9 @@ function createEntry(
   ) {
     throw new TypeError("Transform bundle manifest ID is invalid");
   }
+  const observations = cloneDependencyObservations(
+    dependencyResolutionObservations,
+  );
   return {
     formatVersion: TRANSFORM_CACHE_FORMAT_VERSION,
     code,
@@ -580,7 +923,140 @@ function createEntry(
     expiresAt,
     ...(codeHash === undefined ? {} : { codeHash }),
     ...(bundleManifestId === undefined ? {} : { bundleManifestId }),
+    ...(observations === undefined ? {} : { dependencyResolutionObservations: observations }),
   };
+}
+
+/**
+ * Publish using the exact revision and deadline captured by a prior observation.
+ *
+ * @internal
+ */
+export async function publishCachedTransformWithPermit(
+  permit: TransformCacheWritePermit,
+  code: string,
+  hash: string,
+  bundleManifestId?: string,
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>,
+): Promise<boolean> {
+  const state = requireTransformCacheWritePermit(permit);
+  if (!isCurrentTransformCacheWritePermit(state)) return false;
+
+  const fallback = getLocalFallback();
+  if (state.deleteOnly) {
+    fallback.delete(state.key);
+    if (!state.backend || !state.reservedKey) {
+      invalidateTransformCacheWritePermit(permit);
+      return true;
+    }
+    if (state.revision === undefined) {
+      invalidateTransformCacheWritePermit(permit);
+      throw new TypeError("Transform cache publication permit has no observed revision");
+    }
+
+    try {
+      const exchanged = requireCacheExchangeResult(
+        await state.backend.compareExchange(
+          state.reservedKey,
+          state.revision,
+          { kind: "delete" },
+        ),
+      );
+      if (isCurrentTransformCacheWritePermit(state)) {
+        fallback.delete(state.key);
+        invalidateTransformCacheWritePermit(permit);
+      }
+      if (!exchanged) {
+        logger.debug("Lost transform cache deletion", {
+          keyLength: state.key.length,
+        });
+      }
+      return exchanged;
+    } catch (error) {
+      invalidateTransformCacheWritePermit(permit);
+      throw error;
+    }
+  }
+
+  validateTransformPayload(code, hash);
+  const localCodeHash = await computeHash(code);
+  if (!isCurrentTransformCacheWritePermit(state)) return false;
+  const localEntry = createEntry(
+    code,
+    hash,
+    state.timestamp,
+    state.expiresAtMs,
+    localCodeHash,
+    bundleManifestId,
+    dependencyResolutionObservations,
+  );
+
+  if (!state.backend || !state.reservedKey) {
+    if (Date.now() < state.expiresAtMs) fallback.set(state.key, localEntry);
+    else fallback.delete(state.key);
+    invalidateTransformCacheWritePermit(permit);
+    return true;
+  }
+  if (state.revision === undefined) {
+    invalidateTransformCacheWritePermit(permit);
+    throw new TypeError("Transform cache publication permit has no observed revision");
+  }
+
+  try {
+    const storedCode = tokenizeAllVeryFrontPaths(code);
+    assertPortableCode(storedCode);
+    const storedCodeHash = storedCode === code ? localCodeHash : await computeHash(storedCode);
+    if (!isCurrentTransformCacheWritePermit(state)) return false;
+
+    const storedEntry = createEntry(
+      storedCode,
+      hash,
+      state.timestamp,
+      state.expiresAtMs,
+      storedCodeHash,
+      bundleManifestId,
+      dependencyResolutionObservations,
+    ) as StoredTransformCacheEntry;
+    const serialized = JSON.stringify(storedEntry);
+    if (sizeEncoder.encode(serialized).byteLength > MAX_STORED_ENTRY_BYTES) {
+      throw new RangeError("Serialized transform cache entry is too large");
+    }
+    if (!isCurrentTransformCacheWritePermit(state)) return false;
+
+    const exchanged = requireCacheExchangeResult(
+      await state.backend.compareExchange(
+        state.reservedKey,
+        state.revision,
+        {
+          kind: "set",
+          value: serialized,
+          expiresAtMs: state.expiresAtMs,
+        },
+      ),
+    );
+
+    if (isCurrentTransformCacheWritePermit(state)) {
+      if (exchanged && Date.now() < state.expiresAtMs) {
+        fallback.set(state.key, localEntry);
+      } else {
+        fallback.delete(state.key);
+      }
+      invalidateTransformCacheWritePermit(permit);
+    }
+    if (!exchanged) {
+      logger.debug("Lost transform cache publication", {
+        keyLength: state.key.length,
+      });
+    }
+    return exchanged;
+  } catch (error) {
+    if (isCurrentTransformCacheWritePermit(state)) {
+      if (Date.now() < state.expiresAtMs) fallback.set(state.key, localEntry);
+      else fallback.delete(state.key);
+      invalidateTransformCacheWritePermit(permit);
+    }
+    throw error;
+  }
 }
 
 export async function setCachedTransformAsync(
@@ -589,67 +1065,21 @@ export async function setCachedTransformAsync(
   hash: string,
   ttlSeconds: number = DEFAULT_TTL_SECONDS,
   bundleManifestId?: string,
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>,
 ): Promise<void> {
-  validateCacheKey(key);
-  const ttl = resolveTransformTtl(ttlSeconds);
-  // Bind the write to the cache generation visible at call time. Hashing and
-  // tokenization await, so resolving the destination later could let a retiring
-  // generation publish into a replacement backend after destroy/reconfigure.
-  const fallback = getLocalFallback();
-  const gateway = getEffectiveCacheGateway();
-  if (expiresImmediately(ttl)) {
-    fallback.delete(key);
-    if (gateway) await gateway.del(key);
-    return;
-  }
-  validateTransformPayload(code, hash);
-
-  const timestamp = Date.now();
-  const expiresAt = timestamp + Math.ceil(ttl * 1_000);
-  const localCodeHash = await computeHash(code);
-  const localEntry = createEntry(
+  const observation = await observeCachedTransformForWrite(key, ttlSeconds);
+  await publishCachedTransformWithPermit(
+    observation.permit,
     code,
     hash,
-    timestamp,
-    expiresAt,
-    localCodeHash,
     bundleManifestId,
+    dependencyResolutionObservations,
   );
-  if (!gateway) {
-    fallback.set(key, localEntry);
-    return;
-  }
-
-  const distributed = isDistributedGateway(gateway);
-  const storedCode = distributed ? tokenizeAllVeryFrontPaths(code) : code;
-  if (distributed) assertPortableCode(storedCode);
-  const storedCodeHash = distributed ? await computeHash(storedCode) : localCodeHash;
-  const storedEntry = createEntry(
-    storedCode,
-    hash,
-    timestamp,
-    expiresAt,
-    storedCodeHash,
-    bundleManifestId,
-  ) as StoredTransformCacheEntry;
-  const serialized = JSON.stringify(storedEntry);
-  if (sizeEncoder.encode(serialized).byteLength > MAX_STORED_ENTRY_BYTES) {
-    throw new RangeError("Serialized transform cache entry is too large");
-  }
-
-  try {
-    await gateway.set(key, serialized, ttl);
-  } catch (error) {
-    fallback.set(key, localEntry);
-    throw new Error("Transform cache backend set failed; stored in local fallback", {
-      cause: error,
-    });
-  }
 }
 
 /**
- * Legacy synchronous writes are process-local. Persisted entries require an
- * asynchronous SHA-256 integrity digest and therefore use setCachedTransformAsync.
+ * Legacy synchronous writes are always process-local. Persisted entries require
+ * an asynchronous revision observation and SHA-256 integrity digest.
  */
 export function setCachedTransform(
   key: string,
@@ -659,27 +1089,32 @@ export function setCachedTransform(
 ): void {
   validateCacheKey(key);
   const ttl = resolveTransformTtl(ttlSeconds);
+  const existingPermit = transformCacheWritePermitsByKey.get(key);
+  if (existingPermit) invalidateTransformCacheWritePermit(existingPermit);
+
+  const fallback = getLocalFallback();
   if (expiresImmediately(ttl)) {
-    getLocalFallback().delete(key);
-    const gateway = getEffectiveCacheGateway();
-    gateway?.del(key).catch((error) => {
-      logger.warn("Failed to expire synchronous transform cache entry", {
-        keyLength: key.length,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    });
+    fallback.delete(key);
     return;
   }
+
   validateTransformPayload(code, hash);
   const timestamp = Date.now();
-  getLocalFallback().set(
+  fallback.set(
     key,
-    createEntry(code, hash, timestamp, timestamp + Math.ceil(ttl * 1_000), undefined),
+    createEntry(
+      code,
+      hash,
+      timestamp,
+      timestamp + Math.ceil(ttl * 1_000),
+      undefined,
+    ),
   );
 }
 
 export function destroyTransformCache(): void {
   cacheLifecycleGeneration++;
+  invalidateAllTransformCacheWritePermits();
   getLocalFallback().clear();
   transformFlight = new Singleflight<TransformCacheResult>();
   transformProgress.clear();
@@ -688,17 +1123,18 @@ export function destroyTransformCache(): void {
   cacheInitPromise = null;
 }
 
-export async function getDistributedTransformBackend(): Promise<CacheBackend | null> {
+export async function getDistributedTransformBackend(): Promise<RevisionedCacheBackend | null> {
   await initializeTransformCache();
-  const gateway = getEffectiveCacheGateway();
-  if (!gateway || !isDistributedGateway(gateway)) return null;
-  return gateway as CacheBackend;
+  return getRevisionedDistributedBackend(getEffectiveCacheGateway());
 }
 
 interface TransformCacheResult {
   code: string;
   /** Bundle manifest ID if the cached entry has one. */
   bundleManifestId?: string;
+  /** Inert unresolved dependency metadata used for authority-gated retries. */
+  dependencyResolutionObservations?: ReadonlyArray<DependencyResolutionObservation>;
+  /** Whether this was a cache hit */
   cacheHit: boolean;
 }
 
@@ -707,97 +1143,38 @@ export type TransformCachedEntryValidator = (
   entry: TransformCacheResult,
 ) => boolean | Promise<boolean>;
 
-function publishComputedTransform(
-  key: string,
-  code: string,
-  hash: string,
-  ttlSeconds: number,
-): void {
-  const generation = cacheLifecycleGeneration;
-  const previousPublication = transformCachePublications.get(key) ?? Promise.resolve();
-  const publication = previousPublication
-    .catch(() => {})
-    .then(() => {
-      if (cacheLifecycleGeneration !== generation) {
-        logger.debug("Skipped queued cache write from stale transform generation", {
-          keyLength: key.length,
-        });
-        return;
-      }
-      return setCachedTransformAsync(key, code, hash, ttlSeconds);
-    })
-    .finally(() => {
-      if (transformCachePublications.get(key) === publication) {
-        transformCachePublications.delete(key);
-      }
-    });
-
-  transformCachePublications.set(key, publication);
-  void publication.catch((error) => {
-    logger.warn("Failed to cache computed transform", {
-      keyLength: key.length,
-      errorName: error instanceof Error ? error.name : typeof error,
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
-}
-
-function primeComputedTransformLocally(
-  key: string,
-  code: string,
-  hash: string,
-  ttlSeconds: number,
-): void {
-  const fallback = getLocalFallback();
-  if (expiresImmediately(ttlSeconds)) {
-    fallback.delete(key);
-    return;
-  }
-
-  const timestamp = Date.now();
-  fallback.set(
-    key,
-    createEntry(
-      code,
-      hash,
-      timestamp,
-      timestamp + Math.ceil(ttlSeconds * 1_000),
-      hash,
-    ),
-  );
-}
-
 async function executeTransformFlight(
   key: string,
   computeFn: (reportProgress?: TransformProgressListener) => Promise<string>,
   ttlSeconds: number,
   mayPublish: () => boolean,
   validateCachedEntry?: TransformCachedEntryValidator,
+  getDependencyResolutionObservations?: () => ReadonlyArray<DependencyResolutionObservation>,
 ): Promise<TransformCacheResult> {
   const progressFlight = beginTransformProgressFlight(key);
   const reportProgress: TransformProgressListener = (event) =>
     publishTransformProgress(key, progressFlight.state, event);
+  const observation = await observeCachedTransformForWrite(key, ttlSeconds);
+  let permitConsumed = false;
+
   try {
-    const cached = await getCachedTransformAsync(key);
+    const cached = observation.entry;
     if (cached) {
       if (UNRESOLVED_VF_MODULES_PATTERN.test(cached.code)) {
         const match = cached.code.match(UNRESOLVED_VF_MODULES_PATTERN);
-        logger.warn("Cache contains unresolved _vf_modules import, invalidating", {
+        logger.warn("Cache contains unresolved _vf_modules import, recomputing", {
           keyLength: key.length,
           unresolvedImport: match?.[1]?.slice(0, 60),
         });
-        try {
-          await deleteCacheEntry(key);
-        } catch (error) {
-          logger.warn("Failed to delete stale transform cache entry", {
-            keyLength: key.length,
-            errorName: error instanceof Error ? error.name : typeof error,
-          });
-        }
       } else {
         const cacheEntry: TransformCacheResult = {
           code: cached.code,
           bundleManifestId: cached.bundleManifestId,
+          ...(cached.dependencyResolutionObservations === undefined ? {} : {
+            dependencyResolutionObservations: cloneDependencyObservations(
+              cached.dependencyResolutionObservations,
+            ),
+          }),
           cacheHit: true,
         };
         if (validateCachedEntry) {
@@ -814,6 +1191,8 @@ async function executeTransformFlight(
           }
         }
         if (cacheEntryValid) {
+          releaseCachedTransformWritePermit(observation.permit);
+          permitConsumed = true;
           logger.debug("Cache hit", { keyLength: key.length });
           reportProgress({ phase: "transform-cache:hit" });
           return cacheEntry;
@@ -832,15 +1211,22 @@ async function executeTransformFlight(
     if (!validateCode(code)) {
       throw new RangeError("Computed transform is empty or exceeds the transform cache size limit");
     }
+    const dependencyResolutionObservations = cloneDependencyObservations(
+      getDependencyResolutionObservations?.(),
+    );
     reportProgress({ phase: "transform-cache:computed" });
 
     if (mayPublish()) {
       const hash = await computeHash(code);
       if (mayPublish()) {
-        // Make the completed value immediately available to process-local
-        // followers, while serialized persistence remains off the critical path.
-        primeComputedTransformLocally(key, code, hash, ttlSeconds);
-        publishComputedTransform(key, code, hash, ttlSeconds);
+        await publishCachedTransformWithPermit(
+          observation.permit,
+          code,
+          hash,
+          undefined,
+          dependencyResolutionObservations,
+        );
+        permitConsumed = true;
       } else {
         logger.debug("Skipped cache write from stale transform flight", {
           keyLength: key.length,
@@ -852,8 +1238,17 @@ async function executeTransformFlight(
       });
     }
 
-    return { code, cacheHit: false };
+    return {
+      code,
+      cacheHit: false,
+      ...(dependencyResolutionObservations === undefined
+        ? {}
+        : { dependencyResolutionObservations }),
+    };
   } finally {
+    if (!permitConsumed) {
+      releaseCachedTransformWritePermit(observation.permit);
+    }
     progressFlight.end();
   }
 }
@@ -865,6 +1260,7 @@ export async function getOrComputeTransform(
   onProgress?: TransformProgressListener,
   signal?: AbortSignal,
   validateCachedEntry?: TransformCachedEntryValidator,
+  getDependencyResolutionObservations?: () => ReadonlyArray<DependencyResolutionObservation>,
 ): Promise<TransformCacheResult> {
   signal?.throwIfAborted();
   validateCacheKey(key);
@@ -888,6 +1284,7 @@ export async function getOrComputeTransform(
         ttl,
         () => transformFlight === flightRegistry,
         validateCachedEntry,
+        getDependencyResolutionObservations,
       );
     } else {
       flight = flightRegistry.do(
@@ -899,6 +1296,7 @@ export async function getOrComputeTransform(
             ttl,
             () => transformFlight === flightRegistry && control.isCurrent(),
             validateCachedEntry,
+            getDependencyResolutionObservations,
           ),
         {
           staleAfterMs: TRANSFORM_FLIGHT_STALE_EVICTION_MS,

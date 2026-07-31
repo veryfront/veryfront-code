@@ -213,6 +213,10 @@ export async function processVfModuleImports(
       importMap: context.importMap,
       importMapFingerprint: context.importMapFingerprint,
       reactVersion: context.reactVersion,
+      moduleServerOrigin: context.moduleServerOrigin,
+      dependencyPinningCacheKey: context.dependencyPinningCacheKey,
+      dependencyPinningDependencies: context.dependencyPinningDependencies,
+      dependencyPinningSource: context.dependencyPinningSource,
       projectSlug: context.projectSlug,
       logger: logger.child({
         project_id: context.projectId,

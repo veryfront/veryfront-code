@@ -6,6 +6,10 @@ import type { VeryfrontRenderer } from "#veryfront/rendering/index.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import {
+  createDependencyPinningSource,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = serverLogger.component("build");
 
@@ -21,6 +25,10 @@ export interface BuildExecutorOptions {
   dryRun: boolean;
   releaseAssetManifest?: ReleaseAssetManifest | null;
   ignoredSourceDirs?: string[];
+  /** Select adapter-backed package reads for virtual/proxy build sources. */
+  isLocalProject?: boolean;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
 }
 
 export interface BuildResult {
@@ -38,11 +46,28 @@ export async function executeBuild(
     `[BUILD] executeBuild: ${pagesRoutes.length} pages routes, ${appRoutes.length} app routes`,
   );
 
+  const dependencySnapshot = await resolveDependencyPinningSnapshot(
+    createDependencyPinningSource({
+      projectDir: options.projectDir,
+      adapter: options.adapter,
+      isLocalProject: options.isLocalProject,
+      contentSourceId: "production-build",
+      config: options.config,
+    }),
+    options.dependencyPinningCacheKey,
+    options.dependencyPinningDependencies,
+  );
+  const buildOptions: BuildExecutorOptions = {
+    ...options,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+    dependencyPinningDependencies: dependencySnapshot.dependencies,
+  };
+
   logger.debug("Building pages...");
-  const pagesStats = await buildPagesRoutes(pagesRoutes, options);
+  const pagesStats = await buildPagesRoutes(pagesRoutes, buildOptions);
   logger.debug(`pagesStats: ${pagesStats.pages} pages built`);
 
-  const appStats = await buildAppRoutes(appRoutes, options);
+  const appStats = await buildAppRoutes(appRoutes, buildOptions);
   logger.debug(`appStats: ${appStats.pages} pages built`);
 
   return {

@@ -27,7 +27,10 @@ import { resolveUnresolvedModuleViaHttpFallback } from "./http-fallback.ts";
 import { normalizePath } from "./module-cache.ts";
 import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
-import { transformResolvedModuleSource } from "./source-transform.ts";
+import {
+  transformResolvedModuleSource,
+  type TransformResolvedModuleSourceResult,
+} from "./source-transform.ts";
 import {
   MAX_MDX_MODULE_GRAPH_ENTRIES,
   ModuleGraphLimitError,
@@ -35,6 +38,7 @@ import {
   ModuleSourceLimitError,
 } from "./limits.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
+import { classifyThrownValue } from "./error-classification.ts";
 
 export {
   MAX_MDX_MODULE_GRAPH_ENTRIES,
@@ -89,13 +93,17 @@ function getLog(context?: { logger?: Logger }): Logger {
 }
 
 function isFatalModuleFetchError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  return error.name === "MissingModuleError" ||
-    error instanceof TransformTreeTimeoutError ||
-    error instanceof CircularModuleDependencyError ||
-    error instanceof ModuleGraphLimitError ||
-    error instanceof ModuleImportLimitError ||
-    error instanceof ModuleSourceLimitError;
+  try {
+    if (!(error instanceof Error)) return false;
+    return error.name === "MissingModuleError" ||
+      error instanceof TransformTreeTimeoutError ||
+      error instanceof CircularModuleDependencyError ||
+      error instanceof ModuleGraphLimitError ||
+      error instanceof ModuleImportLimitError ||
+      error instanceof ModuleSourceLimitError;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -224,6 +232,10 @@ async function doFetchAndCacheModule(
     importMapFingerprint,
   } = context;
   const effectiveReactVersion = context.reactVersion ?? REACT_DEFAULT_VERSION;
+  const dependencyPinningCacheKey = context.dependencyPinningCacheKey ?? "off";
+  const moduleServerOrigin = dependencyPinningCacheKey.startsWith("on:")
+    ? context.moduleServerOrigin
+    : undefined;
 
   const pathCache = await getModulePathCache(esmCacheDir);
 
@@ -236,6 +248,8 @@ async function doFetchAndCacheModule(
         effectiveReactVersion,
         undefined,
         importMapFingerprint,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
       );
       const cachedPath = await readValidCachedModulePath({
         normalizedPath,
@@ -261,6 +275,8 @@ async function doFetchAndCacheModule(
         pathCache,
         reactVersion: effectiveReactVersion,
         importMapFingerprint,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
         parentModulePath,
       });
     }
@@ -281,6 +297,8 @@ async function doFetchAndCacheModule(
       effectiveReactVersion,
       contentHash,
       importMapFingerprint,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
     );
     const cachedPath = await readValidCachedModulePath({
       normalizedPath,
@@ -302,15 +320,19 @@ async function doFetchAndCacheModule(
         normalizedPath,
         contentHash,
         importMapFingerprint,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
       )
       : null;
 
     let moduleCode: string | null = null;
+    let bundleManifestAuthority: TransformResolvedModuleSourceResult["bundleManifestAuthority"] =
+      null;
     let needsDistributedCacheWrite = false;
 
     // Try distributed cache read with full validation.
     // Returns null only if no distributed backend is configured.
-    // Otherwise returns { code, distributedCache } where code may be null (miss).
+    // Otherwise returns the code and the exact pre-transform publication permit.
     const distResult = transformCacheKey
       ? await readDistributedCache(
         transformCacheKey,
@@ -328,7 +350,7 @@ async function doFetchAndCacheModule(
     }
 
     if (!moduleCode) {
-      moduleCode = await transformResolvedModuleSource({
+      const transformed = await transformResolvedModuleSource({
         sourceCode,
         actualFilePath,
         projectDir,
@@ -336,10 +358,16 @@ async function doFetchAndCacheModule(
         normalizedPath,
         projectSlug,
         reactVersion: context.reactVersion,
+        moduleServerOrigin,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: context.dependencyPinningDependencies,
+        dependencyPinningSource: context.dependencyPinningSource,
         adapter,
         importMap: context.importMap,
         log,
       });
+      moduleCode = transformed.code;
+      bundleManifestAuthority = transformed.bundleManifestAuthority;
 
       // Mark for distributed cache write AFTER nested imports are resolved.
       // This ensures we don't cache code with unresolved /_vf_modules/ paths.
@@ -367,21 +395,28 @@ async function doFetchAndCacheModule(
       reactVersion: effectiveReactVersion,
       sourceContentHash: contentHash,
       importMapFingerprint,
-      distributedCacheWrite:
-        needsDistributedCacheWrite && distResult?.distributedCache && transformCacheKey &&
-          contentSourceId
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+      distributedCachePublication:
+        needsDistributedCacheWrite && distResult?.publicationPermit && contentSourceId
           ? {
-            distributedCache: distResult.distributedCache,
-            transformCacheKey,
+            publicationPermit: distResult.publicationPermit,
             projectId,
             contentSourceId,
+            bundleManifestAuthority,
           }
           : undefined,
     });
   } catch (error) {
-    log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process ${normalizedPath}`, error);
-    if ((context.strictMissingModules ?? true) || isFatalModuleFetchError(error)) {
-      throw (error instanceof Error) ? error : new Error(String(error));
+    const strictMissingModules = context.strictMissingModules ?? true;
+    const fatal = isFatalModuleFetchError(error);
+    log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process module`, {
+      strictMissingModules,
+      fatal,
+      errorName: classifyThrownValue(error),
+    });
+    if (strictMissingModules || fatal) {
+      throw error;
     }
     return null;
   }
@@ -402,6 +437,10 @@ export function createModuleFetcherContext(
     isLocalProject?: boolean;
     projectSlug?: string;
     reactVersion?: string;
+    moduleServerOrigin?: string;
+    dependencyPinningCacheKey?: string;
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    dependencyPinningSource?: ModuleFetcherContext["dependencyPinningSource"];
     logger?: Logger;
     strictMissingModules?: boolean;
   },

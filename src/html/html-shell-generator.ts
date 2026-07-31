@@ -1,5 +1,4 @@
 import type { ComponentProps } from "#veryfront/types";
-import { isAbsolute, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { profilePhase, SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -37,6 +36,14 @@ import {
 } from "./styles-builder/index.ts";
 import type { HTMLGenerationOptions } from "./types.ts";
 import { buildImportMap, buildRootAttributes, shouldDisableLayout } from "./utils.ts";
+import { appendDependencyPinningPathKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import {
+  assertHTMLJsonValueIsNotProxy,
+  snapshotHTMLJsonRecord,
+  snapshotHTMLJsonValue,
+} from "./json-snapshot.ts";
+import { resolveCanonicalProjectRelativePath } from "./project-relative-path.ts";
+import { snapshotHTMLShellConfig } from "./html-config-snapshot.ts";
 
 const MAX_HTML_SHELL_INPUT_FIELDS = 256;
 
@@ -44,15 +51,59 @@ function snapshotShellInput<T extends object>(
   value: T,
   label: string,
 ): T {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  return snapshotHTMLJsonRecord(value, label, {
+    accessorError: `${label} must not contain accessor properties`,
+    maxProperties: MAX_HTML_SHELL_INPUT_FIELDS,
+  });
+}
+
+function snapshotProjectClasses(value: unknown): Set<string> | undefined {
+  if (value === undefined) return undefined;
+  assertHTMLJsonValueIsNotProxy(value, "HTML shell project classes");
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("HTML shell project classes must be a plain Set");
+  }
+
+  let prototype: object | null;
+  try {
+    prototype = Reflect.getPrototypeOf(value);
+  } catch {
+    throw new TypeError("HTML shell project classes cannot be inspected");
+  }
+  if (prototype !== Set.prototype) {
+    throw new TypeError("HTML shell project classes must be a plain Set");
+  }
+
+  const classes = new Set<string>();
+  try {
+    for (const className of Set.prototype.values.call(value as Set<unknown>)) {
+      if (typeof className !== "string") {
+        throw new TypeError("HTML shell project classes must contain strings");
+      }
+      classes.add(className);
+      if (classes.size > 100_000) {
+        throw new TypeError("HTML shell project classes exceed the entry limit");
+      }
+    }
+  } catch (error) {
+    if (error instanceof TypeError && error.message.startsWith("HTML shell")) throw error;
+    throw new TypeError("HTML shell project classes cannot be inspected");
+  }
+  return classes;
+}
+
+function snapshotShellOptions(options: HTMLGenerationOptions): HTMLGenerationOptions {
+  const label = "HTML shell options";
+  assertHTMLJsonValueIsNotProxy(options, label);
+  if (!options || typeof options !== "object" || Array.isArray(options)) {
     throw new TypeError(`${label} must be a plain object`);
   }
 
   let prototype: object | null;
   let keys: PropertyKey[];
   try {
-    prototype = Object.getPrototypeOf(value);
-    keys = Reflect.ownKeys(value);
+    prototype = Reflect.getPrototypeOf(options);
+    keys = Reflect.ownKeys(options);
   } catch {
     throw new TypeError(`${label} cannot be inspected`);
   }
@@ -63,11 +114,13 @@ function snapshotShellInput<T extends object>(
     throw new TypeError(`${label} exceeds the field limit`);
   }
 
-  const snapshot: Record<string, unknown> = {};
+  const jsonOptions = Object.create(null) as Record<string, unknown>;
+  let projectClasses: Set<string> | undefined;
+  let config: HTMLGenerationOptions["config"] | undefined;
   for (const key of keys) {
     let descriptor: PropertyDescriptor | undefined;
     try {
-      descriptor = Reflect.getOwnPropertyDescriptor(value, key);
+      descriptor = Reflect.getOwnPropertyDescriptor(options, key);
     } catch {
       throw new TypeError(`${label} cannot be inspected`);
     }
@@ -78,14 +131,53 @@ function snapshotShellInput<T extends object>(
     ) {
       throw new TypeError(`${label} must not contain accessor properties`);
     }
-    Object.defineProperty(snapshot, key, {
+    if (key === "projectClasses") {
+      projectClasses = snapshotProjectClasses(descriptor.value);
+      continue;
+    }
+    if (key === "config") {
+      config = snapshotHTMLShellConfig(descriptor.value);
+      continue;
+    }
+    if (descriptor.value === undefined) continue;
+    Object.defineProperty(jsonOptions, key, {
       configurable: true,
       enumerable: true,
       value: descriptor.value,
       writable: true,
     });
   }
-  return snapshot as T;
+
+  const snapshot = snapshotHTMLJsonValue(
+    jsonOptions,
+    label,
+  ) as unknown as HTMLGenerationOptions;
+  if (config !== undefined) snapshot.config = config;
+  if (projectClasses !== undefined) snapshot.projectClasses = projectClasses;
+  return snapshot;
+}
+
+function snapshotShellInputs(
+  meta: HTMLRenderMetadata,
+  options: HTMLGenerationOptions,
+  params?: Record<string, string | string[]>,
+  props?: ComponentProps,
+): {
+  meta: HTMLRenderMetadata;
+  options: HTMLGenerationOptions;
+  params: Record<string, string | string[]> | undefined;
+  props: ComponentProps | undefined;
+} {
+  return {
+    meta: snapshotShellInput(meta, "HTML shell metadata"),
+    options: snapshotShellOptions(options),
+    params: params === undefined
+      ? undefined
+      : snapshotHTMLJsonValue(params, "HTML shell route params"),
+    props: props === undefined
+      ? undefined
+      : snapshotHTMLJsonValue(props, "HTML shell component props"),
+  };
 }
 
 function pathToModuleUrl(
@@ -93,6 +185,7 @@ function pathToModuleUrl(
   studioEmbed?: boolean,
   manifest?: ReleaseAssetManifest | null,
   fallbackReleaseId?: string,
+  dependencyPinningCacheKey?: string,
 ): string {
   if (!path) return "";
 
@@ -103,13 +196,24 @@ function pathToModuleUrl(
     if (assetUrl) return assetUrl;
   }
 
-  const withExtReplaced = path.replace(/\.(tsx|ts|jsx|mdx)$/, ".js");
-  const urlBase = withExtReplaced === path && !path.endsWith(".js")
-    ? `/_vf_modules/${path}.js`
-    : `/_vf_modules/${withExtReplaced}`;
+  const hasSourceExtension = /\.(?:tsx?|jsx?|mdx?|mjs)$/.test(path);
+  // Match the hydration loader exactly: explicit source extensions identify
+  // one authored module and must not collapse onto a same-basename sibling.
+  // Authored JavaScript gets a second suffix to distinguish it from the legacy
+  // extensionless compiled-module endpoint.
+  const requestPath = /\.(?:mjs|js)$/.test(path)
+    ? `${path}.js`
+    : hasSourceExtension
+    ? path
+    : `${path}.js`;
+  const urlBase = `/_vf_modules/${requestPath}`;
 
-  if (studioEmbed) return `${urlBase}?studio_embed=true`;
-  return fallbackReleaseId ? appendReleaseModuleVersion(urlBase, fallbackReleaseId) : urlBase;
+  const moduleUrl = studioEmbed
+    ? `${urlBase}?studio_embed=true`
+    : fallbackReleaseId
+    ? appendReleaseModuleVersion(urlBase, fallbackReleaseId)
+    : urlBase;
+  return appendDependencyPinningPathKey(moduleUrl, dependencyPinningCacheKey);
 }
 
 function appendReleaseModuleVersion(url: string, releaseId: string): string {
@@ -126,17 +230,11 @@ function getRelativePagePath(
   projectDir: string | undefined,
 ): string {
   if (!fullPath) return "";
-
-  const normalized = fullPath.replace(/\\/g, "/");
-  if (!projectDir) return normalized.replace(/^\//, "");
-
-  const projectRoot = resolve(projectDir).replace(/\\/g, "/").replace(/\/+$/, "") || "/";
-  const candidate = resolve(isAbsolute(normalized) ? normalized : `${projectRoot}/${normalized}`)
-    .replace(/\\/g, "/");
-  const projectPrefix = projectRoot.endsWith("/") ? projectRoot : `${projectRoot}/`;
-
-  if (!candidate.startsWith(projectPrefix)) return "";
-  return candidate.slice(projectPrefix.length);
+  return resolveCanonicalProjectRelativePath(
+    fullPath,
+    projectDir,
+    { module: true },
+  ) ?? "";
 }
 
 type ProjectCSSResult = Awaited<ReturnType<typeof getProjectCSS>> | null;
@@ -218,7 +316,15 @@ function generateModulePreloadHints(
 
   if (options.pagePath) {
     const relativePath = getRelativePagePath(options.pagePath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
+    addHint(
+      pathToModuleUrl(
+        relativePath,
+        studioEmbed,
+        releaseManifest,
+        fallbackReleaseId,
+        options.dependencyPinningCacheKey,
+      ),
+    );
   }
 
   for (const layout of options.nestedLayouts ?? []) {
@@ -226,7 +332,15 @@ function generateModulePreloadHints(
     if (!layoutPath) continue;
 
     const relativePath = getRelativePagePath(layoutPath, projectDir);
-    addHint(pathToModuleUrl(relativePath, studioEmbed, releaseManifest, fallbackReleaseId));
+    addHint(
+      pathToModuleUrl(
+        relativePath,
+        studioEmbed,
+        releaseManifest,
+        fallbackReleaseId,
+        options.dependencyPinningCacheKey,
+      ),
+    );
   }
 
   // Skip manifest-based preloads in preview/studio-embed mode:
@@ -281,14 +395,15 @@ export async function generateHTMLShellPartsWithStylesheetArtifact(
   stylesheetCandidateSource?: string,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<HTMLShellPartsWithStylesheetArtifact> {
+  const snapshot = snapshotShellInputs(meta, options, params, props);
   const projectCSSObservation = projectCSSPromise
     ? observeProjectCSSPromise(projectCSSPromise)
     : undefined;
   return await generateHTMLShellPartsWithObservedStylesheetArtifact(
-    meta,
-    options,
-    params,
-    props,
+    snapshot.meta,
+    snapshot.options,
+    snapshot.params,
+    snapshot.props,
     stylesheetCandidateSource,
     projectCSSObservation,
   );
@@ -302,24 +417,22 @@ async function generateHTMLShellPartsWithObservedStylesheetArtifact(
   stylesheetCandidateSource?: string,
   projectCSSObservation?: ProjectCSSObservation,
 ): Promise<HTMLShellPartsWithStylesheetArtifact> {
-  const safeMeta = snapshotShellInput(meta, "HTML shell metadata");
-  const safeOptions = snapshotShellInput(options, "HTML shell options");
   return await withSpan(
     SpanNames.HTML_GENERATE_SHELL_PARTS,
     () =>
       generateHTMLShellPartsImpl(
-        safeMeta,
-        safeOptions,
+        meta,
+        options,
         params,
         props,
         stylesheetCandidateSource,
         projectCSSObservation,
       ),
     {
-      "html.slug": safeMeta.slug || "",
+      "html.slug": meta.slug || "",
       "html.has_stylesheet_candidate_source": !!stylesheetCandidateSource,
-      "html.mode": safeOptions.mode || "production",
-      "html.is_local_project": safeOptions.isLocalProject ?? false,
+      "html.mode": options.mode || "production",
+      "html.is_local_project": options.isLocalProject ?? false,
     },
   );
 }
@@ -404,6 +517,9 @@ async function generateHTMLShellPartsImpl(
   const importMapPromise = buildImportMap({
     projectDir: options.projectDir,
     config: options.config,
+    moduleServerOrigin: options.moduleServerOrigin,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
     customImports: options.importMap,
     pretty: useDevScripts,
     releaseAssetManifest: releaseManifest,
@@ -610,27 +726,26 @@ export async function wrapInHTMLShell(
   props?: ComponentProps,
   projectCSSPromise?: Promise<ProjectCSSResult>,
 ): Promise<string> {
+  const snapshot = snapshotShellInputs(meta, options, params, props);
   const projectCSSObservation = projectCSSPromise
     ? observeProjectCSSPromise(projectCSSPromise)
     : undefined;
-  const safeMeta = snapshotShellInput(meta, "HTML shell metadata");
-  const safeOptions = snapshotShellInput(options, "HTML shell options");
   return await withSpan(
     SpanNames.HTML_WRAP_IN_SHELL,
     async () => {
       const cleanedContent = content.trim();
       const { start, end } = await generateHTMLShellPartsWithObservedStylesheetArtifact(
-        safeMeta,
-        safeOptions,
-        params,
-        props,
+        snapshot.meta,
+        snapshot.options,
+        snapshot.params,
+        snapshot.props,
         cleanedContent,
         projectCSSObservation,
       );
       return `${start}${cleanedContent}${end}`;
     },
     {
-      "html.slug": safeMeta.slug || "",
+      "html.slug": snapshot.meta.slug || "",
       "html.content_length": content.length,
     },
   );

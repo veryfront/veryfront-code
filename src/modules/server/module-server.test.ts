@@ -25,6 +25,7 @@ import { clearReleaseModuleResponseCache } from "./module-response-cache.ts";
 import { clearSourceMissCache } from "./module-source-resolution-cache.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
@@ -36,6 +37,11 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { createImportMapIdentity } from "#veryfront/modules/import-map/index.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { buildImportMapJson, clearImportMapCache } from "../../html/utils.ts";
 
 describe("isModuleRequest", () => {
   it("should return true for /_vf_modules/ path", () => {
@@ -84,11 +90,13 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   afterEach(() => {
     deleteEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG);
     deleteEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+    deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
     deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
     deleteEnv("VERYFRONT_CACHE_DIR");
     configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
     clearReleaseModuleResponseCache();
+    clearImportMapCache();
     resetRequestProfiles();
   });
 
@@ -1298,6 +1306,817 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       assertEquals(secondVersion.length > 0, true);
       assertEquals(firstVersion !== secondVersion, true);
     } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps a browser child request on the parent dependency snapshot", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-child-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({
+          dependencies: {
+            react: "18.3.1",
+            "snapshot-package": "1.0.0",
+          },
+        }),
+      );
+      await Deno.utime(packageJsonPath, new Date(1_000), new Date(1_000));
+      await Deno.writeTextFile(
+        `${projectDir}/page.ts`,
+        `import { child } from "./child.js";\nexport const page = child;\n`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/child.ts`,
+        [
+          `import React from "react";`,
+          `import value from "snapshot-package";`,
+          `export const child = [React, value];`,
+        ].join("\n"),
+      );
+      const dependencySnapshotA = await getDependencyPinningSnapshot(projectDir);
+      const parentUrlA = new URL(
+        `http://localhost:3000/_vf_modules/page.js?pins=${
+          encodeURIComponent(dependencySnapshotA.cacheKey)
+        }`,
+      );
+
+      const parentResponse = await serve(
+        new Request(parentUrlA),
+        projectDir,
+      );
+      assertEquals(parentResponse.status, 200);
+      const parentCode = await parentResponse.text();
+      const historicalChildPath = `/_vf_modules/_pins/${
+        encodeURIComponent(dependencySnapshotA.cacheKey)
+      }/child.js`;
+      assertStringIncludes(parentCode, historicalChildPath);
+      assertEquals(parentCode.includes("?pins="), false);
+
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({
+          dependencies: {
+            react: "19.2.4",
+            "snapshot-package": "2.0.0",
+          },
+        }),
+      );
+      await Deno.utime(packageJsonPath, new Date(2_000), new Date(2_000));
+      const dependencySnapshotB = await getDependencyPinningSnapshot(projectDir);
+
+      const currentResponse = await serve(
+        new Request(
+          `http://localhost:3000/_vf_modules/_pins/${
+            encodeURIComponent(dependencySnapshotB.cacheKey)
+          }/child.js`,
+        ),
+        projectDir,
+      );
+      assertEquals(currentResponse.status, 200);
+      const currentCode = await currentResponse.text();
+      assertStringIncludes(currentCode, "snapshot-package@2.0.0");
+      assertStringIncludes(currentCode, "react@19.2.4");
+
+      const historicalResponse = await serve(
+        new Request(new URL(historicalChildPath, parentUrlA)),
+        projectDir,
+      );
+      assertEquals(historicalResponse.status, 200);
+      const historicalCode = await historicalResponse.text();
+      assertStringIncludes(historicalCode, "snapshot-package@1.0.0");
+      assertStringIncludes(historicalCode, "react@18.3.1");
+    } finally {
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("path-binds same-origin absolute module literals before strict child lookup", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-absolute-module-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+    const originalFetch = globalThis.fetch;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.mkdir(`${projectDir}/shared`, { recursive: true });
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({
+          dependencies: {
+            "absolute-module-fixture": `1.0.0-test.${Date.now()}`,
+          },
+        }),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/Parent.ts`,
+        [
+          `export { value as absolute } from "http://localhost:3000/_vf_modules/shared/Absolute.js";`,
+          `export { value as protocol } from "//localhost:3000/_vf_modules/shared/Protocol.js";`,
+          `export { value as foreign } from "https://cdn.example/_vf_modules/shared/Foreign.js";`,
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(`${projectDir}/shared/Absolute.ts`, `export const value = "abs";`);
+      await Deno.writeTextFile(`${projectDir}/shared/Protocol.ts`, `export const value = "proto";`);
+
+      const snapshot = await getDependencyPinningSnapshot(projectDir);
+      const encodedKey = encodeURIComponent(snapshot.cacheKey);
+      const parentUrl = new URL(
+        `http://localhost:3000/_vf_modules/_pins/${encodedKey}/components/Parent.js`,
+      );
+      const absolutePath = `/_vf_modules/_pins/${encodedKey}/shared/Absolute.js`;
+      const protocolPath = `/_vf_modules/_pins/${encodedKey}/shared/Protocol.js`;
+
+      const parentResponse = await serve(new Request(parentUrl), projectDir);
+      assertEquals(parentResponse.status, 200);
+      const parentCode = await parentResponse.text();
+      assertStringIncludes(parentCode, absolutePath);
+      assertStringIncludes(parentCode, protocolPath);
+      assertStringIncludes(
+        parentCode,
+        "https://cdn.example/_vf_modules/shared/Foreign.js",
+      );
+
+      for (const childPath of [absolutePath, protocolPath]) {
+        const childResponse = await serve(
+          new Request(new URL(childPath, parentUrl)),
+          projectDir,
+        );
+        assertEquals(childResponse.status, 200);
+      }
+
+      const nestedFetches: string[] = [];
+      globalThis.fetch = async (
+        input: RequestInfo | URL,
+        init?: RequestInit,
+      ): Promise<Response> => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        const requestUrl = new URL(request.url);
+        if (
+          requestUrl.origin === parentUrl.origin &&
+          requestUrl.pathname.startsWith("/_vf_modules/")
+        ) {
+          nestedFetches.push(requestUrl.href);
+          return await serve(request, projectDir);
+        }
+        if (requestUrl.origin === "https://cdn.example") {
+          return new Response(`export const value = "foreign";`, {
+            headers: { "content-type": "application/javascript" },
+          });
+        }
+        return await originalFetch(input, init);
+      };
+
+      const ssrParentUrl = new URL(parentUrl);
+      ssrParentUrl.searchParams.set("ssr", "true");
+      const ssrParentResponse = await serve(new Request(ssrParentUrl), projectDir);
+      assertEquals(ssrParentResponse.status, 200);
+      for (const childName of ["Absolute.js", "Protocol.js"]) {
+        const childFetch = nestedFetches.find((href) =>
+          new URL(href).pathname.endsWith(`/shared/${childName}`)
+        );
+        assertEquals(childFetch !== undefined, true);
+        const childUrl = new URL(childFetch!);
+        assertEquals(childUrl.searchParams.get("ssr"), "true");
+        assertEquals(childUrl.searchParams.get("pins"), snapshot.cacheKey);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps cross-project relative children on snapshot A and B", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-cross-project-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+    const originalFetch = globalThis.fetch;
+    const parentSource = [
+      `export { child as staticChild } from "./Child.js";`,
+      `export { child as staticAliasChild } from "@/shared/Root.js";`,
+      `const childPath = "./Child.js";`,
+      `const aliasPath = "@/shared/Lazy.js";`,
+      `const escapePath = "../../../../Escape.js";`,
+      `export const loadChild = () => import(childPath);`,
+      `export const loadAliasChild = () => import(aliasPath);`,
+      `export const loadEscape = () => import(escapePath);`,
+    ].join("\n");
+    const childSource = [
+      `import React from "react";`,
+      `import value from "snapshot-package";`,
+      `export const child = [React, value];`,
+    ].join("\n");
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      globalThis.fetch = (input: RequestInfo | URL): Promise<Response> => {
+        const requestUrl = input instanceof Request
+          ? input.url
+          : input instanceof URL
+          ? input.href
+          : input;
+        const pathname = new URL(requestUrl).pathname;
+        if (pathname.endsWith("/components/Parent.js")) {
+          return Promise.resolve(new Response(parentSource));
+        }
+        if (pathname.endsWith("/components/Child.js")) {
+          return Promise.resolve(new Response(childSource));
+        }
+        if (
+          pathname.endsWith("/shared/Root.js") ||
+          pathname.endsWith("/shared/Lazy.js")
+        ) {
+          return Promise.resolve(new Response(childSource));
+        }
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      };
+
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({
+          dependencies: {
+            react: "18.3.1",
+            "snapshot-package": "1.0.0",
+          },
+        }),
+      );
+      await Deno.utime(packageJsonPath, new Date(1_000), new Date(1_000));
+      const dependencySnapshotA = await getDependencyPinningSnapshot(projectDir);
+
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({
+          dependencies: {
+            react: "19.2.4",
+            "snapshot-package": "2.0.0",
+          },
+        }),
+      );
+      await Deno.utime(packageJsonPath, new Date(2_000), new Date(2_000));
+      const dependencySnapshotB = await getDependencyPinningSnapshot(projectDir);
+
+      const assertCrossProjectSnapshot = async (
+        cacheKey: string,
+        packageVersion: string,
+        reactVersion: string,
+      ): Promise<void> => {
+        const encodedKey = encodeURIComponent(cacheKey);
+        const parentUrl = new URL(
+          `http://localhost:3000/_vf_modules/_cross/remote@1.0.0/@/components/Parent.js?pins=${encodedKey}`,
+        );
+        const expectedParentPath =
+          `/_vf_modules/_pins/${encodedKey}/_cross/remote@1.0.0/@/components/Parent.js`;
+        const expectedChildPath =
+          `/_vf_modules/_pins/${encodedKey}/_cross/remote@1.0.0/@/components/Child.js`;
+        const expectedStaticAliasPath =
+          `/_vf_modules/_pins/${encodedKey}/_cross/remote@1.0.0/@/shared/Root.js`;
+        const expectedComputedAliasPath =
+          `/_vf_modules/_pins/${encodedKey}/_cross/remote@1.0.0/@/shared/Lazy.js`;
+
+        const parentResponse = await serve(new Request(parentUrl), projectDir);
+        assertEquals(parentResponse.status, 200);
+        const parentCode = await parentResponse.text();
+        assertStringIncludes(parentCode, expectedChildPath);
+        assertStringIncludes(parentCode, expectedStaticAliasPath);
+        assertStringIncludes(parentCode, expectedParentPath);
+        assertStringIncludes(parentCode, "/*__vf_dependency_pinned__*/");
+        assertEquals(parentCode.includes("?pins="), false);
+
+        const helperMatch = parentCode.match(
+          /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
+        );
+        assertEquals(helperMatch !== null, true);
+        const helper = new Function(
+          `${helperMatch?.[1]}; return ${helperMatch?.[2]};`,
+        )() as (value: unknown, parentUrl: string, modulePath?: string) => string;
+        assertEquals(
+          helper("./Child.js", parentUrl.href, expectedParentPath),
+          expectedChildPath,
+        );
+        assertEquals(
+          helper("@/shared/Lazy.js", parentUrl.href, expectedParentPath),
+          expectedComputedAliasPath,
+        );
+        assertEquals(
+          helper("../../../../Escape.js", parentUrl.href, expectedParentPath),
+          "/_vf_modules/_pins/invalid",
+        );
+
+        for (
+          const childPath of [
+            expectedChildPath,
+            expectedStaticAliasPath,
+            expectedComputedAliasPath,
+          ]
+        ) {
+          const childResponse = await serve(
+            new Request(new URL(childPath, parentUrl)),
+            projectDir,
+          );
+          assertEquals(childResponse.status, 200);
+          const childCode = await childResponse.text();
+          assertStringIncludes(childCode, `snapshot-package@${packageVersion}`);
+          assertStringIncludes(childCode, `react@${reactVersion}`);
+        }
+      };
+
+      await assertCrossProjectSnapshot(
+        dependencySnapshotB.cacheKey,
+        "2.0.0",
+        "19.2.4",
+      );
+      await assertCrossProjectSnapshot(
+        dependencySnapshotA.cacheKey,
+        "1.0.0",
+        "18.3.1",
+      );
+
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
+      const flagOffResponse = await serve(
+        new Request(
+          "http://localhost:3000/_vf_modules/_cross/remote@1.0.0/@/components/Parent.js",
+        ),
+        projectDir,
+      );
+      assertEquals(flagOffResponse.status, 200);
+      const flagOffCode = await flagOffResponse.text();
+      assertStringIncludes(
+        flagOffCode,
+        "http://localhost:3000/components/Child.js",
+      );
+      assertStringIncludes(flagOffCode, "import(childPath)");
+      assertEquals(flagOffCode.includes("/_pins/"), false);
+    } finally {
+      globalThis.fetch = originalFetch;
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps static and computed prefix imports on historical snapshot A after B", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-prefix-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+    const nestedDir = `${projectDir}/components/nested`;
+
+    function resolvePrefix(
+      imports: Record<string, string>,
+      prefix: string,
+      specifier: string,
+    ): string {
+      return `${imports[prefix]}${specifier.slice(prefix.length)}`;
+    }
+
+    async function assertSnapshotModule(
+      moduleUrl: URL,
+      packageVersion: string,
+      reactVersion: string,
+    ): Promise<void> {
+      const response = await serve(new Request(moduleUrl), projectDir);
+      assertEquals(response.status, 200);
+      const code = await response.text();
+      assertStringIncludes(code, `snapshot-package@${packageVersion}`);
+      assertStringIncludes(code, `react@${reactVersion}`);
+    }
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.mkdir(nestedDir, { recursive: true });
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({
+          dependencies: {
+            react: "18.3.1",
+            "snapshot-package": "1.0.0",
+          },
+        }),
+      );
+      await Deno.utime(packageJsonPath, new Date(1_000), new Date(1_000));
+      await Deno.writeTextFile(
+        `${nestedDir}/Parent.ts`,
+        [
+          `export { value as staticValue } from "../StaticChild.js";`,
+          `const localPath = "./LocalLazy.js";`,
+          `const parentPath = "../LazyChild.js";`,
+          `const rootPath = "/_vf_modules/components/LazyChild.js";`,
+          `export const loadLocal = () => import(localPath);`,
+          `export const loadParent = () => import(parentPath);`,
+          `export const loadRoot = () => import(rootPath);`,
+        ].join("\n"),
+      );
+      const childSource = [
+        `import React from "react";`,
+        `import value from "snapshot-package";`,
+        `export { value };`,
+        `export const react = React;`,
+      ].join("\n");
+      await Deno.writeTextFile(`${projectDir}/components/StaticChild.ts`, childSource);
+      await Deno.writeTextFile(`${projectDir}/components/LazyChild.ts`, childSource);
+      await Deno.writeTextFile(`${nestedDir}/LocalLazy.ts`, childSource);
+
+      const dependencySnapshotA = await getDependencyPinningSnapshot(projectDir);
+      const importsA = JSON.parse(
+        await buildImportMapJson({
+          projectDir,
+          dependencyPinningCacheKey: dependencySnapshotA.cacheKey,
+          dependencyPinningDependencies: dependencySnapshotA.dependencies,
+          customImports: {
+            "custom-entry": "/_vf_modules/components/nested/Parent.js",
+            "custom-prefix/": "/_vf_modules/components/",
+          },
+          pretty: false,
+        }),
+      ).imports as Record<string, string>;
+
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({
+          dependencies: {
+            react: "19.2.4",
+            "snapshot-package": "2.0.0",
+          },
+        }),
+      );
+      await Deno.utime(packageJsonPath, new Date(2_000), new Date(2_000));
+      const dependencySnapshotB = await getDependencyPinningSnapshot(projectDir);
+      const importsB = JSON.parse(
+        await buildImportMapJson({
+          projectDir,
+          dependencyPinningCacheKey: dependencySnapshotB.cacheKey,
+          dependencyPinningDependencies: dependencySnapshotB.dependencies,
+          customImports: {
+            "custom-entry": "/_vf_modules/components/nested/Parent.js",
+            "custom-prefix/": "/_vf_modules/components/",
+          },
+          pretty: false,
+        }),
+      ).imports as Record<string, string>;
+
+      assertEquals(importsA["@/"]!.endsWith("/"), true);
+      assertEquals(importsA["custom-prefix/"]!.endsWith("/"), true);
+      assertStringIncludes(importsA["@/"]!, "/_vf_modules/_pins/on%3A");
+      assertStringIncludes(importsB["custom-prefix/"]!, "/_vf_modules/_pins/on%3A");
+
+      const prefixParentA = new URL(
+        resolvePrefix(importsA, "@/", "@/components/nested/Parent.js"),
+        "http://localhost:3000",
+      );
+      const parentA = new URL(importsA["custom-entry"]!, "http://localhost:3000");
+      const parentB = new URL(
+        resolvePrefix(
+          importsB,
+          "custom-prefix/",
+          "custom-prefix/nested/Parent.js",
+        ),
+        "http://localhost:3000",
+      );
+      assertEquals(parentA.href, prefixParentA.href);
+
+      const currentParentResponse = await serve(new Request(parentB), projectDir);
+      assertEquals(currentParentResponse.status, 200);
+      const currentParentCode = await currentParentResponse.text();
+      assertStringIncludes(currentParentCode, `"../StaticChild.js"`);
+      assertStringIncludes(currentParentCode, "/*__vf_dependency_pinned__*/");
+      assertStringIncludes(currentParentCode, "localPath,import.meta.url");
+      assertStringIncludes(currentParentCode, "parentPath,import.meta.url");
+      assertStringIncludes(currentParentCode, "rootPath,import.meta.url");
+      assertEquals(currentParentCode.includes("?pins="), false);
+
+      const currentStaticChild = new URL("../StaticChild.js", parentB);
+      const currentLocalLazy = new URL("./LocalLazy.js", parentB);
+      const currentParentLazy = new URL("../LazyChild.js", parentB);
+      assertEquals(currentStaticChild.search, "");
+      assertStringIncludes(currentStaticChild.pathname, "/_vf_modules/_pins/on%3A");
+      assertStringIncludes(currentLocalLazy.pathname, "/_vf_modules/_pins/on%3A");
+      assertStringIncludes(currentParentLazy.pathname, "/_vf_modules/_pins/on%3A");
+      await assertSnapshotModule(currentStaticChild, "2.0.0", "19.2.4");
+      await assertSnapshotModule(currentLocalLazy, "2.0.0", "19.2.4");
+      await assertSnapshotModule(currentParentLazy, "2.0.0", "19.2.4");
+
+      const currentHelperMatch = currentParentCode.match(
+        /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
+      );
+      assertEquals(currentHelperMatch !== null, true);
+      const currentHelper = new Function(
+        `${currentHelperMatch?.[1]}; return ${currentHelperMatch?.[2]};`,
+      )() as (value: unknown, parentUrl: string, modulePath?: string) => string;
+      const currentRootLazy = new URL(
+        currentHelper(
+          "/_vf_modules/components/LazyChild.js",
+          parentB.href,
+          parentB.pathname,
+        ),
+        parentB,
+      );
+      await assertSnapshotModule(currentRootLazy, "2.0.0", "19.2.4");
+
+      const historicalParentResponse = await serve(new Request(parentA), projectDir);
+      assertEquals(historicalParentResponse.status, 200);
+      const historicalParentCode = await historicalParentResponse.text();
+      assertStringIncludes(historicalParentCode, `"../StaticChild.js"`);
+      assertStringIncludes(historicalParentCode, "/*__vf_dependency_pinned__*/");
+      assertStringIncludes(historicalParentCode, "localPath,import.meta.url");
+      assertStringIncludes(historicalParentCode, "parentPath,import.meta.url");
+      assertStringIncludes(historicalParentCode, "rootPath,import.meta.url");
+      assertEquals(historicalParentCode.includes("?pins="), false);
+
+      const historicalStaticChild = new URL("../StaticChild.js", parentA);
+      const historicalLocalLazy = new URL("./LocalLazy.js", parentA);
+      const historicalParentLazy = new URL("../LazyChild.js", parentA);
+      await assertSnapshotModule(historicalStaticChild, "1.0.0", "18.3.1");
+      await assertSnapshotModule(historicalLocalLazy, "1.0.0", "18.3.1");
+      await assertSnapshotModule(historicalParentLazy, "1.0.0", "18.3.1");
+
+      const historicalHelperMatch = historicalParentCode.match(
+        /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
+      );
+      assertEquals(historicalHelperMatch !== null, true);
+      const historicalHelper = new Function(
+        `${historicalHelperMatch?.[1]}; return ${historicalHelperMatch?.[2]};`,
+      )() as (value: unknown, parentUrl: string, modulePath?: string) => string;
+      const historicalRootLazy = new URL(
+        historicalHelper(
+          "/_vf_modules/components/LazyChild.js",
+          parentA.href,
+          parentA.pathname,
+        ),
+        parentA,
+      );
+      await assertSnapshotModule(historicalRootLazy, "1.0.0", "18.3.1");
+
+      for (
+        const escapedUrl of [
+          new URL("../../../Escape.js", parentA),
+          new URL("../../../../Escape.js", parentA),
+        ]
+      ) {
+        const response = await serve(new Request(escapedUrl), projectDir);
+        assertEquals(response.status, 409);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+      }
+    } finally {
+      clearReactVersionCache();
+      clearImportMapCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps flag-off prefix graphs byte-compatible and query-free", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-prefix-off-" });
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/Parent.ts`,
+        [
+          `export { default as staticValue } from "./Static.js";`,
+          `const path = "./Lazy.js";`,
+          `export const load = () => import(path);`,
+        ].join("\n"),
+      );
+      await Deno.writeTextFile(`${projectDir}/components/Lazy.ts`, "export default 1;\n");
+      await Deno.writeTextFile(`${projectDir}/components/Static.ts`, "export default 2;\n");
+
+      const common = {
+        projectDir,
+        customImports: {
+          "custom-prefix/": "/_vf_modules/components/",
+        },
+        pretty: false,
+      };
+      const unkeyed = await buildImportMapJson(common);
+      const flagOff = await buildImportMapJson({
+        ...common,
+        dependencyPinningCacheKey: "off",
+      });
+      assertEquals(flagOff, unkeyed);
+
+      const imports = JSON.parse(flagOff).imports as Record<string, string>;
+      const parentUrl = new URL(
+        `${imports["custom-prefix/"]}Parent.js`,
+        "http://localhost:3000",
+      );
+      assertEquals(parentUrl.pathname, "/_vf_modules/components/Parent.js");
+      assertEquals(parentUrl.search, "");
+
+      const parentResponse = await serve(new Request(parentUrl), projectDir);
+      assertEquals(parentResponse.status, 200);
+      const parentCode = await parentResponse.text();
+      assertStringIncludes(parentCode, `"./Static.js"`);
+      assertStringIncludes(parentCode, "import(path)");
+      assertEquals(parentCode.includes("/_vf_modules/components/Static.js"), false);
+
+      const childUrl = new URL("./Lazy.js", parentUrl);
+      assertEquals(childUrl.pathname, "/_vf_modules/components/Lazy.js");
+      assertEquals(childUrl.search, "");
+      assertEquals((await serve(new Request(childUrl), projectDir)).status, 200);
+    } finally {
+      clearReactVersionCache();
+      clearImportMapCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("serves ordinary _pins project paths without confusing them for transport", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-pins-source-" });
+    try {
+      await Deno.mkdir(`${projectDir}/_pins/project-dir`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({
+          dependencies: { react: "19.2.4" },
+        }),
+      );
+      await Deno.writeTextFile(`${projectDir}/_pins/foo.ts`, "export default 'foo';\n");
+      await Deno.writeTextFile(
+        `${projectDir}/_pins/project-dir/bar.ts`,
+        "export default 'bar';\n",
+      );
+
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "0");
+      for (
+        const path of [
+          "/_vf_modules/_pins/foo.js",
+          "/_vf_modules/_pins/project-dir/bar.js",
+        ]
+      ) {
+        assertEquals(
+          (await serve(new Request(`http://localhost:3000${path}`), projectDir)).status,
+          200,
+        );
+      }
+
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      const snapshot = await getDependencyPinningSnapshot(projectDir);
+      const encodedSnapshot = encodeURIComponent(snapshot.cacheKey);
+      for (
+        const path of [
+          `/_vf_modules/_pins/${encodedSnapshot}/_pins/foo.js`,
+          `/_vf_modules/_pins/${encodedSnapshot}/_pins/project-dir/bar.js`,
+        ]
+      ) {
+        assertEquals(
+          (await serve(new Request(`http://localhost:3000${path}`), projectDir)).status,
+          200,
+        );
+      }
+
+      const unknown = await serve(
+        new Request(
+          "http://localhost:3000/_vf_modules/_pins/on%3Aunknown/_pins/foo.js",
+        ),
+        projectDir,
+      );
+      assertEquals(unknown.status, 409);
+      assertEquals(unknown.headers.get("cache-control"), "no-store");
+    } finally {
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("keeps release fallback static and computed children inside the path snapshot", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-release-path-pins-" });
+    const releaseId = "rel-path-pins";
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({
+          dependencies: {
+            react: "18.3.1",
+            "snapshot-package": "1.0.0",
+          },
+        }),
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/Parent.ts`,
+        [
+          `export { value as staticValue } from "./StaticChild.js";`,
+          `const lazyPath = "./LazyChild.js";`,
+          `export const load = () => import(lazyPath);`,
+        ].join("\n"),
+      );
+      const childSource = [
+        `import React from "react";`,
+        `import value from "snapshot-package";`,
+        `export { value };`,
+        `export const react = React;`,
+      ].join("\n");
+      await Deno.writeTextFile(
+        `${projectDir}/components/StaticChild.ts`,
+        childSource,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/LazyChild.ts`,
+        childSource,
+      );
+      clearReactVersionCache();
+      const snapshot = await getDependencyPinningSnapshot(projectDir);
+      const encodedSnapshot = encodeURIComponent(snapshot.cacheKey);
+      const parentUrl = new URL(
+        `http://localhost:3000/_vf_modules/_pins/${encodedSnapshot}/components/Parent.js` +
+          `?vf_release=${releaseId}&vf_runtime=${VERSION}`,
+      );
+
+      const parentResponse = await serveProductionModule(
+        new Request(parentUrl),
+        projectDir,
+        releaseId,
+      );
+      assertEquals(parentResponse.status, 200);
+      const parentCode = await parentResponse.text();
+      const staticMatch = parentCode.match(
+        /["'](\/_vf_modules\/_pins\/[^"']+\/components\/StaticChild\.js\?[^"']+)["']/,
+      );
+      assertEquals(staticMatch !== null, true);
+      assertStringIncludes(staticMatch?.[1] ?? "", `vf_release=${releaseId}`);
+      assertStringIncludes(staticMatch?.[1] ?? "", `vf_runtime=${VERSION}`);
+      assertEquals((staticMatch?.[1] ?? "").includes("pins="), false);
+
+      const staticResponse = await serveProductionModule(
+        new Request(new URL(staticMatch?.[1] ?? "", parentUrl)),
+        projectDir,
+        releaseId,
+      );
+      assertEquals(staticResponse.status, 200);
+      const staticCode = await staticResponse.text();
+      assertStringIncludes(staticCode, "snapshot-package@1.0.0");
+      assertStringIncludes(staticCode, "react@18.3.1");
+
+      const helperMatch = parentCode.match(
+        /\n(function (__veryfrontPinDynamicImport_*)[\s\S]+)\n$/,
+      );
+      assertEquals(helperMatch !== null, true);
+      const helper = new Function(
+        `${helperMatch?.[1]}; return ${helperMatch?.[2]};`,
+      )() as (value: unknown, parentUrl: string, modulePath?: string) => string;
+      const lazyUrl = new URL(
+        helper("./LazyChild.js", parentUrl.href, parentUrl.pathname),
+        parentUrl,
+      );
+      assertStringIncludes(lazyUrl.pathname, `/_vf_modules/_pins/${encodedSnapshot}/`);
+      assertEquals(lazyUrl.searchParams.has("pins"), false);
+
+      const lazyResponse = await serveProductionModule(
+        new Request(lazyUrl),
+        projectDir,
+        releaseId,
+      );
+      assertEquals(lazyResponse.status, 200);
+      const lazyCode = await lazyResponse.text();
+      assertStringIncludes(lazyCode, "snapshot-package@1.0.0");
+      assertStringIncludes(lazyCode, "react@18.3.1");
+    } finally {
+      clearReactVersionCache();
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects missing, duplicate, malformed, and unknown dependency snapshots", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-invalid-pins-" });
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "19.2.4" } }),
+      );
+      await Deno.writeTextFile(`${projectDir}/page.ts`, "export default 1;\n");
+      clearReactVersionCache();
+      const snapshot = await getDependencyPinningSnapshot(projectDir);
+      const encodedSnapshot = encodeURIComponent(snapshot.cacheKey);
+
+      for (
+        const pathAndQuery of [
+          "/_vf_modules/page.js",
+          "/_vf_modules/page.js?pins=",
+          "/_vf_modules/page.js?pins=off",
+          "/_vf_modules/page.js?pins=on%3Afirst&pins=on%3Asecond",
+          "/_vf_modules/page.js?pins=on%3Aunknown",
+          "/_vf_modules/page.js?pins=on%3Amissing",
+          "/_vf_modules/_pins/not-terminated",
+          "/_vf_modules/_pins/%E0%A4%A/page.js",
+          `/_vf_modules/_pins/${encodedSnapshot}`,
+          `/_vf_modules/_pins/${encodedSnapshot}/page.js?pins=${encodedSnapshot}`,
+          `/_vf_modules/_pins/${encodedSnapshot}/page.js?pins=on%3Aother`,
+          `/_vf_modules/_pins/${encodedSnapshot}/_pins/${encodedSnapshot}/page.js`,
+        ]
+      ) {
+        const response = await serve(
+          new Request(`http://localhost:3000${pathAndQuery}`),
+          projectDir,
+        );
+        assertEquals(response.status, 409);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+      }
+    } finally {
+      clearReactVersionCache();
       await Deno.remove(projectDir, { recursive: true });
     }
   });

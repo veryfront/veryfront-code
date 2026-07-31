@@ -15,12 +15,16 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
   DEFAULT_REACT_VERSION,
+  type DependencyPinningSourceInput,
   esmShReact,
-  readProjectDependencyVersions,
-  resolveProjectReactVersion,
-  stripSemverRange,
+  resolveProjectPackageVersions,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  appendDependencyPinningKey,
+  appendSameOriginDependencyPinningPathKey,
+} from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 function joinAttributes(attrs: Array<string | false | undefined | null | "">): string {
   return attrs.filter(Boolean).join(" ");
@@ -48,7 +52,7 @@ interface DetectedVersions {
 
 interface CachedImportMapEntry {
   cacheKey: string;
-  imports: Record<string, string>;
+  imports: Readonly<Record<string, string>>;
   json: string;
 }
 
@@ -73,6 +77,13 @@ const IMPORT_MAP_CACHE_MAX_ENTRIES = 256;
 const importMapJsonCache = new LRUCache<string, CachedImportMapEntry>({
   maxEntries: IMPORT_MAP_CACHE_MAX_ENTRIES,
 });
+
+function detachCachedImportMap(entry: CachedImportMapEntry): BuiltImportMap {
+  return {
+    imports: { ...entry.imports },
+    json: entry.json,
+  };
+}
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 
@@ -112,6 +123,7 @@ const AI_MODULE_UTILITIES: Record<string, string> = {
   "veryfront/chat": PLATFORM_UTILITY_PATHS.chat,
   "veryfront/markdown": PLATFORM_UTILITY_PATHS.markdown,
   "veryfront/mdx": PLATFORM_UTILITY_PATHS.mdx,
+  "veryfront/workflow": PLATFORM_UTILITY_PATHS.workflow,
   "veryfront/workflow/react": PLATFORM_UTILITY_PATHS.workflow,
 };
 
@@ -191,6 +203,7 @@ function buildCdnImportMapFromTemplates(
     "veryfront/chat": templates.veryfrontChat(veryfront),
     "veryfront/markdown": templates.veryfrontMarkdown(veryfront),
     "veryfront/mdx": templates.veryfrontMdx(veryfront),
+    "veryfront/workflow": templates.veryfrontWorkflow(veryfront),
     "veryfront/workflow/react": templates.veryfrontWorkflow(veryfront),
     // Core runtime utilities always resolve locally.
     ...CORE_PLATFORM_UTILITIES,
@@ -219,6 +232,7 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/chat": "/_veryfront/lib/chat.js",
     "veryfront/markdown": "/_veryfront/lib/markdown.js",
     "veryfront/mdx": "/_veryfront/lib/mdx.js",
+    "veryfront/workflow": "/_veryfront/lib/workflow.js",
     "veryfront/workflow/react": "/_veryfront/lib/workflow.js",
     "veryfront/head": PLATFORM_UTILITY_PATHS.head,
     "veryfront/router": PLATFORM_UTILITY_PATHS.router,
@@ -243,38 +257,34 @@ function getCdnImportMap(
   return (CDN_IMPORT_MAP_FACTORIES[provider] ?? getEsmShImportMap)(versions);
 }
 
-async function resolveVersions(
-  projectDir: string | undefined,
-  config?: VeryfrontConfig,
-): Promise<DetectedVersions> {
-  // Use shared resolver for React (handles config override + package.json + fallback)
-  const versionsConfig = config?.client?.cdn?.versions;
-  const configuredVeryfrontVersion = versionsConfig && versionsConfig !== "auto"
-    ? versionsConfig.veryfront
-    : undefined;
-  const detected: { react?: string; veryfront?: string } = projectDir
-    ? await readProjectDependencyVersions(projectDir)
-    : {};
-  const reactVersion = await resolveProjectReactVersion({ projectDir, config });
-
-  // Resolve veryfront version separately (config override or detection)
-  let veryfrontVersion = DEFAULT_VERSIONS.veryfront;
-
-  if (configuredVeryfrontVersion) {
-    veryfrontVersion = stripSemverRange(configuredVeryfrontVersion);
-  } else if (detected.veryfront) {
-    veryfrontVersion = detected.veryfront;
-  }
-
-  return { react: reactVersion, veryfront: veryfrontVersion };
-}
-
 interface BuildImportMapOptions {
   projectDir?: string;
   config?: VeryfrontConfig;
+  /** Absolute request origin used to identify same-origin module URLs. */
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
   customImports?: Record<string, string>;
   pretty?: boolean;
   releaseAssetManifest?: ReleaseAssetManifest | null;
+}
+
+async function resolveVersions(
+  options: Pick<
+    BuildImportMapOptions,
+    | "projectDir"
+    | "config"
+    | "dependencyPinningCacheKey"
+    | "dependencyPinningDependencies"
+    | "dependencyPinningSource"
+  >,
+): Promise<DetectedVersions> {
+  const versions = await resolveProjectPackageVersions(options);
+  return {
+    react: versions.react,
+    veryfront: versions.veryfront ?? DEFAULT_VERSIONS.veryfront,
+  };
 }
 
 function stringifyImportMap(imports: Record<string, string>, pretty = true): string {
@@ -381,11 +391,46 @@ function applyReleaseModuleVersions(
   );
 }
 
+function applyDependencyPinningKeys(
+  imports: Record<string, string>,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): Record<string, string> {
+  if (!dependencyPinningCacheKey?.startsWith("on:")) return imports;
+
+  return Object.fromEntries(
+    Object.entries(imports).map(([specifier, url]) => {
+      const pinnedModuleUrl = appendSameOriginDependencyPinningPathKey(
+        url,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
+      );
+      if (pinnedModuleUrl !== url) {
+        return [
+          specifier,
+          pinnedModuleUrl,
+        ];
+      }
+
+      return [
+        specifier,
+        !specifier.endsWith("/") && url.startsWith("/_veryfront/lib/")
+          ? appendDependencyPinningKey(url, dependencyPinningCacheKey)
+          : url,
+      ];
+    }),
+  );
+}
+
 function isImportMapOnlyOptions(
   options: BuildImportMapOptions | Record<string, string>,
 ): options is Record<string, string> {
   return !("projectDir" in options) &&
     !("config" in options) &&
+    !("moduleServerOrigin" in options) &&
+    !("dependencyPinningCacheKey" in options) &&
+    !("dependencyPinningDependencies" in options) &&
+    !("dependencyPinningSource" in options) &&
     !("customImports" in options) &&
     !("releaseAssetManifest" in options) &&
     !("pretty" in options);
@@ -401,11 +446,27 @@ export async function buildImportMap(
     }
   }
 
-  const { projectDir, config, customImports, pretty = true, releaseAssetManifest } =
-    (options ?? {}) as BuildImportMapOptions;
+  const {
+    projectDir,
+    config,
+    moduleServerOrigin,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    customImports,
+    pretty = true,
+    releaseAssetManifest,
+  } = (options ?? {}) as BuildImportMapOptions;
   const mode = config?.client?.moduleResolution ?? "cdn";
-  const versions = projectDir || config
-    ? await resolveVersions(projectDir, config)
+  const versions = projectDir || config || dependencyPinningCacheKey ||
+      dependencyPinningDependencies || dependencyPinningSource
+    ? await resolveVersions({
+      projectDir,
+      config,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+    })
     : DEFAULT_VERSIONS;
 
   if (mode === "bundled") {
@@ -413,6 +474,11 @@ export async function buildImportMap(
     imports = { ...imports, ...customImports };
     imports = applyManifestDependencies(imports, releaseAssetManifest);
     imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
+    imports = applyDependencyPinningKeys(
+      imports,
+      dependencyPinningCacheKey,
+      moduleServerOrigin,
+    );
 
     return { imports, json: stringifyImportMap(imports, pretty) };
   }
@@ -433,9 +499,19 @@ export async function buildImportMap(
   }
   imports = applyManifestDependencies(imports, releaseAssetManifest);
   imports = applyReleaseModuleVersions(imports, releaseAssetManifest);
+  imports = applyDependencyPinningKeys(
+    imports,
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
 
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
   const cacheKey = JSON.stringify({
     projectDir: projectDir ?? "",
+    ...(dependencyPinningCacheVariant ? { dependencyPinningCacheVariant } : {}),
     mode,
     provider: config?.client?.cdn?.provider ?? "esm.sh",
     react: versions.react,
@@ -446,12 +522,16 @@ export async function buildImportMap(
     manifestDependencies: stableManifestDependencyKey(releaseAssetManifest),
   });
   const cached = importMapJsonCache.get(cacheKey);
-  if (cached) return cached;
+  if (cached) return detachCachedImportMap(cached);
 
   const json = stringifyImportMap(imports, pretty);
-  const built = { cacheKey, imports, json };
+  const built: CachedImportMapEntry = {
+    cacheKey,
+    imports: Object.freeze({ ...imports }),
+    json,
+  };
   importMapJsonCache.set(cacheKey, built);
-  return built;
+  return detachCachedImportMap(built);
 }
 
 export async function buildImportMapJson(

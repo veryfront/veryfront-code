@@ -1190,12 +1190,21 @@ describe("DOM Utils", () => {
         parseFromString(html: string, _type: string) {
           const rootMatch = html.match(/<div id="root"[^>]*>(.*?)<\/div>/s);
           const scriptMatch = html.match(/<script data-veryfront-page[^>]*>(.*?)<\/script>/s);
+          const hydrationMatch = html.match(
+            /<script id="veryfront-hydration-data"[^>]*>(.*?)<\/script>/s,
+          );
 
           const mockRoot = rootMatch ? { innerHTML: rootMatch[1] } : null;
           const mockScript = scriptMatch ? { textContent: scriptMatch[1] } : null;
+          const mockHydrationScript = hydrationMatch ? { textContent: hydrationMatch[1] } : null;
 
           return {
-            getElementById: (id: string) => (id === "root" ? mockRoot : null),
+            getElementById: (id: string) =>
+              id === "root"
+                ? mockRoot
+                : id === "veryfront-hydration-data"
+                ? mockHydrationScript
+                : null,
             querySelector: (selector: string) =>
               selector === "script[data-veryfront-page]" ? mockScript : null,
           };
@@ -1235,6 +1244,24 @@ describe("DOM Utils", () => {
         const result = parsePageDataFromHTML(html);
 
         assertEquals(result.pageData, pageData, "Should extract page data");
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("should extract the dependency snapshot from hydration data", () => {
+      const mocks = setupMockDOMParser();
+      try {
+        const html = `
+        <div id="root"><div>Content</div></div>
+        <script id="veryfront-hydration-data" type="application/json">${
+          JSON.stringify({ dependencyPinningCacheKey: "on:snapshot-a" })
+        }</script>
+      `;
+
+        const result = parsePageDataFromHTML(html);
+
+        assertEquals(result.dependencyPinningCacheKey, "on:snapshot-a");
       } finally {
         mocks.cleanup();
       }

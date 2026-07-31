@@ -19,11 +19,21 @@ import { buildSSRModuleCacheKey } from "../../../cache/keys.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { computeConfigHashSync } from "../../../cache/config-hash.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
-import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
+import {
+  makeTempDir,
+  mkdir,
+  readTextFile,
+  remove,
+  writeTextFile,
+} from "#veryfront/testing/deno-compat.ts";
 import { injectNodePositions } from "#veryfront/transforms/plugins/babel-node-positions.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import type {
+  CacheRevisionMutation,
+  CacheRevisionSnapshot,
+  RevisionedCacheBackend,
+} from "#veryfront/cache/types.ts";
+import { buildRevisionedCacheKey } from "#veryfront/cache/backend.ts";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
-import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import {
   buildMdxEsmModuleRecoveryCacheKey,
   buildMdxEsmPathCacheKey,
@@ -38,6 +48,14 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { SSRCacheManager } from "./ssr-cache-manager.ts";
 import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import {
+  createMdxModuleRecoveryPayload,
+  serializeMdxModuleRecoveryPayload,
+} from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/recovery-payload.ts";
+
+const CANONICAL_PIN_KEY = "on:3m96ohlm0kf87";
+const PINNED_DEPENDENCIES = Object.freeze({ lodash: "1.0.0" });
+const CHANGED_PINNED_DEPENDENCIES = Object.freeze({ lodash: "2.0.0" });
 
 /** Hash source as the loader sees it (after node position injection for .tsx in dev/preview) */
 function hashAsLoader(source: string, filePath: string, projectDir: string): Promise<string> {
@@ -90,22 +108,50 @@ async function getLoaderCacheKeys(options: {
   };
 }
 
-class FakeDistributedCache implements CacheBackend {
+class FakeDistributedCache implements RevisionedCacheBackend {
   readonly type = "distributed" as const;
-  private values = new Map<string, string>();
+  private values = new Map<string, { value: string | null; revision: string }>();
+  private nextRevision = 0;
 
   get(key: string): Promise<string | null> {
-    return Promise.resolve(this.values.get(key) ?? null);
+    return Promise.reject(new Error(`ordinary get must not be used: ${key}`));
   }
 
-  set(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
+  set(key: string): Promise<void> {
+    return Promise.reject(new Error(`ordinary set must not be used: ${key}`));
   }
 
   del(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
+    return Promise.reject(new Error(`ordinary del must not be used: ${key}`));
+  }
+
+  getWithRevision(key: string): Promise<CacheRevisionSnapshot> {
+    const record = this.values.get(key);
+    return Promise.resolve({ value: record?.value ?? null, revision: record?.revision ?? "0" });
+  }
+
+  compareExchange(
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ): Promise<boolean> {
+    const current = this.values.get(key);
+    if ((current?.revision ?? "0") !== expectedRevision) return Promise.resolve(false);
+    this.values.set(key, {
+      value: mutation.kind === "set" ? mutation.value : null,
+      revision: String(++this.nextRevision),
+    });
+    return Promise.resolve(true);
+  }
+
+  async seedWithCompareExchange(key: string, value: string): Promise<void> {
+    const snapshot = await this.getWithRevision(key);
+    const stored = await this.compareExchange(key, snapshot.revision, {
+      kind: "set",
+      value,
+      expiresAtMs: Date.now() + 60_000,
+    });
+    if (!stored) throw new Error("revisioned test seed lost its compare-exchange");
   }
 }
 
@@ -242,6 +288,42 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     new SSRModuleLoader(baseOptions);
   });
 
+  it("rejects invalid dependency snapshots before constructing cache-backed state", () => {
+    const baseOptions = {
+      projectDir: "/project",
+      projectId: "project-a",
+      contentSourceId: "preview-main",
+      adapter: denoAdapter,
+      dev: true,
+    } as const;
+
+    for (
+      const invalidSnapshot of [
+        {
+          dependencyPinningCacheKey: "malformed",
+          dependencyPinningDependencies: PINNED_DEPENDENCIES,
+        },
+        {
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+        },
+        {
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+          dependencyPinningDependencies: CHANGED_PINNED_DEPENDENCIES,
+        },
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          new SSRModuleLoader({
+            ...baseOptions,
+            ...invalidSnapshot,
+          }),
+        Error,
+        "dependency pinning snapshot",
+      );
+    }
+  });
+
   it("isolates cache by projectId", async () => {
     clearSSRModuleCache();
 
@@ -281,6 +363,28 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     } finally {
       await remove(projectDir, { recursive: true });
     }
+  });
+
+  it("uses the writer's origin-aware MDX cache variant for lookup and invalidation", () => {
+    const originA = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      moduleServerOrigin: "https://a.example",
+    });
+    const originB = __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+      dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+      moduleServerOrigin: "https://b.example",
+    });
+
+    assert(originA?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
+    assert(originB?.startsWith(`${CANONICAL_PIN_KEY}:origin:`));
+    assert(originA !== originB);
+    assertEquals(
+      __ssrModuleLoaderInternals.getMdxEsmCacheVariant({
+        dependencyPinningCacheKey: "off",
+        moduleServerOrigin: "https://a.example",
+      }),
+      undefined,
+    );
   });
 
   it("invalidates stale cache entries with missing local dependencies and retransforms", async () => {
@@ -727,12 +831,21 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       });
 
       const vfmodDir = getMdxEsmSsrCacheDir(projectId, contentSourceId);
-      const childPath = join(vfmodDir, "vfmod-child.mjs");
+      const recoveredChildCode = `export default null;`;
+      const childPayload = createMdxModuleRecoveryPayload(
+        projectId,
+        contentSourceId,
+        "_vf_modules/child.js",
+        recoveredChildCode,
+      );
+      const childPath = join(vfmodDir, childPayload.fileName);
       const cachedTempPath = join(projectDir, `recover-vfmod-${crypto.randomUUID()}.mjs`);
 
-      await distributedCache.set(
-        buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, "vfmod-child.mjs"),
-        tokenizeAllVeryFrontPaths(`export default null;`),
+      await distributedCache.seedWithCompareExchange(
+        buildRevisionedCacheKey(
+          buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, childPayload.fileName),
+        ),
+        serializeMdxModuleRecoveryPayload(childPayload),
       );
 
       await writeTextFile(
@@ -760,6 +873,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
       const component = await loader.loadModule(filePath, source);
       assertEquals(component.name, "RecoveredViaCache");
       assertEquals(globalModuleCache.has(filePathCacheKey), true);
+      assertEquals(await readTextFile(childPath), recoveredChildCode);
     } finally {
       __injectCachesForTests(null);
       await remove(getMdxEsmSsrCacheDir(projectId, contentSourceId), { recursive: true })

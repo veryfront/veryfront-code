@@ -8,6 +8,7 @@ function makePayload(overrides: Partial<RSCPayload> = {}): RSCPayload {
   return {
     html: overrides.html ?? "<div>hello</div>",
     clientRefs: overrides.clientRefs ?? {},
+    dependencyPinningCacheKey: overrides.dependencyPinningCacheKey,
     assets: overrides.assets ?? { css: [], js: [] },
     tree: overrides.tree,
   };
@@ -80,6 +81,14 @@ describe("rendering/rsc/production-optimizer", () => {
       assertEquals(result.clientRefs, { Button: "/button-v1.js" });
       assertEquals(result.assets, { css: ["/app-v1.css"], js: ["/app-v1.js"] });
     });
+
+    it("preserves dependency snapshot identity", () => {
+      const result = RSCProductionOptimizer.optimizePayload(
+        makePayload({ dependencyPinningCacheKey: "on:pins-a" }),
+      );
+
+      assertEquals(result.dependencyPinningCacheKey, "on:pins-a");
+    });
   });
 
   describe("getCacheHeaders", () => {
@@ -151,6 +160,17 @@ describe("rendering/rsc/production-optimizer", () => {
           RSCProductionOptimizer.generateETag(changedAssets),
         true,
       );
+    });
+
+    it("differs for identical output rendered under different dependency snapshots", () => {
+      const a = RSCProductionOptimizer.generateETag(
+        makePayload({ dependencyPinningCacheKey: "on:pins-a" }),
+      );
+      const b = RSCProductionOptimizer.generateETag(
+        makePayload({ dependencyPinningCacheKey: "on:pins-b" }),
+      );
+
+      assertEquals(a !== b, true);
     });
   });
 

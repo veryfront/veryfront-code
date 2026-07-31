@@ -103,8 +103,9 @@ reported as a discovery error; it is not partially reinterpreted.
 bounded, fail-closed parser. The explicitly named
 `parseUnsafeLegacySkillFrontmatter` helper preserves the historical lossy
 fallback only for migration and is deprecated. Likewise,
-`buildSkillManifestPrompt` JSON-quotes bounded IDs and descriptions before
-placing this untrusted metadata in a system prompt;
+`buildSkillManifestPrompt` JSON-quotes bounded IDs and descriptions, escapes
+Unicode line and paragraph separators, and uses captured serialization
+intrinsics before placing this untrusted metadata in a system prompt;
 `buildUnsafeLegacySkillManifestPrompt` is deprecated and unsafe for prompts.
 The public Agent runtime helpers follow the same rule:
 `buildRuntimeAvailableSkillsPromptBlock`, `formatRuntimeSkillMetadata`,
@@ -137,7 +138,11 @@ adapter entry names are rejected by both policies even if an older release
 happened to enumerate them; those cases are intentional security corrections,
 not supported compatibility behavior.
 Errors returned from strict Skill reads redact the configured root as
-`<skill-root>` so host filesystem layout is not exposed to callers.
+`<skill-root>` and other absolute local paths as `<local-path>` so host
+filesystem layout is not exposed to callers. Cancellation control still uses
+the caller's abort reason internally, but the public error is a detached,
+redacted framework-owned value without the source stack, cause, or custom
+fields.
 Framework discovery and tool execution additionally apply tighter resource
 ceilings and deterministic sorting at their filesystem boundaries.
 Non-native filesystem adapters used at these bounded Skill boundaries must
@@ -358,9 +363,18 @@ When retirement begins, the loader seals the current generation synchronously,
 before extension context abort or teardown, so no new execution can enter it.
 Context abort and generation drain can both request cancellation, but the
 validated execution forwards `terminate(reason)` at most once. The drain waits
-for every admitted execution to report its result and terminal cleanup. Only
-after those generation leases drain does the provider extension run teardown
-and a successfully staged replacement become active.
+up to a 1,000 ms cleanup grace for every admitted execution to report its
+result and terminal cleanup. Only after those generation leases drain does the
+provider extension run teardown and a successfully staged replacement become
+active.
+
+If a provider does not report both settlements within the cleanup grace, the
+public script invocation returns its timeout or cancellation result instead of
+waiting indefinitely. Veryfront keeps observing the late settlements and
+quarantines the provider generation. Teardown and replacement fail without
+dismantling or reusing that generation while its execution remains active.
+After the provider reports both its late result and terminal cleanup
+settlements, retry teardown before activating a replacement.
 
 Provider resolution fails closed while a generation is retiring or a
 replacement is staging. If replacement setup fails, contracts remain
@@ -389,6 +403,13 @@ Veryfront supports exact tool IDs and colon-delimited prefix wildcards such as
 `Bash(git:*)`; unsupported patterns fail validation instead of widening access.
 An explicitly empty string or array creates a deny-all policy. Only omission
 means unrestricted tool access.
+
+`load_skill` remains available under a declared policy so the agent can load
+or switch skill instructions. `load_skill_reference` and
+`execute_skill_script` are available only when the active skill advertises a
+matching file and the declared policy allows that tool ID. An empty or invalid
+policy therefore cannot read advertised references or execute advertised
+scripts.
 
 The latest successful skill body load remains active for the persisted
 conversation, including later user messages, until another skill body is

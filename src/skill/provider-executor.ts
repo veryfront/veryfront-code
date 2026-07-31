@@ -24,16 +24,141 @@ import {
 } from "#veryfront/platform/compat/abort-signal.ts";
 import { createIntrinsicPromiseContinuation } from "../extensions/promise-intrinsics-internal.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
+import { SKILL_SCRIPT_PROVIDER_TERMINATION_GRACE_MS } from "./limits.ts";
 import { type SkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
 
 const arrayIteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
 const arrayIterator = Array.prototype[arrayIteratorSymbol];
 const clearScheduledTimeout = clearTimeout;
+const createObject = Object.create;
 const defineOwnProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const NativeAggregateError = AggregateError;
+const NativePromise = Promise;
+const NativeRangeError = RangeError;
+const numberIsSafeInteger = Number.isSafeInteger;
 const scheduleTimeout = setTimeout;
+
+type ExecutionSettlement<T> =
+  | { readonly fulfilled: true; readonly value: T }
+  | { readonly fulfilled: false; readonly reason: unknown };
+
+type ProviderLifecycleSettlements = Readonly<{
+  result: ExecutionSettlement<Readonly<SkillScriptResult>>;
+  terminal: ExecutionSettlement<void>;
+}>;
+
+type ProviderLifecycleRace =
+  | { readonly kind: "settled"; readonly settlements: ProviderLifecycleSettlements }
+  | { readonly kind: "grace-expired" };
+
+const graceExpiredRecord = createObject(null) as { kind: "grace-expired" };
+graceExpiredRecord.kind = "grace-expired";
+const GRACE_EXPIRED = freeze(graceExpiredRecord) as ProviderLifecycleRace;
+
+function createPinnedPromise<T>(
+  executor: ConstructorParameters<typeof Promise<T>>[0],
+): Promise<T> {
+  const promise = new NativePromise<T>(executor);
+  defineOwnProperty(promise, "constructor", {
+    configurable: true,
+    enumerable: false,
+    value: NativePromise,
+    writable: false,
+  });
+  return promise;
+}
+
+function observeProviderLifecycle(
+  result: Promise<ExecutionSettlement<Readonly<SkillScriptResult>>>,
+  terminal: Promise<ExecutionSettlement<void>>,
+): Promise<ProviderLifecycleSettlements> {
+  return createPinnedPromise<ProviderLifecycleSettlements>((resolve, reject) => {
+    let resultSettlement: ExecutionSettlement<Readonly<SkillScriptResult>> | undefined;
+    let terminalSettlement: ExecutionSettlement<void> | undefined;
+    const finish = (): void => {
+      if (resultSettlement === undefined || terminalSettlement === undefined) return;
+      const settlements = createObject(null) as {
+        result: ExecutionSettlement<Readonly<SkillScriptResult>>;
+        terminal: ExecutionSettlement<void>;
+      };
+      settlements.result = resultSettlement;
+      settlements.terminal = terminalSettlement;
+      resolve(freeze(settlements));
+    };
+    const captureResult = (
+      settlement: ExecutionSettlement<Readonly<SkillScriptResult>>,
+    ): void => {
+      try {
+        resultSettlement = settlement;
+        finish();
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const captureTerminal = (settlement: ExecutionSettlement<void>): void => {
+      try {
+        terminalSettlement = settlement;
+        finish();
+      } catch (error) {
+        reject(error);
+      }
+    };
+    createIntrinsicPromiseContinuation(result, captureResult, reject);
+    createIntrinsicPromiseContinuation(terminal, captureTerminal, reject);
+  });
+}
+
+function raceLifecycleAgainstGrace(
+  lifecycle: Promise<ProviderLifecycleSettlements>,
+  graceExpired: Promise<void>,
+): Promise<ProviderLifecycleRace> {
+  return createPinnedPromise<ProviderLifecycleRace>((resolve, reject) => {
+    let settled = false;
+    const resolveOnce = (value: ProviderLifecycleRace): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    createIntrinsicPromiseContinuation(
+      lifecycle,
+      (settlements) => {
+        const settledRecord = createObject(null) as {
+          kind: "settled";
+          settlements: ProviderLifecycleSettlements;
+        };
+        settledRecord.kind = "settled";
+        settledRecord.settlements = settlements;
+        resolveOnce(freeze(settledRecord));
+      },
+      reject,
+    );
+    createIntrinsicPromiseContinuation(
+      graceExpired,
+      () => resolveOnce(GRACE_EXPIRED),
+      reject,
+    );
+  });
+}
+
+function ignoreSettlement(_value: unknown): void {}
+
+function releaseLeaseAfterLifecycle(
+  lifecycle: Promise<ProviderLifecycleSettlements>,
+  release: () => void,
+): void {
+  const lateRelease = createIntrinsicPromiseContinuation(
+    lifecycle,
+    () => release(),
+    () => release(),
+  );
+  createIntrinsicPromiseContinuation(
+    lateRelease,
+    ignoreSettlement,
+    ignoreSettlement,
+  );
+}
 
 /** A legacy/built-in executor or one snapshotted extension provider. */
 export type SkillScriptExecutionBackend =
@@ -106,7 +231,13 @@ async function executeSkillScriptWithProviderInternal(
   input: Readonly<SkillScriptExecutorInput>,
   budget: SkillOperationBudget,
   contractReference?: Readonly<ContractReference<unknown>>,
+  terminationGraceMs = SKILL_SCRIPT_PROVIDER_TERMINATION_GRACE_MS,
 ): Promise<Readonly<SkillScriptResult>> {
+  if (!numberIsSafeInteger(terminationGraceMs) || terminationGraceMs < 0) {
+    throw new NativeRangeError(
+      "Skill provider termination grace must be a non-negative safe integer",
+    );
+  }
   const timeoutReason = budget.timeoutMs === undefined
     ? undefined
     : budget.timeoutError ?? new SkillOperationTimeoutError(budget.timeoutMs);
@@ -115,10 +246,16 @@ async function executeSkillScriptWithProviderInternal(
     : acquireContractLease(contractReference);
   const abortSignal = budget.abortSignal;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let terminationGraceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let resolveTerminationGrace!: () => void;
+  const terminationGraceExpired = createPinnedPromise<void>((resolve) => {
+    resolveTerminationGrace = resolve;
+  });
   let abortListener: (() => void) | undefined;
   let abortListenerAttached = false;
   let terminationStarted = false;
   let terminationReason: unknown;
+  let leaseReleaseDeferred = false;
   const controlFailures: unknown[] = [];
   const terminationControlFailures: unknown[] = [];
 
@@ -130,10 +267,26 @@ async function executeSkillScriptWithProviderInternal(
     const terminalSettlementPromise = observeSkillScriptExecutionSettlementWithoutHooks(
       handle.terminal,
     );
+    const lifecycleSettlementPromise = observeProviderLifecycle(
+      resultSettlementPromise,
+      terminalSettlementPromise,
+    );
+    const lifecycleRacePromise = raceLifecycleAgainstGrace(
+      lifecycleSettlementPromise,
+      terminationGraceExpired,
+    );
+    const startTerminationGrace = (): void => {
+      if (terminationGraceTimeoutId !== undefined) return;
+      terminationGraceTimeoutId = scheduleTimeout(
+        resolveTerminationGrace,
+        terminationGraceMs,
+      );
+    };
     const terminate = (reason: unknown): void => {
       if (terminationStarted) return;
       terminationStarted = true;
       terminationReason = reason;
+      startTerminationGrace();
       try {
         handle.terminate(reason);
       } catch (error) {
@@ -149,17 +302,21 @@ async function executeSkillScriptWithProviderInternal(
         if (!requestSkillScriptExecutionTermination(handle, reason)) {
           terminationStarted = false;
           terminationReason = undefined;
+        } else {
+          startTerminationGrace();
         }
       } catch (error) {
         appendUniqueFailure(controlFailures, error);
         appendUniqueFailure(terminationControlFailures, error);
       }
     };
-    const terminateIfBudgetExpired = (): void => {
+    const terminateIfBudgetExpired = (): boolean => {
       try {
         budget.throwIfTerminated();
+        return false;
       } catch (reason) {
         terminate(reason);
+        return true;
       }
     };
 
@@ -195,12 +352,25 @@ async function executeSkillScriptWithProviderInternal(
         handle.activate();
       } catch (error) {
         appendUniqueFailure(controlFailures, error);
+        if (!terminateIfBudgetExpired()) terminate(error);
       }
       terminateIfBudgetExpired();
     }
 
-    const resultSettlement = await resultSettlementPromise;
-    const terminalSettlement = await terminalSettlementPromise;
+    const lifecycleRace = await lifecycleRacePromise;
+    if (lifecycleRace.kind === "grace-expired") {
+      if (contractLease !== undefined) {
+        contractLease.quarantine();
+        leaseReleaseDeferred = true;
+        releaseLeaseAfterLifecycle(
+          lifecycleSettlementPromise,
+          contractLease.release,
+        );
+      }
+      throw terminationReason;
+    }
+    const resultSettlement = lifecycleRace.settlements.result;
+    const terminalSettlement = lifecycleRace.settlements.terminal;
     terminateIfBudgetExpired();
     if (timeoutReason !== undefined && terminationReason === timeoutReason) {
       const cleanupFailures: unknown[] = [];
@@ -236,10 +406,13 @@ async function executeSkillScriptWithProviderInternal(
     return resultSettlement.value;
   } finally {
     if (timeoutId !== undefined) clearScheduledTimeout(timeoutId);
+    if (terminationGraceTimeoutId !== undefined) {
+      clearScheduledTimeout(terminationGraceTimeoutId);
+    }
     if (abortSignal && abortListener && abortListenerAttached) {
       removeAbortSignalListener(abortSignal, abortListener);
     }
-    contractLease?.release();
+    if (!leaseReleaseDeferred) contractLease?.release();
   }
 }
 
@@ -254,25 +427,30 @@ function rethrowExecutionFailure(reason: unknown): never {
 }
 
 /**
- * Execute one lifecycle provider without exposing settlement before cleanup.
+ * Execute one lifecycle provider with bounded post-cancellation cleanup.
  *
  * Timeout and abort handling are installed before activation. Once cancellation
  * starts, provider termination is forwarded once by the validated handle and
- * this function continues to consume both result and terminal settlements. The
- * returned Promise pins its intrinsic constructor so provider code cannot
- * interfere with caller observation through mutable Promise hooks.
+ * this function continues to consume both result and terminal settlements. If
+ * cleanup exceeds its grace, the public Promise rejects with the original
+ * cancellation while a managed generation remains quarantined until both late
+ * settlements arrive. The returned Promise pins its intrinsic constructor so
+ * provider code cannot interfere with caller observation through mutable
+ * Promise hooks.
  */
 export function executeSkillScriptWithProvider(
   provider: Readonly<SkillScriptExecutorProviderSnapshot>,
   input: Readonly<SkillScriptExecutorInput>,
   budget: SkillOperationBudget,
   contractReference?: Readonly<ContractReference<unknown>>,
+  terminationGraceMs = SKILL_SCRIPT_PROVIDER_TERMINATION_GRACE_MS,
 ): Promise<Readonly<SkillScriptResult>> {
   const execution = executeSkillScriptWithProviderInternal(
     provider,
     input,
     budget,
     contractReference,
+    terminationGraceMs,
   );
   return createIntrinsicPromiseContinuation(
     execution,

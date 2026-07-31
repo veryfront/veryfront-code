@@ -22,6 +22,11 @@ import {
   fingerprintPipelineImportMap,
   snapshotImportMap,
 } from "#veryfront/transforms/pipeline/cache-identity.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { assertReactComponentType } from "../../react-component-type.ts";
 
@@ -304,9 +309,18 @@ export async function loadTSXComponent(
   reactVersion?: string,
   importMap?: ImportMapConfig,
   options: LoadTSXComponentOptions = {},
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ComponentType> {
   const mode = options.mode ?? "development";
   const source = await adapter.fs.readFile(componentPath);
+  const dependencySnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource ?? projectDir,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+  );
   const resolvedImportMap = snapshotImportMap(
     importMap ?? await preloadImportMap(projectDir, adapter, projectId),
   );
@@ -327,14 +341,19 @@ export async function loadTSXComponent(
     contentSourceId,
     importMapFingerprint,
   ) + ":" + runtimeFingerprint;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    dependencySnapshot.cacheKey,
+    moduleServerOrigin,
+  );
+  const dependencyAwareCacheKey = cacheVariant ? `${cacheKey}:pins:${cacheVariant}` : cacheKey;
 
-  const cached = getCachedLayout(cache, projectId, cacheKey);
+  const cached = getCachedLayout(cache, projectId, dependencyAwareCacheKey);
   if (cached) return cached;
 
   const loaded = await getTSXComponentFlights(cache).do(
-    cacheKey,
+    dependencyAwareCacheKey,
     async (control) => {
-      const cachedDuringFlight = getCachedLayout(cache, projectId, cacheKey);
+      const cachedDuringFlight = getCachedLayout(cache, projectId, dependencyAwareCacheKey);
       if (cachedDuringFlight) return cachedDuringFlight;
 
       const exported = await (options.loadComponentFromSource ?? loadComponentFromSource)(
@@ -352,6 +371,10 @@ export async function loadTSXComponent(
           contentSourceId,
           reactVersion,
           importMap: resolvedImportMap,
+          moduleServerOrigin,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource: dependencyPinningSource ?? projectDir,
         },
       );
       const loaded = assertReactComponentType(
@@ -360,7 +383,7 @@ export async function loadTSXComponent(
       );
 
       if (control.isCurrent()) {
-        setCachedLayout(cache, projectId, cacheKey, loaded);
+        setCachedLayout(cache, projectId, dependencyAwareCacheKey, loaded);
       }
       return loaded;
     },
@@ -386,6 +409,10 @@ export function loadMDXLayout(
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
   reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ComponentType<{ components?: MDXComponents }>> {
   return withSpan(
     SpanNames.LAYOUT_LOAD_MDX,
@@ -415,6 +442,10 @@ export function loadMDXLayout(
         contentSourceId,
         reactVersion,
         map,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        moduleServerOrigin,
       )) as MDXModule;
 
       loadMdxLayoutLog.debug("loadModuleESM DONE", {
@@ -445,6 +476,10 @@ export async function preloadMDXLayoutModule(
   contentSourceId: string,
   reactVersion?: string,
   preloadedImportMap?: ImportMapConfig,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<void> {
   await loadMDXLayout(
     bundle,
@@ -455,6 +490,10 @@ export async function preloadMDXLayoutModule(
     contentSourceId,
     preloadedImportMap,
     reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
   );
 }
 
@@ -472,6 +511,10 @@ export async function applyTSXLayout(
   importMap?: ImportMapConfig,
   mode: "development" | "production" = "development",
   moduleServerUrl?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ReactElement> {
   const start = performance.now();
   applyTsxLayoutLog.debug("START", {
@@ -497,6 +540,10 @@ export async function applyTSXLayout(
       reactVersion,
       importMap,
       { mode, moduleServerUrl },
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+      moduleServerOrigin,
     );
 
     applyTsxLayoutLog.debug("loadTSXComponent DONE", {
@@ -533,6 +580,10 @@ export async function applyMDXLayout(
   contentSourceId: string,
   preloadedImportMap?: ImportMapConfig,
   reactVersion?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   const LayoutFn = await loadMDXLayout(
@@ -544,6 +595,10 @@ export async function applyMDXLayout(
     contentSourceId,
     preloadedImportMap,
     reactVersion,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
   );
 
   const child = ensureValidChild(element, React);

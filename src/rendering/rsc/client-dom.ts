@@ -1,7 +1,13 @@
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rscLogger } from "../client/browser-logger.ts";
 import { isValidRscSlotId, MAX_RSC_CLIENT_SLOTS } from "./client-transport.ts";
-import { RSC_ROOT_ID } from "./constants.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER, RSC_ROOT_ID } from "./constants.ts";
+import { readHydrationDataSnapshot } from "./client-module-strategy.ts";
+import {
+  admitDependencySnapshot,
+  DependencySnapshotAdmissionError,
+  type RecoverFromDependencySnapshotAdmissionFailure,
+} from "./dependency-snapshot-admission.ts";
 
 type SlotMessage = { type: "slot"; id: string; html: string };
 
@@ -11,6 +17,11 @@ const MAX_NDJSON_RECORDS = 10_000;
 interface NdjsonStreamState {
   records: number;
   readonly slotIds: Set<string>;
+}
+
+export interface NdjsonDependencySnapshotOptions {
+  readonly requestedDependencyPinningCacheKey?: string;
+  readonly recoverFromAdmissionFailure?: RecoverFromDependencySnapshotAdmissionFailure;
 }
 
 export function getContainer(doc: Document, id: string): HTMLElement {
@@ -159,10 +170,39 @@ export async function consumeNdjsonStream(
   input: Response | ReadableStream<Uint8Array>,
   doc: Document = document,
   signal?: AbortSignal,
+  dependencySnapshotOptions?: NdjsonDependencySnapshotOptions,
 ): Promise<void> {
   const response = "body" in input ? input : null;
   const stream = response?.body ?? (input as ReadableStream<Uint8Array>);
   if (!stream) return;
+
+  if (response) {
+    const currentHydrationSnapshot = readHydrationDataSnapshot(doc);
+    const requestedDependencyPinningCacheKey = dependencySnapshotOptions === undefined
+      ? currentHydrationSnapshot.data?.dependencyPinningCacheKey
+      : dependencySnapshotOptions.requestedDependencyPinningCacheKey;
+    const admission = admitDependencySnapshot(
+      {
+        requestedDependencyPinningCacheKey,
+        currentDependencyPinningCacheKey: currentHydrationSnapshot.valid
+          ? currentHydrationSnapshot.data?.dependencyPinningCacheKey
+          : currentHydrationSnapshot,
+        responseHeaderDependencyPinningCacheKey: response.headers.get(
+          RSC_DEPENDENCY_PINNING_HEADER,
+        ),
+        requireResponseHeader: true,
+      },
+      dependencySnapshotOptions?.recoverFromAdmissionFailure,
+    );
+    if (!admission) {
+      try {
+        await stream.cancel();
+      } catch (e) {
+        rscLogger.debug("[client-dom] rejected stream cancel failed", e);
+      }
+      throw new DependencySnapshotAdmissionError();
+    }
+  }
 
   const reader = stream.getReader();
   const decoder = new TextDecoder();

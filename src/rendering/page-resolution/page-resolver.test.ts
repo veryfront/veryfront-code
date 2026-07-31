@@ -133,6 +133,7 @@ describe("rendering/page-resolution/page-resolver", () => {
       let statCalls = 0;
       const adapter = {
         fs: {
+          symlinkSemantics: "none",
           readFile: async (path: string) => {
             if (path === "/project/app/[slug]/page.tsx") {
               return "export default function Page() { return null; }";
@@ -169,6 +170,7 @@ describe("rendering/page-resolution/page-resolver", () => {
     it("resolves optional catch-all App Router pages across remaining segments", async () => {
       const adapter = {
         fs: {
+          symlinkSemantics: "none",
           readFile: async (path: string) => {
             if (path === "/project/app/[[...slug]]/page.tsx") {
               return "export default function Page() { return null; }";
@@ -201,6 +203,7 @@ describe("rendering/page-resolution/page-resolver", () => {
       const adapter = {
         id: "memory",
         fs: {
+          symlinkSemantics: "none",
           readFile: async (path: string) => {
             if (path === "/project/app/page.tsx") {
               return "export default function Page() { return null; }";

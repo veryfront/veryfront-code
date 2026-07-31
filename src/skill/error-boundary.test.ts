@@ -130,6 +130,63 @@ Deno.test("Skill error boundary canonicalizes Windows root matching", () => {
   assertEquals(failure.message, String.raw`Failed below <skill-root>\references`);
 });
 
+Deno.test("Skill error boundary redacts unrelated POSIX and Windows absolute paths", () => {
+  const root = "/project/skills/demo";
+  const failure = sanitizeSkillBoundaryFailure(
+    new Error(
+      String
+        .raw`Skill ${root}/scripts; POSIX /Users/alice/private/input.json; Windows C:\Users\Alice\private\output.json`,
+    ),
+    root,
+  );
+
+  assertEquals(
+    failure.message,
+    "Skill <skill-root>/scripts; POSIX <local-path>; Windows <local-path>",
+  );
+});
+
+Deno.test("Skill error boundary redacts generic paths before diagnostic truncation", () => {
+  const prefix = "x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS - 36);
+  const failure = sanitizeSkillBoundaryFailure(
+    new Error(`${prefix} /Users/alice/private/secret.json ${"y".repeat(100)}`),
+    "/project/skills/demo",
+  );
+
+  assertEquals(failure.message.includes("/Users/alice/private"), false);
+  assertEquals(failure.message.includes("<local-path>"), true);
+  assertEquals(failure.message.endsWith("...[truncated]"), true);
+});
+
+Deno.test("Skill error boundary preserves package identifiers and web URLs", () => {
+  const failure = sanitizeSkillBoundaryFailure(
+    new Error(
+      "Missing @veryfront/ext-yaml from https://example.test/packages/ext-yaml",
+    ),
+    "/project/skills/demo",
+  );
+
+  assertEquals(
+    failure.message,
+    "Missing @veryfront/ext-yaml from https://example.test/packages/ext-yaml",
+  );
+});
+
+Deno.test("Skill error boundary redacts POSIX and Windows file URLs", () => {
+  const failure = sanitizeSkillBoundaryFailure(
+    new Error(
+      "POSIX file:///Users/alice/private/input.ts:1:2; " +
+        "Windows file:///C:/Users/Alice/private/output.ts:3:4",
+    ),
+    "/project/skills/demo",
+  );
+
+  assertEquals(
+    failure.message,
+    "POSIX <local-path>; Windows <local-path>",
+  );
+});
+
 Deno.test("Skill error boundary redacts a root before diagnostic truncation", () => {
   const root = String.raw`C:\Private\Skills\deep\nested\private\skill\root\Demo`;
   const prefix = "x".repeat(ERROR_DIAGNOSTIC_MAX_LENGTH_CHARS - 28);
@@ -154,7 +211,7 @@ Deno.test("Skill error boundary treats root metacharacters as literal text", () 
 
   assertEquals(
     failure.message,
-    String.raw`Exact <skill-root>\script; decoy c:\private\skills\demoXprod`,
+    String.raw`Exact <skill-root>\script; decoy <local-path>`,
   );
 });
 

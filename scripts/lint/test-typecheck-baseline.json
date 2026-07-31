@@ -28,7 +28,6 @@
   "src/rendering/element-validator/validator-core.test.ts",
   "src/rendering/layouts/utils/compiler.test.ts",
   "src/rendering/utils/react-helpers.test.ts",
-  "src/transforms/import-rewriter/strategies/cross-project-strategy.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
   "src/transforms/mdx/esm-module-loader/loader.test.ts"
 ]

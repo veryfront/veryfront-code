@@ -15,8 +15,15 @@ import {
 } from "#veryfront/cache/keys.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 const PAGE_DATA_TIMEOUT_MS = 25_000;
+const DEPENDENCY_PINNING_REQUEST_HEADER = "x-veryfront-dependency-pins";
 const PAGE_DATA_CACHE_TTL_MS = readPositiveIntegerEnv("VERYFRONT_PAGE_DATA_CACHE_TTL_MS", 60_000);
 const PAGE_DATA_CACHE_STALE_MS = readPositiveIntegerEnv(
   "VERYFRONT_PAGE_DATA_CACHE_STALE_MS",
@@ -84,15 +91,20 @@ async function resolvePageDataWithinDeadline(
   request: Request,
   url: URL,
   callerSignal: AbortSignal | undefined,
+  dependencySnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
 ): Promise<PageDataResponse> {
   const controller = new AbortController();
   const workRequest = callerSignal ? request : new Request(request, { signal: controller.signal });
 
-  return await withTimeoutThrow(
+  const pageData = await withTimeoutThrow(
     renderer.resolvePageData(slug, {
       request: workRequest,
       url,
       abortSignal: controller.signal,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
     }),
     PAGE_DATA_TIMEOUT_MS,
     `resolvePageData for ${slug}`,
@@ -102,6 +114,11 @@ async function resolvePageDataWithinDeadline(
       onTimeout: (error) => controller.abort(error),
     },
   );
+
+  return dependencySnapshot.cacheKey === "off" ? pageData : {
+    ...pageData,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+  };
 }
 
 export function __clearPageDataEndpointCacheForTests(): void {
@@ -119,34 +136,81 @@ export function handlePageDataEndpoint(
   return withSpan(
     "module.pageData.handle",
     async () => {
+      let dependencySnapshot: DependencyPinningSnapshot | undefined;
+      const respondPageData = (response: Response): HandlerResult =>
+        respond(withDependencySnapshotResponseHeaders(response, dependencySnapshot));
       try {
         const slug = pathname
           .replace("/_veryfront/page-data/", "")
           .replace(/\.json$/, "") || "";
 
+        const requestedPinKey = req.headers.get(DEPENDENCY_PINNING_REQUEST_HEADER);
+        if (requestedPinKey !== null && !requestedPinKey.startsWith("on:")) {
+          return respondPageData(
+            unknownDependencySnapshotResponse(req, ctx, createResponseBuilder),
+          );
+        }
+
+        const dependencySource = createHandlerDependencyPinningSource(ctx);
+        const resolvedDependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
+          dependencySource,
+          requestedPinKey,
+        );
+        if (
+          !resolvedDependencySnapshot ||
+          (requestedPinKey === null && resolvedDependencySnapshot.cacheKey !== "off")
+        ) {
+          return respondPageData(
+            unknownDependencySnapshotResponse(req, ctx, createResponseBuilder),
+          );
+        }
+        dependencySnapshot = resolvedDependencySnapshot;
+
         const url = new URL(req.url);
+        const applicationRequest = requestedPinKey === null ? req : new Request(req, {
+          headers: withoutHeader(req.headers, DEPENDENCY_PINNING_REQUEST_HEADER),
+        });
         const renderer = await getRendererForProject(ctx);
         const isSpeculativePrefetch = req.headers.get("x-veryfront-prefetch") === "1";
         // The request reaches server-data hooks, so prefetch work cannot safely
         // populate or join the foreground response cache/singleflight.
         const canUsePageDataCache = isPageDataCacheEnabled() &&
-          !requestHasCacheSensitiveState(req) && !isSpeculativePrefetch;
-        const cacheKey = canUsePageDataCache ? buildPageDataCacheKey(ctx, slug, url) : null;
+          !requestHasCacheSensitiveState(applicationRequest) && !isSpeculativePrefetch;
+        const cacheKey = canUsePageDataCache
+          ? buildPageDataCacheKey(ctx, slug, url, resolvedDependencySnapshot.cacheKey)
+          : null;
         const cachePolicy = cacheKey ? getPageDataCachePolicy(ctx) : null;
 
         const payload = cacheKey
           ? await waitForSharedPromise(
             resolveCachedPageData(
               cacheKey,
-              () => resolvePageDataWithinDeadline(renderer, slug, req, url, undefined),
+              () =>
+                resolvePageDataWithinDeadline(
+                  renderer,
+                  slug,
+                  applicationRequest,
+                  url,
+                  undefined,
+                  resolvedDependencySnapshot,
+                  dependencySource,
+                ),
               cachePolicy!,
             ),
             req.signal,
           )
           : await resolveUncachedPageData(() =>
-            resolvePageDataWithinDeadline(renderer, slug, req, url, req.signal)
+            resolvePageDataWithinDeadline(
+              renderer,
+              slug,
+              applicationRequest,
+              url,
+              req.signal,
+              resolvedDependencySnapshot,
+              dependencySource,
+            )
           );
-        const cacheStrategy = cacheKey
+        const cacheStrategy = cacheKey && resolvedDependencySnapshot.cacheKey === "off"
           ? {
             maxAge: cachePolicy!.maxAgeSeconds,
             public: true,
@@ -162,10 +226,10 @@ export function handlePageDataEndpoint(
         );
 
         if (hasMatchingEtag(req, payload.etag)) {
-          return respond(builder.notModified(payload.etag));
+          return respondPageData(builder.notModified(payload.etag));
         }
 
-        return respond(
+        return respondPageData(
           builder
             .withSecurity(ctx.securityConfig ?? undefined, req)
             .withCache(cacheStrategy)
@@ -179,7 +243,7 @@ export function handlePageDataEndpoint(
             pathname,
             detail: e.message,
           });
-          return respond(
+          return respondPageData(
             ResponseBuilder.json(
               { error: "Page data request timed out", status: HTTP_GATEWAY_TIMEOUT },
               req,
@@ -199,9 +263,14 @@ export function handlePageDataEndpoint(
         // treating it as an internal error (which 500s and aborts navigation).
         const redirect = extractRedirectFromError(e);
         if (redirect) {
-          return respond(
+          return respondPageData(
             ResponseBuilder.json(
-              { redirect },
+              {
+                redirect,
+                ...(dependencySnapshot?.cacheKey.startsWith("on:")
+                  ? { dependencyPinningCacheKey: dependencySnapshot.cacheKey }
+                  : {}),
+              },
               req,
               {
                 securityConfig: ctx.securityConfig,
@@ -227,7 +296,7 @@ export function handlePageDataEndpoint(
           status,
         });
 
-        return respond(
+        return respondPageData(
           ResponseBuilder.json(
             { error: isNotFound ? "Page not found" : "Internal server error", status },
             req,
@@ -245,6 +314,51 @@ export function handlePageDataEndpoint(
       "module.pageData.projectSlug": ctx.projectSlug || "unknown",
     },
   );
+}
+
+function withoutHeader(headers: Headers, name: string): Headers {
+  const sanitized = new Headers(headers);
+  sanitized.delete(name);
+  return sanitized;
+}
+
+function withDependencySnapshotResponseHeaders(
+  response: Response,
+  snapshot?: DependencyPinningSnapshot,
+): Response {
+  const headers = new Headers(response.headers);
+  const vary = headers.get("vary");
+  const varyValues = (vary ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (
+    !varyValues.some((value) => value.toLowerCase() === DEPENDENCY_PINNING_REQUEST_HEADER)
+  ) {
+    varyValues.push(DEPENDENCY_PINNING_REQUEST_HEADER);
+  }
+  headers.set("vary", varyValues.join(", "));
+  if (snapshot?.cacheKey.startsWith("on:")) {
+    headers.set(DEPENDENCY_PINNING_REQUEST_HEADER, snapshot.cacheKey);
+  }
+
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+function unknownDependencySnapshotResponse(
+  req: Request,
+  ctx: HandlerContext,
+  createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
+): Response {
+  return createResponseBuilder(ctx)
+    .withCORS(req, ctx.securityConfig?.cors)
+    .withSecurity(ctx.securityConfig ?? undefined, req)
+    .withCache("no-store")
+    .json({ error: "Unknown dependency snapshot", status: 409 }, 409);
 }
 
 async function resolveCachedPageData(
@@ -403,7 +517,12 @@ function extractRedirectFromError(
   return { destination: redirect.destination, permanent: redirect.permanent === true };
 }
 
-function buildPageDataCacheKey(ctx: HandlerContext, slug: string, url: URL): string {
+function buildPageDataCacheKey(
+  ctx: HandlerContext,
+  slug: string,
+  url: URL,
+  dependencyPinningCacheKey = "off",
+): string {
   const projectKey = ctx.projectId ?? ctx.projectSlug ?? ctx.projectDir;
   const environment = ctx.resolvedEnvironment ?? ctx.requestContext?.mode ?? "preview";
   const contentSource = ctx.enriched?.contentSourceId ??
@@ -413,11 +532,14 @@ function buildPageDataCacheKey(ctx: HandlerContext, slug: string, url: URL): str
   const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
   const query = sanitizeQueryParamsForCacheKey(url, queryParamOptions);
 
-  return [
+  const baseKey = [
     projectKey,
     environment,
     contentSource,
     slug || "index",
     query,
   ].join("|");
+  return dependencyPinningCacheKey.startsWith("on:")
+    ? `${baseKey}|pins:${dependencyPinningCacheKey}`
+    : baseKey;
 }

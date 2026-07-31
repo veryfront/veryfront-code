@@ -1,6 +1,7 @@
 import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import type { RenderHandler } from "./render-handler.ts";
 import type { StreamSlot } from "./types.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 
 const STREAM_HEADERS = {
   "content-type": "application/x-ndjson; charset=utf-8",
@@ -13,6 +14,7 @@ function invalidRenderPayloadResponse(): Response {
     headers: {
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "no-store",
+      vary: RSC_DEPENDENCY_PINNING_HEADER,
     },
   });
 }
@@ -20,9 +22,13 @@ function invalidRenderPayloadResponse(): Response {
 export class StreamHandler {
   constructor(private renderHandler: RenderHandler) {}
 
-  async handle(pathname: string, searchParams: URLSearchParams): Promise<Response> {
+  async handle(
+    pathname: string,
+    searchParams: URLSearchParams,
+    request?: Request,
+  ): Promise<Response> {
     const page = searchParams.get("page") ?? pathname;
-    const renderResponse = await this.renderHandler.handle(page, searchParams);
+    const renderResponse = await this.renderHandler.handle(page, searchParams, request);
     if (!renderResponse.ok) return renderResponse;
 
     let payload: RSCPayload;
@@ -39,7 +45,15 @@ export class StreamHandler {
     const stream = this.createStream(payload.html);
 
     return new Response(stream, {
-      headers: STREAM_HEADERS,
+      headers: {
+        ...STREAM_HEADERS,
+        vary: RSC_DEPENDENCY_PINNING_HEADER,
+        ...(payload.dependencyPinningCacheKey?.startsWith("on:")
+          ? {
+            [RSC_DEPENDENCY_PINNING_HEADER]: payload.dependencyPinningCacheKey,
+          }
+          : {}),
+      },
     });
   }
 

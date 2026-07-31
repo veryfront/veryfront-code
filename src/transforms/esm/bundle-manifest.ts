@@ -5,6 +5,10 @@
  * Key invariant: a transform is never used unless ALL of its HTTP bundle
  * dependencies are confirmed present.
  *
+ * The content-addressed authority is the canonical bundle-hash set. URL,
+ * byte-size, creation time, TTL, and serialized bytes are refreshable,
+ * non-authoritative metadata.
+ *
  * @module transforms/esm/bundle-manifest
  **************************/
 
@@ -37,7 +41,10 @@ function containsControlCharacter(value: string): boolean {
   return false;
 }
 
-export type ManifestValidationReason = "manifest_missing" | "bundle_missing";
+export type ManifestValidationReason =
+  | "manifest_missing"
+  | "manifest_mismatch"
+  | "bundle_missing";
 
 /** Result of manifest validation. */
 export interface ManifestValidationResult {
@@ -107,13 +114,18 @@ export async function createBundleManifest(bundles: BundleEntry[]): Promise<Bund
 }
 
 /**
- * Store a bundle manifest in the distributed cache.
+ * Store refreshable metadata for a content-addressed bundle graph.
+ *
+ * Returns true only after the backend acknowledges the write. Callers that
+ * bind a transform to the graph must not publish that binding on false. A
+ * later write for the same ID may refresh non-authoritative metadata; readers
+ * always re-authenticate the canonical hash set against the ID.
  */
-export async function storeBundleManifest(manifest: BundleManifest): Promise<void> {
+export async function storeBundleManifest(manifest: BundleManifest): Promise<boolean> {
   const cache = await getCache();
   if (!cache) {
     logger.debug(`${LOG_PREFIX} No distributed cache available, skipping manifest store`);
-    return;
+    return false;
   }
 
   const key = buildBundleManifestCacheKey(manifest.manifestId);
@@ -124,18 +136,20 @@ export async function storeBundleManifest(manifest: BundleManifest): Promise<voi
       logger.warn(`${LOG_PREFIX} Refusing to store oversized manifest`, {
         manifestId: manifest.manifestId.slice(0, 12),
       });
-      return;
+      return false;
     }
     await cache.set(key, serialized, manifest.ttlSeconds);
     logger.debug(`${LOG_PREFIX} Stored manifest`, {
       manifestId: manifest.manifestId.slice(0, 12),
       bundleCount: manifest.bundles.length,
     });
+    return true;
   } catch (error) {
     logger.warn(`${LOG_PREFIX} Failed to store manifest`, {
       manifestId: manifest.manifestId.slice(0, 12),
       error,
     });
+    return false;
   }
 }
 
@@ -232,6 +246,38 @@ async function loadBundleManifest(manifestId: string): Promise<BundleManifest | 
 }
 
 /**
+ * Prove that every direct bundle hash in code belongs to an authenticated
+ * content-addressed graph. The manifest must come from createBundleManifest or
+ * parseBundleManifest; validateBundleGroup enforces that boundary for cache
+ * reads.
+ */
+export function validateBundleGraphAuthority(
+  manifest: BundleManifest,
+  requiredBundleHashes: readonly string[],
+): ManifestValidationResult {
+  if (requiredBundleHashes.length > MAX_HTTP_BUNDLE_GRAPH_ENTRIES) {
+    return {
+      valid: false,
+      failedHashes: [],
+      reason: "manifest_mismatch",
+    };
+  }
+
+  const manifestHashes = new Set(manifest.bundles.map(({ hash }) => hash));
+  const failedHashes = [...new Set(requiredBundleHashes)]
+    .filter((hash) => !isValidHttpBundleHash(hash) || !manifestHashes.has(hash))
+    .sort();
+  if (failedHashes.length > 0) {
+    return {
+      valid: false,
+      failedHashes,
+      reason: "manifest_mismatch",
+    };
+  }
+  return { valid: true, failedHashes: [] };
+}
+
+/**
  * Validate that ALL bundles in a manifest group exist on the local filesystem.
  * If bundles are missing, attempts to recover them from distributed cache.
  *
@@ -242,6 +288,7 @@ export async function validateBundleGroup(
   manifestId: string,
   cacheDir: string,
   recoverMissingBundles?: BundleRecoveryFn,
+  requiredBundleHashes: readonly string[] = [],
 ): Promise<ManifestValidationResult> {
   const manifest = await loadBundleManifest(manifestId);
   if (!manifest) {
@@ -249,6 +296,15 @@ export async function validateBundleGroup(
       manifestId: manifestId.slice(0, 12),
     });
     return { valid: false, failedHashes: [], reason: "manifest_missing" };
+  }
+
+  const authority = validateBundleGraphAuthority(manifest, requiredBundleHashes);
+  if (!authority.valid) {
+    logger.warn(`${LOG_PREFIX} Direct bundle is absent from manifest graph`, {
+      manifestId: manifestId.slice(0, 12),
+      failedHashCount: authority.failedHashes.length,
+    });
+    return authority;
   }
 
   return validateBundleManifest(manifest, cacheDir, recoverMissingBundles);

@@ -3,7 +3,7 @@ import { isFrameworkSourcePath } from "#veryfront/utils/path-utils.ts";
 import type { FileInfo, ResolveFileOptions } from "../../base.ts";
 import type { ProjectFile } from "../../veryfront-api-client/index.ts";
 import { VeryfrontOperationsBase } from "./base-operations.ts";
-import { createError, fromError, toError } from "#veryfront/errors";
+import { createError, FILE_NOT_FOUND, fromError, toError } from "#veryfront/errors";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { snapshotVeryfrontError } from "#veryfront/errors/types.ts";
 import { buildStatCacheKeyPrefix } from "./cache-keys.ts";
@@ -198,12 +198,10 @@ export class StatOperations extends VeryfrontOperationsBase {
       normalizedPath,
       indexSize: fileIdx.size,
     });
-    throw toError(
-      createError({
-        type: "file",
-        message: `File not found: ${normalizedPath}`,
-      }),
-    );
+    throw FILE_NOT_FOUND.create({
+      detail: `File not found: ${normalizedPath}`,
+      context: { path: normalizedPath },
+    });
   }
 
   private async ensureIndexBuilt(): Promise<void> {

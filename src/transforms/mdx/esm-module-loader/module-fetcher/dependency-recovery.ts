@@ -9,7 +9,12 @@
 
 import { basename, dirname, resolve } from "#veryfront/compat/path/index.ts";
 import { detokenizeAllCachePaths } from "#veryfront/cache/paths.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import type { RevisionedCacheBackend } from "#veryfront/cache/types.ts";
+import {
+  buildRevisionedCacheKey,
+  requireCacheExchangeResult,
+  snapshotCacheRevisionResult,
+} from "#veryfront/cache/backend.ts";
 import type { Logger } from "#veryfront/utils";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
 import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts";
@@ -27,11 +32,12 @@ import {
   parseMdxModuleRecoveryPayload,
   utf8ByteLength,
 } from "./recovery-payload.ts";
+import { classifyThrownValue } from "./error-classification.ts";
 
 // Captures the filesystem path from `file://` URLs that point to veryfront-mdx-esm
-// cache entries.  The character class excludes only quote characters (the
-// delimiters used in JS source) so that paths containing spaces — e.g. under a
-// home directory like `/Users/John Doe/…` — are captured in full.
+// cache entries. The character class excludes only quote characters (the
+// delimiters used in JS source), so paths containing spaces are captured in
+// full.
 const MDX_VFMOD_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"']+veryfront-mdx-esm\/[^"']+\.mjs)/gi
   .source;
 
@@ -39,7 +45,7 @@ interface EnsureMdxModuleDependenciesOptions {
   projectId: string;
   contentSourceId: string;
   log: Logger;
-  distributedCache?: CacheBackend | null;
+  distributedCache?: RevisionedCacheBackend | null;
 }
 
 interface EnsureMdxModuleDependenciesResult {
@@ -89,7 +95,7 @@ async function ensureHttpBundleDependencies(code: string, log: Logger): Promise<
   if (failed.length === 0) return true;
 
   log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to recover HTTP bundles for vfmod dependency`, {
-    failed,
+    failedCount: failed.length,
     totalBundles: bundlePaths.length,
   });
   return false;
@@ -98,7 +104,7 @@ async function ensureHttpBundleDependencies(code: string, log: Logger): Promise<
 async function ensureModuleFileAndDeps(
   absolutePath: string,
   tenantCacheDir: string,
-  distributedCache: CacheBackend,
+  distributedCache: RevisionedCacheBackend,
   options: EnsureMdxModuleDependenciesOptions,
   state: RecoveryState,
   depth: number,
@@ -106,8 +112,7 @@ async function ensureModuleFileAndDeps(
   if (depth > MAX_MDX_RECOVERY_DEPTH) return false;
   if (!isOwnedModulePath(absolutePath, tenantCacheDir)) {
     options.log.warn(`${LOG_PREFIX_MDX_LOADER} Rejected out-of-namespace vfmod recovery path`, {
-      dependencyPath: absolutePath,
-      tenantCacheDir,
+      depth,
     });
     return false;
   }
@@ -151,31 +156,46 @@ async function ensureModuleFileAndDeps(
     /* expected: dependency may not exist on this pod yet */
   }
 
-  const recoveryKey = buildMdxEsmModuleRecoveryCacheKey(
-    options.projectId,
-    options.contentSourceId,
-    basename(resolvedPath),
+  const recoveryKey = buildRevisionedCacheKey(
+    buildMdxEsmModuleRecoveryCacheKey(
+      options.projectId,
+      options.contentSourceId,
+      basename(resolvedPath),
+    ),
   );
 
-  const serializedPayload = await distributedCache.get(recoveryKey);
-  if (!serializedPayload) {
+  const snapshot = snapshotCacheRevisionResult(
+    await distributedCache.getWithRevision(recoveryKey),
+  );
+  if (snapshot.value === null) {
     options.log.debug(`${LOG_PREFIX_MDX_LOADER} No distributed vfmod recovery entry`, {
-      dependencyPath: absolutePath,
-      recoveryKey,
+      depth,
     });
     return false;
   }
 
-  const payload = parseMdxModuleRecoveryPayload(serializedPayload, {
+  const payload = parseMdxModuleRecoveryPayload(snapshot.value, {
     projectId: options.projectId,
     contentSourceId: options.contentSourceId,
     fileName: basename(resolvedPath),
   });
   if (!payload) {
     options.log.warn(`${LOG_PREFIX_MDX_LOADER} Rejected invalid vfmod recovery payload`, {
-      dependencyPath: resolvedPath,
-      recoveryKey,
+      depth,
     });
+    try {
+      requireCacheExchangeResult(
+        await distributedCache.compareExchange(
+          recoveryKey,
+          snapshot.revision,
+          { kind: "delete" },
+        ),
+      );
+    } catch (error) {
+      options.log.debug(`${LOG_PREFIX_MDX_LOADER} Recovery cache cleanup failed`, {
+        errorName: classifyThrownValue(error),
+      });
+    }
     return false;
   }
 
@@ -210,8 +230,8 @@ async function ensureModuleFileAndDeps(
   state.recoveredBytes += recoveredBytes;
 
   options.log.debug(`${LOG_PREFIX_MDX_LOADER} Recovered vfmod dependency from distributed cache`, {
-    dependencyPath: resolvedPath,
-    recoveryKey,
+    depth,
+    recoveredBytes,
   });
 
   return true;

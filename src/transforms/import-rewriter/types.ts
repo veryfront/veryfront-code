@@ -6,6 +6,8 @@
  */
 
 import type { ImportSpecifier } from "../esm/lexer.ts";
+import type { DependencyPinningSourceInput } from "../esm/package-registry.ts";
+import type { DependencyResolutionObservation } from "./dependency-resolution.ts";
 
 /**
  * Transform target environment.
@@ -28,12 +30,24 @@ export interface RewriteContext {
   dev: boolean;
   /** Module server URL for browser imports */
   moduleServerUrl?: string;
+  /** Absolute request origin used for browser-loadable static asset URLs. */
+  moduleServerOrigin?: string;
   /** Vendor bundle hash for cache busting */
   vendorBundleHash?: string;
   /** API base URL for cross-project imports */
   apiBaseUrl?: string;
   /** React version to use for esm.sh URLs */
   reactVersion: string;
+  /** Stable dependency-pinning key paired with the immutable dependency map. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable dependency map captured with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace used to prove write-back authority. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Collect inert unresolved-dependency metadata for cache-hit replay. */
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void;
   /** Import map configuration (loaded lazily) */
   importMap?: ImportMapConfig;
 }

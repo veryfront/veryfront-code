@@ -211,7 +211,12 @@ export async function loadVeryfrontExportsMapForRoute(
   return result;
 }
 
-/** Node.js built-in module names, shared across route-loader external rewrites. */
+/**
+ * Bare builtins supported by Deno's Node compatibility layer.
+ *
+ * This intentionally stays separate from the Node-runtime list used by MDX:
+ * Deno does not implement every `node:` module exposed by current Node.
+ */
 export const NODE_BUILTINS = [
   "assert",
   "buffer",

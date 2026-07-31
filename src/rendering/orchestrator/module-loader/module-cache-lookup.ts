@@ -14,8 +14,19 @@ import { getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { UNRESOLVED_VF_MODULES_RE } from "./module-transform-cache.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 const logger = rendererLogger.component("module-loader");
+
+export function buildModuleTransformCacheVariant(
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
+): string | undefined {
+  return buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+}
 
 export function getModuleCacheKey(
   filePath: string,
@@ -25,6 +36,8 @@ export function getModuleCacheKey(
   reactVersion?: string,
   mode?: "development" | "production",
   importMapFingerprint?: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
 ): string {
   const base = projectId ?? projectDir ?? "default";
   const source = contentSourceId ?? "default";
@@ -36,6 +49,11 @@ export function getModuleCacheKey(
     filePath,
   ];
   if (importMapFingerprint) identity.push(importMapFingerprint);
+  const cacheVariant = buildModuleTransformCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  if (cacheVariant) identity.push(cacheVariant);
   return JSON.stringify(identity);
 }
 
@@ -50,6 +68,8 @@ export interface ResolveCachedModulePathInput {
   contentSourceId?: string;
   reactVersion?: string;
   importMapFingerprint?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   moduleCache: Map<string, string>;
   readTextFile?: (path: string) => Promise<string>;
   fileSystem?: FileSystemReader;
@@ -109,6 +129,10 @@ async function resolveMdxEsmCachedPath(
     },
     input.reactVersion,
     input.importMapFingerprint,
+    buildModuleTransformCacheVariant(
+      input.dependencyPinningCacheKey,
+      input.moduleServerOrigin,
+    ),
   );
 
   if (mdxCacheResult.status === "hit") {

@@ -11,6 +11,10 @@ import { MDX_RENDERER_MAX_ENTRIES, MDX_RENDERER_TTL_MS } from "#veryfront/utils/
 import React from "react";
 import { type ESMLoaderContext, loadModuleESM } from "./esm-module-loader/index.ts";
 import type { MDXComponents, MDXFrontmatter, MDXGlobals, MDXModule } from "./types.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 export interface MDXRenderOptions {
   components?: MDXComponents;
@@ -30,7 +34,7 @@ export class MDXRenderer {
     this.moduleCache.destroy();
   }
 
-  loadModuleESM(
+  async loadModuleESM(
     compiledProgramCode: string,
     adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter,
     projectId?: string,
@@ -39,7 +43,17 @@ export class MDXRenderer {
     contentSourceId?: string,
     reactVersion?: string,
     importMap?: ImportMapConfig,
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
   ): Promise<MDXModule> {
+    const resolvedDependencyPinningSource = dependencyPinningSource ?? projectDir;
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      resolvedDependencyPinningSource,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+    );
     const context: ESMLoaderContext = {
       esmCacheDir: undefined,
       moduleCache: this.moduleCache,
@@ -50,9 +64,15 @@ export class MDXRenderer {
       contentSourceId,
       reactVersion,
       importMap,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource: resolvedDependencyPinningSource,
+      moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+        ? moduleServerOrigin
+        : undefined,
     };
 
-    return loadModuleESM(compiledProgramCode, context);
+    return await loadModuleESM(compiledProgramCode, context);
   }
 
   render(_compiledCode: string, _options: MDXRenderOptions = {}): React.ReactElement {

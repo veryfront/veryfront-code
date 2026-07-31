@@ -10,4 +10,13 @@ export class NodeFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
       markNativeFileSystemAdapter(this);
     }
   }
+
+  override async exists(path: string): Promise<boolean> {
+    try {
+      return await super.exists(path);
+    } catch (error) {
+      serverLogger.debug(`File access check failed for ${path}:`, { error });
+      throw error;
+    }
+  }
 }

@@ -37,17 +37,17 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `buildSkillManifestPrompt` | Build a bounded, injection-safe skill manifest for an agent system prompt. Catalog IDs and descriptions are JSON-quoted and explicitly labeled as untrusted metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L152) |
-| `buildUnsafeLegacySkillManifestPrompt` | **Deprecated:** This helper does not encode untrusted skill metadata and must not be used in system prompts. Use `buildSkillManifestPrompt`. Reproduce the historical raw Markdown manifest format. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L42) |
+| `buildSkillManifestPrompt` | Build a bounded, injection-safe skill manifest for an agent system prompt. Catalog IDs and descriptions are JSON-quoted and explicitly labeled as untrusted metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L247) |
+| `buildUnsafeLegacySkillManifestPrompt` | **Deprecated:** This helper does not encode untrusted skill metadata and must not be used in system prompts. Use `buildSkillManifestPrompt`. Reproduce the historical raw Markdown manifest format. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L131) |
 | `createExecuteSkillScriptTool` | Create the execute_skill_script tool. Executes a script from a skill's scripts/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L581) |
 | `createLoadSkillReferenceTool` | Create the load_skill_reference tool. Reads a reference file from a skill's references/, resources/, or assets/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L517) |
 | `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L436) |
-| `filterToolsForSkill` | Layer 1: Filter tool definitions before sending to model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L106) |
+| `filterToolsForSkill` | Layer 1: Filter tool definitions before sending to model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L118) |
 | `getAllSkills` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L283) |
 | `getSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L279) |
 | `getSkillScriptExecutor` | Get the appropriate script executor. Checks cloud auth availability on every call so request-scoped credentials and environment overrides are respected. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/executor.ts#L757) |
 | `isSkillVisibleTo` | Whether a skill is visible to the caller identified by the scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L64) |
-| `isToolAllowedBySkill` | Layer 2: Check if a specific tool call is allowed at execution time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L140) |
+| `isToolAllowedBySkill` | Layer 2: Check if a specific tool call is allowed at execution time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L153) |
 | `isValidProviderSafeSkillId` | Framework-owned provider-safe owned skill-id grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L66) |
 | `isValidSkillName` | Framework-owned historical skill-name grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L54) |
 | `isValidStrictSkillName` | Framework-owned strict filesystem skill-name grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L60) |
@@ -59,7 +59,7 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 | `readBoundedSkillTextFile` | Read one skill-owned text file through a fixed byte budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/bounded-text-file.ts#L702) |
 | `registerSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L275) |
 | `snapshotSkillScriptResult` | Validate, output-bound, detach, and freeze an executor-provided result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/script-result.ts#L70) |
-| `validateAllowedToolPatterns` | Validate allowed-tool patterns at parse time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L191) |
+| `validateAllowedToolPatterns` | Validate allowed-tool patterns at parse time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L199) |
 | `validateSkillFileMetadata` | Validate metadata loaded from a filesystem skill. The caller-supplied directory/runtime identity remains canonical; a differing authored `name` is display metadata and never participates in lookup or authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L484) |
 | `validateSkillMetadata` | Validate and normalize parsed frontmatter into SkillMetadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L221) |
 | `validateSkillPath` | Validate a requested path with the public compatibility resource policy. Relative paths may contain up to 4096 characters and filesystem directory enumeration is not entry-capped. `validateStrictSkillPath` applies the runtime filesystem ceilings. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/path-safety.ts#L472) |
@@ -91,7 +91,7 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 | `SKILL_REFERENCES_DIR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L130) |
 | `SKILL_RELATIVE_PATH_MAX_LENGTH` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/limits.ts#L14) |
 | `SKILL_RESOURCES_DIR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L131) |
-| `SKILL_SCRIPT_MAX_OUTPUT_BYTES` | Combined UTF-8 byte ceiling for stdout and stderr returned by a skill tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/limits.ts#L37) |
+| `SKILL_SCRIPT_MAX_OUTPUT_BYTES` | Combined UTF-8 byte ceiling for stdout and stderr returned by a skill tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/limits.ts#L39) |
 | `SKILL_SCRIPTS_DIR` | Conventional subdirectory names | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L129) |
 | `SKILL_STRICT_NAME_REGEX` | Strict filesystem skill-name matcher: 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens. Mutating this compatibility value does not alter framework admission. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L41) |
 | `SKILL_SUBDIR_MAX_ENTRIES` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/limits.ts#L21) |

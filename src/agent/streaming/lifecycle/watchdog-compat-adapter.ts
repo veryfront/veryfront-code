@@ -1,0 +1,570 @@
+import type { ChatUiMessageChunk, MessageMetadata } from "#veryfront/chat/types.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
+import { type AbsoluteDeadlineTimer, createAbsoluteDeadline } from "./deadlines.ts";
+import type { StreamLifecyclePhase } from "./types.ts";
+
+/** Default value for chat stream idle timeout ms. */
+export const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 120_000;
+/** Default value for chat stream tool running timeout ms. */
+export const DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS = 300_000;
+
+/** Public API contract for chat stream watchdog phase. */
+export type ChatStreamWatchdogPhase =
+  | "response_pending"
+  | "tool_input_streaming"
+  | "tool_running"
+  | "post_tool_idle";
+
+/** Active tool tracked by a chat stream watchdog. */
+export type ChatStreamWatchdogActiveTool = {
+  phase: "tool_input_streaming" | "tool_running";
+  toolCallId: string;
+  toolName?: string;
+};
+
+/** State for chat stream watchdog. */
+export type ChatStreamWatchdogState = {
+  phase: ChatStreamWatchdogPhase;
+  timeoutMs: number;
+  toolCallId?: string;
+  toolName?: string;
+  activeToolCalls?: readonly ChatStreamWatchdogActiveTool[];
+};
+
+/** Options accepted by chat stream watchdog. */
+export type ChatStreamWatchdogOptions = {
+  idleTimeoutMs?: number;
+  toolRunningTimeoutMs?: number;
+  longRunningToolNames?: Iterable<string>;
+  longRunningToolPrefixes?: Iterable<string>;
+  /**
+   * Strict lifecycle deadline semantics: telemetry (all message-metadata and
+   * tool-call-status chunks, empty deltas) never advances the deadline, and
+   * configured long-running tools run under the absolute
+   * `toolRunningTimeoutMs` cap instead of disabling the deadline.
+   *
+   * Defaults from `VF_STREAM_LIFECYCLE_MODE`: strict in `shadow`/`active`,
+   * legacy-compatible otherwise, so the rollout mode flag governs the full
+   * behavior change and `legacy` remains byte-compatible with the
+   * pre-lifecycle watchdog.
+   */
+  strictDeadlines?: boolean;
+  setTimeoutFn?: typeof globalThis.setTimeout;
+  clearTimeoutFn?: typeof globalThis.clearTimeout;
+};
+
+/** Error shape for chat stream idle timeout. */
+export class ChatStreamIdleTimeoutError extends Error {
+  readonly state: ChatStreamWatchdogState;
+
+  constructor(state: ChatStreamWatchdogState) {
+    const toolLabel = typeof state.toolName === "string" && state.toolName.length > 0
+      ? ` for ${state.toolName}${state.toolCallId ? ` (${state.toolCallId})` : ""}`
+      : state.toolCallId
+      ? ` for ${state.toolCallId}`
+      : "";
+    super(
+      `Chat stream idle timeout after ${state.timeoutMs}ms during ${state.phase}${toolLabel}`,
+    );
+    this.name = "ChatStreamIdleTimeoutError";
+    this.state = state;
+  }
+}
+
+/** State for create chat stream watchdog. */
+export function createChatStreamWatchdogState(
+  phase: ChatStreamWatchdogPhase,
+  metadata?: {
+    toolCallId?: string;
+    toolName?: string;
+  },
+  options: Pick<
+    Required<ChatStreamWatchdogOptions>,
+    "idleTimeoutMs" | "toolRunningTimeoutMs"
+  > = {
+    idleTimeoutMs: DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+    toolRunningTimeoutMs: DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+  },
+): ChatStreamWatchdogState {
+  const idleTimeoutMs = requirePositiveTimeout(
+    options.idleTimeoutMs,
+    "idleTimeoutMs",
+  );
+  const toolRunningTimeoutMs = requirePositiveTimeout(
+    options.toolRunningTimeoutMs,
+    "toolRunningTimeoutMs",
+  );
+  return {
+    phase,
+    timeoutMs: phase === "tool_running" ? toolRunningTimeoutMs : idleTimeoutMs,
+    ...(metadata?.toolCallId ? { toolCallId: metadata.toolCallId } : {}),
+    ...(metadata?.toolName ? { toolName: metadata.toolName } : {}),
+  };
+}
+
+/**
+ * Compatibility helper. Under strict lifecycle deadlines long-running tool
+ * names no longer disable the absolute tool-running deadline; in legacy mode
+ * they still do. Also exported for callers that classify tool activity.
+ */
+export function isLongRunningToolRunning(
+  current: ChatStreamWatchdogState,
+  longRunningToolNames: ReadonlySet<string>,
+  longRunningToolPrefixes: readonly string[] = [],
+): boolean {
+  return (
+    current.phase === "tool_running" &&
+    typeof current.toolName === "string" &&
+    (longRunningToolNames.has(current.toolName) ||
+      longRunningToolPrefixes.some(
+        (prefix) => prefix.length > 0 && current.toolName?.startsWith(prefix),
+      ))
+  );
+}
+
+function getActiveToolCalls(
+  state: ChatStreamWatchdogState,
+): ChatStreamWatchdogActiveTool[] {
+  if (state.activeToolCalls) {
+    return state.activeToolCalls.map((tool) => ({ ...tool }));
+  }
+  if (
+    (state.phase === "tool_input_streaming" || state.phase === "tool_running") &&
+    state.toolCallId
+  ) {
+    return [{
+      phase: state.phase,
+      toolCallId: state.toolCallId,
+      ...(state.toolName ? { toolName: state.toolName } : {}),
+    }];
+  }
+  return [];
+}
+
+function isLongRunningTool(
+  tool: ChatStreamWatchdogActiveTool,
+  options: ReturnType<typeof resolveChatStreamWatchdogOptions>,
+): boolean {
+  return tool.phase === "tool_running" &&
+    typeof tool.toolName === "string" &&
+    (
+      options.longRunningToolNames.has(tool.toolName) ||
+      options.longRunningToolPrefixes.some((prefix) => tool.toolName?.startsWith(prefix))
+    );
+}
+
+function createActiveToolState(
+  activeTools: ChatStreamWatchdogActiveTool[],
+  options: ReturnType<typeof resolveChatStreamWatchdogOptions>,
+): ChatStreamWatchdogState {
+  const selected = activeTools.findLast((tool) => !isLongRunningTool(tool, options)) ??
+    activeTools.at(-1);
+  if (!selected) {
+    return createChatStreamWatchdogState(
+      "response_pending",
+      undefined,
+      options,
+    );
+  }
+
+  return {
+    ...createChatStreamWatchdogState(selected.phase, selected, options),
+    ...(activeTools.length > 1
+      ? { activeToolCalls: activeTools.map((tool) => ({ ...tool })) }
+      : {}),
+  };
+}
+
+function upsertActiveTool(
+  currentState: ChatStreamWatchdogState,
+  tool: ChatStreamWatchdogActiveTool,
+  options: ReturnType<typeof resolveChatStreamWatchdogOptions>,
+): ChatStreamWatchdogState {
+  const activeTools = getActiveToolCalls(currentState);
+  const existingIndex = activeTools.findIndex((active) => active.toolCallId === tool.toolCallId);
+  if (existingIndex === -1) {
+    activeTools.push(tool);
+  } else {
+    const existing = activeTools[existingIndex]!;
+    activeTools[existingIndex] = {
+      ...existing,
+      ...tool,
+      ...(tool.toolName ?? existing.toolName
+        ? { toolName: tool.toolName ?? existing.toolName }
+        : {}),
+    };
+  }
+  return createActiveToolState(activeTools, options);
+}
+
+/** State for get next chat stream watchdog. */
+export function getNextChatStreamWatchdogState(
+  currentState: ChatStreamWatchdogState,
+  chunk: ChatUiMessageChunk<MessageMetadata>,
+  options?: ChatStreamWatchdogOptions,
+): ChatStreamWatchdogState {
+  const resolvedOptions = resolveChatStreamWatchdogOptions(options);
+
+  switch (chunk.type) {
+    case "tool-input-start":
+      return upsertActiveTool(
+        currentState,
+        {
+          phase: "tool_input_streaming",
+          toolCallId: chunk.toolCallId,
+          toolName: chunk.toolName,
+        },
+        resolvedOptions,
+      );
+
+    case "tool-input-delta":
+      return upsertActiveTool(
+        currentState,
+        {
+          phase: "tool_input_streaming",
+          toolCallId: chunk.toolCallId,
+          ...(currentState.toolCallId === chunk.toolCallId &&
+              currentState.toolName
+            ? { toolName: currentState.toolName }
+            : {}),
+        },
+        resolvedOptions,
+      );
+
+    case "tool-input-available":
+      return upsertActiveTool(
+        currentState,
+        {
+          phase: "tool_running",
+          toolCallId: chunk.toolCallId,
+          toolName: chunk.toolName,
+        },
+        resolvedOptions,
+      );
+
+    case "tool-output-available":
+    case "tool-output-error":
+    case "tool-output-denied": {
+      const activeTools = getActiveToolCalls(currentState);
+      const remainingTools = activeTools.filter((tool) => tool.toolCallId !== chunk.toolCallId);
+      if (remainingTools.length > 0) {
+        return createActiveToolState(remainingTools, resolvedOptions);
+      }
+      return createChatStreamWatchdogState(
+        "post_tool_idle",
+        {
+          toolCallId: chunk.toolCallId,
+          toolName: currentState.toolCallId === chunk.toolCallId
+            ? currentState.toolName
+            : undefined,
+        },
+        resolvedOptions,
+      );
+    }
+
+    case "finish":
+      return createChatStreamWatchdogState(
+        "response_pending",
+        undefined,
+        resolvedOptions,
+      );
+
+    default: {
+      const activeTools = getActiveToolCalls(currentState);
+      return activeTools.length > 0
+        ? createActiveToolState(activeTools, resolvedOptions)
+        : createChatStreamWatchdogState(
+          "response_pending",
+          undefined,
+          resolvedOptions,
+        );
+    }
+  }
+}
+
+/** Check whether a chunk only carries heartbeat metadata. */
+export function isHeartbeatOnlyMetadataChunk(
+  chunk: ChatUiMessageChunk<MessageMetadata>,
+): boolean {
+  return chunk.type === "message-metadata" &&
+    Object.keys(chunk.messageMetadata ?? {}).length === 0;
+}
+
+/** Lifecycle-shaped classification of a compatibility UI chunk. */
+export type WatchdogLifecycleActivity =
+  | {
+    type: "semantic_progress";
+    phase: StreamLifecyclePhase;
+    toolCallId?: string;
+    toolName?: string;
+  }
+  | {
+    type: "phase_transition";
+    phase: StreamLifecyclePhase;
+    toolCallId?: string;
+    toolName?: string;
+  }
+  | { type: "telemetry" }
+  | { type: "completed" };
+
+/** Map a compatibility chunk into lifecycle activity for the watchdog. */
+export function mapWatchdogChunkToLifecycleActivity(
+  current: ChatStreamWatchdogState,
+  chunk: ChatUiMessageChunk<MessageMetadata>,
+): WatchdogLifecycleActivity {
+  if (
+    chunk.type === "message-metadata" ||
+    isHeartbeatOnlyMetadataChunk(chunk) ||
+    chunk.type === "data-tool-call-status"
+  ) {
+    return { type: "telemetry" };
+  }
+  switch (chunk.type) {
+    case "text-delta":
+    case "reasoning-delta":
+      return chunk.delta.length > 0
+        ? { type: "semantic_progress", phase: "streaming" }
+        : { type: "telemetry" };
+    case "tool-input-start":
+      return {
+        type: "phase_transition",
+        phase: "awaiting_tool_input",
+        toolCallId: chunk.toolCallId,
+        toolName: chunk.toolName,
+      };
+    case "tool-input-delta":
+      return chunk.inputTextDelta.length > 0
+        ? {
+          type: "semantic_progress",
+          phase: "awaiting_tool_input",
+          toolCallId: chunk.toolCallId,
+          ...(current.toolName ? { toolName: current.toolName } : {}),
+        }
+        : { type: "telemetry" };
+    case "tool-input-available":
+      return {
+        type: "semantic_progress",
+        phase: "tool_handoff",
+        toolCallId: chunk.toolCallId,
+        toolName: chunk.toolName,
+      };
+    case "tool-output-available":
+    case "tool-output-error":
+    case "tool-output-denied":
+      return {
+        type: "semantic_progress",
+        phase: "streaming",
+        toolCallId: chunk.toolCallId,
+        ...(current.toolName ? { toolName: current.toolName } : {}),
+      };
+    case "finish":
+      return { type: "completed" };
+    default:
+      return { type: "telemetry" };
+  }
+}
+
+/** Create chat stream watchdog backed by the lifecycle deadline primitive. */
+export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
+  const resolvedOptions = resolveChatStreamWatchdogOptions(options);
+  const timer: AbsoluteDeadlineTimer = {
+    schedule(callback, delayMs) {
+      const handle = resolvedOptions.setTimeoutFn(callback, delayMs);
+      maybeUnrefTimer(handle);
+      return handle;
+    },
+    cancel(handle) {
+      resolvedOptions.clearTimeoutFn(
+        handle as ReturnType<typeof globalThis.setTimeout>,
+      );
+    },
+  };
+  const controller = new AbortController();
+  let state = createChatStreamWatchdogState(
+    "response_pending",
+    undefined,
+    resolvedOptions,
+  );
+  let deadline: { dispose(): void } | null = null;
+  let lastTimeoutState: ChatStreamWatchdogState | null = null;
+  let disposed = false;
+
+  const clearDeadline = () => {
+    deadline?.dispose();
+    deadline = null;
+  };
+
+  const strict = resolvedOptions.strictDeadlines;
+  const legacyLongRunningToolActive = () =>
+    !strict &&
+    isLongRunningToolRunning(
+      state,
+      resolvedOptions.longRunningToolNames,
+      resolvedOptions.longRunningToolPrefixes,
+    );
+
+  const arm = () => {
+    if (disposed || controller.signal.aborted) {
+      return;
+    }
+    clearDeadline();
+    if (legacyLongRunningToolActive()) {
+      // Legacy mode: configured long-running tools run without a deadline,
+      // matching the pre-lifecycle watchdog until the mode flag advances.
+      return;
+    }
+    const armedState = state;
+    deadline = createAbsoluteDeadline({
+      timer,
+      delayMs: armedState.timeoutMs,
+      onDeadline: () => {
+        lastTimeoutState = armedState;
+        controller.abort(
+          new DOMException(
+            new ChatStreamIdleTimeoutError(armedState).message,
+            "AbortError",
+          ),
+        );
+      },
+    });
+  };
+
+  arm();
+
+  return {
+    signal: controller.signal,
+    get lastTimeoutState(): ChatStreamWatchdogState | null {
+      return lastTimeoutState;
+    },
+    keepAlive() {
+      if (disposed) {
+        return;
+      }
+      if (legacyLongRunningToolActive()) {
+        return;
+      }
+      if (getActiveToolCalls(state).length === 0) {
+        state = createChatStreamWatchdogState(
+          "response_pending",
+          undefined,
+          resolvedOptions,
+        );
+      }
+      arm();
+    },
+    observe(chunk: ChatUiMessageChunk<MessageMetadata>) {
+      if (disposed) {
+        return;
+      }
+      if (!strict) {
+        // Legacy mode is byte-compatible with the pre-lifecycle watchdog:
+        // only heartbeat-only metadata is inert; any other chunk (including
+        // non-empty metadata and tool-call-status telemetry) transitions
+        // state and re-arms the deadline.
+        if (isHeartbeatOnlyMetadataChunk(chunk)) {
+          return;
+        }
+        state = getNextChatStreamWatchdogState(state, chunk, resolvedOptions);
+        if (chunk.type === "finish") {
+          clearDeadline();
+          return;
+        }
+        arm();
+        return;
+      }
+      const activity = mapWatchdogChunkToLifecycleActivity(state, chunk);
+      if (activity.type === "telemetry") {
+        return;
+      }
+      if (activity.type === "completed") {
+        state = createChatStreamWatchdogState(
+          "response_pending",
+          undefined,
+          resolvedOptions,
+        );
+        clearDeadline();
+        return;
+      }
+      state = getNextChatStreamWatchdogState(state, chunk, resolvedOptions);
+      arm();
+    },
+    dispose() {
+      disposed = true;
+      clearDeadline();
+    },
+  };
+}
+
+function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
+  const defaultSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const defaultClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
+  return {
+    idleTimeoutMs: requirePositiveTimeout(
+      options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+      "idleTimeoutMs",
+    ),
+    toolRunningTimeoutMs: requirePositiveTimeout(
+      options?.toolRunningTimeoutMs ??
+        DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+      "toolRunningTimeoutMs",
+    ),
+    strictDeadlines: options?.strictDeadlines ?? defaultStrictDeadlines(),
+    // Default to an empty set — callers must opt in to classify specific tool
+    // names as long-running. Embedding product-specific names here as a
+    // default couples this shared utility to application concerns.
+    longRunningToolNames: new Set(options?.longRunningToolNames ?? []),
+    longRunningToolPrefixes: normalizeLongRunningToolPrefixes(
+      options?.longRunningToolPrefixes ?? [],
+    ),
+    setTimeoutFn: options?.setTimeoutFn ?? defaultSetTimeout,
+    clearTimeoutFn: options?.clearTimeoutFn ?? defaultClearTimeout,
+  };
+}
+
+function requirePositiveTimeout(value: number, optionName: string): number {
+  const normalized = normalizeTimerDurationMs(
+    value,
+    `Chat stream watchdog ${optionName}`,
+  );
+  if (normalized === 0) {
+    throw new RangeError(
+      `Chat stream watchdog ${optionName} must be greater than zero`,
+    );
+  }
+  return normalized;
+}
+
+function normalizeLongRunningToolPrefixes(
+  prefixes: Iterable<string>,
+): string[] {
+  const normalized = [...prefixes];
+  if (
+    normalized.some((prefix) =>
+      typeof prefix !== "string" || prefix.length === 0 ||
+      prefix.trim().length === 0
+    )
+  ) {
+    throw new TypeError(
+      "Chat stream watchdog longRunningToolPrefixes must contain non-empty strings",
+    );
+  }
+  return normalized;
+}
+
+function defaultStrictDeadlines(): boolean {
+  const mode = getHostEnv("VF_STREAM_LIFECYCLE_MODE");
+  return mode === "shadow" || mode === "active";
+}
+
+function maybeUnrefTimer(timer: ReturnType<typeof globalThis.setTimeout>): void {
+  if (typeof timer !== "object" || timer === null || !("unref" in timer)) {
+    return;
+  }
+
+  const timerWithUnref: { unref?: unknown } = timer;
+  if (typeof timerWithUnref.unref === "function") {
+    timerWithUnref.unref();
+  }
+}

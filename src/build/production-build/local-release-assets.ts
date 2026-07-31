@@ -25,7 +25,13 @@ import {
   type ReleaseAssetManifest,
 } from "#veryfront/release-assets/manifest-schema.ts";
 import { computeHashBytes } from "#veryfront/utils/hash-utils.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
@@ -43,6 +49,18 @@ export interface LocalReleaseAssetOptions {
   releaseId?: string;
   vendorHttpImports?: ReleaseAssetHttpDependencyVendor;
   frameworkTransform?: ReleaseAssetTransform;
+  /** React version derived from the build-wide dependency snapshot. */
+  reactVersion?: string;
+  /** Immutable dependency state shared by the production build. */
+  dependencyPinningSnapshot?: DependencyPinningSnapshot;
+  /** Package source paired with dependencyPinningSnapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
+}
+
+interface LocalReleaseDependencyContext {
+  readonly source: DependencyPinningSourceInput;
+  readonly snapshot: DependencyPinningSnapshot;
+  readonly reactVersion: string;
 }
 
 function shouldBuildLocalDependencyAssets(): boolean {
@@ -397,6 +415,7 @@ async function writeLocalReleaseOutputs(
 async function buildLocalReleaseAssets(
   options: LocalReleaseAssetOptions,
   tempDir: string,
+  dependencyContext: LocalReleaseDependencyContext,
 ): Promise<{ manifest: ReleaseAssetManifest; assets: PreparedReleaseAsset[] }> {
   const vendorHttpImports = options.vendorHttpImports;
   const frameworkTransform = options.frameworkTransform;
@@ -405,10 +424,11 @@ async function buildLocalReleaseAssets(
       "Local release dependency assets require explicitly composed transform and vendor extensions",
     );
   }
-  const reactVersion = await resolveProjectReactVersion({
-    projectDir: options.projectDir,
-    config: options.config,
-  });
+  const {
+    source: dependencyPinningSource,
+    snapshot: dependencyPinningSnapshot,
+    reactVersion,
+  } = dependencyContext;
   const built = await buildReactImportMapDependencyAssets({
     tempDir,
     reactVersion,
@@ -426,6 +446,8 @@ async function buildLocalReleaseAssets(
     projectId: options.projectId ?? "local",
     transform: frameworkTransform,
     dependencyUrls,
+    dependencyPinningSource,
+    dependencyPinningSnapshot,
   });
   dependencies = mergeDependencyRecords(dependencies, framework.dependencies);
   const coverageFailures = mergeCoverageFailures(cached.gaps, built.gaps, framework.gaps);
@@ -471,10 +493,55 @@ async function buildLocalReleaseAssets(
   return { manifest, assets };
 }
 
+async function resolveLocalReleaseDependencyContext(
+  options: LocalReleaseAssetOptions,
+): Promise<LocalReleaseDependencyContext> {
+  const source = options.dependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir: options.projectDir,
+      adapter: options.adapter,
+      contentSourceId: "local-release-assets",
+      config: options.config,
+    });
+  const suppliedSnapshot = options.dependencyPinningSnapshot;
+  const snapshot = suppliedSnapshot
+    ? await resolveDependencyPinningSnapshot(
+      source,
+      suppliedSnapshot.cacheKey,
+      suppliedSnapshot.dependencies,
+    )
+    : await resolveDependencyPinningSnapshot(source);
+  const reactVersion = await resolveProjectReactVersion({
+    projectDir: options.projectDir,
+    config: options.config,
+    dependencyPinningSource: source,
+    dependencyPinningCacheKey: snapshot.cacheKey,
+    dependencyPinningDependencies: snapshot.dependencies,
+  });
+  if (options.reactVersion !== undefined && options.reactVersion !== reactVersion) {
+    throw new Error(
+      `Local release React version ${
+        JSON.stringify(options.reactVersion)
+      } does not match dependency snapshot ${JSON.stringify(reactVersion)}`,
+    );
+  }
+  return Object.freeze({ source, snapshot, reactVersion });
+}
+
 export async function generateLocalReleaseAssetManifest(
   options: LocalReleaseAssetOptions,
 ): Promise<ReleaseAssetManifest | null> {
   if (!shouldBuildLocalDependencyAssets()) return null;
+
+  let dependencyContext: LocalReleaseDependencyContext;
+  try {
+    dependencyContext = await resolveLocalReleaseDependencyContext(options);
+  } catch (error) {
+    throw new Error(
+      `Failed to generate local release dependency assets: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
 
   let tempDir: string;
   try {
@@ -491,7 +558,7 @@ export async function generateLocalReleaseAssetManifest(
     | undefined;
   let generationFailure: Error | undefined;
   try {
-    builtResult = await buildLocalReleaseAssets(options, tempDir);
+    builtResult = await buildLocalReleaseAssets(options, tempDir, dependencyContext);
   } catch (error) {
     generationFailure = new Error(
       `Failed to generate local release dependency assets: ${errorMessage(error)}`,

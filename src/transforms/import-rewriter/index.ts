@@ -27,6 +27,8 @@ export {
 
 export {
   addEsmShDeps,
+  appendDependencyPinningKey,
+  appendDependencyPinningPathKey,
   buildCrossProjectUrl,
   buildEsmShUrl,
   buildModuleServerUrl,
@@ -34,6 +36,7 @@ export {
   buildVeryfrontModuleUrl,
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
+  extractDependencyPinningPathKey,
   getReactImportMap,
   isEsmShUrl,
   normalizeExtension,

@@ -31,7 +31,10 @@ export function DropdownMenu(props: DropdownMenuProps): React.ReactElement {
   return <_Root {...props} />;
 }
 
-/** Trigger — toggles the menu. `asChild` merges onto the child element. */
+/**
+ * Trigger — toggles the menu; the positioning anchor. `asChild` merges onto
+ * the child element, which must forward `ref` to its DOM node.
+ */
 export function DropdownMenuTrigger(
   props:
     & React.ButtonHTMLAttributes<HTMLButtonElement>

@@ -163,6 +163,9 @@ export class RouteDiscovery {
       return stat.isDirectory;
     } catch (error) {
       if (isNotFoundError(error)) return false;
+      logger.debug("Directory check failed", {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
       throw error;
     }
   }

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -42,6 +42,10 @@ const crossProjectImport: CrossProjectImport = {
   version: "1.2.3",
   path: "components/Button.tsx",
 };
+const SNAPSHOT_A_PIN_KEY = "on:3m96ohlm0kf87";
+const SNAPSHOT_B_PIN_KEY = "on:htdjrangih5s";
+const SNAPSHOT_A_DEPENDENCIES = Object.freeze({ lodash: "1.0.0" });
+const SNAPSHOT_B_DEPENDENCIES = Object.freeze({ lodash: "2.0.0" });
 
 interface FlowHarnessOptions {
   crossProjectImport?: CrossProjectImport;
@@ -126,6 +130,8 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
         projectDir: "/project",
         dev: true,
         apiBaseUrl: "https://registry.example.com/api",
+        moduleServerOrigin: "https://app.example",
+        dependencyPinningCacheKey: "off",
         adapter: denoAdapter,
       },
       cache: {
@@ -203,6 +209,101 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
 
     assertEquals(await load(mapAIdentity), "/tmp/map-a.mjs");
     assertEquals(await load(mapBIdentity), "/tmp/map-b.mjs");
+  });
+
+  it("preserves the mainline off key and isolates enabled snapshots and origins", () => {
+    const base = {
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      reactVersion: "19.1.1",
+      registryBaseUrl: "https://registry.example.com",
+    };
+    const unkeyed = buildCrossProjectImportCacheKey(base);
+    const flagOff = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://app.example",
+      dependencyPinningCacheKey: "off",
+    });
+    assertEquals(flagOff, unkeyed);
+
+    const snapshotA = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://app.example",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+      dependencyPinningDependencies: SNAPSHOT_A_DEPENDENCIES,
+    });
+    const snapshotB = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://app.example",
+      dependencyPinningCacheKey: SNAPSHOT_B_PIN_KEY,
+      dependencyPinningDependencies: SNAPSHOT_B_DEPENDENCIES,
+    });
+    const otherOrigin = buildCrossProjectImportCacheKey({
+      ...base,
+      moduleServerOrigin: "https://other.example",
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+      dependencyPinningDependencies: SNAPSHOT_A_DEPENDENCIES,
+    });
+
+    assertNotEquals(snapshotA, snapshotB);
+    assertNotEquals(snapshotA, otherOrigin);
+  });
+
+  it("rejects invalid dependency snapshots before a prepopulated cache can be reused", async () => {
+    const base = {
+      specifier: crossProjectImport.specifier,
+      projectId: "project-a",
+      registryBaseUrl: "https://registry.example.com",
+    };
+    const flagOffKey = buildCrossProjectImportCacheKey({
+      ...base,
+      dependencyPinningCacheKey: "off",
+    });
+    const invalidSnapshots = [
+      {
+        dependencyPinningCacheKey: "malformed",
+        dependencyPinningDependencies: SNAPSHOT_A_DEPENDENCIES,
+      },
+      {
+        dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+      },
+      {
+        dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+        dependencyPinningDependencies: SNAPSHOT_B_DEPENDENCIES,
+      },
+    ] as const;
+
+    for (const invalidSnapshot of invalidSnapshots) {
+      globalCrossProjectCache.clear();
+      globalCrossProjectCache.set(flagOffKey, {
+        tempPath: "/tmp/flag-off-cross-project.mjs",
+        contentHash: "cafe1234",
+      });
+      let fetchCalls = 0;
+
+      await assertRejects(
+        () =>
+          transformCrossProjectImportFlow({
+            ...createFlowHarness({
+              fetchImpl: async () => {
+                fetchCalls++;
+                return new Response("unexpected");
+              },
+            }),
+            options: {
+              projectId: "project-a",
+              projectDir: "/project",
+              dev: true,
+              apiBaseUrl: "https://registry.example.com/api",
+              adapter: denoAdapter,
+              ...invalidSnapshot,
+            },
+          }),
+        Error,
+        "dependency pinning snapshot",
+      );
+      assertEquals(fetchCalls, 0);
+    }
   });
 
   it("fetches, transforms, writes temp file, and caches transformed cross-project import", async () => {
@@ -659,11 +760,14 @@ describe("modules/react-loader/ssr-module-loader/cross-project-import-loader", (
         createFlowHarness({
           fetchTimeoutMs: 5,
           fetchImpl: async (_input, init) => {
-            const signal = init?.signal;
+            const signal = init && "signal" in init ? init.signal : undefined;
+            if (!(signal instanceof AbortSignal)) {
+              throw new TypeError("Expected fetch to receive an AbortSignal");
+            }
             return new Response(
               new ReadableStream<Uint8Array>({
                 start(controller) {
-                  signal?.addEventListener(
+                  signal.addEventListener(
                     "abort",
                     () => {
                       observedAbort = true;

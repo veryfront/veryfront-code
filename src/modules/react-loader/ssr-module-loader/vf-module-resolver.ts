@@ -5,6 +5,7 @@
  */
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { getMdxEsmSsrCacheDir } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
@@ -35,6 +36,10 @@ interface ResolveVfModuleImportsOptions {
   reactVersion?: string;
   /** Atomic map/cache identity already bound to the authenticated render source. */
   importMapIdentity?: SSRImportMapIdentity;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 interface ResolveVfModuleImportsDependencies {
@@ -144,6 +149,10 @@ export async function resolveVfModuleImports(
       importMap: options.importMapIdentity?.importMap,
       importMapFingerprint: options.importMapIdentity?.fingerprint,
       reactVersion: options.reactVersion,
+      moduleServerOrigin: options.moduleServerOrigin,
+      dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+      dependencyPinningDependencies: options.dependencyPinningDependencies,
+      dependencyPinningSource: options.dependencyPinningSource,
       projectSlug: options.projectId,
       strictMissingModules: true,
     },

@@ -9,6 +9,7 @@ import {
   buildMdxEsmTransformCacheKey,
   buildMdxJsxCacheFileName,
   FRAMEWORK_VF_MODULE_CACHE_NAMESPACE,
+  MDX_DISTRIBUTED_TRANSFORM_ENVELOPE_VERSION,
   MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE,
   MDX_ESM_CACHE_NAMESPACE,
   MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE,
@@ -16,6 +17,11 @@ import {
 
 describe("transforms/mdx/esm-module-loader/cache-format", () => {
   describe("namespaces", () => {
+    it("exports envelope format version 2 and rolls the MDX schema namespace", () => {
+      assertEquals(MDX_DISTRIBUTED_TRANSFORM_ENVELOPE_VERSION, 2);
+      assertEquals(MDX_ESM_CACHE_NAMESPACE === "mdx-esm-ed118c5e", false);
+    });
+
     it("exposes non-empty, distinct cache namespaces", () => {
       assertEquals(typeof MDX_ESM_CACHE_NAMESPACE, "string");
       assertEquals(MDX_ESM_CACHE_NAMESPACE.length > 0, true);
@@ -65,13 +71,43 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       const b = buildMdxEsmTransformCacheKey("p", "s", "19", "/a.js", "h", "map-b");
       assertEquals(a !== b, true);
     });
+
+    it("isolates distributed transforms by dependency pinning state", () => {
+      const unkeyed = buildMdxEsmTransformCacheKey(
+        "p",
+        "s",
+        "19",
+        "/a.js",
+        "h",
+      );
+      const flagOff = buildMdxEsmTransformCacheKey(
+        "p",
+        "s",
+        "19",
+        "/a.js",
+        "h",
+        undefined,
+        "off",
+      );
+      const flagOn = buildMdxEsmTransformCacheKey(
+        "p",
+        "s",
+        "19",
+        "/a.js",
+        "h",
+        undefined,
+        "on:pins",
+      );
+      assertEquals(flagOff === flagOn, false);
+      assertEquals(flagOff, unkeyed);
+    });
   });
 
   describe("buildMdxEsmPathCacheKey", () => {
     it("uses a framed namespace, react version, path, and source digest", () => {
       assertEquals(
         buildMdxEsmPathCacheKey("/a.js", "19.1.1", "source-hash"),
-        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","/a.js","source-hash",null]`,
+        `${MDX_ESM_CACHE_NAMESPACE}:path:["19.1.1","/a.js","source-hash",null,null]`,
       );
     });
 
@@ -79,13 +115,41 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
       const key = buildMdxEsmPathCacheKey("/a.js");
       assertEquals(key.startsWith(`${MDX_ESM_CACHE_NAMESPACE}:`), true);
       assertEquals(key.includes('"/a.js"'), true);
-      assertEquals(key.endsWith(",null,null]"), true);
+      assertEquals(key.endsWith(",null,null,null]"), true);
     });
 
     it("changes when the import map changes", () => {
       const a = buildMdxEsmPathCacheKey("/a.js", "19.1.1", "source-hash", "map-a");
       const b = buildMdxEsmPathCacheKey("/a.js", "19.1.1", "source-hash", "map-b");
       assertEquals(a !== b, true);
+    });
+
+    it("isolates cached module paths by dependency pinning state", () => {
+      const unkeyed = buildMdxEsmPathCacheKey("/a.js", "19.1.1");
+      const flagOff = buildMdxEsmPathCacheKey(
+        "/a.js",
+        "19.1.1",
+        undefined,
+        undefined,
+        "off",
+      );
+      const firstPins = buildMdxEsmPathCacheKey(
+        "/a.js",
+        "19.1.1",
+        undefined,
+        undefined,
+        "on:first",
+      );
+      const changedPins = buildMdxEsmPathCacheKey(
+        "/a.js",
+        "19.1.1",
+        undefined,
+        undefined,
+        "on:second",
+      );
+
+      assertEquals(new Set([flagOff, firstPins, changedPins]).size, 3);
+      assertEquals(flagOff, unkeyed);
     });
   });
 

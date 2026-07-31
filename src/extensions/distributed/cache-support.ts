@@ -1,6 +1,21 @@
 /** Provider-neutral cache helpers shared with distributed store extensions. */
 
-export type { CacheBackend } from "#veryfront/cache/types.ts";
+export { MAX_CACHE_REVISION_LENGTH } from "#veryfront/cache/types.ts";
+export type {
+  CacheBackend,
+  CacheRevisionMutation,
+  CacheRevisionSnapshot,
+  RevisionedCacheBackend,
+} from "#veryfront/cache/types.ts";
+export {
+  buildRevisionedCacheKey,
+  isRevisionedCacheBackend,
+  isRevisionedCacheKey,
+  MAX_REVISIONED_CACHE_SOURCE_KEY_LENGTH,
+  requireCacheExchangeResult,
+  REVISIONED_CACHE_KEY_PREFIX,
+  snapshotCacheRevisionResult,
+} from "#veryfront/cache/capabilities.ts";
 export { buildBatchResults } from "#veryfront/cache/batch-results.ts";
 export { assertCacheBatchSize } from "#veryfront/cache/batch-policy.ts";
 export {
@@ -11,7 +26,9 @@ export {
 } from "#veryfront/cache/backends/ttl.ts";
 export {
   escapeCacheGlobLiteral,
+  registerOwnedDistributedCacheKeyPrefix,
   registerRenderDistributedCacheNamespace,
+  stripOwnedDistributedCacheKeyPrefix,
   validateDistributedCacheKeyPrefix,
 } from "#veryfront/cache/backends/distributed-keyspace.ts";
 export {

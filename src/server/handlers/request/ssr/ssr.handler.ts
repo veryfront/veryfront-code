@@ -16,6 +16,7 @@ import type {
 } from "../../types.ts";
 import { PRIORITY_LOW } from "#veryfront/utils/constants/index.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
+import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
@@ -33,8 +34,14 @@ import { ErrorPages } from "../../../utils/error-html.ts";
 import { VeryfrontError } from "#veryfront/errors";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 import { getRequestTokenProvenance } from "../../../context/request-context.ts";
+import {
+  type DependencyPinningSnapshot,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 
 const logger = serverLogger.component("ssr");
+const DEPENDENCY_PINNING_RESPONSE_HEADER = "x-veryfront-dependency-pins";
 
 /**
  * Determine if request should serve production (released) content.
@@ -218,27 +225,51 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
+        const requestedPinKey = req.headers.get(DEPENDENCY_PINNING_RESPONSE_HEADER);
+        const dependencySource = createHandlerDependencyPinningSource(ctx);
+        const dependencySnapshot = requestedPinKey !== null &&
+            !requestedPinKey.startsWith("on:")
+          ? undefined
+          : await resolveRequestedDependencyPinningSnapshot(
+            dependencySource,
+            requestedPinKey,
+          );
+        if (!dependencySnapshot) {
+          return this.handleDependencySnapshotConflict(req, ctx);
+        }
+
+        const applicationUrl = new URL(url);
+        const applicationHeaders = new Headers(req.headers);
+        applicationHeaders.delete(DEPENDENCY_PINNING_RESPONSE_HEADER);
+        const applicationRequest = new Request(applicationUrl, {
+          method: req.method,
+          headers: applicationHeaders,
+          signal: req.signal,
+        });
+
         const memoryStatus = this.ssrService.checkMemoryPressure();
         if (memoryStatus.shouldReject) {
           this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
           const result = this.ssrService.createMemoryPressureResult(slug);
+          result.dependencyPinningCacheKey = dependencySnapshot.cacheKey;
           return this.buildResponse(req, ctx, result, generateNonce());
         }
 
         const nonce = generateNonce();
-        const studioEmbed = url.searchParams.get("studio_embed") === "true";
-        const projectId = ctx.projectId || url.searchParams.get("project_id") ||
+        const studioEmbed = applicationUrl.searchParams.get("studio_embed") === "true";
+        const projectId = ctx.projectId || applicationUrl.searchParams.get("project_id") ||
           ctx.projectSlug || undefined;
-        const pageId = url.searchParams.get("page_id") || undefined;
-        const noHmr = url.searchParams.get("noHmr") === "1" ||
-          url.searchParams.get("no_hmr") === "1";
-        const forceProductionScripts = url.searchParams.get("forceProductionScripts") === "1" ||
-          url.searchParams.get("force_production_scripts") === "1";
+        const pageId = applicationUrl.searchParams.get("page_id") || undefined;
+        const noHmr = applicationUrl.searchParams.get("noHmr") === "1" ||
+          applicationUrl.searchParams.get("no_hmr") === "1";
+        const forceProductionScripts =
+          applicationUrl.searchParams.get("forceProductionScripts") === "1" ||
+          applicationUrl.searchParams.get("force_production_scripts") === "1";
         const useNoCache = shouldUseNoCacheHeadersFromHandler(ctx);
 
         const result = await this.ssrService.renderPage(ctx, {
-          request: req,
-          url,
+          request: applicationRequest,
+          url: applicationUrl,
           slug,
           nonce,
           studioEmbed,
@@ -247,14 +278,24 @@ export class SSRHandler extends BaseHandler {
           noHmr,
           forceProductionScripts,
           useNoCache,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource: dependencySource,
         });
+        result.dependencyPinningCacheKey = dependencySnapshot.cacheKey;
 
         if (result.errorType === "redirect" && result.redirectLocation) {
           return this.handleRedirect(req, ctx, result, nonce);
         }
 
         if (result.errorType === "not-found") {
-          return this.handleNotFound(req, ctx, slug, nonce);
+          return this.handleNotFound(
+            applicationRequest,
+            ctx,
+            slug,
+            nonce,
+            dependencySnapshot,
+          );
         }
 
         const isServerError = result.errorType === "server-error" ||
@@ -262,7 +303,13 @@ export class SSRHandler extends BaseHandler {
         // Project error pages should beat the dev overlay for runtime errors.
         // Build/import errors stay visible because their overlay is actionable.
         if (isServerError && !(result.showDevOverlay && isBuildError(result.error))) {
-          const customResponse = await this.tryCustomErrorFallback(req, ctx, result, nonce);
+          const customResponse = await this.tryCustomErrorFallback(
+            applicationRequest,
+            ctx,
+            result,
+            nonce,
+            dependencySnapshot,
+          );
           if (customResponse) return customResponse;
         }
 
@@ -278,7 +325,11 @@ export class SSRHandler extends BaseHandler {
     result: SSRRenderResult,
     nonce: string,
   ): HandlerResult {
-    const response = this.createResponseBuilder(ctx, nonce)
+    const response = this.createSnapshotResponseBuilder(
+      ctx,
+      nonce,
+      result.dependencyPinningCacheKey,
+    )
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache(result.cacheStrategy)
@@ -293,16 +344,27 @@ export class SSRHandler extends BaseHandler {
     ctx: HandlerContext,
     slug: string,
     nonce: string,
+    dependencySnapshot: DependencyPinningSnapshot,
   ): Promise<HandlerResult> {
-    const builder = this.createResponseBuilder(ctx, nonce);
+    const builder = this.createSnapshotResponseBuilder(
+      ctx,
+      nonce,
+      dependencySnapshot.cacheKey,
+    );
 
-    const notFoundResponse = await tryNotFoundFallback(req, slug, ctx, builder);
+    const notFoundResponse = await tryNotFoundFallback(
+      req,
+      slug,
+      ctx,
+      builder,
+      dependencySnapshot,
+    );
     if (notFoundResponse) return this.respond(notFoundResponse);
 
     const customResponse = await tryErrorPageFallback(req, ctx, builder, {
       statusCode: 404,
       pathname: slug || "/",
-    });
+    }, dependencySnapshot);
     if (customResponse) return this.respond(customResponse);
 
     const result: SSRRenderResult = {
@@ -312,6 +374,7 @@ export class SSRHandler extends BaseHandler {
       cacheStrategy: "no-cache",
       errorType: "not-found",
       slug,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     };
 
     return this.buildResponse(req, ctx, result, nonce);
@@ -322,13 +385,18 @@ export class SSRHandler extends BaseHandler {
     ctx: HandlerContext,
     result: SSRRenderResult,
     nonce: string,
+    dependencySnapshot: DependencyPinningSnapshot,
   ): Promise<HandlerResult | null> {
-    const builder = this.createResponseBuilder(ctx, nonce);
+    const builder = this.createSnapshotResponseBuilder(
+      ctx,
+      nonce,
+      result.dependencyPinningCacheKey,
+    );
     const customResponse = await tryErrorPageFallback(req, ctx, builder, {
       statusCode: result.status,
       error: result.error,
       pathname: result.slug || "/",
-    });
+    }, dependencySnapshot);
 
     return customResponse ? this.respond(customResponse) : null;
   }
@@ -339,8 +407,53 @@ export class SSRHandler extends BaseHandler {
     result: SSRRenderResult,
     nonce: string,
   ): Promise<HandlerResult> {
-    const builder = this.createResponseBuilder(ctx, nonce);
+    const builder = this.createSnapshotResponseBuilder(
+      ctx,
+      nonce,
+      result.dependencyPinningCacheKey,
+    );
     const response = await buildSSRResponse(req, ctx, result, builder);
     return this.respond(response);
   }
+
+  private handleDependencySnapshotConflict(
+    req: Request,
+    ctx: HandlerContext,
+  ): HandlerResult {
+    const response = this.createResponseBuilder(ctx, generateNonce())
+      .withCORS(req, ctx.securityConfig?.cors)
+      .withSecurity(ctx.securityConfig ?? undefined, req)
+      .withCache("no-store");
+    withDependencyPinningVary(response);
+    const conflict = response.text("Unknown dependency snapshot", 409);
+    return this.respond(conflict);
+  }
+
+  private createSnapshotResponseBuilder(
+    ctx: HandlerContext,
+    nonce: string,
+    dependencyPinningCacheKey?: string,
+  ) {
+    const builder = this.createResponseBuilder(ctx, nonce);
+    withDependencyPinningVary(builder);
+    if (dependencyPinningCacheKey?.startsWith("on:")) {
+      builder.withHeaders({
+        [DEPENDENCY_PINNING_RESPONSE_HEADER]: dependencyPinningCacheKey,
+      });
+    }
+    return builder;
+  }
+}
+
+function withDependencyPinningVary(
+  builder: ResponseBuilder,
+): void {
+  const existing = builder.headers.get("vary");
+  const values = existing?.split(",").map((value) => value.trim().toLowerCase()) ?? [];
+  if (values.includes(DEPENDENCY_PINNING_RESPONSE_HEADER)) return;
+  builder.withHeaders({
+    vary: existing
+      ? `${existing}, ${DEPENDENCY_PINNING_RESPONSE_HEADER}`
+      : DEPENDENCY_PINNING_RESPONSE_HEADER,
+  });
 }

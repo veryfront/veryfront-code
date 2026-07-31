@@ -3,6 +3,7 @@ import type { ClientComponentMeta } from "#veryfront/rendering/rsc/types.ts";
 export interface ManifestData {
   version: 1;
   hash: string;
+  dependencyPinningCacheKey?: string;
   components: Record<string, string>;
   modules: Array<{ id: string; clientRef: string; exports: readonly string[] }>;
   graphIds: {
@@ -14,6 +15,7 @@ export interface ManifestData {
 export interface ManifestCacheEntry {
   data: ManifestData;
   timestamp: number;
+  dependencyPinningCacheKey: string;
 }
 
 export interface RSCHandlerConfig {

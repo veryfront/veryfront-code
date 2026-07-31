@@ -1073,7 +1073,8 @@ export class ExtensionLoader {
     if (generation !== undefined) {
       try {
         // Notify cancellation only after all extension contexts are revoked,
-        // then wait for every admitted operation to release its lease.
+        // then wait for every admitted operation to release its lease. A
+        // quarantined lease rejects the drain while keeping teardown fenced.
         await drainContractGeneration(generation);
       } catch (error) {
         this.logger.error("Error draining extension contract generation:", error);

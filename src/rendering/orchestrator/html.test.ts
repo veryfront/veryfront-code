@@ -47,6 +47,8 @@ type Head = {
 const REACT_HASH = "e".repeat(64);
 const RELEASE_CSS_HASH = "f".repeat(64);
 const REACT_CDN_URL = "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3";
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
 
 function extractBridgeConfig(html: string): Record<string, unknown> {
   const match = html.match(/window\.__VF_BRIDGE_CONFIG__=(\{.*?\});<\/script>/);
@@ -701,6 +703,47 @@ describe("HTMLGenerator helpers", () => {
       }));
 
       assertEquals(html.includes('<script type="importmap" nonce="nonce-123">'), true);
+    });
+
+    it("keeps the import map and hydration payload on historical snapshot A after B", async () => {
+      const generator = createHTMLGenerator({
+        readFile: async (path: string) => path.endsWith("/app/page.tsx") ? `'use client';` : "",
+      });
+      const renderSnapshot = (
+        key: string,
+        react: string,
+      ) =>
+        generator.generateFullHTML(createHTMLContext({
+          options: {
+            environment: "production",
+            dependencyPinningCacheKey: key,
+            dependencyPinningDependencies: { react },
+          },
+        }));
+
+      const snapshotBHtml = await renderSnapshot(PIN_KEY_B, "^19.0.0");
+      const snapshotAHtml = await renderSnapshot(PIN_KEY_A, "^18.3.1");
+      const parseImportMap = (html: string) => {
+        const json = html.match(
+          /<script type="importmap"[^>]*>([\s\S]*?)<\/script>/,
+        )?.[1];
+        assertExists(json);
+        return JSON.parse(json).imports as Record<string, string>;
+      };
+      const parseHydrationData = (html: string) => {
+        const json = html.match(
+          /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/,
+        )?.[1];
+        assertExists(json);
+        return JSON.parse(json) as { dependencyPinningCacheKey?: string };
+      };
+
+      assertStringIncludes(parseImportMap(snapshotBHtml).react!, "react@19.0.0");
+      assertStringIncludes(parseImportMap(snapshotAHtml).react!, "react@18.3.1");
+      assertEquals(
+        parseHydrationData(snapshotAHtml).dependencyPinningCacheKey,
+        PIN_KEY_A,
+      );
     });
 
     it("treats an undefined manifest option as absent for full HTML import maps", async () => {

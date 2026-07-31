@@ -179,6 +179,14 @@ export interface RenderSSRRequest {
   layoutProps: Record<string, unknown>[];
   /** Rendering delivery mode */
   delivery: "string" | "stream";
+  /**
+   * Exact dependency snapshot selected by the host renderer.
+   *
+   * Omitted is the legacy flag-off wire shape. "off" is accepted explicitly;
+   * enabled snapshots require the paired immutable dependency map.
+   */
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
 }

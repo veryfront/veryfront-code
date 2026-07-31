@@ -70,6 +70,18 @@ function isSkillInfrastructureToolAllowed(
   return false;
 }
 
+function isToolAllowedByCapturedPolicy(
+  toolName: string,
+  allowedTools: readonly string[] | undefined,
+  availability?: SkillToolAvailability,
+): boolean {
+  const skillToolAvailable = isSkillInfrastructureToolAllowed(toolName, availability);
+  if (skillToolAvailable === false) return false;
+  if (toolName === LOAD_SKILL_TOOL_ID) return true;
+  if (allowedTools === undefined) return true;
+  return matchesAnyAllowedTool(toolName, allowedTools);
+}
+
 /**
  * Check if a tool name matches a single allowed-tools pattern.
  *
@@ -96,8 +108,8 @@ export function matchesAllowedTool(toolName: string, pattern: string): boolean {
 /**
  * Layer 1: Filter tool definitions before sending to model.
  *
- * Removes tools not in the allowed list. Always-allowed tools
- * (skill system tools) pass through regardless.
+ * Removes tools not in the allowed list. `load_skill` remains available for
+ * skill navigation. File-backed skill tools also require an advertised file.
  *
  * @param tools - Full list of tool definitions
  * @param allowedTools - Allowed tool patterns, or undefined for no restrictions
@@ -123,11 +135,12 @@ export function filterToolsForSkill<T extends { name: string }>(
   }
 
   const capturedAllowedTools = captureProgrammaticAllowedToolPatterns(allowedTools);
-  return apply(arrayFilter, tools, [(tool: T) => {
-    const skillToolAllowed = isSkillInfrastructureToolAllowed(tool.name, skillToolAvailability);
-    if (skillToolAllowed !== undefined) return skillToolAllowed;
-    return matchesAnyAllowedTool(tool.name, capturedAllowedTools);
-  }]) as T[];
+  return apply(arrayFilter, tools, [(tool: T) =>
+    isToolAllowedByCapturedPolicy(
+      tool.name,
+      capturedAllowedTools,
+      skillToolAvailability,
+    )]) as T[];
 }
 
 /**
@@ -142,12 +155,10 @@ export function isToolAllowedBySkill(
   allowedTools: string[] | undefined,
   skillToolAvailability?: SkillToolAvailability,
 ): boolean {
-  const skillToolAllowed = isSkillInfrastructureToolAllowed(toolName, skillToolAvailability);
-  if (skillToolAllowed !== undefined) return skillToolAllowed;
-  if (allowedTools === undefined) return true;
-  return matchesAnyAllowedTool(
+  return isToolAllowedByCapturedPolicy(
     toolName,
-    captureProgrammaticAllowedToolPatterns(allowedTools),
+    allowedTools === undefined ? undefined : captureProgrammaticAllowedToolPatterns(allowedTools),
+    skillToolAvailability,
   );
 }
 
@@ -160,15 +171,12 @@ export function filterToolNamesForSkill(
   const capturedAllowedTools = allowedTools === undefined
     ? undefined
     : captureProgrammaticAllowedToolPatterns(allowedTools);
-  return apply(arrayFilter, toolNames, [(toolName: string) => {
-    const skillToolAllowed = isSkillInfrastructureToolAllowed(
+  return apply(arrayFilter, toolNames, [(toolName: string) =>
+    isToolAllowedByCapturedPolicy(
       toolName,
+      capturedAllowedTools,
       skillToolAvailability,
-    );
-    if (skillToolAllowed !== undefined) return skillToolAllowed;
-    return capturedAllowedTools === undefined ||
-      matchesAnyAllowedTool(toolName, capturedAllowedTools);
-  }]) as string[];
+    )]) as string[];
 }
 
 function matchesAnyAllowedTool(toolName: string, patterns: readonly string[]): boolean {

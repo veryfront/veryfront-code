@@ -17,20 +17,28 @@ import {
 } from "#veryfront/utils/constants/index.ts";
 import { isWithinDirectory, joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveProjectReactVersion,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { preloadImportMap } from "#veryfront/modules/import-map/index.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 
 const logger = serverLogger.component("rsc");
 
 interface ActionGuardModule {
-  rscActionGuard: (
+  rscActionGuard?: (
     req: Request,
     context: { id: string; args: unknown[] },
   ) => boolean | Promise<boolean>;
 }
 
 export type ActionGuardLoader = () => Promise<ActionGuardModule>;
+export type ActionModuleLoader = typeof loadModuleFromSource;
 
 const loadDefaultActionGuard: ActionGuardLoader = () =>
   import("#veryfront/rendering/rsc/server-action-guard.ts");
@@ -48,17 +56,55 @@ export async function handleActionRequest(
 
 /** @internal Guard-loader seam for deterministic failure-path tests. */
 export async function handleActionRequestWithGuardLoader(
+  params: ActionRequestParams,
+  actionGuardLoader: ActionGuardLoader,
+  actionModuleLoader: ActionModuleLoader = loadModuleFromSource,
+): Promise<Response> {
+  return withDependencyPinningVary(
+    await handleActionRequestWithGuardLoaderInner(
+      params,
+      actionGuardLoader,
+      actionModuleLoader,
+    ),
+  );
+}
+
+async function handleActionRequestWithGuardLoaderInner(
   {
     req,
     projectDir,
     projectId,
+    projectSlug,
     contentSourceId,
+    releaseId,
+    branch,
+    isLocalProject,
+    dependencyPinningSource,
     adapter,
     config,
     mode,
   }: ActionRequestParams,
   actionGuardLoader: ActionGuardLoader,
+  actionModuleLoader: ActionModuleLoader = loadModuleFromSource,
 ): Promise<Response> {
+  const dependencySource = dependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir,
+      adapter,
+      isLocalProject,
+      projectId,
+      projectSlug,
+      contentSourceId,
+      releaseId,
+      branch,
+      config,
+    });
+  const dependencySnapshot = await resolveActionDependencySnapshot(
+    req,
+    dependencySource,
+  );
+  if (dependencySnapshot instanceof Response) return dependencySnapshot;
+
   let body: unknown;
   try {
     body = JSON.parse(await readBodyWithLimit(req, DEFAULT_MAX_BODY_SIZE_BYTES));
@@ -105,21 +151,36 @@ export async function handleActionRequestWithGuardLoader(
 
   const source = await adapter.fs.readFile(file);
   const resolvedContentSourceId = contentSourceId ??
+    releaseId ??
+    (branch ? `branch:${branch}` : undefined) ??
     (mode === "development" ? "preview-main" : "production");
   const [reactVersion, importMap] = await Promise.all([
-    resolveProjectReactVersion({ projectDir, config }),
+    resolveProjectReactVersion({
+      projectDir,
+      dependencyPinningSource: dependencySource,
+      config,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+    }),
     preloadImportMap(projectDir, adapter, projectId, {
       contentSourceId: resolvedContentSourceId,
       config,
     }),
   ]);
-  const mod = await loadModuleFromSource(source, file, projectDir, adapter, {
+  const mod = await actionModuleLoader(source, file, projectDir, adapter, {
     projectId: projectId ?? projectDir,
+    projectSlug,
     contentSourceId: resolvedContentSourceId,
     dev: mode === "development",
     mode: mode === "development" ? "preview" : "production",
     reactVersion,
     importMap,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+    dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningSource: dependencySource,
+    moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+      ? new URL(req.url).origin
+      : undefined,
   });
   const fn = mod.default ?? mod.action;
 
@@ -131,6 +192,52 @@ export async function handleActionRequestWithGuardLoader(
 
   return new Response(JSON.stringify({ ok: true, result }), {
     headers: { "content-type": "application/json" },
+  });
+}
+
+async function resolveActionDependencySnapshot(
+  req: Request,
+  dependencyPinningSource: DependencyPinningSourceInput,
+): Promise<DependencyPinningSnapshot | Response> {
+  const requestedPinKey = req.headers.get(RSC_DEPENDENCY_PINNING_HEADER);
+  if (requestedPinKey !== null && !requestedPinKey.startsWith("on:")) {
+    return unknownDependencySnapshotResponse();
+  }
+
+  const snapshot = await resolveRequestedDependencyPinningSnapshot(
+    dependencyPinningSource,
+    requestedPinKey,
+  );
+  if (
+    !snapshot ||
+    (requestedPinKey === null && snapshot.cacheKey !== "off")
+  ) {
+    return unknownDependencySnapshotResponse();
+  }
+  return snapshot;
+}
+
+function withDependencyPinningVary(response: Response): Response {
+  appendVaryHeader(response.headers, RSC_DEPENDENCY_PINNING_HEADER);
+  return response;
+}
+
+function appendVaryHeader(headers: Headers, fieldName: string): void {
+  const values = (headers.get("vary") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.includes("*")) return;
+  if (!values.some((value) => value.toLowerCase() === fieldName.toLowerCase())) {
+    values.push(fieldName);
+  }
+  headers.set("vary", values.join(", "));
+}
+
+function unknownDependencySnapshotResponse(): Response {
+  return new Response("Unknown dependency snapshot", {
+    status: HttpStatus.CONFLICT,
+    headers: { "cache-control": "no-store" },
   });
 }
 

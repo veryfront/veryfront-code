@@ -70,6 +70,8 @@ import {
 } from "#veryfront/cache/dependency-graph.ts";
 import { assertSSRImportMapIdentity } from "./import-map-identity.ts";
 import { toFileUrl } from "#veryfront/compat/path/index.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import { captureDependencyPinningSnapshot } from "../../dependency-pinning-snapshot.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 const CACHE_FILE_MISSING_PREFIX = "Cache file missing:";
@@ -151,9 +153,19 @@ function publishTransformCacheIfCurrent(input: {
   return true;
 }
 
+function getMdxEsmCacheVariant(
+  options: Pick<SSRModuleLoaderOptions, "dependencyPinningCacheKey" | "moduleServerOrigin">,
+): string | undefined {
+  return buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+}
+
 /** Internal test seam for the singleflight timeout lifecycle. */
 export const __ssrModuleLoaderInternals = {
   deleteInProgressTransformIfCurrent,
+  getMdxEsmCacheVariant,
   publishTransformCacheIfCurrent,
   scheduleStaleInProgressTransformEviction,
   shouldRetryRejectedInProgressTransform,
@@ -192,10 +204,18 @@ export class SSRModuleLoader {
   private readonly options: SSRModuleLoaderOptions;
 
   constructor(options: SSRModuleLoaderOptions) {
+    const dependencyPinningDependencies = captureDependencyPinningSnapshot(
+      options.dependencyPinningCacheKey,
+      options.dependencyPinningDependencies,
+      options.dependencyPinningSource,
+    );
     if (options.importMapIdentity !== undefined) {
       assertSSRImportMapIdentity(options.importMapIdentity);
     }
-    this.options = Object.freeze({ ...options });
+    this.options = Object.freeze({
+      ...options,
+      dependencyPinningDependencies,
+    });
     this.cache = new SSRCacheManager(this.options);
   }
 
@@ -420,6 +440,8 @@ export class SSRModuleLoader {
       this.options.projectDir,
       this.options.reactVersion,
       mdxCacheDirs,
+      this.options.importMapIdentity?.fingerprint,
+      getMdxEsmCacheVariant(this.options),
     );
   }
 
@@ -727,6 +749,7 @@ export class SSRModuleLoader {
         },
         this.options.reactVersion,
         this.options.importMapIdentity?.fingerprint,
+        getMdxEsmCacheVariant(this.options),
       );
 
       if (mdxCacheResult.status === "hit") {
@@ -917,8 +940,12 @@ export class SSRModuleLoader {
             dev: this.options.dev,
             ssr: true,
             apiBaseUrl: this.options.apiBaseUrl,
+            moduleServerOrigin: this.options.moduleServerOrigin,
             reactVersion: this.options.reactVersion,
             dependencyHashCache,
+            dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+            dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+            dependencyPinningSource: this.options.dependencyPinningSource,
             loadImportMap: importMap ? async () => importMap : undefined,
           };
 
@@ -954,6 +981,10 @@ export class SSRModuleLoader {
             projectDir: this.options.projectDir,
             reactVersion: this.options.reactVersion,
             importMapIdentity: this.options.importMapIdentity,
+            moduleServerOrigin: this.options.moduleServerOrigin,
+            dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
+            dependencyPinningDependencies: this.options.dependencyPinningDependencies,
+            dependencyPinningSource: this.options.dependencyPinningSource,
           });
 
           // Ensure HTTP bundles exist for this transform (handles nested bundle deps)

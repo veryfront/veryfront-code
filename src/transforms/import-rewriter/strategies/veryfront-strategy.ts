@@ -11,7 +11,12 @@ import type {
   RewriteContext,
   RewriteResult,
 } from "../types.ts";
-import { buildVeryfrontModuleUrl } from "../url-builder.ts";
+import { resolveDependencyPinForImport } from "../dependency-resolution.ts";
+import {
+  appendDependencyPinningKey,
+  appendDependencyPinningPathKey,
+  buildVeryfrontModuleUrl,
+} from "../url-builder.ts";
 import {
   resolveInternalModuleUrl,
   resolveVeryfrontModuleUrl,
@@ -35,6 +40,13 @@ const CLIENT_SAFE_MODULE_OVERRIDES: Record<string, string> = {
   "veryfront": "/_vf_modules/_veryfront/index.client.js",
 };
 
+function finalizeInternalModuleUrl(url: string, ctx: RewriteContext): string {
+  const targetUrl = ctx.target === "ssr" ? `${url}?ssr=true` : url;
+  return ctx.target === "browser"
+    ? appendDependencyPinningPathKey(targetUrl, ctx.dependencyPinningCacheKey)
+    : appendDependencyPinningKey(targetUrl, ctx.dependencyPinningCacheKey);
+}
+
 export class VeryfrontStrategy implements ImportRewriteStrategy {
   readonly name = "veryfront";
   readonly priority = 1.5;
@@ -56,7 +68,17 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
     // module unless the importer carries `with { type: "json" }`, so serving JS
     // keeps the rewrite independent of import attribute support in the browser.
     if (specifier === "#deno-config") {
-      return { specifier: "/_vf_modules/_veryfront/_deno-config.js" };
+      return {
+        specifier: ctx.target === "browser"
+          ? appendDependencyPinningPathKey(
+            "/_vf_modules/_veryfront/_deno-config.js",
+            ctx.dependencyPinningCacheKey,
+          )
+          : appendDependencyPinningKey(
+            "/_vf_modules/_veryfront/_deno-config.js",
+            ctx.dependencyPinningCacheKey,
+          ),
+      };
     }
 
     // Handle #veryfront/* (internal framework imports)
@@ -66,36 +88,33 @@ export class VeryfrontStrategy implements ImportRewriteStrategy {
       // veryfront/head → react/runtime/core.js).
       const mapped = resolveVeryfrontModuleUrl(`veryfront/${path}`);
       if (mapped) {
-        if (ctx.target === "ssr") return { specifier: `${mapped}?ssr=true` };
-        return { specifier: mapped };
+        return { specifier: finalizeInternalModuleUrl(mapped, ctx) };
       }
       // Try resolving via #veryfront/* import map (handles paths where the
       // filesystem layout differs from the specifier, e.g. #veryfront/compat/console
       // maps to src/platform/compat/console/index.ts, not src/compat/console.ts)
       const internalMapped = resolveInternalModuleUrl(specifier);
       if (internalMapped) {
-        if (ctx.target === "ssr") return { specifier: `${internalMapped}?ssr=true` };
-        return { specifier: internalMapped };
+        return { specifier: finalizeInternalModuleUrl(internalMapped, ctx) };
       }
       const builtUrl = buildVeryfrontModuleUrl(path);
-      if (ctx.target === "ssr") return { specifier: `${builtUrl}?ssr=true` };
-      return { specifier: builtUrl };
+      return { specifier: finalizeInternalModuleUrl(builtUrl, ctx) };
     }
 
     // Handle veryfront/* imports
     if (specifier === "veryfront" || specifier.startsWith("veryfront/")) {
+      resolveDependencyPinForImport("veryfront", ctx);
+
       // Redirect broad client-facing barrels to lightweight submodules that
       // exclude server-side dependencies from SSR and browser hydration.
       const override = CLIENT_SAFE_MODULE_OVERRIDES[specifier];
       if (override !== undefined) {
-        if (ctx.target === "ssr") return { specifier: `${override}?ssr=true` };
-        if (ctx.target === "browser") return { specifier: override };
+        return { specifier: finalizeInternalModuleUrl(override, ctx) };
       }
 
       const mapped = resolveVeryfrontModuleUrl(specifier);
       if (mapped) {
-        if (ctx.target === "ssr") return { specifier: `${mapped}?ssr=true` };
-        return { specifier: mapped };
+        return { specifier: finalizeInternalModuleUrl(mapped, ctx) };
       }
       return { specifier: null };
     }

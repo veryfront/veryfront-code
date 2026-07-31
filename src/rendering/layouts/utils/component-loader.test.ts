@@ -14,6 +14,19 @@ import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LoadComponentOptions } from "#veryfront/modules/react-loader/types.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
+const SNAPSHOT_A_DEPENDENCIES = { zod: "3.0.0" } as const;
+const SNAPSHOT_A_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_A_DEPENDENCIES);
 
 async function waitFor(predicate: () => boolean): Promise<void> {
   const deadline = Date.now() + 1_000;
@@ -657,9 +670,13 @@ describe("rendering/layouts/utils/component-loader", () => {
     };
     let moduleReactVersion: unknown;
     let moduleImportMap: unknown;
+    let modulePinKey: unknown;
+    let moduleDependencies: unknown;
     mutableRenderer.loadModuleESM = ((...args: unknown[]) => {
       moduleReactVersion = args[6];
       moduleImportMap = args[7];
+      modulePinKey = args[8];
+      moduleDependencies = args[9];
       return Promise.resolve({ default: () => null });
     }) as typeof mdxRenderer.loadModuleESM;
 
@@ -673,10 +690,14 @@ describe("rendering/layouts/utils/component-loader", () => {
         "preview-main",
         { imports: {} },
         "18.3.1",
+        SNAPSHOT_A_PIN_KEY,
+        SNAPSHOT_A_DEPENDENCIES,
       );
 
       assertEquals(moduleReactVersion, "18.3.1");
       assertEquals(moduleImportMap, { imports: {} });
+      assertEquals(modulePinKey, SNAPSHOT_A_PIN_KEY);
+      assertEquals(moduleDependencies, SNAPSHOT_A_DEPENDENCIES);
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
@@ -708,5 +729,93 @@ describe("rendering/layouts/utils/component-loader", () => {
     } finally {
       mutableRenderer.loadModuleESM = originalLoadModuleESM;
     }
+  });
+
+  it("uses the request snapshot in the TSX layout cache key", async () => {
+    function CachedLayout() {
+      return null;
+    }
+    let requestedCacheKey = "";
+    const cache = {
+      get(key: string) {
+        requestedCacheKey = key;
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+
+    const loaded = await loadTSXComponent(
+      "/project/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-id",
+      "project-slug",
+      "preview-main",
+      "19.1.1",
+      EMPTY_IMPORT_MAP,
+      undefined,
+      SNAPSHOT_A_PIN_KEY,
+      SNAPSHOT_A_DEPENDENCIES,
+    );
+
+    assertEquals(loaded, CachedLayout);
+    assertEquals(
+      requestedCacheKey.endsWith(`:pins:${SNAPSHOT_A_PIN_KEY}`),
+      true,
+    );
+  });
+
+  it("preserves the legacy TSX layout cache key when pinning is off", async () => {
+    function CachedLayout() {
+      return null;
+    }
+    const requestedKeys: string[] = [];
+    const cache = {
+      get(key: string) {
+        requestedKeys.push(key);
+        return CachedLayout;
+      },
+      set() {},
+      delete() {},
+      clear() {},
+    };
+    const adapter = {
+      fs: {
+        readFile: () => Promise.resolve("export default function Layout() { return null; }"),
+      },
+    } as unknown as RuntimeAdapter;
+    const common = [
+      "/project/layout.tsx",
+      "/project",
+      cache,
+      adapter,
+      "project-id",
+      "project-slug",
+      "preview-main",
+      "19.1.1",
+      EMPTY_IMPORT_MAP,
+    ] as const;
+
+    await loadTSXComponent(...common);
+    await loadTSXComponent(
+      ...common,
+      undefined,
+      "off",
+      undefined,
+      undefined,
+      "https://app.example",
+    );
+
+    assertEquals(requestedKeys.length, 2);
+    assertEquals(requestedKeys[1], requestedKeys[0]);
+    assertEquals(requestedKeys[0]?.includes(":pins:"), false);
   });
 });

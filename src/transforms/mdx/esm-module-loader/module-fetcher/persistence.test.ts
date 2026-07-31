@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import type { CacheBackend } from "#veryfront/cache/backend.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { persistResolvedModule } from "./persistence.ts";
+import type { MdxPrimaryPublicationPermit } from "./distributed-cache.ts";
 
 const noopLog: Logger = {
   debug: () => {},
@@ -16,15 +16,14 @@ const noopLog: Logger = {
 };
 
 describe("module-fetcher/persistence", () => {
-  it("writes distributed cache before local cache and returns the local cache path", async () => {
+  it("passes the exact opaque permit and manifest authority to the distributed writer", async () => {
     const calls: string[] = [];
     const pathCache = new Map<string, string>();
-    const distributedCache: CacheBackend = {
-      type: "memory",
-      get: () => Promise.resolve(null),
-      set: () => Promise.resolve(),
-      del: () => Promise.resolve(),
-    };
+    const publicationPermit = Object.freeze({}) as MdxPrimaryPublicationPermit;
+    const bundleManifestAuthority = Object.freeze({
+      manifestId: "b".repeat(64),
+      bundleHashes: Object.freeze(["bbb222"]),
+    });
 
     const result = await persistResolvedModule({
       normalizedPath: "_vf_modules/app/page.js",
@@ -34,27 +33,30 @@ describe("module-fetcher/persistence", () => {
       log: noopLog,
       projectSlug: "docs",
       reactVersion: "19.1.1",
+      sourceContentHash: "source-hash",
       importMapFingerprint: "a".repeat(64),
-      distributedCacheWrite: {
-        distributedCache,
-        transformCacheKey: "transform-key",
+      dependencyPinningCacheKey: "on:pins",
+      moduleServerOrigin: "https://preview.example",
+      distributedCachePublication: {
+        publicationPermit,
         projectId: "project-1",
         contentSourceId: "preview-main",
+        bundleManifestAuthority,
       },
       writeToDistributedCache: (
-        receivedCache,
-        transformCacheKey,
+        receivedPermit,
         projectId,
         contentSourceId,
         moduleCode,
+        receivedManifestAuthority,
         normalizedPath,
       ) => {
         calls.push("distributed");
-        assertEquals(receivedCache, distributedCache);
-        assertEquals(transformCacheKey, "transform-key");
+        assertStrictEquals(receivedPermit, publicationPermit);
         assertEquals(projectId, "project-1");
         assertEquals(contentSourceId, "preview-main");
         assertEquals(moduleCode, "export default 1;");
+        assertStrictEquals(receivedManifestAuthority, bundleManifestAuthority);
         assertEquals(normalizedPath, "_vf_modules/app/page.js");
         return Promise.resolve();
       },
@@ -67,6 +69,8 @@ describe("module-fetcher/persistence", () => {
         reactVersion,
         sourceContentHash,
         importMapFingerprint,
+        dependencyPinningCacheKey,
+        moduleServerOrigin,
       ) => {
         calls.push("local");
         assertEquals(normalizedPath, "_vf_modules/app/page.js");
@@ -74,8 +78,10 @@ describe("module-fetcher/persistence", () => {
         assertEquals(esmCacheDir, "/cache");
         assertEquals(receivedPathCache, pathCache);
         assertEquals(reactVersion, "19.1.1");
-        assertEquals(sourceContentHash, undefined);
+        assertEquals(sourceContentHash, "source-hash");
         assertEquals(importMapFingerprint, "a".repeat(64));
+        assertEquals(dependencyPinningCacheKey, "on:pins");
+        assertEquals(moduleServerOrigin, "https://preview.example");
         return Promise.resolve("/cache/page.mjs");
       },
     });

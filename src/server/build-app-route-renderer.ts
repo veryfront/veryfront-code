@@ -15,7 +15,13 @@ import {
   shouldUnwrapAppRouterDocumentLayout,
   unwrapAppRouterDocumentLayout,
 } from "#veryfront/rendering/layouts/utils/component-loader.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSource,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
@@ -51,16 +57,24 @@ async function loadComponent(
   projectDir: string,
   contentSourceId: string,
   importMap: ImportMapConfig,
+  dependencySnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSource,
+  moduleServerOrigin?: string,
   reactVersion?: string,
+  componentLoader: typeof loadComponentFromSource = loadComponentFromSource,
 ): Promise<unknown> {
   const src = await adapter.fs.readFile(filePath);
-  return loadComponentFromSource(src, filePath, projectDir, adapter, {
+  return componentLoader(src, filePath, projectDir, adapter, {
     projectId: projectDir,
     dev: false,
     moduleServerUrl: "",
+    moduleServerOrigin,
     contentSourceId,
     importMap,
     reactVersion,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+    dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningSource,
   });
 }
 
@@ -98,41 +112,83 @@ function getLayoutDirectoriesForPage(appRoot: string, pageFile: string): string[
 /**
  * Render an App Router route to HTML
  */
-export async function renderAppRouteToHTML(args: {
+interface RenderAppRouteArgs {
   adapter: RuntimeAdapter;
   projectDir: string;
   routePath: string;
   pageFile: string;
   contentSourceId: string;
+  /** Configured deployment origin used to identify same-origin module-map URLs. */
+  moduleServerOrigin?: string;
   reactVersion?: string;
   config?: VeryfrontConfig;
   releaseAssetManifest?: ReleaseAssetManifest | null;
   stylesheetHref?: string;
   includePreviewStylesheet?: boolean;
-}): Promise<string> {
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+}
+
+interface AppRouteRendererInternals {
+  componentLoader: typeof loadComponentFromSource;
+}
+
+const DEFAULT_RENDERER_INTERNALS: AppRouteRendererInternals = {
+  componentLoader: loadComponentFromSource,
+};
+
+async function renderAppRouteToHTMLWithInternals(
+  args: RenderAppRouteArgs,
+  internals: AppRouteRendererInternals,
+): Promise<string> {
   const {
     adapter,
     projectDir,
     routePath,
     pageFile,
     contentSourceId,
+    moduleServerOrigin,
     reactVersion: explicitReactVersion,
     config,
     releaseAssetManifest,
     stylesheetHref,
     includePreviewStylesheet,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
   } = args;
 
   const appRoot = join(projectDir, config?.directories?.app ?? "app");
-  const [reactVersion, importMap] = await Promise.all([
-    explicitReactVersion
-      ? Promise.resolve(explicitReactVersion)
-      : resolveProjectReactVersion({ projectDir, config }),
+  // Capture the key and package map once. Every transform and browser module
+  // identity in this render must use this exact immutable pair, even if
+  // package.json changes while page/layout modules are loading.
+  const dependencyPinningSource = createDependencyPinningSource({
+    projectDir,
+    adapter,
+    isLocalProject: true,
+    contentSourceId,
+    config,
+  });
+  const dependencySnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+  );
+  const [snapshotReactVersion, importMap] = await Promise.all([
+    resolveProjectReactVersion({
+      projectDir,
+      config,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource,
+    }),
     preloadImportMap(projectDir, adapter, projectDir, {
       contentSourceId,
       config,
     }),
   ]);
+  const reactVersion = dependencySnapshot.cacheKey.startsWith("on:")
+    ? snapshotReactVersion
+    : explicitReactVersion ?? snapshotReactVersion;
   const layouts: string[] = [];
   for (const directory of getLayoutDirectoriesForPage(appRoot, pageFile)) {
     for (const extension of APP_ROUTE_LAYOUT_EXTENSIONS) {
@@ -147,13 +203,17 @@ export async function renderAppRouteToHTML(args: {
   const React = await getProjectReact(reactVersion);
 
   const pageSource = await adapter.fs.readFile(pageFile);
-  const Page = await loadComponentFromSource(pageSource, pageFile, projectDir, adapter, {
+  const Page = await internals.componentLoader(pageSource, pageFile, projectDir, adapter, {
     projectId: projectDir,
     dev: false,
     moduleServerUrl: "",
+    moduleServerOrigin,
     contentSourceId,
     importMap,
     reactVersion,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+    dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningSource,
   });
 
   const hydrationStrategy = "rsc-module" as const;
@@ -181,7 +241,11 @@ export async function renderAppRouteToHTML(args: {
       projectDir,
       contentSourceId,
       importMap,
+      dependencySnapshot,
+      dependencyPinningSource,
+      moduleServerOrigin,
       reactVersion,
+      internals.componentLoader,
     );
     const shouldUnwrapDocumentLayout = shouldUnwrapAppRouterDocumentLayout(
       layoutPath,
@@ -226,6 +290,10 @@ export async function renderAppRouteToHTML(args: {
       ...config,
       react: { ...config?.react, version: reactVersion },
     } as VeryfrontConfig,
+    moduleServerOrigin,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+    dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningSource,
     releaseAssetManifest,
   });
   const hydrationData = clientPageIsland || hasUseClientDirective(pageSource)
@@ -246,6 +314,7 @@ export async function renderAppRouteToHTML(args: {
         forceProductionScripts: true,
         nestedLayouts: clientPageIsland?.clientLayouts ?? layoutDescriptors,
         isolatedClientPage: Boolean(clientPageIsland),
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
       },
       { pretty: false },
     )
@@ -281,4 +350,16 @@ ${hydrationDataScript}
 ${hydrationData ? getProdScripts(slug) : ""}
 </body>
 </html>`;
+}
+
+export function renderAppRouteToHTML(args: RenderAppRouteArgs): Promise<string> {
+  return renderAppRouteToHTMLWithInternals(args, DEFAULT_RENDERER_INTERNALS);
+}
+
+/** Test-only seam for observing the request-scoped component load options. */
+export function _renderAppRouteToHTMLForTest(
+  args: RenderAppRouteArgs,
+  internals: AppRouteRendererInternals,
+): Promise<string> {
+  return renderAppRouteToHTMLWithInternals(args, internals);
 }

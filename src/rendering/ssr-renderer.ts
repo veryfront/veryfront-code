@@ -103,6 +103,8 @@ export interface SSRRenderOptions {
   mode: string;
   wantsStream: boolean;
   debugMode?: boolean;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
 }
 
 export interface SSRRenderResult {
@@ -136,7 +138,22 @@ export class SSRRenderer {
     }
   }
 
-  private async getReactVersion(): Promise<string> {
+  private async getReactVersion(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  ): Promise<string> {
+    if (
+      dependencyPinningDependencies !== undefined ||
+      dependencyPinningCacheKey?.startsWith("on:")
+    ) {
+      return await resolveProjectReactVersion({
+        projectDir: this.projectDir,
+        config: this.config,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+      });
+    }
+
     if (this.resolvedReactVersion) return this.resolvedReactVersion;
 
     this.reactVersionPromise ??= resolveProjectReactVersion({
@@ -153,7 +170,10 @@ export class SSRRenderer {
   ): Promise<SSRRenderResult> {
     setupSSRGlobals();
 
-    const reactVersion = await this.getReactVersion();
+    const reactVersion = await this.getReactVersion(
+      options.dependencyPinningCacheKey,
+      options.dependencyPinningDependencies,
+    );
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;
     const compiledBinary = isCompiledBinary();
 

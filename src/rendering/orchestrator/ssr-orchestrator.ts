@@ -27,26 +27,10 @@ import {
   endRenderSession,
   hasRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-
-import { isDataControlResult } from "#veryfront/data/helpers.ts";
+import { isSSRControlOutcome } from "../ssr-outcome.ts";
+import { snapshotRenderOptions } from "./request-snapshot.ts";
 
 const logger = rendererLogger.component("ssr-orchestrator");
-
-/** True when the thrown value is (or wraps) a notFound()/redirect() control result. */
-function isThrownControlResult(error: unknown): boolean {
-  const seen = new Set<unknown>();
-  const stack: unknown[] = [error];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || typeof current !== "object" || seen.has(current)) continue;
-    if (isDataControlResult(current)) return true;
-    seen.add(current);
-    stack.push((current as { cause?: unknown }).cause);
-    const aggregated = (current as { errors?: unknown }).errors;
-    if (Array.isArray(aggregated)) stack.push(...aggregated);
-  }
-  return false;
-}
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
@@ -303,10 +287,11 @@ export class SSROrchestrator {
     // Isolated SSR path: render in per-project Worker
     if (this.isolationEnabled() && isolationOptions !== undefined) {
       const isolation = snapshotSSRIsolationOptions(isolationOptions);
+      const stableOptions = snapshotRenderOptions(options);
       // NOTE: the app-router error.tsx catch below is scoped to the main-process
       // render path. Under SSR isolation (per-project Worker) a page throw is not
       // yet routed to error.tsx — a follow-up, isolation being off by default.
-      return this.performIsolatedSSR(generationContext, options, isolation);
+      return this.performIsolatedSSR(generationContext, stableOptions, isolation);
     }
 
     // Default path: render in main process
@@ -340,6 +325,8 @@ export class SSROrchestrator {
               mode: this.config.mode,
               wantsStream,
               debugMode: this.config.debugMode,
+              dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+              dependencyPinningDependencies: options?.dependencyPinningDependencies,
             }),
           {
             "ssr.wants_stream": wantsStream,
@@ -352,7 +339,7 @@ export class SSROrchestrator {
     } catch (renderError) {
       // A thrown notFound()/redirect() control result is NOT a render error —
       // let it propagate to the SSR error handler (→ 404 / redirect).
-      if (isThrownControlResult(renderError)) throw renderError;
+      if (isSSRControlOutcome(renderError)) throw renderError;
 
       // The page threw during SSR (React error boundaries don't catch SSR render
       // throws). Render the segment's app-router error.tsx instead, if present;
@@ -495,6 +482,9 @@ export class SSROrchestrator {
         generationContext.pageBundle?.headings,
         renderOptions?.clientPageIsland,
         renderOptions?.props,
+        renderOptions?.dependencyPinningCacheKey,
+        renderOptions?.dependencyPinningDependencies,
+        renderOptions?.dependencyPinningSource,
       );
     }
 
@@ -503,6 +493,8 @@ export class SSROrchestrator {
         mode: this.config.mode,
         wantsStream: false,
         debugMode: this.config.debugMode,
+        dependencyPinningCacheKey: renderOptions?.dependencyPinningCacheKey,
+        dependencyPinningDependencies: renderOptions?.dependencyPinningDependencies,
       })
     );
     logger.debug("Rendered app-router error.tsx for a page throw", {
@@ -551,6 +543,8 @@ export class SSROrchestrator {
                 pageProps: isolation.pageProps,
                 layoutProps: isolation.layoutProps,
                 delivery: "stream",
+                dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+                dependencyPinningDependencies: options?.dependencyPinningDependencies,
                 sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
               },
             );
@@ -599,6 +593,8 @@ export class SSROrchestrator {
               pageProps: isolation.pageProps,
               layoutProps: isolation.layoutProps,
               delivery: "string",
+              dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
+              dependencyPinningDependencies: options?.dependencyPinningDependencies,
               sourceIntegrationPolicy: requireActiveSourceIntegrationPolicy(),
             },
           );

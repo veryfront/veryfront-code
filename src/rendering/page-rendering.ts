@@ -11,6 +11,7 @@ import { flattenRouteParams } from "#veryfront/routing";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { toHTMLFrontmatter, toMDXFrontmatter } from "./frontmatter.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 interface MDXPageResult {
   pageElement: BundledReact.ReactElement;
@@ -159,6 +160,12 @@ export function handleMDXPage(
     reactVersion?: string;
     /** Import map snapshot resolved for this project/content source. */
     importMap?: ImportMapConfig;
+    /** Request-scoped dependency-pinning state used by transform caches. */
+    dependencyPinningCacheKey?: string;
+    /** Immutable package map paired with dependencyPinningCacheKey. */
+    dependencyPinningDependencies?: Readonly<Record<string, string>>;
+    /** Exact package source namespace paired with the immutable snapshot. */
+    dependencyPinningSource?: DependencyPinningSourceInput;
   },
 ): Promise<MDXPageResult> {
   return withSpan(
@@ -183,6 +190,10 @@ export function handleMDXPage(
           options?.contentSourceId,
           options?.reactVersion,
           options?.importMap,
+          options?.dependencyPinningCacheKey,
+          options?.dependencyPinningDependencies,
+          options?.dependencyPinningSource,
+          options?.url?.origin,
         )) as MDXModule;
 
         const MDXComp = mod.MDXContent || mod.default;

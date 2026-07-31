@@ -25,7 +25,10 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { resolveFrameworkSourcePath } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
-import { resolveProjectReactVersion } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  type DependencyPinningSourceInput,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { CLIENT_PAGE_ISLAND_ID } from "#veryfront/rendering/rsc/page-island.ts";
 import { toMDXFrontmatter } from "../frontmatter.ts";
 import { isDotPath } from "../orchestrator/path-helpers.ts";
@@ -52,6 +55,9 @@ export interface LayoutApplicationOptions {
   pageProps?: Record<string, unknown>;
   headings?: Array<{ id: string; text: string; level: number }>;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 type LoadComponentFromSource =
@@ -80,6 +86,9 @@ export class LayoutApplicator {
   private preloadedImportMap?: ImportMapConfig | null;
   private readonly configuredReactVersion?: string;
   private readonly loadComponentFromSourceOverride?: LoadComponentFromSource;
+  private readonly dependencyPinningCacheKey?: string;
+  private readonly dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  private readonly dependencyPinningSource?: DependencyPinningSourceInput;
   private reactVersionPromise: Promise<string> | null = null;
   private frameworkProviderModulesPromise?: Promise<{
     PageContextProvider: BundledReact.ComponentType<Record<string, unknown>>;
@@ -108,12 +117,20 @@ export class LayoutApplicator {
     this.headings = options.headings;
     this.configuredReactVersion = options.reactVersion;
     this.loadComponentFromSourceOverride = dependencies.loadComponentFromSource;
+    this.dependencyPinningCacheKey = options.dependencyPinningCacheKey;
+    this.dependencyPinningDependencies = options.dependencyPinningDependencies;
+    this.dependencyPinningSource = options.dependencyPinningSource;
   }
 
   private getReactVersion(): Promise<string> {
     this.reactVersionPromise ??= this.configuredReactVersion
       ? Promise.resolve(this.configuredReactVersion)
-      : resolveProjectReactVersion({ projectDir: this.projectDir, config: this.config });
+      : resolveProjectReactVersion({
+        projectDir: this.projectDir,
+        config: this.config,
+        dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+        dependencyPinningDependencies: this.dependencyPinningDependencies,
+      });
     return this.reactVersionPromise;
   }
 
@@ -287,6 +304,10 @@ export class LayoutApplicator {
             reactVersion,
             this.mode,
             this.moduleServerUrl,
+            this.dependencyPinningCacheKey,
+            this.dependencyPinningDependencies,
+            this.dependencyPinningSource,
+            this.requestUrl?.origin,
           );
         }
 
@@ -306,6 +327,10 @@ export class LayoutApplicator {
           this.preloadedImportMap ?? undefined,
           this.mode,
           this.moduleServerUrl,
+          this.dependencyPinningCacheKey,
+          this.dependencyPinningDependencies,
+          this.dependencyPinningSource,
+          this.requestUrl?.origin,
         );
       },
       {
@@ -355,6 +380,10 @@ export class LayoutApplicator {
       mode: this.mode,
       reactVersion: await this.getReactVersion(),
       importMap: this.preloadedImportMap ?? undefined,
+      dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+      dependencyPinningDependencies: this.dependencyPinningDependencies,
+      dependencyPinningSource: this.dependencyPinningSource,
+      moduleServerOrigin: this.requestUrl?.origin,
     } as const;
 
     const [contextModule, routerModule] = await Promise.all([
@@ -423,6 +452,10 @@ export class LayoutApplicator {
               contentSourceId: this.contentSourceId,
               reactVersion: await this.getReactVersion(),
               importMap: this.preloadedImportMap ?? undefined,
+              moduleServerOrigin: this.requestUrl?.origin,
+              dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+              dependencyPinningDependencies: this.dependencyPinningDependencies,
+              dependencyPinningSource: this.dependencyPinningSource,
             },
           );
           App = assertReactComponentType(exported, `App module "${appPath}"`);
@@ -467,9 +500,13 @@ export class LayoutApplicator {
         dev: this.mode === "development",
         mode: this.mode,
         moduleServerUrl: this.moduleServerUrl ?? this.config?.dev?.moduleServerUrl,
+        moduleServerOrigin: this.requestUrl?.origin,
         contentSourceId: this.contentSourceId,
         reactVersion: await this.getReactVersion(),
         importMap: this.preloadedImportMap ?? undefined,
+        dependencyPinningCacheKey: this.dependencyPinningCacheKey,
+        dependencyPinningDependencies: this.dependencyPinningDependencies,
+        dependencyPinningSource: this.dependencyPinningSource,
       },
     );
     return assertReactComponentType(exported, `MDX App module "${appPath}"`);
@@ -503,6 +540,11 @@ export class LayoutApplicator {
             this.contentSourceId,
             reactVersion,
             this.preloadedImportMap ?? undefined,
+            undefined,
+            this.dependencyPinningCacheKey,
+            this.dependencyPinningDependencies,
+            this.dependencyPinningSource,
+            this.requestUrl?.origin,
           ),
           tryLoadReservedInDirs(
             searchDirs,
@@ -514,6 +556,11 @@ export class LayoutApplicator {
             this.contentSourceId,
             reactVersion,
             this.preloadedImportMap ?? undefined,
+            undefined,
+            this.dependencyPinningCacheKey,
+            this.dependencyPinningDependencies,
+            this.dependencyPinningSource,
+            this.requestUrl?.origin,
           ),
         ]);
 

@@ -26,6 +26,8 @@ const PAGE_HASH = "a".repeat(64);
 const CHAT_HASH = "b".repeat(64);
 const COMPONENT_HASH = "d".repeat(64);
 const REACT_HASH = "e".repeat(64);
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
 
 function meta(): RenderMetadata {
   return { title: "T", slug: "index", frontmatter: {} };
@@ -99,7 +101,7 @@ describe("html shell release asset manifest consumption", () => {
 
     // No asset rewriting; falls back to /_vf_modules/* exactly as today.
     assert(!withReleaseId.start.includes("/_vf/assets/"));
-    assertStringIncludes(withReleaseId.start, "/_vf_modules/pages/index.js");
+    assertStringIncludes(withReleaseId.start, "/_vf_modules/pages/index.tsx");
     assertEquals(withReleaseId.start, withoutReleaseId.start);
   });
 
@@ -119,8 +121,36 @@ describe("html shell release asset manifest consumption", () => {
 
     const result = await generateHTMLShellParts(meta(), prodOptions({ releaseId: "rel-1" }));
 
-    assertStringIncludes(result.start, "/_vf_modules/pages/index.js?vf_release=rel-1");
+    assertStringIncludes(result.start, "/_vf_modules/pages/index.tsx?vf_release=rel-1");
     assert(!result.start.includes("/_vf/assets/"));
+  });
+
+  it("preserves release params when pinning fallback page and import-map modules", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    configureReleaseAssetManifestFetcher(undefined);
+
+    const result = await generateHTMLShellParts(
+      meta(),
+      prodOptions({
+        releaseId: "rel-1",
+        dependencyPinningCacheKey: PIN_KEY_A,
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+      }),
+    );
+    const imports = extractImportMap(result.start);
+
+    assertStringIncludes(
+      result.start,
+      `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/pages/index.tsx?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
+    );
+    assertEquals(
+      imports["veryfront/router"],
+      `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/_veryfront/react/runtime/core.js`,
+    );
+    assertEquals(imports["@/"], `/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/`);
   });
 
   it("uses manifest route closure preloads for index routes", async () => {
@@ -413,7 +443,7 @@ describe("html shell release asset manifest consumption", () => {
     );
     assertStringIncludes(
       result.start,
-      `/_vf_modules/pages/uncovered.js?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
+      `/_vf_modules/pages/uncovered.tsx?vf_release=rel-1&amp;vf_runtime=${VERYFRONT_VERSION}`,
     );
     assertStringIncludes(result.start, "/_vf/css/");
     assert(!result.start.includes(`/_vf/assets/${PAGE_HASH}.js`));

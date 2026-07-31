@@ -11,6 +11,7 @@ import {
   CSSTYPE_VERSION,
   DEFAULT_REACT_VERSION,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import { buildDependencyPinningCacheVariant } from "./keys/dependency-pinning.ts";
 
 const JSONStringify = JSON.stringify;
 
@@ -24,6 +25,8 @@ interface TransformConfig {
   jsxImportSource?: string;
   /** Module server URL for rewritten browser imports */
   moduleServerUrl?: string;
+  /** Absolute request origin used to emit browser-loadable static asset URLs. */
+  moduleServerOrigin?: string;
   /** Vendor bundle hash for rewritten vendor imports */
   vendorBundleHash?: string;
   /** API base URL for rewritten cross-project imports */
@@ -32,6 +35,8 @@ interface TransformConfig {
   studioEmbed?: boolean;
   /** Development mode */
   dev?: boolean;
+  /** Stable VERYFRONT_DEPENDENCY_PINNING + package dependency-map state. */
+  dependencyPinningCacheKey?: string;
 }
 
 /**
@@ -40,6 +45,10 @@ interface TransformConfig {
  * Changes to these values should invalidate cached transforms.
  */
 export function computeConfigHash(config: TransformConfig): Promise<string> {
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
+  );
   const normalized = {
     transformVersion: VERSION,
     reactVersion: config.reactVersion ?? DEFAULT_REACT_VERSION,
@@ -49,6 +58,7 @@ export function computeConfigHash(config: TransformConfig): Promise<string> {
     apiBaseUrl: config.apiBaseUrl ?? null,
     studioEmbed: config.studioEmbed ?? false,
     dev: config.dev ?? false,
+    ...(dependencyPinningCacheVariant ? { dependencyPinningCacheVariant } : {}),
     csstype: CSSTYPE_VERSION,
   };
 
@@ -71,6 +81,13 @@ export function computeConfigHashSync(config: TransformConfig): string {
     config.studioEmbed ? "studio" : "",
     config.dev ? "dev" : "",
   ].filter(Boolean);
+  const dependencyPinningCacheVariant = buildDependencyPinningCacheVariant(
+    config.dependencyPinningCacheKey,
+    config.moduleServerOrigin,
+  );
+  if (dependencyPinningCacheVariant) {
+    parts.push(`pins:${dependencyPinningCacheVariant}`);
+  }
 
   return parts.join(":");
 }

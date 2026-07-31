@@ -2,6 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RenderHandler } from "./render-handler.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
+import {
+  clearReactVersionCache,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 
 describe("server/services/rsc/orchestrators/render-handler", () => {
   describe("handle", () => {
@@ -68,6 +77,211 @@ describe("server/services/rsc/orchestrators/render-handler", () => {
       const params = new URLSearchParams({ foo: "bar", baz: "qux" });
       const response = await handler.handle("/page", params);
       assertEquals(response.status >= 400, true);
+    });
+
+    it("preserves application pins in app props because transport uses a header", () => {
+      const handler = new RenderHandler(
+        "/tmp/nonexistent",
+        () => null,
+        "production",
+      );
+      const props = (handler as unknown as {
+        buildProps: (
+          pathname: string,
+          searchParams: URLSearchParams,
+        ) => { searchParams: Record<string, string> };
+      }).buildProps(
+        "/page",
+        new URLSearchParams({
+          query: "visible",
+          pins: "on:internal-snapshot",
+        }),
+      );
+
+      assertEquals(props.searchParams, {
+        query: "visible",
+        pins: "on:internal-snapshot",
+      });
+    });
+
+    it("uses the historical snapshot loader when no adapter was supplied", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-runtime-adapter-" });
+      const packageJsonPath = `${projectDir}/package.json`;
+      const pagePath = `${projectDir}/app/page.tsx`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      await Deno.mkdir(`${projectDir}/app`);
+      await Deno.writeTextFile(
+        pagePath,
+        `import value from "example-package"; export default function Page() { return value; }`,
+      );
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({
+            dependencies: {
+              react: "18.3.1",
+              "example-package": "1.0.0",
+            },
+          }),
+        );
+        const snapshotA = await getDependencyPinningSnapshot(projectDir);
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({
+            dependencies: {
+              react: "19.2.4",
+              "example-package": "2.0.0",
+            },
+          }),
+        );
+        const future = new Date(Date.now() + 2_000);
+        await Deno.utime(packageJsonPath, future, future);
+        await getDependencyPinningSnapshot(projectDir);
+
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(
+          pagePath,
+          `import value from "example-package"; export default function Page() { return value; }`,
+        );
+        let observedVersion: string | undefined;
+        const observedOrigins: Array<string | undefined> = [];
+        const Page = () => null;
+        const renderer = {
+          renderToPayload: () => Promise.resolve({ html: "<div></div>", clientRefs: {} }),
+        } as unknown as RSCRenderer;
+        const handler = new RenderHandler(
+          projectDir,
+          () => renderer,
+          "development",
+          "app",
+          {
+            runtimeAdapter: () => Promise.resolve(adapter),
+            moduleLoader: (_source, _path, _projectDir, _adapter, options) => {
+              observedVersion = options?.dependencyPinningDependencies?.["example-package"];
+              observedOrigins.push(options?.moduleServerOrigin);
+              return Promise.resolve({ default: Page });
+            },
+            reactVersion: (snapshot) => Promise.resolve(snapshot.dependencies?.react ?? "19.1.1"),
+          },
+        );
+
+        const response = await handler.handle(
+          "/",
+          new URLSearchParams({ pins: "application-value" }),
+          new Request(
+            "https://preview-a.example/_veryfront/rsc/render?pins=application-value",
+            {
+              headers: { [RSC_DEPENDENCY_PINNING_HEADER]: snapshotA.cacheKey },
+            },
+          ),
+        );
+        const secondOriginResponse = await handler.handle(
+          "/",
+          new URLSearchParams({ pins: "application-value" }),
+          new Request(
+            "https://preview-b.example/_veryfront/rsc/render?pins=application-value",
+            {
+              headers: { [RSC_DEPENDENCY_PINNING_HEADER]: snapshotA.cacheKey },
+            },
+          ),
+        );
+        assertEquals(response.status, 200);
+        assertEquals(secondOriginResponse.status, 200);
+        assertEquals(
+          response.headers.get("vary"),
+          RSC_DEPENDENCY_PINNING_HEADER,
+        );
+        assertEquals(
+          response.headers.get(RSC_DEPENDENCY_PINNING_HEADER),
+          snapshotA.cacheKey,
+        );
+        assertEquals(
+          secondOriginResponse.headers.get(RSC_DEPENDENCY_PINNING_HEADER),
+          snapshotA.cacheKey,
+        );
+        assertEquals(observedVersion, "1.0.0");
+        assertEquals(observedOrigins, [
+          "https://preview-a.example",
+          "https://preview-b.example",
+        ]);
+        const payload = await response.json();
+        assertEquals(payload.dependencyPinningCacheKey, snapshotA.cacheKey);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("resolves the current render token on a fresh worker", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-rsc-fresh-render-pins-" });
+      const packageJsonPath = `${projectDir}/package.json`;
+      const pagePath = `${projectDir}/app/page.tsx`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      await Deno.mkdir(`${projectDir}/app`);
+      await Deno.writeTextFile(pagePath, `export default function Page() { return null; }`);
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({
+            dependencies: {
+              react: "18.3.1",
+              "example-package": "1.0.0",
+            },
+          }),
+        );
+        const currentSnapshot = await getDependencyPinningSnapshot(projectDir);
+
+        // Simulate a load-balanced worker whose in-process snapshot registry
+        // has not seen the token emitted by the page-rendering worker.
+        clearReactVersionCache();
+        const adapter = createMockAdapter();
+        adapter.fs.files.set(pagePath, `export default function Page() { return null; }`);
+        let observedVersion: string | undefined;
+        const renderer = {
+          renderToPayload: () => Promise.resolve({ html: "<div></div>", clientRefs: {} }),
+        } as unknown as RSCRenderer;
+        const handler = new RenderHandler(
+          projectDir,
+          () => renderer,
+          "development",
+          "app",
+          {
+            runtimeAdapter: () => Promise.resolve(adapter),
+            moduleLoader: (_source, _path, _projectDir, _adapter, options) => {
+              observedVersion = options?.dependencyPinningDependencies?.["example-package"];
+              return Promise.resolve({ default: () => null });
+            },
+          },
+        );
+
+        const response = await handler.handle(
+          "/",
+          new URLSearchParams({ pins: "application-value" }),
+          new Request("http://localhost/_veryfront/rsc/render?pins=application-value", {
+            headers: { [RSC_DEPENDENCY_PINNING_HEADER]: currentSnapshot.cacheKey },
+          }),
+        );
+        const payload = await response.json();
+
+        assertEquals(response.status, 200);
+        assertEquals(observedVersion, "1.0.0");
+        assertEquals(
+          response.headers.get(RSC_DEPENDENCY_PINNING_HEADER),
+          currentSnapshot.cacheKey,
+        );
+        assertEquals(payload.dependencyPinningCacheKey, currentSnapshot.cacheKey);
+      } finally {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 });

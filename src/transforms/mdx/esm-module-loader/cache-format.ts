@@ -11,6 +11,7 @@ import { hashString } from "./utils/hash.ts";
 const ALL_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+)/.source;
 const MJS_FILE_URL_PATTERN_SOURCE = /file:\/\/([^"'\s]+\.mjs)/.source;
 const CACHE_NAMESPACE_SENTINEL = "__vf_cache_namespace__";
+export const MDX_DISTRIBUTED_TRANSFORM_ENVELOPE_VERSION = 2;
 const PUBLIC_RUNTIME_SPECIFIERS = [
   "veryfront/head",
   "veryfront/router",
@@ -39,7 +40,9 @@ function formatMdxEsmTransformCacheKey(
   normalizedPath: string,
   contentHash: string,
   importMapFingerprint?: string,
+  cacheVariant?: string,
 ): string {
+  const dependencyPinningVariant = cacheVariant?.startsWith("on:") ? cacheVariant : null;
   const identity = hashString(
     JSON.stringify([
       projectId,
@@ -48,6 +51,7 @@ function formatMdxEsmTransformCacheKey(
       normalizedPath,
       contentHash,
       importMapFingerprint ?? null,
+      dependencyPinningVariant,
     ]),
   );
   return `${namespace}:transform:${identity}:ssr`;
@@ -59,15 +63,18 @@ function formatMdxEsmPathCacheKey(
   normalizedPath: string,
   sourceContentHash?: string,
   importMapFingerprint?: string,
+  cacheVariant?: string,
 ): string {
   // This cache is local and needs to support selective path invalidation. Keep
   // the framed identity parseable while binding it to the full source digest.
+  const dependencyPinningVariant = cacheVariant?.startsWith("on:") ? cacheVariant : null;
   return `${namespace}:path:${
     JSON.stringify([
       reactVersion,
       normalizedPath,
       sourceContentHash ?? null,
       importMapFingerprint ?? null,
+      dependencyPinningVariant,
     ])
   }`;
 }
@@ -105,6 +112,7 @@ function formatFrameworkVfModuleCacheFileName(
 
 function buildMdxEsmCacheSchemaSample() {
   return {
+    distributedTransformEnvelopeVersion: MDX_DISTRIBUTED_TRANSFORM_ENVELOPE_VERSION,
     transformKey: formatMdxEsmTransformCacheKey(
       CACHE_NAMESPACE_SENTINEL,
       "__vf_project__",
@@ -113,6 +121,7 @@ function buildMdxEsmCacheSchemaSample() {
       "_vf_modules/pages/index.js",
       "deadbeef",
       "__vf_import_map__",
+      "on:__vf_dependency_pinning__",
     ),
     pathKey: formatMdxEsmPathCacheKey(
       CACHE_NAMESPACE_SENTINEL,
@@ -120,6 +129,7 @@ function buildMdxEsmCacheSchemaSample() {
       "_vf_modules/pages/index.js",
       "deadbeef",
       "__vf_import_map__",
+      "on:__vf_dependency_pinning__",
     ),
     moduleFile: formatMdxEsmModuleFileName(CACHE_NAMESPACE_SENTINEL, "deadbeef"),
     moduleRecoveryKey: formatMdxEsmModuleRecoveryCacheKey(
@@ -185,6 +195,7 @@ export function buildMdxEsmTransformCacheKey(
   normalizedPath: string,
   contentHash: string,
   importMapFingerprint?: string,
+  cacheVariant?: string,
 ): string {
   return formatMdxEsmTransformCacheKey(
     MDX_ESM_CACHE_NAMESPACE,
@@ -194,6 +205,7 @@ export function buildMdxEsmTransformCacheKey(
     normalizedPath,
     contentHash,
     importMapFingerprint,
+    cacheVariant,
   );
 }
 
@@ -202,6 +214,7 @@ export function buildMdxEsmPathCacheKey(
   reactVersion = REACT_DEFAULT_VERSION,
   sourceContentHash?: string,
   importMapFingerprint?: string,
+  cacheVariant?: string,
 ): string {
   return formatMdxEsmPathCacheKey(
     MDX_ESM_CACHE_NAMESPACE,
@@ -209,6 +222,7 @@ export function buildMdxEsmPathCacheKey(
     normalizedPath,
     sourceContentHash,
     importMapFingerprint,
+    cacheVariant,
   );
 }
 

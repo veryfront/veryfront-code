@@ -100,6 +100,47 @@ describe("module-loader/module-cache-lookup", () => {
     });
   });
 
+  it("isolates in-memory module paths by dependency-pin state", () => {
+    const base = [
+      "/project/app/page.tsx",
+      "project-id",
+      "/project",
+      "source-id",
+      "19.0.0",
+      "production",
+    ] as const;
+    const flagOff = getModuleCacheKey(...base, undefined, "off");
+    const unkeyed = getModuleCacheKey(...base);
+    const firstPins = getModuleCacheKey(...base, undefined, "on:first");
+    const changedPins = getModuleCacheKey(...base, undefined, "on:second");
+
+    assertEquals(new Set([flagOff, firstPins, changedPins]).size, 3);
+    assertEquals(flagOff, unkeyed);
+  });
+
+  it("isolates pin-on module paths by origin while preserving flag-off identity", () => {
+    const base = [
+      "/project/app/page.tsx",
+      "project-id",
+      "/project",
+      "source-id",
+      "19.0.0",
+      "production",
+    ] as const;
+    const originA = getModuleCacheKey(...base, undefined, "on:snapshot", "https://a.example");
+    const originB = getModuleCacheKey(...base, undefined, "on:snapshot", "https://b.example");
+    const flagOff = getModuleCacheKey(...base, undefined, "off");
+    const flagOffWithOrigin = getModuleCacheKey(
+      ...base,
+      undefined,
+      "off",
+      "https://a.example",
+    );
+
+    assertEquals(originA === originB, false);
+    assertEquals(flagOffWithOrigin, flagOff);
+  });
+
   it("returns a valid in-memory cached module path", async () => {
     await withCachedFile("export const ok = true;", async (cachedPath) => {
       const moduleCache = new Map([["cache-key", cachedPath]]);

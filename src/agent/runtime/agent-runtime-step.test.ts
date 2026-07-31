@@ -515,6 +515,38 @@ describe("agent/runtime-step", () => {
     ]);
   });
 
+  it("hides advertised skill file tools under an explicit deny-all policy", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: [],
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: ["scripts/run.sh"],
+      },
+      allowedRemoteToolNames: undefined,
+      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("read_file"),
+        toolDefinition("load_skill"),
+        toolDefinition("load_skill_reference"),
+        toolDefinition("execute_skill_script"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill"]);
+  });
+
   it("hides skill file tools before any skill is active", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",

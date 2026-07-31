@@ -31,6 +31,8 @@ export interface RSCPayload {
   html: string;
   /** Browser module paths keyed by client component identifier. */
   clientRefs: Record<string, string>;
+  /** Dependency snapshot captured before loading and rendering this payload. */
+  dependencyPinningCacheKey?: string;
   /** Stylesheets and scripts required by the payload. */
   assets?: {
     /** Stylesheet URLs required by the payload. */

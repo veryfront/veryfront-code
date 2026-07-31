@@ -15,13 +15,71 @@ import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes, type CollectedRoutes } from "./route-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
+import {
+  generateLocalReleaseAssetManifest,
+  type LocalReleaseAssetOptions,
+} from "../local-release-assets.ts";
 import { discoverStaticAssets } from "../asset-generation.ts";
 import { assertSafeBuildOutputDirectory, validateBuildOutputPlan } from "./output-plan.ts";
 import { type BuildPublication, createBuildPublication } from "./build-publication.ts";
 import { expandPagesStaticPaths } from "../static-path-expansion.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSource,
+  resolveDependencyPinningSnapshot,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 
-export function buildProduction(options: BuildOptions): Promise<BuildStats> {
+interface BuildDependencySnapshotOptions {
+  projectDir: string;
+  adapter: RuntimeAdapter;
+  isLocalProject: boolean;
+  config: VeryfrontConfig;
+}
+
+interface BuildDependencyContext {
+  source: DependencyPinningSource;
+  snapshot: DependencyPinningSnapshot;
+}
+
+/** Trusted providers composed by the production-build entry point. */
+export interface BuildProductionReleaseAssetProviders {
+  readonly vendorHttpImports: NonNullable<LocalReleaseAssetOptions["vendorHttpImports"]>;
+  readonly frameworkTransform: NonNullable<LocalReleaseAssetOptions["frameworkTransform"]>;
+}
+
+/** Production-build options, including optional flag-gated release asset providers. */
+export interface BuildProductionOptions extends BuildOptions {
+  readonly localReleaseAssetProviders?: BuildProductionReleaseAssetProviders;
+}
+
+async function captureBuildDependencyContext(
+  options: BuildDependencySnapshotOptions,
+): Promise<BuildDependencyContext> {
+  const source = createDependencyPinningSource({
+    projectDir: options.projectDir,
+    adapter: options.adapter,
+    isLocalProject: options.isLocalProject,
+    contentSourceId: "production-build",
+    config: options.config,
+  });
+  return {
+    source,
+    snapshot: await resolveDependencyPinningSnapshot(source),
+  };
+}
+
+/** Capture the immutable package/config state shared by one production build. */
+export async function captureBuildDependencySnapshot(
+  options: BuildDependencySnapshotOptions,
+): Promise<DependencyPinningSnapshot> {
+  return (await captureBuildDependencyContext(options)).snapshot;
+}
+
+export function buildProduction(options: BuildProductionOptions): Promise<BuildStats> {
   return withSpan(
     "build.production",
     async () => {
@@ -73,6 +131,20 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
       let buildError: unknown;
       let buildFailed = false;
       try {
+        const dependencyContext = await captureBuildDependencyContext({
+          projectDir: normalizedOptions.projectDir,
+          adapter: context.adapter,
+          isLocalProject: true,
+          config: context.config,
+        });
+        const dependencySnapshot = dependencyContext.snapshot;
+        const buildReactVersion = await resolveProjectReactVersion({
+          projectDir: normalizedOptions.projectDir,
+          config: context.config,
+          dependencyPinningSource: dependencyContext.source,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+        });
         const finalOutputDir = normalizedOptions.outputDir ?? "";
         const dryRun = normalizedOptions.dryRun ?? false;
         const enableSplitting = normalizedOptions.enableSplitting ?? true;
@@ -151,6 +223,11 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               outputDir,
               dryRun,
               config: context.config,
+              reactVersion: buildReactVersion,
+              dependencyPinningSource: dependencyContext.source,
+              dependencyPinningSnapshot: dependencySnapshot,
+              vendorHttpImports: options.localReleaseAssetProviders?.vendorHttpImports,
+              frameworkTransform: options.localReleaseAssetProviders?.frameworkTransform,
             }),
           {},
         );
@@ -184,6 +261,9 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               dryRun,
               releaseAssetManifest,
               ignoredSourceDirs: [finalOutputDir, outputDir],
+              isLocalProject: true,
+              dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+              dependencyPinningDependencies: dependencySnapshot.dependencies,
             }),
           {},
         );

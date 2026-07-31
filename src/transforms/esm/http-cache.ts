@@ -533,19 +533,51 @@ async function cacheHttpModule(url: string, options: CacheOptions): Promise<stri
   );
 }
 
-/** Result of cacheHttpImportsToLocal including bundle manifest info. */
+/**
+ * Positively acknowledged content-addressed bundle-graph authority.
+ *
+ * The canonical hash set is authoritative. Manifest URL, size, timestamp, TTL,
+ * and serialized bytes are refreshable metadata and are intentionally absent.
+ */
+export interface AcknowledgedBundleManifestAuthority {
+  readonly manifestId: string;
+  readonly bundleHashes: readonly string[];
+}
+
+const acknowledgedBundleManifestAuthorities = new WeakSet<
+  AcknowledgedBundleManifestAuthority
+>();
+
+/**
+ * Return an authority only when this module created it after a positive store
+ * acknowledgement. Structurally identical caller objects are not proof.
+ */
+export function inspectAcknowledgedBundleManifestAuthority(
+  value: unknown,
+): AcknowledgedBundleManifestAuthority | null {
+  if (value === null || typeof value !== "object") return null;
+  const authority = value as AcknowledgedBundleManifestAuthority;
+  return acknowledgedBundleManifestAuthorities.has(authority) ? authority : null;
+}
+
+/** Result of cacheHttpImportsToLocal including bundle graph authority. */
 interface CacheHttpImportsResult {
   code: string;
   bundleManifestId?: string;
+  bundleManifestAuthority?: AcknowledgedBundleManifestAuthority;
 }
 
 /**
  * Rewrite HTTP imports in the provided code to cached local file:// paths.
- * Returns the rewritten code and an optional bundle manifest ID for atomic validation.
+ * Returns the rewritten code and graph authority only after manifest storage is
+ * positively acknowledged.
  */
 export function cacheHttpImportsToLocal(
   code: string,
   options: CacheOptions,
+  dependencies: Readonly<{
+    storeBundleManifest?: typeof storeBundleManifest;
+  }> = {},
 ): Promise<CacheHttpImportsResult> {
   const requestOptions = prepareHttpCacheRequestOptions(options);
   const accumulator = createBundleAccumulator();
@@ -575,12 +607,30 @@ export function cacheHttpImportsToLocal(
 
     try {
       const manifest = await createBundleManifest(bundles);
-      await storeBundleManifest(manifest);
+      const bundleManifestAuthority = Object.freeze({
+        manifestId: manifest.manifestId,
+        bundleHashes: Object.freeze(manifest.bundles.map(({ hash }) => hash)),
+      }) satisfies AcknowledgedBundleManifestAuthority;
+      const manifestStored = await (dependencies.storeBundleManifest ?? storeBundleManifest)(
+        manifest,
+      );
+      if (manifestStored !== true) {
+        httpCacheLog.debug("Bundle manifest storage was not acknowledged", {
+          manifestId: manifest.manifestId.slice(0, 12),
+          bundleCount: bundles.length,
+        });
+        return { code: rewrittenCode };
+      }
+      acknowledgedBundleManifestAuthorities.add(bundleManifestAuthority);
       httpCacheLog.debug("Created bundle manifest", {
         manifestId: manifest.manifestId.slice(0, 12),
         bundleCount: bundles.length,
       });
-      return { code: rewrittenCode, bundleManifestId: manifest.manifestId };
+      return {
+        code: rewrittenCode,
+        bundleManifestId: manifest.manifestId,
+        bundleManifestAuthority,
+      };
     } catch (error) {
       httpCacheLog.debug("Failed to create bundle manifest", { error });
       return { code: rewrittenCode };

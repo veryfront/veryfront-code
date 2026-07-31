@@ -189,6 +189,82 @@ describe("html/html-injection", () => {
       assertEquals(optionsAccessorCalls, 0);
     });
 
+    it("rejects nested hydration accessors without executing them", () => {
+      let accessorCalls = 0;
+      const nestedParams = Object.defineProperty({}, "slug", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return ["unsafe"];
+        },
+      });
+
+      assertThrows(
+        () =>
+          injectHTMLContent(
+            baseTemplate,
+            "",
+            minMeta,
+            {
+              mode: "production",
+              slug: "test",
+              pagePath: "/project/app/page.tsx",
+              projectDir: "/project",
+              isClientPage: true,
+              params: nestedParams as Record<string, string | string[]>,
+            },
+          ),
+        Error,
+      );
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("rejects transparent proxies before hydration serialization", () => {
+      const params = new Proxy<Record<string, string>>({ id: "unsafe" }, {});
+
+      assertThrows(
+        () =>
+          injectHTMLContent(
+            baseTemplate,
+            "",
+            minMeta,
+            {
+              mode: "production",
+              slug: "test",
+              pagePath: "/project/app/page.tsx",
+              projectDir: "/project",
+              isClientPage: true,
+              params,
+            },
+          ),
+        TypeError,
+      );
+    });
+
+    it("rejects transparent proxies around public input records", () => {
+      const metadata = new Proxy(minMeta, {});
+      const options = new Proxy(
+        {
+          mode: "production",
+          slug: "test",
+        },
+        {},
+      );
+
+      assertThrows(
+        () =>
+          injectHTMLContent(baseTemplate, "", metadata, {
+            mode: "production",
+            slug: "test",
+          }),
+        TypeError,
+      );
+      assertThrows(
+        () => injectHTMLContent(baseTemplate, "", minMeta, options),
+        TypeError,
+      );
+    });
+
     it("passes the response nonce to all metadata script and style tags", () => {
       const html = injectHTMLContent(
         "<head>{{ scripts }}{{ styles }}</head><body></body>",
@@ -308,6 +384,46 @@ describe("html/html-injection", () => {
       assertEquals(typeof hydrationData.buildVersion, "object");
     });
 
+    it("injects a minimal dependency snapshot for non-client full documents", () => {
+      const html = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          dependencyPinningCacheKey: "on:snapshot-a",
+        },
+      );
+
+      assertEquals(extractHydrationData(html), {
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+      assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
+    });
+
+    it("keeps non-client full documents byte-identical when pinning is off", () => {
+      const unkeyed = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        { mode: "production", slug: "test" },
+      );
+      const flagOff = injectHTMLContent(
+        baseTemplate,
+        "<p>content</p>",
+        minMeta,
+        {
+          mode: "production",
+          slug: "test",
+          dependencyPinningCacheKey: "off",
+        },
+      );
+
+      assertEquals(flagOff, unkeyed);
+      assertEquals(flagOff.includes("veryfront-hydration-data"), false);
+    });
+
     it("injects route-scoped release asset modules into full-document client page hydration data", () => {
       const html = injectHTMLContent(
         baseTemplate,
@@ -350,6 +466,37 @@ describe("html/html-injection", () => {
       assertEquals(hydrationData.releaseAssetModules, {
         "src/pages/about.tsx": `/_vf/assets/${ABOUT_HASH}.js`,
       });
+    });
+
+    it("omits foreign and dot-segment client module paths", () => {
+      for (
+        const pagePath of [
+          "/foreign/project/app/page.tsx",
+          "/workspace/project/app/../secret.tsx",
+          "/workspace/project/app/./page.tsx",
+          "/workspace/project/app/.%2e/.%2e/admin.tsx",
+          "/workspace/project/app/%2E./page.tsx",
+        ]
+      ) {
+        const html = injectHTMLContent(
+          baseTemplate,
+          "<p>content</p>",
+          minMeta,
+          {
+            mode: "production",
+            slug: "test",
+            pagePath,
+            projectDir: "/workspace/project",
+            isClientPage: true,
+          },
+        );
+
+        assertEquals(
+          html.includes("veryfront-hydration-data"),
+          false,
+          `unexpected hydration payload for ${pagePath}`,
+        );
+      }
     });
 
     it("seeds route params into client-page hydration data (issue #2741)", () => {

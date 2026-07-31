@@ -11,7 +11,10 @@ import {
   buildRenderCacheKey,
   buildRenderCachePrefix,
 } from "#veryfront/cache/keys.ts";
-import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+import {
+  DEPENDENCY_PINNING_ENV_FLAG,
+  RELEASE_ASSET_MANIFEST_ENV_FLAG,
+} from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
   configureReleaseAssetManifestFetcher,
@@ -22,6 +25,7 @@ import { stub } from "#std/testing/mock";
 import { FakeTime } from "#std/testing/time";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
+import type { RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import {
   clearRendererCacheForProject,
   destroyRenderer,
@@ -39,8 +43,10 @@ import {
   renderSemaphore,
 } from "./renderer-concurrency.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 import { destroySharedServices } from "./shared/shared-services.ts";
 import { WorkerExecutionScopeOwner } from "./worker-execution-scope.ts";
+import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -149,12 +155,25 @@ function makeReadyManifest(): ReleaseAssetManifest {
   };
 }
 
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
 function makeRenderAdapter(
   fsOverrides: Record<string, unknown> = {},
 ): RenderContext["adapter"] {
   return {
     fs: {
       exists: async () => false,
+      readFile: () =>
+        Promise.reject(
+          Object.assign(new Error("file not found"), { code: "ENOENT" }),
+        ),
       readDir: () => {
         throw Object.assign(new Error("components directory not found"), {
           code: "ENOENT",
@@ -565,6 +584,70 @@ describe("Renderer release asset cache isolation", () => {
     );
   });
 
+  it("snapshots dependency pins before awaiting the release manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const manifestRequested = Promise.withResolvers<void>();
+    const releaseManifest = Promise.withResolvers<
+      { state: "ready"; manifest_version: number; manifest: ReleaseAssetManifest }
+    >();
+    configureReleaseAssetManifestFetcher(() => {
+      manifestRequested.resolve();
+      return releaseManifest.promise;
+    });
+
+    const renderer = new Renderer({ cache: { store: createInMemoryStore() } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+    let observedDependencies: Readonly<Record<string, string>> | undefined;
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<{
+            html: string;
+            frontmatter: Record<string, unknown>;
+            headings: never[];
+            stream: null;
+          }>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observedDependencies = options?.dependencyPinningDependencies;
+          return Promise.resolve({
+            html: "<html>snapshotted dependencies</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const dependencies = { react: "18.2.0" };
+    const pending = renderer.renderPage("/dependency-snapshot", makeRenderContext(), {
+      environment: "production",
+      releaseId: "rel-1",
+      dependencyPinningCacheKey: cacheKeyForDependencies(dependencies),
+      dependencyPinningDependencies: dependencies,
+    });
+
+    await manifestRequested.promise;
+    dependencies.react = "19.0.0";
+    releaseManifest.resolve({
+      state: "ready",
+      manifest_version: 1,
+      manifest: makeReadyManifest(),
+    });
+
+    assertEquals((await pending).html, "<html>snapshotted dependencies</html>");
+    assertEquals(observedDependencies, { react: "18.2.0" });
+    assertStrictEquals(Object.getPrototypeOf(observedDependencies), null);
+    assertEquals(Object.isFrozen(observedDependencies), true);
+  });
+
   it("persists rendered HTML under the manifest-versioned cache prefix", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     configureReleaseAssetManifestFetcher(() =>
@@ -653,6 +736,10 @@ describe("Renderer release asset cache isolation", () => {
     });
 
     let renderCount = 0;
+    const dependencyPinningSource = {
+      projectDir: "/custom-package-source",
+      cacheNamespace: "custom-package-source",
+    };
     const renderer = new Renderer({ cache: { store } });
     (renderer as unknown as { initialized: boolean }).initialized = true;
     (renderer as unknown as {
@@ -665,6 +752,7 @@ describe("Renderer release asset cache isolation", () => {
             options?: {
               skipCacheCheck?: boolean;
               releaseAssetManifest?: ReleaseAssetManifest | null;
+              dependencyPinningSource?: RenderOptions["dependencyPinningSource"];
             },
           ) => Promise<{
             html: string;
@@ -685,6 +773,7 @@ describe("Renderer release asset cache isolation", () => {
             options?: {
               skipCacheCheck?: boolean;
               releaseAssetManifest?: ReleaseAssetManifest | null;
+              dependencyPinningSource?: RenderOptions["dependencyPinningSource"];
             },
           ) => Promise<{
             html: string;
@@ -700,6 +789,10 @@ describe("Renderer release asset cache isolation", () => {
           renderCount++;
           assertEquals(slug, "/stale");
           assertEquals(options?.skipCacheCheck, true);
+          assertStrictEquals(
+            options?.dependencyPinningSource,
+            dependencyPinningSource,
+          );
           return Promise.resolve({
             html: "<html>fresh render</html>",
             frontmatter: {},
@@ -713,6 +806,7 @@ describe("Renderer release asset cache isolation", () => {
     const result = await renderer.renderPage("/stale", ctx, {
       environment: "production",
       releaseId: "rel-1",
+      dependencyPinningSource,
     });
 
     assertEquals(result.html, "<html>stale render</html>");
@@ -1092,8 +1186,16 @@ describe("Renderer release asset cache isolation", () => {
     const renderedSlugs: string[] = [];
     const renderRequests = new Map<
       string,
-      { request?: Request; url?: URL }
+      {
+        request?: Request;
+        url?: URL;
+        dependencyPinningSource?: RenderOptions["dependencyPinningSource"];
+      }
     >();
+    const dependencyPinningSource = {
+      projectDir: "/custom-prewarm-package-source",
+      cacheNamespace: "custom-prewarm-package-source",
+    };
     const stalePages = Array.from(
       { length: 14 },
       (_, index) => `aa-stale-${index.toString().padStart(2, "0")}`,
@@ -1112,6 +1214,7 @@ describe("Renderer release asset cache isolation", () => {
               releaseAssetManifest?: ReleaseAssetManifest | null;
               request?: Request;
               url?: URL;
+              dependencyPinningSource?: RenderOptions["dependencyPinningSource"];
             },
           ) => Promise<{
             html: string;
@@ -1136,6 +1239,7 @@ describe("Renderer release asset cache isolation", () => {
               releaseAssetManifest?: ReleaseAssetManifest | null;
               request?: Request;
               url?: URL;
+              dependencyPinningSource?: RenderOptions["dependencyPinningSource"];
             },
           ) => Promise<{
             html: string;
@@ -1154,6 +1258,7 @@ describe("Renderer release asset cache isolation", () => {
           renderRequests.set(slug, {
             request: options?.request,
             url: options?.url,
+            dependencyPinningSource: options?.dependencyPinningSource,
           });
           return Promise.resolve({
             html: `<html>${slug}</html>`,
@@ -1183,6 +1288,7 @@ describe("Renderer release asset cache isolation", () => {
         },
       }),
       url,
+      dependencyPinningSource,
     });
     await waitForProductionPrewarm(renderer);
 
@@ -1215,6 +1321,10 @@ describe("Renderer release asset cache isolation", () => {
       assertEquals(prewarm?.request?.headers.has("authorization"), false);
       assertEquals(prewarm?.request?.headers.has("cookie"), false);
       assertEquals(prewarm?.request?.headers.has("x-preview-context"), false);
+      assertStrictEquals(
+        prewarm?.dependencyPinningSource,
+        dependencyPinningSource,
+      );
     }
   });
 
@@ -2586,6 +2696,114 @@ describe("rendering/renderer destruction lifecycle", () => {
     assertEquals(dataFetcherDestroyCalls, 1);
     assertEquals(internals.dataFetcher, undefined);
     assertThrows(() => internals.getDataFetcher(), Error, "not initialized");
+  });
+});
+
+describe("Renderer dependency pin cache isolation", () => {
+  it("bounds the complete API render key while preserving the flag-off override", async () => {
+    const renderer = new Renderer();
+    const buildCachePolicy = (renderer as unknown as {
+      buildCachePolicy(
+        slug: string,
+        ctx: RenderContext,
+        options?: RenderOptions,
+      ): Promise<{ cacheKey: string | null }>;
+    }).buildCachePolicy.bind(renderer);
+    const ctx = makeRenderContext();
+    const legacyKey = "a".repeat(440);
+    const options: RenderOptions = {
+      cacheKey: legacyKey,
+      colorScheme: "dark",
+      dependencyPinningCacheKey: "on:3w5e11264sgsf",
+      url: new URL("https://preview.example.test"),
+    };
+    const cacheKey = (await buildCachePolicy("/", ctx, options)).cacheKey;
+
+    assertEquals(typeof cacheKey, "string");
+    const completeKey = `render:${ctx.cachePrefix}:page:${cacheKey}:theme-dark`;
+    assertEquals(completeKey.length <= 512, true);
+    assertEquals(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey), true);
+    const configDigest = await computeHash(JSON.stringify(ctx.config));
+    assertEquals(
+      (await buildCachePolicy("/", ctx, {
+        ...options,
+        dependencyPinningCacheKey: "off",
+      })).cacheKey,
+      `${legacyKey}:config-${configDigest}`,
+    );
+  });
+
+  it("misses the outer render cache when the package map changes", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-renderer-pins-" });
+    const packageJsonPath = `${projectDir}/package.json`;
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    let renders = 0;
+    const observedPinKeys: string[] = [];
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<RenderResult>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          renders++;
+          observedPinKeys.push(options?.dependencyPinningCacheKey ?? "");
+          return Promise.resolve({
+            html: `<html>${options?.dependencyPinningCacheKey}</html>`,
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      projectDir,
+      environment: "preview",
+      contentSourceId: "preview-main",
+      releaseId: undefined,
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "main"),
+    } as RenderContext;
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { zod: "3.0.0" } }),
+      );
+      const first = await renderer.renderPage("/pins", ctx);
+
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await Deno.writeTextFile(
+        packageJsonPath,
+        JSON.stringify({ dependencies: { zod: "4.0.0" } }),
+      );
+      const second = await renderer.renderPage("/pins", ctx);
+      const cachedSecond = await renderer.renderPage("/pins", ctx);
+
+      assertEquals(renders, 2);
+      assertEquals(new Set(observedPinKeys).size, 2);
+      assertEquals(first.html === second.html, false);
+      assertEquals(cachedSecond.html, second.html);
+      assertEquals(store.data.size, 2);
+    } finally {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      await renderer.destroy();
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 });
 

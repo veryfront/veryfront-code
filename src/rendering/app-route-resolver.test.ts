@@ -13,6 +13,7 @@ function createMockAdapter(
 
   return {
     fs: {
+      symlinkSemantics: "none",
       readFile: (path: string) => {
         const content = files.get(path);
         if (content === undefined) {

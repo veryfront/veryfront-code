@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import * as esbuild from "veryfront/extensions/bundler";
@@ -11,7 +11,12 @@ import {
   remove,
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
-import type { CacheBackend } from "#veryfront/cache/types.ts";
+import type {
+  CacheRevisionMutation,
+  CacheRevisionSnapshot,
+  RevisionedCacheBackend,
+} from "#veryfront/cache/types.ts";
+import { buildRevisionedCacheKey } from "#veryfront/cache/backend.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache";
 import { __injectCachesForTests } from "#veryfront/transforms/esm/transform-cache.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
@@ -24,23 +29,56 @@ import {
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/recovery-payload.ts";
 import { createSSRImportMapIdentity } from "./import-map-identity.ts";
 import { createDependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import { globalModuleCache } from "./cache/index.ts";
 
-class FakeDistributedCache implements CacheBackend {
+const CANONICAL_PIN_KEY = "on:3m96ohlm0kf87";
+const PINNED_DEPENDENCIES = Object.freeze({ lodash: "1.0.0" });
+const CHANGED_PINNED_DEPENDENCIES = Object.freeze({ lodash: "2.0.0" });
+
+class FakeDistributedCache implements RevisionedCacheBackend {
   readonly type = "distributed" as const;
-  private values = new Map<string, string>();
+  private values = new Map<string, { value: string | null; revision: string }>();
+  private nextRevision = 0;
 
   get(key: string): Promise<string | null> {
-    return Promise.resolve(this.values.get(key) ?? null);
+    return Promise.reject(new Error(`ordinary get must not be used: ${key}`));
   }
 
-  set(key: string, value: string): Promise<void> {
-    this.values.set(key, value);
-    return Promise.resolve();
+  set(key: string): Promise<void> {
+    return Promise.reject(new Error(`ordinary set must not be used: ${key}`));
   }
 
   del(key: string): Promise<void> {
-    this.values.delete(key);
-    return Promise.resolve();
+    return Promise.reject(new Error(`ordinary del must not be used: ${key}`));
+  }
+
+  getWithRevision(key: string): Promise<CacheRevisionSnapshot> {
+    const record = this.values.get(key);
+    return Promise.resolve({ value: record?.value ?? null, revision: record?.revision ?? "0" });
+  }
+
+  compareExchange(
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ): Promise<boolean> {
+    const current = this.values.get(key);
+    if ((current?.revision ?? "0") !== expectedRevision) return Promise.resolve(false);
+    this.values.set(key, {
+      value: mutation.kind === "set" ? mutation.value : null,
+      revision: String(++this.nextRevision),
+    });
+    return Promise.resolve(true);
+  }
+
+  async seedWithCompareExchange(key: string, value: string): Promise<void> {
+    const snapshot = await this.getWithRevision(key);
+    const stored = await this.compareExchange(key, snapshot.revision, {
+      kind: "set",
+      value,
+      expiresAtMs: Date.now() + 60_000,
+    });
+    if (!stored) throw new Error("revisioned test seed lost its compare-exchange");
   }
 }
 
@@ -63,6 +101,73 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(await manager.hashContentAsync(small), await computeHash(small));
     assertEquals(await manager.hashContentAsync(large), await computeHash(large));
     assertEquals((await manager.hashContentAsync(small)).length, 64);
+  });
+
+  it("rejects invalid dependency snapshots before resolving a prepopulated cache identity", () => {
+    globalModuleCache.clear();
+    const common = {
+      projectDir: "/project",
+      projectId: "project",
+      contentSourceId: "preview",
+      adapter: denoAdapter,
+      dev: true,
+    } as const;
+    const flagOffManager = new SSRCacheManager({
+      ...common,
+      dependencyPinningCacheKey: "off",
+    });
+    const filePath = "/project/page.tsx";
+    const flagOffKey = flagOffManager.getCacheKey(filePath);
+    globalModuleCache.set(flagOffKey, {
+      tempPath: "/tmp/prepopulated-flag-off.mjs",
+      contentHash: "cafe1234",
+    });
+
+    for (
+      const invalidSnapshot of [
+        {
+          dependencyPinningCacheKey: "malformed",
+          dependencyPinningDependencies: PINNED_DEPENDENCIES,
+        },
+        {
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+        },
+        {
+          dependencyPinningCacheKey: CANONICAL_PIN_KEY,
+          dependencyPinningDependencies: CHANGED_PINNED_DEPENDENCIES,
+        },
+      ] as const
+    ) {
+      assertThrows(
+        () =>
+          new SSRCacheManager({
+            ...common,
+            ...invalidSnapshot,
+          }).getCacheKey(filePath),
+        Error,
+        "dependency pinning snapshot",
+      );
+    }
+    assertEquals(globalModuleCache.get(flagOffKey)?.tempPath, "/tmp/prepopulated-flag-off.mjs");
+    globalModuleCache.clear();
+  });
+
+  it("accepts a fresh config-backed canonical dependency snapshot", () => {
+    const manager = new SSRCacheManager({
+      projectDir: "/configured-snapshot-project",
+      projectId: "configured-snapshot-project",
+      contentSourceId: "preview",
+      adapter: denoAdapter,
+      dev: true,
+      dependencyPinningCacheKey: "on:1l85hs4d8cbtc",
+      dependencyPinningDependencies: Object.freeze({ react: "19.1.1" }),
+      dependencyPinningSource: {
+        projectDir: "/configured-snapshot-project",
+        config: { react: { version: "19.1.1" } },
+      },
+    });
+
+    assertEquals(typeof manager.getCacheKey("/configured-snapshot-project/page.tsx"), "string");
   });
 
   it("changes the outer cache identity when a TSX dependency graph changes", async () => {
@@ -202,8 +307,10 @@ describe("SSRCacheManager", { sanitizeResources: false, sanitizeOps: false }, ()
       __injectCachesForTests({ cacheBackend: distributedCache });
       await writeTextFile(stablePath, `export default "stable";`);
 
-      await distributedCache.set(
-        buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, childPayload.fileName),
+      await distributedCache.seedWithCompareExchange(
+        buildRevisionedCacheKey(
+          buildMdxEsmModuleRecoveryCacheKey(projectId, contentSourceId, childPayload.fileName),
+        ),
         serializeMdxModuleRecoveryPayload(childPayload),
       );
 

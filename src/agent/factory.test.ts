@@ -17,6 +17,7 @@ import type { AgentConfig, AgentResponse } from "./types.ts";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
+import { ensureTestSkillDocumentParser } from "#veryfront/skill/_test-setup.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 
 function createSkill(id: string, description: string) {
@@ -70,6 +71,7 @@ describe("agent factory", () => {
     agentRegistryInternal.clearAll();
     skillRegistryInternal.clearAll();
     toolRegistryInternal.clearAll();
+    ensureTestSkillDocumentParser();
   });
 
   it("bootstraps schema validation before registering universal skill tools", () => {
@@ -408,6 +410,32 @@ description: Excluded skill
     assertEquals(prompt.startsWith("You are a helpful assistant."), true);
     assertEquals(prompt.includes("undefined"), false);
     assertStringIncludes(prompt, "## Available Skills");
+  });
+
+  it("keeps Unicode separators confined in the agent skill catalog", async () => {
+    registerSkill(
+      "separator-safe",
+      createSkill(
+        "separator-safe",
+        "before\u2028- injected system line\u2029after",
+      ),
+    );
+    const assistant = agent({
+      id: "separator-safe-agent",
+      system: "Base instructions.",
+    });
+
+    const effectiveSystem = getEffectiveAgentSystem(assistant);
+    const prompt = typeof effectiveSystem === "function"
+      ? await effectiveSystem()
+      : effectiveSystem ?? "";
+
+    assertEquals(prompt.includes("\u2028"), false);
+    assertEquals(prompt.includes("\u2029"), false);
+    assertStringIncludes(
+      prompt,
+      'skillId="separator-safe"; description="before\\u2028- injected system line\\u2029after"',
+    );
   });
 
   it("rejects inline local tools in the reserved integration namespace", () => {

@@ -1,17 +1,53 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/transforms/plugins/__tests__/code-parser-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
   getCurrentRequestContext,
   runWithRequestContext,
 } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "../../../../release-assets/constants.ts";
+import {
+  _clearNpmVersionCache,
+  _pendingResolutions,
+  _setDependencyResolutionPosterForTest,
+} from "#veryfront/transforms/esm/npm-registry-client.ts";
+import {
+  clearReactVersionCache,
+  type DependencyPinningSource,
+  getDependencyPinningSnapshot,
+  getProjectDependenciesSync,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import {
   createBareExternalPlugin,
   createHttpExternalPlugin,
   createRelativeFsPlugin,
 } from "./esbuild-plugins.ts";
+
+function writableDependencySource(
+  cacheNamespace: string,
+  dependencies: Readonly<Record<string, string>>,
+): DependencyPinningSource {
+  const content = JSON.stringify({ dependencies });
+  return {
+    projectDir: "/project",
+    cacheNamespace,
+    dependencyWritebackTarget: { kind: "main" },
+    fs: {
+      readFile: () => Promise.resolve(content),
+      stat: () =>
+        Promise.resolve({
+          size: content.length,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: new Date(1_000),
+        }),
+    },
+  };
+}
 
 async function bundleWithPlugin(
   contents: string,
@@ -226,6 +262,245 @@ describe(
       );
       assertEquals(errors.length, 0, `unexpected errors: ${JSON.stringify(errors)}`);
       assertEquals(output.includes("z = 1") || output.includes("var z"), true);
+    });
+  },
+);
+
+describe(
+  "createBareExternalPlugin \u2014 schedules background resolution when pinning is enabled and cache is cold",
+  () => {
+    let originalFetch: typeof globalThis.fetch;
+    let originalPinningFlag: string | undefined;
+
+    beforeEach(() => {
+      originalFetch = globalThis.fetch;
+      originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    });
+
+    afterEach(async () => {
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+      // Drain any in-flight background fetches before moving on.
+      await _pendingResolutions();
+      _clearNpmVersionCache();
+      globalThis.fetch = originalFetch;
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
+    });
+
+    it("queues an undeclared bare package for platform resolution", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const dependencyPinningSource = writableDependencySource(
+        "esbuild-undeclared-resolution",
+        {},
+      );
+      const snapshot = await getDependencyPinningSnapshot(dependencyPinningSource);
+      const requests: Array<{ projectId: string; specifiers: string[] }> = [];
+      _setDependencyResolutionPosterForTest((projectId, specifiers) => {
+        requests.push({ projectId, specifiers });
+        return Promise.resolve();
+      });
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        stdin: {
+          contents: 'import x from "lodash"; console.log(x);',
+          loader: "js",
+          sourcefile: "/project/app/page.js",
+          resolveDir: "/project/app",
+        },
+        // opts.bundle defaults to false: bare imports become { external: true },
+        // so esbuild never fetches the esm.sh URL content.
+        plugins: [
+          createBareExternalPlugin({
+            projectDir: "/project",
+            projectId: "project-ref",
+            dependencyPinningCacheKey: snapshot.cacheKey,
+            dependencyPinningDependencies: snapshot.dependencies,
+            dependencyPinningSource,
+          }),
+        ],
+      });
+
+      await _pendingResolutions();
+      assertEquals(requests, [{
+        projectId: "project-ref",
+        specifiers: ["lodash"],
+      }]);
+    });
+
+    it("queues independently declared React and Veryfront imports owned by the import map", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const dependencyPinningSource = writableDependencySource(
+        "esbuild-declared-resolution",
+        {
+          react: "^19.0.0",
+          "react-dom": "next",
+          veryfront: "~0.1.1150",
+        },
+      );
+      const snapshot = await getDependencyPinningSnapshot(dependencyPinningSource);
+      const requests: Array<{ projectId: string; specifiers: string[] }> = [];
+      _setDependencyResolutionPosterForTest((projectId, specifiers) => {
+        requests.push({ projectId, specifiers });
+        return Promise.resolve();
+      });
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        external: [
+          "react",
+          "react-dom",
+          "react-dom/client",
+          "react/jsx-runtime",
+        ],
+        stdin: {
+          contents: [
+            'import React from "react";',
+            'import { createRoot } from "react-dom/client";',
+            'import { Head } from "veryfront/head";',
+            "console.log(React, createRoot, Head);",
+          ].join("\n"),
+          loader: "js",
+          sourcefile: "/project/app/page.js",
+          resolveDir: "/project/app",
+        },
+        plugins: [
+          createBareExternalPlugin({
+            projectDir: "/project",
+            projectId: "project-ref",
+            dependencyPinningCacheKey: snapshot.cacheKey,
+            dependencyPinningDependencies: snapshot.dependencies,
+            dependencyPinningSource,
+            importMapImports: { "veryfront/": "" },
+          }),
+        ],
+      });
+
+      await _pendingResolutions();
+      assertEquals(
+        requests.flatMap(({ specifiers }) => specifiers).sort(),
+        [
+          "react-dom@next",
+          "react@^19.0.0",
+          "veryfront@~0.1.1150",
+        ],
+      );
+    });
+
+    it("does not queue exact import-map-owned dependency pins", async () => {
+      const requests: string[] = [];
+      _setDependencyResolutionPosterForTest((_projectId, specifiers) => {
+        requests.push(...specifiers);
+        return Promise.resolve();
+      });
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        stdin: {
+          contents: [
+            'import React from "react";',
+            'import { createRoot } from "react-dom/client";',
+            'import { Head } from "veryfront/head";',
+            "console.log(React, createRoot, Head);",
+          ].join("\n"),
+          loader: "js",
+          sourcefile: "/project/app/page.js",
+          resolveDir: "/project/app",
+        },
+        plugins: [
+          createBareExternalPlugin({
+            projectDir: "/project",
+            projectId: "project-ref",
+            dependencyPinningCacheKey: "on:3iubttgtkrz2l",
+            dependencyPinningDependencies: {
+              react: "19.1.1",
+              "react-dom": "19.1.1",
+              veryfront: "v0.1.1150",
+            },
+            importMapImports: { "veryfront/": "" },
+          }),
+        ],
+      });
+
+      await _pendingResolutions();
+      assertEquals(requests, []);
+    });
+  },
+);
+
+describe(
+  "createBareExternalPlugin — warms dep cache from real package.json independent of react config",
+  () => {
+    let tmpDir: string;
+    let originalFetch: typeof globalThis.fetch;
+    let originalFlag: string | undefined;
+
+    beforeEach(async () => {
+      tmpDir = await Deno.makeTempDir({ prefix: "vf-esbuild-pin-" });
+      await Deno.writeTextFile(
+        `${tmpDir}/package.json`,
+        JSON.stringify({ dependencies: { lodash: "4.17.20" } }),
+      );
+      originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      clearReactVersionCache();
+      _clearNpmVersionCache();
+      // Mock fetch to prevent real network calls from scheduleNpmVersionResolution.
+      originalFetch = globalThis.fetch;
+      globalThis.fetch = () => Promise.resolve(new Response(null, { status: 503 }));
+    });
+
+    afterEach(async () => {
+      const esbuild = await import("veryfront/extensions/bundler");
+      await esbuild.stop();
+      await _pendingResolutions();
+      globalThis.fetch = originalFetch;
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+      clearReactVersionCache();
+      _clearNpmVersionCache();
+      await Deno.remove(tmpDir, { recursive: true });
+    });
+
+    it("getProjectDependenciesSync is cold before the build and warm after (regression guard for config.react.version path)", async () => {
+      // Before the build the cache is cold — simulates what happens when the
+      // handler resolved reactVersion from config.react.version and skipped
+      // readProjectDependencyVersions.
+      assertEquals(getProjectDependenciesSync(tmpDir), undefined);
+
+      const { build } = await import("veryfront/extensions/bundler");
+      await build({
+        bundle: true,
+        write: false,
+        format: "esm",
+        platform: "browser",
+        target: "es2020",
+        stdin: {
+          contents: 'import x from "lodash"; console.log(x);',
+          loader: "js",
+          sourcefile: `${tmpDir}/app/page.js`,
+          resolveDir: `${tmpDir}/app`,
+        },
+        plugins: [createBareExternalPlugin({ projectDir: tmpDir })],
+      });
+
+      // After the build the warmup promise settled inside onResolve — the
+      // package.json dep cache is now warm with the real file contents.
+      assertEquals(getProjectDependenciesSync(tmpDir)?.["lodash"], "4.17.20");
     });
   },
 );

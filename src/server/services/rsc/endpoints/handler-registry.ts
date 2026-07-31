@@ -8,7 +8,7 @@
 
 import { RSCDevServerHandler } from "../orchestrators/index.ts";
 import {
-  getConfiguredRSCReactVersion,
+  getConfiguredRSCDependencyVersionIdentity,
   type RSCServerHandlerOptions,
 } from "../orchestrators/handler.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -100,18 +100,20 @@ export function getRSCHandler(
   const appDir = options.config?.directories?.app ?? "app";
   const mode = options.mode ?? "production";
   const clientModuleStrategy = options.clientModuleStrategy === "fs" ? "fs" : "rsc-module";
-  const reactVersion = getConfiguredRSCReactVersion(options.config) ?? null;
+  const dependencyVersionIdentity = getConfiguredRSCDependencyVersionIdentity(options.config);
+  const pinningEnabled = options.dependencyPinningEnabled === true;
   const cacheKey = jsonStringify([
     baseKey,
     options.isLocalProject === true,
     clientModuleStrategy,
     mode,
     appDir,
-    reactVersion,
+    ...dependencyVersionIdentity,
     ...(options.contentSourceId || options.releaseId
-      ? [options.releaseId ?? null, options.contentSourceId ?? null]
+      ? [["content-source", options.releaseId ?? null, options.contentSourceId ?? null]]
       : []),
-    ...(options.importMapIdentity ? [options.importMapIdentity.fingerprint] : []),
+    ...(options.importMapIdentity ? [["import-map", options.importMapIdentity.fingerprint]] : []),
+    ...(pinningEnabled && options.branch ? [["branch", options.branch]] : []),
   ]);
   const cache = getHandlersCache();
   const existing = cache.get(cacheKey);
@@ -153,4 +155,8 @@ export function __destroyRSCHandlerForTests(): void {
   injectedCache = null;
   rscHandlersByProject?.destroy();
   rscHandlersByProject = null;
+}
+
+export function __getTrackedRSCHandlerKeyCountForTests(): number {
+  return getExistingHandlersCache()?.size ?? 0;
 }

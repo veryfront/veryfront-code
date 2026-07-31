@@ -183,6 +183,28 @@ describe("transform pipeline cache identity", () => {
     assertNotEquals(plugins, baseline);
   });
 
+  it("changes identity when moduleServerOrigin changes", async () => {
+    const baseline = await computePipelineConfigIdentity(
+      identityInput({ moduleServerOrigin: "https://app.example.test" }),
+    );
+    const changed = await computePipelineConfigIdentity(
+      identityInput({ moduleServerOrigin: "https://preview.example.test" }),
+    );
+
+    assertNotEquals(changed, baseline);
+  });
+
+  it("changes identity when dependencyPinningCacheKey changes", async () => {
+    const baseline = await computePipelineConfigIdentity(
+      identityInput({ dependencyPinningCacheKey: "on:first" }),
+    );
+    const changed = await computePipelineConfigIdentity(
+      identityInput({ dependencyPinningCacheKey: "on:second" }),
+    );
+
+    assertNotEquals(changed, baseline);
+  });
+
   it("uses captured primordials for import-map and plugin identities", async () => {
     const original = {
       arrayIsArray: Array.isArray,

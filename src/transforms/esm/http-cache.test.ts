@@ -7,6 +7,7 @@ import {
   assertInstanceOf,
   assertNotEquals,
   assertRejects,
+  assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
@@ -25,6 +26,7 @@ import {
   cacheModuleToLocal,
   ensureHttpBundlesExist,
   extractSourceUrl,
+  inspectAcknowledgedBundleManifestAuthority,
   normalizeHttpUrl,
 } from "./http-cache.ts";
 import { __setDistributedCacheAccessorForTests } from "./http-cache-wrapper.ts";
@@ -36,6 +38,9 @@ import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
+const acknowledgedManifestStore = {
+  storeBundleManifest: () => Promise.resolve(true),
+} as const;
 
 function extractBundleHashes(code: string): string[] {
   const hashes: string[] = [];
@@ -753,20 +758,81 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       const source = `import { child } from "${rootUrl}"; export { child };`;
       const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
 
-      const networkResult = await cacheHttpImportsToLocal(source, options);
+      const networkResult = await cacheHttpImportsToLocal(
+        source,
+        options,
+        acknowledgedManifestStore,
+      );
       assert(networkResult.bundleManifestId, "Expected a manifest after the network fetch");
+      assert(
+        networkResult.bundleManifestAuthority,
+        "Expected acknowledged complete graph authority after the network fetch",
+      );
+      assertEquals(Object.isFrozen(networkResult.bundleManifestAuthority), true);
+      assertEquals(Object.isFrozen(networkResult.bundleManifestAuthority.bundleHashes), true);
+      assertEquals(
+        networkResult.bundleManifestAuthority.manifestId,
+        networkResult.bundleManifestId,
+      );
+      assertEquals(networkResult.bundleManifestAuthority.bundleHashes.length, 2);
+      assertStrictEquals(
+        inspectAcknowledgedBundleManifestAuthority(networkResult.bundleManifestAuthority),
+        networkResult.bundleManifestAuthority,
+      );
+      assertStrictEquals(
+        inspectAcknowledgedBundleManifestAuthority(
+          Object.freeze({
+            manifestId: networkResult.bundleManifestAuthority.manifestId,
+            bundleHashes: networkResult.bundleManifestAuthority.bundleHashes,
+          }),
+        ),
+        null,
+      );
 
       __injectCachesForTests({
         cachedPaths: new Map(),
         processingStack: new Set(),
         lastDistributedRefresh: new Map(),
       });
-      const diskResult = await cacheHttpImportsToLocal(source, options);
+      const diskResult = await cacheHttpImportsToLocal(source, options, acknowledgedManifestStore);
       assertEquals(diskResult.bundleManifestId, networkResult.bundleManifestId);
+      assertEquals(
+        diskResult.bundleManifestAuthority?.bundleHashes,
+        networkResult.bundleManifestAuthority.bundleHashes,
+      );
 
-      const memoryResult = await cacheHttpImportsToLocal(source, options);
+      const memoryResult = await cacheHttpImportsToLocal(
+        source,
+        options,
+        acknowledgedManifestStore,
+      );
       assertEquals(memoryResult.bundleManifestId, networkResult.bundleManifestId);
+      assertEquals(
+        memoryResult.bundleManifestAuthority?.bundleHashes,
+        networkResult.bundleManifestAuthority.bundleHashes,
+      );
       assertEquals(fetchCount, 2, "Expected one network request per module");
+    });
+  });
+
+  it("does not expose a manifest ID when manifest storage is unacknowledged", async () => {
+    const moduleUrl = "https://modules.example.com/unacknowledged-manifest.js";
+    const mockFetch = (() =>
+      Promise.resolve(
+        new Response("export const value = true;", {
+          headers: { "content-type": "application/javascript" },
+        }),
+      )) as typeof fetch;
+
+    await withIsolatedHttpCache("vf-unacknowledged-manifest-", mockFetch, async (tempDir) => {
+      const result = await cacheHttpImportsToLocal(
+        `import { value } from "${moduleUrl}"; export { value };`,
+        { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+        { storeBundleManifest: () => Promise.resolve(false) },
+      );
+
+      assertEquals(result.bundleManifestId, undefined);
+      assertEquals(result.bundleManifestAuthority, undefined);
     });
   });
 
@@ -786,8 +852,8 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
 
       const [first, second] = await Promise.all([
-        cacheHttpImportsToLocal(source, options),
-        cacheHttpImportsToLocal(source, options),
+        cacheHttpImportsToLocal(source, options, acknowledgedManifestStore),
+        cacheHttpImportsToLocal(source, options, acknowledgedManifestStore),
       ]);
 
       assert(first.bundleManifestId);
@@ -819,7 +885,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       );
       const source = `import { child } from "${rootUrl}"; export { child };`;
       const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
-      const networkResult = await cacheHttpImportsToLocal(source, options);
+      const networkResult = await cacheHttpImportsToLocal(
+        source,
+        options,
+        acknowledgedManifestStore,
+      );
       assert(networkResult.bundleManifestId);
 
       for await (const entry of readDir(tempDir)) {
@@ -833,7 +903,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
         lastDistributedRefresh: new Map(),
       });
 
-      const distributedResult = await cacheHttpImportsToLocal(source, options);
+      const distributedResult = await cacheHttpImportsToLocal(
+        source,
+        options,
+        acknowledgedManifestStore,
+      );
 
       assertEquals(distributedResult.bundleManifestId, networkResult.bundleManifestId);
       assertEquals(fetchCount, 2, "Expected the second transform to avoid network requests");

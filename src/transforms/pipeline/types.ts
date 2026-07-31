@@ -8,6 +8,8 @@
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { TransformProgressListener } from "#veryfront/transforms/progress.ts";
+import type { DependencyPinningSourceInput } from "../esm/package-registry.ts";
+import type { DependencyResolutionObservation } from "../import-rewriter/dependency-resolution.ts";
 
 /**
  * Transform stages in execution order.
@@ -49,6 +51,8 @@ export interface TransformOptions {
   jsxImportSource?: string;
   /** Module server URL for browser imports */
   moduleServerUrl?: string;
+  /** Absolute request origin used for browser-loadable static asset URLs. */
+  moduleServerOrigin?: string;
   /** Vendor bundle hash for cache busting */
   vendorBundleHash?: string;
   /** SSR mode (true) or browser mode (false) */
@@ -63,6 +67,16 @@ export interface TransformOptions {
   readFile?: (path: string) => Promise<string>;
   /** Internal per-render dependency hash cache. */
   dependencyHashCache?: DependencyHashCache;
+  /** Internal stable flag + package dependency-map key for cache isolation. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace used to prove write-back authority. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Internal collector for unresolved dependency cache metadata. */
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void;
   /** Internal observer for meaningful transform milestones. */
   onProgress?: TransformProgressListener;
   /**
@@ -95,6 +109,8 @@ export interface TransformContext {
   contentHash: string;
   /** Module server URL (browser only) */
   moduleServerUrl?: string;
+  /** Absolute request origin used for browser-loadable static asset URLs. */
+  moduleServerOrigin?: string;
   /** Vendor bundle hash (browser only) */
   vendorBundleHash?: string;
   /** API base URL for cross-project imports */
@@ -111,6 +127,16 @@ export interface TransformContext {
   studioEmbed?: boolean;
   /** React version to use for esm.sh URLs */
   reactVersion: string;
+  /** Internal stable flag + package dependency-map key for cache isolation. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace used to prove write-back authority. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  /** Internal collector for unresolved dependency cache metadata. */
+  onDependencyResolutionObserved?: (
+    observation: DependencyResolutionObservation,
+  ) => void;
   /** Internal observer for meaningful transform milestones. */
   onProgress?: TransformProgressListener;
   /** Immutable import-map snapshot used by all SSR stages in this run. */

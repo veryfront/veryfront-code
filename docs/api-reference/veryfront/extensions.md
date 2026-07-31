@@ -53,7 +53,7 @@ await loader.teardownAll();
 |------|-------------|--------|
 | `assertImageOptimizationEngine` | Validate an implementation received through the dynamic contract registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L120) |
 | `auditCapabilities` | Log capabilities for a named extension at startup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L834) |
-| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L433) |
+| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L438) |
 | `captureImageOptimizationEngine` | Capture dynamic properties once so one run cannot split across mutations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/image/image-optimization-engine.ts#L127) |
 | `captureNodeWebSocketServer` | Capture one server instance without retaining mutable method lookups. The underlying implementation remains the receiver because protocol engines legitimately keep mutable transport state on their instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L142) |
 | `createDevUiAssetProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L33) |
@@ -75,8 +75,8 @@ await loader.teardownAll();
 | `snapshotDevUiAssetProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L27) |
 | `snapshotIsolatedSsrRendererProvider` | Snapshot an extension-owned provider without invoking accessors or retaining mutable provider metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L84) |
 | `snapshotNodeWebSocketServerProvider` | Capture a provider generation without retaining its mutable registration object or invoking extension-owned accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L189) |
-| `snapshotSkillScriptExecutorProvider` | Capture a provider and validate inert controls before returning ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L711) |
-| `snapshotSkillScriptPreparedExecution` | Capture inert controls without retaining mutable method properties. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L433) |
+| `snapshotSkillScriptExecutorProvider` | Capture a provider and validate inert controls before returning ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L714) |
+| `snapshotSkillScriptPreparedExecution` | Capture inert controls without retaining mutable method properties. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L436) |
 | `snapshotStudioCaptureBundleProvider` | Snapshot an untrusted extension contract without invoking accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L40) |
 | `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L37) |
 | `validateDevUiBundle` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L23) |
@@ -134,7 +134,7 @@ await loader.teardownAll();
 | `SkillScriptExecutionReporter` | Provider callbacks used to report one result and one terminal settlement. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L51) |
 | `SkillScriptExecutorProvider` | Extension-owned implementation selected by application composition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L78) |
 | `SkillScriptExecutorProviderInput` | Canonical detached input delivered to a composed execution provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L75) |
-| `SkillScriptExecutorProviderSnapshot` | Validated provider facade that owns settlement promises for its caller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L92) |
+| `SkillScriptExecutorProviderSnapshot` | Validated provider facade that owns settlement promises for its caller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L95) |
 | `SkillScriptPreparedExecution` | Inert provider-owned controls returned before execution begins. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L59) |
 | `StudioCaptureBundleProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L24) |
 
@@ -467,8 +467,8 @@ import { captureDistributedCacheAdministration, captureDistributedRuntimeProvide
 | Name | Description | Source |
 |------|-------------|--------|
 | `captureDistributedCacheAdministration` | Capture the administrative surface returned by a distributed provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L189) |
-| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L433) |
-| `captureDistributedWorkflowWorkerEnvironment` | Snapshot and bound provider-owned environment passed to isolated workflow processes. Core reserves execution/tenant identity variables and never evaluates provider-specific names or values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L357) |
+| `captureDistributedRuntimeProvider` | Capture a provider's complete callable surface without invoking accessors. Later mutation of the registry object cannot redirect active operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L438) |
+| `captureDistributedWorkflowWorkerEnvironment` | Snapshot and bound provider-owned environment passed to isolated workflow processes. Core reserves execution/tenant identity variables and never evaluates provider-specific names or values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/distributed/runtime-provider.ts#L362) |
 
 #### Types
 
@@ -517,7 +517,7 @@ import { estimateTokens } from "veryfront/extensions/distributed/agent-memory-su
 Provider-neutral cache helpers shared with distributed store extensions.
 
 ```ts
-import { assertCacheBatchSize, buildBatchResults, escapeCacheGlobLiteral } from "veryfront/extensions/distributed/cache-support";
+import { assertCacheBatchSize, buildBatchResults, buildRevisionedCacheKey } from "veryfront/extensions/distributed/cache-support";
 ```
 
 #### Functions
@@ -526,29 +526,42 @@ import { assertCacheBatchSize, buildBatchResults, escapeCacheGlobLiteral } from 
 |------|-------------|--------|
 | `assertCacheBatchSize` | Enforce the cache subsystem's shared per-operation batch bound. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/batch-policy.ts#L9) |
 | `buildBatchResults` | Build a `Map` of batch results by resolving each key in order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/batch-results.ts#L21) |
+| `buildRevisionedCacheKey` | Add the reserved versioned namespace to one valid source key. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L156) |
 | `escapeCacheGlobLiteral` | Escape the wildcard syntax shared by cache backend pattern operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L304) |
 | `expiresImmediately` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L45) |
+| `isRevisionedCacheBackend` | Test whether a backend exposes the complete atomic revision capability. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L81) |
+| `isRevisionedCacheKey` | Test whether a key belongs to the valid revisioned-key builder image. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L172) |
 | `parseSerializedCachePayload` | Reject oversized or malformed JSON before constructing an untrusted object graph. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/cache-payload.ts#L950) |
+| `registerOwnedDistributedCacheKeyPrefix` | Register an opaque namespace without making it eligible for project invalidation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L288) |
 | `registerRenderDistributedCacheNamespace` | Register a namespace containing render-cache keys. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L276) |
+| `requireCacheExchangeResult` | Validate a provider-returned compare-exchange result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L140) |
 | `requirePositiveIntegerCacheTtlSeconds` | Validate a constructor-level TTL for whole-second cache protocols. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L68) |
 | `resolveIntegerCacheTtlSeconds` | Resolve a TTL for protocols that accept only whole seconds. Positive fractions round up so integer conversion never expires an entry earlier than requested; non-positive values retain their immediate-expiry meaning. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L37) |
 | `serializeCachePayload` | Serialize using the origin-compatible payload shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/cache-payload.ts#L884) |
+| `snapshotCacheRevisionResult` | Validate and detach a provider-returned revision snapshot. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L101) |
+| `stripOwnedDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L308) |
 | `validateDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L166) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CacheBackend` | Provides storage operations for memory, disk, API, and extension-backed distributed caches. All cache backends must implement this interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L20) |
+| `CacheBackend` | Provides storage operations for memory, disk, API, and extension-backed distributed caches. All cache backends must implement this interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L38) |
 | `CachePayload` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L3) |
+| `CacheRevisionMutation` | Atomic mutation applied when an expected cache revision still matches. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L26) |
+| `CacheRevisionSnapshot` | Serialized logical value and the revision that observed it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L20) |
 | `CacheStoreStats` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L12) |
 | `RenderCacheStore` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L16) |
+| `RevisionedCacheBackend` | Cache backend with the complete atomic revision capability. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L121) |
 
 #### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `DEFAULT_CACHE_TTL_SECONDS` | Shared default used when a CacheBackend caller omits a TTL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L81) |
+| `MAX_CACHE_REVISION_LENGTH` | Maximum number of code units in a cache revision identifier. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L17) |
+| `MAX_REVISIONED_CACHE_SOURCE_KEY_LENGTH` | Maximum source-key length before the reserved namespace is added. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L10) |
+| `REVISIONED_CACHE_KEY_PREFIX` | Reserved logical-key namespace for revisioned Veryfront cache entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L7) |
 
 ### `veryfront/extensions/distributed/rate-limit-support`
 
@@ -896,8 +909,8 @@ import { snapshotSkillScriptExecutorProvider, snapshotSkillScriptPreparedExecuti
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `snapshotSkillScriptExecutorProvider` | Capture a provider and validate inert controls before returning ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L711) |
-| `snapshotSkillScriptPreparedExecution` | Capture inert controls without retaining mutable method properties. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L433) |
+| `snapshotSkillScriptExecutorProvider` | Capture a provider and validate inert controls before returning ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L714) |
+| `snapshotSkillScriptPreparedExecution` | Capture inert controls without retaining mutable method properties. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L436) |
 
 #### Types
 
@@ -907,7 +920,7 @@ import { snapshotSkillScriptExecutorProvider, snapshotSkillScriptPreparedExecuti
 | `SkillScriptExecutionReporter` | Provider callbacks used to report one result and one terminal settlement. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L51) |
 | `SkillScriptExecutorProvider` | Extension-owned implementation selected by application composition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L78) |
 | `SkillScriptExecutorProviderInput` | Canonical detached input delivered to a composed execution provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L75) |
-| `SkillScriptExecutorProviderSnapshot` | Validated provider facade that owns settlement promises for its caller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L92) |
+| `SkillScriptExecutorProviderSnapshot` | Validated provider facade that owns settlement promises for its caller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L95) |
 | `SkillScriptPreparedExecution` | Inert provider-owned controls returned before execution begins. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L59) |
 
 ### `veryfront/extensions/websocket`

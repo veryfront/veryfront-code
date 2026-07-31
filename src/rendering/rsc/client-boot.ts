@@ -6,16 +6,17 @@
 import type { ClientModuleStrategy } from "./client-module-strategy.ts";
 import {
   buildClientModuleUrl,
+  buildRSCTransportHeaders,
   type ClientRuntimeHydrationData,
   getHydrationReactImportSpecifiers,
-  readHydrationData,
+  readHydrationDataSnapshot,
   resolveClientModuleStrategy,
 } from "./client-module-strategy.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
 import { hydrateAllClientBoundaries } from "./hydrate-client.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
-import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER, RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 import { rscLogger } from "../client/browser-logger.ts";
 import {
   createClientRequestLifetime,
@@ -24,6 +25,16 @@ import {
   readJsonResponseWithinLimit,
 } from "./client-transport.ts";
 import { HEAD_REACT_OWNER_ATTRIBUTE } from "#veryfront/html/managed-head-protocol.ts";
+import {
+  recoverFromDependencySnapshotAdmissionFailure,
+  recoverFromDependencySnapshotConflict,
+  recoverFromSnapshotBoundModuleFailure,
+} from "./dependency-snapshot-recovery.ts";
+import {
+  admitDependencySnapshot,
+  DependencySnapshotAdmissionError,
+  type RecoverFromDependencySnapshotAdmissionFailure,
+} from "./dependency-snapshot-admission.ts";
 
 const MAX_RSC_PAYLOAD_RESPONSE_BYTES = 2 * 1024 * 1024;
 
@@ -31,10 +42,11 @@ const MAX_RSC_PAYLOAD_RESPONSE_BYTES = 2 * 1024 * 1024;
  * Import React using the page's import map when available.
  * When the document does not own the React specifiers, use explicit CDN URLs.
  */
-async function importReact(): Promise<
+async function importReact(
+  hydrationData: ClientRuntimeHydrationData | null,
+): Promise<
   { React: typeof import("react"); ReactDOM: typeof import("react-dom/client") }
 > {
-  const hydrationData = readHydrationData(document);
   const specifiers = getHydrationReactImportSpecifiers(
     document,
     hydrationData?.reactVersion,
@@ -159,27 +171,65 @@ export function shouldRenderPageComponent(strategy: ClientModuleStrategy): boole
   return strategy === "rsc-module";
 }
 
-async function tryStream(q: string): Promise<boolean> {
+export function buildRSCTransportQuery(
+  search: string,
+  _dependencyPinningCacheKey?: string,
+): string {
+  if (!search) return "";
+  return search.startsWith("?") ? search : `?${search}`;
+}
+
+export function buildPageHydrationModuleUrl(
+  pagePath: string,
+  strategy: ClientModuleStrategy,
+  hydrationData: ClientRuntimeHydrationData | null,
+): string | null {
+  return buildClientModuleUrl({
+    strategy,
+    rel: pagePath,
+    releaseAssetModules: hydrationData?.releaseAssetModules,
+    dependencyPinningCacheKey: hydrationData?.dependencyPinningCacheKey,
+  });
+}
+
+type RSCTransportResult = "success" | "snapshot-conflict" | "failure";
+
+async function tryStream(
+  q: string,
+  hydrationData: ClientRuntimeHydrationData | null,
+): Promise<RSCTransportResult> {
   const lifetime = createClientRequestLifetime();
   try {
     const res = await fetch(RSC_PATH_PREFIX + "stream" + q, {
-      headers: { Accept: "application/x-ndjson" },
+      headers: {
+        Accept: "application/x-ndjson",
+        ...buildRSCTransportHeaders(hydrationData),
+      },
       signal: lifetime.signal,
     });
-    if (!res.ok || !res.body) {
+    if (!res.ok) {
+      const recovered = await recoverFromDependencySnapshotConflict(res);
       try {
         await res.body?.cancel();
       } catch {
         // The request lifetime may already have cancelled the body.
       }
-      return false;
+      return recovered ? "snapshot-conflict" : "failure";
+    }
+    if (!res.body) {
+      return "failure";
     }
 
-    await consumeNdjsonStream(res, document, lifetime.signal);
-    return true;
+    await consumeNdjsonStream(res, document, lifetime.signal, {
+      requestedDependencyPinningCacheKey: hydrationData?.dependencyPinningCacheKey,
+    });
+    return "success";
   } catch (e) {
+    if (e instanceof DependencySnapshotAdmissionError) {
+      return "snapshot-conflict";
+    }
     rscLogger.debug("tryStream failed", e);
-    return false;
+    return "failure";
   } finally {
     lifetime.dispose();
   }
@@ -199,16 +249,18 @@ async function hydratePageComponent(
   hydrationData: ClientRuntimeHydrationData | null,
 ): Promise<boolean> {
   try {
-    const { React, ReactDOM } = await importReact();
-    const moduleUrl = buildClientModuleUrl({
-      strategy,
-      rel: pagePath,
-      releaseAssetModules: hydrationData?.releaseAssetModules,
-    });
+    const { React, ReactDOM } = await importReact(hydrationData);
+    const moduleUrl = buildPageHydrationModuleUrl(pagePath, strategy, hydrationData);
     if (!moduleUrl) return false;
     rscLogger.debug("Loading component from:", moduleUrl);
 
-    const mod = await import(moduleUrl);
+    let mod;
+    try {
+      mod = await import(moduleUrl);
+    } catch (error) {
+      await recoverFromSnapshotBoundModuleFailure(moduleUrl);
+      throw error;
+    }
     const Component = mod.default;
 
     if (typeof Component !== "function") {
@@ -319,30 +371,95 @@ export function applyRscPayload(doc: Document, value: unknown): boolean {
   }
 }
 
-async function applyPayload(q: string): Promise<boolean> {
+export interface RscPayloadDependencySnapshotOptions {
+  readonly requestedDependencyPinningCacheKey?: string;
+  readonly responseHeaderDependencyPinningCacheKey: string | null;
+  readonly recoverFromAdmissionFailure?: RecoverFromDependencySnapshotAdmissionFailure;
+}
+
+function readPayloadDependencyPinningCacheKey(value: unknown): unknown {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) return undefined;
+
+  const descriptor = Object.getOwnPropertyDescriptor(
+    value,
+    "dependencyPinningCacheKey",
+  );
+  if (!descriptor) return undefined;
+  return Object.hasOwn(descriptor, "value") ? descriptor.value : descriptor;
+}
+
+export function admitAndApplyRscPayload(
+  doc: Document,
+  value: unknown,
+  options: RscPayloadDependencySnapshotOptions,
+): boolean {
+  const currentHydrationSnapshot = readHydrationDataSnapshot(doc);
+  const admission = admitDependencySnapshot(
+    {
+      requestedDependencyPinningCacheKey: options.requestedDependencyPinningCacheKey,
+      currentDependencyPinningCacheKey: currentHydrationSnapshot.valid
+        ? currentHydrationSnapshot.data?.dependencyPinningCacheKey
+        : currentHydrationSnapshot,
+      responseHeaderDependencyPinningCacheKey: options.responseHeaderDependencyPinningCacheKey,
+      responseBodyDependencyPinningCacheKey: readPayloadDependencyPinningCacheKey(value),
+      requireResponseHeader: true,
+      requireResponseBody: true,
+    },
+    options.recoverFromAdmissionFailure,
+  );
+  return admission !== null && applyRscPayload(doc, value);
+}
+
+async function applyPayload(
+  q: string,
+  hydrationData: ClientRuntimeHydrationData | null,
+): Promise<RSCTransportResult> {
   const lifetime = createClientRequestLifetime();
   try {
     const res = await fetch(RSC_PATH_PREFIX + "payload" + q, {
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...buildRSCTransportHeaders(hydrationData),
+      },
       signal: lifetime.signal,
     });
     if (!res.ok) {
+      const recovered = await recoverFromDependencySnapshotConflict(res);
       try {
         await res.body?.cancel();
       } catch {
         // The request lifetime may already have cancelled the body.
       }
-      return false;
+      return recovered ? "snapshot-conflict" : "failure";
     }
 
     const data = await readJsonResponseWithinLimit(
       res,
       MAX_RSC_PAYLOAD_RESPONSE_BYTES,
     );
-    return applyRscPayload(document, data);
+    let admissionFailed = false;
+    if (
+      !admitAndApplyRscPayload(document, data, {
+        requestedDependencyPinningCacheKey: hydrationData?.dependencyPinningCacheKey,
+        responseHeaderDependencyPinningCacheKey: res.headers.get(
+          RSC_DEPENDENCY_PINNING_HEADER,
+        ),
+        recoverFromAdmissionFailure: () => {
+          admissionFailed = true;
+          return recoverFromDependencySnapshotAdmissionFailure();
+        },
+      })
+    ) {
+      return admissionFailed ? "snapshot-conflict" : "failure";
+    }
+    return "success";
   } catch (e) {
     rscLogger.debug("payload fetch failed", e);
-    return false;
+    return "failure";
   } finally {
     lifetime.dispose();
   }
@@ -350,8 +467,16 @@ async function applyPayload(q: string): Promise<boolean> {
 
 export async function boot(): Promise<void> {
   try {
-    const q = globalThis.window?.location.search ?? "";
-    const hydrationData = readHydrationData(document);
+    const hydrationSnapshot = readHydrationDataSnapshot(document);
+    if (!hydrationSnapshot.valid) {
+      recoverFromDependencySnapshotAdmissionFailure();
+      return;
+    }
+    const hydrationData = hydrationSnapshot.data;
+    const q = buildRSCTransportQuery(
+      globalThis.window?.location.search ?? "",
+      hydrationData?.dependencyPinningCacheKey,
+    );
     if (shouldHydrateOnly()) {
       await hydrateMarkers();
       return;
@@ -381,12 +506,16 @@ export async function boot(): Promise<void> {
       return;
     }
 
-    if (await tryStream(q)) {
+    const streamResult = await tryStream(q, hydrationData);
+    if (streamResult === "snapshot-conflict") return;
+    if (streamResult === "success") {
       await hydrateMarkers();
       return;
     }
 
-    if (await applyPayload(q)) {
+    const payloadResult = await applyPayload(q, hydrationData);
+    if (payloadResult === "snapshot-conflict") return;
+    if (payloadResult === "success") {
       await hydrateMarkers();
       return;
     }

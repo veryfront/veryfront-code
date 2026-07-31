@@ -54,6 +54,7 @@ function createManager(
     executionsCompleted: 0,
     executionsFailed: 0,
     activeExecutions: 0,
+    pendingCleanupExecutions: 0,
   });
 
   return {

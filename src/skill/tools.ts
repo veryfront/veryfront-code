@@ -133,7 +133,7 @@ function sanitizeSkillToolFailure(
   if (abortSignal && isAbortSignalWithoutHooks(abortSignal)) {
     const reason = getAbortSignalReason(abortSignal);
     if (isAbortSignalAborted(abortSignal) && reason !== undefined && error === reason) {
-      return error;
+      return sanitizeSkillBoundaryFailure(reason, skillRoot ?? "");
     }
   }
   return sanitizeSkillBoundaryFailure(error, skillRoot ?? "");

@@ -13,6 +13,7 @@ import {
   commitContractGeneration,
   completeContractGenerationRetirement,
   drainContractGeneration,
+  isContractGenerationDrained,
   registerUnmanagedContract,
   resetContractRegistry,
   runWithContractGenerationEpoch,
@@ -342,6 +343,35 @@ describe("contract registry lifecycle state", () => {
 
     assertEquals(firstNestedDrain === outerDrain, true);
     assertEquals(secondNestedDrain === outerDrain, true);
+  });
+
+  it("rejects generation drain while a quarantined lease remains active", async () => {
+    const generation = createCommittedGeneration(
+      "QuarantinedLeaseContract",
+      Object.freeze({ id: "owned" }),
+    );
+    const snapshot = trySnapshotContractForUse("QuarantinedLeaseContract");
+    if (snapshot === undefined) throw new Error("Expected a contract snapshot");
+    const lease = acquireContractLease(snapshot.reference);
+    lease.setRetirementHandler(() => {});
+    lease.quarantine();
+
+    let drainFailure: unknown;
+    try {
+      await drainContractGeneration(generation);
+    } catch (error) {
+      drainFailure = error;
+    }
+
+    assertEquals(drainFailure instanceof Error, true);
+    assertEquals(
+      drainFailure instanceof Error ? drainFailure.message.includes("quarantined") : false,
+      true,
+    );
+    assertEquals(isContractGenerationDrained(generation), false);
+    lease.release();
+    await drainContractGeneration(generation);
+    completeContractGenerationRetirement(generation);
   });
 
   it("blocks stale teardown scopes from staging into a replacement generation", async () => {

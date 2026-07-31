@@ -1,6 +1,5 @@
 import type { HTMLMetadata } from "#veryfront/transforms/mdx/types.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
-import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import type { ClientModuleStrategy } from "#veryfront/types/rsc.ts";
 import {
   generateLinkTags,
@@ -28,6 +27,8 @@ import {
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { createBuildVersion } from "#veryfront/utils/version.ts";
 import { insertBeforeHtmlHeadClose } from "./tag-scanner.ts";
+import { assertHTMLJsonValueIsNotProxy, snapshotHTMLJsonValue } from "./json-snapshot.ts";
+import { resolveCanonicalProjectRelativePath } from "./project-relative-path.ts";
 
 const MAX_INJECTION_INPUT_PROPERTIES = 128;
 
@@ -35,6 +36,7 @@ function snapshotOwnDataRecord(
   value: unknown,
   label: string,
 ): Record<string, unknown> {
+  assertHTMLJsonValueIsNotProxy(value, label);
   if (typeof value !== "object" || value === null) {
     throw INPUT_VALIDATION_FAILED.create({ detail: `${label} must be a plain object` });
   }
@@ -74,6 +76,7 @@ function snapshotOwnDataRecord(
     ) {
       throw INPUT_VALIDATION_FAILED.create({ detail: `${label} cannot be inspected` });
     }
+    if (descriptor.value === undefined) continue;
     Object.defineProperty(snapshot, key, {
       configurable: true,
       enumerable: true,
@@ -81,7 +84,8 @@ function snapshotOwnDataRecord(
       writable: true,
     });
   }
-  return snapshot;
+  const detached = snapshotHTMLJsonValue(snapshot, label) as Record<string, unknown>;
+  return detached;
 }
 
 function replaceLiteral(
@@ -139,18 +143,12 @@ export interface InjectHTMLContentOptions {
   importMapJson?: string;
   /** Framework-generated project stylesheet for production shells */
   projectStylesheetHref?: string;
+  /** Request-scoped dependency snapshot used to version RSC module imports. */
+  dependencyPinningCacheKey?: string;
   /** Ready release asset manifest used to hydrate full HTML client pages */
   releaseAssetManifest?: ReleaseAssetManifest | null;
   /** Configured route directories used to map physical page paths to route keys */
   directories?: ConfiguredRouteDirectories;
-}
-
-function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
-  const normalizedPath = absolutePath.replace(/\\/g, "/");
-
-  if (!projectDir) return normalizedPath.replace(/^\//, "");
-
-  return resolveRelativePath(normalizedPath, projectDir);
 }
 
 export function injectHTMLContent(
@@ -251,28 +249,47 @@ export function injectHTMLContent(
 
   const hasBodyClose = /<\/body>/i.test(html);
 
-  // Inject hydration data for 'use client' pages (before scripts, so client.js can find it)
-  if (options.pagePath && options.isClientPage && hasBodyClose) {
+  const clientPagePath = options.isClientPage === true && options.pagePath
+    ? resolveCanonicalProjectRelativePath(
+      options.pagePath,
+      options.projectDir,
+      { module: true },
+    )
+    : undefined;
+  const dependencyPinningCacheKey = options.dependencyPinningCacheKey?.startsWith("on:")
+    ? options.dependencyPinningCacheKey
+    : undefined;
+
+  // Client pages need the full hydration payload. Other full documents still
+  // need the immutable dependency token before client.js boots so any RSC
+  // transport it starts remains on the document's snapshot.
+  if ((clientPagePath || dependencyPinningCacheKey) && hasBodyClose) {
     // Serialize with jsonForInlineScript, not raw JSON.stringify: route params
     // (and slug) are URL-derived and decoded, so a segment like `%3C/script%3E`
     // would otherwise break out of the <script> tag (reflected XSS). This escapes
     // `<`, `>`, `&`, and line separators, matching the main shell hydration path.
-    const pagePath = toProjectRelativePath(options.pagePath, options.projectDir);
-    const releaseManifest = options.studioEmbed ? null : options.releaseAssetManifest;
+    const pagePath = clientPagePath;
+    const releaseManifest = pagePath && !options.studioEmbed ? options.releaseAssetManifest : null;
     const hydrationData = jsonForInlineScript({
-      pagePath,
-      slug: options.slug,
-      params: options.params ?? {},
-      props: {},
-      layouts: [],
-      clientModuleStrategy: options.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
-      releaseId: releaseManifest?.releaseId,
-      releaseAssetModules: buildReleaseAssetModules(releaseManifest, {
-        route: routeForConfiguredPage(pagePath, options.directories),
-      }),
-      buildVersion: createBuildVersion(),
-      dev: options.mode === "development",
-      studioEmbed: options.studioEmbed,
+      ...(pagePath !== undefined
+        ? {
+          pagePath,
+          slug: options.slug,
+          isClientPage: true,
+          params: options.params ?? {},
+          props: {},
+          layouts: [],
+          clientModuleStrategy: options.clientModuleStrategy === "fs" ? "fs" : "rsc-module",
+          releaseId: releaseManifest?.releaseId,
+          releaseAssetModules: buildReleaseAssetModules(releaseManifest, {
+            route: routeForConfiguredPage(pagePath, options.directories),
+          }),
+          buildVersion: createBuildVersion(),
+          dev: options.mode === "development",
+          studioEmbed: options.studioEmbed,
+        }
+        : {}),
+      ...(dependencyPinningCacheKey ? { dependencyPinningCacheKey } : {}),
     });
     const nonceAttr = buildNonceAttribute(options.nonce);
     const hydrationScript =
@@ -320,12 +337,17 @@ export function injectHTMLContent(
 
   // Inject Studio bridge script when embedded in Studio iframe
   if (options.studioEmbed && hasBodyClose) {
+    const studioPagePath = options.pagePath
+      ? resolveCanonicalProjectRelativePath(
+        options.pagePath,
+        options.projectDir,
+        { module: true },
+      )
+      : undefined;
     const studioScripts = getStudioScripts({
       projectId: options.projectId ?? options.slug,
       pageId: options.pageId ?? options.slug,
-      pagePath: options.pagePath
-        ? toProjectRelativePath(options.pagePath, options.projectDir)
-        : undefined,
+      pagePath: studioPagePath,
       nonce: options.nonce,
       sourceHash: options.sourceHash,
     });

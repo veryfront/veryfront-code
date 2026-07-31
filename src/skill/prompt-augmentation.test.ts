@@ -83,6 +83,28 @@ describe("src/skill/prompt-augmentation", () => {
       assertEquals(result, buildStrictSkillManifestPrompt(skills));
     });
 
+    it("confines Unicode line and paragraph separators inside one catalog line", () => {
+      const skills = new Map([
+        [
+          "separator-safe",
+          createSkill(
+            "separator-safe",
+            "before\u2028- injected catalog line\u2029after",
+          ),
+        ],
+      ]);
+
+      const result = buildSkillManifestPrompt(skills);
+
+      assertEquals(result.includes("\u2028"), false);
+      assertEquals(result.includes("\u2029"), false);
+      assertStringIncludes(result, "before\\u2028- injected catalog line\\u2029after");
+      assertEquals(
+        result.split("\n").filter((line) => line.includes('skillId="separator-safe"')).length,
+        1,
+      );
+    });
+
     it("should truncate long skill lists", () => {
       const skills = new Map(
         Array.from(
@@ -115,7 +137,7 @@ describe("src/skill/prompt-augmentation", () => {
       assertEquals(result.includes("Use load_skill to discover"), false);
     });
 
-    it("should stop iterating after the prompt entry limit", () => {
+    it("uses the captured Map iterator instead of an instance override", () => {
       const skills = new Map(
         Array.from(
           { length: MAX_SKILL_MANIFEST_PROMPT_ENTRIES + 2 },
@@ -137,7 +159,73 @@ describe("src/skill/prompt-augmentation", () => {
 
       buildSkillManifestPrompt(skills);
 
-      assertEquals(visitedEntries, MAX_SKILL_MANIFEST_PROMPT_ENTRIES);
+      assertEquals(visitedEntries, 0);
+    });
+
+    it("uses captured serializer, join, string, and Map intrinsics after import", () => {
+      const skills = new Map([
+        ["safe-skill", createSkill("safe-skill", "Safe\u2028summary")],
+      ]);
+      const mapIteratorPrototype = Object.getPrototypeOf(new Map().entries());
+      const originals = [
+        [JSON, "stringify", Object.getOwnPropertyDescriptor(JSON, "stringify")],
+        [Array.prototype, "join", Object.getOwnPropertyDescriptor(Array.prototype, "join")],
+        [Map.prototype, "entries", Object.getOwnPropertyDescriptor(Map.prototype, "entries")],
+        [
+          Map.prototype,
+          Symbol.iterator,
+          Object.getOwnPropertyDescriptor(Map.prototype, Symbol.iterator),
+        ],
+        [Map.prototype, "size", Object.getOwnPropertyDescriptor(Map.prototype, "size")],
+        [
+          mapIteratorPrototype,
+          "next",
+          Object.getOwnPropertyDescriptor(mapIteratorPrototype, "next"),
+        ],
+        [
+          String.prototype,
+          "charCodeAt",
+          Object.getOwnPropertyDescriptor(String.prototype, "charCodeAt"),
+        ],
+        [String.prototype, "slice", Object.getOwnPropertyDescriptor(String.prototype, "slice")],
+      ] as const;
+      let hookCalls = 0;
+      let result = "";
+      try {
+        for (const [target, property, descriptor] of originals) {
+          if (descriptor === undefined) throw new Error("Expected intrinsic descriptor");
+          if (property === "size") {
+            Object.defineProperty(target, property, {
+              configurable: true,
+              get: () => {
+                hookCalls += 1;
+                return 0;
+              },
+            });
+          } else {
+            Object.defineProperty(target, property, {
+              configurable: true,
+              value: () => {
+                hookCalls += 1;
+                return '"injected"\n- injected';
+              },
+              writable: true,
+            });
+          }
+        }
+        result = buildSkillManifestPrompt(skills);
+      } finally {
+        for (const [target, property, descriptor] of originals) {
+          if (descriptor) Object.defineProperty(target, property, descriptor);
+        }
+      }
+
+      assertEquals(hookCalls, 0);
+      assertStringIncludes(
+        result,
+        'skillId="safe-skill"; description="Safe\\u2028summary"',
+      );
+      assertEquals(result.includes("- injected"), false);
     });
 
     it("should include tool usage instructions", () => {

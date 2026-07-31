@@ -7,6 +7,60 @@ function assertIncludes(haystack: string, needle: string): void {
   assertEquals(haystack.includes(needle), true);
 }
 
+function extractGeneratedFunction(declaration: string): string {
+  const script = getRouterScript();
+  const start = script.indexOf(declaration);
+  assertEquals(start >= 0, true, declaration + " not found in router script");
+  const end = script.indexOf("\n    }", start);
+  assertEquals(end > start, true, "could not find end of " + declaration);
+  return script.slice(start, end + "\n    }".length);
+}
+
+type ImportModule = (moduleUrl: string) => Promise<unknown>;
+
+function importSnapshotBoundModule(
+  moduleUrl: string,
+  importModule: ImportModule,
+  fetchModule: typeof fetch,
+  reloadDocument: () => void,
+  recoveryState: Record<string, unknown>,
+  allowDocumentReload = true,
+): Promise<unknown> {
+  const source = [
+    extractGeneratedFunction("async function isDependencySnapshotConflictResponse("),
+    extractGeneratedFunction("async function recoverFromSnapshotBoundModuleFailure("),
+    extractGeneratedFunction("async function importSnapshotBoundModule("),
+  ].join("\n");
+
+  return new Function(
+    "moduleUrl",
+    "importModule",
+    "fetchModule",
+    "reloadDocument",
+    "recoveryState",
+    "allowDocumentReload",
+    source +
+      "\nreturn importSnapshotBoundModule(" +
+      "moduleUrl, importModule, fetchModule, reloadDocument, recoveryState, allowDocumentReload);",
+  )(
+    moduleUrl,
+    importModule,
+    fetchModule,
+    reloadDocument,
+    recoveryState,
+    allowDocumentReload,
+  ) as Promise<unknown>;
+}
+
+async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
+  try {
+    await promise;
+  } catch (error) {
+    return error;
+  }
+  throw new Error("expected the generated module import to reject");
+}
+
 describe("hydration-script-builder/templates/router", () => {
   describe("getRouterScript", () => {
     it("should return a non-empty string", () => {
@@ -114,8 +168,46 @@ describe("hydration-script-builder/templates/router", () => {
       assertIncludes(result, "const pendingPageDataFetches = new Map()");
       assertIncludes(result, "function startPageDataFetch(path, signal, options = {})");
       assertIncludes(result, "function refreshPageDataInBackground(path)");
-      assertIncludes(result, "pendingPageDataFetches.set(path, request)");
+      assertIncludes(result, "pendingPageDataFetches.set(cacheIdentity, pendingEntry)");
       assertIncludes(result, "refreshPageDataInBackground(path)");
+    });
+
+    it("binds page-data requests and cache identities to the document dependency snapshot", () => {
+      const result = getRouterScript();
+      assertIncludes(result, "const DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY =");
+      assertIncludes(result, "function pageDataCacheIdentity(path)");
+      assertIncludes(result, "function buildPageDataEndpoint(path)");
+      assertIncludes(
+        result,
+        "headers['X-Veryfront-Dependency-Pins'] = DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY",
+      );
+      assertIncludes(result, "assertPageDataMatchesDocumentSnapshot(path, await response.json())");
+    });
+
+    it("starts dependency-snapshot document recovery only once", () => {
+      const source = extractGeneratedFunction(
+        "function navigateForDependencySnapshotMismatch(",
+      );
+      let assignments = 0;
+      let assignedHref = "";
+      const runtimeWindow = {
+        location: {
+          set href(value: string) {
+            assignments++;
+            assignedHref = value;
+          },
+        },
+      };
+      const navigate = new Function(
+        "window",
+        `${source}\nreturn navigateForDependencySnapshotMismatch;`,
+      )(runtimeWindow) as (href: string) => void;
+
+      navigate("/first");
+      navigate("/second");
+
+      assertEquals(assignments, 1);
+      assertEquals(assignedHref, "/first");
     });
 
     it("should reuse pending page-data fetches for first-hit navigation", () => {
@@ -252,15 +344,184 @@ describe("hydration-script-builder/templates/router", () => {
 
     it("should resolve isolated page-island modules through release assets then RSC", () => {
       const result = getRouterScript();
-      assertIncludes(result, "async function loadPageDataComponent(pageData, path)");
+      assertIncludes(result, "async function loadPageDataComponent(pageData, path, options = {})");
       assertIncludes(
         result,
         "const moduleUrl = resolveHydrationModuleUrl(",
       );
-      assertIncludes(result, "await loadComponentFromUrl(path, moduleUrl)");
+      assertIncludes(result, "pageData.releaseAssetModules || null");
+      assertIncludes(result, "const component = await loadComponentFromUrl(");
+      assertIncludes(result, "options,");
       assertIncludes(
         result,
         "allPaths.map((path) => loadPageDataComponent(pageData, path))",
+      );
+    });
+
+    it("reloads once when pinned page, layout, app, and error imports hit snapshot eviction", async () => {
+      const importedUrls: string[] = [];
+      const probedUrls: string[] = [];
+      const cacheModes: (RequestCache | undefined)[] = [];
+      const recoveryState: Record<string, unknown> = {};
+      let reloads = 0;
+
+      for (
+        const path of [
+          "app/page.tsx",
+          "app/layout.tsx",
+          "components/app.tsx",
+          "app/error.tsx",
+        ]
+      ) {
+        const moduleUrl = `/_veryfront/rsc/module?rel=${
+          encodeURIComponent(path)
+        }&pins=on%3Asnapshot-a`;
+        const importError = new TypeError(`dynamic import failed: ${path}`);
+        const thrown = await captureRejection(
+          importSnapshotBoundModule(
+            moduleUrl,
+            (url) => {
+              importedUrls.push(url);
+              return Promise.reject(importError);
+            },
+            (input, init) => {
+              probedUrls.push(String(input));
+              cacheModes.push((init as { cache?: RequestCache } | undefined)?.cache);
+              return Promise.resolve(
+                new Response("export default null; // Unknown dependency snapshot", {
+                  status: 409,
+                  headers: { "content-type": "application/javascript" },
+                }),
+              );
+            },
+            () => {
+              reloads++;
+            },
+            recoveryState,
+          ),
+        );
+
+        assertEquals(thrown, importError);
+      }
+
+      assertEquals(importedUrls.length, 4);
+      assertEquals(probedUrls, importedUrls);
+      assertEquals(cacheModes, ["no-store", "no-store", "no-store", "no-store"]);
+      assertEquals(reloads, 1);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        true,
+      );
+    });
+
+    it("recovers module-server path-pinned imports used by the shared component loader", async () => {
+      const moduleUrl = "/_vf_modules/_pins/on%3Asnapshot-a/app/layout.js";
+      const importError = new TypeError("dynamic import failed");
+      const probedUrls: string[] = [];
+      let reloads = 0;
+
+      const thrown = await captureRejection(
+        importSnapshotBoundModule(
+          moduleUrl,
+          () => Promise.reject(importError),
+          (input, init) => {
+            probedUrls.push(String(input));
+            assertEquals(
+              (init as { cache?: RequestCache } | undefined)?.cache,
+              "no-store",
+            );
+            return Promise.resolve(
+              new Response("Unknown dependency snapshot", { status: 409 }),
+            );
+          },
+          () => {
+            reloads++;
+          },
+          {},
+        ),
+      );
+
+      assertEquals(thrown, importError);
+      assertEquals(probedUrls, [moduleUrl]);
+      assertEquals(reloads, 1);
+    });
+
+    it("reports speculative snapshot conflicts without reloading the document", async () => {
+      const moduleUrl = "/_veryfront/rsc/module?rel=app%2Fpage.tsx&pins=on%3Asnapshot-a";
+      let reloads = 0;
+      const recoveryState: Record<string, unknown> = {};
+
+      const thrown = await captureRejection(
+        importSnapshotBoundModule(
+          moduleUrl,
+          () => Promise.reject(new TypeError("dynamic import failed")),
+          () =>
+            Promise.resolve(
+              new Response("Unknown dependency snapshot", { status: 409 }),
+            ),
+          () => {
+            reloads++;
+          },
+          recoveryState,
+          false,
+        ),
+      ) as Error & { dependencySnapshotConflict?: boolean };
+
+      assertEquals(thrown.name, "DependencySnapshotConflictError");
+      assertEquals(thrown.dependencySnapshotConflict, true);
+      assertEquals(reloads, 0);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        undefined,
+      );
+    });
+
+    it("preserves arbitrary import failures without probing or reloading them", async () => {
+      const importError = new SyntaxError("module evaluation failed");
+      let probes = 0;
+      let reloads = 0;
+      const recoveryState: Record<string, unknown> = {};
+
+      const unpinnedThrown = await captureRejection(
+        importSnapshotBoundModule(
+          "/_veryfront/rsc/module?rel=app%2Fpage.tsx",
+          () => Promise.reject(importError),
+          () => {
+            probes++;
+            return Promise.resolve(
+              new Response("Unknown dependency snapshot", { status: 409 }),
+            );
+          },
+          () => {
+            reloads++;
+          },
+          recoveryState,
+        ),
+      );
+      const applicationConflictThrown = await captureRejection(
+        importSnapshotBoundModule(
+          "/_veryfront/rsc/module?rel=app%2Fpage.tsx&pins=on%3Asnapshot-a",
+          () => Promise.reject(importError),
+          () => {
+            probes++;
+            return Promise.resolve(
+              new Response("Application conflict", { status: 409 }),
+            );
+          },
+          () => {
+            reloads++;
+          },
+          recoveryState,
+        ),
+      );
+
+      assertEquals(unpinnedThrown, importError);
+      assertEquals(applicationConflictThrown, importError);
+      assertEquals(probes, 1);
+      assertEquals(reloads, 0);
+      assertEquals(
+        recoveryState.__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__,
+        undefined,
       );
     });
 
@@ -294,21 +555,27 @@ describe("hydration-script-builder/templates/router", () => {
       const result = getRouterScript();
       assertIncludes(result, "function prefetchPage(href)");
       assertIncludes(result, "function preloadModulesForPageData(pageData, path)");
-      assertIncludes(result, "loadPageDataComponent(pageData, modulePath)");
+      assertIncludes(
+        result,
+        "loadPageDataComponent(pageData, modulePath, { allowDocumentReload: false })",
+      );
       assertIncludes(result, "PREFETCH_DELAY_MS");
       assertIncludes(result, "MAX_PREFETCH_PATHS = 100");
     });
 
     it("should prefetch isolated modules securely and skip document-navigation targets", () => {
       const result = getRouterScript();
-      assertIncludes(result, "async function loadPageDataComponent(pageData, path)");
+      assertIncludes(
+        result,
+        "async function loadPageDataComponent(pageData, path, options = {})",
+      );
       assertIncludes(
         result,
         "if (!pageData || pageData.requiresFullDocumentNavigation) return;",
       );
       assertIncludes(
         result,
-        "modulePaths.map((modulePath) => loadPageDataComponent(pageData, modulePath))",
+        "loadPageDataComponent(pageData, modulePath, { allowDocumentReload: false })",
       );
     });
 
@@ -472,6 +739,7 @@ describe("hydration-script-builder/templates/router", () => {
       search: string;
       hash: string;
       href: string;
+      reload(): void;
     }
     interface RuntimeRouter {
       params: Record<string, string>;
@@ -548,6 +816,7 @@ describe("hydration-script-builder/templates/router", () => {
       // normalized (joined) so it matches the server render.
       getRenderedPageParams: () => Record<string, string> | null;
       getRouteCss: () => string | null;
+      getReloads: () => number;
     }
 
     function evaluateRouterRuntime(
@@ -562,6 +831,7 @@ describe("hydration-script-builder/templates/router", () => {
         };
         hydrationDev?: boolean;
         activeReleaseId?: string;
+        hydrationDependencyPinningCacheKey?: string;
         fetchImpl?: (
           url: string,
           options: { headers?: Record<string, string>; signal?: AbortSignal },
@@ -569,6 +839,7 @@ describe("hydration-script-builder/templates/router", () => {
         loadComponentImpl?: (path: string) => Promise<unknown>;
         setTimeoutImpl?: (callback: () => void, delay: number) => number;
         clearTimeoutImpl?: (id: number) => void;
+        importModuleImpl?: ImportModule;
         debug?: boolean;
       } = {},
     ): RuntimeHandle {
@@ -576,6 +847,9 @@ describe("hydration-script-builder/templates/router", () => {
         params: opts.hydrationParams ?? {},
         buildVersion: opts.hydrationBuildVersion,
         dev: opts.hydrationDev,
+        ...(opts.hydrationDependencyPinningCacheKey
+          ? { dependencyPinningCacheKey: opts.hydrationDependencyPinningCacheKey }
+          : {}),
       });
       const listeners: Record<string, Array<(e: unknown) => void>> = {};
       const addEventListener = (type: string, fn: (e: unknown) => void) => {
@@ -630,8 +904,9 @@ describe("hydration-script-builder/templates/router", () => {
       };
 
       let assignedHref: string | null = null;
+      let reloads = 0;
       const historyCalls: RuntimeHandle["historyCalls"] = [];
-      const location = {
+      const location: RuntimeLocation = {
         origin: "https://veryfront.test",
         pathname: opts.pathname ?? "/",
         search: opts.search ?? "",
@@ -642,6 +917,9 @@ describe("hydration-script-builder/templates/router", () => {
         },
         set href(value: string) {
           assignedHref = value;
+        },
+        reload() {
+          reloads++;
         },
       };
       const win: RuntimeWindow = {
@@ -669,7 +947,13 @@ describe("hydration-script-builder/templates/router", () => {
           opts.activeReleaseId;
       }
 
-      let nextPageData: unknown = { pagePath: "page", params: {} };
+      let nextPageData: unknown = {
+        pagePath: "page",
+        params: {},
+        ...(opts.hydrationDependencyPinningCacheKey
+          ? { dependencyPinningCacheKey: opts.hydrationDependencyPinningCacheKey }
+          : {}),
+      };
       const fetchCalls: RuntimeFetchCall[] = [];
       const fetchStub = (
         url: string,
@@ -716,6 +1000,7 @@ describe("hydration-script-builder/templates/router", () => {
         path: string,
         preferRscModule: boolean,
         studioEmbed: boolean,
+        moduleData: { dependencyPinningCacheKey?: unknown } | null,
         releaseAssetModules: Record<string, string> | null,
         releaseId: string | null,
       ) => {
@@ -726,9 +1011,43 @@ describe("hydration-script-builder/templates/router", () => {
           releaseAssetModules,
           releaseId,
         });
+
+        if (
+          !studioEmbed &&
+          releaseAssetModules &&
+          Object.prototype.hasOwnProperty.call(releaseAssetModules, path)
+        ) {
+          return releaseAssetModules[path];
+        }
+
+        if (preferRscModule) {
+          let moduleUrl = "/_veryfront/rsc/module?rel=" + encodeURIComponent(path);
+          const pinKey = moduleData?.dependencyPinningCacheKey;
+          if (typeof pinKey === "string" && pinKey.startsWith("on:")) {
+            moduleUrl += "&pins=" + encodeURIComponent(pinKey);
+          }
+          return moduleUrl;
+        }
+
         return path;
       };
-      const loadComponentFromUrl = (path: string) => loadComponent(path);
+      const loadComponentFromUrl = async (
+        path: string,
+        moduleUrl: string,
+        options: { allowDocumentReload?: boolean } = {},
+      ) => {
+        if (!opts.importModuleImpl) return loadComponent(path);
+
+        const module = await importSnapshotBoundModule(
+          moduleUrl,
+          opts.importModuleImpl,
+          fetchStub as typeof fetch,
+          () => location.reload(),
+          win as unknown as Record<string, unknown>,
+          options.allowDocumentReload !== false,
+        ) as Record<string, unknown>;
+        return module.MDXLayout ?? module.MainLayout ?? module.default ?? module;
+      };
       let navigationNotifications = 0;
       const navigationStore = {
         setNavigator() {},
@@ -790,6 +1109,7 @@ describe("hydration-script-builder/templates/router", () => {
         getRenderedParams: () => renderedRouterParams,
         getRenderedPageParams: () => renderedPageParams,
         getRouteCss: () => spaStyleEl?.textContent ?? null,
+        getReloads: () => reloads,
       };
     }
 
@@ -902,6 +1222,140 @@ describe("hydration-script-builder/templates/router", () => {
       assertEquals(Object.prototype.hasOwnProperty.call(router.params, "__proto__"), true);
       assertEquals(router.params["__proto__"], "safe/value");
       assertEquals(Object.getPrototypeOf(router.params), Object.prototype);
+    });
+
+    it("preserves route queries and binds page-data requests to the document snapshot", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA("/search?pins=customer-value&q=one", "push");
+
+      assertEquals(
+        runtime.fetchCalls[0]?.url,
+        "/_veryfront/page-data/search.json?pins=customer-value&q=one",
+      );
+      assertEquals(runtime.fetchCalls[0]?.options.headers, {
+        "X-Veryfront-Navigation": "spa",
+        "X-Veryfront-Dependency-Pins": "on:snapshot-a",
+      });
+    });
+
+    it("falls back to a document navigation when page data returns another snapshot", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+      runtime.setNextPageData({
+        pagePath: "page",
+        params: {},
+        dependencyPinningCacheKey: "on:snapshot-b",
+      });
+
+      await runtime.navigateSPA("/target", "push");
+
+      assertEquals(runtime.win.location.href, "/target");
+      assertEquals(runtime.getRenderedParams(), null);
+    });
+
+    it("rejects history state from another dependency snapshot without refetching", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA(
+        "/target",
+        "none",
+        true,
+        {
+          pagePath: "page",
+          params: {},
+          dependencyPinningCacheKey: "on:snapshot-b",
+        },
+      );
+
+      assertEquals(runtime.win.location.href, "/target");
+      assertEquals(runtime.fetchCalls, []);
+      assertEquals(runtime.getRenderedParams(), null);
+    });
+
+    it("rejects pinned fetched and history payloads for an unpinned document", async () => {
+      const fetchedRuntime = evaluateRouterRuntime();
+      fetchedRuntime.win.__veryfrontHydrationComplete?.();
+      fetchedRuntime.setNextPageData({
+        pagePath: "page",
+        params: {},
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+
+      await fetchedRuntime.navigateSPA("/fetched", "push");
+      assertEquals(fetchedRuntime.win.location.href, "/fetched");
+      assertEquals(fetchedRuntime.getRenderedParams(), null);
+
+      const historyRuntime = evaluateRouterRuntime();
+      historyRuntime.win.__veryfrontHydrationComplete?.();
+      await historyRuntime.navigateSPA(
+        "/history",
+        "none",
+        true,
+        {
+          pagePath: "page",
+          params: {},
+          dependencyPinningCacheKey: "on:snapshot-a",
+        },
+      );
+      assertEquals(historyRuntime.win.location.href, "/history");
+      assertEquals(historyRuntime.fetchCalls, []);
+      assertEquals(historyRuntime.historyCalls, []);
+      assertEquals(historyRuntime.getRenderedParams(), null);
+    });
+
+    it("does not cache a pinned prefetch payload for an unpinned document", async () => {
+      const pinnedPageData = {
+        pagePath: "page",
+        params: {},
+        dependencyPinningCacheKey: "on:snapshot-a",
+      };
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: () => Promise.resolve(pageDataResponse("cached", pinnedPageData)),
+      });
+
+      runtime.router.prefetch("/cached");
+      await flushUntil(() => runtime.fetchCalls.length === 1);
+      for (let index = 0; index < 5; index++) await flushMicrotasks();
+
+      runtime.win.__veryfrontHydrationComplete?.();
+      await runtime.navigateSPA("/cached", "push");
+
+      assertEquals(runtime.fetchCalls.map((call) => call.url), [
+        "/_veryfront/page-data/cached.json",
+        "/_veryfront/page-data/cached.json",
+      ]);
+      assertEquals(runtime.win.location.href, "/cached");
+      assertEquals(runtime.historyCalls, []);
+      assertEquals(runtime.getRenderedParams(), null);
+    });
+
+    it("falls back to a document navigation when the pinned snapshot is unavailable", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+        fetchImpl: () =>
+          Promise.resolve({
+            ok: false,
+            status: 409,
+            url: "/_veryfront/page-data/target.json?pins=on%3Asnapshot-a",
+            headers: { get: () => null },
+            json: () => Promise.resolve({}),
+          }),
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      await runtime.navigateSPA("/target", "push");
+
+      assertEquals(runtime.win.location.href, "/target");
+      assertEquals(runtime.getRenderedParams(), null);
     });
 
     it("replaces stale params with new page data on SPA navigation", async () => {
@@ -1052,6 +1506,42 @@ describe("hydration-script-builder/templates/router", () => {
       assertEquals(runtime.getRenderedPageParams(), { owner: "second" });
       assertEquals(runtime.historyCalls, [{ method: "push", href: "/second" }]);
       assertEquals(runtime.isBodyBusy(), false);
+    });
+
+    it("starts a fresh request when a same-href navigation supersedes an aborted owner", async () => {
+      let requestCount = 0;
+      const runtime = evaluateRouterRuntime({
+        fetchImpl: (_url, options) => {
+          requestCount++;
+          if (requestCount === 1) {
+            return new Promise((_, reject) => {
+              options.signal?.addEventListener("abort", () => {
+                reject(new DOMException("Aborted", "AbortError"));
+              }, { once: true });
+            });
+          }
+          return Promise.resolve(
+            pageDataResponse("page-b", {
+              pagePath: "page-b",
+              params: { owner: "second" },
+            }),
+          );
+        },
+      });
+      runtime.win.__veryfrontHydrationComplete?.();
+
+      const firstNavigation = runtime.navigateSPA("/same", "push");
+      await flushUntil(() => runtime.fetchCalls.length === 1);
+      const secondNavigation = runtime.navigateSPA("/same", "push");
+      await Promise.all([firstNavigation, secondNavigation]);
+
+      assertEquals(runtime.fetchCalls.map((call) => call.url), [
+        "/_veryfront/page-data/same.json",
+        "/_veryfront/page-data/same.json",
+      ]);
+      assertEquals(runtime.router.pathname, "/same");
+      assertEquals(runtime.router.params, { owner: "second" });
+      assertEquals(runtime.historyCalls, [{ method: "push", href: "/same" }]);
     });
 
     it("keeps current progress and fallback ownership when a stale request aborts", async () => {
@@ -1376,6 +1866,43 @@ describe("hydration-script-builder/templates/router", () => {
       assertEquals(runtime.getAssignedHref(), null);
       assertEquals(runtime.router.pathname, "/next");
       assertEquals(runtime.historyCalls, [{ method: "push", href: "/next" }]);
+    });
+
+    it("does not reload the active document for a speculative module snapshot conflict", async () => {
+      const runtime = evaluateRouterRuntime({
+        hydrationDependencyPinningCacheKey: "on:snapshot-a",
+        importModuleImpl: () => Promise.reject(new Error("module import failed")),
+        fetchImpl: (url) => {
+          if (url.startsWith("/_veryfront/page-data/")) {
+            return Promise.resolve({
+              ok: true,
+              status: 200,
+              url,
+              headers: { get: () => null },
+              json: () =>
+                Promise.resolve({
+                  pagePath: "app/page.tsx",
+                  params: {},
+                  isolatedClientPage: true,
+                  dependencyPinningCacheKey: "on:snapshot-a",
+                }),
+            });
+          }
+
+          return Promise.resolve(
+            new Response("Unknown dependency snapshot", { status: 409 }),
+          );
+        },
+      });
+
+      runtime.router.prefetch("/target");
+      await flushUntil(() => runtime.fetchCalls.length >= 2);
+
+      assertEquals(runtime.fetchCalls.map((call) => call.url), [
+        "/_veryfront/page-data/target.json",
+        "/_veryfront/rsc/module?rel=app%2Fpage.tsx&pins=on%3Asnapshot-a",
+      ]);
+      assertEquals(runtime.getReloads(), 0);
     });
 
     it("allows a failed speculative prefetch to be requested again later", async () => {

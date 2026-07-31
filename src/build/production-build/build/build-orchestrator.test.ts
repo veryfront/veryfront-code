@@ -12,12 +12,24 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertBuildProducedOutput,
   buildProduction,
+  captureBuildDependencySnapshot,
   cleanupCaches,
   cleanupRenderer,
   logBuildCompletion,
 } from "./build-orchestrator.ts";
 import type { BuildStats } from "#veryfront/server/build-types.ts";
 import type { CollectedRoutes } from "./route-collector.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import {
+  DEPENDENCY_PINNING_ENV_FLAG,
+  RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
+} from "#veryfront/release-assets/constants.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import {
+  clearReactVersionCache,
+  resolveProjectReactVersion,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { getProjectReact } from "#veryfront/react";
 import { getReactDOMServer } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import {
@@ -136,6 +148,14 @@ async function assertStaticPathsFailureIsAtomic(options: {
     const { stop } = await import("veryfront/extensions/bundler");
     await stop();
     await Deno.remove(projectDir, { recursive: true });
+  }
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    deleteEnv(name);
+  } else {
+    setEnv(name, value);
   }
 }
 
@@ -262,6 +282,71 @@ describe("build/production-build/build/build-orchestrator", () => {
           false,
         );
       } finally {
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("threads explicitly composed release asset providers through a flag-on build", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-release-providers-" });
+      const outputDir = `${projectDir}/dist`;
+      const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+      let vendorCalls = 0;
+      let transformCalls = 0;
+
+      try {
+        setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+        await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "19.2.4" } }),
+        );
+        await Deno.writeTextFile(`${projectDir}/pages/index.mdx`, "# Provider-backed build");
+
+        const stats = await buildProduction({
+          projectDir,
+          outputDir,
+          enableSplitting: false,
+          enableCompression: false,
+          localReleaseAssetProviders: {
+            vendorHttpImports: (code: string) => {
+              vendorCalls++;
+              const urls = [
+                ...new Set(
+                  [...code.matchAll(/["'](https?:\/\/[^"']+)["']/g)]
+                    .map((match) => match[1])
+                    .filter((url): url is string => typeof url === "string"),
+                ),
+              ];
+              return Promise.resolve({
+                code,
+                dependencies: urls.map((url) => ({
+                  specifier: url,
+                  manifestKey: url,
+                  code: `export const sourceUrl = ${JSON.stringify(url)};`,
+                })),
+              });
+            },
+            frameworkTransform: () => {
+              transformCalls++;
+              return Promise.resolve("export const framework = true;");
+            },
+          },
+        });
+
+        assertEquals(stats.pages, 1);
+        assertEquals(vendorCalls > 0, true);
+        assertEquals(transformCalls > 0, true);
+        assertExists(
+          JSON.parse(
+            await Deno.readTextFile(
+              `${outputDir}/_veryfront/release-asset-manifest.json`,
+            ),
+          ).dependencies.react,
+        );
+      } finally {
+        restoreEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag);
         const { stop } = await import("veryfront/extensions/bundler");
         await stop();
         await Deno.remove(projectDir, { recursive: true });
@@ -502,6 +587,126 @@ export default function BlogPost() { return null; }
         restoreTransformCache();
         const { stop } = await import("veryfront/extensions/bundler");
         await stop();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("changes the build snapshot when only dependency-affecting config changes", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-build-config-snapshot-",
+      });
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const adapter = createMockAdapter();
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ dependencies: { lodash: "4.17.21" } }),
+        );
+
+        const snapshotA = await captureBuildDependencySnapshot({
+          projectDir,
+          adapter,
+          isLocalProject: true,
+          config: { react: { version: "18.3.1" } } as VeryfrontConfig,
+        });
+        const snapshotB = await captureBuildDependencySnapshot({
+          projectDir,
+          adapter,
+          isLocalProject: true,
+          config: { react: { version: "19.2.4" } } as VeryfrontConfig,
+        });
+
+        assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
+        assertEquals(snapshotA.dependencies?.react, "18.3.1");
+        assertEquals(snapshotB.dependencies?.react, "19.2.4");
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("derives build React from captured A after package state B becomes current", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-build-react-snapshot-",
+      });
+      const packageJsonPath = `${projectDir}/package.json`;
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      const adapter = createMockAdapter();
+      const config = {} as VeryfrontConfig;
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { react: "18.3.1" } }),
+        );
+        const snapshotA = await captureBuildDependencySnapshot({
+          projectDir,
+          adapter,
+          isLocalProject: true,
+          config,
+        });
+
+        await Deno.writeTextFile(
+          packageJsonPath,
+          JSON.stringify({ dependencies: { react: "19.2.4" } }),
+        );
+        const future = new Date(Date.now() + 2_000);
+        await Deno.utime(packageJsonPath, future, future);
+        const snapshotB = await captureBuildDependencySnapshot({
+          projectDir,
+          adapter,
+          isLocalProject: true,
+          config,
+        });
+
+        const buildReactVersion = await resolveProjectReactVersion({
+          projectDir,
+          config,
+          dependencyPinningCacheKey: snapshotA.cacheKey,
+          dependencyPinningDependencies: snapshotA.dependencies,
+        });
+
+        assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
+        assertEquals(snapshotB.dependencies?.react, "19.2.4");
+        assertEquals(buildReactVersion, "18.3.1");
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        clearReactVersionCache();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects a build snapshot when package.json is malformed", async () => {
+      const projectDir = await Deno.makeTempDir({
+        prefix: "vf-build-malformed-snapshot-",
+      });
+      const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+
+      try {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        clearReactVersionCache();
+        await Deno.writeTextFile(`${projectDir}/package.json`, "{ malformed");
+
+        await assertRejects(
+          () =>
+            captureBuildDependencySnapshot({
+              projectDir,
+              adapter: createMockAdapter(),
+              isLocalProject: true,
+              config: {} as VeryfrontConfig,
+            }),
+          Error,
+          "on:unknown",
+        );
+      } finally {
+        restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+        clearReactVersionCache();
         await Deno.remove(projectDir, { recursive: true });
       }
     });

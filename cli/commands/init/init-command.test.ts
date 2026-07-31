@@ -51,6 +51,7 @@ describe("InitCommand Types", () => {
         });
 
         assertEquals(await exists(join(parentDir, name, "app")), true);
+        assertEquals(await exists(join(parentDir, name, "package.json")), false);
         assertEquals(await exists(cwdTarget), false);
       } finally {
         await remove(parentDir, { recursive: true }).catch(() => {});
@@ -271,6 +272,7 @@ describe("InitCommand Types", () => {
 
         const expectedLiveLine = `  Live: ${deployedUrl}`;
         const liveLine = output.map(stripAnsi).find((line) => line === expectedLiveLine);
+        assertEquals(await exists(join(parentDir, name, "app")), true);
         assertEquals(liveLine, expectedLiveLine);
       } finally {
         console.log = originalLog;

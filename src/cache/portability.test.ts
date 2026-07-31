@@ -7,7 +7,13 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { afterEach, beforeAll, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import {
   CACHE_DIR_TOKEN,
@@ -17,6 +23,7 @@ import {
 } from "./paths.ts";
 import { createTokenizingGateway, type TokenizingCacheGateway } from "./tokenizing-gateway.ts";
 import { type CacheBackend, DiskCacheBackend, MemoryCacheBackend } from "./backend.ts";
+import type { CacheRevisionMutation, CacheRevisionSnapshot } from "./types.ts";
 
 /**
  * Mock distributed backend that simulates Redis behavior.
@@ -365,6 +372,116 @@ describe("Cache Portability", () => {
       // Stored value should be unchanged
       const stored = mockBackend.getRawStoredValue("metadata-key");
       assertEquals(stored, metadata);
+    });
+
+    it("does not expose revision operations for an ordinary backend", () => {
+      assertEquals(Object.hasOwn(gateway, "getWithRevision"), false);
+      assertEquals(Object.hasOwn(gateway, "compareExchange"), false);
+      assertEquals(gateway.getWithRevision, undefined);
+      assertEquals(gateway.compareExchange, undefined);
+    });
+
+    it("forwards revision operations and mutation deadlines without tokenization", async () => {
+      const snapshot: CacheRevisionSnapshot = {
+        value: `raw:${CACHE_DIR_TOKEN}:\0payload`,
+        revision: "revision:!~",
+      };
+      const mutation: CacheRevisionMutation = {
+        kind: "set",
+        value: `serialized:${CACHE_DIR_TOKEN}:\0bytes`,
+        expiresAtMs: 1_900_000_000_000,
+      };
+      const observed: {
+        getKey?: string;
+        exchangeKey?: string;
+        expectedRevision?: string;
+        mutation?: CacheRevisionMutation;
+        getThis?: unknown;
+        exchangeThis?: unknown;
+      } = {};
+      const backend: CacheBackend = {
+        type: "distributed",
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+        getWithRevision(key) {
+          observed.getKey = key;
+          observed.getThis = this;
+          return Promise.resolve(snapshot);
+        },
+        compareExchange(key, expectedRevision, receivedMutation) {
+          observed.exchangeKey = key;
+          observed.expectedRevision = expectedRevision;
+          observed.mutation = receivedMutation;
+          observed.exchangeThis = this;
+          return Promise.resolve(false);
+        },
+      };
+      const revisionGateway = createTokenizingGateway(backend, "REVISION-GATEWAY");
+      const rawKey = `key:${CACHE_DIR_TOKEN}:\0bytes`;
+
+      assertEquals(Object.hasOwn(revisionGateway, "getWithRevision"), true);
+      assertEquals(Object.hasOwn(revisionGateway, "compareExchange"), true);
+      assertStrictEquals(await revisionGateway.getWithRevision!(rawKey), snapshot);
+      assertStrictEquals(
+        await revisionGateway.compareExchange!(rawKey, "expected:!~", mutation),
+        false,
+      );
+      assertEquals(observed.getKey, rawKey);
+      assertEquals(observed.exchangeKey, rawKey);
+      assertEquals(observed.expectedRevision, "expected:!~");
+      assertStrictEquals(observed.mutation, mutation);
+      assertStrictEquals(observed.getThis, backend);
+      assertStrictEquals(observed.exchangeThis, backend);
+    });
+
+    it("captures revision methods without proxy property reads or later redirection", async () => {
+      const originalSnapshot = { value: "original", revision: "r1" };
+      let capabilityPropertyReads = 0;
+      let getThis: unknown;
+      let exchangeThis: unknown;
+      const target: CacheBackend = {
+        type: "distributed",
+        get: () => Promise.resolve(null),
+        set: () => Promise.resolve(),
+        del: () => Promise.resolve(),
+        getWithRevision() {
+          getThis = this;
+          return Promise.resolve(originalSnapshot);
+        },
+        compareExchange() {
+          exchangeThis = this;
+          return Promise.resolve(true);
+        },
+      };
+      const proxy = new Proxy(target, {
+        get(backend, property, receiver) {
+          if (property === "getWithRevision" || property === "compareExchange") {
+            capabilityPropertyReads += 1;
+            throw new Error("capability property must not be read");
+          }
+          return Reflect.get(backend, property, receiver);
+        },
+      });
+      const revisionGateway = createTokenizingGateway(proxy, "CAPTURE-GATEWAY");
+
+      Object.defineProperties(target, {
+        getWithRevision: {
+          value: () => Promise.reject(new Error("redirected get")),
+        },
+        compareExchange: {
+          value: () => Promise.reject(new Error("redirected exchange")),
+        },
+      });
+
+      assertStrictEquals(await revisionGateway.getWithRevision!("key"), originalSnapshot);
+      assertEquals(
+        await revisionGateway.compareExchange!("key", "r1", { kind: "delete" }),
+        true,
+      );
+      assertEquals(capabilityPropertyReads, 0);
+      assertStrictEquals(getThis, proxy);
+      assertStrictEquals(exchangeThis, proxy);
     });
 
     describe("Invariant Validation", () => {

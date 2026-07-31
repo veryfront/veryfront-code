@@ -7,6 +7,14 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { setJsonMode } from "../../shared/json-output.ts";
+import type {
+  DeployEvent,
+  DeployProject,
+  DeployProjectRequest,
+} from "../../shared/deployment/deploy-project.ts";
+import type { DeployResult } from "../../shared/deployment/result.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
 import {
   assertProjectOwnership,
   createDeployment,
@@ -26,6 +34,7 @@ import {
   waitForEnvironmentReady,
   waitForReleaseAssetManifest,
 } from "./index.ts";
+import { deployCommandWithProjectForTesting } from "./command.ts";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
@@ -50,6 +59,24 @@ function createMockClient(overrides: MockClientOverrides = {}): ApiClient {
     patch: <T>(): Promise<T> => Promise.resolve({} as T),
     delete: <T>(): Promise<T> => Promise.resolve({} as T),
   };
+}
+
+async function captureConsole<T>(fn: () => Promise<T>): Promise<{ result: T; output: string[] }> {
+  const output: string[] = [];
+  const originalLog = console.log;
+  const originalWarn = console.warn;
+  console.log = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
+  };
+  console.warn = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
+  };
+  try {
+    return { result: await fn(), output };
+  } finally {
+    console.log = originalLog;
+    console.warn = originalWarn;
+  }
 }
 
 async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | undefined> {
@@ -93,6 +120,137 @@ async function commitProject(projectDir: string) {
     }).output()).stdout,
   ).trim();
 }
+
+describe("deploy command adapters", () => {
+  it("render human and JSON output from one injected deployment executor", async () => {
+    const sentinelResult: DeployResult = {
+      projectId: "project-sentinel",
+      projectSlug: "sentinel-project",
+      release: {
+        id: "release-sentinel",
+        name: "release-from-fake",
+        version: "2026.07.30-1",
+      },
+      environment: "production",
+      environmentId: "environment-sentinel",
+      deploymentId: "deployment-sentinel",
+      url: "https://sentinel.example.test/dashboard",
+      protected: true,
+      routingConvergence: { status: "converged", acknowledged: 3, recipients: 3 },
+      commitSha: "f".repeat(40),
+      sourceDigest: "sha256:sentinel",
+      controlPlane: "https://control.example.test/api",
+      branch: "main",
+    };
+    const observedRequests: DeployProjectRequest[] = [];
+    const createFakeDeployment = (): DeployProject => ({
+      async execute(request, observer) {
+        observedRequests.push(request);
+        const events: DeployEvent[] = [
+          { kind: "step", step: "resolve-config", phase: "started" },
+          { kind: "step", step: "resolve-config", phase: "completed" },
+          { kind: "step", step: "create-deployment", phase: "started" },
+          { kind: "step", step: "create-deployment", phase: "completed" },
+          {
+            kind: "warning",
+            code: "routing-convergence-unconfirmed",
+            message: "sentinel warning",
+          },
+        ];
+        for (const event of events) await observer?.onEvent(event);
+        return { kind: "deployed", result: sentinelResult };
+      },
+    });
+    const options = {
+      projectDir: "adapter-must-not-read",
+      branch: "main",
+      env: "production",
+      releaseName: "release-from-options",
+      dryRun: false,
+      force: false,
+      quiet: false,
+      skipSourcePush: true,
+      environmentPollIntervalMs: 1,
+      environmentTimeoutMs: 1,
+    };
+
+    const human = await withMockFetch(
+      () => {
+        throw new Error("adapter performed fetch orchestration");
+      },
+      () =>
+        captureConsole(() =>
+          deployCommandWithProjectForTesting(options, {
+            createDeployProject: createFakeDeployment,
+          })
+        ),
+    );
+
+    let json: { result: DeployResult | null; output: string[] };
+    try {
+      setJsonMode(true);
+      json = await withMockFetch(
+        () => {
+          throw new Error("adapter performed fetch orchestration");
+        },
+        () =>
+          captureConsole(() =>
+            deployCommandWithProjectForTesting(options, {
+              createDeployProject: createFakeDeployment,
+            })
+          ),
+      );
+    } finally {
+      setJsonMode(false);
+    }
+
+    assertEquals(observedRequests.length, 2);
+    assertEquals(observedRequests[0], observedRequests[1]);
+    assertEquals(observedRequests[0], {
+      projectDir: "adapter-must-not-read",
+      branch: "main",
+      environment: "production",
+      releaseName: "release-from-options",
+      mode: "apply",
+      source: { kind: "already-pushed" },
+    });
+    assertEquals(human.result, sentinelResult);
+    assertEquals(json.result, sentinelResult);
+
+    const humanOutput = stripAnsi(human.output.join("\n"));
+    assertEquals(humanOutput.includes("Deployed sentinel-project to production"), true);
+    const expectedUrlLine = `  ${sentinelResult.url}`;
+    assertEquals(
+      human.output.map(stripAnsi).find((line) => line === expectedUrlLine),
+      expectedUrlLine,
+    );
+    assertEquals(humanOutput.includes("Release 2026.07.30-1"), true);
+    assertEquals(humanOutput.includes("sentinel warning"), true);
+
+    const jsonRecords = json.output.map((line) => JSON.parse(line));
+    assertEquals(
+      jsonRecords
+        .filter((record) => record.type === "step")
+        .map((record) => `${record.name}:${record.status}`),
+      [
+        "resolve-config:started",
+        "resolve-config:completed",
+        "deploy:started",
+        "deploy:completed",
+      ],
+    );
+    assertEquals(jsonRecords.at(-2), {
+      type: "warning",
+      code: "routing-convergence-unconfirmed",
+      message: "sentinel warning",
+    });
+    assertEquals(jsonRecords.at(-1), {
+      type: "result",
+      success: true,
+      data: sentinelResult,
+    });
+  });
+});
 
 describe("pushed source provenance", () => {
   it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
@@ -680,6 +838,34 @@ describe("getEnvironmentByName", () => {
     const env = await getEnvironmentByName(mockClient, "my-project", "nonexistent");
     assertEquals(env, null);
   });
+
+  it("preserves environment ownership aliases from the API response", async () => {
+    const mockClient = createMockClient({
+      get: () =>
+        Promise.resolve({
+          data: [
+            {
+              id: "env-1",
+              name: "production",
+              protected: true,
+              project_id: "project-1",
+              projectId: "project-1-alias",
+              project: { id: "project-1-reference" },
+            },
+          ],
+        }),
+    });
+
+    const env = await getEnvironmentByName(mockClient, "my-project", "production");
+    assertEquals(env, {
+      id: "env-1",
+      name: "production",
+      protected: true,
+      project_id: "project-1",
+      projectId: "project-1-alias",
+      project: { id: "project-1-reference" },
+    });
+  });
 });
 
 describe("createRelease", () => {
@@ -745,6 +931,35 @@ describe("createRelease", () => {
 
     await createRelease(mockClient, "my-project", { name: "v2.0.0", branch: "develop" });
     assertEquals(capturedBody, { name: "v2.0.0", branch_reference: "develop" });
+  });
+
+  it("preserves API-supplied release status fields and ownership aliases", async () => {
+    const mockClient = createMockClient({
+      post: () =>
+        Promise.resolve({
+          id: "rel-123",
+          name: "v2.0.0",
+          version: "1.0.0",
+          project_id: "project-1",
+          projectId: "project-1-alias",
+          project: { id: "project-1-reference" },
+          export_status: "exported",
+          build_status: "built",
+          deploy_status: "ready",
+        }),
+    });
+
+    assertEquals(await createRelease(mockClient, "my-project", { name: "v2.0.0" }), {
+      id: "rel-123",
+      name: "v2.0.0",
+      version: "1.0.0",
+      project_id: "project-1",
+      projectId: "project-1-alias",
+      project: { id: "project-1-reference" },
+      export_status: "exported",
+      build_status: "built",
+      deploy_status: "ready",
+    });
   });
 });
 

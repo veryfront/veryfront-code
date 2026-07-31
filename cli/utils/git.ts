@@ -3,7 +3,7 @@
  * @module cli/utils/git
  */
 
-import { runCommand } from "veryfront/platform";
+import { env, runCommand } from "veryfront/platform";
 import { cliLogger as logger } from "#cli/utils";
 
 /**
@@ -14,10 +14,20 @@ export async function initializeGitRepo(
   projectName: string,
 ): Promise<boolean> {
   try {
+    const gitEnv = Object.fromEntries(
+      Object.entries(env()).filter(([key]) =>
+        !key.startsWith("GIT_") ||
+        key.startsWith("GIT_AUTHOR_") ||
+        key.startsWith("GIT_COMMITTER_")
+      ),
+    );
+
     // Initialize git
     const initResult = await runCommand("git", {
       args: ["init"],
       cwd: projectDir,
+      clearEnv: true,
+      env: gitEnv,
       capture: true,
     });
 
@@ -30,6 +40,8 @@ export async function initializeGitRepo(
     const addResult = await runCommand("git", {
       args: ["add", "-A"],
       cwd: projectDir,
+      clearEnv: true,
+      env: gitEnv,
       capture: true,
     });
 
@@ -42,6 +54,8 @@ export async function initializeGitRepo(
     const commitResult = await runCommand("git", {
       args: ["commit", "-m", `Initial commit: ${projectName}`, "--no-gpg-sign"],
       cwd: projectDir,
+      clearEnv: true,
+      env: gitEnv,
       capture: true,
     });
 

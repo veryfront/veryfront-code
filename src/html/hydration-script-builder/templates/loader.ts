@@ -36,6 +36,66 @@ export const getLoaderScript = (): string => `
       return url + (url.includes('?') ? '&' : '?') + key + '=' + value;
     }
 
+    function appendDependencyPinningVersion(url, moduleData) {
+      const pinKey = moduleData && moduleData.dependencyPinningCacheKey;
+      if (typeof pinKey !== 'string' || !pinKey.startsWith('on:')) return url;
+
+      const hashIndex = url.indexOf('#');
+      const hash = hashIndex >= 0 ? url.slice(hashIndex) : '';
+      const withoutHash = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+      const queryIndex = withoutHash.indexOf('?');
+      const base = queryIndex >= 0 ? withoutHash.slice(0, queryIndex) : withoutHash;
+      const params = new URLSearchParams(queryIndex >= 0 ? withoutHash.slice(queryIndex + 1) : '');
+
+      const modulePrefix = '/_vf_modules/';
+      const prefixIndex = base.indexOf(modulePrefix);
+      const origin = prefixIndex >= 0 ? base.slice(0, prefixIndex) : '';
+      if (
+        prefixIndex >= 0 &&
+        (origin === '' || /^https?:\\/\\/[^/]+$/i.test(origin))
+      ) {
+        const pathStart = prefixIndex + modulePrefix.length;
+        let modulePath = base.slice(pathStart);
+        if (modulePath.startsWith('_pins/')) {
+          const existingKeyEnd = modulePath.indexOf('/', '_pins/'.length);
+          const encodedExistingKey = existingKeyEnd < 0
+            ? modulePath.slice('_pins/'.length)
+            : modulePath.slice('_pins/'.length, existingKeyEnd);
+          let existingKey;
+          try {
+            existingKey = decodeURIComponent(encodedExistingKey);
+          } catch {
+            existingKey = undefined;
+          }
+          if (existingKey && /^on:[A-Za-z0-9._-]+$/.test(existingKey)) {
+            if (existingKeyEnd < 0) return url;
+            modulePath = modulePath.slice(existingKeyEnd + 1);
+          }
+        }
+        params.delete('pins');
+        const query = params.toString();
+        return (
+          base.slice(0, pathStart) +
+          '_pins/' +
+          encodeURIComponent(pinKey) +
+          '/' +
+          modulePath +
+          (query ? '?' + query : '') +
+          hash
+        );
+      }
+
+      params.set('pins', pinKey);
+      return base + '?' + params.toString() + hash;
+    }
+
+    function componentCacheKey(path, moduleData) {
+      const pinKey = moduleData && moduleData.dependencyPinningCacheKey;
+      return typeof pinKey === 'string' && pinKey.startsWith('on:')
+        ? path + '|vf_pins|' + pinKey
+        : path;
+    }
+
     let __releaseId = null;
     function setReleaseId(value) {
       __releaseId = typeof value === 'string' && value ? value : null;
@@ -111,8 +171,9 @@ export const getLoaderScript = (): string => `
       path,
       preferRscModule,
       studioEmbed,
-      releaseAssetModules = __releaseAssetModules,
-      releaseId = __releaseId,
+      moduleData,
+      releaseAssetModules = moduleData?.releaseAssetModules ?? __releaseAssetModules,
+      releaseId = moduleData?.releaseId ?? __releaseId,
     ) {
       const releaseAssetUrl = resolveReleaseAssetModuleUrl(
         path,
@@ -122,15 +183,25 @@ export const getLoaderScript = (): string => `
       if (releaseAssetUrl) return releaseAssetUrl;
 
       if (preferRscModule) {
-        return '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
+        return appendDependencyPinningVersion(
+          '/_veryfront/rsc/module?rel=' + encodeURIComponent(path),
+          moduleData,
+        );
       }
 
-      return pathToModuleUrl(path, studioEmbed, releaseAssetModules, releaseId);
+      return pathToModuleUrl(
+        path,
+        studioEmbed,
+        moduleData,
+        releaseAssetModules,
+        releaseId,
+      );
     }
 
     function pathToModuleUrl(
       path,
       studioEmbed,
+      moduleData,
       releaseAssetModules = __releaseAssetModules,
       releaseId = __releaseId,
     ) {
@@ -167,6 +238,7 @@ export const getLoaderScript = (): string => `
       if (!studioEmbed && !__hmrRefreshTimestamp) {
         url = appendReleaseModuleVersion(url, releaseId);
       }
+      url = appendDependencyPinningVersion(url, moduleData);
 
       return url;
     }
@@ -185,7 +257,7 @@ export const getLoaderScript = (): string => `
     }
     window.__veryfrontSetHMRRefreshTimestamp = setHMRRefreshTimestamp;
 
-    async function loadComponentFromUrl(path, moduleUrl) {
+    async function loadComponentFromUrl(path, moduleUrl, options = {}) {
       if (!path || !moduleUrl) return null;
 
       const cacheKey = path + '\\0' + moduleUrl;
@@ -206,7 +278,14 @@ export const getLoaderScript = (): string => `
           const start = DEBUG ? performance.now() : 0;
 
           log('Loading component:', moduleUrl);
-          const module = await import(moduleUrl);
+          const module = await importSnapshotBoundModule(
+            moduleUrl,
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            options.allowDocumentReload !== false,
+          );
 
           // Prefer MDXLayout/MainLayout over default for MDX files
           // MDXContent (default export) has a bug where it overwrites children prop
@@ -235,6 +314,7 @@ export const getLoaderScript = (): string => `
           }
           return component;
         } catch (error) {
+          if (error?.dependencySnapshotConflict) throw error;
           logError('Failed to load component:', path, error);
           return null;
         } finally {
@@ -250,8 +330,12 @@ export const getLoaderScript = (): string => `
       return loadPromise;
     }
 
-    async function loadComponent(path) {
+    async function loadComponent(path, moduleData, options = {}) {
       if (!path) return null;
-      return loadComponentFromUrl(path, pathToModuleUrl(path, __studioEmbed));
+      return loadComponentFromUrl(
+        path,
+        pathToModuleUrl(path, __studioEmbed, moduleData),
+        options,
+      );
     }
 `;

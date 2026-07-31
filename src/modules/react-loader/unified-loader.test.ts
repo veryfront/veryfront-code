@@ -7,8 +7,17 @@ import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts"
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
+import type { TransformOptions } from "#veryfront/transforms/esm/types.ts";
+import type { LoadComponentOptions } from "./types.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
-import { loadComponentsUnified } from "./unified-loader.ts";
+import {
+  _resolveUnifiedTransformOptionsForTest,
+  _transformAllComponentsForTest,
+  loadComponentsUnified,
+} from "./unified-loader.ts";
 
 describe("modules/react-loader/unified-loader", () => {
   afterEach(async () => {
@@ -220,5 +229,128 @@ describe("modules/react-loader/unified-loader", () => {
       "unified evaluation failed",
     );
     assertEquals(await listMaterializations(), before);
+  });
+
+  it("passes one immutable caller snapshot to every parallel transform", async () => {
+    const callerDependencies = { lodash: "1.0.0" };
+    const dependencyPinningCacheKey = `on:${hashString(JSON.stringify([["lodash", "1.0.0"]]))}`;
+    const transformOptions = await _resolveUnifiedTransformOptionsForTest(
+      "/project",
+      {
+        projectId: "project-id",
+        moduleServerOrigin: "https://preview.example",
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies: callerDependencies,
+      },
+    );
+    callerDependencies.lodash = "2.0.0";
+
+    const observedOptions: TransformOptions[] = [];
+    const components = Array.from({ length: 8 }, (_, index) => ({
+      name: `Component${index}`,
+      source: `export default function Component${index}() { return null; }`,
+      filePath: `/project/components/Component${index}.tsx`,
+    }));
+    const transformed = await _transformAllComponentsForTest(
+      components,
+      "/project",
+      createMockAdapter(),
+      transformOptions,
+      ((_source, filePath, _projectDir, _adapter, options) => {
+        observedOptions.push(options ?? {});
+        return Promise.resolve(`export const filePath = ${JSON.stringify(filePath)};`);
+      }) as Parameters<typeof _transformAllComponentsForTest>[4],
+    );
+
+    assertEquals(transformed.length, components.length);
+    assertEquals(observedOptions.length, components.length);
+    assertEquals(observedOptions.every((options) => options === transformOptions), true);
+    assertEquals(
+      observedOptions.every(
+        (options) =>
+          options.dependencyPinningCacheKey === dependencyPinningCacheKey &&
+          options.dependencyPinningDependencies?.lodash === "1.0.0",
+      ),
+      true,
+    );
+    assertEquals(Object.isFrozen(transformOptions.dependencyPinningDependencies), true);
+    assertEquals(transformOptions.moduleServerOrigin, "https://preview.example");
+  });
+
+  it("captures every option and nested map before a gated dependency read yields", async () => {
+    const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    let releaseRead!: () => void;
+    let markReadStarted!: () => void;
+    const readGate = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readStarted = new Promise<void>((resolve) => {
+      markReadStarted = resolve;
+    });
+    const importMap = { imports: { fixture: "node:fs" } };
+    const dependencyPinningSource = {
+      projectDir: "/project",
+      cacheNamespace: `unified-options-${crypto.randomUUID()}`,
+      fs: {
+        stat: () =>
+          Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            size: 45,
+            mtime: new Date(0),
+          }),
+        readFile: async () => {
+          markReadStarted();
+          await readGate;
+          return JSON.stringify({ dependencies: { lodash: "1.0.0" } });
+        },
+      },
+    };
+    const options: LoadComponentOptions = {
+      projectId: "initial-project",
+      moduleServerUrl: "/initial-modules",
+      ssr: true,
+      importMap,
+      dependencyPinningSource,
+    };
+
+    try {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const transformOptionsPromise = _resolveUnifiedTransformOptionsForTest(
+        "/project",
+        options,
+      );
+      await readStarted;
+
+      options.projectId = "mutated-project";
+      options.moduleServerUrl = "/mutated-modules";
+      importMap.imports.fixture = "node:path";
+      releaseRead();
+
+      const transformOptions = await transformOptionsPromise;
+      assertEquals(transformOptions.projectId, "initial-project");
+      assertEquals(transformOptions.moduleServerUrl, "/initial-modules");
+      assertEquals(
+        (await transformOptions.loadImportMap?.())?.imports?.fixture,
+        "node:fs",
+      );
+    } finally {
+      releaseRead();
+      if (originalFlag === undefined) {
+        deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+      } else {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+      }
+    }
+  });
+
+  it("does not vary flag-off transform options by request origin", async () => {
+    const options = await _resolveUnifiedTransformOptionsForTest("/project", {
+      moduleServerOrigin: "https://preview.example",
+      dependencyPinningCacheKey: "off",
+    });
+
+    assertEquals(options.moduleServerOrigin, undefined);
   });
 });

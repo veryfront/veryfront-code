@@ -4,8 +4,23 @@
  * @module cache/backends
  */
 
-// Re-export CacheBackend interface from types
-export type { CacheBackend } from "../types.ts";
+// Re-export cache contracts from types
+export { MAX_CACHE_REVISION_LENGTH } from "../types.ts";
+export type {
+  CacheBackend,
+  CacheRevisionMutation,
+  CacheRevisionSnapshot,
+  RevisionedCacheBackend,
+} from "../types.ts";
+export {
+  buildRevisionedCacheKey,
+  isRevisionedCacheBackend,
+  isRevisionedCacheKey,
+  MAX_REVISIONED_CACHE_SOURCE_KEY_LENGTH,
+  requireCacheExchangeResult,
+  REVISIONED_CACHE_KEY_PREFIX,
+  snapshotCacheRevisionResult,
+} from "../capabilities.ts";
 
 // Backend implementations
 export { MemoryCacheBackend } from "./memory.ts";

@@ -48,6 +48,7 @@ import {
   createTestCSSOptimizationEngine,
   withTestCSSOptimizationEngine,
 } from "../../../tests/_helpers/css-optimization-engine.ts";
+import { hashString } from "#veryfront/cache/hash.ts";
 
 const RELEASE_CSS_HASH = "c".repeat(64);
 const PAGE_CSS_PIPELINE_IDENTITY = (await acquireCSSGenerationSession(false))
@@ -79,6 +80,20 @@ function layoutPreloadSummary(
     requestIdentity,
   };
 }
+
+function cacheKeyForDependencies(
+  dependencies: Readonly<Record<string, string>>,
+): string {
+  const sortedEntries = Object.entries(dependencies).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
+const SNAPSHOT_A_DEPENDENCIES = { react: "^18.3.1" } as const;
+const SNAPSHOT_B_DEPENDENCIES = { react: "^19.0.0" } as const;
+const SNAPSHOT_A_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_A_DEPENDENCIES);
+const SNAPSHOT_B_PIN_KEY = cacheKeyForDependencies(SNAPSHOT_B_DEPENDENCIES);
 
 function createPipeline(
   pagePath: string,
@@ -604,6 +619,41 @@ describe("RenderPipeline behavior", () => {
     );
   });
 
+  it("keeps a historical request on React A after a newer snapshot uses React B", async () => {
+    const pipeline = createPipeline("/project/pages/index.tsx");
+    const observedVersions: string[] = [];
+    (pipeline as any).loadModule = async (
+      _path: string,
+      config: { reactVersion?: string },
+    ) => {
+      observedVersions.push(config.reactVersion ?? "");
+      return {};
+    };
+    const requestOptions = {
+      request: new Request("http://localhost/"),
+      url: new URL("http://localhost/"),
+    };
+
+    await pipeline.resolvePageData("/", {
+      ...requestOptions,
+      dependencyPinningCacheKey: SNAPSHOT_B_PIN_KEY,
+      dependencyPinningDependencies: SNAPSHOT_B_DEPENDENCIES,
+    });
+    const afterSnapshotB = observedVersions.slice();
+    observedVersions.length = 0;
+
+    await pipeline.resolvePageData("/", {
+      ...requestOptions,
+      dependencyPinningCacheKey: SNAPSHOT_A_PIN_KEY,
+      dependencyPinningDependencies: SNAPSHOT_A_DEPENDENCIES,
+    });
+
+    assert(afterSnapshotB.length > 0);
+    assertEquals(afterSnapshotB.every((version) => version === "19.0.0"), true);
+    assert(observedVersions.length > 0);
+    assertEquals(observedVersions.every((version) => version === "18.3.1"), true);
+  });
+
   it("keeps a cold module graph alive while distinct transforms keep completing", async () => {
     using time = new FakeTime();
     const pipeline = createPipeline("/project/pages/large-cold-graph.tsx");
@@ -832,6 +882,43 @@ describe("RenderPipeline behavior", () => {
     assertEquals(cacheKeys[0] !== cacheKeys[1], true);
     assertEquals(cacheKeys[0]?.includes("render-css-engine@1"), true);
     assertEquals(cacheKeys[1]?.includes("render-css-engine@2"), true);
+  });
+
+  it("bounds the complete API render key while preserving the flag-off override", () => {
+    const cachePrefix = "project:preview:branch:v1";
+    const pipeline = createPipeline("/project/pages/index.mdx", {
+      renderCacheKeyComposition: {
+        backendPrefix: "render",
+        cachePrefix,
+        addPagePrefix: true,
+      },
+    });
+    const buildCacheKey = (pipeline as unknown as {
+      buildCacheKey(
+        slug: string,
+        options: RenderOptions | undefined,
+        cssPipelineIdentity: string | undefined,
+        dependencyPinningCacheKey: string,
+      ): string | null;
+    }).buildCacheKey.bind(pipeline);
+    const legacyKey = "a".repeat(440);
+    const options: RenderOptions = {
+      cacheKey: legacyKey,
+      colorScheme: "dark",
+      url: new URL("https://preview.example.test/"),
+    };
+    const cacheKey = buildCacheKey(
+      "/",
+      options,
+      undefined,
+      "on:3w5e11264sgsf",
+    );
+
+    assert(cacheKey);
+    const completeKey = `render:${cachePrefix}:page:${cacheKey}:theme-dark`;
+    assert(completeKey.length <= 512);
+    assert(/^[a-zA-Z0-9_:.\-/*]+$/.test(completeKey));
+    assertEquals(buildCacheKey("/", options, undefined, "off"), legacyKey);
   });
 
   it("renderPage preserves active SSR transforms during development cache freshness clears", async () => {

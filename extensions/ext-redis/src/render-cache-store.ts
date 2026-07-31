@@ -78,9 +78,9 @@ export class RedisCacheStore implements CacheStore {
   }
 
   private async scanKeys(client: RedisClient, literalPrefix: string): Promise<string[]> {
-    let cursor = 0;
+    let cursor = "0";
     let iterations = 0;
-    const seenCursors = new Set<number>();
+    const seenCursors = new Set<string>();
     const keys = new Set<string>();
 
     do {
@@ -94,18 +94,18 @@ export class RedisCacheStore implements CacheStore {
       });
       if (
         !result ||
-        !Number.isSafeInteger(result.cursor) ||
-        result.cursor < 0 ||
+        typeof result.cursor !== "string" ||
+        !/^(0|[1-9]\d*)$/.test(result.cursor) ||
         !Array.isArray(result.keys) ||
         !result.keys.every((key) => typeof key === "string")
       ) {
         throw new TypeError("Redis returned an invalid SCAN result");
       }
 
-      if (result.cursor !== 0 && seenCursors.has(result.cursor)) {
+      if (result.cursor !== "0" && seenCursors.has(result.cursor)) {
         throw new Error("Redis SCAN repeated a cursor before completing");
       }
-      if (result.cursor !== 0) seenCursors.add(result.cursor);
+      if (result.cursor !== "0") seenCursors.add(result.cursor);
       for (const key of result.keys) {
         if (!key.startsWith(literalPrefix)) {
           throw new Error("Redis SCAN returned a key outside the requested cache namespace");
@@ -116,7 +116,7 @@ export class RedisCacheStore implements CacheStore {
         }
       }
       cursor = result.cursor;
-    } while (cursor !== 0);
+    } while (cursor !== "0");
 
     return [...keys];
   }

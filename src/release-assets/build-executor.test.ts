@@ -16,6 +16,7 @@ import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache.ts";
 import { parseImports } from "#veryfront/transforms/esm/lexer.ts";
 import { toScopedCssModuleClass } from "#veryfront/transforms/css-modules/naming.ts";
 import {
+  DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MANIFEST_LIMITS,
   RELEASE_ASSET_MAX_SIZE_BYTES,
@@ -33,6 +34,12 @@ import {
 import { parseReleaseAssetManifest, type ReleaseAssetManifest } from "./manifest-schema.ts";
 import type { CompileProjectCssResult } from "./css-compile.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
+import {
+  clearReactVersionCache,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 const STYLE_PROFILE_HASH = "d".repeat(64);
 const CSS_PIPELINE_IDENTITY = "test-css-pipeline@1";
@@ -198,6 +205,7 @@ function withFakeReactVendor(
 describe("release asset build executor", () => {
   const tempDirs: string[] = [];
   const originalDependencyFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+  const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
 
   async function tmp(): Promise<string> {
     const dir = await Deno.makeTempDir({ prefix: "vf-rab-test-" });
@@ -211,6 +219,8 @@ describe("release asset build executor", () => {
 
   afterEach(async () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalDependencyFlag ?? "");
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
+    clearReactVersionCache();
     for (const dir of tempDirs.splice(0)) {
       await Deno.remove(dir, { recursive: true }).catch(() => undefined);
     }
@@ -304,6 +314,70 @@ describe("release asset build executor", () => {
     assertEquals(result.success, false);
     assertEquals(rec.states.map(({ state }) => state), ["failed"]);
     assertEquals(await Deno.stat(escapedPath).then(() => true, () => false), false);
+  });
+
+  it("rejects changing release file accessors before they can bypass size validation", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    let pathReads = 0;
+    let contentReads = 0;
+    const file: Record<string, unknown> = {};
+    Object.defineProperty(file, "path", {
+      enumerable: true,
+      get() {
+        pathReads++;
+        return "pages/index.tsx";
+      },
+    });
+    Object.defineProperty(file, "content", {
+      enumerable: true,
+      get() {
+        contentReads++;
+        return contentReads < 3
+          ? "export default null;"
+          : "x".repeat(RELEASE_ASSET_MAX_SIZE_BYTES + 1);
+      },
+    });
+    const client = makeClient([], rec, {
+      listAllReleaseFiles: () =>
+        Promise.resolve([
+          file as unknown as { path: string; content: string },
+        ]),
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, () => Promise.resolve("export default null;")),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(pathReads, 0);
+    assertEquals(contentReads, 0);
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
+  });
+
+  it("rejects release file proxies whose own data properties cannot be inspected", async () => {
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const file = new Proxy(
+      { path: "pages/index.tsx", content: "export default null;" },
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error("descriptor access denied");
+        },
+      },
+    );
+    const client = makeClient([], rec, {
+      listAllReleaseFiles: () => Promise.resolve([file]),
+    });
+
+    const result = await runReleaseAssetBuild(
+      baseInput(client, (source) => Promise.resolve(source)),
+      await tmp(),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(rec.manifest, null);
+    assertEquals(rec.states.map(({ state }) => state), ["failed"]);
   });
 
   it("keeps transformed HTTP imports on their source URLs by default", async () => {
@@ -1941,6 +2015,94 @@ export default defineConfig({ react: { version: "19.2.1" } });`,
 
     assert(seenReactVersions.length > 0);
     assert(seenReactVersions.every((version) => version === "19.2.3"));
+  });
+
+  it("uses one materialized dependency snapshot for every project and framework transform", async () => {
+    enableDependencyImportMap();
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [
+      {
+        path: "package.json",
+        content: JSON.stringify({
+          dependencies: { react: "18.3.1", lodash: "1.0.0" },
+        }),
+      },
+      {
+        path: "veryfront.config.ts",
+        content: `export default { react: { version: "19.2.1" } };`,
+      },
+      {
+        path: "pages/a.tsx",
+        content: 'import "veryfront/head"; export default () => "a";',
+      },
+      { path: "pages/b.tsx", content: "export default () => 'b';" },
+    ];
+    const client = makeClient(files, rec);
+    const observations: Array<{
+      sourceFile: string;
+      snapshot: DependencyPinningSnapshot;
+      pinningSource: NonNullable<DependencyPinningSourceInput>;
+    }> = [];
+    let newerSnapshot: DependencyPinningSnapshot | undefined;
+
+    const transform: ReleaseAssetBuildInput["transform"] = async (
+      source,
+      sourceFile,
+      projectDir,
+      _adapter,
+      options,
+    ) => {
+      const snapshot = options.dependencyPinningSnapshot;
+      const pinningSource = options.dependencyPinningSource;
+      assertExists(snapshot);
+      assertExists(pinningSource);
+      observations.push({ sourceFile, snapshot, pinningSource });
+
+      if (sourceFile.endsWith("pages/a.tsx")) {
+        await Deno.writeTextFile(
+          join(projectDir, "package.json"),
+          JSON.stringify({
+            dependencies: { react: "18.3.1", lodash: "2.0.0" },
+          }),
+        );
+        const future = new Date(Date.now() + 2_000);
+        await Deno.utime(join(projectDir, "package.json"), future, future);
+        newerSnapshot = await resolveDependencyPinningSnapshot(pinningSource);
+      }
+
+      return sourceFile.includes("/pages/") ? source : "export const framework = true;";
+    };
+
+    const result = await runReleaseAssetBuild({
+      ...baseInput(client, transform),
+      loadConfig: releaseConfigLoader({ react: { version: "19.2.1" } }),
+    }, await tmp());
+
+    assertEquals(result.success, true);
+    assert(observations.some(({ sourceFile }) => sourceFile.endsWith("pages/a.tsx")));
+    assert(observations.some(({ sourceFile }) => sourceFile.endsWith("pages/b.tsx")));
+    assert(observations.some(({ sourceFile }) => !sourceFile.includes("/pages/")));
+
+    const buildSnapshot = observations[0]?.snapshot;
+    const buildSource = observations[0]?.pinningSource;
+    assertExists(buildSnapshot);
+    assertExists(buildSource);
+    assertEquals(buildSnapshot.cacheKey.startsWith("on:"), true);
+    assertEquals(buildSnapshot.dependencies?.react, "19.2.1");
+    assertEquals(buildSnapshot.dependencies?.lodash, "1.0.0");
+    assertEquals(
+      observations.every(
+        ({ snapshot, pinningSource }) =>
+          snapshot === buildSnapshot && pinningSource === buildSource,
+      ),
+      true,
+    );
+    assertExists(newerSnapshot);
+    assertEquals(newerSnapshot.dependencies?.lodash, "2.0.0");
+    assertEquals(newerSnapshot.cacheKey === buildSnapshot.cacheKey, false);
   });
 
   it("uses conventional stylesheet and default React version when config is absent", async () => {

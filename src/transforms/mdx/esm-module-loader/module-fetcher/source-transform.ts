@@ -4,15 +4,20 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/source-transform
  */
 
-import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
+import {
+  type AcknowledgedBundleManifestAuthority,
+  cacheHttpImportsToLocal,
+} from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "../../../esm-transform.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import type { Logger } from "#veryfront/utils";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
+import { classifyThrownValue } from "./error-classification.ts";
 
 type TransformToEsmFn = typeof transformToESM;
 type LoadImportMapFn = typeof loadImportMap;
@@ -27,6 +32,10 @@ export interface TransformResolvedModuleSourceInput {
   normalizedPath: string;
   projectSlug: string;
   reactVersion?: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
   adapter: RuntimeAdapter;
   /** Import map snapshot resolved by the top-level authenticated loader. */
   importMap?: ImportMapConfig;
@@ -36,16 +45,21 @@ export interface TransformResolvedModuleSourceInput {
   cacheHttpImportsToLocal?: CacheHttpImportsToLocalFn;
 }
 
+export interface TransformResolvedModuleSourceResult {
+  readonly code: string;
+  /** Positively acknowledged canonical bundle-graph authority, or null. */
+  readonly bundleManifestAuthority: AcknowledgedBundleManifestAuthority | null;
+}
+
 /**
  * Transform a resolved source file into cache-safe ESM module code.
  */
 export async function transformResolvedModuleSource(
   input: TransformResolvedModuleSourceInput,
-): Promise<string> {
+): Promise<TransformResolvedModuleSourceResult> {
   input.log.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] transformToESM START`, {
     projectSlug: input.projectSlug,
     normalizedPath: input.normalizedPath,
-    actualFilePath: input.actualFilePath,
     sourceLength: input.sourceCode.length,
   });
 
@@ -68,15 +82,20 @@ export async function transformResolvedModuleSource(
         ssr: true,
         reactVersion: input.reactVersion,
         loadImportMap: async () => importMap,
+        moduleServerOrigin: input.moduleServerOrigin,
+        dependencyPinningCacheKey: input.dependencyPinningCacheKey,
+        ...(input.dependencyPinningDependencies === undefined
+          ? {}
+          : { dependencyPinningDependencies: input.dependencyPinningDependencies }),
+        ...(input.dependencyPinningSource === undefined
+          ? {}
+          : { dependencyPinningSource: input.dependencyPinningSource }),
       },
     );
   } catch (transformError) {
     input.log.error(`${LOG_PREFIX_MDX_LOADER} Transform failed for module`, {
-      normalizedPath: input.normalizedPath,
-      actualFilePath: input.actualFilePath,
       sourceLength: input.sourceCode.length,
-      sourcePreview: input.sourceCode.slice(0, 200),
-      error: transformError instanceof Error ? transformError.message : String(transformError),
+      errorName: classifyThrownValue(transformError),
     });
     throw transformError;
   }
@@ -100,5 +119,8 @@ export async function transformResolvedModuleSource(
     reactVersion: input.reactVersion,
   });
 
-  return cacheResult.code;
+  return {
+    code: cacheResult.code,
+    bundleManifestAuthority: cacheResult.bundleManifestAuthority ?? null,
+  };
 }

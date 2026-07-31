@@ -24,6 +24,7 @@ import { assertMdxModuleImportCount } from "./limits.ts";
 export interface FetchModuleViaHttpOptions {
   fetchFn?: typeof fetch;
   timeoutMs?: number;
+  dependencyPinningCacheKey?: string;
 }
 
 function discardResponseBody(response: Response): void {
@@ -83,7 +84,8 @@ export async function fetchModuleViaHTTP(
   log: Logger,
   projectSlug?: string,
   isLocalProject?: boolean,
-  options: FetchModuleViaHttpOptions = {},
+  optionsOrDependencyPinningKey: FetchModuleViaHttpOptions | string = {},
+  dependencyPinningCacheKey?: string,
 ): Promise<string | null> {
   if (!isLocalProject) {
     log.warn(
@@ -94,6 +96,12 @@ export async function fetchModuleViaHTTP(
 
   log.debug(`${LOG_PREFIX_MDX_LOADER} Direct read failed, falling back to HTTP: ${normalizedPath}`);
 
+  const options = typeof optionsOrDependencyPinningKey === "string"
+    ? {}
+    : optionsOrDependencyPinningKey;
+  const effectiveDependencyPinningCacheKey = typeof optionsOrDependencyPinningKey === "string"
+    ? optionsOrDependencyPinningKey
+    : options.dependencyPinningCacheKey ?? dependencyPinningCacheKey;
   const port = requireLocalDevPort(
     adapter.env.get("VERYFRONT_DEV_PORT") || adapter.env.get("PORT") || "3001",
   );
@@ -103,6 +111,9 @@ export async function fetchModuleViaHTTP(
   const moduleUrl = new URL(`http://${host}:${port}`);
   moduleUrl.pathname = `/${normalizedPath}`;
   moduleUrl.searchParams.set("ssr", "true");
+  if (effectiveDependencyPinningCacheKey?.startsWith("on:")) {
+    moduleUrl.searchParams.set("pins", effectiveDependencyPinningCacheKey);
+  }
   const moduleUrlString = moduleUrl.toString();
   const controller = new AbortController();
   const timeout = setTimeout(

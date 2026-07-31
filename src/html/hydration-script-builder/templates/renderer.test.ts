@@ -51,6 +51,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "isAppRouterPath(normalizedPagePath)");
       assertIncludes(result, "isRemoteAppRouterClientPage");
       assertIncludes(result, "resolveHydrationModuleUrl");
+      assertIncludes(result, "pageModule = await importSnapshotBoundModule(moduleUrl)");
     });
 
     it("does not use release coverage to choose App Router rendering ownership", () => {
@@ -103,6 +104,7 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "layouts[i].path");
       assertIncludes(result, "shouldRenderRscClientPage");
       assertIncludes(result, "resolveHydrationModuleUrl");
+      assertIncludes(result, "const module = await importSnapshotBoundModule(moduleUrl)");
     });
 
     it("should recreate initial layouts with their serialized props", () => {

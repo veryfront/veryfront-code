@@ -45,6 +45,80 @@ export const getRouterScript = () => `
     const MAX_ROUTE_TIMINGS = 100;
     const MAX_SERVER_TIMING_LENGTH = 1024;
 
+    function readInitialHydrationData() {
+      try {
+        const element = document.getElementById('veryfront-hydration-data');
+        return JSON.parse(element && element.textContent ? element.textContent : '{}') || {};
+      } catch (_) {
+        return {};
+      }
+    }
+
+    const initialHydrationData = readInitialHydrationData();
+
+    function normalizeDependencySnapshotKey(value) {
+      if (value === undefined || value === null || value === 'off') return null;
+      if (typeof value === 'string' && /^on:[A-Za-z0-9._-]+$/.test(value)) {
+        return value;
+      }
+      return undefined;
+    }
+
+    const DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY = normalizeDependencySnapshotKey(
+      initialHydrationData.dependencyPinningCacheKey
+    );
+
+    function pageDataCacheIdentity(path) {
+      return DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY
+        ? DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY + '|path:' + path
+        : path;
+    }
+
+    function buildPageDataEndpoint(path) {
+      const targetUrl = new URL(path, window.location.origin);
+      const normalizedPath = targetUrl.pathname === '/'
+        ? 'index'
+        : targetUrl.pathname.replace(/^\\//, '');
+      const endpointUrl = new URL(
+        '/_veryfront/page-data/' + normalizedPath + '.json',
+        window.location.origin
+      );
+      endpointUrl.search = targetUrl.search;
+      return endpointUrl.pathname + endpointUrl.search;
+    }
+
+    function assertPageDataMatchesDocumentSnapshot(path, data) {
+      const pageDataSnapshotKey = normalizeDependencySnapshotKey(
+        data?.dependencyPinningCacheKey
+      );
+      if (
+        DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY !== undefined &&
+        pageDataSnapshotKey !== undefined &&
+        pageDataSnapshotKey === DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY
+      ) {
+        return data;
+      }
+
+      const error = new Error('Page data dependency snapshot does not match the document');
+      error.status = 409;
+      error.dependencySnapshotMismatch = true;
+      error.path = path;
+      throw error;
+    }
+
+    function navigateForDependencySnapshotMismatch(href) {
+      const recoveryKey = '__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__';
+      if (window[recoveryKey] === true) return;
+
+      window[recoveryKey] = true;
+      try {
+        window.location.href = href;
+      } catch (error) {
+        delete window[recoveryKey];
+        throw error;
+      }
+    }
+
     // ============================================
     // Debug logging (production-safe)
     // ============================================
@@ -399,22 +473,24 @@ export const getRouterScript = () => `
     const backgroundRefreshTimestamps = new Map();
 
     function getCachedPageData(path) {
-      const entry = pageDataCache.get(path);
+      const cacheIdentity = pageDataCacheIdentity(path);
+      const entry = pageDataCache.get(cacheIdentity);
       if (!entry) return null;
 
       if (Date.now() - entry.timestamp < CACHE_TTL_MS) {
-        pageDataCache.delete(path);
-        pageDataCache.set(path, entry);
+        pageDataCache.delete(cacheIdentity);
+        pageDataCache.set(cacheIdentity, entry);
         return entry.data;
       }
 
-      pageDataCache.delete(path);
-      backgroundRefreshTimestamps.delete(path);
+      pageDataCache.delete(cacheIdentity);
+      backgroundRefreshTimestamps.delete(cacheIdentity);
       return null;
     }
 
     function setCachedPageData(path, data) {
-      if (pageDataCache.size >= MAX_CACHE_SIZE && !pageDataCache.has(path)) {
+      const cacheIdentity = pageDataCacheIdentity(path);
+      if (pageDataCache.size >= MAX_CACHE_SIZE && !pageDataCache.has(cacheIdentity)) {
         const oldest = pageDataCache.keys().next().value;
         if (oldest) {
           pageDataCache.delete(oldest);
@@ -422,8 +498,8 @@ export const getRouterScript = () => `
         }
       }
 
-      pageDataCache.delete(path);
-      pageDataCache.set(path, { data, timestamp: Date.now() });
+      pageDataCache.delete(cacheIdentity);
+      pageDataCache.set(cacheIdentity, { data, timestamp: Date.now() });
     }
 
     // ============================================
@@ -607,9 +683,7 @@ export const getRouterScript = () => `
       } = options;
       const navigationUrl = getNavigationUrl(path);
       const routePathname = navigationUrl.pathname;
-      const normalizedPath = routePathname === '/' ? 'index' : routePathname.replace(/^\\//, '');
-      const endpoint =
-        '/_veryfront/page-data/' + normalizedPath + '.json' + navigationUrl.search;
+      const endpoint = buildPageDataEndpoint(path);
       const startedAt = recordRouteTiming ? routeTimingNow() : 0;
 
       log('Fetching page data:', routePathname);
@@ -618,6 +692,9 @@ export const getRouterScript = () => `
       const headers = options.prefetch
         ? { 'X-Veryfront-Prefetch': '1' }
         : { 'X-Veryfront-Navigation': 'spa' };
+      if (DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY) {
+        headers['X-Veryfront-Dependency-Pins'] = DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY;
+      }
       const response = await fetchWithRetry(endpoint, {
         headers,
         signal
@@ -636,11 +713,17 @@ export const getRouterScript = () => `
         }
         const error = new Error('Failed to fetch page data: ' + response.status);
         error.status = response.status;
+        if (
+          response.status === 409 &&
+          typeof DOCUMENT_DEPENDENCY_PINNING_CACHE_KEY === 'string'
+        ) {
+          error.dependencySnapshotMismatch = true;
+        }
         throw error;
       }
 
       perfStart('parse:' + routePathname);
-      const data = await response.json();
+      const data = assertPageDataMatchesDocumentSnapshot(path, await response.json());
       throwIfAborted(signal);
       perfEnd('parse:' + routePathname);
       perfEnd('fetch:' + routePathname);
@@ -686,30 +769,58 @@ export const getRouterScript = () => `
     }
 
     function startPageDataFetch(path, signal, options = {}) {
+      const cacheIdentity = pageDataCacheIdentity(path);
+      let pendingEntry;
       const request = fetchPageDataFresh(path, signal, options).finally(() => {
-        if (options.trackPending !== false && pendingPageDataFetches.get(path) === request) {
-          pendingPageDataFetches.delete(path);
+        if (
+          options.trackPending !== false &&
+          pendingPageDataFetches.get(cacheIdentity) === pendingEntry
+        ) {
+          pendingPageDataFetches.delete(cacheIdentity);
         }
       });
       if (options.trackPending !== false) {
-        pendingPageDataFetches.set(path, request);
+        pendingEntry = { request, signal };
+        pendingPageDataFetches.set(cacheIdentity, pendingEntry);
       }
       return request;
     }
 
+    function getPendingPageDataRequest(path, callerSignal) {
+      const cacheIdentity = pageDataCacheIdentity(path);
+      const pendingEntry = pendingPageDataFetches.get(cacheIdentity);
+      if (!pendingEntry) return null;
+
+      if (pendingEntry.signal?.aborted) {
+        pendingPageDataFetches.delete(cacheIdentity);
+        return null;
+      }
+      if (pendingEntry.signal && pendingEntry.signal !== callerSignal) return null;
+      return pendingEntry.request;
+    }
+
+    function invalidatePendingPageDataFetchesForSignal(signal) {
+      for (const [cacheIdentity, pendingEntry] of pendingPageDataFetches) {
+        if (pendingEntry.signal === signal) {
+          pendingPageDataFetches.delete(cacheIdentity);
+        }
+      }
+    }
+
     function fetchPageDataDeduped(path) {
-      const pending = pendingPageDataFetches.get(path);
+      const pending = getPendingPageDataRequest(path, null);
       if (pending) return pending;
 
       return startPageDataFetch(path, null);
     }
 
     function refreshPageDataInBackground(path) {
-      const lastRefreshAt = backgroundRefreshTimestamps.get(path) || 0;
+      const cacheIdentity = pageDataCacheIdentity(path);
+      const lastRefreshAt = backgroundRefreshTimestamps.get(cacheIdentity) || 0;
       const now = Date.now();
       if (now - lastRefreshAt < BACKGROUND_REFRESH_INTERVAL_MS) return;
 
-      backgroundRefreshTimestamps.set(path, now);
+      backgroundRefreshTimestamps.set(cacheIdentity, now);
       fetchPageDataDeduped(path).catch((error) => {
         logBackgroundFetchFailure('Stale page data refresh', path, error);
       });
@@ -727,7 +838,7 @@ export const getRouterScript = () => `
         return checkedData;
       }
 
-      const pending = pendingPageDataFetches.get(path);
+      const pending = getPendingPageDataRequest(path, signal);
       if (pending) {
         log('Reusing pending page data fetch for navigation:', routePathname);
         const data = await pending;
@@ -813,7 +924,11 @@ export const getRouterScript = () => `
       const targetPathname = targetUrl.pathname;
       const targetHash = targetUrl.hash ? targetUrl.hash.slice(1) : '';
       const navigationId = ++navigationSequence;
-      currentAbortController?.abort();
+      const supersededController = currentAbortController;
+      supersededController?.abort();
+      if (supersededController) {
+        invalidatePendingPageDataFetchesForSignal(supersededController.signal);
+      }
 
       removeQueuedPrefetch(targetRouteHref);
       abortActiveSpeculativePrefetches();
@@ -838,7 +953,10 @@ export const getRouterScript = () => `
         perfStart(fetchPerfLabel);
         const pageData = providedPageData === undefined
           ? await fetchPageDataForNavigation(targetRouteHref, signal)
-          : handlePageDataVersionMismatch(targetRouteHref, providedPageData);
+          : handlePageDataVersionMismatch(
+            targetRouteHref,
+            assertPageDataMatchesDocumentSnapshot(targetRouteHref, providedPageData),
+          );
         assertLatestNavigation(navigation);
         perfEnd(fetchPerfLabel);
 
@@ -925,7 +1043,11 @@ export const getRouterScript = () => `
           logError('Page not found:', targetPathname);
         }
 
-        window.location.href = resolvedHref;
+        if (error.dependencySnapshotMismatch) {
+          navigateForDependencySnapshotMismatch(resolvedHref);
+        } else {
+          window.location.href = resolvedHref;
+        }
       } finally {
         perfCancel(totalPerfLabel);
         perfCancel(fetchPerfLabel);
@@ -946,15 +1068,117 @@ export const getRouterScript = () => `
     // ============================================
     // Render page from page data
     // ============================================
-    async function loadPageDataComponent(pageData, path) {
+    function buildPinnedRscModuleUrl(path, moduleData) {
+      let moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
+      const pinKey = moduleData && moduleData.dependencyPinningCacheKey;
+      if (typeof pinKey === 'string' && pinKey.startsWith('on:')) {
+        moduleUrl += '&pins=' + encodeURIComponent(pinKey);
+      }
+      return moduleUrl;
+    }
+
+    async function isDependencySnapshotConflictResponse(response) {
+      if (!response || response.status !== 409) return false;
+
+      try {
+        const body = (await response.clone().text()).trim();
+        return body === 'Unknown dependency snapshot' ||
+          body === 'export default null; // Unknown dependency snapshot';
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function recoverFromSnapshotBoundModuleFailure(
+      moduleUrl,
+      fetchModule = (url, init) => fetch(url, init),
+      reloadDocument = () => window.location.reload(),
+      recoveryState = window,
+      allowDocumentReload = true,
+    ) {
+      try {
+        const parsedUrl = new URL(moduleUrl, 'http://veryfront.local');
+        const snapshotKeys = parsedUrl.searchParams.getAll('pins');
+        const pathMatch = parsedUrl.pathname.match(
+          /^\\/_vf_modules\\/_pins\\/([^/]+)(?:\\/|$)/,
+        );
+        if (pathMatch) {
+          try {
+            snapshotKeys.push(decodeURIComponent(pathMatch[1]));
+          } catch (_) {
+            return false;
+          }
+        }
+        if (
+          snapshotKeys.length !== 1 ||
+          !/^on:[A-Za-z0-9._-]+$/.test(snapshotKeys[0])
+        ) return false;
+
+        const response = await fetchModule(moduleUrl, { cache: 'no-store' });
+        if (!(await isDependencySnapshotConflictResponse(response))) return false;
+        if (!allowDocumentReload) return true;
+
+        const recoveryKey = '__VF_DEPENDENCY_SNAPSHOT_RECOVERY_STARTED__';
+        if (recoveryState[recoveryKey] === true) return true;
+
+        recoveryState[recoveryKey] = true;
+        try {
+          reloadDocument();
+        } catch (_) {
+          delete recoveryState[recoveryKey];
+          return false;
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function importSnapshotBoundModule(
+      moduleUrl,
+      importModule = (url) => import(url),
+      fetchModule = (url, init) => fetch(url, init),
+      reloadDocument = () => window.location.reload(),
+      recoveryState = window,
+      allowDocumentReload = true,
+    ) {
+      try {
+        return await importModule(moduleUrl);
+      } catch (error) {
+        const snapshotConflict = await recoverFromSnapshotBoundModuleFailure(
+          moduleUrl,
+          fetchModule,
+          reloadDocument,
+          recoveryState,
+          allowDocumentReload,
+        );
+        if (snapshotConflict && !allowDocumentReload) {
+          const conflictError = new Error(
+            'Dependency snapshot is unavailable during speculative module prefetch'
+          );
+          conflictError.name = 'DependencySnapshotConflictError';
+          conflictError.dependencySnapshotConflict = true;
+          conflictError.cause = error;
+          throw conflictError;
+        }
+        throw error;
+      }
+    }
+
+    async function loadPageDataComponent(pageData, path, options = {}) {
       const moduleUrl = resolveHydrationModuleUrl(
         path,
         pageData.isolatedClientPage === true,
         window.__veryfrontStudioEmbed === true,
+        pageData,
         pageData.releaseAssetModules || null,
         pageData.releaseId || null,
       );
-      const component = await loadComponentFromUrl(path, moduleUrl);
+      const component = await loadComponentFromUrl(
+        path,
+        moduleUrl,
+        options,
+      );
       if (!component) {
         throw new Error('Module has no renderable export: ' + path);
       }
@@ -1221,9 +1445,18 @@ export const getRouterScript = () => `
 
       try {
         await Promise.all(
-          modulePaths.map((modulePath) => loadPageDataComponent(pageData, modulePath))
+          modulePaths.map((modulePath) =>
+            loadPageDataComponent(pageData, modulePath, { allowDocumentReload: false })
+          )
         );
       } catch (error) {
+        if (error?.dependencySnapshotConflict) {
+          const cacheIdentity = pageDataCacheIdentity(path);
+          pageDataCache.delete(cacheIdentity);
+          backgroundRefreshTimestamps.delete(cacheIdentity);
+          prefetchedPaths.delete(path);
+          throw error;
+        }
         logBackgroundFetchFailure('Module prefetch', path, error);
       }
     }
@@ -1266,8 +1499,11 @@ export const getRouterScript = () => `
         activePageDataPrefetchControllers.set(href, controller);
 
         fetchPageDataForPrefetch(href, controller.signal)
-          .catch(() => {
+          .catch((error) => {
             prefetchedPaths.delete(href);
+            if (error?.dependencySnapshotConflict) {
+              logBackgroundFetchFailure('Module prefetch', href, error);
+            }
           })
           .finally(() => {
             inFlightPrefetches.delete(href);
@@ -1397,13 +1633,7 @@ export const getRouterScript = () => `
       // Seed route params from the hydration data (issue #2741). Catch-all
       // segments arrive as arrays and are joined so no path info is lost.
       params: (function () {
-        try {
-          const el = document.getElementById('veryfront-hydration-data');
-          const raw = (JSON.parse(el && el.textContent ? el.textContent : '{}') || {}).params || {};
-          return normalizeRouteParams(raw);
-        } catch (_) {
-          return {};
-        }
+        return normalizeRouteParams(initialHydrationData.params || {});
       })(),
       isPreview: false,
       isMounted: true,

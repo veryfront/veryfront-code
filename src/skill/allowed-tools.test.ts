@@ -155,8 +155,8 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(result.map((t) => t.name).sort(), ["Read", "load_skill"]);
     });
 
-    it("should expose load_skill_reference only when the active skill has references", () => {
-      const result = filterToolsForSkill(tools, ["Read"], {
+    it("should expose load_skill_reference only when policy and active files allow it", () => {
+      const result = filterToolsForSkill(tools, ["Read", "load_skill_reference"], {
         hasActiveSkill: true,
         references: ["references/guide.md"],
         scripts: [],
@@ -169,8 +169,8 @@ describe("src/skill/allowed-tools", () => {
       ]);
     });
 
-    it("should expose execute_skill_script only when the active skill has scripts", () => {
-      const result = filterToolsForSkill(tools, ["Read"], {
+    it("should expose execute_skill_script only when policy and active files allow it", () => {
+      const result = filterToolsForSkill(tools, ["Read", "execute_skill_script"], {
         hasActiveSkill: true,
         references: [],
         scripts: ["scripts/run.sh"],
@@ -194,6 +194,16 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(result.some((t) => t.name === "load_skill_reference"), false);
       assertEquals(result.some((t) => t.name === "execute_skill_script"), false);
     });
+
+    it("denies advertised skill file tools for an explicit empty policy", () => {
+      const result = filterToolsForSkill(tools, [], {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: ["scripts/run.sh"],
+      });
+
+      assertEquals(result.map((tool) => tool.name), ["load_skill"]);
+    });
   });
 
   describe("filterToolNamesForSkill", () => {
@@ -216,6 +226,30 @@ describe("src/skill/allowed-tools", () => {
 
     it("denies every non-infrastructure tool for an explicit empty policy", () => {
       assertEquals(filterToolNamesForSkill(["web_search", "web_fetch"], []), []);
+    });
+
+    it("denies advertised skill file tools unless a declared policy matches them", () => {
+      const availability = {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: ["scripts/run.sh"],
+      };
+      assertEquals(
+        filterToolNamesForSkill(
+          ["load_skill", "load_skill_reference", "execute_skill_script"],
+          [],
+          availability,
+        ),
+        ["load_skill"],
+      );
+      assertEquals(
+        filterToolNamesForSkill(
+          ["load_skill", "load_skill_reference", "execute_skill_script"],
+          ["load_skill_reference"],
+          availability,
+        ),
+        ["load_skill", "load_skill_reference"],
+      );
     });
 
     it("preserves unrestricted name-only inventories when no policy is active", () => {
@@ -283,9 +317,9 @@ describe("src/skill/allowed-tools", () => {
       assertEquals(isToolAllowedBySkill("execute_skill_script", ["Read"]), false);
     });
 
-    it("should allow load_skill_reference only when the active skill has references", () => {
+    it("should allow load_skill_reference only when policy and active files allow it", () => {
       assertEquals(
-        isToolAllowedBySkill("load_skill_reference", ["Read"], {
+        isToolAllowedBySkill("load_skill_reference", ["Read", "load_skill_reference"], {
           hasActiveSkill: true,
           references: ["references/guide.md"],
           scripts: [],
@@ -302,9 +336,9 @@ describe("src/skill/allowed-tools", () => {
       );
     });
 
-    it("should allow execute_skill_script only when the active skill has scripts", () => {
+    it("should allow execute_skill_script only when policy and active files allow it", () => {
       assertEquals(
-        isToolAllowedBySkill("execute_skill_script", ["Read"], {
+        isToolAllowedBySkill("execute_skill_script", ["Read", "execute_skill_script"], {
           hasActiveSkill: true,
           references: [],
           scripts: ["scripts/run.sh"],
@@ -319,6 +353,18 @@ describe("src/skill/allowed-tools", () => {
         }),
         false,
       );
+    });
+
+    it("denies advertised skill file tools for an explicit empty policy", () => {
+      const availability = {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: ["scripts/run.sh"],
+      };
+
+      assertEquals(isToolAllowedBySkill("load_skill", [], availability), true);
+      assertEquals(isToolAllowedBySkill("load_skill_reference", [], availability), false);
+      assertEquals(isToolAllowedBySkill("execute_skill_script", [], availability), false);
     });
   });
 

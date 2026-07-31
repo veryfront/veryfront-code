@@ -3,34 +3,55 @@ import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { RenderHandler } from "./render-handler.ts";
 import { StreamHandler } from "./stream-handler.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 
 class MockRenderHandler extends RenderHandler {
-  private handlerImpl: (page: string, params: URLSearchParams) => Promise<Response>;
+  private handlerImpl: (
+    page: string,
+    params: URLSearchParams,
+    request?: Request,
+  ) => Promise<Response>;
 
-  constructor(handlerImpl: (page: string, params: URLSearchParams) => Promise<Response>) {
+  constructor(
+    handlerImpl: (
+      page: string,
+      params: URLSearchParams,
+      request?: Request,
+    ) => Promise<Response>,
+  ) {
     super("/project", () => null);
     this.handlerImpl = handlerImpl;
   }
 
-  setHandler(handlerImpl: (page: string, params: URLSearchParams) => Promise<Response>): void {
+  setHandler(
+    handlerImpl: (
+      page: string,
+      params: URLSearchParams,
+      request?: Request,
+    ) => Promise<Response>,
+  ): void {
     this.handlerImpl = handlerImpl;
   }
 
-  override handle(page: string, params: URLSearchParams): Promise<Response> {
-    return this.handlerImpl(page, params);
+  override handle(
+    page: string,
+    params: URLSearchParams,
+    request?: Request,
+  ): Promise<Response> {
+    return this.handlerImpl(page, params, request);
   }
 }
 
 describe("StreamHandler", () => {
   let streamHandler: StreamHandler;
   let mockRenderHandler: MockRenderHandler;
-  let handleCalls: Array<[string, URLSearchParams]>;
+  let handleCalls: Array<[string, URLSearchParams, Request | undefined]>;
 
   beforeEach(() => {
     handleCalls = [];
 
-    mockRenderHandler = new MockRenderHandler((page, params) => {
-      handleCalls.push([page, params]);
+    mockRenderHandler = new MockRenderHandler((page, params, request) => {
+      handleCalls.push([page, params, request]);
       return Promise.resolve(
         new Response(JSON.stringify({ html: "<div>Test Content</div>" }), {
           status: 200,
@@ -49,6 +70,7 @@ describe("StreamHandler", () => {
       expect(response).toBeInstanceOf(Response);
       expect(response.headers.get("content-type")).toBe("application/x-ndjson; charset=utf-8");
       expect(response.headers.get("cache-control")).toBe("no-cache");
+      expect(response.headers.get("vary")).toBe(RSC_DEPENDENCY_PINNING_HEADER);
     });
 
     it("streams only the rendered project HTML as NDJSON", async () => {
@@ -63,6 +85,39 @@ describe("StreamHandler", () => {
         id: "root",
         html: "<div>Test Content</div>",
       });
+    });
+
+    it("exposes the exact dependency snapshot captured by the render payload", async () => {
+      mockRenderHandler.setHandler(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({
+            html: "<div>Pinned</div>",
+            clientRefs: {},
+            dependencyPinningCacheKey: "on:pins-a",
+          })),
+        )
+      );
+
+      const response = await streamHandler.handle("/", new URLSearchParams());
+
+      expect(response.headers.get(RSC_DEPENDENCY_PINNING_HEADER)).toBe(
+        "on:pins-a",
+      );
+    });
+
+    it("forwards the snapshot header while leaving application pins untouched", async () => {
+      const request = new Request(
+        "http://localhost/_veryfront/rsc/stream?pins=application-value",
+        {
+          headers: { [RSC_DEPENDENCY_PINNING_HEADER]: "on:pins-a" },
+        },
+      );
+      const params = new URLSearchParams({ pins: "application-value" });
+
+      await streamHandler.handle("/", params, request);
+
+      expect(handleCalls[0]?.[1].get("pins")).toBe("application-value");
+      expect(handleCalls[0]?.[2]).toBe(request);
     });
 
     it("should use page query param when provided", async () => {

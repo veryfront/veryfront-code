@@ -107,6 +107,44 @@ describe("css-cache", () => {
         );
       }
     });
+
+    it("isolates dependency snapshots and module origins", () => {
+      const snapshotA = getPageCssCacheKey(
+        "proj",
+        "production",
+        "/about",
+        "v1",
+        pipelineIdentity,
+        "on:34n9smy47dk9",
+        "https://a.example.test",
+      );
+      const snapshotB = getPageCssCacheKey(
+        "proj",
+        "production",
+        "/about",
+        "v1",
+        pipelineIdentity,
+        "on:34n8mjmdp7io",
+        "https://a.example.test",
+      );
+      const otherOrigin = getPageCssCacheKey(
+        "proj",
+        "production",
+        "/about",
+        "v1",
+        pipelineIdentity,
+        "on:34n9smy47dk9",
+        "https://b.example.test",
+      );
+
+      assertNotEquals(snapshotA, snapshotB);
+      assertNotEquals(snapshotA, otherOrigin);
+
+      cachePageCss(snapshotA, "/* snapshot A */");
+      cachePageCss(snapshotB, "/* snapshot B */");
+      assertEquals(getCachedPageCss(snapshotA), "/* snapshot A */");
+      assertEquals(getCachedPageCss(snapshotB), "/* snapshot B */");
+    });
   });
 
   describe("cachePageCss and getCachedPageCss", () => {

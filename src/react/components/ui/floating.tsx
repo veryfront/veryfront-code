@@ -18,9 +18,12 @@ const VIEWPORT_PADDING_PX = 8;
 
 export type FloatingDismissReason = "escape" | "pointer";
 
+// Warn once per session, not per render, when a surface opens unanchored.
+let warnedMissingAnchor = false;
+
 /** Props accepted by `<Floating>`. */
 export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Element the surface is positioned against (usually the trigger wrapper). */
+  /** Element the surface is positioned against (usually the trigger element). */
   anchorRef: React.RefObject<HTMLElement | null>;
   open: boolean;
   /** Horizontal edge to align to. */
@@ -75,9 +78,19 @@ export function Floating({
   React.useLayoutEffect(() => {
     if (!open || !portalReady) return;
     const anchor = anchorRef.current;
+    if (!anchor) {
+      if (!warnedMissingAnchor) {
+        warnedMissingAnchor = true;
+        console.warn(
+          "[ui] Floating surface opened without an anchor element. " +
+            "If the trigger uses asChild, its child must forward `ref` to a DOM node.",
+        );
+      }
+      return;
+    }
     const ownerDocument = anchor?.ownerDocument;
     const ownerWindow = ownerDocument?.defaultView;
-    if (!anchor || !ownerDocument || !ownerWindow) return;
+    if (!ownerDocument || !ownerWindow) return;
 
     const update = () => {
       const a = anchor.getBoundingClientRect();

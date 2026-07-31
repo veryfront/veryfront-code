@@ -20,6 +20,13 @@ import type { HTMLGenerationOptions } from "./types.ts";
 import { getProdHydrationModulePath } from "./hydration-script-builder/prod-scripts.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { installTestCSSOptimizationEngine } from "../../tests/_helpers/css-optimization-engine.ts";
+import { FakeTime } from "#std/testing/time";
+import { validateVeryfrontConfig } from "#veryfront/config";
+
+const PIN_KEY_A = "on:z7bg3qnfgtcb";
+const PIN_KEY_B = "on:3w5e11264sgsf";
+const ENCODED_PIN_KEY_A = encodeURIComponent(PIN_KEY_A);
+const ENCODED_PIN_KEY_B = encodeURIComponent(PIN_KEY_B);
 
 describe("html-generation/html-shell-generator", () => {
   let restoreCSSOptimizationEngine: (() => void) | undefined;
@@ -148,6 +155,183 @@ describe("html-generation/html-shell-generator", () => {
         "HTML shell options must not contain accessor properties",
       );
       assertEquals(optionAccessorCalls, 0);
+    });
+
+    it("rejects nested serialized accessors without executing them", async () => {
+      let accessorCalls = 0;
+      const props = {
+        card: Object.defineProperty({}, "title", {
+          enumerable: true,
+          get() {
+            accessorCalls++;
+            return "unsafe";
+          },
+        }),
+      };
+
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta(),
+            createOptions(),
+            {},
+            props,
+          ),
+        TypeError,
+      );
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("captures one nested hydration snapshot before asynchronous shell work", async () => {
+      const params = { slug: ["before"] };
+      const props = { card: { title: "before" } };
+      const frontmatter = { description: "before" };
+      const layoutProps = {
+        "app/layout.tsx": { theme: "before" },
+      };
+      const resultPromise = wrapInHTMLShell(
+        "<p>content</p>",
+        createMeta(),
+        createOptions({ frontmatter, layoutProps }),
+        params,
+        props,
+      );
+
+      params.slug[0] = "after";
+      props.card.title = "after";
+      frontmatter.description = "after";
+      layoutProps["app/layout.tsx"].theme = "after";
+
+      const result = await resultPromise;
+      const hydrationMatch = result.match(
+        /<script id="veryfront-hydration-data" type="application\/json"[^>]*>\s*([\s\S]*?)\s*<\/script>/,
+      );
+      if (!hydrationMatch?.[1]) throw new Error("missing hydration payload");
+      const hydrationData = JSON.parse(hydrationMatch[1]) as {
+        params: { slug: string[] };
+        props: { card: { title: string } };
+        frontmatter: { description: string };
+        layoutProps: Record<string, { theme: string }>;
+      };
+
+      assertEquals(hydrationData.params, { slug: ["before"] });
+      assertEquals(hydrationData.props, { card: { title: "before" } });
+      assertEquals(hydrationData.frontmatter, { description: "before" });
+      assertEquals(hydrationData.layoutProps, {
+        "app/layout.tsx": { theme: "before" },
+      });
+    });
+
+    it("accepts public config callbacks and hooks while snapshotting consumed config", async () => {
+      let callbackCalls = 0;
+      let hookCalls = 0;
+      const config = validateVeryfrontConfig({
+        react: { version: "18.3.1" },
+        client: { moduleResolution: "bundled" },
+        dev: { hmr: true, components: ["before-component"] },
+        security: {
+          cors: {
+            origin: (_origin: string) => {
+              callbackCalls++;
+              return true;
+            },
+          },
+        },
+        extensions: [{
+          name: "html-config-probe",
+          version: "1.0.0",
+          capabilities: [],
+          setup() {
+            hookCalls++;
+          },
+          teardown() {
+            hookCalls++;
+          },
+        }],
+      });
+
+      const resultPromise = wrapInHTMLShell(
+        "<p>content</p>",
+        createMeta(),
+        createOptions({
+          config,
+          clientModuleStrategy: "fs",
+          isLocalProject: true,
+        }),
+      );
+      config.react!.version = "19.1.1";
+      config.dev!.components![0] = "after-component";
+
+      const result = await resultPromise;
+      assertStringIncludes(result, 'window.__veryfrontComponents = ["before-component"]');
+      assertStringIncludes(result, 'src="/_veryfront/hmr.js"');
+      assertStringIncludes(result, "react@18.3.1");
+      assertEquals(result.includes("after-component"), false);
+      assertEquals(result.includes("react@19.1.1"), false);
+      assertEquals(callbackCalls, 0);
+      assertEquals(hookCalls, 0);
+    });
+
+    it("rejects accessors and proxies in consumed config fields without invoking them", async () => {
+      let accessorCalls = 0;
+      const accessorConfig = Object.defineProperty({}, "client", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return { moduleResolution: "bundled" };
+        },
+      });
+
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta(),
+            createOptions({ config: accessorConfig }),
+          ),
+        TypeError,
+        "HTML shell config.client must be an own data property",
+      );
+      assertEquals(accessorCalls, 0);
+
+      await assertRejects(
+        () =>
+          wrapInHTMLShell(
+            "<p>content</p>",
+            createMeta(),
+            createOptions({
+              config: {
+                client: new Proxy({ moduleResolution: "bundled" }, {}),
+              },
+            }),
+          ),
+        TypeError,
+        "HTML shell config.client must not contain Proxy values",
+      );
+    });
+
+    it("canonically snapshots intentional Date values in hydration frontmatter", async () => {
+      const publishedAt = new Date("2026-07-24T08:30:00.000Z");
+      const result = await wrapInHTMLShell(
+        "<p>content</p>",
+        createMeta({ frontmatter: { title: "Dated", publishedAt } as never }),
+        createOptions({
+          frontmatter: { title: "Dated", publishedAt } as never,
+        }),
+      );
+      const hydrationMatch = result.match(
+        /<script id="veryfront-hydration-data" type="application\/json"[^>]*>\s*([\s\S]*?)\s*<\/script>/,
+      );
+      if (!hydrationMatch?.[1]) throw new Error("missing hydration payload");
+      const hydrationData = JSON.parse(hydrationMatch[1]) as {
+        frontmatter: { publishedAt: string };
+      };
+
+      assertEquals(
+        hydrationData.frontmatter.publishedAt,
+        "2026-07-24T08:30:00.000Z",
+      );
     });
 
     it("should set title from metadata", async () => {
@@ -305,7 +489,7 @@ describe("html-generation/html-shell-generator", () => {
 
         assertStringIncludes(
           result,
-          '<link rel="modulepreload" href="/_vf_modules/pages/dashboard.js">',
+          '<link rel="modulepreload" href="/_vf_modules/pages/dashboard.tsx">',
         );
         assertEquals(result.includes("/_vf_modules/lib/api.js"), false);
         assertEquals(result.includes("/_vf_modules/lib/files.js"), false);
@@ -329,8 +513,8 @@ describe("html-generation/html-shell-generator", () => {
       );
 
       assertEquals(result.includes("/private/workspace/"), false);
-      assertEquals(result.includes("secret-pages/dashboard.js"), false);
-      assertEquals(result.includes("secret-layouts/root.js"), false);
+      assertEquals(result.includes("secret-pages/dashboard.tsx"), false);
+      assertEquals(result.includes("secret-layouts/root.tsx"), false);
     });
 
     it("rejects project-directory prefix collisions in module preloads", async () => {
@@ -346,9 +530,27 @@ describe("html-generation/html-shell-generator", () => {
         }),
       );
 
-      assertEquals(result.includes("secret/pages/admin.js"), false);
-      assertEquals(result.includes("secret/app/layout.js"), false);
+      assertEquals(result.includes("secret/pages/admin.tsx"), false);
+      assertEquals(result.includes("secret/app/layout.tsx"), false);
       assertEquals(result.includes("/project-secret/"), false);
+    });
+
+    it("omits module paths that WHATWG URL parsing would move outside the prefix", async () => {
+      const result = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        createOptions({
+          projectDir: "/project",
+          pagePath: "/project/app/.%2e/.%2e/admin.tsx",
+          nestedLayouts: [
+            { kind: "tsx", path: "/project/app/%2E./layout.tsx" },
+          ],
+        }),
+      );
+
+      assertEquals(result.includes(".%2e"), false);
+      assertEquals(result.includes("%2E."), false);
+      assertEquals(result.includes("/_vf_modules/admin.tsx"), false);
     });
 
     it("preserves module preloads for paths inside the project directory", async () => {
@@ -366,12 +568,108 @@ describe("html-generation/html-shell-generator", () => {
 
       assertStringIncludes(
         result,
-        '<link rel="modulepreload" href="/_vf_modules/pages/dashboard.js">',
+        '<link rel="modulepreload" href="/_vf_modules/pages/dashboard.tsx">',
       );
       assertStringIncludes(
         result,
-        '<link rel="modulepreload" href="/_vf_modules/app/layout.js">',
+        '<link rel="modulepreload" href="/_vf_modules/app/layout.tsx">',
       );
+    });
+
+    it("preloads the same exact source identity used by hydration imports", async () => {
+      for (
+        const [sourcePath, requestPath] of [
+          ["pages/guide.md", "pages/guide.md"],
+          ["pages/authored.js", "pages/authored.js.js"],
+          ["pages/authored.mjs", "pages/authored.mjs.js"],
+        ]
+      ) {
+        const result = await wrapInHTMLShell(
+          "<div>Content</div>",
+          createMeta(),
+          createOptions({
+            projectDir: "/project",
+            pagePath: `/project/${sourcePath}`,
+          }),
+        );
+
+        assertStringIncludes(
+          result,
+          `<link rel="modulepreload" href="/_vf_modules/${requestPath}">`,
+        );
+      }
+    });
+
+    it("binds page and layout fallback preloads to historical snapshot A after B", async () => {
+      const common = createOptions({
+        projectDir: "/project",
+        pagePath: "/project/pages/dashboard.tsx",
+        nestedLayouts: [
+          { kind: "tsx", path: "/project/app/layout.tsx" },
+        ],
+      });
+      const snapshotB = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        {
+          ...common,
+          dependencyPinningCacheKey: PIN_KEY_B,
+          dependencyPinningDependencies: {
+            react: "19.0.0",
+            veryfront: "0.2.0",
+          },
+        },
+      );
+      const snapshotA = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        {
+          ...common,
+          dependencyPinningCacheKey: PIN_KEY_A,
+          dependencyPinningDependencies: {
+            react: "18.3.1",
+            veryfront: "0.1.10",
+          },
+        },
+      );
+
+      assertStringIncludes(
+        snapshotB,
+        `<link rel="modulepreload" href="/_vf_modules/_pins/${ENCODED_PIN_KEY_B}/pages/dashboard.tsx">`,
+      );
+      assertStringIncludes(
+        snapshotA,
+        `<link rel="modulepreload" href="/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/pages/dashboard.tsx">`,
+      );
+      assertStringIncludes(
+        snapshotA,
+        `<link rel="modulepreload" href="/_vf_modules/_pins/${ENCODED_PIN_KEY_A}/app/layout.tsx">`,
+      );
+      assertEquals(snapshotA.includes(ENCODED_PIN_KEY_B), false);
+    });
+
+    it("keeps flag-off fallback preload output byte-identical", async () => {
+      using _time = new FakeTime(new Date("2026-07-26T00:00:00.000Z"));
+      const common = createOptions({
+        projectDir: "/project",
+        pagePath: "/project/pages/dashboard.tsx",
+        nestedLayouts: [
+          { kind: "tsx", path: "/project/app/layout.tsx" },
+        ],
+        dependencyPinningDependencies: {
+          react: "18.3.1",
+          veryfront: "0.1.10",
+        },
+      });
+
+      const unkeyed = await wrapInHTMLShell("<div>Content</div>", createMeta(), common);
+      const flagOff = await wrapInHTMLShell(
+        "<div>Content</div>",
+        createMeta(),
+        { ...common, dependencyPinningCacheKey: "off" },
+      );
+
+      assertEquals(flagOff, unkeyed);
     });
 
     it("escapes in-project filenames in modulepreload attributes", async () => {
@@ -387,11 +685,11 @@ describe("html-generation/html-shell-generator", () => {
 
       assertStringIncludes(
         result,
-        'href="/_vf_modules/pages/dashboard&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
+        'href="/_vf_modules/pages/dashboard&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.tsx"',
       );
       assertEquals(
         result.includes(
-          'href="/_vf_modules/pages/dashboard"><script>alert(1)</script>.js"',
+          'href="/_vf_modules/pages/dashboard"><script>alert(1)</script>.tsx"',
         ),
         false,
       );

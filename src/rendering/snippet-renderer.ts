@@ -8,6 +8,13 @@ import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { escapeHtml } from "#veryfront/html/html-escape.ts";
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSource,
+  getDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { appendDependencyPinningKey } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const logger = rendererLogger.component("snippet-renderer");
 
@@ -25,6 +32,12 @@ const textEncoder = new TextEncoder();
 export interface SnippetRenderOptions {
   mode: "development" | "production";
   projectDir: string;
+  adapter?: RuntimeAdapter;
+  isLocalProject?: boolean;
+  projectId?: string;
+  contentSourceId?: string;
+  /** Canonical request-scoped dependency source supplied by server handlers. */
+  dependencyPinningSource?: DependencyPinningSource;
   filePath?: string;
   nonce?: string;
   /** Base URL for module server (e.g., http://localhost:3002) */
@@ -42,6 +55,18 @@ export interface SnippetRenderOptions {
 export interface SnippetRenderResult {
   html: string;
   frontmatter: Record<string, unknown>;
+}
+
+export function buildSnippetModuleUrl(
+  moduleServerBase: string,
+  hash: string,
+  cacheBuster: string | number,
+  dependencyPinningCacheKey?: string,
+): string {
+  return appendDependencyPinningKey(
+    `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${cacheBuster}`,
+    dependencyPinningCacheKey,
+  );
 }
 
 interface SnippetCacheEntry {
@@ -338,6 +363,22 @@ export function renderSnippet(
         filePath: options.filePath,
       });
 
+      const dependencySnapshot = await getDependencyPinningSnapshot(
+        options.dependencyPinningSource ??
+          createDependencyPinningSource({
+            projectDir: options.projectDir,
+            adapter: options.adapter,
+            isLocalProject: options.isLocalProject,
+            projectId: options.projectId,
+            projectSlug: options.projectSlug,
+            contentSourceId: options.contentSourceId,
+            config: options.config,
+          }),
+      );
+      if (dependencySnapshot.cacheKey === "on:unknown") {
+        throw new Error("Dependency pinning snapshot is unavailable: on:unknown");
+      }
+
       try {
         if (utf8ByteLength(mdxContent) > MAX_SNIPPET_SOURCE_BYTES) {
           throw RENDER_ERROR.create({ detail: "Snippet source exceeds the 1 MiB render limit" });
@@ -416,8 +457,12 @@ export function renderSnippet(
           codePreview: bundle.compiledCode.substring(0, 300),
         });
 
-        const snippetUrl =
-          `${moduleServerBase}/_vf_modules/_snippets/${hash}.js?ssr=true&v=${hash}`;
+        const snippetUrl = buildSnippetModuleUrl(
+          moduleServerBase,
+          hash,
+          hash,
+          dependencySnapshot.cacheKey,
+        );
 
         logger.debug("Loading snippet module", {
           snippetUrl,
@@ -463,10 +508,13 @@ export function renderSnippet(
           mode: options.mode,
           config: snippetConfig,
           projectDir: options.projectDir,
+          moduleServerOrigin: new URL(moduleServerBase).origin,
           nonce: options.nonce,
           studioEmbed: true,
           pagePath: `_snippets/${hash}`,
           pageId: options.pageId,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
         });
 
         return { html, frontmatter };

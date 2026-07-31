@@ -11,9 +11,10 @@ import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
-import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
 import { assertReactComponentType } from "./react-component-type.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { snapshotLoadComponentOptions } from "./load-options-snapshot.ts";
 
 const MAX_COMPONENTS = 10_000;
 const MAX_COMPONENT_NAME_LENGTH = 4_096;
@@ -140,12 +141,17 @@ function createComponentMap(
   return result;
 }
 
+type ComponentTransformer = typeof transformToESM;
+
 export function loadComponentsUnified(
   components: ComponentSource[],
   projectDir: string,
   adapter: RuntimeAdapter,
   options?: LoadComponentOptions,
 ): Promise<ComponentMap> {
+  const componentSnapshot = snapshotComponents(components);
+  const validatedProjectDir = requireBoundedPath(projectDir, "projectDir");
+  const optionSnapshot = snapshotLoadComponentOptions(options);
   const componentCount = arrayIsArray(components) ? components.length : 0;
   const tracedProjectDir = typeof projectDir === "string" &&
       projectDir.length <= MAX_PATH_LENGTH_CHARS &&
@@ -155,30 +161,15 @@ export function loadComponentsUnified(
   return withSpan(
     "modules.loadComponentsUnified",
     async () => {
-      const componentSnapshot = snapshotComponents(components);
-      const validatedProjectDir = requireBoundedPath(projectDir, "projectDir");
       if (componentSnapshot.length === 0) {
         return createComponentMap([], []);
       }
 
-      const projectId = options?.projectId ?? validatedProjectDir;
-      const dev = options?.dev ?? true;
-      const moduleServerUrl = options?.moduleServerUrl;
-      const reactVersion = options?.reactVersion;
-      const ssr = options?.ssr ?? false;
-      const explicitImportMap = options?.importMap
-        ? snapshotImportMap(options.importMap)
-        : undefined;
-
-      const transformOpts: TransformOptions = {
-        projectId,
-        dev,
-        moduleServerUrl,
-        reactVersion,
-        ssr,
-        vendorBundleHash: options?.vendorBundleHash,
-        ...(explicitImportMap ? { loadImportMap: async () => explicitImportMap } : {}),
-      };
+      const projectId = optionSnapshot?.projectId ?? validatedProjectDir;
+      const transformOpts = await resolveUnifiedTransformOptions(
+        validatedProjectDir,
+        optionSnapshot,
+      );
 
       const transformedComponents = await transformAllComponents(
         componentSnapshot,
@@ -213,11 +204,43 @@ export function loadComponentsUnified(
   );
 }
 
+async function resolveUnifiedTransformOptions(
+  projectDir: string,
+  options?: Readonly<LoadComponentOptions>,
+): Promise<TransformOptions> {
+  const optionSnapshot = snapshotLoadComponentOptions(options);
+  const dependencyPinningSource = optionSnapshot?.dependencyPinningSource ?? projectDir;
+  const dependencySnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource,
+    optionSnapshot?.dependencyPinningCacheKey,
+    optionSnapshot?.dependencyPinningDependencies,
+  );
+  const explicitImportMap = optionSnapshot?.importMap;
+  return {
+    projectId: optionSnapshot?.projectId ?? projectDir,
+    dev: optionSnapshot?.dev ?? true,
+    moduleServerUrl: optionSnapshot?.moduleServerUrl,
+    moduleServerOrigin: dependencySnapshot.cacheKey.startsWith("on:")
+      ? optionSnapshot?.moduleServerOrigin
+      : undefined,
+    reactVersion: optionSnapshot?.reactVersion,
+    ssr: optionSnapshot?.ssr ?? false,
+    vendorBundleHash: optionSnapshot?.vendorBundleHash,
+    dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+    dependencyPinningDependencies: dependencySnapshot.dependencies,
+    dependencyPinningSource,
+    ...(explicitImportMap ? { loadImportMap: async () => explicitImportMap } : {}),
+  };
+}
+
+export { resolveUnifiedTransformOptions as _resolveUnifiedTransformOptionsForTest };
+
 async function transformAllComponents(
   components: ComponentSource[],
   projectDir: string,
   adapter: RuntimeAdapter,
   transformOpts: TransformOptions,
+  transform: ComponentTransformer = transformToESM,
 ): Promise<TransformedComponent[]> {
   const transformed = await parallelMap(
     components,
@@ -225,7 +248,7 @@ async function transformAllComponents(
       name: comp.name,
       sourcePath: comp.filePath,
       fileName: `component-${index}.mjs`,
-      code: await transformToESM(comp.source, comp.filePath, projectDir, adapter, transformOpts),
+      code: await transform(comp.source, comp.filePath, projectDir, adapter, transformOpts),
     }),
     {
       concurrency: TRANSFORM_CONCURRENCY,
@@ -251,6 +274,8 @@ async function transformAllComponents(
 
   return transformed;
 }
+
+export { transformAllComponents as _transformAllComponentsForTest };
 
 async function createTempDir(projectId: string, fs: FileSystem): Promise<string> {
   const baseTmp = await getProjectTmpDir(projectId);

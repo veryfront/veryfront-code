@@ -10,6 +10,7 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import {
+  DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG,
   RELEASE_ASSET_MAX_SIZE_BYTES,
   RELEASE_ASSET_UPLOAD_CONCURRENCY,
@@ -24,7 +25,13 @@ import { generateLocalReleaseAssetManifest } from "./local-release-assets.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  clearReactVersionCache,
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  getReactImportMap,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 import { toFileUrl } from "#veryfront/compat/path/index.ts";
 
 function makeAdapter() {
@@ -98,9 +105,12 @@ const fakeFrameworkTransform = () =>
 
 describe("build/production-build/local-release-assets", () => {
   const originalFlag = getHostEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
+  const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, originalFlag ?? "");
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalPinningFlag ?? "");
+    clearReactVersionCache();
   });
 
   it("skips local dependency assets unless the dependency import-map flag is enabled", async () => {
@@ -377,6 +387,169 @@ describe("build/production-build/local-release-assets", () => {
     );
     assertEquals(writes.has("/project/dist/_veryfront/release-asset-manifest.json"), false);
     assertEquals(adapter.fs.directories.has("/project/dist"), false);
+  });
+
+  it("passes the project dependency snapshot to every local framework transform", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+    const { adapter } = makeAdapter();
+    adapter.fs.files.set(
+      "/project/package.json",
+      JSON.stringify({ dependencies: { react: "18.3.1", lodash: "4.17.21" } }),
+    );
+    const pinningSource = createDependencyPinningSource({
+      projectDir: "/project",
+      adapter,
+      isLocalProject: false,
+      contentSourceId: "production-build",
+    });
+    const resolved = await resolveDependencyPinningSnapshot(pinningSource);
+    const snapshot: DependencyPinningSnapshot = {
+      cacheKey: resolved.cacheKey,
+      dependencies: { ...resolved.dependencies },
+    };
+    const observed: Array<{
+      snapshot: DependencyPinningSnapshot | undefined;
+      source: unknown;
+      reactVersion: string | undefined;
+    }> = [];
+
+    const manifest = await generateLocalReleaseAssetManifest({
+      // deno-lint-ignore no-explicit-any
+      adapter: adapter as any,
+      projectDir: "/project",
+      outputDir: "/project/dist",
+      dryRun: true,
+      vendorHttpImports: fakeVendorHttpImports,
+      dependencyPinningSnapshot: snapshot,
+      dependencyPinningSource: pinningSource,
+      frameworkTransform: (
+        _source,
+        _sourceFile,
+        _projectDir,
+        _adapter,
+        options,
+      ) => {
+        observed.push({
+          snapshot: options.dependencyPinningSnapshot,
+          source: options.dependencyPinningSource,
+          reactVersion: options.reactVersion,
+        });
+        return Promise.resolve("export const framework = true;");
+      },
+    });
+
+    assertExists(manifest);
+    assertEquals(observed.length > 0, true);
+    assertEquals(
+      observed.every(
+        (value) =>
+          value.snapshot !== snapshot &&
+          Object.isFrozen(value.snapshot) &&
+          Object.isFrozen(value.snapshot?.dependencies) &&
+          value.snapshot?.cacheKey === snapshot.cacheKey &&
+          value.snapshot?.dependencies?.lodash === "4.17.21" &&
+          value.source === pinningSource &&
+          value.reactVersion === "18.3.1",
+      ),
+      true,
+    );
+  });
+
+  it("canonicalizes and freezes a supplied dependency snapshot before any async gap", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+    const { adapter } = makeAdapter();
+    adapter.fs.files.set(
+      "/project/package.json",
+      JSON.stringify({ dependencies: { react: "18.3.1", lodash: "4.17.21" } }),
+    );
+    const pinningSource = createDependencyPinningSource({
+      projectDir: "/project",
+      adapter,
+      isLocalProject: false,
+      contentSourceId: "production-build-mutable-snapshot",
+    });
+    const resolved = await resolveDependencyPinningSnapshot(pinningSource);
+    const mutableDependencies = { ...resolved.dependencies };
+    const suppliedSnapshot: DependencyPinningSnapshot = {
+      cacheKey: resolved.cacheKey,
+      dependencies: mutableDependencies,
+    };
+    const observed: DependencyPinningSnapshot[] = [];
+
+    const manifestPromise = generateLocalReleaseAssetManifest({
+      adapter,
+      projectDir: "/project",
+      outputDir: "/project/dist",
+      dryRun: true,
+      vendorHttpImports: fakeVendorHttpImports,
+      frameworkTransform: (
+        _source,
+        _sourceFile,
+        _projectDir,
+        _adapter,
+        options,
+      ) => {
+        assertExists(options.dependencyPinningSnapshot);
+        observed.push(options.dependencyPinningSnapshot);
+        return Promise.resolve("export const framework = true;");
+      },
+      dependencyPinningSnapshot: suppliedSnapshot,
+      dependencyPinningSource: pinningSource,
+    });
+    mutableDependencies.react = "19.2.4";
+
+    const manifest = await manifestPromise;
+
+    assertExists(manifest);
+    assertEquals(observed.length > 0, true);
+    assertEquals(
+      observed.every((snapshot) =>
+        snapshot !== suppliedSnapshot &&
+        Object.isFrozen(snapshot) &&
+        Object.isFrozen(snapshot.dependencies) &&
+        snapshot.dependencies?.react === "18.3.1"
+      ),
+      true,
+    );
+  });
+
+  it("rejects a caller React version that disagrees with the dependency snapshot", async () => {
+    setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+    clearReactVersionCache();
+    const { adapter } = makeAdapter();
+    adapter.fs.files.set(
+      "/project/package.json",
+      JSON.stringify({ dependencies: { react: "18.3.1" } }),
+    );
+    const pinningSource = createDependencyPinningSource({
+      projectDir: "/project",
+      adapter,
+      isLocalProject: false,
+      contentSourceId: "production-build-react-mismatch",
+    });
+    const snapshot = await resolveDependencyPinningSnapshot(pinningSource);
+
+    await assertRejects(
+      () =>
+        generateLocalReleaseAssetManifest({
+          adapter,
+          projectDir: "/project",
+          outputDir: "/project/dist",
+          dryRun: true,
+          vendorHttpImports: fakeVendorHttpImports,
+          frameworkTransform: fakeFrameworkTransform,
+          dependencyPinningSnapshot: snapshot,
+          dependencyPinningSource: pinningSource,
+          reactVersion: "19.2.4",
+        }),
+      Error,
+      "does not match dependency snapshot",
+    );
   });
 
   it("includes existing cached HTTP dependency assets in the local manifest", async () => {

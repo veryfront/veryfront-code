@@ -11,9 +11,10 @@ import { createSSRImportMapIdentity, SSRModuleLoader } from "./ssr-module-loader
 import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
-import { snapshotImportMap } from "#veryfront/transforms/pipeline/cache-identity.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { writeCacheFile } from "#veryfront/utils/cache-file-ops.ts";
+import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { snapshotLoadComponentOptions } from "./load-options-snapshot.ts";
 
 const outputQueues = new Map<string, Promise<void>>();
 
@@ -45,10 +46,11 @@ export async function loadModuleFromSource(
   adapter: RuntimeAdapter,
   options?: LoadComponentOptions,
 ): Promise<Record<string, unknown>> {
+  const optionSnapshot = snapshotLoadComponentOptions(options);
   const fileName = filePath.split("/").pop() ?? filePath;
-  const projectId = options?.projectId ?? projectDir;
-  const dev = options?.dev ?? true;
-  const ssr = options?.ssr ?? true;
+  const projectId = optionSnapshot?.projectId ?? projectDir;
+  const dev = optionSnapshot?.dev ?? true;
+  const ssr = optionSnapshot?.ssr ?? true;
 
   return await withSpan(
     "modules.react.loadComponentFromSource",
@@ -59,41 +61,56 @@ export async function loadModuleFromSource(
           "Component file path must identify a file beneath the project root",
         );
       }
+      const dependencyPinningSource = optionSnapshot?.dependencyPinningSource ?? projectDir;
+      const dependencySnapshot = await resolveDependencyPinningSnapshot(
+        dependencyPinningSource,
+        optionSnapshot?.dependencyPinningCacheKey,
+        optionSnapshot?.dependencyPinningDependencies,
+      );
+      const moduleServerOrigin = dependencySnapshot.cacheKey.startsWith("on:")
+        ? optionSnapshot?.moduleServerOrigin
+        : undefined;
 
       if (ssr) {
         const importMapIdentity = await createSSRImportMapIdentity(
-          options?.importMap ?? await loadImportMap(projectDir, adapter),
+          optionSnapshot?.importMap ?? await loadImportMap(projectDir, adapter),
         );
         const loader = new SSRModuleLoader({
           projectDir,
           projectId,
-          projectSlug: options?.projectSlug,
+          projectSlug: optionSnapshot?.projectSlug,
           adapter,
           dev,
-          contentSourceId: options?.contentSourceId,
-          reactVersion: options?.reactVersion,
-          mode: options?.mode,
+          contentSourceId: optionSnapshot?.contentSourceId,
+          reactVersion: optionSnapshot?.reactVersion,
+          moduleServerOrigin,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+          dependencyPinningDependencies: dependencySnapshot.dependencies,
+          dependencyPinningSource,
+          mode: optionSnapshot?.mode,
           importMapIdentity,
         });
 
         return await loader.loadRawModule(filePath, source);
       }
 
-      const explicitImportMap = options?.importMap
-        ? snapshotImportMap(options.importMap)
-        : undefined;
+      const explicitImportMap = optionSnapshot?.importMap;
       const transformOpts: TransformOptions = {
         projectId,
         dev,
-        moduleServerUrl: options?.moduleServerUrl ?? "/_vf_modules",
-        vendorBundleHash: options?.vendorBundleHash,
+        moduleServerUrl: optionSnapshot?.moduleServerUrl ?? "/_vf_modules",
+        moduleServerOrigin,
+        vendorBundleHash: optionSnapshot?.vendorBundleHash,
         ssr: false,
-        reactVersion: options?.reactVersion,
+        reactVersion: optionSnapshot?.reactVersion,
         ...(explicitImportMap
           ? {
             loadImportMap: async () => explicitImportMap,
           }
           : {}),
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+        dependencyPinningDependencies: dependencySnapshot.dependencies,
+        dependencyPinningSource,
       };
 
       const transformedCode = await transformToESM(

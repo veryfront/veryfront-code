@@ -15,6 +15,11 @@ import { containsPathControlCharacters } from "#veryfront/utils/route-path-utils
 import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { type VirtualModuleRegistration, VirtualModuleSystem } from "../virtual-module-system.ts";
 import { assertReactComponentType } from "../react-component-type.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 const COMPONENT_EXTENSION = /^(.*)\.(tsx|jsx|ts|js)$/;
 const NON_RUNTIME_COMPONENT_SUFFIX = /\.(?:d|spec|test|stories|story)$/;
@@ -56,6 +61,16 @@ interface DirectoryWork {
   insideVeryfront: boolean;
 }
 
+const COMPONENT_DEPENDENCY_SNAPSHOT_MAX_ENTRIES = 32;
+
+export type ComponentSourceLoader = (
+  source: string,
+  filePath: string,
+  projectDir: string,
+  adapter: RuntimeAdapter,
+  options?: LoadComponentOptions,
+) => Promise<React.ComponentType<Record<string, unknown>>>;
+
 interface DiscoveryBudget {
   directoriesVisited: number;
   entriesInspected: number;
@@ -69,6 +84,14 @@ export interface FailedComponent {
   readonly timestamp: number;
 }
 
+export class DependencySnapshotUnavailableError extends Error {
+  override readonly name = "DependencySnapshotUnavailableError";
+
+  constructor() {
+    super("Component dependency snapshot is unavailable");
+  }
+}
+
 export interface ComponentRegistryOptions {
   adapter: RuntimeAdapter;
   projectDir: string;
@@ -77,6 +100,8 @@ export interface ComponentRegistryOptions {
   vendorBundleHash?: string;
   projectId?: string;
   contentSourceId?: string;
+  /** @internal Component loading seam for snapshot-isolation tests. */
+  componentSourceLoader?: ComponentSourceLoader;
 }
 
 export class ComponentRegistry {
@@ -91,11 +116,18 @@ export class ComponentRegistry {
     string,
     React.ComponentType<Record<string, unknown>>
   >();
+  private readonly componentsByDependencySnapshot = new Map<
+    string,
+    Map<string, React.ComponentType<Record<string, unknown>>>
+  >();
+  private readonly dependencySnapshotGenerations = new Map<string, number>();
   private readonly componentSources = new Map<string, DeferredComponentSource>();
   private readonly componentPaths = new Map<string, string>();
   private readonly failedComponents = new Map<string, FailedComponent>();
+  private readonly componentSourceLoader: ComponentSourceLoader;
   private initialized = false;
   private retainedDeferredSourceBytes = 0;
+  private componentSourceGeneration = 0;
   private lifecycleGeneration = 0;
   private mutationTail: Promise<void> = Promise.resolve();
 
@@ -122,6 +154,8 @@ export class ComponentRegistry {
     this.vendorBundleHash = options.vendorBundleHash;
     this.projectId = options.projectId;
     this.contentSourceId = options.contentSourceId;
+    this.componentSourceLoader = options.componentSourceLoader ??
+      loadComponentFromSource;
   }
 
   loadFromDirectory(dir: string, deferLoading = false): Promise<void> {
@@ -129,11 +163,24 @@ export class ComponentRegistry {
     return this.runExclusive(async () => {
       this.assertGeneration(generation);
       await this.loadDirectoryGeneration(dir, deferLoading, generation);
+      if (!deferLoading) {
+        await this.prepareDependencySnapshotGeneration(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          generation,
+        );
+      }
     });
   }
 
-  get(name: string): React.ComponentType<Record<string, unknown>> | null {
-    const component = this.components.get(name);
+  get(
+    name: string,
+    dependencyPinningCacheKey?: string,
+  ): React.ComponentType<Record<string, unknown>> | null {
+    const components = this.getDependencySnapshotComponents(dependencyPinningCacheKey);
+    const component = components?.get(name);
     if (component) return component;
 
     if (this.componentSources.has(name) && !this.initialized) {
@@ -142,19 +189,24 @@ export class ComponentRegistry {
     return null;
   }
 
-  getAll(): Record<string, React.ComponentType<Record<string, unknown>>> {
-    return Object.fromEntries(this.components);
+  getAll(
+    dependencyPinningCacheKey?: string,
+  ): Record<string, React.ComponentType<Record<string, unknown>>> {
+    const components = this.getDependencySnapshotComponents(dependencyPinningCacheKey);
+    return Object.fromEntries(components ?? []);
   }
 
-  getAllAsComponents(): Record<string, React.ComponentType<unknown>> {
-    return Object.fromEntries(this.components) as Record<
+  getAllAsComponents(
+    dependencyPinningCacheKey?: string,
+  ): Record<string, React.ComponentType<unknown>> {
+    return this.getAll(dependencyPinningCacheKey) as Record<
       string,
       React.ComponentType<unknown>
     >;
   }
 
-  has(name: string): boolean {
-    return this.components.has(name);
+  has(name: string, dependencyPinningCacheKey?: string): boolean {
+    return this.getDependencySnapshotComponents(dependencyPinningCacheKey)?.has(name) === true;
   }
 
   getVirtualModuleSystem(): VirtualModuleSystem {
@@ -168,36 +220,113 @@ export class ComponentRegistry {
     // from leaving transformed modules visible without matching components.
     this.virtualModules.clear();
     this.components.clear();
+    this.componentsByDependencySnapshot.clear();
+    this.dependencySnapshotGenerations.clear();
     this.componentSources.clear();
     this.componentPaths.clear();
     this.failedComponents.clear();
     this.retainedDeferredSourceBytes = 0;
     this.initialized = false;
+    this.componentSourceGeneration = 0;
   }
 
-  initializeComponents(): Promise<void> {
-    const generation = this.lifecycleGeneration;
-    return this.runExclusive(async () => {
-      this.assertGeneration(generation);
-      if (this.initialized) return;
-      if (this.componentSources.size === 0) {
-        this.initialized = true;
-        return;
-      }
+  async initializeComponents(): Promise<void> {
+    await this.prepareDependencySnapshot();
+  }
 
-      const loaderOptions = await this.getLoaderOptions();
-      const loaded = new Map<
-        string,
-        React.ComponentType<Record<string, unknown>>
-      >();
+  /**
+   * Materialize the retained component sources for one immutable dependency
+   * snapshot. Snapshot-specific maps avoid reusing component objects compiled
+   * under package state A during a later or concurrent state-B render.
+   */
+  async prepareDependencySnapshot(
+    dependencyPinningCacheKey?: string,
+    dependencyPinningDependencies?: Readonly<Record<string, string>>,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): Promise<string> {
+    const generation = this.lifecycleGeneration;
+    return await this.runExclusive(() =>
+      this.prepareDependencySnapshotGeneration(
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        moduleServerOrigin,
+        generation,
+      )
+    );
+  }
+
+  private async prepareDependencySnapshotGeneration(
+    dependencyPinningCacheKey: string | undefined,
+    dependencyPinningDependencies: Readonly<Record<string, string>> | undefined,
+    dependencyPinningSource: DependencyPinningSourceInput | undefined,
+    moduleServerOrigin: string | undefined,
+    generation: number,
+  ): Promise<string> {
+    this.assertGeneration(generation);
+    const dependencySnapshot = await resolveDependencyPinningSnapshot(
+      dependencyPinningSource ?? this.projectDir,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+    );
+    this.assertGeneration(generation);
+    const snapshotKey = dependencySnapshot.cacheKey.startsWith("on:") && moduleServerOrigin
+      ? `${dependencySnapshot.cacheKey}:origin:${encodeURIComponent(moduleServerOrigin)}`
+      : dependencySnapshot.cacheKey;
+    const sourceGeneration = this.componentSourceGeneration;
+    if (
+      this.dependencySnapshotGenerations.get(snapshotKey) === sourceGeneration
+    ) {
+      this.touchDependencySnapshot(snapshotKey);
+      this.components.clear();
+      for (
+        const [name, component] of this.componentsByDependencySnapshot.get(snapshotKey) ?? []
+      ) {
+        this.components.set(name, component);
+      }
+      this.initialized = true;
+      return snapshotKey;
+    }
+
+    await this.loadDependencySnapshot(
+      dependencySnapshot,
+      snapshotKey,
+      sourceGeneration,
+      dependencyPinningSource,
+      moduleServerOrigin,
+      generation,
+    );
+    return snapshotKey;
+  }
+
+  private async loadDependencySnapshot(
+    dependencySnapshot: DependencyPinningSnapshot,
+    snapshotKey: string,
+    sourceGeneration: number,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+    generation = this.lifecycleGeneration,
+  ): Promise<void> {
+    this.assertGeneration(generation);
+    logger.debug(`Initializing ${this.componentSources.size} deferred components`);
+
+    const components = new Map<string, React.ComponentType<Record<string, unknown>>>();
+    if (this.componentSources.size > 0) {
+      const loaderOptions = await this.getLoaderOptions(
+        dependencySnapshot,
+        dependencyPinningSource,
+        moduleServerOrigin,
+      );
+      this.assertGeneration(generation);
 
       for (const [componentName, info] of this.componentSources) {
         this.assertGeneration(generation);
         try {
-          loaded.set(
+          components.set(
             componentName,
             assertReactComponentType(
-              await loadComponentFromSource(
+              await this.componentSourceLoader(
                 info.source,
                 info.filePath,
                 info.projectRoot,
@@ -207,6 +336,7 @@ export class ComponentRegistry {
               `Module "${info.filePath}"`,
             ),
           );
+          this.failedComponents.delete(componentName);
         } catch (error) {
           const message = safeErrorMessage(error);
           this.failedComponents.set(
@@ -233,16 +363,68 @@ export class ComponentRegistry {
         ),
         this.projectDir,
       );
-      this.assertGeneration(generation);
-      for (const [componentName, component] of loaded) {
-        this.components.set(componentName, component);
-        this.failedComponents.delete(componentName);
+    }
+    this.assertGeneration(generation);
+    if (sourceGeneration !== this.componentSourceGeneration) {
+      throw new Error("Component registry sources changed during initialization");
+    }
+
+    this.componentsByDependencySnapshot.set(
+      snapshotKey,
+      components,
+    );
+    this.dependencySnapshotGenerations.set(
+      snapshotKey,
+      sourceGeneration,
+    );
+    this.touchDependencySnapshot(snapshotKey);
+    this.trimDependencySnapshots();
+    this.components.clear();
+    for (const [name, component] of components) {
+      this.components.set(name, component);
+    }
+    this.initialized = true;
+    logger.debug(`Initialized ${components.size} deferred components`);
+  }
+
+  private touchDependencySnapshot(snapshotKey: string): void {
+    const components = this.componentsByDependencySnapshot.get(snapshotKey);
+    const generation = this.dependencySnapshotGenerations.get(snapshotKey);
+    if (!components || generation === undefined) return;
+
+    this.componentsByDependencySnapshot.delete(snapshotKey);
+    this.componentsByDependencySnapshot.set(snapshotKey, components);
+    this.dependencySnapshotGenerations.delete(snapshotKey);
+    this.dependencySnapshotGenerations.set(snapshotKey, generation);
+  }
+
+  private getDependencySnapshotComponents(
+    snapshotKey?: string,
+  ): Map<string, React.ComponentType<Record<string, unknown>>> | undefined {
+    if (!snapshotKey) return this.components;
+    const components = this.componentsByDependencySnapshot.get(snapshotKey);
+    if (
+      !components ||
+      this.dependencySnapshotGenerations.get(snapshotKey) !==
+        this.componentSourceGeneration
+    ) {
+      throw new DependencySnapshotUnavailableError();
+    }
+    this.touchDependencySnapshot(snapshotKey);
+    return components;
+  }
+
+  private trimDependencySnapshots(): void {
+    while (
+      this.componentsByDependencySnapshot.size >
+        COMPONENT_DEPENDENCY_SNAPSHOT_MAX_ENTRIES
+    ) {
+      for (const snapshotKey of this.componentsByDependencySnapshot.keys()) {
+        this.componentsByDependencySnapshot.delete(snapshotKey);
+        this.dependencySnapshotGenerations.delete(snapshotKey);
+        break;
       }
-      this.componentSources.clear();
-      this.retainedDeferredSourceBytes = 0;
-      this.initialized = true;
-      logger.debug(`Initialized ${loaded.size} deferred components`);
-    });
+    }
   }
 
   getFailedComponents(): FailedComponent[] {
@@ -258,7 +440,7 @@ export class ComponentRegistry {
 
   private async loadDirectoryGeneration(
     dir: string,
-    deferLoading: boolean,
+    _deferLoading: boolean,
     generation: number,
   ): Promise<void> {
     assertSafePath(dir, "Component directory");
@@ -297,83 +479,44 @@ export class ComponentRegistry {
     }
 
     let projectedDeferredBytes = this.retainedDeferredSourceBytes;
-    if (deferLoading) {
-      for (const component of discovered) {
-        projectedDeferredBytes -= this.componentSources.get(component.name)?.sourceBytes ?? 0;
-        if (
-          component.sourceBytes >
-            MAX_DEFERRED_SOURCE_BYTES - projectedDeferredBytes
-        ) {
-          throw new RangeError(
-            `Deferred component source byte limit of ${MAX_DEFERRED_SOURCE_BYTES} was exceeded`,
-          );
-        }
-        projectedDeferredBytes += component.sourceBytes;
-      }
-    }
-
-    const stagedComponents = new Map<
-      string,
-      React.ComponentType<Record<string, unknown>>
-    >();
-    if (!deferLoading) {
-      const loaderOptions = await this.getLoaderOptions();
-      for (const component of discovered) {
-        this.assertGeneration(generation);
-        try {
-          stagedComponents.set(
-            component.name,
-            assertReactComponentType(
-              await loadComponentFromSource(
-                component.source,
-                component.filePath,
-                component.projectRoot,
-                this.adapter,
-                loaderOptions,
-              ),
-              `Module "${component.filePath}"`,
-            ),
-          );
-        } catch (error) {
-          throw componentLoadError(component.name, component.filePath, error);
-        }
-      }
-    }
-
-    if (!deferLoading) {
-      const registrations: VirtualModuleRegistration[] = discovered.map(
-        (component) => ({
-          id: `component:${component.name}`,
-          source: component.source,
-          fileType: component.fileType,
-        }),
-      );
-      await this.virtualModules.registerModules(registrations, this.projectDir);
-      this.assertGeneration(generation);
-    }
-
     for (const component of discovered) {
+      projectedDeferredBytes -= this.componentSources.get(component.name)?.sourceBytes ?? 0;
+      if (
+        component.sourceBytes >
+          MAX_DEFERRED_SOURCE_BYTES - projectedDeferredBytes
+      ) {
+        throw new RangeError(
+          `Deferred component source byte limit of ${MAX_DEFERRED_SOURCE_BYTES} was exceeded`,
+        );
+      }
+      projectedDeferredBytes += component.sourceBytes;
+    }
+
+    let sourcesChanged = false;
+    for (const component of discovered) {
+      const previous = this.componentSources.get(component.name);
       this.componentPaths.set(component.name, component.filePath);
       this.failedComponents.delete(component.name);
-
-      if (deferLoading) {
-        this.components.delete(component.name);
+      if (
+        !previous ||
+        previous.source !== component.source ||
+        previous.filePath !== component.filePath ||
+        previous.projectRoot !== component.projectRoot ||
+        previous.fileType !== component.fileType
+      ) {
         this.componentSources.set(component.name, component);
-      } else {
-        const previousSource = this.componentSources.get(component.name);
-        if (previousSource) {
-          this.retainedDeferredSourceBytes -= previousSource.sourceBytes;
-          this.componentSources.delete(component.name);
-        }
-        this.components.set(component.name, stagedComponents.get(component.name)!);
+        this.componentSourceGeneration += 1;
+        sourcesChanged = true;
       }
     }
 
-    if (deferLoading) {
-      this.retainedDeferredSourceBytes = projectedDeferredBytes;
+    this.retainedDeferredSourceBytes = projectedDeferredBytes;
+    if (sourcesChanged) {
+      this.virtualModules.clear();
+      this.components.clear();
+      this.componentsByDependencySnapshot.clear();
+      this.dependencySnapshotGenerations.clear();
       this.initialized = false;
-    } else {
-      this.initialized = this.componentSources.size === 0;
     }
     logger.debug(
       `Loaded ${discovered.length} component${
@@ -382,7 +525,11 @@ export class ComponentRegistry {
     );
   }
 
-  private async getLoaderOptions(): Promise<LoadComponentOptions> {
+  private async getLoaderOptions(
+    dependencySnapshot?: DependencyPinningSnapshot,
+    dependencyPinningSource?: DependencyPinningSourceInput,
+    moduleServerOrigin?: string,
+  ): Promise<LoadComponentOptions> {
     if (!this.contentSourceId) {
       throw new TypeError(
         "Component loading requires a content source ID for cache isolation",
@@ -395,6 +542,10 @@ export class ComponentRegistry {
       vendorBundleHash: this.vendorBundleHash,
       contentSourceId: this.contentSourceId,
       importMap: await this.virtualModules.getImportMap(this.projectDir),
+      moduleServerOrigin,
+      dependencyPinningCacheKey: dependencySnapshot?.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot?.dependencies,
+      dependencyPinningSource,
     };
   }
 

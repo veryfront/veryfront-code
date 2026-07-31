@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/module-fetcher/index.test */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { join } from "#veryfront/compat/path";
@@ -25,6 +25,91 @@ import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";
 import { getDefaultImportMap } from "#veryfront/modules/import-map/index.ts";
 import { normalizePath } from "./module-cache.ts";
+import type {
+  CacheRevisionMutation,
+  CacheRevisionSnapshot,
+  RevisionedCacheBackend,
+} from "#veryfront/cache/types.ts";
+import {
+  __injectCachesForTests,
+  __resetInitStateForTests,
+} from "#veryfront/transforms/esm/transform-cache.ts";
+import type { Logger } from "#veryfront/utils/logger/logger.ts";
+
+class PermitFlowCache implements RevisionedCacheBackend {
+  readonly type = "distributed" as const;
+  readonly events: string[];
+  readonly primaryReads: string[] = [];
+  readonly primaryExchanges: Array<{ expectedRevision: string; result: boolean }> = [];
+  readonly ordinaryCalls: string[] = [];
+  private primaryRevision = "replacement-after-observation";
+  private recoveryRevision = 0;
+
+  constructor(events: string[]) {
+    this.events = events;
+  }
+
+  get(key: string): Promise<string | null> {
+    this.ordinaryCalls.push(`get:${key}`);
+    return Promise.reject(new Error("ordinary get must not be used"));
+  }
+
+  set(key: string): Promise<void> {
+    this.ordinaryCalls.push(`set:${key}`);
+    return Promise.reject(new Error("ordinary set must not be used"));
+  }
+
+  del(key: string): Promise<void> {
+    this.ordinaryCalls.push(`del:${key}`);
+    return Promise.reject(new Error("ordinary del must not be used"));
+  }
+
+  getWithRevision(key: string): Promise<CacheRevisionSnapshot> {
+    if (key.includes(":transform:")) {
+      this.primaryReads.push(key);
+      this.events.push("primary-observation");
+      if (this.primaryReads.length === 1) {
+        return Promise.resolve({ value: null, revision: "observed-before-transform" });
+      }
+      return Promise.resolve({ value: null, revision: this.primaryRevision });
+    }
+    return Promise.resolve({ value: null, revision: String(this.recoveryRevision) });
+  }
+
+  compareExchange(
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ): Promise<boolean> {
+    if (key.includes(":transform:")) {
+      const result = expectedRevision === this.primaryRevision;
+      this.primaryExchanges.push({ expectedRevision, result });
+      this.events.push("primary-publication");
+      if (result) this.primaryRevision = "unexpected-overwrite";
+      return Promise.resolve(result);
+    }
+    if (expectedRevision === String(this.recoveryRevision) && mutation.kind === "set") {
+      this.recoveryRevision++;
+      return Promise.resolve(true);
+    }
+    return Promise.resolve(false);
+  }
+}
+
+function createPermitFlowLogger(events: string[]): Logger {
+  const log = {
+    debug(message: string) {
+      if (message.includes("transformToESM START")) events.push("transform-start");
+    },
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    time: (_label: string, fn: () => unknown) => fn(),
+    child: () => log,
+    component: () => log,
+  };
+  return log as unknown as Logger;
+}
 
 function getTransformCacheKey(
   projectId: string,
@@ -95,6 +180,11 @@ function hashString(input: string): string {
 }
 
 describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () => {
+  afterEach(() => {
+    __injectCachesForTests(null);
+    __resetInitStateForTests();
+  });
+
   describe("getTransformCacheKey", () => {
     it("includes namespace, project, path, and hash", () => {
       const key = getTransformCacheKey(
@@ -345,6 +435,71 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     });
   });
 
+  async function runPermitFlow(): Promise<{
+    cache: PermitFlowCache;
+    events: string[];
+  }> {
+    const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-permit-cache-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-permit-project-" });
+    const events: string[] = [];
+    const cache = new PermitFlowCache(events);
+    const adapter = {
+      env: { get: (_key: string) => undefined },
+      fs: {
+        resolveFile: (path: string) => Promise.resolve(path === "page" ? "/virtual/page.ts" : null),
+        readFile: (path: string) => {
+          if (path !== "/virtual/page.ts") throw new Error(`Unexpected path: ${path}`);
+          return Promise.resolve("export default function Page() { return null; }");
+        },
+      },
+    } as unknown as RuntimeAdapter;
+
+    try {
+      __injectCachesForTests({ cacheBackend: cache });
+      const context = createModuleFetcherContext(
+        esmCacheDir,
+        adapter,
+        projectDir,
+        `project-${crypto.randomUUID()}`,
+        {
+          contentSourceId: "preview-main",
+          importMap: getDefaultImportMap(),
+          projectSlug: "permit-flow",
+          logger: createPermitFlowLogger(events),
+          strictMissingModules: true,
+        },
+      );
+
+      const path = await fetchAndCacheModule("/_vf_modules/page.js", context);
+      assertEquals(typeof path, "string");
+      return { cache, events };
+    } finally {
+      await remove(esmCacheDir, { recursive: true });
+      await remove(projectDir, { recursive: true });
+    }
+  }
+
+  it("carries the exact primary permit from read through persistence", async () => {
+    const { cache } = await runPermitFlow();
+
+    assertEquals(cache.primaryExchanges, [{
+      expectedRevision: "observed-before-transform",
+      result: false,
+    }]);
+    assertEquals(cache.ordinaryCalls, []);
+  });
+
+  it("does not reacquire the primary revision after transformation", async () => {
+    const { cache, events } = await runPermitFlow();
+
+    assertEquals(cache.primaryReads.length, 1);
+    assertEquals(events, [
+      "primary-observation",
+      "transform-start",
+      "primary-publication",
+    ]);
+  });
+
   it("rejects a new module after the request graph reaches its limit", async () => {
     let resolved = false;
     const adapter = {
@@ -371,6 +526,121 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
   });
 
   describe("strictMissingModules", () => {
+    it("rethrows an unknown failure unchanged without logging or coercing it", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-strict-safe-log-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-strict-safe-project-" });
+      const coercionFailure = new Error("coercion hook must not run");
+      const thrownValue = {
+        [Symbol.toPrimitive]() {
+          throw coercionFailure;
+        },
+      };
+      const warnings: Array<{ message: string; metadata?: unknown }> = [];
+      const logger = {
+        debug: () => {},
+        info: () => {},
+        warn(message: string, metadata?: unknown) {
+          warnings.push({ message, metadata });
+        },
+        error: () => {},
+        time: (_label: string, fn: () => unknown) => fn(),
+        child: () => logger,
+        component: () => logger,
+      } as unknown as Logger;
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: () => Promise.reject(thrownValue),
+        },
+      } as any;
+
+      try {
+        const context = createModuleFetcherContext(
+          esmCacheDir,
+          adapter,
+          projectDir,
+          "proj-safe-log",
+          { logger, strictMissingModules: true },
+        );
+        let caught: unknown;
+        try {
+          await fetchAndCacheModule("/_vf_modules/private/secret.js", context);
+        } catch (error) {
+          caught = error;
+        }
+
+        assertStrictEquals(caught, thrownValue);
+        assertEquals(warnings, [{
+          message: "[mdx-loader] Failed to process module",
+          metadata: {
+            strictMissingModules: true,
+            fatal: false,
+            errorName: "object",
+          },
+        }]);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("returns the legacy non-strict fallback without coercing an unknown failure", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-nonstrict-safe-log-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-nonstrict-safe-project-" });
+      let coercionCalls = 0;
+      const thrownValue = {
+        [Symbol.toPrimitive]() {
+          coercionCalls += 1;
+          throw new Error("coercion hook must not run");
+        },
+      };
+      const warnings: Array<{ message: string; metadata?: unknown }> = [];
+      const logger = {
+        debug: () => {},
+        info: () => {},
+        warn(message: string, metadata?: unknown) {
+          warnings.push({ message, metadata });
+        },
+        error: () => {},
+        time: (_label: string, fn: () => unknown) => fn(),
+        child: () => logger,
+        component: () => logger,
+      } as unknown as Logger;
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: () => Promise.reject(thrownValue),
+        },
+      } as any;
+
+      try {
+        const context = createModuleFetcherContext(
+          esmCacheDir,
+          adapter,
+          projectDir,
+          "proj-safe-log",
+          { logger, strictMissingModules: false },
+        );
+
+        assertEquals(
+          await fetchAndCacheModule("/_vf_modules/private/secret.js", context),
+          null,
+        );
+        assertEquals(coercionCalls, 0);
+        assertEquals(warnings, [{
+          message: "[mdx-loader] Failed to process module",
+          metadata: {
+            strictMissingModules: false,
+            fatal: false,
+            errorName: "object",
+          },
+        }]);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("throws when module cannot be resolved", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-strict-cache-" });
       const projectDir = await makeTempDir({ prefix: "vf-mdx-strict-proj-" });

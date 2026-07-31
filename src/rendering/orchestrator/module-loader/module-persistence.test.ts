@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { dirname, join } from "#veryfront/compat/path/index.ts";
+import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { getModulePathCache } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
@@ -111,6 +111,57 @@ describe("module-loader/module-persistence", () => {
         mapBPath,
       );
       assertEquals(mapAPath === mapBPath, false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+      await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);
+    }
+  });
+
+  it("isolates dynamic-cycle artifacts and aliases across dependency snapshots", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-module-persist-project-" });
+    const tmpDir = await Deno.makeTempDir({ prefix: "vf-module-persist-out-" });
+    const localAdapter = await getLocalAdapter();
+    const filePath = join(projectDir, "app/page.ts");
+    const moduleCache = new Map<string, string>();
+
+    try {
+      const snapshotAPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: `export const snapshot = "A";`,
+        localAdapter,
+        moduleCache,
+        cacheKey: "snapshot-a",
+        dependencyPinningCacheKey: "on:34n9smy47dk9",
+        moduleServerOrigin: "https://app.example.test",
+        isCycleTarget: true,
+      });
+      const snapshotBPath = await persistTransformedModule({
+        filePath,
+        projectDir,
+        tmpDir,
+        transformedCode: `export const snapshot = "B";`,
+        localAdapter,
+        moduleCache,
+        cacheKey: "snapshot-b",
+        dependencyPinningCacheKey: "on:34n8mjmdp7io",
+        moduleServerOrigin: "https://app.example.test",
+        isCycleTarget: true,
+      });
+
+      assertNotEquals(dirname(snapshotAPath), dirname(snapshotBPath));
+
+      const snapshotAAlias = await Deno.readTextFile(join(dirname(snapshotAPath), "page.js"));
+      const snapshotBAlias = await Deno.readTextFile(join(dirname(snapshotBPath), "page.js"));
+      assertStringIncludes(
+        snapshotAAlias,
+        `export * from "./${basename(snapshotAPath)}";`,
+      );
+      assertStringIncludes(
+        snapshotBAlias,
+        `export * from "./${basename(snapshotBPath)}";`,
+      );
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
       await Deno.remove(tmpDir, { recursive: true }).catch(() => undefined);

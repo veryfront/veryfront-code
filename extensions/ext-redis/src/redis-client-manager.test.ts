@@ -24,8 +24,10 @@ function createFakeClient(connect: () => Promise<void> = () => Promise.resolve()
     mGet: (keys) => Promise.resolve(keys.map(() => null)),
     set: () => Promise.resolve("OK"),
     del: () => Promise.resolve(0),
-    scan: () => Promise.resolve({ cursor: 0, keys: [] }),
+    scan: () => Promise.resolve({ cursor: "0", keys: [] }),
     expire: () => Promise.resolve(1),
+    eval: () => Promise.resolve(null),
+    info: () => Promise.resolve(""),
     isOpen: true,
   };
 }

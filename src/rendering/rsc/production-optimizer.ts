@@ -57,6 +57,9 @@ export class RSCProductionOptimizer {
     return {
       html: RSCProductionOptimizer.minifyHTML(payload.html),
       clientRefs: { ...payload.clientRefs },
+      ...(payload.dependencyPinningCacheKey?.startsWith("on:")
+        ? { dependencyPinningCacheKey: payload.dependencyPinningCacheKey }
+        : {}),
       assets: payload.assets
         ? {
           css: payload.assets.css ? [...payload.assets.css] : undefined,
@@ -115,6 +118,17 @@ export class RSCProductionOptimizer {
 
     for (const asset of payload.assets?.js ?? []) {
       hash = updateLengthDelimitedHash64(hash, "js-asset", asset);
+    }
+
+    const dependencyPinningCacheKey = payload.dependencyPinningCacheKey?.startsWith("on:")
+      ? payload.dependencyPinningCacheKey
+      : "";
+    if (dependencyPinningCacheKey) {
+      hash = updateLengthDelimitedHash64(
+        hash,
+        "dependency-pinning-cache-key",
+        dependencyPinningCacheKey,
+      );
     }
 
     return `"${hash.toString(36).padStart(13, "0")}"`;

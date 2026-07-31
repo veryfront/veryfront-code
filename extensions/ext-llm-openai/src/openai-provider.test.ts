@@ -747,13 +747,6 @@ describe("openai-provider", () => {
         toolName: "weather",
       },
       {
-        type: "data-tool-call-status",
-        data: {
-          toolCallId: "call_weather",
-          status: "streaming_input",
-        },
-      },
-      {
         type: "tool-input-delta",
         id: "call_weather",
         delta: '{"city":"',
@@ -2794,7 +2787,6 @@ describe("openai-provider", () => {
         "reasoning-delta",
         "reasoning-end",
         "tool-input-start",
-        "data-tool-call-status",
         "tool-input-delta",
         "tool-call",
         "text-delta",

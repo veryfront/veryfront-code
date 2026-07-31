@@ -7,358 +7,16 @@ import { cliLogger as logger, isVerbose } from "#cli/utils";
 import { brand, dim, red } from "#cli/ui";
 import { createTransientSpinner } from "../../ui/progress.ts";
 import { join } from "veryfront/platform/path";
-import { createPackageJson } from "./config-generator.ts";
-import { createDenoConfig } from "./deno-config-generator.ts";
 import { createError, toError } from "veryfront/errors";
 import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
-import { createFileSystem, cwd, mkdir } from "veryfront/platform";
-import {
-  detectPackageManager,
-  getDlxCommand,
-  getInstallCommand,
-  getRunCommand,
-  installDependencies,
-  type PackageManager,
-} from "../../utils/package-manager.ts";
-import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
-import type { EnvVarConfig, ResolvedIntegration, TemplateFile } from "../../templates/types.ts";
-import {
-  loadFeature,
-  mergeFiles,
-  resolveFeatures,
-  validateFeatures,
-} from "../../templates/feature-loader.ts";
-import {
-  loadIntegrationBaseConfig,
-  loadIntegrationBaseFilesFromDirectory,
-  loadIntegrations,
-  validateIntegrations,
-} from "../../templates/integration-loader.ts";
-import {
-  getAtlassianOAuthScopes,
-  getUnselectedAtlassianOAuthScopes,
-} from "../../templates/atlassian-oauth-composition.ts";
-import {
-  runInteractiveWizard,
-  shouldRunWizard,
-  validateProjectName,
-} from "./interactive-wizard.ts";
+import { cwd } from "veryfront/platform";
+import { createFileSystem } from "veryfront/platform";
+import { getDlxCommand, getInstallCommand, getRunCommand } from "../../utils/package-manager.ts";
+import { createProject, type ProjectCreationObserver } from "../../shared/project-creation.ts";
+import { validateProjectName } from "../../shared/project-name.ts";
+import { promptForEnvVars } from "../../utils/env-prompt.ts";
+import { runInteractiveWizard, shouldRunWizard } from "./interactive-wizard.ts";
 import { DEFAULT_TEMPLATE } from "./catalog.ts";
-
-/**
- * Icon mapping for integrations based on category/name
- */
-const INTEGRATION_ICONS: Record<string, string> = {
-  gmail: "mail",
-  outlook: "mail",
-  slack: "slack",
-  teams: "teams",
-  calendar: "calendar",
-  github: "github",
-  gitlab: "gitlab",
-  bitbucket: "bitbucket",
-  jira: "jira",
-  confluence: "confluence",
-  notion: "notion",
-  linear: "linear",
-  asana: "asana",
-  trello: "trello",
-  monday: "monday",
-  clickup: "clickup",
-  figma: "figma",
-  drive: "drive",
-  onedrive: "onedrive",
-  sharepoint: "sharepoint",
-  box: "box",
-  sheets: "sheets",
-  airtable: "airtable",
-  supabase: "database",
-  neon: "database",
-  snowflake: "database",
-  salesforce: "salesforce",
-  pipedrive: "pipedrive",
-  zendesk: "zendesk",
-  intercom: "intercom",
-  freshdesk: "freshdesk",
-  servicenow: "servicenow",
-  stripe: "stripe",
-  quickbooks: "quickbooks",
-  xero: "xero",
-  shopify: "shopify",
-  mailchimp: "mailchimp",
-  twitter: "twitter",
-  zoom: "zoom",
-  webex: "webex",
-  twilio: "twilio",
-  sentry: "sentry",
-  posthog: "posthog",
-  mixpanel: "mixpanel",
-  anthropic: "ai",
-  aws: "cloud",
-};
-
-/**
- * Generate the integrations status route based on loaded integrations
- */
-function generateIntegrationsStatusRoute(
-  integrations: ResolvedIntegration[],
-): string {
-  const atlassianOAuthScopes = getAtlassianOAuthScopes(
-    integrations.map(({ config }) => config.name),
-  );
-  const unselectedAtlassianOAuthScopes = getUnselectedAtlassianOAuthScopes(
-    integrations.map(({ config }) => config.name),
-  );
-  const definitions = integrations.map(({ config }) => ({
-    id: config.name,
-    name: config.displayName,
-    icon: INTEGRATION_ICONS[config.name] ?? "default",
-    authType: config.auth.type,
-    connectionMode: config.auth.type === "oauth2" &&
-        config.auth.grantType !== "client_credentials"
-      ? "user-oauth"
-      : "environment",
-    requiredEnvironmentVariables: (config.envVars ?? [])
-      .filter(({ required }) => required)
-      .map(({ name }) => name),
-    requiredOAuthScopes: config.name === "jira" || config.name === "confluence"
-      ? atlassianOAuthScopes
-      : [],
-    forbiddenOAuthScopes: config.name === "jira" || config.name === "confluence"
-      ? unselectedAtlassianOAuthScopes
-      : [],
-    atlassianService: config.name === "jira" || config.name === "confluence" ? config.name : null,
-  }));
-  const hasUserOAuth = definitions.some(({ connectionMode }) => connectionMode === "user-oauth");
-  const hasAtlassianOAuth = definitions.some(({ atlassianService }) => atlassianService !== null);
-  const hasEnvironmentAuth = definitions.some(
-    ({ connectionMode }) => connectionMode === "environment",
-  );
-  const integrationEntries = definitions.map((definition) => {
-    const environmentVariables = definition.requiredEnvironmentVariables.length
-      ? `[
-${
-        definition.requiredEnvironmentVariables.map((name) => `      ${JSON.stringify(name)},`)
-          .join("\n")
-      }
-    ]`
-      : "[]";
-    const requiredOAuthScopes = definition.requiredOAuthScopes.length
-      ? `[
-${definition.requiredOAuthScopes.map((scope) => `      ${JSON.stringify(scope)},`).join("\n")}
-    ]`
-      : "[]";
-    const forbiddenOAuthScopes = definition.forbiddenOAuthScopes.length
-      ? `[
-${definition.forbiddenOAuthScopes.map((scope) => `      ${JSON.stringify(scope)},`).join("\n")}
-    ]`
-      : "[]";
-    return `  {
-    id: ${JSON.stringify(definition.id)},
-    name: ${JSON.stringify(definition.name)},
-    icon: ${JSON.stringify(definition.icon)},
-    authType: ${JSON.stringify(definition.authType)},
-    connectionMode: ${JSON.stringify(definition.connectionMode)},
-    requiredEnvironmentVariables: ${environmentVariables},
-    requiredOAuthScopes: ${requiredOAuthScopes},
-    forbiddenOAuthScopes: ${forbiddenOAuthScopes},
-    atlassianService: ${JSON.stringify(definition.atlassianService)},
-  },`;
-  }).join("\n");
-  const imports = [
-    hasUserOAuth ? 'import { oauthTokenStore } from "../../../../lib/oauth-store.ts";' : "",
-    hasUserOAuth
-      ? 'import { satisfiesOAuthScopePolicy } from "../../../../lib/oauth-scope-utils.ts";'
-      : "",
-    hasAtlassianOAuth
-      ? 'import { resolveAtlassianCloudId } from "../../../../lib/atlassian-cloud.ts";'
-      : "",
-    'import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";',
-    hasEnvironmentAuth
-      ? 'import { readEnvironmentVariable } from "../../../../lib/environment.ts";'
-      : "",
-  ].filter(Boolean).join("\n");
-  const oauthTokenValidator = hasUserOAuth
-    ? `function hasUsableOAuthTokens(
-  value: unknown,
-  requiredScopes: readonly string[],
-  forbiddenScopes: readonly string[],
-  now = Date.now(),
-): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const token = value as Record<string, unknown>;
-  if (
-    typeof token.accessToken !== "string" || token.accessToken.length === 0 ||
-    token.accessToken.length > 131072 ||
-    token.accessToken.trim() !== token.accessToken
-  ) return false;
-  if (!satisfiesOAuthScopePolicy(token.scope, requiredScopes, forbiddenScopes)) return false;
-  const hasRefreshToken = typeof token.refreshToken === "string" &&
-    token.refreshToken.length > 0 && token.refreshToken.length <= 131072 &&
-    token.refreshToken.trim() === token.refreshToken;
-  if (token.refreshToken !== undefined && !hasRefreshToken) return false;
-  if (token.expiresAt === undefined) return true;
-  if (
-    typeof token.expiresAt !== "number" ||
-    !Number.isSafeInteger(token.expiresAt) ||
-    token.expiresAt < 0
-  ) return false;
-  return token.expiresAt > now || hasRefreshToken;
-}`
-    : "";
-  const integrationOAuthValidator = hasUserOAuth
-    ? `async function hasUsableIntegrationOAuth(
-  integration: (typeof INTEGRATIONS)[number],
-  userId: string,
-): Promise<boolean> {
-  const usableTokens = hasUsableOAuthTokens(
-    await oauthTokenStore.getTokens(integration.id, userId),
-    integration.requiredOAuthScopes,
-    integration.forbiddenOAuthScopes,
-  );
-  if (!usableTokens) return false;
-${
-      hasAtlassianOAuth
-        ? `  if (integration.atlassianService !== null) {
-    try {
-      await resolveAtlassianCloudId(userId, integration.atlassianService, {
-        requiredScopes: integration.requiredOAuthScopes,
-        forbiddenScopes: integration.forbiddenOAuthScopes,
-      });
-    } catch {
-      return false;
-    }
-  }
-`
-        : ""
-    }  return true;
-}`
-    : "";
-  const environmentValidator = hasEnvironmentAuth
-    ? `function hasRequiredConfiguration(names: readonly string[]): boolean {
-  return names.length > 0 && names.every((name) => {
-    const value = readEnvironmentVariable(name);
-    return typeof value === "string" && value.trim().length > 0;
-  });
-}`
-    : "";
-  const connectionResolver = hasUserOAuth && hasEnvironmentAuth
-    ? `async function resolveConnected(
-  integration: (typeof INTEGRATIONS)[number],
-  userId: string,
-): Promise<boolean> {
-  return integration.connectionMode === "user-oauth"
-    ? hasUsableIntegrationOAuth(integration, userId)
-    : hasRequiredConfiguration(integration.requiredEnvironmentVariables);
-}`
-    : hasUserOAuth
-    ? `async function resolveConnected(
-  integration: (typeof INTEGRATIONS)[number],
-  userId: string,
-): Promise<boolean> {
-  return hasUsableIntegrationOAuth(integration, userId);
-}`
-    : `function resolveConnected(
-  integration: (typeof INTEGRATIONS)[number],
-  _userId: string,
-): Promise<boolean> {
-  return Promise.resolve(
-    hasRequiredConfiguration(integration.requiredEnvironmentVariables),
-  );
-}`;
-  const helperDefinitions = [
-    oauthTokenValidator,
-    integrationOAuthValidator,
-    environmentValidator,
-    connectionResolver,
-  ].filter(Boolean).join("\n\n");
-
-  return `/**
- * Integration Status API
- *
- * Returns the connection status of all configured integrations.
- * Used by the setup guide to show which services are connected.
- *
- * This file is auto-generated based on the integrations you selected.
- */
-
-${imports}
-
-// Integrations configured for this project
-const INTEGRATIONS = [
-${integrationEntries}
-] as const;
-const NO_STORE_HEADERS = { "Cache-Control": "no-store" } as const;
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return Response.json(body, { status, headers: NO_STORE_HEADERS });
-}
-
-${helperDefinitions}
-
-export async function GET(req: Request): Promise<Response> {
-  const userId = await requireUserIdFromRequest(req);
-  if (!userId) return jsonResponse({ error: "Unauthorized" }, 401);
-
-  try {
-    const integrations = await Promise.all(
-      INTEGRATIONS.map(async (integration) => {
-        const { id, name, icon, authType, connectionMode } = integration;
-        const connected = await resolveConnected(integration, userId);
-        const isUserOAuth = String(connectionMode) === "user-oauth";
-
-        return {
-          id,
-          name,
-          icon,
-          authType,
-          connected,
-          connectionState: connected
-            ? (isUserOAuth ? "connected" : "configured")
-            : (isUserOAuth ? "disconnected" : "configuration-required"),
-          connectUrl: isUserOAuth ? \`/api/auth/\${id}\` : null,
-        };
-      }),
-    );
-
-    return jsonResponse({ integrations });
-  } catch {
-    return jsonResponse({
-      error: "Integration status is temporarily unavailable",
-    }, 503);
-  }
-}
-`;
-}
-
-function validateOrThrow<T extends string>(
-  kind: "features" | "integrations",
-  values: T[],
-  validate: (values: T[]) => { valid: boolean; errors: string[] },
-): void {
-  if (!values.length) return;
-
-  const validation = validate(values);
-  if (validation.valid) return;
-
-  for (const error of validation.errors) logger.error(error);
-
-  throw toError(
-    createError({
-      type: "config",
-      message: `Invalid ${kind} specified`,
-    }),
-  );
-}
-
-function dedupeEnvVars(envVars: EnvVarConfig[]): EnvVarConfig[] {
-  const seen = new Set<string>();
-  return envVars.filter(({ name }) => {
-    if (seen.has(name)) return false;
-    seen.add(name);
-    return true;
-  });
-}
 
 type StructureNode = {
   file: boolean;
@@ -397,13 +55,10 @@ function structureRank(name: string): number {
   return index === -1 ? STRUCTURE_ORDER.length : index;
 }
 
-function sortStructureEntries(
-  [nameA, nodeA]: [string, StructureNode],
-  [nameB, nodeB]: [
-    string,
-    StructureNode,
-  ],
-): number {
+function sortStructureEntries([nameA, nodeA]: [string, StructureNode], [nameB, nodeB]: [
+  string,
+  StructureNode,
+]): number {
   const rankDiff = structureRank(nameA) - structureRank(nameB);
   if (rankDiff !== 0) return rankDiff;
 
@@ -411,11 +66,7 @@ function sortStructureEntries(
   return nameA.localeCompare(nameB);
 }
 
-function renderProjectStructure(
-  rootName: string,
-  paths: string[],
-  maxLines = 22,
-): string[] {
+function renderProjectStructure(rootName: string, paths: string[], maxLines = 22): string[] {
   const root: StructureNode = { file: false, children: new Map() };
   const normalizedPaths = [...new Set(paths)]
     .filter((path) => path && !path.endsWith("/"))
@@ -457,9 +108,7 @@ function renderProjectStructure(
   walk(root, 1);
 
   if (omitted > 0) {
-    lines.push(
-      `${"  ".repeat(1)}... ${omitted} more ${omitted === 1 ? "entry" : "entries"}`,
-    );
+    lines.push(`${"  ".repeat(1)}... ${omitted} more ${omitted === 1 ? "entry" : "entries"}`);
   }
 
   return lines;
@@ -523,266 +172,85 @@ export async function initCommand(
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;
-  // Map runtime to package-manager preference. "node" → "npm" so an explicit
-  // --runtime node always uses npm regardless of lockfiles or user agent;
-  // "bun"/"deno" force the matching pm.
-  const pmPreference: PackageManager = runtime === "node" ? "npm" : runtime;
-
   const projectDir = projectName ? join(parentDir, projectName) : parentDir;
-  const fs = createFileSystem();
-
-  validateOrThrow("features", features, validateFeatures);
-  validateOrThrow("integrations", integrations, validateIntegrations);
-
-  if (projectName && (await fs.exists(projectDir)) && !options.force) {
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          `Directory "${projectName}" already exists. Choose a different name or use --force to overwrite.`,
-      }),
-    );
-  }
-
-  const { getAiRuleTemplate, getTemplate, getTemplateConfig } = await import(
-    "../../templates/index.ts"
-  );
-
-  let templateFiles = await getTemplate(template);
-  const templateConfig = getTemplateConfig(template);
-
-  if (!templateFiles) {
-    throw toError(
-      createError({
-        type: "config",
-        message: `Template ${template} not found`,
-      }),
-    );
-  }
-
-  const agentsGuide = getAiRuleTemplate("agents.md");
-  if (!agentsGuide) {
-    throw toError(
-      createError({
-        type: "config",
-        message: "Project agent guide template not found",
-      }),
-    );
-  }
-
-  if (!templateFiles.some((file) => file.path === "AGENTS.md")) {
-    templateFiles = mergeFiles(templateFiles, [
-      { path: "AGENTS.md", content: agentsGuide },
-    ]);
-  }
-
-  const allEnvVars: EnvVarConfig[] = templateConfig?.envVars ? [...templateConfig.envVars] : [];
-  const featureTips: string[] = [];
-  let loadedIntegrations: ResolvedIntegration[] = [];
-
-  if (features.length) {
-    const { ordered, errors } = await resolveFeatures(features);
-    if (errors.length) {
-      for (const error of errors) logger.error(error);
+  if (projectName && !options.force) {
+    const fs = createFileSystem();
+    if (await fs.exists(projectDir)) {
       throw toError(
         createError({
           type: "config",
-          message: "Failed to resolve features",
+          message:
+            `Directory "${projectName}" already exists. Choose a different name or use --force to overwrite.`,
         }),
       );
     }
-
-    logger.debug(`Resolved feature order: ${ordered.join(" -> ")}`);
-
-    for (const featureName of ordered) {
-      const feature = await loadFeature(featureName);
-      if (!feature) {
-        logger.warn(`Feature ${featureName} not found, skipping`);
-        continue;
-      }
-
-      logger.debug(
-        `Loading feature: ${featureName} (${feature.files.length} files)`,
-      );
-      templateFiles = mergeFiles(templateFiles, feature.files);
-
-      if (feature.config.envVars) allEnvVars.push(...feature.config.envVars);
-      if (feature.config.tips) featureTips.push(...feature.config.tips);
-    }
   }
 
-  if (integrations.length) {
-    logger.debug(`Loading integrations: ${integrations.join(", ")}`);
-
-    templateFiles = mergeFiles(
-      templateFiles,
-      await loadIntegrationBaseFilesFromDirectory(),
-    );
-
-    const baseConfig = await loadIntegrationBaseConfig();
-    if (baseConfig.envVars) allEnvVars.push(...baseConfig.envVars);
-
-    const {
-      integrations: resolvedIntegrations,
-      files: integrationFiles,
-      errors: integrationErrors,
-    } = await loadIntegrations(integrations);
-    loadedIntegrations = resolvedIntegrations;
-
-    if (integrationErrors.length) {
-      for (const error of integrationErrors) logger.error(error);
-      throw toError(
-        createError({
-          type: "config",
-          message: `Failed to load selected integrations: ${integrationErrors.join("; ")}`,
-        }),
-      );
-    }
-
-    templateFiles = mergeFiles(templateFiles, integrationFiles);
-
-    for (const integration of loadedIntegrations) {
-      if (integration.config.envVars) {
-        allEnvVars.push(...integration.config.envVars);
+  let installSpinner: ReturnType<typeof createTransientSpinner> | null = null;
+  const installObserver: ProjectCreationObserver = {
+    onEvent(event) {
+      if (event.kind === "dependency-installation-started") {
+        installSpinner = quiet
+          ? null
+          : createTransientSpinner(`Installing dependencies with ${event.packageManager}...`);
+        return;
       }
-    }
 
-    templateFiles = mergeFiles(templateFiles, [
-      {
-        path: "app/api/integrations/status/route.ts",
-        content: generateIntegrationsStatusRoute(loadedIntegrations),
-      },
-    ]);
-
-    logger.debug(
-      `Loaded ${loadedIntegrations.length} integrations with ${integrationFiles.length} files`,
-    );
-
-    featureTips.push(`Integrations loaded: ${integrations.join(", ")}`);
-    featureTips.push("Visit /setup for guided OAuth app setup");
-    featureTips.push("Connect services at /api/auth/<service>");
-  }
-
-  if (projectName) await mkdir(projectDir, { recursive: true });
-
-  const filesSpinner = quiet ? null : createTransientSpinner("Creating project files...");
-  const createdPaths: string[] = [];
-  try {
-    for (const file of templateFiles as TemplateFile[]) {
-      if (file.path === ".env" || file.path === ".env.example") continue;
-
-      const filePath = join(projectDir, file.path);
-      const fileDir = join(projectDir, ...file.path.split("/").slice(0, -1));
-
-      if (fileDir !== projectDir) await mkdir(fileDir, { recursive: true });
-
-      await fs.writeTextFile(filePath, file.content);
-      createdPaths.push(file.path);
-      logger.debug(`Created file: ${file.path}`);
-    }
-
-    // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
-    if (!options.quiet) {
-      await createPackageJson(projectDir, projectName, {
-        dependencies: templateConfig?.npmDependencies,
-        firstPartyExtensions: templateConfig?.firstPartyExtensions,
-        integrations: loadedIntegrations.map((integration) => ({
-          name: integration.config.name,
-          npmDependencies: integration.config.npmDependencies,
-        })),
-      });
-      createdPaths.push("package.json");
-      if (runtime === "deno") {
-        await createDenoConfig(projectDir);
-        createdPaths.push("deno.json");
+      if (event.status === "installed") {
+        installSpinner?.success("Dependencies installed");
+        return;
       }
-    }
 
-    if (allEnvVars.length) {
-      const envResult = await promptForEnvVars(dedupeEnvVars(allEnvVars), {
-        skipPrompt: options.skipEnvPrompt,
-        prefilledValues: options.env,
-      });
-
-      await fs.writeTextFile(join(projectDir, ".env"), envResult.envContent);
-      createdPaths.push(".env");
-      logger.debug("Created file: .env");
-
-      await fs.writeTextFile(
-        join(projectDir, ".env.example"),
-        envResult.envExampleContent,
-      );
-      createdPaths.push(".env.example");
-      logger.debug("Created file: .env.example");
-    }
-
-    const gitignorePath = join(projectDir, ".gitignore");
-    let existingGitignore: string | undefined;
-    try {
-      existingGitignore = await fs.readTextFile(gitignorePath);
-    } catch {
-      existingGitignore = undefined;
-    }
-
-    await fs.writeTextFile(
-      gitignorePath,
-      generateGitignoreContent(existingGitignore),
-    );
-    createdPaths.push(".gitignore");
-    logger.debug("Updated file: .gitignore");
-
-    filesSpinner?.success("Project files created");
-  } catch (err) {
-    filesSpinner?.error("Failed to create project files");
-    throw err;
-  }
-
-  (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
-
-  if (!options.skipInstall) {
-    const pm = await detectPackageManager(projectDir, pmPreference);
-    const installSpinner = quiet
-      ? null
-      : createTransientSpinner(`Installing dependencies with ${pm}...`);
-    const installSuccess = await installDependencies(projectDir, {
-      silent: true,
-      packageManager: pm,
-    });
-
-    if (installSuccess) {
-      installSpinner?.success("Dependencies installed");
-    } else {
       installSpinner?.error("Dependency installation failed");
       if (!quiet) {
         logger.warn(
-          `Run '${getInstallCommand(pm)}' manually to install dependencies.`,
+          `Run '${getInstallCommand(event.packageManager)}' manually to install dependencies.`,
         );
       }
-    }
+    },
+  };
+
+  const result = await createProject(
+    {
+      name: projectName,
+      parentDir,
+      template,
+      runtime,
+      features,
+      integrations,
+      environmentValues: options.env ?? {},
+      conflictPolicy: options.force ? "overwrite" : "fail",
+      installDependencies: !options.skipInstall,
+      initializeGit: initGit,
+      includePackageMetadata: !quiet,
+    },
+    {
+      observer: installObserver,
+      resolveEnvironmentFiles: (variables, values) =>
+        promptForEnvVars(variables, {
+          skipPrompt: options.skipEnvPrompt,
+          prefilledValues: values,
+        }),
+    },
+  );
+
+  if (result.gitInitialization === "failed" && !quiet) {
+    logger.warn("Git initialization failed");
   }
 
-  // Initialize git if requested
-  if (initGit) {
-    try {
-      const { initializeGitRepo } = await import("../../utils/git.ts");
-      const success = await initializeGitRepo(projectDir, projectName ?? "veryfront project");
-      if (!success && !quiet) logger.warn("Git initialization failed");
-    } catch {
-      if (!quiet) logger.warn("Git initialization failed");
-    }
-  }
+  const createdProjectDir = result.projectDir;
 
   // Deploy to cloud if --deploy flag is set
   let deployedUrl: string | undefined;
   const manualDeployCommand = quiet
-    ? `${getDlxCommand(pmPreference)} veryfront deploy`
-    : getRunCommand(pmPreference, "deploy");
+    ? `${getDlxCommand(result.packageManager)} veryfront deploy`
+    : getRunCommand(result.packageManager, "deploy");
   if (options.deploy) {
     const manualDeployHint = `Run ${brand(manualDeployCommand)} to deploy later.`;
 
     if (dependencies.deployProject) {
       try {
-        deployedUrl = await dependencies.deployProject(projectDir);
+        deployedUrl = await dependencies.deployProject(createdProjectDir);
         if (!deployedUrl) {
           throw new Error("Deploy completed without a verified result.");
         }
@@ -811,10 +279,10 @@ export async function initCommand(
           log(`  Deploying project...`);
 
           try {
-            chdir(projectDir);
+            chdir(createdProjectDir);
 
             const deployment = await deployCommand({
-              projectDir,
+              projectDir: createdProjectDir,
               branch: "main",
               env: "production",
               force: true,
@@ -838,7 +306,7 @@ export async function initCommand(
   }
 
   // Build success box with next steps
-  const pm = await detectPackageManager(projectDir, pmPreference);
+  const pm = result.packageManager;
   const devCommand = getRunCommand(pm, "dev");
 
   const localSteps: string[] = [];
@@ -852,7 +320,7 @@ export async function initCommand(
 
   const displayName = projectName ?? "Project";
   const structureRoot = projectName ?? ".";
-  const structureLines = renderProjectStructure(structureRoot, createdPaths);
+  const structureLines = renderProjectStructure(structureRoot, result.createdPaths);
   const deployCommandHint = getRunCommand(pm, "deploy");
 
   if (!quiet) {
@@ -881,9 +349,8 @@ export async function initCommand(
     }
 
     const tips: string[] = [];
-    const displayFeatureTips = (options as InitOptions & { _featureTips?: string[] })._featureTips;
-    if (displayFeatureTips?.length) {
-      for (const tip of displayFeatureTips) {
+    if (result.featureTips.length) {
+      for (const tip of result.featureTips) {
         tips.push(dim(tip));
       }
     }

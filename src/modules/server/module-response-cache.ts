@@ -1,9 +1,12 @@
 import { registerLRUCache } from "#veryfront/cache";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { TRANSFORM_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { captureDependencyPinningSnapshot } from "../dependency-pinning-snapshot.ts";
 
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_ENTRIES = 10_000;
 const RELEASE_MODULE_RESPONSE_CACHE_MAX_BYTES = 64 * 1024 * 1024;
@@ -30,6 +33,10 @@ export interface ReleaseModuleResponseCacheKeyOptions {
   releaseId: string;
   runtimeVersion: string;
   reactVersion?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  moduleServerOrigin?: string;
   releaseDependencyManifestVersion?: number | null;
   modulePath: string;
 }
@@ -147,6 +154,11 @@ function normalizeOptionalIdentity(value: string | null | undefined, label: stri
 export async function buildReleaseModuleResponseCacheKey(
   options: ReleaseModuleResponseCacheKeyOptions,
 ): Promise<string> {
+  captureDependencyPinningSnapshot(
+    options.dependencyPinningCacheKey,
+    options.dependencyPinningDependencies,
+    options.dependencyPinningSource,
+  );
   const manifestVersion = options.releaseDependencyManifestVersion;
   if (
     manifestVersion != null &&
@@ -154,7 +166,7 @@ export async function buildReleaseModuleResponseCacheKey(
   ) {
     throw new RangeError("Release dependency manifest version must be a non-negative integer");
   }
-  const identity = JSON.stringify([
+  const identityFields = [
     assertBoundedIdentity(options.projectIdentity, "Project identity"),
     assertBoundedIdentity(options.projectDir, "Project directory"),
     normalizeOptionalIdentity(options.projectSlug, "Project slug"),
@@ -164,7 +176,14 @@ export async function buildReleaseModuleResponseCacheKey(
     normalizeOptionalIdentity(options.reactVersion, "React version"),
     manifestVersion ?? null,
     assertBoundedIdentity(options.modulePath, "Module path"),
-  ]);
+  ];
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+  const identity = JSON.stringify(
+    cacheVariant ? [...identityFields, ["dependency-pinning", cacheVariant]] : identityFields,
+  );
   if (encoder.encode(identity).byteLength > MAX_RELEASE_MODULE_IDENTITY_BYTES) {
     throw new RangeError("Release module response cache identity exceeds its limit");
   }

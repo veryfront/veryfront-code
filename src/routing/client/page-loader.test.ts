@@ -9,6 +9,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { PageLoader } from "./page-loader.ts";
 import type { RouteData, SpaPageData } from "./types.ts";
 
+const DEPENDENCY_PINNING_HEADER = "x-veryfront-dependency-pins";
+
 function makeRouteData(overrides: Partial<RouteData> = {}): RouteData {
   return {
     html: "<div>test</div>",
@@ -31,8 +33,58 @@ function makeSpaPageData(overrides: Partial<SpaPageData> = {}): SpaPageData {
   };
 }
 
+function makeHydrationDocument(getJson: () => string): Document {
+  return {
+    getElementById: (id: string) =>
+      id === "veryfront-hydration-data" ? { textContent: getJson() } : null,
+  } as unknown as Document;
+}
+
+function installSnapshotDOMParser(): () => void {
+  const globalWithDOMParser = globalThis as typeof globalThis & {
+    DOMParser: typeof DOMParser;
+  };
+  const originalDOMParser = globalWithDOMParser.DOMParser;
+
+  class SnapshotDOMParser {
+    parseFromString(html: string) {
+      const rootMatch = html.match(/<div id="root"[^>]*>(.*?)<\/div>/s);
+      const hydrationMatch = html.match(
+        /<script id="veryfront-hydration-data"[^>]*>(.*?)<\/script>/s,
+      );
+      return {
+        getElementById: (id: string) =>
+          id === "root"
+            ? (rootMatch ? { innerHTML: rootMatch[1] } : null)
+            : id === "veryfront-hydration-data"
+            ? (hydrationMatch ? { textContent: hydrationMatch[1] } : null)
+            : null,
+        querySelector: () => null,
+      };
+    }
+  }
+
+  globalWithDOMParser.DOMParser = SnapshotDOMParser as unknown as typeof DOMParser;
+  return () => {
+    globalWithDOMParser.DOMParser = originalDOMParser;
+  };
+}
+
 describe("routing/client/page-loader", () => {
   describe("cache operations", () => {
+    it("preserves the legacy path identity when pinning is off", () => {
+      const loader = new PageLoader(
+        makeHydrationDocument(() => JSON.stringify({ dependencyPinningCacheKey: "off" })),
+      );
+
+      loader.setCache("/legacy", makeRouteData());
+      const keys = [
+        ...(loader as unknown as { cache: Map<string, RouteData> }).cache.keys(),
+      ];
+
+      assertEquals(keys, ["/legacy"]);
+    });
+
     it("should set and get cached route data", () => {
       const loader = new PageLoader();
       const data = makeRouteData();
@@ -147,17 +199,222 @@ describe("routing/client/page-loader", () => {
   });
 
   describe("page data URL", () => {
-    it("places the JSON suffix before query parameters and maps root to index", async () => {
+    it("places the JSON suffix before query parameters and preserves application pins while off", async () => {
       const originalFetch = globalThis.fetch;
       let requestedUrl = "";
-      globalThis.fetch = (input: URL | RequestInfo) => {
+      let requestedPins: string | null = null;
+      globalThis.fetch = (input: URL | RequestInfo, init?: RequestInit) => {
         requestedUrl = String(input);
+        requestedPins = new Headers(init?.headers).get(
+          DEPENDENCY_PINNING_HEADER,
+        );
         return Promise.resolve(Response.json({ html: "root" }));
       };
 
       try {
-        await new PageLoader().fetchPageData("/?page=2#section");
-        assertEquals(requestedUrl, "/_veryfront/data/index.json?page=2");
+        await new PageLoader().fetchPageData(
+          "/?pins=app-value&page=2#section",
+        );
+        assertEquals(
+          requestedUrl,
+          "/_veryfront/data/index.json?pins=app-value&page=2",
+        );
+        assertEquals(requestedPins, null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("pins requests to immutable A and rejects an HTML fallback identified as B", async () => {
+      const originalFetch = globalThis.fetch;
+      const requestedUrls: string[] = [];
+      const requestedPins: Array<string | null> = [];
+      const reloads: string[] = [];
+      let hydrationJson = JSON.stringify({
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+      const loader = new PageLoader(
+        makeHydrationDocument(() => hydrationJson),
+        (url) => reloads.push(url),
+      );
+
+      // Replacing the document's hydration state cannot retarget an existing
+      // loader, its cache, or its in-flight requests.
+      hydrationJson = JSON.stringify({
+        dependencyPinningCacheKey: "on:snapshot-b",
+      });
+      globalThis.fetch = (input: URL | RequestInfo, init?: RequestInit) => {
+        requestedUrls.push(String(input));
+        requestedPins.push(
+          new Headers(init?.headers).get(DEPENDENCY_PINNING_HEADER),
+        );
+        if (requestedUrls.length === 1) {
+          return Promise.resolve(new Response("Not Found", { status: 404 }));
+        }
+        return Promise.resolve(
+          new Response("snapshot B", {
+            headers: {
+              "x-veryfront-dependency-pins": "on:snapshot-b",
+            },
+          }),
+        );
+      };
+
+      try {
+        await assertRejects(
+          () =>
+            loader.fetchPageData(
+              "/docs?view=full&pins=app-value#section",
+            ),
+          Error,
+          "Dependency snapshot mismatch",
+        );
+        assertEquals(requestedUrls, [
+          "/_veryfront/data/docs.json?view=full&pins=app-value",
+          "/docs?view=full&pins=app-value#section",
+        ]);
+        assertEquals(requestedPins, ["on:snapshot-a", "on:snapshot-a"]);
+        assertEquals(reloads, ["/docs?view=full&pins=app-value#section"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not silently fall back to HTML when the JSON snapshot is unavailable", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      const reloads: string[] = [];
+      globalThis.fetch = () => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response("Unknown dependency snapshot", { status: 409 }),
+        );
+      };
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+        await assertRejects(
+          () => loader.fetchPageData("/docs"),
+          Error,
+          "Dependency snapshot is unavailable",
+        );
+        assertEquals(fetchCalls, 1);
+        assertEquals(reloads, ["/docs"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects route data whose response identity does not match the loader", async () => {
+      const originalFetch = globalThis.fetch;
+      const reloads: string[] = [];
+      let fetchCalls = 0;
+      globalThis.fetch = () => {
+        fetchCalls++;
+        return Promise.resolve(
+          Response.json({
+            html: "snapshot B",
+            dependencyPinningCacheKey: "on:snapshot-b",
+          }),
+        );
+      };
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+        await assertRejects(
+          () => loader.fetchPageData("/docs?pins=app-value"),
+          Error,
+          "Dependency snapshot mismatch",
+        );
+        assertEquals(fetchCalls, 1);
+        assertEquals(reloads, ["/docs?pins=app-value"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects HTML whose header is A but hydration body is B", async () => {
+      const originalFetch = globalThis.fetch;
+      const restoreDOMParser = installSnapshotDOMParser();
+      const reloads: string[] = [];
+      let fetchCalls = 0;
+      globalThis.fetch = () => {
+        fetchCalls++;
+        if (fetchCalls === 1) {
+          return Promise.resolve(new Response("Not Found", { status: 404 }));
+        }
+        return Promise.resolve(
+          new Response(
+            `<div id="root">snapshot B</div><script id="veryfront-hydration-data">${
+              JSON.stringify({ dependencyPinningCacheKey: "on:snapshot-b" })
+            }</script>`,
+            {
+              headers: {
+                "x-veryfront-dependency-pins": "on:snapshot-a",
+              },
+            },
+          ),
+        );
+      };
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+        await assertRejects(
+          () => loader.fetchPageData("/docs"),
+          Error,
+          "Dependency snapshot mismatch in HTML body",
+        );
+        assertEquals(fetchCalls, 2);
+        assertEquals(reloads, ["/docs"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreDOMParser();
+      }
+    });
+
+    it("drops a speculative route prefetch conflict without navigating", async () => {
+      const originalFetch = globalThis.fetch;
+      const reloads: string[] = [];
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response("Unknown dependency snapshot", { status: 409 }),
+        );
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+
+        await loader.prefetch("/docs?pins=app-value");
+
+        assertEquals(reloads, []);
+        assertEquals(loader.isCached("/docs?pins=app-value"), false);
       } finally {
         globalThis.fetch = originalFetch;
       }
@@ -250,6 +507,138 @@ describe("routing/client/page-loader", () => {
       try {
         await new PageLoader().fetchSpaPageData("/?page=2#section");
         assertEquals(requestedUrl, "/_veryfront/page-data/index.json?page=2");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("uses immutable snapshot A and preserves duplicate application pins", async () => {
+      const originalFetch = globalThis.fetch;
+      let requestedUrl = "";
+      let requestedPins: string | null = null;
+      let hydrationJson = JSON.stringify({
+        dependencyPinningCacheKey: "on:snapshot-a",
+      });
+      const loader = new PageLoader(makeHydrationDocument(() => hydrationJson));
+      hydrationJson = JSON.stringify({
+        dependencyPinningCacheKey: "on:snapshot-b",
+      });
+      globalThis.fetch = (input: URL | RequestInfo, init?: RequestInit) => {
+        requestedUrl = String(input);
+        requestedPins = new Headers(init?.headers).get(
+          DEPENDENCY_PINNING_HEADER,
+        );
+        return Promise.resolve(
+          Response.json(
+            makeSpaPageData({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            }),
+          ),
+        );
+      };
+
+      try {
+        await loader.fetchSpaPageData(
+          "/?pins=app-a&page=2&pins=app-b#section",
+        );
+        assertEquals(
+          requestedUrl,
+          "/_veryfront/page-data/index.json?pins=app-a&page=2&pins=app-b",
+        );
+        assertEquals(requestedPins, "on:snapshot-a");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("reloads the document when SPA page data has an unknown snapshot", async () => {
+      const originalFetch = globalThis.fetch;
+      const reloads: string[] = [];
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response("Unknown dependency snapshot", { status: 409 }),
+        );
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+        await assertRejects(
+          () =>
+            loader.fetchSpaPageData(
+              "/docs?view=full&pins=app-value#section",
+            ),
+          Error,
+          "Dependency snapshot is unavailable",
+        );
+        assertEquals(reloads, ["/docs?view=full&pins=app-value#section"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("reloads the document when SPA page data is identified as another snapshot", async () => {
+      const originalFetch = globalThis.fetch;
+      const reloads: string[] = [];
+      globalThis.fetch = () =>
+        Promise.resolve(
+          Response.json(
+            makeSpaPageData({
+              dependencyPinningCacheKey: "on:snapshot-b",
+            }),
+          ),
+        );
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+        await assertRejects(
+          () => loader.fetchSpaPageData("/docs"),
+          Error,
+          "Dependency snapshot mismatch",
+        );
+        assertEquals(reloads, ["/docs"]);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("drops a speculative SPA prefetch conflict without navigating", async () => {
+      const originalFetch = globalThis.fetch;
+      const reloads: string[] = [];
+      globalThis.fetch = () =>
+        Promise.resolve(
+          new Response("Unknown dependency snapshot", { status: 409 }),
+        );
+
+      try {
+        const loader = new PageLoader(
+          makeHydrationDocument(() =>
+            JSON.stringify({
+              dependencyPinningCacheKey: "on:snapshot-a",
+            })
+          ),
+          (url) => reloads.push(url),
+        );
+
+        await loader.prefetchSpaPageData("/docs?pins=app-value");
+
+        assertEquals(reloads, []);
+        assertEquals(
+          loader.isSpaDataCached("/docs?pins=app-value"),
+          false,
+        );
       } finally {
         globalThis.fetch = originalFetch;
       }

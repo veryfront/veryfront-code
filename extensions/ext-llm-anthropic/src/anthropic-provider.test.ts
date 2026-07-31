@@ -2229,13 +2229,6 @@ describe("anthropic-provider", () => {
         providerExecuted: true,
       },
       {
-        type: "data-tool-call-status",
-        data: {
-          toolCallId: "srvtool_web_1",
-          status: "streaming_input",
-        },
-      },
-      {
         type: "tool-input-delta",
         id: "srvtool_web_1",
         delta: '{"query":"Veryfront"}',
@@ -2514,7 +2507,7 @@ describe("anthropic-provider", () => {
     });
 
     const parts = await collectAsync(result.stream);
-    assertEquals(parts.length, 6);
+    assertEquals(parts.length, 5);
     assertEquals(parts[0], {
       type: "tool-input-start",
       id: "srvtool_fetch_2",
@@ -2522,22 +2515,18 @@ describe("anthropic-provider", () => {
       providerExecuted: true,
     });
     assertEquals(parts[1], {
-      type: "data-tool-call-status",
-      data: { toolCallId: "srvtool_fetch_2", status: "streaming_input" },
-    });
-    assertEquals(parts[2], {
       type: "tool-input-delta",
       id: "srvtool_fetch_2",
       delta: '{"url":"https://veryfront.com/docs"}',
     });
-    assertEquals(parts[3], {
+    assertEquals(parts[2], {
       type: "tool-call",
       toolCallId: "srvtool_fetch_2",
       toolName: "web_fetch",
       input: '{"url":"https://veryfront.com/docs"}',
       providerExecuted: true,
     });
-    assertEquals(parts[4], {
+    assertEquals(parts[3], {
       type: "tool-result",
       toolCallId: "srvtool_fetch_2",
       toolName: "web_fetch",
@@ -2552,7 +2541,7 @@ describe("anthropic-provider", () => {
       },
       providerExecuted: true,
     });
-    assertEquals(parts[5], {
+    assertEquals(parts[4], {
       type: "finish",
       finishReason: { unified: "stop", raw: "end_turn" },
       providerMetadata: {

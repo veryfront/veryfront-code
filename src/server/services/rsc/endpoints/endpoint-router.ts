@@ -20,6 +20,13 @@ import {
   type BrowserModuleBuildCoordinatorOptions,
   BrowserModuleCapacityError,
 } from "#veryfront/server/shared/browser-module-availability.ts";
+import {
+  createDependencyPinningSource,
+  type DependencyPinningSourceInput,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { isDependencyPinningEnabled } from "#veryfront/transforms/esm/npm-registry-client.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import type { RSCDevServerHandler } from "../orchestrators/index.ts";
 import { handleActionRequest } from "./action-handler.ts";
 import { getRSCHandler } from "./handler-registry.ts";
@@ -33,6 +40,7 @@ const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
 const MODULE_CACHE_CONTROL = "private, no-cache, must-revalidate";
 let browserModuleBuilds = new BrowserModuleBuildCoordinator<BrowserModuleBundle>();
+let browserModuleBuilder = bundleBrowserModuleWithMetadata;
 let browserModuleAdapterIds = new WeakMap<RuntimeAdapter, number>();
 let nextBrowserModuleAdapterId = 1;
 
@@ -41,8 +49,16 @@ export function resetBrowserModuleEndpointStateForTesting(
 ): void {
   browserModuleBuilds.resetForTesting();
   browserModuleBuilds = new BrowserModuleBuildCoordinator<BrowserModuleBundle>(options);
+  browserModuleBuilder = bundleBrowserModuleWithMetadata;
   browserModuleAdapterIds = new WeakMap<RuntimeAdapter, number>();
   nextBrowserModuleAdapterId = 1;
+}
+
+/** Override the browser module builder for focused endpoint tests. */
+export function setBrowserModuleBuilderForTesting(
+  builder?: typeof bundleBrowserModuleWithMetadata,
+): void {
+  browserModuleBuilder = builder ?? bundleBrowserModuleWithMetadata;
 }
 
 export function getBrowserModuleEndpointStatsForTesting() {
@@ -63,6 +79,8 @@ export async function handleRSCEndpoint(
     projectSlug,
     contentSourceId,
     releaseId,
+    branch,
+    dependencyPinningSource: providedDependencyPinningSource,
     adapter,
     config,
     isLocalProject,
@@ -104,6 +122,18 @@ export async function handleRSCEndpoint(
   }
 
   const url = new URL(req.url);
+  const dependencyPinningSource = providedDependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir,
+      adapter,
+      isLocalProject,
+      projectId,
+      projectSlug,
+      contentSourceId,
+      releaseId,
+      branch,
+      config,
+    });
 
   try {
     // App-router client-page hydration imports browser-safe page modules from
@@ -117,6 +147,8 @@ export async function handleRSCEndpoint(
         projectSlug,
         contentSourceId,
         releaseId,
+        branch,
+        dependencyPinningSource,
         adapter,
         config,
       });
@@ -133,10 +165,23 @@ export async function handleRSCEndpoint(
       return null;
     }
 
+    const snapshotBoundEndpoint = isDependencySnapshotBoundEndpoint(sub);
+    if (snapshotBoundEndpoint) {
+      const dependencySnapshotError = await validateRequestedDependencySnapshot(
+        dependencyPinningSource,
+        req,
+      );
+      if (dependencySnapshotError) return dependencySnapshotError;
+    }
+    const validatedDependencyPinningCacheKey = snapshotBoundEndpoint
+      ? req.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined
+      : undefined;
+
     let handlerPromise: Promise<RSCDevServerHandler> | undefined;
     const getRequestHandler = (): Promise<RSCDevServerHandler> => {
       handlerPromise ??= (async () => {
         const handlerContentSourceId = contentSourceId ?? releaseId ??
+          (branch ? `branch:${branch}` : undefined) ??
           (isLocalProject ? "local-main" : mode === "development" ? "preview-main" : "production");
         const importMapIdentity = await createImportMapIdentity(
           await preloadImportMap(projectDir, adapter, projectId ?? projectDir, {
@@ -154,6 +199,10 @@ export async function handleRSCEndpoint(
           projectId,
           projectSlug,
           releaseId,
+          branch,
+          dependencyPinningEnabled: isDependencyPinningEnabled(),
+          dependencyPinningCacheKey: validatedDependencyPinningCacheKey,
+          dependencyPinningSource,
           importMapIdentity,
         });
       })();
@@ -183,6 +232,7 @@ export async function handleRSCEndpoint(
       return (await getRequestHandler()).handleStream(
         sub.replace("stream/", ""),
         url.searchParams,
+        req,
       );
     }
 
@@ -204,7 +254,12 @@ export async function handleRSCEndpoint(
           req,
           projectDir,
           projectId,
+          projectSlug,
           contentSourceId,
+          releaseId,
+          branch,
+          isLocalProject,
+          dependencyPinningSource,
           adapter,
           config,
           mode,
@@ -214,16 +269,20 @@ export async function handleRSCEndpoint(
         rscEndpointRouterLog.error("action request failed", {
           errorName: e instanceof Error ? e.name : "UnknownError",
         });
-        return jsonErrorResponse(
-          HttpStatus.INTERNAL_SERVER_ERROR,
-          "action failed",
+        return withDependencyPinningVary(
+          jsonErrorResponse(
+            HttpStatus.INTERNAL_SERVER_ERROR,
+            "action failed",
+          ),
         );
       }
     }
 
     if (sub === "manifest") {
       metrics.recordRSC("manifest");
-      return (await getRequestHandler()).handleManifest();
+      return (await getRequestHandler()).handleManifest(
+        req.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined,
+      );
     }
 
     if (sub === "payload") {
@@ -231,6 +290,7 @@ export async function handleRSCEndpoint(
       return handlePayloadEndpoint({
         handler: await getRequestHandler(),
         searchParams: url.searchParams,
+        request: req,
       });
     }
 
@@ -241,7 +301,7 @@ export async function handleRSCEndpoint(
 
     if (sub === "stream") {
       metrics.recordRSC("stream");
-      return (await getRequestHandler()).handleStream("/", url.searchParams);
+      return (await getRequestHandler()).handleStream("/", url.searchParams, req);
     }
 
     return null;
@@ -265,9 +325,53 @@ export async function handleRSCEndpoint(
     });
     return new Response("Internal Error", {
       status: HTTP_SERVER_ERROR,
-      headers: { "cache-control": "no-store" },
+      headers: {
+        "cache-control": "no-store",
+        ...(isDependencySnapshotBoundEndpoint(sub) ? { vary: RSC_DEPENDENCY_PINNING_HEADER } : {}),
+      },
     });
   }
+}
+
+function isDependencySnapshotBoundEndpoint(sub: string): boolean {
+  return sub === "render" ||
+    sub.startsWith("render/") ||
+    sub === "manifest" ||
+    sub === "payload" ||
+    sub === "stream" ||
+    sub.startsWith("stream/");
+}
+
+async function validateRequestedDependencySnapshot(
+  dependencyPinningSource: DependencyPinningSourceInput,
+  request: Request,
+): Promise<Response | null> {
+  const requestedPinKey = request.headers.get(RSC_DEPENDENCY_PINNING_HEADER);
+  if (requestedPinKey !== null && !requestedPinKey.startsWith("on:")) {
+    return unknownDependencySnapshotResponse();
+  }
+
+  const snapshot = await resolveRequestedDependencyPinningSnapshot(
+    dependencyPinningSource,
+    requestedPinKey,
+  );
+  if (
+    !snapshot ||
+    (requestedPinKey === null && snapshot.cacheKey !== "off")
+  ) {
+    return unknownDependencySnapshotResponse();
+  }
+  return null;
+}
+
+function unknownDependencySnapshotResponse(): Response {
+  return new Response("Unknown dependency snapshot", {
+    status: HttpStatus.CONFLICT,
+    headers: {
+      "cache-control": "no-store",
+      vary: RSC_DEPENDENCY_PINNING_HEADER,
+    },
+  });
 }
 
 async function handleModuleEndpoint({
@@ -278,6 +382,8 @@ async function handleModuleEndpoint({
   projectSlug,
   contentSourceId,
   releaseId,
+  branch,
+  dependencyPinningSource,
   adapter,
   config,
 }: {
@@ -288,6 +394,8 @@ async function handleModuleEndpoint({
   projectSlug?: string;
   contentSourceId?: string;
   releaseId?: string;
+  branch?: string | null;
+  dependencyPinningSource: DependencyPinningSourceInput;
   adapter: RuntimeAdapter;
   config?: VeryfrontConfig;
 }): Promise<Response> {
@@ -309,7 +417,28 @@ async function handleModuleEndpoint({
   }
 
   const rel = normalizedRel.startsWith("/") ? normalizedRel : `/${normalizedRel}`;
+  const requestedPinKeys = searchParams.getAll("pins");
+  const hasMalformedPinKey = requestedPinKeys.length > 1 ||
+    (requestedPinKeys.length === 1 && !requestedPinKeys[0]?.startsWith("on:"));
+  const requestedPinKey = requestedPinKeys[0];
+  const dependencyPinningSnapshot = hasMalformedPinKey
+    ? undefined
+    : await resolveRequestedDependencyPinningSnapshot(
+      dependencyPinningSource,
+      requestedPinKey,
+    );
+  if (
+    !dependencyPinningSnapshot ||
+    (requestedPinKeys.length === 0 && dependencyPinningSnapshot.cacheKey !== "off")
+  ) {
+    return new Response("Unknown dependency snapshot", {
+      status: HttpStatus.CONFLICT,
+      headers: { "cache-control": "no-store" },
+    });
+  }
+
   try {
+    const moduleServerOrigin = new URL(req.url).origin;
     const modulePath = await resolveModuleEndpointPath(rel, projectDir, adapter, config);
     if (!modulePath) {
       return new Response("Not Found", {
@@ -320,30 +449,53 @@ async function handleModuleEndpoint({
 
     const adapterId = getBrowserModuleAdapterId(adapter);
     const configHash = await computeHash(stableSerialize(config ?? null));
+    const dependencyPinningCacheKey = dependencyPinningSnapshot.cacheKey;
     const projectKey = projectId ?? projectSlug ?? projectDir;
-    const cacheKey = [
+    const cacheKey = buildBrowserModuleCacheKey({
       adapterId,
       projectKey,
-      contentSourceId ?? "",
-      releaseId ?? "",
+      contentSourceId,
+      releaseId,
+      branch,
       configHash,
+      moduleServerOrigin,
+      dependencyPinningCacheKey,
       modulePath,
-    ].join("\0");
+    });
     const result = await browserModuleBuilds.getOrBuild({
       cacheKey,
       projectKey,
       build: async () => {
-        const importMapJson = await buildImportMapJson({ projectDir, config });
-        return bundleBrowserModuleWithMetadata(modulePath, {
+        const importMapJson = await buildImportMapJson({
+          projectDir,
+          config,
+          moduleServerOrigin,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningSource,
+        });
+        return browserModuleBuilder(modulePath, {
           adapter,
           projectDir,
+          projectId: projectId ?? projectSlug,
           config,
           projectSlug,
           importMapJson,
+          moduleServerOrigin,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningSource,
         });
       },
       validate: async (bundle) => {
-        const importMapJson = await buildImportMapJson({ projectDir, config });
+        const importMapJson = await buildImportMapJson({
+          projectDir,
+          config,
+          moduleServerOrigin,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
+          dependencyPinningSource,
+        });
         if (await computeHash(importMapJson) !== bundle.importMapHash) return false;
         return validateBrowserModuleBundle(bundle, { adapter, projectDir });
       },
@@ -388,6 +540,46 @@ async function handleModuleEndpoint({
       headers: { "cache-control": "no-store" },
     });
   }
+}
+
+interface BrowserModuleCacheKeyOptions {
+  adapterId: number;
+  projectKey: string;
+  contentSourceId?: string;
+  releaseId?: string;
+  branch?: string | null;
+  configHash: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  modulePath: string;
+}
+
+export function buildBrowserModuleCacheKey(
+  options: BrowserModuleCacheKeyOptions,
+): string {
+  const legacyFields = [
+    options.adapterId,
+    options.projectKey,
+    options.contentSourceId ?? "",
+    options.releaseId ?? "",
+    options.configHash,
+    options.modulePath,
+  ];
+  if (!options.dependencyPinningCacheKey?.startsWith("on:")) {
+    return legacyFields.join("\0");
+  }
+
+  return [
+    options.adapterId,
+    options.projectKey,
+    options.contentSourceId ?? "",
+    options.releaseId ?? "",
+    options.branch ?? "",
+    options.configHash,
+    options.moduleServerOrigin ?? "",
+    options.dependencyPinningCacheKey,
+    options.modulePath,
+  ].join("\0");
 }
 
 function getBrowserModuleAdapterId(adapter: RuntimeAdapter): number {
@@ -533,12 +725,31 @@ async function isTrustedBrowserModuleEntry(
   }
 }
 
-async function handlePayloadEndpoint({
+function handlePayloadEndpoint({
   handler,
   searchParams,
+  request,
 }: {
   handler: RSCDevServerHandler;
   searchParams: URLSearchParams;
+  request: Request;
 }): Promise<Response> {
-  return handler.handleRender("/", searchParams);
+  return handler.handleRender("/", searchParams, request);
+}
+
+function withDependencyPinningVary(response: Response): Response {
+  appendVaryHeader(response.headers, RSC_DEPENDENCY_PINNING_HEADER);
+  return response;
+}
+
+function appendVaryHeader(headers: Headers, fieldName: string): void {
+  const values = (headers.get("vary") ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  if (values.includes("*")) return;
+  if (!values.some((value) => value.toLowerCase() === fieldName.toLowerCase())) {
+    values.push(fieldName);
+  }
+  headers.set("vary", values.join(", "));
 }

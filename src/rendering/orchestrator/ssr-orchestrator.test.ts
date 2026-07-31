@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertMatch } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type SSRIsolationOptions,
@@ -324,6 +324,65 @@ describe("rendering/orchestrator/ssr-orchestrator", () => {
       assertEquals(result.fullHtml.includes("<main>isolated</main>"), true);
       assertEquals(result.finalStream, null);
       assertEquals(result.stylesheet, PROJECT_STYLESHEET);
+    });
+
+    it("plumbs the canonical dependency snapshot to isolated SSR for fail-closed selection", async () => {
+      const dependencies = { react: "19.0.0" };
+      const cacheKey = "on:1";
+      let workerCalled = false;
+      const workerPool: ReturnType<
+        NonNullable<SSROrchestratorDependencies["getWorkerPool"]>
+      > = {
+        execute: (_projectId, _readPaths, request) => {
+          workerCalled = true;
+          if (request.type !== "render-ssr") {
+            throw new Error("expected an SSR request");
+          }
+          const pinnedRequest = request as typeof request & {
+            dependencyPinningCacheKey?: string;
+            dependencyPinningDependencies?: Readonly<Record<string, string>>;
+          };
+          assertEquals(pinnedRequest.dependencyPinningCacheKey, cacheKey);
+          assertEquals(pinnedRequest.dependencyPinningDependencies, dependencies);
+          throw new Error(
+            "Isolated SSR does not support enabled dependency snapshots",
+          );
+        },
+        executeStream: () => {
+          throw new Error("stream execution must not be used");
+        },
+        evictWorker: () => {},
+      };
+      const orchestrator = new SSROrchestrator(createMockConfig(), {
+        getWorkerPool: () => workerPool,
+        isSSRIsolationEnabled: () => true,
+      });
+
+      await assertRejects(
+        () =>
+          runWithExactSourceIntegrationPolicy(
+            TEST_SOURCE_INTEGRATION_POLICY,
+            () =>
+              orchestrator.performSSRRendering(
+                React.createElement("div"),
+                createGenerationContext(),
+                {
+                  dependencyPinningCacheKey: cacheKey,
+                  dependencyPinningDependencies: dependencies,
+                },
+                {
+                  projectDir: "/tmp/project",
+                  pageModulePath: "/tmp/project/page.tsx",
+                  layoutModulePaths: [],
+                  pageProps: {},
+                  layoutProps: [],
+                },
+              ),
+          ),
+        Error,
+        "Isolated SSR does not support enabled dependency snapshots",
+      );
+      assertEquals(workerCalled, true);
     });
 
     it("reconstructs registered isolated string errors with a sanitized stack", async () => {

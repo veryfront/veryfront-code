@@ -126,6 +126,16 @@ function createMockInstruments(): MetricsInstruments & {
     heapUsageGauge: null,
     heapTotalGauge: null,
     heapPercentGauge: null,
+    streamLifecycleOutcomeCounter: null,
+    streamLifecycleDeadlineCounter: null,
+    streamLifecycleTelemetryCounter: null,
+    streamLifecycleRepairCounter: null,
+    streamLifecycleShadowDivergenceCounter: null,
+    streamLifecycleAttemptDuration: null,
+    streamLifecycleFirstProgressDuration: null,
+    streamLifecycleSemanticIdleDuration: null,
+    streamLifecycleToolInputDuration: null,
+    streamLifecycleToolExecutionDuration: null,
 
     _httpRequestCounter: httpRequestCounter,
     _httpRequestDuration: httpRequestDuration,
@@ -521,6 +531,16 @@ describe("observability/metrics/recorder", () => {
         heapUsageGauge: null,
         heapTotalGauge: null,
         heapPercentGauge: null,
+        streamLifecycleOutcomeCounter: null,
+        streamLifecycleDeadlineCounter: null,
+        streamLifecycleTelemetryCounter: null,
+        streamLifecycleRepairCounter: null,
+        streamLifecycleShadowDivergenceCounter: null,
+        streamLifecycleAttemptDuration: null,
+        streamLifecycleFirstProgressDuration: null,
+        streamLifecycleSemanticIdleDuration: null,
+        streamLifecycleToolInputDuration: null,
+        streamLifecycleToolExecutionDuration: null,
       };
       const nullRecorder = new MetricsRecorder(nullInstruments, runtimeState);
 

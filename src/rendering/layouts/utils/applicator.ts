@@ -10,6 +10,7 @@ import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-lo
 import { getElementTypeName } from "../../element-validator/primitive-checks.ts";
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = rendererLogger.component("apply-layouts-esm");
 
@@ -29,6 +30,10 @@ export function applyLayoutsESM(
   reactVersion?: string,
   mode: "development" | "production" = "development",
   moduleServerUrl?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ReactElement> {
   return withSpan(
     SpanNames.LAYOUT_APPLY_LAYOUTS_ESM,
@@ -75,6 +80,10 @@ export function applyLayoutsESM(
                   contentSourceId,
                   preloadedImportMap,
                   reactVersion,
+                  dependencyPinningCacheKey,
+                  dependencyPinningDependencies,
+                  dependencyPinningSource,
+                  moduleServerOrigin,
                 ),
               spanAttrs,
             );
@@ -101,6 +110,10 @@ export function applyLayoutsESM(
                 preloadedImportMap,
                 mode,
                 moduleServerUrl,
+                dependencyPinningCacheKey,
+                dependencyPinningDependencies,
+                dependencyPinningSource,
+                moduleServerOrigin,
               ),
             spanAttrs,
           );
@@ -132,6 +145,10 @@ export function applyLayoutsESM(
             contentSourceId,
             preloadedImportMap,
             reactVersion,
+            dependencyPinningCacheKey,
+            dependencyPinningDependencies,
+            dependencyPinningSource,
+            moduleServerOrigin,
           ),
         { "layout.kind": "mdx", "layout.type": "named" },
       );
@@ -163,6 +180,10 @@ export async function applyLayoutsFunctionBody(
   preloadedImportMap?: ImportMapConfig,
   mode: "development" | "production" = "development",
   moduleServerUrl?: string,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<BundledReact.ReactElement> {
   const React = await getProjectReact(reactVersion);
   let element = pageElement;
@@ -197,6 +218,10 @@ export async function applyLayoutsFunctionBody(
         contentSourceId,
         preloadedImportMap,
         reactVersion,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        moduleServerOrigin,
       );
       continue;
     }
@@ -215,6 +240,10 @@ export async function applyLayoutsFunctionBody(
         reactVersion,
         preloadedImportMap,
         { mode, moduleServerUrl },
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
+        moduleServerOrigin,
       );
 
       const child = ensureValidChild(element, React);
@@ -251,6 +280,10 @@ export async function applyLayoutsFunctionBody(
       contentSourceId,
       preloadedImportMap,
       reactVersion,
+      dependencyPinningCacheKey,
+      dependencyPinningDependencies,
+      dependencyPinningSource,
+      moduleServerOrigin,
     );
   }
 

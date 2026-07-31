@@ -1,11 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { RSC_ROOT_ID } from "./constants.ts";
+import { HYDRATION_DATA_ID, RSC_DEPENDENCY_PINNING_HEADER, RSC_ROOT_ID } from "./constants.ts";
 import { consumeNdjsonStream } from "./client-dom.ts";
 
 class MockElement {
   id = "";
+  textContent = "";
   dataset: Record<string, string> = {};
   children: MockElement[] = [];
   private rawInnerHtml = "";
@@ -109,6 +110,86 @@ function toDatasetKey(value: string): string {
 }
 
 describe("rendering/rsc/client-dom", () => {
+  it("admits an exact stream snapshot before applying its chunks", async () => {
+    const doc = createDocument();
+    const hydrationData = doc.createElement("script") as unknown as MockElement;
+    hydrationData.id = HYDRATION_DATA_ID;
+    hydrationData.textContent = JSON.stringify({
+      reactVersion: "19.2.4",
+      dependencyPinningCacheKey: "on:1",
+    });
+    (doc.body as unknown as MockElement).appendChild(hydrationData);
+
+    await consumeNdjsonStream(
+      new Response(
+        '{"type":"slot","id":"root","html":"<div>Ready</div>"}\n',
+        {
+          headers: {
+            [RSC_DEPENDENCY_PINNING_HEADER]: "on:1",
+          },
+        },
+      ),
+      doc,
+      undefined,
+      { requestedDependencyPinningCacheKey: "on:1" },
+    );
+
+    assertEquals(JSON.parse(hydrationData.textContent), {
+      reactVersion: "19.2.4",
+      dependencyPinningCacheKey: "on:1",
+    });
+    assertEquals(doc.getElementById(RSC_ROOT_ID)?.innerHTML, "<div>Ready</div>");
+  });
+
+  it("reloads and leaves the DOM untouched when a stream snapshot is not exact", async () => {
+    for (
+      const [current, requested, responseHeader] of [
+        ["on:1", "on:1", null],
+        ["on:1", "on:1", "on:not-canonical"],
+        ["on:1", "on:1", "on:2"],
+        [undefined, undefined, "on:1"],
+      ] as const
+    ) {
+      const doc = createDocument();
+      if (current !== undefined) {
+        const hydrationData = doc.createElement("script") as unknown as MockElement;
+        hydrationData.id = HYDRATION_DATA_ID;
+        hydrationData.textContent = JSON.stringify({
+          dependencyPinningCacheKey: current,
+        });
+        (doc.body as unknown as MockElement).appendChild(hydrationData);
+      }
+      let recoveries = 0;
+      const headers = responseHeader === null
+        ? undefined
+        : { [RSC_DEPENDENCY_PINNING_HEADER]: responseHeader };
+
+      await assertRejects(
+        () =>
+          consumeNdjsonStream(
+            new Response(
+              '{"type":"slot","id":"root","html":"<div>Must not render</div>"}\n',
+              { headers },
+            ),
+            doc,
+            undefined,
+            {
+              requestedDependencyPinningCacheKey: requested,
+              recoverFromAdmissionFailure: () => {
+                recoveries++;
+                return true;
+              },
+            },
+          ),
+        Error,
+        "Dependency snapshot admission failed",
+      );
+
+      assertEquals(recoveries, 1);
+      assertEquals(doc.getElementById(RSC_ROOT_ID), null);
+    }
+  });
+
   it("applies streamed slot HTML without claiming React hydration completed", async () => {
     const doc = createDocument();
 

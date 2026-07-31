@@ -202,6 +202,8 @@ const WORKER_EXIT_MESSAGE = objectFreeze({ type: "worker-exit" as const });
 const LOWERCASE_SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const CANONICAL_POLICY_SEGMENT_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 const CANONICAL_ROUTE_METHOD_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Z]{1,64}$/;
+const CANONICAL_DEPENDENCY_PINNING_CACHE_KEY_PATTERN = /^on:(0|[1-9a-z][0-9a-z]{0,12})$/;
+const MAX_DEPENDENCY_PINNING_HASH = "3w5e11264sgsf";
 const PROJECT_ENV_KEY_PATTERN = /^[^=\0]+$/;
 const PROJECT_ENV_VALUE_PATTERN = /^[^\0]*$/;
 const DATA_JAVASCRIPT_URL_PATTERN =
@@ -1514,6 +1516,111 @@ function snapshotOptionalString(
   return requireString(field.value, key, maxChars);
 }
 
+function snapshotSSRDependencyPinning(
+  request: DataRecord,
+): Pick<
+  RenderSSRRequest,
+  "dependencyPinningCacheKey" | "dependencyPinningDependencies"
+> {
+  const cacheKeyField = readOptionalDataProperty(
+    request,
+    "dependencyPinningCacheKey",
+  );
+  const dependenciesField = readOptionalDataProperty(
+    request,
+    "dependencyPinningDependencies",
+  );
+  const rawCacheKey = cacheKeyField.present ? cacheKeyField.value : undefined;
+  const rawDependencies = dependenciesField.present ? dependenciesField.value : undefined;
+
+  if (rawCacheKey === undefined && rawDependencies === undefined) return {};
+  const cacheKey = requireString(
+    rawCacheKey,
+    "dependencyPinningCacheKey",
+    16,
+    false,
+  );
+  if (cacheKey === "off") {
+    if (rawDependencies !== undefined) {
+      return invalidWorkerRequest("dependencyPinningDependencies");
+    }
+    return { dependencyPinningCacheKey: cacheKey };
+  }
+
+  const match = apply(
+    regexpExec,
+    CANONICAL_DEPENDENCY_PINNING_CACHE_KEY_PATTERN,
+    [cacheKey],
+  ) as RegExpExecArray | null;
+  const hash = match?.[1];
+  if (
+    cacheKey === "on:unknown" ||
+    cacheKey === "on:no-project" ||
+    !hash ||
+    (hash.length === MAX_DEPENDENCY_PINNING_HASH.length &&
+      hash > MAX_DEPENDENCY_PINNING_HASH) ||
+    rawDependencies === undefined
+  ) {
+    return invalidWorkerRequest("dependencyPinningCacheKey");
+  }
+
+  const { record, keys } = requirePlainDataRecord(
+    rawDependencies,
+    "dependencyPinningDependencies",
+  );
+  apply(arraySort, keys, [compareStrings]);
+  const dependencies = createNullPrototypeRecord<string>();
+  const budget: StringSnapshotBudget = {
+    values: 0,
+    utf8Bytes: 0,
+    maxValues: MAX_WORKER_RECORD_ENTRIES * 2,
+    maxUtf8Bytes: MAX_WORKER_PROJECT_ENV_UTF8_BYTES,
+  };
+  for (let index = 0; index < keys.length; index++) {
+    const name = requireString(
+      keys[index],
+      "dependencyPinningDependencies",
+      MAX_WORKER_VALUE_CHARS,
+      false,
+    );
+    const declaration = requireString(
+      readDataProperty(record, name),
+      "dependencyPinningDependencies",
+    );
+    consumeStringBudget(budget, name, "dependencyPinningDependencies");
+    consumeStringBudget(
+      budget,
+      declaration,
+      "dependencyPinningDependencies",
+    );
+    defineDataProperty(dependencies, name, declaration);
+  }
+
+  return {
+    dependencyPinningCacheKey: cacheKey,
+    dependencyPinningDependencies: freezeObject(dependencies),
+  };
+}
+
+/**
+ * The bundled worker renderer has one fixed React implementation. Until the
+ * extension can select a renderer by canonical dependency snapshot, accepting
+ * an enabled host snapshot would silently render with the wrong React graph.
+ */
+export function assertIsolatedSsrDependencySnapshotSupported(
+  request: RenderSSRRequest,
+): void {
+  if (
+    request.dependencyPinningCacheKey === undefined ||
+    request.dependencyPinningCacheKey === "off"
+  ) {
+    return;
+  }
+  throw new NativeError(
+    "Isolated SSR does not support enabled dependency snapshots",
+  );
+}
+
 /**
  * Synchronously detach and validate one control-port request before it can be
  * observed or mutated by any later project task.
@@ -1765,7 +1872,10 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "delivery",
         "sourceIntegrationPolicy",
       ],
-      [],
+      [
+        "dependencyPinningCacheKey",
+        "dependencyPinningDependencies",
+      ],
       "payload",
     );
     const budget: DataSnapshotBudget = { nodes: 0, utf8Bytes: 0 };
@@ -1807,6 +1917,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
     if (delivery !== "string" && delivery !== "stream") {
       return invalidWorkerRequest("delivery");
     }
+    const dependencyPinning = snapshotSSRDependencyPinning(request);
     return {
       type,
       id: requireString(
@@ -1828,6 +1939,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
       ),
       layoutProps,
       delivery,
+      ...dependencyPinning,
       sourceIntegrationPolicy,
     };
   }
@@ -2798,6 +2910,7 @@ async function renderSSR(
   req: RenderSSRRequest,
   execution: SSRExecutionContext,
 ): Promise<string | null> {
+  assertIsolatedSsrDependencySnapshotSupported(req);
   const renderer = await getIsolatedSsrRenderer();
   const createElement = renderer.createElement;
   const renderToReadableStream = renderer.renderToReadableStream;

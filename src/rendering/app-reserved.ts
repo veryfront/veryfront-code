@@ -5,6 +5,7 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { dirname, isAbsolute, normalize, parse, relative } from "#veryfront/compat/path";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { assertReactComponentType } from "./react-component-type.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 type ReservedComponent = BundledReact.ComponentType<{ error?: Error; reset?: () => void }>;
 
@@ -131,6 +132,10 @@ export async function loadReservedWithPath(
   reactVersion?: string,
   importMap?: ImportMapConfig,
   deps?: ReservedComponentLoaderDeps,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<{ component: ReservedComponent; filePath: string } | null> {
   const join = (a: string, b: string) => `${a.replace(/\/$/, "")}/${b.replace(/^\//, "")}`;
   const candidateName = RESERVED_COMPONENTS[which];
@@ -156,6 +161,10 @@ export async function loadReservedWithPath(
         contentSourceId,
         reactVersion,
         importMap,
+        moduleServerOrigin,
+        dependencyPinningCacheKey,
+        dependencyPinningDependencies,
+        dependencyPinningSource,
       });
       const component = assertReactComponentType(
         exported,
@@ -179,6 +188,10 @@ export async function tryLoadReservedInDirs(
   reactVersion?: string,
   importMap?: ImportMapConfig,
   deps?: ReservedComponentLoaderDeps,
+  dependencyPinningCacheKey?: string,
+  dependencyPinningDependencies?: Readonly<Record<string, string>>,
+  dependencyPinningSource?: DependencyPinningSourceInput,
+  moduleServerOrigin?: string,
 ): Promise<ReservedComponent | null> {
   const loaded = await loadReservedWithPath(
     dirs,
@@ -191,6 +204,10 @@ export async function tryLoadReservedInDirs(
     reactVersion,
     importMap,
     deps,
+    dependencyPinningCacheKey,
+    dependencyPinningDependencies,
+    dependencyPinningSource,
+    moduleServerOrigin,
   );
   return loaded?.component ?? null;
 }

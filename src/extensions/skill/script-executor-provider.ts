@@ -80,6 +80,9 @@ export interface SkillScriptExecutorProvider {
    * Prepare and return inert controls synchronously. Implementations must not
    * spawn, provision, or issue a request until `activate()` is invoked. Report
    * the first result and terminal settlement through the core-owned reporter.
+   * After `terminate()` is invoked, report both settlements within the core
+   * cleanup grace. Otherwise a loader-owned generation remains quarantined
+   * until the late settlements arrive.
    * This function property must not depend on a receiver.
    */
   readonly prepare: (

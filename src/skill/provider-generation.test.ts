@@ -54,6 +54,8 @@ function providerExtension(
 
 function executeProviderBackend(
   backend: Readonly<SkillScriptExecutionBackend>,
+  timeoutMs = 1_000,
+  terminationGraceMs?: number,
 ): Promise<Readonly<SkillScriptResult>> {
   if (backend.kind !== "provider") {
     throw new Error("Expected a Skill provider backend");
@@ -61,8 +63,9 @@ function executeProviderBackend(
   return executeSkillScriptWithProvider(
     backend.provider,
     { scriptPath: "/skills/demo/scripts/run.ts" },
-    createSkillOperationBudget({ timeoutMs: 1_000 }),
+    createSkillOperationBudget({ timeoutMs }),
     backend.contractReference,
+    terminationGraceMs,
   );
 }
 
@@ -351,6 +354,116 @@ Deno.test("Skill execution drains before provider-generation replacement", async
         await replacement;
       } catch {
         // Preserve the primary assertion.
+      }
+    }
+    try {
+      await loader.teardownAll();
+    } catch {
+      // Preserve the primary assertion.
+    }
+    reset();
+  }
+});
+
+Deno.test("unsettled Skill cleanup quarantines replacement until late terminal settlement", async () => {
+  reset();
+  const loader = new ExtensionLoader(noopLogger);
+  const terminationStarted = Promise.withResolvers<void>();
+  let firstReporter: Readonly<SkillScriptExecutionReporter> | undefined;
+  let firstTeardownCalls = 0;
+  const firstProvider: SkillScriptExecutorProvider = {
+    prepare(_input, reporter) {
+      firstReporter = reporter;
+      return {
+        activate() {},
+        terminate(reason) {
+          reporter.rejectResult(reason);
+          terminationStarted.resolve();
+        },
+      };
+    },
+  };
+  const secondProvider: SkillScriptExecutorProvider = {
+    prepare(_input, reporter) {
+      return {
+        activate() {
+          reporter.resolveResult({ stdout: "second", stderr: "", exitCode: 0 });
+          reporter.resolveTerminal();
+        },
+        terminate(reason) {
+          reporter.rejectResult(reason);
+          reporter.resolveTerminal();
+        },
+      };
+    },
+  };
+  let execution: Promise<Readonly<SkillScriptResult>> | undefined;
+  let replacement: Promise<void> | undefined;
+
+  try {
+    await loader.setupAll(
+      [
+        providerExtension("unsettled-provider", firstProvider, () => {
+          firstTeardownCalls += 1;
+        }),
+      ],
+      {},
+    );
+    execution = executeProviderBackend(
+      resolveSkillScriptExecutionBackend(),
+      1_000,
+      10,
+    );
+    const executionSettlementPromise = settleWithin(execution, 60);
+    replacement = loader.setupAll(
+      [providerExtension("replacement-provider", secondProvider)],
+      {},
+    );
+    const replacementSettlementPromise = settleWithin(replacement, 60);
+
+    await terminationStarted.promise;
+    const replacementSettlement = await replacementSettlementPromise;
+    assertEquals(replacementSettlement.kind, "rejected");
+    assertEquals(
+      replacementSettlement.kind === "rejected" &&
+        replacementSettlement.reason instanceof Error &&
+        replacementSettlement.reason.message.includes("quarantined"),
+      true,
+    );
+    assertEquals((await executionSettlementPromise).kind, "rejected");
+    assertEquals(firstTeardownCalls, 0);
+    assertThrows(
+      () => resolveSkillScriptExecutionBackend(),
+      Error,
+      "generation is retiring",
+    );
+
+    firstReporter?.resolveTerminal();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await loader.teardownAll();
+    await loader.setupAll(
+      [providerExtension("replacement-provider", secondProvider)],
+      {},
+    );
+    assertEquals(firstTeardownCalls, 1);
+    assertEquals(
+      (await executeProviderBackend(resolveSkillScriptExecutionBackend())).stdout,
+      "second",
+    );
+  } finally {
+    firstReporter?.resolveTerminal();
+    if (execution) {
+      try {
+        await execution;
+      } catch {
+        // Expected after retirement.
+      }
+    }
+    if (replacement) {
+      try {
+        await replacement;
+      } catch {
+        // Expected while the old generation is quarantined.
       }
     }
     try {

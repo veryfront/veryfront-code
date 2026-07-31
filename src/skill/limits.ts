@@ -33,6 +33,8 @@ export const SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES = 1_000;
 
 export const SKILL_SCRIPT_DEFAULT_TIMEOUT_MS = 60_000;
 export const SKILL_SCRIPT_MAX_TIMEOUT_MS = 300_000;
+/** Maximum cleanup wait after a lifecycle provider receives termination. */
+export const SKILL_SCRIPT_PROVIDER_TERMINATION_GRACE_MS = 1_000;
 /** Combined UTF-8 byte ceiling for stdout and stderr returned by a skill tool. */
 export const SKILL_SCRIPT_MAX_OUTPUT_BYTES = 1_048_576;
 export const SKILL_SCRIPT_MAX_CONTENT_BYTES = 1_048_576;

@@ -3,7 +3,10 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import {
+  admitAndApplyRscPayload,
   applyRscPayload,
+  buildPageHydrationModuleUrl,
+  buildRSCTransportQuery,
   retireAbandonedHeadOwnerMarkers,
   selectHydrationRoot,
   shouldAttemptRSCTransport,
@@ -81,6 +84,97 @@ describe("rendering/rsc/client-boot", () => {
       );
       assertEquals(doc.getElementById("rsc-slot-sidebar"), null);
       assertEquals(doc.getElementById("rsc-slot-../escape"), null);
+    });
+  });
+
+  describe("dependency snapshot propagation", () => {
+    it("preserves application pins regardless of the captured snapshot flag", () => {
+      assertEquals(
+        buildRSCTransportQuery(
+          "?name=Ada&pins=on%3Astale",
+          "on:pins-a",
+        ),
+        "?name=Ada&pins=on%3Astale",
+      );
+      assertEquals(
+        buildRSCTransportQuery("?pins=user-a&pins=user-b", "on:pins-a"),
+        "?pins=user-a&pins=user-b",
+      );
+      assertEquals(buildRSCTransportQuery("?pins=application", "off"), "?pins=application");
+    });
+
+    it("versions direct full-document page module imports", () => {
+      assertEquals(
+        buildPageHydrationModuleUrl(
+          "app/page.tsx",
+          "rsc-module",
+          { dependencyPinningCacheKey: "on:pins-a" },
+        ),
+        "/_veryfront/rsc/module?rel=app%2Fpage.tsx&pins=on%3Apins-a",
+      );
+      assertEquals(
+        buildPageHydrationModuleUrl(
+          "/project/app/page.tsx",
+          "fs",
+          { dependencyPinningCacheKey: "on:pins-a" },
+        ),
+        "/_veryfront/fs/L3Byb2plY3QvYXBwL3BhZ2UudHN4.js?pins=on%3Apins-a",
+      );
+    });
+
+    it("admits payload header and body atomically before changing the DOM", () => {
+      const dom = new JSDOM(`
+        <body>
+          <script id="veryfront-hydration-data" type="application/json">
+            {"dependencyPinningCacheKey":"on:1"}
+          </script>
+          <div id="rsc-root">Original</div>
+        </body>
+      `);
+      try {
+        let recoveries = 0;
+        assertEquals(
+          admitAndApplyRscPayload(
+            dom.window.document,
+            {
+              html: "<main>Must not render</main>",
+              dependencyPinningCacheKey: "on:2",
+            },
+            {
+              requestedDependencyPinningCacheKey: "on:1",
+              responseHeaderDependencyPinningCacheKey: "on:1",
+              recoverFromAdmissionFailure: () => {
+                recoveries++;
+                return true;
+              },
+            },
+          ),
+          false,
+        );
+        assertEquals(dom.window.document.getElementById("rsc-root")?.innerHTML, "Original");
+        assertEquals(recoveries, 1);
+
+        assertEquals(
+          admitAndApplyRscPayload(
+            dom.window.document,
+            {
+              html: "<main>Ready</main>",
+              dependencyPinningCacheKey: "on:1",
+            },
+            {
+              requestedDependencyPinningCacheKey: "on:1",
+              responseHeaderDependencyPinningCacheKey: "on:1",
+            },
+          ),
+          true,
+        );
+        assertEquals(
+          dom.window.document.getElementById("rsc-root")?.innerHTML,
+          "<main>Ready</main>",
+        );
+      } finally {
+        dom.window.close();
+      }
     });
   });
 

@@ -570,9 +570,18 @@ function invalidateMdxEsmModuleFromCache(
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
   expectedCachedPath?: string,
+  importMapFingerprint?: string,
+  cacheVariant?: string,
 ): boolean {
   const target = parseMdxEsmPathCacheKey(
-    toMdxEsmCacheKey(filePath, projectDir, reactVersion),
+    toMdxEsmCacheKey(
+      filePath,
+      projectDir,
+      reactVersion,
+      undefined,
+      importMapFingerprint,
+      cacheVariant,
+    ),
   );
   if (!target) return false;
 
@@ -582,7 +591,11 @@ function invalidateMdxEsmModuleFromCache(
     if (
       !parsed ||
       parsed.reactVersion !== target.reactVersion ||
-      parsed.normalizedPath !== target.normalizedPath
+      parsed.normalizedPath !== target.normalizedPath ||
+      (importMapFingerprint !== undefined &&
+        parsed.importMapFingerprint !== target.importMapFingerprint) ||
+      (cacheVariant !== undefined &&
+        parsed.dependencyPinningVariant !== target.dependencyPinningVariant)
     ) {
       continue;
     }
@@ -606,11 +619,22 @@ export function invalidateMdxEsmModule(
   filePath: string,
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
+  importMapFingerprint?: string,
+  cacheVariant?: string,
 ): boolean {
   const cache = modulePathCaches.get(cacheDir);
   if (!cache) return false;
 
-  return invalidateMdxEsmModuleFromCache(cacheDir, cache, filePath, projectDir, reactVersion);
+  return invalidateMdxEsmModuleFromCache(
+    cacheDir,
+    cache,
+    filePath,
+    projectDir,
+    reactVersion,
+    undefined,
+    importMapFingerprint,
+    cacheVariant,
+  );
 }
 
 export async function invalidateMdxEsmModuleForCachedPath(
@@ -619,6 +643,8 @@ export async function invalidateMdxEsmModuleForCachedPath(
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
   cacheDirs: string | string[] | null = getMdxEsmCacheDirForCachedPath(cachedPath),
+  importMapFingerprint?: string,
+  cacheVariant?: string,
 ): Promise<boolean> {
   const derivedCacheDir = getMdxEsmCacheDirForCachedPath(cachedPath);
   const configuredDirs = Array.isArray(cacheDirs) ? cacheDirs : cacheDirs ? [cacheDirs] : [];
@@ -637,6 +663,8 @@ export async function invalidateMdxEsmModuleForCachedPath(
       projectDir,
       reactVersion,
       cachedPath,
+      importMapFingerprint,
+      cacheVariant,
     );
     if (invalidated) return true;
   }
@@ -654,6 +682,7 @@ interface ParsedMdxEsmPathCacheKey {
   normalizedPath: string;
   sourceContentHash: string | null;
   importMapFingerprint: string | null;
+  dependencyPinningVariant: string | null;
 }
 
 function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | null {
@@ -663,11 +692,12 @@ function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | n
     const parsed = JSON.parse(cacheKey.slice(prefix.length));
     if (
       !Array.isArray(parsed) ||
-      (parsed.length !== 3 && parsed.length !== 4) ||
+      (parsed.length !== 3 && parsed.length !== 4 && parsed.length !== 5) ||
       typeof parsed[0] !== "string" ||
       typeof parsed[1] !== "string" ||
       (parsed[2] !== null && typeof parsed[2] !== "string") ||
       (parsed[3] !== undefined && parsed[3] !== null && typeof parsed[3] !== "string") ||
+      (parsed[4] !== undefined && parsed[4] !== null && typeof parsed[4] !== "string") ||
       parsed[0].length === 0 ||
       parsed[0].length > 64 ||
       parsed[1].length === 0 ||
@@ -676,7 +706,11 @@ function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | n
       parsed[1].split("/").some((segment: string) => segment === "." || segment === "..") ||
       (parsed[2] !== null && !/^[a-f0-9]{64}$/.test(parsed[2])) ||
       (typeof parsed[3] === "string" &&
-        (parsed[3].length === 0 || parsed[3].length > 256 || parsed[3].includes("\0")))
+        (parsed[3].length === 0 || parsed[3].length > 256 || parsed[3].includes("\0"))) ||
+      (typeof parsed[4] === "string" &&
+        (!parsed[4].startsWith("on:") ||
+          parsed[4].length > 512 ||
+          parsed[4].includes("\0")))
     ) {
       return null;
     }
@@ -685,6 +719,7 @@ function parseMdxEsmPathCacheKey(cacheKey: string): ParsedMdxEsmPathCacheKey | n
       normalizedPath: parsed[1],
       sourceContentHash: parsed[2],
       importMapFingerprint: parsed[3] ?? null,
+      dependencyPinningVariant: parsed[4] ?? null,
     };
   } catch (_) {
     return null;
@@ -861,6 +896,7 @@ function toMdxEsmCacheKey(
   reactVersion = REACT_DEFAULT_VERSION,
   sourceContentHash?: string,
   importMapFingerprint?: string,
+  cacheVariant?: string,
 ): string {
   let relativePath = filePath;
 
@@ -876,6 +912,7 @@ function toMdxEsmCacheKey(
     reactVersion,
     sourceContentHash,
     importMapFingerprint,
+    cacheVariant,
   );
 }
 
@@ -887,6 +924,7 @@ export async function lookupMdxEsmCache(
   recoveryOptions?: { projectId: string; contentSourceId: string },
   reactVersion = REACT_DEFAULT_VERSION,
   importMapFingerprint?: string,
+  cacheVariant?: string,
 ): Promise<CacheLookupResult> {
   const cache = await getModulePathCache(cacheDir);
   const cacheKey = toMdxEsmCacheKey(
@@ -895,6 +933,7 @@ export async function lookupMdxEsmCache(
     reactVersion,
     contentHash,
     importMapFingerprint,
+    cacheVariant,
   );
 
   const cachedPath = cache.get(cacheKey);

@@ -14,6 +14,7 @@ import {
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import { buildMdxEsmPathCacheKey } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
+import { buildModuleTransformCacheVariant } from "./module-cache-lookup.ts";
 
 const logger = rendererLogger.component("module-loader");
 
@@ -71,6 +72,8 @@ export interface PersistTransformedModuleInput {
   reactVersion?: string;
   /** Canonical identity of the import map used to produce transformedCode. */
   importMapFingerprint?: string;
+  dependencyPinningCacheKey?: string;
+  moduleServerOrigin?: string;
   /**
    * True when a dynamic import elsewhere closes a cycle back onto this module.
    * Such an edge is left as authored (`import("../app/page.js")`), so it needs a
@@ -102,13 +105,13 @@ function hasDefaultExport(code: string): boolean {
  */
 async function writeCycleTargetAlias(
   input: PersistTransformedModuleInput,
-  relativePath: string,
+  outputRelativePath: string,
   hashedFileName: string,
 ): Promise<void> {
-  const aliasRelativePath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
+  const aliasRelativePath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, ".js");
   // Same extension in and out means nothing was renamed (already `.js`): the
   // authored edge already points at the real artifact, so no alias is needed.
-  if (aliasRelativePath === relativePath) return;
+  if (aliasRelativePath === outputRelativePath) return;
 
   const aliasPath = join(input.tmpDir, aliasRelativePath);
   const lines = [`export * from "./${hashedFileName}";`];
@@ -140,7 +143,14 @@ export async function persistTransformedModule(
     ? input.filePath.slice(input.projectDir.length).replace(/^\/+/, "")
     : input.filePath.replace(/^\/+/, "");
 
-  const jsPath = relativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
+  const cacheVariant = buildModuleTransformCacheVariant(
+    input.dependencyPinningCacheKey,
+    input.moduleServerOrigin,
+  );
+  const outputRelativePath = cacheVariant
+    ? join("_pins", encodeURIComponent(cacheVariant), relativePath)
+    : relativePath;
+  const jsPath = outputRelativePath.replace(/\.(tsx?|jsx|mdx)$/, `.${transformedHash}.js`);
   const tempFilePath = join(input.tmpDir, jsPath);
 
   const tempDir = tempFilePath.substring(0, tempFilePath.lastIndexOf("/"));
@@ -184,6 +194,10 @@ export async function persistTransformedModule(
       input.reactVersion,
       undefined,
       input.importMapFingerprint,
+      buildModuleTransformCacheVariant(
+        input.dependencyPinningCacheKey,
+        input.moduleServerOrigin,
+      ),
     );
     const cache = await getModulePathCache(input.tmpDir);
     cache.set(mdxCacheKey, tempFilePath);
@@ -203,7 +217,7 @@ export async function persistTransformedModule(
 
   if (input.isCycleTarget) {
     const hashedFileName = jsPath.slice(jsPath.lastIndexOf("/") + 1);
-    await writeCycleTargetAlias(input, relativePath, hashedFileName);
+    await writeCycleTargetAlias(input, outputRelativePath, hashedFileName);
   }
 
   return tempFilePath;

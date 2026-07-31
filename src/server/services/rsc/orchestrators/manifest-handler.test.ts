@@ -4,6 +4,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import type { CacheRepository } from "#veryfront/repositories/types.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 
 function createMockCacheRepo(): CacheRepository<string> & { store: Map<string, string> } {
   const store = new Map<string, string>();
@@ -36,6 +37,7 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       const response = await handler.handle(manifest as any);
 
       assertEquals(response.headers.get("content-type"), "application/json");
+      assertEquals(response.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
       const body = await response.json();
       assertEquals(body.components.Button, "/app/components/Button.tsx");
       assertEquals(body.components.Card, "/app/components/Card.tsx");
@@ -232,6 +234,40 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       assertEquals(rebuilt.modules[0].exports, ["default", "Widget"]);
       assertEquals(rebuilt.hash === first.hash, false);
     });
+
+    it("invalidates manifest identity when dependency pins change", async () => {
+      const manifest = new Map([
+        [
+          "Button",
+          {
+            id: "Button",
+            path: "/project/frontend/Button.tsx",
+            rel: "frontend/Button.tsx",
+            contentHash: "source-a",
+            exports: ["default"],
+          },
+        ],
+      ]);
+      const handler = new ManifestHandler("/project", {
+        isLocalProject: false,
+      });
+
+      const stateA = await (await handler.handle(manifest, "on:pins-a")).json();
+      const stateB = await (await handler.handle(manifest, "on:pins-b")).json();
+      const stateBAgain = await (await handler.handle(new Map(), "on:pins-b")).json();
+
+      assertEquals(stateA.hash === stateB.hash, false);
+      assertEquals(
+        stateA.components.Button,
+        "/_veryfront/rsc/module?rel=frontend%2FButton.tsx&v=source-a&pins=on%3Apins-a",
+      );
+      assertEquals(
+        stateB.components.Button,
+        "/_veryfront/rsc/module?rel=frontend%2FButton.tsx&v=source-a&pins=on%3Apins-b",
+      );
+      assertEquals(stateBAgain.hash, stateB.hash);
+      assertEquals(stateB.dependencyPinningCacheKey, "on:pins-b");
+    });
   });
 
   describe("handle with injected CacheRepository", () => {
@@ -304,6 +340,67 @@ describe("server/services/rsc/orchestrators/manifest-handler", () => {
       }).handle(manifest as any);
 
       assertEquals(cacheRepo.store.size, 2);
+    });
+
+    it("isolates external manifest cache entries by dependency pins", async () => {
+      const cacheRepo = createMockCacheRepo();
+      const manifest = new Map([
+        [
+          "Y",
+          {
+            path: "/project/y.tsx",
+            rel: "y.tsx",
+            contentHash: "source-a",
+            exports: ["default"],
+          },
+        ],
+      ]);
+      const handler = new ManifestHandler("/project", {
+        cacheRepo,
+        isLocalProject: false,
+      });
+
+      await handler.handle(manifest as any, "on:pins-a");
+      await handler.handle(manifest as any, "on:pins-b");
+
+      assertEquals(cacheRepo.store.size, 2);
+    });
+
+    it("bounds tracked and external cache keys during dependency snapshot churn", async () => {
+      const cacheRepo = createMockCacheRepo();
+      const manifest = new Map([
+        [
+          "Y",
+          {
+            path: "/project/y.tsx",
+            rel: "y.tsx",
+            contentHash: "source-a",
+            exports: ["default"],
+          },
+        ],
+      ]);
+      const handler = new ManifestHandler("/project", {
+        cacheRepo,
+        isLocalProject: false,
+      });
+
+      for (let index = 0; index < 70; index++) {
+        await handler.handle(manifest as any, `on:pins-${index}`);
+      }
+
+      const trackedKeys = (handler as unknown as {
+        knownCacheKeys: Set<string>;
+      }).knownCacheKeys;
+      assertEquals(trackedKeys.size, 64);
+      assertEquals(cacheRepo.store.size, 64);
+      assertEquals(
+        [...cacheRepo.store.keys()].some((key) => key.endsWith(":on:pins-0")),
+        false,
+      );
+      assertEquals(
+        [...cacheRepo.store.keys()].some((key) => key.endsWith(":on:pins-69")),
+        true,
+      );
     });
   });
 

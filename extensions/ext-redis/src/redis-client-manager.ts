@@ -11,14 +11,23 @@ export interface RedisClient {
   disconnect(): Promise<void>;
   get(key: string): Promise<string | null>;
   mGet(keys: string[]): Promise<Array<string | null>>;
-  set(key: string, value: string, options?: { EX?: number }): Promise<string | null>;
+  set(
+    key: string,
+    value: string,
+    options?: { EX?: number; NX?: boolean },
+  ): Promise<string | null>;
   del(key: string | string[]): Promise<number>;
   scan(
-    cursor: number,
+    cursor: string,
     options?: { MATCH?: string; COUNT?: number },
-  ): Promise<{ cursor: number; keys: string[] }>;
+  ): Promise<{ cursor: string; keys: string[] }>;
   expire(key: string, seconds: number): Promise<number>;
   ttl?(key: string): Promise<number>;
+  eval(
+    script: string,
+    options: { keys: string[]; arguments: string[] },
+  ): Promise<unknown>;
+  info(section?: "server" | "memory" | "cluster"): Promise<string>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
   isOpen?: boolean;
 }

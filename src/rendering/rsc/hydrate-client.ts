@@ -4,11 +4,14 @@ import { rscLogger } from "../client/browser-logger.ts";
 import { base64urlEncode } from "#veryfront/utils/base64url.ts";
 import type * as ReactTypes from "react";
 import {
+  appendClientModuleDependencyPins,
   buildClientModuleUrl,
+  buildRSCTransportHeaders,
   type ClientModuleStrategy,
   type ClientRuntimeHydrationData,
   getHydrationReactImportSpecifiers,
   readHydrationData,
+  readHydrationDataSnapshot,
   resolveClientModuleStrategy,
 } from "./client-module-strategy.ts";
 import {
@@ -17,14 +20,35 @@ import {
 } from "./client-boundary-payload.ts";
 import type { RSCNode } from "./types.ts";
 import { wrapWithRouterProvider } from "./hydration-router.ts";
-import { type HydrationManifest, parseHydrationManifest } from "./hydration-manifest.ts";
+import {
+  type HydrationManifest as ParsedHydrationManifest,
+  parseHydrationManifest,
+} from "./hydration-manifest.ts";
 import { createClientRequestLifetime, readJsonResponseWithinLimit } from "./client-transport.ts";
+import {
+  recoverFromDependencySnapshotConflict,
+  recoverFromSnapshotBoundModuleFailure,
+} from "./dependency-snapshot-recovery.ts";
+import {
+  admitDependencySnapshot,
+  type RecoverFromDependencySnapshotAdmissionFailure,
+} from "./dependency-snapshot-admission.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "./constants.ts";
 
-export type { HydrationManifest } from "./hydration-manifest.ts";
+export type HydrationManifest = ParsedHydrationManifest & {
+  readonly dependencyPinningCacheKey?: string;
+};
 
 interface ClientModule {
   default?: ReactTypes.ComponentType<unknown>;
   [exportName: string]: ReactTypes.ComponentType<unknown> | unknown;
+}
+
+interface ClientModuleImportOptions {
+  importModule?: (moduleUrl: string) => Promise<ClientModule>;
+  recoverSnapshotFailure?: (moduleUrl: string) => Promise<boolean>;
+  releaseAssetModules?: ClientRuntimeHydrationData["releaseAssetModules"];
+  clientPathByRel?: ReadonlyMap<string, string>;
 }
 
 interface ReactRoot {
@@ -194,14 +218,90 @@ export function readClientBoundaryChildren(el: HTMLElement): RSCNode[] {
 
 export const base64url = base64urlEncode;
 
-async function fetchManifest(): Promise<HydrationManifest | null> {
+export function buildHydrationManifestUrl(
+  _hydrationData: ReturnType<typeof readHydrationData>,
+): string {
+  return "/_veryfront/rsc/manifest";
+}
+
+export function buildHydrationManifestHeaders(
+  hydrationData: ReturnType<typeof readHydrationData>,
+): Record<string, string> {
+  return buildRSCTransportHeaders(hydrationData);
+}
+
+export interface HydrationManifestDependencySnapshotOptions {
+  readonly requestedDependencyPinningCacheKey?: string;
+  readonly currentDependencyPinningCacheKey?: unknown;
+  readonly responseHeaderDependencyPinningCacheKey: string | null;
+  readonly recoverFromAdmissionFailure?: RecoverFromDependencySnapshotAdmissionFailure;
+}
+
+function readManifestDependencyPinningCacheKey(value: unknown): unknown {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) return undefined;
+
+  const descriptor = Object.getOwnPropertyDescriptor(
+    value,
+    "dependencyPinningCacheKey",
+  );
+  if (!descriptor) return undefined;
+  return Object.hasOwn(descriptor, "value") ? descriptor.value : descriptor;
+}
+
+export function admitSnapshotBoundHydrationManifest(
+  value: unknown,
+  options: HydrationManifestDependencySnapshotOptions,
+): HydrationManifest | null {
+  const manifest = parseHydrationManifest(value);
+  if (!manifest) return null;
+
+  const admission = admitDependencySnapshot(
+    {
+      requestedDependencyPinningCacheKey: options.requestedDependencyPinningCacheKey,
+      currentDependencyPinningCacheKey: options.currentDependencyPinningCacheKey,
+      responseHeaderDependencyPinningCacheKey: options.responseHeaderDependencyPinningCacheKey,
+      responseBodyDependencyPinningCacheKey: readManifestDependencyPinningCacheKey(value),
+      requireResponseHeader: true,
+      requireResponseBody: true,
+    },
+    options.recoverFromAdmissionFailure,
+  );
+  if (!admission) return null;
+  if (admission.dependencyPinningCacheKey === "off") return manifest;
+
+  return Object.freeze({
+    ...manifest,
+    dependencyPinningCacheKey: admission.dependencyPinningCacheKey,
+  });
+}
+
+async function fetchManifest(
+  doc: Document = document,
+): Promise<HydrationManifest | null> {
   const lifetime = createClientRequestLifetime();
   try {
-    const res = await fetch("/_veryfront/rsc/manifest", {
-      headers: { Accept: "application/json" },
+    const requestedHydrationSnapshot = readHydrationDataSnapshot(doc);
+    if (!requestedHydrationSnapshot.valid) {
+      admitDependencySnapshot({
+        requestedDependencyPinningCacheKey: requestedHydrationSnapshot,
+        currentDependencyPinningCacheKey: requestedHydrationSnapshot,
+      });
+      return null;
+    }
+    const hydrationData = requestedHydrationSnapshot.data;
+    const res = await fetch(buildHydrationManifestUrl(hydrationData), {
+      headers: {
+        Accept: "application/json",
+        ...buildHydrationManifestHeaders(hydrationData),
+      },
       signal: lifetime.signal,
     });
     if (!res.ok) {
+      await recoverFromDependencySnapshotConflict(res);
       try {
         await res.body?.cancel();
       } catch {
@@ -213,7 +313,16 @@ async function fetchManifest(): Promise<HydrationManifest | null> {
       res,
       MAX_HYDRATION_MANIFEST_RESPONSE_BYTES,
     );
-    return parseHydrationManifest(value);
+    const currentHydrationSnapshot = readHydrationDataSnapshot(doc);
+    return admitSnapshotBoundHydrationManifest(value, {
+      requestedDependencyPinningCacheKey: hydrationData?.dependencyPinningCacheKey,
+      currentDependencyPinningCacheKey: currentHydrationSnapshot.valid
+        ? currentHydrationSnapshot.data?.dependencyPinningCacheKey
+        : currentHydrationSnapshot,
+      responseHeaderDependencyPinningCacheKey: res.headers.get(
+        RSC_DEPENDENCY_PINNING_HEADER,
+      ),
+    });
   } catch (_) {
     /* expected: manifest fetch may fail when RSC is not configured */
     return null;
@@ -222,19 +331,18 @@ async function fetchManifest(): Promise<HydrationManifest | null> {
   }
 }
 
-async function importClientModule(
+export async function importClientModule(
   manifest: HydrationManifest,
   reference: ParsedClientRef,
   strategy: ClientModuleStrategy,
-  releaseAssetModules?: ClientRuntimeHydrationData["releaseAssetModules"],
-  clientPathByRel?: ReadonlyMap<string, string>,
+  options: ClientModuleImportOptions = {},
 ): Promise<ClientModule | null> {
   const moduleUrl = resolveClientBoundaryModuleUrl(
     manifest,
     reference,
     strategy,
-    releaseAssetModules,
-    clientPathByRel,
+    options.releaseAssetModules,
+    options.clientPathByRel,
   );
   if (!moduleUrl) return null;
   const cacheKey = `${moduleUrl}#${manifest.hash ?? ""}`;
@@ -247,7 +355,9 @@ async function importClientModule(
   }
 
   try {
-    const mod = (await import(moduleUrl)) as ClientModule;
+    const mod = await (options.importModule ?? ((url) => import(url) as Promise<ClientModule>))(
+      moduleUrl,
+    );
 
     try {
       setClientModCache(cacheKey, mod);
@@ -258,6 +368,7 @@ async function importClientModule(
     return mod;
   } catch (e) {
     rscLogger.debug("hydrate: failed to import module", { moduleUrl, error: e });
+    await (options.recoverSnapshotFailure ?? recoverFromSnapshotBoundModuleFailure)(moduleUrl);
     return null;
   }
 }
@@ -269,7 +380,12 @@ export function resolveClientBoundaryModuleUrl(
   releaseAssetModules?: ClientRuntimeHydrationData["releaseAssetModules"],
   clientPathByRel?: ReadonlyMap<string, string>,
 ): string | null {
-  if (reference.moduleUrl) return reference.moduleUrl;
+  if (reference.moduleUrl) {
+    return appendClientModuleDependencyPins(
+      reference.moduleUrl,
+      manifest.dependencyPinningCacheKey,
+    );
+  }
   if (!reference.rel) return null;
 
   const absPath = clientPathByRel?.get(reference.rel) ??
@@ -279,6 +395,7 @@ export function resolveClientBoundaryModuleUrl(
     rel: reference.rel,
     absPath,
     version: manifest.hash,
+    dependencyPinningCacheKey: manifest.dependencyPinningCacheKey,
     releaseAssetModules,
   });
 }
@@ -311,7 +428,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
   let manifest: HydrationManifest | null = null;
 
   try {
-    manifest = await fetchManifest();
+    manifest = await fetchManifest(doc);
   } catch (e) {
     rscLogger.debug("hydrate: fetch manifest failed", e);
   }
@@ -336,7 +453,16 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     return;
   }
 
-  const hydrationData = readHydrationData(doc);
+  const currentHydrationSnapshot = readHydrationDataSnapshot(doc);
+  const manifestSnapshotAdmission = admitDependencySnapshot({
+    requestedDependencyPinningCacheKey: manifest.dependencyPinningCacheKey,
+    currentDependencyPinningCacheKey: currentHydrationSnapshot.valid
+      ? currentHydrationSnapshot.data?.dependencyPinningCacheKey
+      : currentHydrationSnapshot,
+  });
+  if (!manifestSnapshotAdmission) return;
+
+  const hydrationData = currentHydrationSnapshot.data;
   const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
   const releaseAssetModules = hydrationData?.releaseAssetModules;
   const moduleById = new Map(
@@ -377,8 +503,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
       manifest,
       parsed,
       clientModuleStrategy,
-      releaseAssetModules,
-      clientPathByRel,
+      { releaseAssetModules, clientPathByRel },
     );
     if (!mod) continue;
 
@@ -421,8 +546,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
             manifest,
             childReference,
             clientModuleStrategy,
-            releaseAssetModules,
-            clientPathByRel,
+            { releaseAssetModules, clientPathByRel },
           );
           if (!childModule) return null;
           const Child = childModule[childReference.exportName] ?? childModule.default;

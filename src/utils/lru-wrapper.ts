@@ -14,6 +14,7 @@ interface LRUOptions<K, V> {
   maxSizeBytes?: number;
   ttlMs?: number;
   cleanupIntervalMs?: number;
+  /** Called whenever an entry leaves the cache, including delete/clear/expiry. */
   onEvict?: (key: K, value: V) => void;
   estimateSizeOf?: (value: V) => number;
   now?: () => number;

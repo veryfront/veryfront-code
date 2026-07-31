@@ -29,7 +29,6 @@ import {
   requestStream,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
-  withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
 import {
   buildAnthropicMessagesRequestWithCorrelationState,
@@ -65,7 +64,6 @@ export {
   ProviderRateLimitError,
   ProviderRequestError,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
-  withToolInputStatusTransitions,
 };
 
 export interface AnthropicRuntimeConfig {
@@ -669,7 +667,7 @@ export function createAnthropicModelRuntime(
 
       return {
         stream: createCancelableProviderStream(
-          withToolInputStatusTransitions(continuePausedStream()),
+          continuePausedStream(),
           providerAbortScope.controller,
           providerAbortScope.dispose,
         ),

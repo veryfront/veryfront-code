@@ -10,6 +10,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerLRUCache } from "#veryfront/cache";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { assertCSSPipelineIdentity } from "#veryfront/utils";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
 
 /** Timeout for CSS generation SSR (shorter than full SSR since it's optional) */
 export const CSS_SSR_TIMEOUT_MS = 5_000;
@@ -19,7 +20,8 @@ export const PAGE_CSS_CACHE_MAX_SIZE = 200;
 
 /**
  * Per-page CSS cache to avoid redundant SSR for CSS generation.
- * Key: versioned JSON tuple of project, environment, route, content, and CSS pipeline identity
+ * Key: versioned JSON tuple of project, environment, route, content, CSS
+ * pipeline identity, and an optional dependency snapshot variant.
  * Value: Generated CSS string
  * Uses LRU eviction so frequently-used pages' CSS is retained under cache pressure.
  */
@@ -44,6 +46,8 @@ export function getPageCssCacheKey(
   slug: string,
   projectUpdatedAt: string | undefined,
   cssPipelineIdentity: string,
+  dependencyPinningCacheKey?: string,
+  moduleServerOrigin?: string,
 ): string {
   if (typeof projectId !== "string" || projectId.length === 0) {
     throw INVALID_ARGUMENT.create({
@@ -60,7 +64,7 @@ export function getPageCssCacheKey(
     });
   }
 
-  return `veryfront:page-css:v2:${
+  const baseKey = `veryfront:page-css:v2:${
     JSON.stringify([
       projectId,
       environment ?? null,
@@ -69,6 +73,11 @@ export function getPageCssCacheKey(
       capturedCSSPipelineIdentity,
     ])
   }`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    dependencyPinningCacheKey,
+    moduleServerOrigin,
+  );
+  return cacheVariant ? `${baseKey}:pins:${cacheVariant}` : baseKey;
 }
 
 /** Get cached CSS for a page, if available. */

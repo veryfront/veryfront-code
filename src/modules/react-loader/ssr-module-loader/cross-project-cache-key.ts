@@ -1,4 +1,7 @@
 import { encodeCacheKeySegment } from "#veryfront/cache/keys/segment-codec.ts";
+import { buildDependencyPinningCacheVariant } from "#veryfront/cache/keys/dependency-pinning.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { captureDependencyPinningSnapshot } from "../../dependency-pinning-snapshot.ts";
 
 const CROSS_PROJECT_CACHE_KEY_PREFIX = "ssr-cross-project:v2:";
 const MAX_CACHE_IDENTITY_LENGTH = 32 * 1024;
@@ -22,6 +25,10 @@ export interface CrossProjectImportCacheKeyOptions {
   reactVersion?: string;
   registryBaseUrl: string;
   importMapFingerprint?: string;
+  moduleServerOrigin?: string;
+  dependencyPinningCacheKey?: string;
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 /**
@@ -33,9 +40,14 @@ export interface CrossProjectImportCacheKeyOptions {
 export function buildCrossProjectImportCacheKey(
   options: CrossProjectImportCacheKeyOptions,
 ): string {
+  captureDependencyPinningSnapshot(
+    options.dependencyPinningCacheKey,
+    options.dependencyPinningDependencies,
+    options.dependencyPinningSource,
+  );
   const reactVersion = options.reactVersion ?? "default";
   const importMapFingerprint = options.importMapFingerprint ?? "default";
-  return `${CROSS_PROJECT_CACHE_KEY_PREFIX}${
+  const baseKey = `${CROSS_PROJECT_CACHE_KEY_PREFIX}${
     encodeCacheKeySegment(assertCacheIdentity(options.projectId, "Project ID"))
   }:${encodeCacheKeySegment(assertCacheIdentity(options.specifier, "Import specifier"))}:${
     encodeCacheKeySegment(assertCacheIdentity(reactVersion, "React version"))
@@ -48,6 +60,11 @@ export function buildCrossProjectImportCacheKey(
       assertCacheIdentity(importMapFingerprint, "Import-map fingerprint"),
     )
   }`;
+  const cacheVariant = buildDependencyPinningCacheVariant(
+    options.dependencyPinningCacheKey,
+    options.moduleServerOrigin,
+  );
+  return cacheVariant ? `${baseKey}:${encodeCacheKeySegment(cacheVariant)}` : baseKey;
 }
 
 /** Return true only for a v2 cross-project key owned by the exact project. */
@@ -56,7 +73,7 @@ export function isCrossProjectCacheKeyForProject(
   projectId: string,
 ): boolean {
   const parts = cacheKey.split(":");
-  return parts.length === 7 &&
+  return (parts.length === 7 || parts.length === 8) &&
     `${parts[0]}:${parts[1]}:` === CROSS_PROJECT_CACHE_KEY_PREFIX &&
     parts[2] === encodeCacheKeySegment(
         assertCacheIdentity(projectId, "Project ID"),

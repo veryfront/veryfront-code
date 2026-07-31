@@ -5,6 +5,10 @@ import {
   RELEASE_ASSET_MANIFEST_LIMITS,
 } from "#veryfront/release-assets/constants.ts";
 import type { HydrationDataStructure } from "../hydration-script-builder/types.ts";
+import {
+  isCanonicalHydrationModulePath,
+  isCanonicalHydrationPath,
+} from "../project-relative-path.ts";
 
 const MAX_HYDRATION_ROUTE_TEXT_LENGTH = 2_048;
 const MAX_BUILD_VERSION_TEXT_LENGTH = 2_048;
@@ -12,27 +16,7 @@ const MAX_HYDRATION_LAYOUTS = 256;
 const MAX_HYDRATION_MODULES = 512;
 const MAX_HYDRATION_HEADINGS = 10_000;
 const MAX_HYDRATION_HEADING_TEXT_LENGTH = 4_096;
-const HYDRATION_MODULE_EXTENSION_PATTERN = /\.(?:tsx?|jsx?|mdx?|mjs)$/;
 const RELEASE_ASSET_JS_FILENAME_PATTERN = /^[0-9a-f]{64}\.js$/;
-
-function isCanonicalHydrationPath(value: string): boolean {
-  if (
-    value.startsWith("/") ||
-    value.endsWith("/") ||
-    value.includes("\\") ||
-    value.includes("?") ||
-    value.includes("#")
-  ) {
-    return false;
-  }
-
-  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== "..");
-}
-
-function isCanonicalHydrationModulePath(value: string): boolean {
-  return isCanonicalHydrationPath(value) &&
-    HYDRATION_MODULE_EXTENSION_PATTERN.test(value);
-}
 
 function isInternalReleaseAssetModuleUrl(value: string): boolean {
   const prefix = `${RELEASE_ASSET_BASE_PATH}/`;
@@ -58,7 +42,6 @@ export const getClientModuleStrategySchema = defineSchema((v) =>
 export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
   v.object({
     mode: v.enum(["development", "production"]),
-    // deno-lint-ignore no-explicit-any -- VeryfrontConfig is complex, use any
     config: v.any(), // VeryfrontConfig is complex, use any
     importMap: v.record(v.string(), v.string()).optional(),
     nestedLayouts: v
@@ -78,6 +61,7 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     pageType: getPageTypeSchema().optional(),
     nonce: v.string().optional(),
     projectDir: v.string().optional(),
+    moduleServerOrigin: v.string().optional(),
     globalCSS: v.string().optional(),
     frontmatter: v.record(v.string(), v.unknown()).optional(),
     layoutProps: v.record(v.string(), v.record(v.string(), v.unknown())).optional(),
@@ -105,6 +89,8 @@ export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
     clientModuleStrategy: getClientModuleStrategySchema().optional(),
     noHmr: v.boolean().optional(),
     forceProductionScripts: v.boolean().optional(),
+    dependencyPinningCacheKey: v.string().optional(),
+    dependencyPinningDependencies: v.record(v.string(), v.string()).optional(),
   })
 );
 
@@ -136,6 +122,7 @@ export const getHydrationDataSchema = defineSchema<HydrationDataStructure>((v) =
       .refine(isCanonicalHydrationModulePath).optional(),
     pageType: getPageTypeSchema().optional(),
     clientModuleStrategy: getClientModuleStrategySchema().optional(),
+    dependencyPinningCacheKey: v.string().optional(),
     releaseId: v.string().min(1)
       .max(RELEASE_ASSET_MANIFEST_LIMITS.identifierLength)
       .optional(),

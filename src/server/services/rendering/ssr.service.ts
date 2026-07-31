@@ -7,9 +7,7 @@ import {
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
-import { VeryfrontError } from "#veryfront/errors";
-import { isDataControlResult } from "#veryfront/data/helpers.ts";
-import type { DataResult } from "#veryfront/data/types.ts";
+import { findSSRControlOutcome, resolveSSRFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   abortRenderSession,
@@ -32,6 +30,8 @@ import {
 import { buildQueryAwareCacheKey, type QueryParamCacheOptions } from "#veryfront/cache/keys.ts";
 import { requestHasCacheSensitiveState } from "#veryfront/cache/request-cacheability.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import type { CacheRepository } from "#veryfront/repositories/types.ts";
+import type { DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
 
 const logger = serverLogger.component("ssr-service");
 
@@ -79,6 +79,8 @@ export interface SSRRenderResult {
   showDevOverlay?: boolean;
   redirectLocation?: string;
   slug: string;
+  /** Dependency snapshot identity rendered into this document. */
+  dependencyPinningCacheKey?: string;
 }
 
 export interface SSRRenderOptions {
@@ -92,6 +94,12 @@ export interface SSRRenderOptions {
   noHmr: boolean;
   forceProductionScripts?: boolean;
   useNoCache: boolean;
+  /** Immutable dependency snapshot selected at the HTTP request boundary. */
+  dependencyPinningCacheKey?: string;
+  /** Immutable package map paired with dependencyPinningCacheKey. */
+  dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Exact package source namespace paired with the immutable snapshot. */
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }
 
 export interface MemoryStatus {
@@ -99,43 +107,6 @@ export interface MemoryStatus {
   heapUsedMB: number;
   heapLimitMB: number;
   heapUsedPercent: number;
-}
-
-interface RedirectResultContext {
-  redirect?: {
-    destination?: unknown;
-    permanent?: unknown;
-  };
-}
-
-/**
- * Find a thrown `notFound()` / `redirect()` control result anywhere in the
- * error's `cause` chain or an `AggregateError`'s `errors`.
- *
- * `throw notFound()` is documented to work like `return notFound()`. The data
- * loaders already recognise a thrown branded result (server-data-fetcher.ts),
- * but a control result thrown from a page COMPONENT render surfaces here in the
- * SSR error handler instead, where, unrecognised, it became a 500. Matching the
- * brand lets it behave like the returned/loader form: a 404 (custom
- * `not-found.tsx`) or a redirect. The check is on the brand, never the shape.
- *
- * React can surface concurrent boundary failures wrapped in an `AggregateError`,
- * so the walk descends both `cause` and `errors`. A `seen` set keeps a
- * self-referential chain from looping.
- */
-function findThrownControlResult(error: unknown): DataResult | null {
-  const seen = new Set<unknown>();
-  const stack: unknown[] = [error];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || typeof current !== "object" || seen.has(current)) continue;
-    if (isDataControlResult(current)) return current as DataResult;
-    seen.add(current);
-    stack.push((current as { cause?: unknown }).cause);
-    const aggregated = (current as { errors?: unknown }).errors;
-    if (Array.isArray(aggregated)) stack.push(...aggregated);
-  }
-  return null;
 }
 
 async function buildPublicRenderCacheKey(
@@ -172,19 +143,6 @@ async function buildPublicRenderCacheKey(
 
   return `public-${await computeHash(JSON.stringify(identity))}`;
 }
-
-function extractRedirectLocation(
-  error: VeryfrontError,
-): { destination: string; permanent: boolean } | null {
-  const redirect = (error.context as RedirectResultContext | undefined)?.redirect;
-  if (!redirect || typeof redirect.destination !== "string") return null;
-
-  return {
-    destination: redirect.destination,
-    permanent: redirect.permanent === true,
-  };
-}
-
 /**
  * Build the redirect result shared by the thrown-control-result and
  * `render-error` paths, so a change to redirect handling lands in one place.
@@ -226,12 +184,28 @@ function getAllReady(stream: ReadableStream | null | undefined): Promise<unknown
   return allReady as Promise<unknown>;
 }
 
+function getApiUrlForLogging(error: Error): string | undefined {
+  if (!("context" in error)) return undefined;
+
+  const context = error.context;
+  if (!context || typeof context !== "object" || !("details" in context)) return undefined;
+
+  const details = context.details;
+  if (!details || typeof details !== "object" || !("url" in details)) return undefined;
+
+  const url = details.url;
+  return typeof url === "string" ? url : undefined;
+}
+
 export class SSRService implements SSRServiceLike {
+  private readonly cacheRepo?: CacheRepository<string>;
   private readonly rendererProvider: RendererProvider;
 
   constructor(options?: {
+    cacheRepo?: CacheRepository<string>;
     rendererProvider?: RendererProvider;
   }) {
+    this.cacheRepo = options?.cacheRepo;
     this.rendererProvider = options?.rendererProvider ?? defaultRendererProvider;
   }
 
@@ -314,6 +288,9 @@ export class SSRService implements SSRServiceLike {
                 forceProductionScripts: options.forceProductionScripts,
                 renderSessionId,
                 cacheKey,
+                dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+                dependencyPinningDependencies: options.dependencyPinningDependencies,
+                dependencyPinningSource: options.dependencyPinningSource,
               })),
         ));
 
@@ -353,7 +330,7 @@ export class SSRService implements SSRServiceLike {
           try {
             await allReady;
           } catch (error) {
-            if (findThrownControlResult(error)) {
+            if (findSSRControlOutcome(error)) {
               return this.handleRenderError(error, ctx, slug, request, nonce);
             }
           }
@@ -368,6 +345,7 @@ export class SSRService implements SSRServiceLike {
         etag,
         cacheStrategy,
         slug,
+        dependencyPinningCacheKey: options.dependencyPinningCacheKey,
       };
     } catch (error) {
       if (hasRenderSession(renderSessionId)) abortRenderSession(renderSessionId);
@@ -383,69 +361,41 @@ export class SSRService implements SSRServiceLike {
     nonce?: string,
   ): SSRRenderResult {
     const errorObj = error instanceof Error ? error : new Error(String(error));
+    const outcome = resolveSSRFailure(error, { isLocalProject: Boolean(ctx.isLocalProject) });
 
-    // The page threw and its app-router error.tsx already rendered a full,
-    // hydrating document (the boundary UI). Serve it as a 500 without caching.
-    const errorBoundaryHtml = (error as { errorBoundaryHtml?: string })?.errorBoundaryHtml;
-    if (typeof errorBoundaryHtml === "string") {
-      captureApplicationError(errorObj, {
-        boundary: "ssr.app-router-error-boundary",
-        method: request.method,
-      });
-      return {
-        status: HTTP_INTERNAL_SERVER_ERROR,
-        html: errorBoundaryHtml,
-        isStreaming: false,
-        cacheStrategy: "no-cache",
-        errorType: "app-router-error-boundary",
-        slug,
-      };
-    }
-
-    // Dev-only overlay (full stack, absolute paths, line numbers) must never
-    // be exposed outside a local project, including remote preview, which is
-    // internet-reachable. See VULN-SRV-1 / VULN-SRV-2.
-    const isDev = Boolean(ctx.isLocalProject);
-
-    // `throw notFound()` / `throw redirect()` from a page component surfaces here
-    // as a thrown control result. Recognise the brand and behave like the loader
-    // form: notFound to 404 (routed to the segment's custom not-found.tsx by the
-    // handler), redirect to 301/302. Otherwise it falls through to a 500.
-    const control = findThrownControlResult(error);
-    if (control?.redirect) {
-      logger.debug("SSR control-result redirect (thrown from component)", {
-        slug,
-        destination: control.redirect.destination,
-        permanent: control.redirect.permanent,
-        projectSlug: ctx.projectSlug,
-      });
-      return buildRedirectResult(control.redirect, errorObj, slug);
-    }
-    if (control?.notFound) {
-      logger.debug("SSR control-result notFound (thrown from component)", { slug });
-      return buildNotFoundResult(slug);
-    }
-
-    if (error instanceof VeryfrontError && error.slug === "file-not-found") {
-      logger.debug("Page not found", { slug, error: errorObj.message });
-      return buildNotFoundResult(slug);
-    }
-
-    if (
-      error instanceof VeryfrontError && error.slug === "api-client-error" && error.status === 404
-    ) {
-      const apiUrl =
-        (((error.context as { details?: { url?: string } } | undefined)?.details?.url) ?? "")
-          .toString();
-
-      const isFileListRequest = apiUrl.includes("/files") &&
-        !apiUrl.includes("/files/") &&
-        (apiUrl.includes("/environments/") || apiUrl.includes("/branches/"));
-
-      if (isFileListRequest) {
+    switch (outcome.kind) {
+      case "app-router-error-boundary":
+        captureApplicationError(outcome.error, {
+          boundary: "ssr.app-router-error-boundary",
+          method: request.method,
+        });
+        return {
+          status: HTTP_INTERNAL_SERVER_ERROR,
+          html: outcome.html,
+          isStreaming: false,
+          cacheStrategy: "no-cache",
+          errorType: "app-router-error-boundary",
+          slug,
+        };
+      case "redirect":
+        logger.debug("SSR redirect", {
+          slug,
+          destination: outcome.location,
+          permanent: outcome.permanent,
+          projectSlug: ctx.projectSlug,
+        });
+        return buildRedirectResult(
+          { destination: outcome.location, permanent: outcome.permanent },
+          errorObj,
+          slug,
+        );
+      case "not-found":
+        logger.debug("SSR notFound", { slug });
+        return buildNotFoundResult(slug);
+      case "undeployed":
         logger.debug("Project not deployed", {
           projectSlug: ctx.projectSlug,
-          apiUrl,
+          apiUrl: getApiUrlForLogging(outcome.error),
         });
         return {
           status: HTTP_NOT_FOUND,
@@ -455,87 +405,82 @@ export class SSRService implements SSRServiceLike {
           errorType: "undeployed",
           slug,
         };
-      }
-    }
-
-    if (error instanceof VeryfrontError && error.slug === "render-error") {
-      const redirect = extractRedirectLocation(error);
-      if (redirect) {
-        logger.debug("SSR redirect", {
+      case "overloaded":
+        return {
+          status: outcome.status,
+          html: ErrorPages.memoryPressure(),
+          isStreaming: false,
+          cacheStrategy: "no-cache",
+          error: outcome.error,
+          errorType: "server-error",
           slug,
-          destination: redirect.destination,
-          permanent: redirect.permanent,
+        };
+      case "runtime":
+        captureApplicationError(outcome.error, {
+          boundary: "ssr.render",
+          method: request.method,
+        });
+
+        logger.error("Render failed", {
+          slug,
+          error: outcome.error.message,
+          stack: outcome.error.stack,
           projectSlug: ctx.projectSlug,
         });
-        return buildRedirectResult(redirect, errorObj, slug);
-      }
+
+        // Dev-only overlay content includes stack details and must stay local-only.
+        getErrorCollector().addRuntimeError(outcome.error.message, outcome.error.stack, {
+          source: "ssr-service",
+          url: request.url,
+          slug,
+        });
+
+        {
+          const sourceFile = (outcome.error as Error & { sourceFile?: string }).sourceFile;
+          const location = sourceFile ? parseErrorLocation(outcome.error, sourceFile) : {};
+          return {
+            status: HTTP_INTERNAL_SERVER_ERROR,
+            html: ErrorOverlay.createHTML(
+              {
+                error: outcome.error,
+                type: "runtime",
+                ...(sourceFile ? { file: sourceFile } : {}),
+                ...location,
+              },
+              ctx.projectSlug,
+              nonce,
+            ),
+            isStreaming: false,
+            cacheStrategy: "no-cache",
+            error: outcome.error,
+            errorType: "runtime",
+            showDevOverlay: true,
+            slug,
+          };
+        }
+      case "server-error":
+        captureApplicationError(outcome.error, {
+          boundary: "ssr.render",
+          method: request.method,
+        });
+
+        logger.error("Render failed", {
+          slug,
+          error: outcome.error.message,
+          stack: outcome.error.stack,
+          projectSlug: ctx.projectSlug,
+        });
+
+        return {
+          status: HTTP_INTERNAL_SERVER_ERROR,
+          html: ErrorPages.serverError(),
+          isStreaming: false,
+          cacheStrategy: "no-cache",
+          error: outcome.error,
+          errorType: "server-error",
+          slug,
+        };
     }
-
-    if (
-      error instanceof VeryfrontError && error.slug === "service-overloaded"
-    ) {
-      return {
-        status: error.status ?? HTTP_UNAVAILABLE,
-        html: ErrorPages.memoryPressure(),
-        isStreaming: false,
-        cacheStrategy: "no-cache",
-        error: errorObj,
-        errorType: "server-error",
-        slug,
-      };
-    }
-
-    captureApplicationError(errorObj, {
-      boundary: "ssr.render",
-      method: request.method,
-    });
-
-    logger.error("Render failed", {
-      slug,
-      error: errorObj.message,
-      stack: errorObj.stack,
-      projectSlug: ctx.projectSlug,
-    });
-
-    if (isDev) {
-      getErrorCollector().addRuntimeError(errorObj.message, errorObj.stack, {
-        source: "ssr-service",
-        url: request.url,
-        slug,
-      });
-
-      const sourceFile = (errorObj as Error & { sourceFile?: string }).sourceFile;
-      const location = sourceFile ? parseErrorLocation(errorObj, sourceFile) : {};
-      return {
-        status: HTTP_INTERNAL_SERVER_ERROR,
-        html: ErrorOverlay.createHTML(
-          {
-            error: errorObj,
-            type: "runtime",
-            ...(sourceFile ? { file: sourceFile } : {}),
-            ...location,
-          },
-          ctx.projectSlug,
-          nonce,
-        ),
-        isStreaming: false,
-        cacheStrategy: "no-cache",
-        error: errorObj,
-        errorType: "runtime",
-        showDevOverlay: true,
-        slug,
-      };
-    }
-
-    return {
-      status: HTTP_INTERNAL_SERVER_ERROR,
-      html: ErrorPages.serverError(),
-      isStreaming: false,
-      cacheStrategy: "no-cache",
-      error: errorObj,
-      errorType: "server-error",
-      slug,
-    };
   }
 
   createMemoryPressureResult(slug: string): SSRRenderResult {

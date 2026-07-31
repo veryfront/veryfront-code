@@ -21,14 +21,23 @@ import { loadModuleFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { compileContent } from "#veryfront/transforms/mdx/compiler/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
+import {
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
+  resolveRequestedDependencyPinningSnapshot,
+} from "#veryfront/transforms/esm/package-registry.ts";
+import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 
-interface RenderHandlerModuleOptions {
+export interface RenderHandlerModuleOptions {
   adapter?: RuntimeAdapter;
   projectId?: string;
   projectSlug?: string;
   contentSourceId?: string;
-  reactVersion?: () => Promise<string>;
+  reactVersion?: (snapshot: DependencyPinningSnapshot) => Promise<string>;
   importMap?: () => Promise<ImportMapConfig>;
+  dependencyPinningSource?: DependencyPinningSourceInput;
+  runtimeAdapter?: () => Promise<RuntimeAdapter>;
+  moduleLoader?: typeof loadModuleFromSource;
 }
 
 const logger = serverLogger.component("rsc");
@@ -53,16 +62,47 @@ export class RenderHandler {
     request?: Request,
   ): Promise<Response> {
     try {
-      const component = await this.loadComponent(pathname);
+      const requestedPinKey = request?.headers.get(RSC_DEPENDENCY_PINNING_HEADER) ?? undefined;
+      const dependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
+        this.moduleOptions.dependencyPinningSource ?? this.projectDir,
+        requestedPinKey,
+      );
+      if (!dependencySnapshot) {
+        throw new Error(`Unknown dependency pinning snapshot: ${requestedPinKey}`);
+      }
+      const [reactVersion, importMap] = await Promise.all([
+        this.moduleOptions.reactVersion?.(dependencySnapshot),
+        this.moduleOptions.importMap?.(),
+      ]);
+      const moduleServerOrigin = dependencySnapshot.cacheKey.startsWith("on:") && request
+        ? new URL(request.url).origin
+        : undefined;
+      const component = await this.loadComponent(
+        pathname,
+        dependencySnapshot,
+        reactVersion,
+        importMap,
+        moduleServerOrigin,
+      );
       const props = this.buildProps(pathname, searchParams);
-      const payload = await this.renderPayload(component, props);
+      const renderedPayload = await this.renderPayload(component, props, reactVersion);
+      const payload = dependencySnapshot.cacheKey === "off" ? renderedPayload : {
+        ...renderedPayload,
+        dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      };
       return this.createResponse(payload, request);
     } catch (error) {
       return this.createErrorResponse(error);
     }
   }
 
-  private async loadComponent(pathname: string): Promise<React.ComponentType<RenderProps>> {
+  private async loadComponent(
+    pathname: string,
+    dependencySnapshot: DependencyPinningSnapshot,
+    reactVersion?: string,
+    importMap?: ImportMapConfig,
+    moduleServerOrigin?: string,
+  ): Promise<React.ComponentType<RenderProps>> {
     const componentPath = await resolveComponentPath(
       pathname,
       this.projectDir,
@@ -78,7 +118,13 @@ export class RenderHandler {
       );
     }
 
-    const module = await this.loadComponentModule(componentPath);
+    const module = await this.loadComponentModule(
+      componentPath,
+      dependencySnapshot,
+      reactVersion,
+      importMap,
+      moduleServerOrigin,
+    );
     const Component = (module.default ?? module.Page ?? module) as unknown;
 
     if (typeof Component !== "function") {
@@ -93,8 +139,14 @@ export class RenderHandler {
     return Component as React.ComponentType<RenderProps>;
   }
 
-  private async loadComponentModule(componentPath: string): Promise<Record<string, unknown>> {
-    const adapter = this.moduleOptions.adapter;
+  private async loadComponentModule(
+    componentPath: string,
+    dependencySnapshot: DependencyPinningSnapshot,
+    reactVersion?: string,
+    importMap?: ImportMapConfig,
+    moduleServerOrigin?: string,
+  ): Promise<Record<string, unknown>> {
+    let adapter = this.moduleOptions.adapter;
 
     if (isContentComponent(componentPath)) {
       const source = adapter
@@ -116,24 +168,38 @@ export class RenderHandler {
         this.projectDir,
         this.moduleOptions.projectSlug,
         this.moduleOptions.contentSourceId,
-        await this.moduleOptions.reactVersion?.(),
-        await this.moduleOptions.importMap?.(),
+        reactVersion,
+        importMap,
+        dependencySnapshot.cacheKey,
+        dependencySnapshot.dependencies,
+        this.moduleOptions.dependencyPinningSource,
+        moduleServerOrigin,
       ) as Record<string, unknown>;
     }
 
     if (!adapter) {
-      return (await import(componentPath)) as Record<string, unknown>;
+      adapter = await (this.moduleOptions.runtimeAdapter ?? (async () => {
+        const { runtime } = await import(
+          "#veryfront/platform/adapters/detect.ts"
+        );
+        return await runtime.get();
+      }))();
     }
 
     const source = await adapter.fs.readFile(componentPath);
-    return await loadModuleFromSource(source, componentPath, this.projectDir, adapter, {
+    const moduleLoader = this.moduleOptions.moduleLoader ?? loadModuleFromSource;
+    return await moduleLoader(source, componentPath, this.projectDir, adapter, {
       projectId: this.moduleOptions.projectId ?? this.projectDir,
       projectSlug: this.moduleOptions.projectSlug,
       contentSourceId: this.moduleOptions.contentSourceId,
       dev: this.mode === "development",
       mode: this.mode === "development" ? "preview" : "production",
-      reactVersion: await this.moduleOptions.reactVersion?.(),
-      importMap: await this.moduleOptions.importMap?.(),
+      reactVersion,
+      importMap,
+      dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+      dependencyPinningDependencies: dependencySnapshot.dependencies,
+      dependencyPinningSource: this.moduleOptions.dependencyPinningSource,
+      moduleServerOrigin,
     });
   }
 
@@ -147,6 +213,7 @@ export class RenderHandler {
   private async renderPayload(
     component: React.ComponentType<RenderProps>,
     props: RenderProps,
+    reactVersion?: string,
   ): Promise<RSCPayload> {
     const renderer = this.getRenderer();
     if (!renderer) {
@@ -158,7 +225,9 @@ export class RenderHandler {
       );
     }
 
-    const payload = await renderer.renderToPayload(component, props);
+    const payload = await renderer.renderToPayload(component, props, {
+      reactVersion,
+    });
     if (!payload) {
       throw toError(
         createError({
@@ -175,11 +244,14 @@ export class RenderHandler {
     const etag = RSCProductionOptimizer.generateETag(payload);
 
     if (request && this.shouldReturn304(request, etag)) {
-      return new Response(null, { status: 304 });
+      return new Response(null, {
+        status: 304,
+        headers: this.buildHeaders(etag, payload.dependencyPinningCacheKey),
+      });
     }
 
     return new Response(JSON.stringify(payload), {
-      headers: this.buildHeaders(etag),
+      headers: this.buildHeaders(etag, payload.dependencyPinningCacheKey),
     });
   }
 
@@ -187,16 +259,23 @@ export class RenderHandler {
     return RSCProductionOptimizer.checkETag(request.headers.get("if-none-match"), etag);
   }
 
-  private buildHeaders(etag: string): Record<string, string> {
+  private buildHeaders(
+    etag: string,
+    dependencyPinningCacheKey?: string,
+  ): Record<string, string> {
     const isProd = this.mode === "production";
 
     const headers: Record<string, string> = {
       "content-type": "application/json",
+      vary: RSC_DEPENDENCY_PINNING_HEADER,
       etag,
       ...RSCProductionOptimizer.getCacheHeaders({
         isStatic: false,
         maxAge: isProd ? 60 : 0,
       }),
+      ...(dependencyPinningCacheKey?.startsWith("on:")
+        ? { [RSC_DEPENDENCY_PINNING_HEADER]: dependencyPinningCacheKey }
+        : {}),
     };
 
     if (isProd) {
@@ -233,6 +312,20 @@ export class RenderHandler {
       vfError = wrapUnknownError(error);
     }
 
-    return createErrorResponse(vfError);
+    const response = createErrorResponse(vfError);
+    const varyValues = (response.headers.get("vary") ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (
+      !varyValues.includes("*") &&
+      !varyValues.some((value) =>
+        value.toLowerCase() === RSC_DEPENDENCY_PINNING_HEADER.toLowerCase()
+      )
+    ) {
+      varyValues.push(RSC_DEPENDENCY_PINNING_HEADER);
+      response.headers.set("vary", varyValues.join(", "));
+    }
+    return response;
   }
 }

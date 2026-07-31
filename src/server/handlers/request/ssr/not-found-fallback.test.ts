@@ -6,7 +6,7 @@ import { join } from "#veryfront/compat/path";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { tryNotFoundFallback } from "./not-found-fallback.ts";
+import { __setReservedComponentLoaderForTests, tryNotFoundFallback } from "./not-found-fallback.ts";
 import { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -17,6 +17,17 @@ import {
   __setServerModuleLoaderForTests,
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
+import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
+import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 function createMockAdapter(
   overrides: {
@@ -78,6 +89,7 @@ describe(
     afterEach(() => {
       resetReactCache();
       __setServerModuleLoaderForTests(null);
+      __setReservedComponentLoaderForTests(null);
     });
 
     describe("tryNotFoundFallback", () => {
@@ -103,6 +115,49 @@ describe(
 
         const result = await tryNotFoundFallback(req, "not-found", ctx, builder);
         assertEquals(result, null);
+      });
+
+      it("fails closed before fallback loading when package.json is malformed", async () => {
+        const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-not-found-fallback-malformed-",
+        });
+        let statCalls = 0;
+
+        try {
+          setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+          clearReactVersionCache();
+          await Deno.writeTextFile(join(projectDir, "package.json"), "{ malformed");
+          const adapter = createMockAdapter({
+            stat: () => {
+              statCalls++;
+              return Promise.resolve({
+                isFile: false,
+                isDirectory: true,
+                size: 0,
+                mtime: null,
+              });
+            },
+          });
+
+          const result = await tryNotFoundFallback(
+            new Request("http://localhost/missing"),
+            "missing",
+            makeCtx({ projectDir, adapter, isLocalProject: true }),
+            new ResponseBuilder(),
+          );
+
+          assertEquals(result, null);
+          assertEquals(statCalls, 0);
+        } finally {
+          if (originalFlag === undefined) {
+            deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+          } else {
+            setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+          }
+          clearReactVersionCache();
+          await Deno.remove(projectDir, { recursive: true });
+        }
       });
 
       it("returns null when slug is empty and app directory doesn't exist", async () => {
@@ -193,6 +248,135 @@ describe(
           assertStringIncludes(await result.text(), "project-react-18");
           assertEquals(loadedVersions, ["18.3.1"]);
         });
+      });
+
+      it("keeps the reserved component and React rendering on snapshot A after package state B", async () => {
+        const originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+        const projectDir = await Deno.makeTempDir({
+          prefix: "vf-not-found-fallback-snapshot-",
+        });
+        const snapshotCaptured = deferred();
+        const continueFallback = deferred();
+
+        try {
+          setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+          clearReactVersionCache();
+          await Deno.writeTextFile(
+            join(projectDir, "package.json"),
+            JSON.stringify({
+              dependencies: {
+                react: "^18.3.1",
+                "example-package": "1.0.0",
+              },
+            }),
+          );
+
+          const adapter = createMockAdapter({
+            stat: async (path: string) => {
+              if (path === join(projectDir, "app")) {
+                snapshotCaptured.resolve();
+                await continueFallback.promise;
+                return {
+                  isFile: false,
+                  isDirectory: true,
+                  size: 0,
+                  mtime: null,
+                };
+              }
+              throw new Error("not found");
+            },
+            readFile: (path: string) =>
+              Promise.reject(new Deno.errors.NotFound(`File not found: ${path}`)),
+          });
+          let observed:
+            | {
+              reactVersion?: string;
+              cacheKey?: string;
+              dependencies?: Readonly<Record<string, string>>;
+              source?: unknown;
+              moduleServerOrigin?: string;
+            }
+            | undefined;
+          __setReservedComponentLoaderForTests(
+            (
+              _dirs,
+              _which,
+              _projectDir,
+              _mode,
+              _adapter,
+              _projectId,
+              _contentSourceId,
+              reactVersion,
+              _importMap,
+              _dependencyOverride,
+              cacheKey,
+              dependencies,
+              source,
+              moduleServerOrigin,
+            ) => {
+              observed = {
+                reactVersion,
+                cacheKey,
+                dependencies,
+                source,
+                moduleServerOrigin,
+              };
+              return Promise.resolve(() => null);
+            },
+          );
+          __setServerModuleLoaderForTests((_url, label) => {
+            if (label === "React") return Promise.resolve({ default: React });
+            throw new Error(`Unexpected module load: ${label}`);
+          });
+          __injectReactDOMServerForTests({
+            renderToString: () => "<p>react-18</p>",
+            renderToStaticMarkup: () => "<p>react-18</p>",
+          }, "18.3.1");
+
+          const responsePromise = tryNotFoundFallback(
+            new Request("http://localhost/missing"),
+            "missing",
+            makeCtx({ projectDir, adapter }),
+            new ResponseBuilder(),
+          );
+
+          await snapshotCaptured.promise;
+          await Deno.writeTextFile(
+            join(projectDir, "package.json"),
+            JSON.stringify({
+              dependencies: {
+                react: "^19.0.0",
+                "example-package": "2.0.0",
+              },
+            }),
+          );
+          continueFallback.resolve();
+
+          const response = await responsePromise;
+          assertExists(response);
+          assertStringIncludes(await response.text(), "react-18");
+          assertEquals(observed?.reactVersion, "18.3.1");
+          assertEquals(observed?.cacheKey?.startsWith("on:"), true);
+          assertEquals(observed?.dependencies, {
+            react: "^18.3.1",
+            "example-package": "1.0.0",
+          });
+          assertEquals(
+            (observed?.source as { projectDir?: string } | undefined)?.projectDir,
+            projectDir,
+          );
+          assertEquals(observed?.moduleServerOrigin, "http://localhost");
+        } finally {
+          continueFallback.resolve();
+          __setReservedComponentLoaderForTests(null);
+          if (originalFlag === undefined) {
+            deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
+          } else {
+            setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
+          }
+          clearReactVersionCache();
+          await Deno.remove(projectDir, { recursive: true });
+        }
       });
     });
   },

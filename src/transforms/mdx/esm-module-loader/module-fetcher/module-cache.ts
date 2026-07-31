@@ -19,6 +19,7 @@ import { recordModuleToSession } from "./render-sessions.ts";
 import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/filename-default-export.ts";
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
+import { getMdxModuleCacheVariant } from "./cache-keys.ts";
 
 /**
  * Normalize a module path, resolving relative paths if a parent is provided.
@@ -68,6 +69,8 @@ export async function cacheModule(
   reactVersion = REACT_DEFAULT_VERSION,
   sourceContentHash?: string,
   importMapFingerprint?: string,
+  dependencyPinningCacheKey = "off",
+  moduleServerOrigin?: string,
 ): Promise<string | null> {
   moduleCode = ensureFilenameDefaultExport(normalizedPath, moduleCode);
   if (utf8ByteLength(moduleCode) > MAX_MDX_MODULE_CODE_BYTES) {
@@ -94,6 +97,7 @@ export async function cacheModule(
     reactVersion,
     sourceContentHash,
     importMapFingerprint,
+    getMdxModuleCacheVariant(dependencyPinningCacheKey, moduleServerOrigin),
   );
 
   const localFs = getLocalFs();

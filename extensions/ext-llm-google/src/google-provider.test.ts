@@ -355,13 +355,6 @@ describe("ext-llm-google/google-provider", () => {
         toolName: "weather",
       },
       {
-        type: "data-tool-call-status",
-        data: {
-          toolCallId: "tool_weather",
-          status: "streaming_input",
-        },
-      },
-      {
         type: "tool-input-delta",
         id: "tool_weather",
         delta: '{"city":"Tokyo"}',

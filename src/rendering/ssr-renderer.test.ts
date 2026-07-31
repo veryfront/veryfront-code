@@ -122,6 +122,46 @@ describe("rendering/ssr-renderer", () => {
     assertEquals(identifierPrefix, "vf");
   });
 
+  it("keeps a historical render on React A after snapshot B", async () => {
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>react-18</div>",
+      renderToStaticMarkup: () => "<div>react-18</div>",
+    }, "18.3.1");
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>react-19</div>",
+      renderToStaticMarkup: () => "<div>react-19</div>",
+    }, "19.0.0");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-ssr-react-snapshot-" });
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/package.json`,
+        JSON.stringify({ dependencies: { react: "^19.0.0" } }),
+      );
+      const renderer = new SSRRenderer(
+        "development",
+        undefined,
+        projectDir,
+        "project",
+      );
+
+      const snapshotB = await renderer.renderToHTML(React.createElement("div"), {
+        mode: "development",
+        wantsStream: false,
+      });
+      const snapshotA = await renderer.renderToHTML(React.createElement("div"), {
+        mode: "development",
+        wantsStream: false,
+        dependencyPinningCacheKey: "on:snapshot-a",
+        dependencyPinningDependencies: { react: "^18.3.1" },
+      });
+
+      assertEquals(snapshotB.html, "<div>react-19</div>");
+      assertEquals(snapshotA.html, "<div>react-18</div>");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("reports an explicit project React version before the first render", () => {
     const renderer = new SSRRenderer(
       "production",

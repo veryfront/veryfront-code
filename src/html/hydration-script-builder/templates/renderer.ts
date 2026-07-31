@@ -134,15 +134,16 @@ export const getRendererScript = () => `
           const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
           const shouldUseRscTransport =
             preferRscModule && isAppRouterPath(normalizedPath);
-          if (!shouldUseRscTransport) return loadComponent(path);
+          if (!shouldUseRscTransport) return loadComponent(path, data);
 
           const moduleUrl = resolveHydrationModuleUrl(
             path,
             true,
             data.studioEmbed,
+            data,
           );
           log('Loading hydration component:', moduleUrl);
-          const module = await import(moduleUrl);
+          const module = await importSnapshotBoundModule(moduleUrl);
           return module.MDXLayout || module.MainLayout || module.default || module;
         }
 
@@ -167,11 +168,12 @@ export const getRendererScript = () => `
             data.pagePath,
             shouldRenderRscClientPage,
             data.studioEmbed,
+            data,
           );
           log('Loading page from hydration data:', moduleUrl);
 
           try {
-            pageModule = await import(moduleUrl);
+            pageModule = await importSnapshotBoundModule(moduleUrl);
           } catch (error) {
             pageModuleError = error;
             logError('Failed to load page from hydration data:', error);
@@ -189,7 +191,8 @@ export const getRendererScript = () => `
             basePath,
             pageSlug,
             pageModuleError,
-            (moduleUrl) => import(moduleUrl),
+            (moduleUrl) =>
+              importSnapshotBoundModule(appendDependencyPinningVersion(moduleUrl, data)),
           );
         }
 

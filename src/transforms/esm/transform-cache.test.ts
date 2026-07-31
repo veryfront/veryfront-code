@@ -2,9 +2,17 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
-import type { CacheBackend } from "#veryfront/cache/backend.ts";
+import {
+  buildRevisionedCacheKey,
+  type CacheBackend,
+  type CacheRevisionMutation,
+  type CacheRevisionSnapshot,
+  type RevisionedCacheBackend,
+} from "#veryfront/cache/backend.ts";
 import { CACHE_DIR_TOKEN } from "#veryfront/cache/paths.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
+import { getCacheStats } from "#veryfront/utils/memory/index.ts";
+import * as transformCacheModule from "./transform-cache.ts";
 import {
   __injectCachesForTests,
   destroyTransformCache,
@@ -17,25 +25,158 @@ import {
   TRANSFORM_FLIGHT_STALE_EVICTION_MS,
 } from "./transform-cache.ts";
 
+interface WishedForTransformObservation {
+  readonly entry?: { readonly code: string };
+  readonly permit: unknown;
+}
+
+function observeCachedTransformForWrite(
+  key: string,
+  ttlSeconds?: number,
+): Promise<WishedForTransformObservation> {
+  const operation = (transformCacheModule as unknown as {
+    observeCachedTransformForWrite?: (
+      key: string,
+      ttlSeconds?: number,
+    ) => Promise<WishedForTransformObservation>;
+  }).observeCachedTransformForWrite;
+  assertEquals(typeof operation, "function");
+  return operation!(key, ttlSeconds);
+}
+
+function publishCachedTransformWithPermit(
+  permit: unknown,
+  code: string,
+  hash: string,
+  bundleManifestId?: string,
+  dependencyResolutionObservations?: ReadonlyArray<{
+    packageName: string;
+    declaration: string | null;
+  }>,
+): Promise<boolean> {
+  const operation = (transformCacheModule as unknown as {
+    publishCachedTransformWithPermit?: (
+      permit: unknown,
+      code: string,
+      hash: string,
+      bundleManifestId?: string,
+      dependencyResolutionObservations?: ReadonlyArray<{
+        packageName: string;
+        declaration: string | null;
+      }>,
+    ) => Promise<boolean>;
+  }).publishCachedTransformWithPermit;
+  assertEquals(typeof operation, "function");
+  return operation!(
+    permit,
+    code,
+    hash,
+    bundleManifestId,
+    dependencyResolutionObservations,
+  );
+}
+
 class RecordingBackend implements CacheBackend {
   readonly values = new Map<string, string>();
   readonly deleted: string[] = [];
+  readonly ordinaryCalls: string[] = [];
 
   constructor(readonly type: CacheBackend["type"] = "memory") {}
 
   get(key: string): Promise<string | null> {
+    this.ordinaryCalls.push(`get:${key}`);
     return Promise.resolve(this.values.get(key) ?? null);
   }
 
   set(key: string, value: string): Promise<void> {
+    this.ordinaryCalls.push(`set:${key}`);
     this.values.set(key, value);
     return Promise.resolve();
   }
 
   del(key: string): Promise<void> {
+    this.ordinaryCalls.push(`del:${key}`);
     this.deleted.push(key);
     this.values.delete(key);
     return Promise.resolve();
+  }
+}
+
+interface RecordedExchange {
+  key: string;
+  expectedRevision: string;
+  mutation: CacheRevisionMutation;
+}
+
+class RevisionedRecordingBackend implements RevisionedCacheBackend {
+  readonly type: CacheBackend["type"];
+  readonly ordinaryCalls: string[] = [];
+  readonly observations: string[] = [];
+  readonly exchanges: RecordedExchange[] = [];
+  readonly records = new Map<string, CacheRevisionSnapshot>();
+  nextRevision = 1;
+  getWithRevisionHook?: (key: string) => Promise<CacheRevisionSnapshot>;
+  compareExchangeHook?: (
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ) => Promise<boolean>;
+
+  constructor(type: CacheBackend["type"] = "distributed") {
+    this.type = type;
+  }
+
+  get(key: string): Promise<string | null> {
+    this.ordinaryCalls.push(`get:${key}`);
+    return Promise.resolve(null);
+  }
+
+  set(key: string): Promise<void> {
+    this.ordinaryCalls.push(`set:${key}`);
+    return Promise.resolve();
+  }
+
+  del(key: string): Promise<void> {
+    this.ordinaryCalls.push(`del:${key}`);
+    return Promise.resolve();
+  }
+
+  getWithRevision(key: string): Promise<CacheRevisionSnapshot> {
+    this.observations.push(key);
+    if (this.getWithRevisionHook) return this.getWithRevisionHook(key);
+    const snapshot = this.records.get(key) ?? { value: null, revision: "0" };
+    return Promise.resolve({ ...snapshot });
+  }
+
+  compareExchange(
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ): Promise<boolean> {
+    this.exchanges.push({ key, expectedRevision, mutation });
+    if (this.compareExchangeHook) {
+      return this.compareExchangeHook(key, expectedRevision, mutation);
+    }
+    return Promise.resolve(this.applyExchange(key, expectedRevision, mutation));
+  }
+
+  applyExchange(
+    key: string,
+    expectedRevision: string,
+    mutation: CacheRevisionMutation,
+  ): boolean {
+    const current = this.records.get(key) ?? { value: null, revision: "0" };
+    if (current.revision !== expectedRevision) return false;
+    const revision = String(this.nextRevision++);
+    this.records.set(key, {
+      value: mutation.kind === "set" ? mutation.value : null,
+      revision,
+    });
+    return true;
+  }
+
+  replace(key: string, value: string | null): void {
+    this.records.set(key, { value, revision: String(this.nextRevision++) });
   }
 }
 
@@ -245,8 +386,7 @@ describe("transforms/esm/transform-cache", () => {
 
   describe("getCachedTransformAsync / setCachedTransformAsync", () => {
     beforeEach(() => {
-      const testMap = new Map();
-      __injectCachesForTests({ localFallback: testMap, cacheBackend: null });
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: null });
     });
 
     afterEach(() => {
@@ -254,70 +394,382 @@ describe("transforms/esm/transform-cache", () => {
       __injectCachesForTests(null);
     });
 
-    it("returns undefined for missing key", async () => {
-      const result = await getCachedTransformAsync("nonexistent-async");
-      assertEquals(result, undefined);
+    it("returns undefined for a local-only miss", async () => {
+      assertEquals(await getCachedTransformAsync("nonexistent-async"), undefined);
     });
 
-    it("stores and retrieves a transform async", async () => {
+    it("stores and retrieves a local-only transform asynchronously", async () => {
       await setCachedTransformAsync("async-key", "const y = 2;", "hash2");
-      const result = await getCachedTransformAsync("async-key");
-      assertEquals(result?.code, "const y = 2;");
+      assertEquals((await getCachedTransformAsync("async-key"))?.code, "const y = 2;");
     });
 
-    it("stores bundleManifestId when provided", async () => {
-      await setCachedTransformAsync("manifest-key", "const x = 1;", "hash1", 300, "manifest-abc");
-      const result = await getCachedTransformAsync("manifest-key");
-      assertEquals(result?.bundleManifestId, "manifest-abc");
+    it("stores bundleManifestId in the bounded local cache", async () => {
+      await setCachedTransformAsync(
+        "manifest-key",
+        "const x = 1;",
+        "hash1",
+        300,
+        "manifest-abc",
+      );
+      assertEquals(
+        (await getCachedTransformAsync("manifest-key"))?.bundleManifestId,
+        "manifest-abc",
+      );
     });
 
-    it("stores versioned payloads with a SHA-256 integrity digest", async () => {
-      const backend = new RecordingBackend("disk");
+    it("uses only one reserved revision observation and CAS for shared publication", async () => {
+      const backend = new RevisionedRecordingBackend();
       __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
 
-      await setCachedTransformAsync("integrity-key", "export const value = 1;", "source-hash");
-      const raw = backend.values.get("integrity-key");
-      if (!raw) throw new Error("Expected a persisted transform entry");
-      const payload = JSON.parse(raw);
+      await setCachedTransformAsync(
+        "atomic-key",
+        "export const value = 1;",
+        "source-hash",
+      );
 
+      const reservedKey = buildRevisionedCacheKey("atomic-key");
+      assertEquals(backend.ordinaryCalls, []);
+      assertEquals(backend.observations, [reservedKey]);
+      assertEquals(backend.exchanges.length, 1);
+      assertEquals(backend.exchanges[0]?.key, reservedKey);
+      assertEquals(backend.exchanges[0]?.expectedRevision, "0");
+      const mutation = backend.exchanges[0]?.mutation;
+      if (mutation?.kind !== "set") throw new Error("Expected one atomic set");
+      const payload = JSON.parse(mutation.value);
       assertEquals(payload.formatVersion, 2);
-      assertEquals(typeof payload.expiresAt, "number");
+      assertEquals(payload.code, "export const value = 1;");
       assertEquals(payload.codeHash.length, 64);
+      assertEquals(typeof mutation.expiresAtMs, "number");
     });
 
-    it("deletes and rejects a tampered persisted payload", async () => {
-      const backend = new RecordingBackend("disk");
+    it("an independent stale writer cannot overwrite a replacement", async () => {
+      const backend = new RevisionedRecordingBackend();
       __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
-      await setCachedTransformAsync("tampered-key", "export const value = 1;", "source-hash");
+      const observation = await observeCachedTransformForWrite("stale-writer-key", 300);
+      const reservedKey = buildRevisionedCacheKey("stale-writer-key");
 
-      const payload = JSON.parse(backend.values.get("tampered-key")!);
-      payload.code = "export const value = 2;";
-      backend.values.set("tampered-key", JSON.stringify(payload));
+      backend.replace(reservedKey, "replacement-record");
+      const published = await publishCachedTransformWithPermit(
+        observation.permit,
+        "export const stale = true;",
+        "stale-hash",
+      );
 
-      assertEquals(await getCachedTransformAsync("tampered-key"), undefined);
-      assertEquals(backend.deleted, ["tampered-key"]);
+      assertEquals(published, false);
+      assertEquals(backend.records.get(reservedKey)?.value, "replacement-record");
+      assertEquals(backend.observations, [reservedKey]);
+      assertEquals(backend.exchanges.length, 1);
     });
 
-    it("rejects persisted payloads with unknown fields", async () => {
-      const backend = new RecordingBackend("disk");
+    it("a replacement progresses while an older exchange never settles", async () => {
+      const backend = new RevisionedRecordingBackend();
+      const firstExchangeStarted = Promise.withResolvers<void>();
+      const neverSettles = new Promise<boolean>(() => {});
+      let exchangeCalls = 0;
+      backend.compareExchangeHook = (key, revision, mutation) => {
+        exchangeCalls++;
+        if (exchangeCalls === 1) {
+          firstExchangeStarted.resolve();
+          return neverSettles;
+        }
+        return Promise.resolve(backend.applyExchange(key, revision, mutation));
+      };
       __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
-      await setCachedTransformAsync("unknown-field-key", "export const value = 1;", "source-hash");
 
-      const payload = JSON.parse(backend.values.get("unknown-field-key")!);
-      payload.untrustedMetadata = "ignored-by-old-readers";
-      backend.values.set("unknown-field-key", JSON.stringify(payload));
+      void setCachedTransformAsync(
+        "progress-key",
+        "export const oldValue = true;",
+        "old-hash",
+      );
+      await firstExchangeStarted.promise;
 
-      assertEquals(await getCachedTransformAsync("unknown-field-key"), undefined);
-      assertEquals(backend.deleted, ["unknown-field-key"]);
+      await setCachedTransformAsync(
+        "progress-key",
+        "export const replacement = true;",
+        "replacement-hash",
+      );
+
+      const stored = backend.records.get(buildRevisionedCacheKey("progress-key"))?.value;
+      assertEquals(JSON.parse(stored ?? "null").code, "export const replacement = true;");
+      assertEquals(exchangeCalls, 2);
     });
 
-    it("does not treat disk storage as a distributed tokenized backend", async () => {
+    it("same-byte ABA invalidates the stale publication permit", async () => {
+      const backend = new RevisionedRecordingBackend();
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+      const observation = await observeCachedTransformForWrite("same-byte-aba", 300);
+      const reservedKey = buildRevisionedCacheKey("same-byte-aba");
+
+      assertEquals(
+        backend.applyExchange(reservedKey, "0", {
+          kind: "set",
+          value: "same",
+          expiresAtMs: Date.now() + 60_000,
+        }),
+        true,
+      );
+      assertEquals(
+        backend.applyExchange(reservedKey, "1", {
+          kind: "set",
+          value: "same",
+          expiresAtMs: Date.now() + 60_000,
+        }),
+        true,
+      );
+
+      assertEquals(
+        await publishCachedTransformWithPermit(
+          observation.permit,
+          "export const stale = true;",
+          "stale-hash",
+        ),
+        false,
+      );
+      assertEquals(backend.records.get(reservedKey), { value: "same", revision: "2" });
+    });
+
+    it("absent-delete ABA invalidates the stale publication permit", async () => {
+      const backend = new RevisionedRecordingBackend();
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+      const observation = await observeCachedTransformForWrite("absent-delete-aba", 300);
+      const reservedKey = buildRevisionedCacheKey("absent-delete-aba");
+
+      assertEquals(backend.applyExchange(reservedKey, "0", { kind: "delete" }), true);
+      assertEquals(
+        await publishCachedTransformWithPermit(
+          observation.permit,
+          "export const stale = true;",
+          "stale-hash",
+        ),
+        false,
+      );
+      assertEquals(backend.records.get(reservedKey), { value: null, revision: "1" });
+    });
+
+    it("conditional invalid-entry cleanup preserves a concurrent replacement", async () => {
+      const backend = new RevisionedRecordingBackend();
+      const reservedKey = buildRevisionedCacheKey("invalid-cleanup-key");
+      backend.replace(reservedKey, "{invalid-json");
+      backend.compareExchangeHook = (key, revision, mutation) => {
+        backend.replace(key, "concurrent-replacement");
+        return Promise.resolve(backend.applyExchange(key, revision, mutation));
+      };
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+
+      assertEquals(await getCachedTransformAsync("invalid-cleanup-key"), undefined);
+      assertEquals(backend.records.get(reservedKey)?.value, "concurrent-replacement");
+      assertEquals(backend.exchanges[0]?.mutation, { kind: "delete" });
+      assertEquals(backend.ordinaryCalls, []);
+    });
+
+    it("preserves the pre-observation absolute deadline through slow serialization", async () => {
+      const backend = new RevisionedRecordingBackend();
+      const observationStarted = Promise.withResolvers<void>();
+      const releaseObservation = Promise.withResolvers<void>();
+      backend.getWithRevisionHook = async () => {
+        observationStarted.resolve();
+        await releaseObservation.promise;
+        return { value: null, revision: "0" };
+      };
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+
+      const originalNow = Date.now;
+      let now = 1_900_000_000_000;
+      Date.now = () => now;
+      try {
+        const pending = setCachedTransformAsync(
+          "absolute-deadline-key",
+          "export const value = true;",
+          "source-hash",
+          10,
+        );
+        await observationStarted.promise;
+        now += 8_000;
+        releaseObservation.resolve();
+        await pending;
+
+        const mutation = backend.exchanges[0]?.mutation;
+        if (mutation?.kind !== "set") throw new Error("Expected one atomic set");
+        assertEquals(mutation.expiresAtMs, 1_900_000_010_000);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    it("synchronous TTL-zero is local-only and performs zero backend calls", () => {
+      const backend = new RevisionedRecordingBackend();
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+      setCachedTransform("sync-delete-key", "export const oldValue = true;", "old-hash");
+
+      setCachedTransform("sync-delete-key", "", "", 0);
+
+      assertEquals(getCachedTransform("sync-delete-key"), undefined);
+      assertEquals(backend.ordinaryCalls, []);
+      assertEquals(backend.observations, []);
+      assertEquals(backend.exchanges, []);
+    });
+
+    it("bounds 1,001 permanently unsettled permits without blocking replacement", async () => {
+      const backend = new RevisionedRecordingBackend();
+      let observations = 0;
+      backend.getWithRevisionHook = () => {
+        observations++;
+        if (observations <= 1_001) {
+          return new Promise<CacheRevisionSnapshot>(() => {});
+        }
+        return Promise.resolve({ value: null, revision: "0" });
+      };
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+
+      for (let index = 0; index < 1_001; index++) {
+        void observeCachedTransformForWrite("unsettled-permit-" + index, 300);
+      }
+      const replacement = await observeCachedTransformForWrite(
+        "replacement-after-capacity",
+        300,
+      );
+      assertEquals(
+        await publishCachedTransformWithPermit(
+          replacement.permit,
+          "export const replacement = true;",
+          "replacement-hash",
+        ),
+        true,
+      );
+      assertEquals(observations, 1_002);
+      assertEquals(backend.exchanges.length, 1);
+    });
+
+    it("incapable API and distributed backends are local-only with zero calls", async () => {
+      for (const type of ["api", "distributed"] as const) {
+        destroyTransformCache();
+        const backend = new RecordingBackend(type);
+        __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+
+        await setCachedTransformAsync(
+          "incapable-" + type,
+          "export const local = true;",
+          "local-hash",
+        );
+        assertEquals(
+          (await getCachedTransformAsync("incapable-" + type))?.code,
+          "export const local = true;",
+        );
+        assertEquals(backend.ordinaryCalls, []);
+        const stats = getCacheStats().find((entry) => entry.name === "transform-cache");
+        assertEquals(
+          String(stats?.backend).endsWith(
+            "local-only:atomic-revision-unavailable",
+          ),
+          true,
+        );
+      }
+    });
+
+    it("rejects malformed revision snapshots and non-boolean exchanges", async () => {
+      const malformedSnapshot = new RevisionedRecordingBackend();
+      malformedSnapshot.getWithRevisionHook = () => Promise.resolve({ value: null, revision: "" });
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: malformedSnapshot });
+
+      await assertRejects(
+        () => getCachedTransformAsync("malformed-snapshot-key"),
+        TypeError,
+        "Cache revision",
+      );
+
+      const malformedExchange = new RevisionedRecordingBackend();
+      malformedExchange.compareExchangeHook = () =>
+        Promise.resolve("accepted" as unknown as boolean);
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: malformedExchange });
+
+      await assertRejects(
+        () =>
+          setCachedTransformAsync(
+            "malformed-exchange-key",
+            "export const value = true;",
+            "source-hash",
+          ),
+        TypeError,
+        "Cache compare-exchange result must be boolean",
+      );
+    });
+
+    it("keeps the local result usable when atomic publication rejects", async () => {
+      const backend = new RevisionedRecordingBackend();
+      backend.compareExchangeHook = () => Promise.reject(new Error("atomic store unavailable"));
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+
+      await assertRejects(
+        () =>
+          setCachedTransformAsync(
+            "rejected-publication-key",
+            "export const localResult = true;",
+            "source-hash",
+          ),
+        Error,
+        "atomic store unavailable",
+      );
+
+      assertEquals(
+        getCachedTransform("rejected-publication-key")?.code,
+        "export const localResult = true;",
+      );
+    });
+
+    it("carries dependency observations through revisioned persistence", async () => {
+      const backend = new RevisionedRecordingBackend();
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+      const observations = [{ packageName: "zod", declaration: "^4" }];
+
+      await setCachedTransformAsync(
+        "dependency-observation-key",
+        "const x = 1;",
+        "hash1",
+        300,
+        undefined,
+        observations,
+      );
+
+      const mutation = backend.exchanges[0]?.mutation;
+      if (mutation?.kind !== "set") throw new Error("Expected one atomic set");
+      assertEquals(
+        JSON.parse(mutation.value).dependencyResolutionObservations,
+        observations,
+      );
+
+      destroyTransformCache();
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+      assertEquals(
+        (await getCachedTransformAsync("dependency-observation-key"))
+          ?.dependencyResolutionObservations,
+        observations,
+      );
+      assertEquals(backend.ordinaryCalls, []);
+    });
+
+    it("conditionally deletes shared entries for asynchronous TTL-zero writes", async () => {
+      const backend = new RevisionedRecordingBackend();
+      const reservedKey = buildRevisionedCacheKey("async-delete-key");
+      backend.replace(reservedKey, "old-record");
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+
+      await setCachedTransformAsync("async-delete-key", "", "", 0);
+
+      assertEquals(backend.observations, [reservedKey]);
+      assertEquals(backend.exchanges[0]?.mutation, { kind: "delete" });
+      assertEquals(backend.records.get(reservedKey)?.value, null);
+      assertEquals(backend.ordinaryCalls, []);
+    });
+
+    it("keeps disk backends process-local without ordinary backend calls", async () => {
       const backend = new RecordingBackend("disk");
       __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
-      const code = `export const marker = "__VF_CACHE_DIR__";`;
+      const code = 'export const marker = "__VF_CACHE_DIR__";';
 
       await setCachedTransformAsync("disk-key", code, "source-hash");
+
       assertEquals((await getCachedTransformAsync("disk-key"))?.code, code);
+      assertEquals(backend.ordinaryCalls, []);
     });
 
     it("expires local fallback entries using their logical deadline", async () => {
@@ -335,28 +787,6 @@ describe("transforms/esm/transform-cache", () => {
       } finally {
         Date.now = originalNow;
       }
-    });
-
-    it("treats a non-positive TTL as observable deletion", async () => {
-      const backend = new RecordingBackend("memory");
-      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
-      await setCachedTransformAsync("delete-key", "export const oldValue = 1;", "old-hash");
-
-      await setCachedTransformAsync("delete-key", "export const newValue = 2;", "new-hash", 0);
-
-      assertEquals(backend.values.has("delete-key"), false);
-      assertEquals(backend.deleted, ["delete-key"]);
-    });
-
-    it("does not validate an unused replacement payload when TTL requests deletion", async () => {
-      const backend = new RecordingBackend("memory");
-      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
-      await setCachedTransformAsync("delete-invalid-key", "export const oldValue = 1;", "old-hash");
-
-      await setCachedTransformAsync("delete-invalid-key", "", "", 0, "");
-
-      assertEquals(backend.values.has("delete-invalid-key"), false);
-      assertEquals(backend.deleted, ["delete-invalid-key"]);
     });
 
     it("rejects invalid TTLs instead of substituting a default", async () => {
@@ -403,6 +833,58 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(computed, false);
       assertEquals(result.code, "first-value");
       assertEquals(result.cacheHit, true);
+    });
+
+    it("publishes and returns dependency observations across cache hits", async () => {
+      const observations = [{ packageName: "zod", declaration: "^4" }];
+      const first = await getOrComputeTransform(
+        "observation-hit-key",
+        async () => "first-value",
+        300,
+        undefined,
+        undefined,
+        undefined,
+        () => observations,
+      );
+      assertEquals(first.dependencyResolutionObservations, observations);
+
+      const second = await getOrComputeTransform(
+        "observation-hit-key",
+        async () => "unexpected-value",
+      );
+      assertEquals(second.cacheHit, true);
+      assertEquals(second.dependencyResolutionObservations, observations);
+    });
+
+    it("getOrCompute observes before computation and performs no post-compute read", async () => {
+      const backend = new RevisionedRecordingBackend();
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
+      let observedBeforeCompute = false;
+
+      const result = await getOrComputeTransform(
+        "observe-before-compute-key",
+        async () => {
+          observedBeforeCompute = backend.observations.length === 1;
+          return "export const computed = true;";
+        },
+        300,
+        undefined,
+        undefined,
+        undefined,
+        () => [{ packageName: "zod", declaration: "^4" }],
+      );
+
+      assertEquals(observedBeforeCompute, true);
+      assertEquals(result.cacheHit, false);
+      assertEquals(backend.observations, [
+        buildRevisionedCacheKey("observe-before-compute-key"),
+      ]);
+      assertEquals(backend.exchanges.length, 1);
+      const mutation = backend.exchanges[0]?.mutation;
+      if (mutation?.kind !== "set") throw new Error("Expected one atomic set");
+      assertEquals(JSON.parse(mutation.value).dependencyResolutionObservations, [
+        { packageName: "zod", declaration: "^4" },
+      ]);
     });
 
     it("recomputes when the cached entry validator rejects a cache hit", async () => {
@@ -521,88 +1003,47 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(computeCalls, 1);
     });
 
-    it("repairs a detokenized distributed framework reference once", async () => {
-      const key = "distributed-framework-repair-key";
-      const frameworkPath =
-        `${getCacheBaseDir()}/veryfront-mdx-esm/framework/vfmod-vf-framework-missing.mjs`;
-      const staleCode = `import helper from "file://${frameworkPath}";`;
-      let storedValue: string | null = null;
-      let setCalls = 0;
-      const setKeys: string[] = [];
-      const repairPublished = Promise.withResolvers<void>();
-      const cacheBackend: CacheBackend = {
-        type: "redis",
-        get: () => Promise.resolve(storedValue),
-        set: (setKey, value) => {
-          setKeys.push(setKey);
-          storedValue = value;
-          setCalls++;
-          if (setCalls === 2) repairPublished.resolve();
-          return Promise.resolve();
-        },
-        del: () => Promise.resolve(),
-      };
-      __injectCachesForTests({ cacheBackend });
+    it("recomputes a detokenized distributed framework reference with its observed revision", async () => {
+      const key = "distributed-framework-recompute-key";
+      const frameworkPath = getCacheBaseDir() +
+        "/veryfront-mdx-esm/framework/vfmod-vf-framework-missing.mjs";
+      const staleCode = 'import helper from "file://' + frameworkPath + '";';
+      const backend = new RevisionedRecordingBackend();
+      __injectCachesForTests({ localFallback: new Map(), cacheBackend: backend });
 
       await setCachedTransformAsync(key, staleCode, "stale-hash");
-      const portableEntry = await cacheBackend.get(key);
+      const reservedKey = buildRevisionedCacheKey(key);
+      const portableEntry = backend.records.get(reservedKey)?.value;
       assertEquals(portableEntry?.includes(CACHE_DIR_TOKEN), true);
       assertEquals(portableEntry?.includes(frameworkPath), false);
 
       let computeCalls = 0;
       let validationCalls = 0;
-      const validationStarted = Promise.withResolvers<void>();
-      const releaseValidation = Promise.withResolvers<void>();
-      const validateCachedEntry = async (entry: { code: string }) => {
-        validationCalls++;
-        assertEquals(entry.code.includes(frameworkPath), true);
-        assertEquals(entry.code.includes(CACHE_DIR_TOKEN), false);
-        validationStarted.resolve();
-        await releaseValidation.promise;
-        return false;
-      };
-
-      const first = getOrComputeTransform(
+      const result = await getOrComputeTransform(
         key,
         async () => {
           computeCalls++;
-          return "export const repaired = true;";
+          return "export const recomputed = true;";
         },
         300,
         undefined,
         undefined,
-        validateCachedEntry,
-      );
-      await validationStarted.promise;
-      const second = getOrComputeTransform(
-        key,
-        async () => {
-          computeCalls++;
-          return "export const duplicate = true;";
+        (entry) => {
+          validationCalls++;
+          assertEquals(entry.code.includes(frameworkPath), true);
+          assertEquals(entry.code.includes(CACHE_DIR_TOKEN), false);
+          return false;
         },
-        300,
-        undefined,
-        undefined,
-        validateCachedEntry,
       );
 
-      releaseValidation.resolve();
-      const [firstResult, secondResult] = await Promise.all([first, second]);
-      await repairPublished.promise;
-
-      assertEquals(firstResult.code, "export const repaired = true;");
-      assertEquals(secondResult.code, "export const repaired = true;");
+      assertEquals(result.code, "export const recomputed = true;");
       assertEquals(validationCalls, 1);
       assertEquals(computeCalls, 1);
-      assertEquals(setCalls, 2);
-      assertEquals(setKeys, [key, key]);
+      assertEquals(backend.observations, [reservedKey, reservedKey]);
+      assertEquals(backend.exchanges.length, 2);
       assertEquals(
-        (JSON.parse(storedValue!) as { code: string }).code,
-        "export const repaired = true;",
-      );
-      assertEquals(
-        (await getCachedTransformAsync(key))?.code,
-        "export const repaired = true;",
+        JSON.parse(backend.records.get(reservedKey)?.value ?? "null").code,
+        "export const recomputed = true;",
       );
     });
 
@@ -898,7 +1339,9 @@ describe("transforms/esm/transform-cache", () => {
 
       let addAbortListenerCalls = 0;
       let removeAbortListenerCalls = 0;
-      const originalAddEventListener = controller.signal.addEventListener.bind(controller.signal);
+      const originalAddEventListener = controller.signal.addEventListener.bind(
+        controller.signal,
+      );
       const originalRemoveEventListener = controller.signal.removeEventListener.bind(
         controller.signal,
       );
@@ -921,45 +1364,25 @@ describe("transforms/esm/transform-cache", () => {
         return originalRemoveEventListener(type, listener, options);
       };
 
-      let resolveCacheGet!: (value: string | null) => void;
-      const cacheGet = new Promise<string | null>((resolve) => {
-        resolveCacheGet = resolve;
-      });
-
-      const abortingCacheBackend: CacheBackend = {
-        type: "memory",
-        get() {
-          controller.abort(new Error("caller already timed out"));
-          return cacheGet;
-        },
-        set: () => Promise.resolve(),
-        del: () => Promise.resolve(),
-      };
-
-      let markComputeFinished!: () => void;
-      const computeFinished = new Promise<void>((resolve) => {
-        markComputeFinished = resolve;
-      });
-
-      __injectCachesForTests({ cacheBackend: abortingCacheBackend });
-      const alreadyAbortedCaller = getOrComputeTransform(
-        "already-aborted-key",
-        async () => {
-          markComputeFinished();
-          throw new Error("detached shared transform failed");
-        },
-        300,
-        undefined,
-        controller.signal,
+      controller.abort(new Error("caller already timed out"));
+      let computeCalls = 0;
+      await assertRejects(
+        () =>
+          getOrComputeTransform(
+            "already-aborted-key",
+            async () => {
+              computeCalls++;
+              return "unreachable";
+            },
+            300,
+            undefined,
+            controller.signal,
+          ),
+        Error,
+        "caller already timed out",
       );
 
-      await assertRejects(() => alreadyAbortedCaller, Error, "caller already timed out");
-      assertEquals(addAbortListenerCalls, 0);
-      assertEquals(removeAbortListenerCalls, 0);
-
-      resolveCacheGet(null);
-      await computeFinished;
-      await Promise.resolve();
+      assertEquals(computeCalls, 0);
       assertEquals(addAbortListenerCalls, 0);
       assertEquals(removeAbortListenerCalls, 0);
     });
@@ -1100,57 +1523,6 @@ describe("transforms/esm/transform-cache", () => {
         (await getCachedTransformAsync("reset-cache-write-key"))?.code,
         "replacement-code",
       );
-    });
-
-    it("serializes cache publication across a registry reset", async () => {
-      const firstSetStarted = Promise.withResolvers<void>();
-      const releaseFirstSet = Promise.withResolvers<void>();
-      const secondSetStarted = Promise.withResolvers<void>();
-      const releaseSecondSet = Promise.withResolvers<void>();
-      const secondSetFinished = Promise.withResolvers<void>();
-      let storedValue: string | null = null;
-      let setCalls = 0;
-      const cacheBackend: CacheBackend = {
-        type: "memory",
-        get: () => Promise.resolve(storedValue),
-        async set(_key, value) {
-          setCalls++;
-          if (setCalls === 1) {
-            firstSetStarted.resolve();
-            await releaseFirstSet.promise;
-          } else {
-            secondSetStarted.resolve();
-            await releaseSecondSet.promise;
-          }
-          storedValue = value;
-          if (setCalls === 2) secondSetFinished.resolve();
-        },
-        del: () => Promise.resolve(),
-      };
-      __injectCachesForTests({ cacheBackend });
-
-      const original = await getOrComputeTransform(
-        "async-reset-cache-write-key",
-        async () => "original-code",
-      );
-      assertEquals(original.code, "original-code");
-      await firstSetStarted.promise;
-
-      destroyTransformCache();
-      const replacement = await getOrComputeTransform(
-        "async-reset-cache-write-key",
-        async () => "replacement-code",
-      );
-      assertEquals(replacement.code, "replacement-code");
-      assertEquals(setCalls, 1);
-
-      releaseFirstSet.resolve();
-      await secondSetStarted.promise;
-      releaseSecondSet.resolve();
-      await secondSetFinished.promise;
-
-      assertEquals(setCalls, 2);
-      assertEquals(JSON.parse(storedValue ?? "null").code, "replacement-code");
     });
 
     it("preserves concurrent computes for different cold keys", async () => {

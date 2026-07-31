@@ -31,6 +31,7 @@ import {
 } from "#veryfront/transforms/pipeline/dependency-cache-identity.ts";
 import { createPipelineReadFile } from "#veryfront/transforms/pipeline/read-file.ts";
 import type { DependencyHashCache } from "#veryfront/cache/dependency-graph.ts";
+import { captureDependencyPinningSnapshot } from "../../dependency-pinning-snapshot.ts";
 
 const logger = rendererLogger.component("ssr-module-loader");
 
@@ -49,8 +50,19 @@ export type SSRSourceGraphCacheIdentity =
 export class SSRCacheManager {
   private fs = createFileSystem();
   private cachedConfigHash: string | undefined;
+  private readonly options: SSRModuleLoaderOptions;
 
-  constructor(private options: SSRModuleLoaderOptions) {}
+  constructor(options: SSRModuleLoaderOptions) {
+    const dependencyPinningDependencies = captureDependencyPinningSnapshot(
+      options.dependencyPinningCacheKey,
+      options.dependencyPinningDependencies,
+      options.dependencyPinningSource,
+    );
+    this.options = Object.freeze({
+      ...options,
+      dependencyPinningDependencies,
+    });
+  }
 
   /** Lazily compute config hash once per manager instance. */
   getConfigHash(): string {
@@ -59,6 +71,8 @@ export class SSRCacheManager {
         reactVersion: this.options.reactVersion,
         dev: this.options.dev,
         apiBaseUrl: this.options.apiBaseUrl,
+        moduleServerOrigin: this.options.moduleServerOrigin,
+        dependencyPinningCacheKey: this.options.dependencyPinningCacheKey,
       });
       const importMapFingerprint = this.options.importMapIdentity?.fingerprint;
       this.cachedConfigHash = importMapFingerprint

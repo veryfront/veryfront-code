@@ -46,7 +46,11 @@ import { normalizeHttpUrl } from "#veryfront/transforms/esm/http-cache-helpers.t
 import { extractSourceUrl } from "#veryfront/transforms/esm/source-url-embed.ts";
 import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import {
+  createDependencyPinningSource,
+  type DependencyPinningSnapshot,
+  type DependencyPinningSourceInput,
   getReactUrls,
+  resolveDependencyPinningSnapshot,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
@@ -178,7 +182,16 @@ export type ReleaseAssetTransform = (
   sourceFile: string,
   projectDir: string,
   adapter: RuntimeAdapter,
-  options: { projectId: string; dev: boolean; ssr: boolean; reactVersion?: string },
+  options: {
+    projectId: string;
+    dev: boolean;
+    ssr: boolean;
+    reactVersion?: string;
+    /** Immutable dependency state shared by every transform in this build. */
+    dependencyPinningSnapshot?: DependencyPinningSnapshot;
+    /** Package source paired with dependencyPinningSnapshot. */
+    dependencyPinningSource?: DependencyPinningSourceInput;
+  },
 ) => Promise<string>;
 
 /** One vendored dependency and the source identity represented by its code. */
@@ -1892,6 +1905,8 @@ async function buildFrameworkDependencies(
   input: FrameworkBuildContext,
   tempDir: string,
   transform: ReleaseAssetTransform,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
   dependencyUrls: Map<string, string>,
   uploadQueue: PreparedAsset[],
   pendingBytes: PendingAssetStore,
@@ -1950,6 +1965,8 @@ async function buildFrameworkDependencies(
         dev: false,
         ssr: false,
         reactVersion: input.reactVersion,
+        dependencyPinningSnapshot,
+        dependencyPinningSource,
       });
 
       const frameworkImportUrls = new Map<string, string>();
@@ -2052,6 +2069,8 @@ export async function buildFrameworkDependencyAssets(options: {
   projectId?: string;
   transform: ReleaseAssetTransform;
   dependencyUrls: Map<string, string>;
+  dependencyPinningSnapshot?: DependencyPinningSnapshot;
+  dependencyPinningSource?: DependencyPinningSourceInput;
 }): Promise<{
   dependencies: Record<string, PreparedAsset>;
   assets: PreparedReleaseAsset[];
@@ -2060,6 +2079,14 @@ export async function buildFrameworkDependencyAssets(options: {
   const uploadQueue: PreparedAsset[] = [];
   const pendingBytes = createPendingAssetStore();
   const gaps: string[] = [];
+  const dependencyPinningSource = options.dependencyPinningSource ??
+    createDependencyPinningSource({
+      projectDir: options.tempDir,
+      adapter: options.adapter,
+      contentSourceId: "local-framework-assets",
+    });
+  const dependencyPinningSnapshot = options.dependencyPinningSnapshot ??
+    await resolveDependencyPinningSnapshot(dependencyPinningSource);
   const transform = options.transform;
   const dependencies = await buildFrameworkDependencies(
     {
@@ -2070,6 +2097,8 @@ export async function buildFrameworkDependencyAssets(options: {
     },
     options.tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     options.dependencyUrls,
     uploadQueue,
     pendingBytes,
@@ -2290,10 +2319,15 @@ export async function runReleaseAssetBuild(
 async function resolveReleaseReactVersion(
   releaseConfig: VeryfrontConfig,
   tempDir: string,
+  dependencyPinningSnapshot: DependencyPinningSnapshot,
+  dependencyPinningSource: DependencyPinningSourceInput,
 ): Promise<string> {
   return await resolveProjectReactVersion({
     projectDir: tempDir,
     config: releaseConfig,
+    dependencyPinningSource,
+    dependencyPinningCacheKey: dependencyPinningSnapshot.cacheKey,
+    dependencyPinningDependencies: dependencyPinningSnapshot.dependencies,
   });
 }
 
@@ -2316,10 +2350,12 @@ async function runBuildInner(
   let transformableSourceCount = 0;
 
   for (const file of files) {
-    if (!file || typeof file !== "object" || typeof file.content !== "string") {
+    const path = readOwnDataProperty(file, "path");
+    const content = readOwnDataProperty(file, "content");
+    if (typeof content !== "string") {
       throw new Error("Release file entry must include string content");
     }
-    const logicalPath = requireCanonicalReleaseFilePath(file.path);
+    const logicalPath = requireCanonicalReleaseFilePath(path);
     if (sourceByPath.has(logicalPath)) {
       throw new Error("Release file list contains a duplicate path");
     }
@@ -2336,7 +2372,7 @@ async function runBuildInner(
         );
       }
     }
-    const contentBytes = textEncoder.encode(file.content).byteLength;
+    const contentBytes = textEncoder.encode(content).byteLength;
     if (contentBytes > RELEASE_ASSET_MAX_SIZE_BYTES) {
       throw new Error(`Release source file exceeds ${RELEASE_ASSET_MAX_SIZE_BYTES} bytes`);
     }
@@ -2345,7 +2381,7 @@ async function runBuildInner(
       throw new Error(`Release source files exceed ${MAX_RELEASE_SOURCE_BYTES} bytes`);
     }
 
-    sourceByPath.set(logicalPath, file.content);
+    sourceByPath.set(logicalPath, content);
   }
 
   // Validate the entire logical file set before writing any tenant-controlled
@@ -2384,9 +2420,22 @@ async function runBuildInner(
     throw new Error("Release asset config loader returned an invalid config");
   }
   const routeDirectories = releaseRouterDirectories(releaseConfig);
+  const dependencyPinningSource = createDependencyPinningSource({
+    projectDir: tempDir,
+    projectId: input.projectId,
+    releaseId: input.releaseId,
+    contentSourceId: `release-assets:${input.releaseVersionRef}`,
+    isLocalProject: true,
+    config: releaseConfig,
+  });
+  const dependencyPinningSnapshot = await resolveDependencyPinningSnapshot(
+    dependencyPinningSource,
+  );
   const releaseReactVersion = await resolveReleaseReactVersion(
     releaseConfig,
     tempDir,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
   );
 
   async function transformProjectModule(
@@ -2407,6 +2456,8 @@ async function runBuildInner(
         dev: false,
         ssr: false,
         reactVersion: releaseReactVersion,
+        dependencyPinningSnapshot,
+        dependencyPinningSource,
       });
     } catch (error) {
       const sanitized = sanitizeError(error);
@@ -2566,6 +2617,8 @@ async function runBuildInner(
     },
     tempDir,
     transform,
+    dependencyPinningSnapshot,
+    dependencyPinningSource,
     dependencyUrls,
     uploadQueue,
     pendingBytes,

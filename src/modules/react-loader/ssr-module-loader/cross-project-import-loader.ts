@@ -35,7 +35,11 @@ interface TransformCrossProjectImportFlowOptions {
     | "projectDir"
     | "dev"
     | "apiBaseUrl"
+    | "moduleServerOrigin"
     | "reactVersion"
+    | "dependencyPinningCacheKey"
+    | "dependencyPinningDependencies"
+    | "dependencyPinningSource"
     | "adapter"
     | "importMapIdentity"
   >;
@@ -104,6 +108,10 @@ export async function transformCrossProjectImportFlow(
     reactVersion: options.reactVersion,
     registryBaseUrl,
     importMapFingerprint: options.importMapIdentity?.fingerprint,
+    moduleServerOrigin: options.moduleServerOrigin,
+    dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+    dependencyPinningDependencies: options.dependencyPinningDependencies,
+    dependencyPinningSource: options.dependencyPinningSource,
   });
 
   const cacheable = version !== "latest";
@@ -177,7 +185,11 @@ export async function transformCrossProjectImportFlow(
           dev: options.dev,
           ssr: true,
           apiBaseUrl: options.apiBaseUrl,
+          moduleServerOrigin: options.moduleServerOrigin,
           reactVersion: options.reactVersion,
+          dependencyPinningCacheKey: options.dependencyPinningCacheKey,
+          dependencyPinningDependencies: options.dependencyPinningDependencies,
+          dependencyPinningSource: options.dependencyPinningSource,
           loadImportMap: importMap ? async () => importMap : undefined,
         };
 

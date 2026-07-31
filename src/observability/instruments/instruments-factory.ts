@@ -10,6 +10,7 @@ import { createMemoryInstruments, createMemoryObservableBindings } from "./memor
 import { installObservableCallbacks } from "./observable-callbacks.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
+import { createStreamLifecycleInstruments } from "./stream-lifecycle-instruments.ts";
 
 const logger = serverLogger.component("metrics");
 const instrumentDisposers = new WeakMap<MetricsInstruments, () => void>();
@@ -49,6 +50,16 @@ export function createEmptyInstruments(): MetricsInstruments {
     heapTotalGauge: null,
     heapPercentGauge: null,
     errorCounter: null,
+    streamLifecycleOutcomeCounter: null,
+    streamLifecycleDeadlineCounter: null,
+    streamLifecycleTelemetryCounter: null,
+    streamLifecycleRepairCounter: null,
+    streamLifecycleShadowDivergenceCounter: null,
+    streamLifecycleAttemptDuration: null,
+    streamLifecycleFirstProgressDuration: null,
+    streamLifecycleSemanticIdleDuration: null,
+    streamLifecycleToolInputDuration: null,
+    streamLifecycleToolExecutionDuration: null,
   };
 }
 
@@ -80,6 +91,7 @@ export function initializeInstruments(
       ...createDataInstruments(meter, config),
       ...createMemoryInstruments(meter, config),
       ...createErrorInstruments(meter, config),
+      ...createStreamLifecycleInstruments(meter, config),
     };
     const dispose = installObservableCallbacks([
       ...createCacheObservableBindings(instruments, runtimeState),

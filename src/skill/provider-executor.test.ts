@@ -302,7 +302,7 @@ Deno.test("skill provider execution forwards active cancellation once and drains
   assertEquals(terminationCalls, 1);
 });
 
-Deno.test("skill provider timeout forwards termination and remains pending for cleanup", async () => {
+Deno.test("skill provider timeout bounds uncooperative cleanup after its grace", async () => {
   let reporter!: Readonly<SkillScriptExecutionReporter>;
   let terminationCalls = 0;
   const provider = snapshotSkillScriptExecutorProvider({
@@ -321,16 +321,63 @@ Deno.test("skill provider timeout forwards termination and remains pending for c
     provider,
     { scriptPath: "/skills/demo/scripts/run.ts" },
     createSkillOperationBudget({ timeoutMs: 5 }),
+    undefined,
+    10,
   );
 
-  assertEquals((await settleWithin(execution, 30)).kind, "pending");
+  const settlement = await settleWithin(execution, 50);
+  assertEquals(settlement.kind, "rejected");
+  assertEquals(
+    settlement.kind === "rejected" && settlement.reason instanceof SkillOperationTimeoutError,
+    true,
+  );
   assertEquals(terminationCalls, 1);
   reporter.resolveTerminal();
-  await assertRejects(
-    () => execution,
-    SkillOperationTimeoutError,
-    "timed out after 5ms",
+  await Promise.resolve();
+});
+
+Deno.test("skill provider abort bounds uncooperative cleanup after its grace", async () => {
+  const controller = new AbortController();
+  const cancellation = new Error("cancel uncooperative execution");
+  let reporter!: Readonly<SkillScriptExecutionReporter>;
+  let terminationCalls = 0;
+  const provider = snapshotSkillScriptExecutorProvider({
+    prepare(_input: unknown, candidate: Readonly<SkillScriptExecutionReporter>) {
+      reporter = candidate;
+      return {
+        activate() {
+          controller.abort(cancellation);
+        },
+        terminate(reason?: unknown) {
+          terminationCalls += 1;
+          reporter.rejectResult(reason);
+        },
+      };
+    },
+  });
+  const execution = executeSkillScriptWithProvider(
+    provider,
+    {
+      scriptPath: "/skills/demo/scripts/run.ts",
+      abortSignal: controller.signal,
+    },
+    createSkillOperationBudget({
+      abortSignal: controller.signal,
+      timeoutMs: 1_000,
+    }),
+    undefined,
+    10,
   );
+
+  const settlement = await settleWithin(execution, 50);
+  assertEquals(settlement.kind, "rejected");
+  assertEquals(
+    settlement.kind === "rejected" ? settlement.reason : undefined,
+    cancellation,
+  );
+  assertEquals(terminationCalls, 1);
+  reporter.resolveTerminal();
+  await Promise.resolve();
 });
 
 Deno.test("skill provider execution aggregates independent result and cleanup failures", async () => {

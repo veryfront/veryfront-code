@@ -11,6 +11,8 @@ import {
   createBundleManifest,
   getManifestIdForHash,
   parseBundleManifest,
+  storeBundleManifest,
+  validateBundleGraphAuthority,
   validateBundleGroup,
   validateBundleManifest,
 } from "./bundle-manifest.ts";
@@ -90,6 +92,16 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
     });
   });
 
+  describe("storeBundleManifest", () => {
+    it("returns false when durable storage is unavailable", async () => {
+      const manifest = await createBundleManifest([
+        { hash: "abc123", url: "https://esm.sh/a@1", sizeBytes: 10 },
+      ]);
+
+      assertEquals(await storeBundleManifest(manifest), false);
+    });
+  });
+
   describe("parseBundleManifest", () => {
     it("authenticates a valid serialized manifest", async () => {
       const manifest = await createBundleManifest([
@@ -115,6 +127,74 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
       assertEquals(
         await parseBundleManifest(JSON.stringify(manifest), "f".repeat(64)),
         null,
+      );
+    });
+
+    it("treats only the authenticated hash set as content-addressed authority", async () => {
+      const original = await createBundleManifest([
+        { hash: "aaa111", url: "https://esm.sh/a@1", sizeBytes: 10 },
+        { hash: "bbb222", url: "https://esm.sh/b@1", sizeBytes: 20 },
+      ]);
+      const refreshedMetadata = {
+        ...original,
+        createdAt: original.createdAt + 10_000,
+        ttlSeconds: original.ttlSeconds + 60,
+        bundles: original.bundles.map((bundle) => ({
+          ...bundle,
+          url: `${bundle.url}?refresh=1`,
+          sizeBytes: bundle.sizeBytes + 1,
+        })),
+      };
+
+      const parsedOriginal = await parseBundleManifest(
+        JSON.stringify(original),
+        original.manifestId,
+      );
+      const parsedRefresh = await parseBundleManifest(
+        JSON.stringify(refreshedMetadata),
+        original.manifestId,
+      );
+      assert(parsedOriginal);
+      assert(parsedRefresh);
+      assertEquals(
+        parsedRefresh.bundles.map(({ hash }) => hash),
+        parsedOriginal.bundles.map(({ hash }) => hash),
+      );
+      assertEquals(
+        validateBundleGraphAuthority(parsedOriginal, ["aaa111"]),
+        { valid: true, failedHashes: [] },
+      );
+      assertEquals(
+        validateBundleGraphAuthority(parsedRefresh, ["aaa111"]),
+        { valid: true, failedHashes: [] },
+      );
+
+      const forgedHashSet = {
+        ...refreshedMetadata,
+        bundles: [
+          refreshedMetadata.bundles[0],
+          { ...refreshedMetadata.bundles[1], hash: "ccc333" },
+        ],
+      };
+      assertEquals(
+        await parseBundleManifest(JSON.stringify(forgedHashSet), original.manifestId),
+        null,
+      );
+    });
+
+    it("rejects direct code hashes absent from the authenticated graph authority", async () => {
+      const manifest = await createBundleManifest([
+        { hash: "aaa111", url: "https://esm.sh/a@1", sizeBytes: 10 },
+        { hash: "bbb222", url: "https://esm.sh/b@1", sizeBytes: 20 },
+      ]);
+
+      assertEquals(
+        validateBundleGraphAuthority(manifest, ["aaa111", "ccc333"]),
+        {
+          valid: false,
+          failedHashes: ["ccc333"],
+          reason: "manifest_mismatch",
+        },
       );
     });
   });

@@ -1,5 +1,6 @@
-import { createError, fromError, toError } from "#veryfront/errors";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   buildGitHubResolveCacheKey,
   buildGitHubStatCacheKey,
@@ -14,11 +15,6 @@ import { buildGitHubCacheRef } from "./cache-scope.ts";
 
 const LOG_PREFIX = "[GitHubStatOperations]";
 const RESOLVE_EXTENSIONS = [".tsx", ".ts", ".jsx", ".js", ".mdx", ".md"];
-
-function isFileNotFoundError(error: unknown): boolean {
-  const data = fromError(error);
-  return data?.type === "file" && data.message.startsWith("File not found:");
-}
 
 interface GitHubIndexSnapshot {
   fileIndex: Map<string, FileIndexEntry>;
@@ -211,22 +207,19 @@ export class GitHubStatOperations {
       indexSize: this.fileIndex.size,
     });
 
-    throw toError(
-      createError({
-        type: "file",
-        message: `File not found: ${normalizedPath}`,
-        context: { path: normalizedPath, operation: "read" },
-      }),
-    );
+    throw FILE_NOT_FOUND.create({
+      detail: `File not found: ${normalizedPath}`,
+      context: { path: normalizedPath, operation: "read" },
+    });
   }
 
   async exists(path: string): Promise<boolean> {
     try {
       await this.stat(path);
       return true;
-    } catch (_) {
-      if (isFileNotFoundError(_)) return false;
-      throw _;
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
     }
   }
 
