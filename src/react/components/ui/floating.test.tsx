@@ -199,6 +199,90 @@ describe("Floating SSR and hydration", () => {
     }
   });
 
+  it("hydrates against the slotted trigger geometry and restores focus to its composed ref", async () => {
+    const triggerRef = React.createRef<HTMLButtonElement>();
+    const tree = (
+      <div data-vf-ui="" data-floating-scope="">
+        <Popover defaultOpen>
+          <PopoverTrigger asChild>
+            <button ref={triggerRef} data-hydrated-trigger="" type="button">
+              Open popover
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" data-floating-surface="geometry">
+            <button data-floating-focus="" type="button">Inside</button>
+          </PopoverContent>
+        </Popover>
+      </div>
+    );
+    const serverMarkup = renderToString(tree);
+    assertEquals(serverMarkup.includes('data-floating-surface="geometry"'), false);
+
+    const dom = new JSDOM(
+      `<!doctype html><html><body><div id="root">${serverMarkup}</div></body></html>`,
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+
+    try {
+      const rootElement = document.getElementById("root");
+      const trigger = document.querySelector<HTMLButtonElement>("[data-hydrated-trigger]");
+      assert(rootElement && trigger);
+      const anchorRect: DOMRect = {
+        bottom: 50,
+        height: 30,
+        left: 100,
+        right: 140,
+        top: 20,
+        width: 40,
+        x: 100,
+        y: 20,
+        toJSON: () => ({}),
+      };
+      Object.defineProperty(trigger, "getBoundingClientRect", {
+        configurable: true,
+        value: () => anchorRect,
+      });
+      const recoverableErrors: unknown[] = [];
+
+      root = hydrateRoot(rootElement, tree, {
+        onRecoverableError: (error) => recoverableErrors.push(error),
+      });
+
+      await waitFor(() => {
+        const surface = document.querySelector<HTMLElement>(
+          '[data-floating-surface="geometry"]',
+        );
+        return surface?.style.visibility === "visible";
+      });
+      const surface = document.querySelector<HTMLElement>(
+        '[data-floating-surface="geometry"]',
+      );
+      const inside = document.querySelector<HTMLButtonElement>("[data-floating-focus]");
+      assert(surface && inside);
+      assertEquals(triggerRef.current, trigger);
+      assertEquals(surface.style.left, "100px");
+      assertEquals(surface.style.top, "58px");
+      assertEquals(recoverableErrors, []);
+
+      inside.focus();
+      assertEquals(document.activeElement, inside);
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          bubbles: true,
+          cancelable: true,
+          key: "Escape",
+        }),
+      );
+      await waitFor(() => document.querySelector('[data-floating-surface="geometry"]') === null);
+      await waitFor(() => document.activeElement === trigger);
+    } finally {
+      root?.unmount();
+      restore();
+    }
+  });
+
   it("uses the anchor owner document for portals and dismissal listeners", async () => {
     const globalDom = new JSDOM(
       '<!doctype html><html><body><div id="global-root"></div></body></html>',

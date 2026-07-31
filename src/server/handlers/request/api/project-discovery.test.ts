@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";

@@ -34,6 +34,7 @@ import type { CheckpointOwnership } from "../checkpoint-manager.ts";
 export type { DAGExecutionResult, DAGExecutorConfig, NodeExecutionResult } from "./types.ts";
 
 import type {
+  ContextPatch,
   DAGExecutionResult,
   DAGExecutorConfig,
   DAGExecutorInternalConfig,
@@ -42,8 +43,8 @@ import type {
 } from "./types.ts";
 import { deriveNodeStatus, shouldCheckpoint } from "./utils.ts";
 import { buildGraph, getReadyNodes, hasCycle, updateInDegreesForCompletedNodes } from "./graph.ts";
-import { executeLoopNodeStrategy } from "./loop-node-strategy.ts";
-import { executeMapNodeStrategy } from "./map-node-strategy.ts";
+import { executeLoopNodeStrategy, type LoopRetryExecutionState } from "./loop-node-strategy.ts";
+import { executeMapNodeStrategy, type MapRetryExecutionState } from "./map-node-strategy.ts";
 import type { ChildGraphExecutionOptions } from "./node-strategy-types.ts";
 import { executeCompositeNodeWithPolicy } from "./composite-node-execution.ts";
 import { canonicalizeWorkflowNodes } from "./node-identity.ts";
@@ -64,10 +65,79 @@ import {
   mergeContextPatches,
   setOwnRecordValue,
 } from "./context-patch.ts";
+import { materializeWorkflowContextDelta } from "../../runtime/public-run.ts";
 import { throwIfAbortedWithCleanup } from "../abortable-operation.ts";
 import { getExecutionFailure, retainExecutionFailure } from "../execution-failure.ts";
+import { getConfiguredTimedWaitKind, INTERNAL_WAIT_KIND_FIELD } from "../../timed-wait-state.ts";
+import {
+  captureWorkflowContextProjection,
+  FRAMEWORK_CONTEXT_PROJECTION_KIND,
+  INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD,
+  INTERNAL_SUBWORKFLOW_STATE_FIELD,
+  INTERNAL_WORKFLOW_INPUT_KIND_FIELD,
+  INTERNAL_WORKFLOW_OUTPUT_KIND_FIELD,
+  INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD,
+  runWithWorkflowContextProjectionTracking,
+  SUBWORKFLOW_CONTEXT_OUTPUT_KIND,
+  SUBWORKFLOW_INPUT_KIND,
+  type WorkflowContextProjection,
+  type WorkflowProjectionPath,
+  type WorkflowProjectionState,
+  workflowRuntimeValuesEqual,
+} from "../../runtime-state.ts";
 
 const DEFAULT_MAX_CONCURRENCY = 10;
+
+function isReentrantCompositeNode(node: WorkflowNode): boolean {
+  return node.config.type === "parallel" || node.config.type === "branch" ||
+    node.config.type === "loop" || node.config.type === "map" ||
+    node.config.type === "subWorkflow";
+}
+
+interface PersistedSubWorkflowExecutionState {
+  readonly input: unknown;
+  readonly stepsEvaluationContext: WorkflowContext;
+  readonly stepsEvaluationProjection: WorkflowContextProjection;
+  readonly context: WorkflowContext;
+  readonly contextProjection: WorkflowContextProjection;
+}
+
+type PersistedSubWorkflowNodeState = NodeState & {
+  readonly [INTERNAL_SUBWORKFLOW_STATE_FIELD]?: PersistedSubWorkflowExecutionState;
+  readonly [INTERNAL_WORKFLOW_OUTPUT_KIND_FIELD]?: typeof SUBWORKFLOW_CONTEXT_OUTPUT_KIND;
+  readonly [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]?: WorkflowProjectionPath[];
+};
+
+type ProjectionMarkedNodeState = NodeState & {
+  readonly [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]?: WorkflowProjectionPath[];
+  readonly [INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD]?: ContextPatch;
+};
+
+function remapContextPatchProjection(
+  patch: ContextPatch,
+  prefix: readonly (string | number)[] = [],
+): WorkflowProjectionPath[] {
+  const paths: WorkflowProjectionPath[] = [];
+  for (const root of Object.keys(patch.set)) {
+    for (const entry of patch.projection[root] ?? []) {
+      paths.push({ kind: entry.kind, path: [...prefix, root, ...entry.path] });
+    }
+  }
+  return paths;
+}
+
+function remapWorkflowContextProjection(
+  projection: WorkflowContextProjection,
+  prefix: readonly (string | number)[] = [],
+): WorkflowProjectionPath[] {
+  return Object.entries(projection).flatMap(([root, paths]) =>
+    paths.map((entry) => ({
+      kind: entry.kind,
+      path: [...prefix, root, ...entry.path],
+    }))
+  );
+}
+
 export class DAGExecutor {
   private config: DAGExecutorInternalConfig;
 
@@ -105,7 +175,11 @@ export class DAGExecutor {
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
   ): Promise<DAGExecutionResult> {
-    const { contextPatch: _contextPatch, ...result } = await runWithWorkflowSourceIntegrationPolicy(
+    const {
+      contextPatch: _contextPatch,
+      _retryContextPatch,
+      ...result
+    } = await runWithWorkflowSourceIntegrationPolicy(
       run,
       () => this.executeUnwrapped(nodes, run, startFromNode, abortSignal, ownership),
     );
@@ -124,8 +198,18 @@ export class DAGExecutor {
     abortSignal?.throwIfAborted();
     const canonicalNodes = canonicalizeWorkflowNodes(nodes, identityPrefix);
     const context = cloneExecutionState(run.context, "Workflow context");
+    const contextProjection = captureWorkflowContextProjection(
+      run._workflowProjection?.context,
+    );
+    const runtimeProjection: WorkflowProjectionState = {
+      context: contextProjection,
+      ...(run._workflowProjection?.inputKind === SUBWORKFLOW_INPUT_KIND
+        ? { inputKind: SUBWORKFLOW_INPUT_KIND }
+        : {}),
+    };
     const nodeStates = cloneExecutionState(run.nodeStates, "Workflow node states");
     let contextPatch = createSetContextPatch();
+    let retryContextPatch = createSetContextPatch();
 
     const admissionFailure = findStaticNodeAdmissionFailure(canonicalNodes);
     if (admissionFailure) {
@@ -143,11 +227,17 @@ export class DAGExecutor {
         context,
         nodeStates,
         contextPatch,
+        _workflowProjection: runtimeProjection,
         error: `Node "${nodeId}" failed: ${error.message}`,
       };
     }
 
     const { adjList, inDegree, nodeMap } = buildGraph(canonicalNodes);
+    const reentrantCompositeNodes = new Set(
+      canonicalNodes
+        .filter(isReentrantCompositeNode)
+        .map((node) => node.id),
+    );
 
     updateInDegreesForCompletedNodes(nodeStates, adjList, inDegree);
 
@@ -158,11 +248,14 @@ export class DAGExecutor {
         context,
         nodeStates,
         contextPatch,
+        _workflowProjection: runtimeProjection,
         error: "Workflow DAG contains cycles",
       };
     }
 
-    let ready = startFromNode ? [startFromNode] : getReadyNodes(inDegree, nodeStates);
+    let ready = startFromNode
+      ? [startFromNode]
+      : getReadyNodes(inDegree, nodeStates, reentrantCompositeNodes);
 
     while (ready.length > 0) {
       abortSignal?.throwIfAborted();
@@ -174,9 +267,16 @@ export class DAGExecutor {
       // resume semantics while preventing nested mutation from crossing an
       // in-flight node boundary.
       const baseContext = cloneExecutionState(context, "Workflow context");
+      const baseContextProjection = cloneExecutionState(
+        contextProjection,
+        "Workflow context projection",
+      );
       const baseNodeStates = cloneExecutionState(nodeStates, "Workflow node states");
       const contextSnapshots = batch.map(() =>
         cloneExecutionState(baseContext, "Workflow context")
+      );
+      const contextProjectionSnapshots = batch.map(() =>
+        cloneExecutionState(baseContextProjection, "Workflow context projection")
       );
       const nodeStateSnapshots = batch.map(() =>
         cloneExecutionState(baseNodeStates, "Workflow node states")
@@ -187,6 +287,8 @@ export class DAGExecutor {
           this.executeNode(
             nodeMap.get(nodeId)!,
             contextSnapshots[i]!,
+            contextProjectionSnapshots[i]!,
+            runtimeProjection.inputKind,
             nodeStateSnapshots[i]!,
             checkpointRunId,
             abortSignal,
@@ -245,17 +347,35 @@ export class DAGExecutor {
         const nodeStateSnapshot = nodeStateSnapshots[i]!;
         applyRecordPatch(nodeStates, createRecordPatch(baseNodeStates, nodeStateSnapshot));
         const contextSnapshot = contextSnapshots[i]!;
+        const contextProjectionSnapshot = contextProjectionSnapshots[i]!;
+        const capturedNodeContextPatch = mergeContextPatches(
+          createContextPatch(
+            baseContext,
+            contextSnapshot,
+            baseContextProjection,
+            contextProjectionSnapshot,
+          ),
+          nodeResult.contextPatch,
+        );
+        const failedReentrantComposite = nodeResult.state.status === "failed" &&
+          isReentrantCompositeNode(nodeMap.get(nodeId)!);
+        if (failedReentrantComposite) {
+          retryContextPatch = mergeContextPatches(
+            retryContextPatch,
+            cloneExecutionState(
+              capturedNodeContextPatch,
+              "Workflow retry-only context changes",
+            ),
+          );
+        }
         const nodeContextPatch = nodeResult.state.status === "failed"
           ? createSetContextPatch()
-          : mergeContextPatches(
-            createContextPatch(baseContext, contextSnapshot),
-            nodeResult.contextPatch,
-          );
+          : capturedNodeContextPatch;
         const isolatedContextPatch = cloneExecutionState(
           nodeContextPatch,
           "Workflow context changes",
         );
-        applyContextPatch(context, isolatedContextPatch);
+        applyContextPatch(context, isolatedContextPatch, contextProjection);
         contextPatch = mergeContextPatches(contextPatch, isolatedContextPatch);
 
         setOwnRecordValue(nodeStates, nodeId, nodeResult.state);
@@ -267,7 +387,14 @@ export class DAGExecutor {
 
         const nodeConfig = nodeMap.get(nodeId);
         if (nodeResult.state.status === "completed" && nodeConfig && shouldCheckpoint(nodeConfig)) {
-          await this.checkpoint(checkpointRunId, nodeId, context, nodeStates, ownership);
+          await this.checkpoint(
+            checkpointRunId,
+            nodeId,
+            context,
+            runtimeProjection,
+            nodeStates,
+            ownership,
+          );
         }
 
         if (nodeResult.state.status === "failed") {
@@ -297,6 +424,7 @@ export class DAGExecutor {
           context,
           nodeStates,
           contextPatch,
+          _workflowProjection: runtimeProjection,
         };
       }
 
@@ -307,6 +435,12 @@ export class DAGExecutor {
           context,
           nodeStates,
           contextPatch,
+          ...(Object.keys(retryContextPatch.set).length > 0 ||
+              retryContextPatch.delete.length > 0 ||
+              Object.keys(retryContextPatch.projection).length > 0
+            ? { _retryContextPatch: retryContextPatch }
+            : {}),
+          _workflowProjection: runtimeProjection,
           error: `Node "${outcome.nodeId}" failed: ${outcome.error}`,
         }, outcome.failureCause);
       }
@@ -318,11 +452,26 @@ export class DAGExecutor {
       // scheduling (and double-decrementing dependents for) a node that is
       // already queued.
       const queued = new Set(ready);
-      for (const nodeId of getReadyNodes(inDegree, nodeStates)) {
+      for (const nodeId of getReadyNodes(inDegree, nodeStates, reentrantCompositeNodes)) {
         if (queued.has(nodeId)) continue;
         queued.add(nodeId);
         ready.push(nodeId);
       }
+    }
+
+    const persistedRunningNode = canonicalNodes.find((node) =>
+      getOwnRecordValue(nodeStates, node.id)?.status === "running"
+    );
+    if (persistedRunningNode) {
+      return {
+        completed: false,
+        waiting: true,
+        waitingNode: persistedRunningNode.id,
+        context,
+        nodeStates,
+        contextPatch,
+        _workflowProjection: runtimeProjection,
+      };
     }
 
     return {
@@ -331,12 +480,15 @@ export class DAGExecutor {
       context,
       nodeStates,
       contextPatch,
+      _workflowProjection: runtimeProjection,
     };
   }
 
   private async executeNode(
     node: WorkflowNode,
     context: WorkflowContext,
+    contextProjection: WorkflowContextProjection,
+    inputKind: typeof SUBWORKFLOW_INPUT_KIND | undefined,
     nodeStates: Record<string, NodeState>,
     checkpointRunId: string,
     abortSignal?: AbortSignal,
@@ -353,8 +505,14 @@ export class DAGExecutor {
     validateRuntimeNodeOptions(node);
     this.config.onNodeStart?.(nodeId);
 
-    if (node.config.skip) {
-      const shouldSkip = await node.config.skip(context);
+    const reenteringRunningComposite = existingState?.status === "running" &&
+      isReentrantCompositeNode(node);
+    if (node.config.skip && !reenteringRunningComposite) {
+      const shouldSkip = await runWithWorkflowContextProjectionTracking(
+        context,
+        contextProjection,
+        (callbackContext) => node.config.skip!(callbackContext),
+      );
       abortSignal?.throwIfAborted();
       if (shouldSkip) {
         const state = this.config.stepExecutor.createSkippedState(nodeId);
@@ -367,33 +525,51 @@ export class DAGExecutor {
 
     switch (config.type) {
       case "step":
-        return this.executeStepNode(node, context, abortSignal);
-      case "parallel":
+        return this.executeStepNode(node, context, contextProjection, inputKind, abortSignal);
+      case "parallel": {
+        let retryContextPatch = cloneExecutionState(
+          (existingState as ProjectionMarkedNodeState | undefined)?.[
+            INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD
+          ] ?? createSetContextPatch(),
+          `Parallel "${node.id}" retry context patch`,
+        );
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeParallelNode(
+          execute: async (attemptSignal) => {
+            const result = await this.executeParallelNode(
               node,
               config,
               context,
+              contextProjection,
+              inputKind,
               nodeStates,
               checkpointRunId,
               attemptSignal,
               ownership,
-            ),
+              retryContextPatch,
+            );
+            retryContextPatch = (result.state as ProjectionMarkedNodeState)[
+              INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD
+            ] ?? retryContextPatch;
+            return result;
+          },
         });
-      case "map":
+      }
+      case "map": {
+        let retryExecution: MapRetryExecutionState | undefined;
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            executeMapNodeStrategy({
+          execute: async (attemptSignal) => {
+            const result = await executeMapNodeStrategy({
               node,
               config,
               context,
+              contextProjection,
+              inputKind,
               nodeStates,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
@@ -408,64 +584,106 @@ export class DAGExecutor {
                 onNodeComplete: this.config.onNodeComplete,
                 abortSignal: attemptSignal,
               },
-            }),
+              retryExecution,
+              onRetryExecution: (state) => retryExecution = state,
+            });
+            retryExecution = result.retryExecution;
+            return result;
+          },
         });
+      }
       case "branch": {
         // A composite retry is another attempt at the same selected branch.
         // Cache the first successful condition result so context produced by a
         // partially successful child cannot switch the retry to the other arm.
-        let hasSelectedBranch = false;
-        let selectedBranch = false;
+        const persistedBranch = typeof existingState?.output === "object" &&
+            existingState.output !== null &&
+            !Array.isArray(existingState.output)
+          ? (existingState.output as Record<string, unknown>).branch
+          : undefined;
+        let hasSelectedBranch = persistedBranch === "then" || persistedBranch === "else";
+        let selectedBranch = persistedBranch === "then";
+        let retryContextPatch = cloneExecutionState(
+          (existingState as ProjectionMarkedNodeState | undefined)?.[
+            INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD
+          ] ?? createSetContextPatch(),
+          `Branch "${node.id}" retry context patch`,
+        );
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
           execute: async (attemptSignal) => {
             if (!hasSelectedBranch) {
-              selectedBranch = await config.condition(context);
+              selectedBranch = await runWithWorkflowContextProjectionTracking(
+                context,
+                contextProjection,
+                (callbackContext) => config.condition(callbackContext),
+              );
               attemptSignal.throwIfAborted();
               hasSelectedBranch = true;
             }
-            return await this.executeBranchNode(
+            const result = await this.executeBranchNode(
               node,
               config,
               selectedBranch,
               context,
+              contextProjection,
+              inputKind,
               nodeStates,
               checkpointRunId,
               attemptSignal,
               ownership,
+              retryContextPatch,
             );
+            retryContextPatch = (result.state as ProjectionMarkedNodeState)[
+              INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD
+            ] ?? retryContextPatch;
+            return result;
           },
         });
       }
       case "wait":
-        return this.executeWaitNode(node, config, context, abortSignal);
-      case "subWorkflow":
+        return this.executeWaitNode(node, config, context, contextProjection, abortSignal);
+      case "subWorkflow": {
+        let retryExecution: PersistedSubWorkflowExecutionState | undefined;
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            this.executeSubWorkflowNode(
+          execute: async (attemptSignal) => {
+            const result = await this.executeSubWorkflowNode(
               node,
               config,
               context,
+              contextProjection,
+              inputKind,
+              nodeStates,
               checkpointRunId,
               attemptSignal,
               ownership,
-            ),
+              retryExecution,
+            );
+            retryExecution = (result.state as PersistedSubWorkflowNodeState)[
+              INTERNAL_SUBWORKFLOW_STATE_FIELD
+            ];
+            return result;
+          },
         });
-      case "loop":
+      }
+      case "loop": {
+        let retryExecution: LoopRetryExecutionState | undefined;
         return executeCompositeNodeWithPolicy({
           node,
           parentSignal: abortSignal,
           cancellationGracePeriod: this.config.cancellationGracePeriod,
-          execute: (attemptSignal) =>
-            executeLoopNodeStrategy({
+          execute: async (attemptSignal) => {
+            const result = await executeLoopNodeStrategy({
               node,
               config,
               context,
+              contextProjection,
+              inputKind,
               nodeStates,
               runtime: {
                 executeChildGraph: (nodes, run, options) =>
@@ -481,8 +699,13 @@ export class DAGExecutor {
                 abortSignal: attemptSignal,
                 cancellationGracePeriod: this.config.cancellationGracePeriod,
               },
-            }),
+              retryExecution,
+            });
+            retryExecution = result.retryExecution;
+            return result;
+          },
         });
+      }
       default:
         throw INVALID_ARGUMENT.create({
           detail:
@@ -495,9 +718,15 @@ export class DAGExecutor {
   private async executeStepNode(
     node: WorkflowNode,
     context: WorkflowContext,
+    contextProjection: WorkflowContextProjection,
+    inputKind: typeof SUBWORKFLOW_INPUT_KIND | undefined,
     abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
-    const result = await this.config.stepExecutor.execute(node, context, abortSignal);
+    const result = await runWithWorkflowContextProjectionTracking(
+      context,
+      contextProjection,
+      (callbackContext) => this.config.stepExecutor.execute(node, callbackContext, abortSignal),
+    );
     abortSignal?.throwIfAborted();
 
     const state: NodeState = {
@@ -509,6 +738,9 @@ export class DAGExecutor {
       attempt: 1,
       startedAt: new Date(Date.now() - result.executionTime),
       completedAt: new Date(),
+      ...(inputKind === SUBWORKFLOW_INPUT_KIND
+        ? { [INTERNAL_WORKFLOW_INPUT_KIND_FIELD]: SUBWORKFLOW_INPUT_KIND }
+        : {}),
     };
 
     this.config.onNodeComplete?.(node.id, state);
@@ -524,10 +756,13 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: ParallelNodeConfig,
     context: WorkflowContext,
+    contextProjection: WorkflowContextProjection,
+    inputKind: typeof SUBWORKFLOW_INPUT_KIND | undefined,
     nodeStates: Record<string, NodeState>,
     checkpointRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
+    priorContextPatch: ContextPatch = createSetContextPatch(),
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -552,6 +787,10 @@ export class DAGExecutor {
         nodeStates,
         currentNodes: [],
         context,
+        _workflowProjection: {
+          context: contextProjection,
+          ...(inputKind ? { inputKind } : {}),
+        },
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
@@ -569,17 +808,25 @@ export class DAGExecutor {
     // a parent retry can skip completed children without losing their context.
     // The outer batch commits this snapshot only if the composite eventually
     // completes or waits; a final failed state discards it in full.
-    applyContextPatch(context, result.contextPatch);
+    applyContextPatch(context, result.contextPatch, contextProjection);
     applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
-    const state: NodeState = {
+    const cumulativeContextPatch = mergeContextPatches(priorContextPatch, result.contextPatch);
+    const outputProjection = remapContextPatchProjection(cumulativeContextPatch);
+    const state: ProjectionMarkedNodeState = {
       nodeId: node.id,
       status: deriveNodeStatus(result.completed, result.waiting),
-      output: result.context,
+      output: materializeWorkflowContextDelta(cumulativeContextPatch.set),
       error: result.error,
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
+      ...(outputProjection.length > 0
+        ? { [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]: outputProjection }
+        : {}),
+      ...(!result.completed
+        ? { [INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD]: cumulativeContextPatch }
+        : {}),
     };
 
     this.config.onNodeComplete?.(node.id, state);
@@ -596,10 +843,13 @@ export class DAGExecutor {
     config: BranchNodeConfig,
     conditionResult: boolean,
     context: WorkflowContext,
+    contextProjection: WorkflowContextProjection,
+    inputKind: typeof SUBWORKFLOW_INPUT_KIND | undefined,
     nodeStates: Record<string, NodeState>,
     checkpointRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
+    priorContextPatch: ContextPatch = createSetContextPatch(),
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -631,6 +881,10 @@ export class DAGExecutor {
         nodeStates,
         currentNodes: [],
         context,
+        _workflowProjection: {
+          context: contextProjection,
+          ...(inputKind ? { inputKind } : {}),
+        },
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
@@ -644,20 +898,28 @@ export class DAGExecutor {
     );
     abortSignal?.throwIfAborted();
 
-    applyContextPatch(context, result.contextPatch);
+    applyContextPatch(context, result.contextPatch, contextProjection);
     applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
 
-    const state: NodeState = {
+    const cumulativeContextPatch = mergeContextPatches(priorContextPatch, result.contextPatch);
+    const outputProjection = remapContextPatchProjection(cumulativeContextPatch, ["result"]);
+    const state: ProjectionMarkedNodeState = {
       nodeId: node.id,
       status: deriveNodeStatus(result.completed, result.waiting),
       output: {
         branch: conditionResult ? "then" : "else",
-        result: result.context,
+        result: materializeWorkflowContextDelta(cumulativeContextPatch.set),
       },
       error: result.error,
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
+      ...(outputProjection.length > 0
+        ? { [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]: outputProjection }
+        : {}),
+      ...(!result.completed
+        ? { [INTERNAL_COMPOSITE_CONTEXT_PATCH_FIELD]: cumulativeContextPatch }
+        : {}),
     };
 
     this.config.onNodeComplete?.(node.id, state);
@@ -673,12 +935,18 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: WaitNodeConfig,
     context: WorkflowContext,
+    contextProjection: WorkflowContextProjection,
     abortSignal?: AbortSignal,
   ): Promise<NodeExecutionResult> {
     this.config.onWaiting?.(node.id, config);
 
-    const payload = typeof config.payload === "function"
-      ? await config.payload(context)
+    const payloadFactory = typeof config.payload === "function" ? config.payload : undefined;
+    const payload = payloadFactory
+      ? await runWithWorkflowContextProjectionTracking(
+        context,
+        contextProjection,
+        (callbackContext) => payloadFactory(callbackContext),
+      )
       : config.payload;
     abortSignal?.throwIfAborted();
 
@@ -692,6 +960,9 @@ export class DAGExecutor {
         approvers: config.approvers === undefined ? undefined : [...config.approvers],
         timeout: config.timeout,
         eventName: config.eventName,
+        ...(config.waitType === "event"
+          ? { [INTERNAL_WAIT_KIND_FIELD]: getConfiguredTimedWaitKind(config) }
+          : {}),
       },
       attempt: 1,
       startedAt: new Date(),
@@ -708,9 +979,13 @@ export class DAGExecutor {
     node: WorkflowNode,
     config: SubWorkflowNodeConfig,
     context: WorkflowContext,
+    contextProjection: WorkflowContextProjection,
+    _inputKind: typeof SUBWORKFLOW_INPUT_KIND | undefined,
+    nodeStates: Record<string, NodeState>,
     checkpointRunId: string,
     abortSignal?: AbortSignal,
     ownership?: CheckpointOwnership,
+    retryExecution?: PersistedSubWorkflowExecutionState,
   ): Promise<NodeExecutionResult> {
     abortSignal?.throwIfAborted();
     const startTime = Date.now();
@@ -724,19 +999,77 @@ export class DAGExecutor {
 
     const workflowDef = config.workflow;
 
-    const input = typeof config.input === "function"
+    const existingState = getOwnRecordValue(nodeStates, node.id) as
+      | PersistedSubWorkflowNodeState
+      | undefined;
+    const persistedExecution = retryExecution ??
+      (existingState?.status === "running"
+        ? existingState[INTERNAL_SUBWORKFLOW_STATE_FIELD]
+        : undefined);
+
+    const inputFactory = typeof config.input === "function" ? config.input : undefined;
+    const admittedInput = persistedExecution
+      ? cloneCapturedWorkflowStaticValue(
+        persistedExecution.input,
+        `Sub-workflow "${workflowDef.id}" persisted input`,
+      )
+      : inputFactory
       ? captureWorkflowStaticValue(
-        await config.input(context),
+        await runWithWorkflowContextProjectionTracking(
+          context,
+          contextProjection,
+          (callbackContext) => inputFactory(callbackContext),
+        ),
         `Sub-workflow "${workflowDef.id}" dynamic input`,
       )
       : cloneCapturedWorkflowStaticValue(
         config.input === undefined ? context.input : config.input,
         `Sub-workflow "${workflowDef.id}" input`,
       );
+    const input = cloneCapturedWorkflowStaticValue(
+      admittedInput,
+      `Sub-workflow "${workflowDef.id}" attempt input`,
+    );
     abortSignal?.throwIfAborted();
 
-    const rawSteps = typeof workflowDef.steps === "function"
-      ? workflowDef.steps({ input, context })
+    const stepsEvaluationContext = persistedExecution
+      ? cloneExecutionState(
+        persistedExecution.stepsEvaluationContext,
+        `Sub-workflow "${workflowDef.id}" persisted steps evaluation context`,
+      )
+      : cloneExecutionState(
+        context,
+        `Sub-workflow "${workflowDef.id}" steps evaluation context`,
+      );
+    const stepsEvaluationProjection = persistedExecution
+      ? cloneExecutionState(
+        persistedExecution.stepsEvaluationProjection,
+        `Sub-workflow "${workflowDef.id}" persisted steps evaluation projection`,
+      )
+      : cloneExecutionState(
+        contextProjection,
+        `Sub-workflow "${workflowDef.id}" steps evaluation projection`,
+      );
+    const stepsCallbackContext = persistedExecution
+      ? cloneExecutionState(
+        stepsEvaluationContext,
+        `Sub-workflow "${workflowDef.id}" resumed steps callback context`,
+      )
+      : context;
+    const stepsCallbackProjection = persistedExecution
+      ? cloneExecutionState(
+        stepsEvaluationProjection,
+        `Sub-workflow "${workflowDef.id}" resumed steps callback projection`,
+      )
+      : contextProjection;
+
+    const stepsFactory = typeof workflowDef.steps === "function" ? workflowDef.steps : undefined;
+    const rawSteps = stepsFactory
+      ? await runWithWorkflowContextProjectionTracking(
+        stepsCallbackContext,
+        stepsCallbackProjection,
+        (callbackContext) => stepsFactory({ input, context: callbackContext }),
+      )
       : workflowDef.steps;
     abortSignal?.throwIfAborted();
     const steps = captureWorkflowNodes(
@@ -754,9 +1087,26 @@ export class DAGExecutor {
         workflowId: workflowDef.id,
         status: "running",
         input,
-        nodeStates: {},
+        nodeStates,
         currentNodes: [],
-        context: { input },
+        context: persistedExecution
+          ? {
+            ...cloneExecutionState(
+              persistedExecution.context,
+              `Sub-workflow "${workflowDef.id}" persisted execution context`,
+            ),
+            input,
+          }
+          : { input },
+        _workflowProjection: {
+          context: persistedExecution
+            ? cloneExecutionState(
+              persistedExecution.contextProjection,
+              `Sub-workflow "${workflowDef.id}" persisted context projection`,
+            )
+            : {},
+          inputKind: SUBWORKFLOW_INPUT_KIND,
+        },
         checkpoints: [],
         pendingApprovals: [],
         createdAt: new Date(),
@@ -770,13 +1120,33 @@ export class DAGExecutor {
     );
     abortSignal?.throwIfAborted();
 
+    for (const [childId, childState] of Object.entries(result.nodeStates)) {
+      if (
+        childId.startsWith(`${node.id}/`) && Object.hasOwn(childState, "input") &&
+        workflowRuntimeValuesEqual(childState.input, input)
+      ) {
+        (childState as NodeState & Record<string, unknown>)[
+          INTERNAL_WORKFLOW_INPUT_KIND_FIELD
+        ] = SUBWORKFLOW_INPUT_KIND;
+      }
+    }
+
+    applyRecordPatch(nodeStates, createRecordPatch(nodeStates, result.nodeStates));
+
+    // Keep the raw child context durable for downstream compatibility. Public
+    // boundaries use the explicit provenance below to project framework data.
     let finalOutput: unknown = result.context;
     if (result.completed && config.output) {
       finalOutput = config.output(result.context);
       abortSignal?.throwIfAborted();
     }
 
-    const state: NodeState = {
+    const defaultOutputProjection: WorkflowProjectionPath[] = [
+      { kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: [] },
+      ...remapWorkflowContextProjection(result._workflowProjection?.context ?? {}),
+    ];
+    const hasDefaultOutput = !(result.completed && config.output);
+    const state: PersistedSubWorkflowNodeState = {
       nodeId: node.id,
       status: deriveNodeStatus(result.completed, result.waiting),
       output: finalOutput,
@@ -784,13 +1154,33 @@ export class DAGExecutor {
       attempt: 1,
       startedAt: new Date(startTime),
       completedAt: result.completed ? new Date() : undefined,
+      ...(hasDefaultOutput
+        ? { [INTERNAL_WORKFLOW_OUTPUT_KIND_FIELD]: SUBWORKFLOW_CONTEXT_OUTPUT_KIND }
+        : {}),
+      ...(hasDefaultOutput
+        ? { [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]: defaultOutputProjection }
+        : {}),
+      ...(!result.completed
+        ? {
+          [INTERNAL_SUBWORKFLOW_STATE_FIELD]: {
+            input: admittedInput,
+            stepsEvaluationContext,
+            stepsEvaluationProjection,
+            context: result.context,
+            contextProjection: result._workflowProjection?.context ?? {},
+          },
+        }
+        : {}),
     };
 
     this.config.onNodeComplete?.(node.id, state);
 
     return retainExecutionFailure({
       state,
-      contextPatch: createSetContextPatch(result.completed ? { [node.id]: finalOutput } : {}),
+      contextPatch: createSetContextPatch(
+        result.completed ? { [node.id]: finalOutput } : {},
+        result.completed && hasDefaultOutput ? { [node.id]: defaultOutputProjection } : {},
+      ),
       waiting: result.waiting,
     }, getExecutionFailure(result));
   }
@@ -799,6 +1189,7 @@ export class DAGExecutor {
     runId: string,
     nodeId: string,
     context: WorkflowContext,
+    workflowProjection: WorkflowProjectionState,
     nodeStates: Record<string, NodeState>,
     ownership?: CheckpointOwnership,
   ): Promise<void> {
@@ -812,6 +1203,7 @@ export class DAGExecutor {
       timestamp: new Date(),
       context: structuredClone(context),
       nodeStates: structuredClone(nodeStates),
+      _workflowProjection: structuredClone(workflowProjection),
     };
 
     const saved = await this.config.checkpointManager.save(runId, checkpoint, ownership);

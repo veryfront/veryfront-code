@@ -12,7 +12,7 @@
 
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
-import { afterAll, describe, it } from "#veryfront/testing/bdd";
+import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 
 import { restoreLogs } from "../../_helpers/log-guard.ts";
@@ -27,6 +27,8 @@ import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { invalidateProjectMiddlewareCache } from "../../../src/server/runtime-handler/project-middleware.ts";
+import { installTestCSSOptimizationEngine } from "../../_helpers/css-optimization-engine.ts";
+import { createTestCSSProcessor, installTestCSSProcessor } from "../../_helpers/css-processor.ts";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -39,9 +41,27 @@ describe(
     sanitizeOps: false,
   },
   () => {
+    let restoreCSSOptimizationEngine: (() => void) | undefined;
+    let restoreCSSProcessor: (() => void) | undefined;
+
+    beforeAll(() => {
+      restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
+      restoreCSSProcessor = installTestCSSProcessor(
+        createTestCSSProcessor(
+          "production-server-integration@1",
+          ".vf-test-fixture{display:block}",
+        ),
+      );
+    });
+
     afterAll(async () => {
-      await cleanupBundler();
-      restoreLogs();
+      try {
+        await cleanupBundler();
+      } finally {
+        restoreCSSProcessor?.();
+        restoreCSSOptimizationEngine?.();
+        restoreLogs();
+      }
     });
 
     describe(
@@ -472,7 +492,7 @@ describe(
                 adapter: proxyAdapter,
                 config: {
                   fs: {
-                    type: "veryfront",
+                    type: "veryfront-api",
                     veryfront: {
                       apiBaseUrl: "https://api.example.com",
                       proxyMode: true,
@@ -595,6 +615,8 @@ describe(
             },
           };
 
+          const previousTrustSetting = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+          Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
           let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
           try {
             server = await startProductionServer({
@@ -607,7 +629,7 @@ describe(
                 adapter: proxyAdapter,
                 config: {
                   fs: {
-                    type: "veryfront",
+                    type: "veryfront-api",
                     veryfront: {
                       apiBaseUrl: "https://api.example.com",
                       proxyMode: true,
@@ -661,6 +683,11 @@ describe(
             await server?.stop();
             (multiProjectFs as any).manager = originalManager;
             multiProjectFs.dispose();
+            if (previousTrustSetting === undefined) {
+              Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+            } else {
+              Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousTrustSetting);
+            }
           }
         });
 

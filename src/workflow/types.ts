@@ -9,6 +9,7 @@ import type { Agent } from "#veryfront/agent/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import type { WorkflowProjectionState } from "./runtime-state.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
@@ -67,6 +68,8 @@ export interface Checkpoint {
   timestamp: Date;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
+  /** @internal Framework-only public projection ownership sidecar. */
+  _workflowProjection?: WorkflowProjectionState;
 }
 
 /**
@@ -283,6 +286,10 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   workerId?: string;
   /** Captured tenant context for multi-tenant job execution */
   _tenant?: CapturedTenantContext;
+  /** @internal Immutable durable provenance model version. */
+  _runtimeStateVersion?: number;
+  /** @internal Framework-only public projection ownership sidecar. */
+  _workflowProjection?: WorkflowProjectionState;
 }
 
 // Utility functions

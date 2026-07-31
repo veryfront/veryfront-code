@@ -89,6 +89,160 @@ describe("resolveProductionBootstrap()", () => {
 });
 
 describe("startProductionServer() lifecycle", () => {
+  it("pins nested supplied configuration before asynchronous startup", async () => {
+    const config = validateVeryfrontConfig({
+      experimental: { rsc: true },
+    }) as BootstrapResult["config"];
+    const bootstrap = createBootstrapResult(() => {});
+    bootstrap.config = config;
+    let handler: ((request: Request) => Promise<Response> | Response) | undefined;
+    bootstrap.adapter.serve = (receivedHandler, options) => {
+      handler = receivedHandler;
+      options.onListen?.({ hostname: "127.0.0.1", port: 4_321 });
+      return Promise.resolve({
+        addr: { hostname: "127.0.0.1", port: 4_321 },
+        stop: () => Promise.resolve(),
+      });
+    };
+
+    const starting = startLocalCliProxyProductionServer({
+      projectDir: "/project",
+      port: 4_321,
+      defaultProjectSlug: "config-snapshot",
+      defaultProjectId: "config-snapshot-id",
+      defaultEnvironment: "preview",
+      bootstrapResult: bootstrap,
+    });
+    config.experimental!.rsc = false;
+
+    const handle = await starting;
+    try {
+      await handle.ready;
+      const response = await handler!(
+        new Request("http://localhost/_veryfront/rsc/probe"),
+      );
+      assertEquals(response.status, 200);
+      await response.body?.cancel();
+    } finally {
+      await handle.stop();
+    }
+  });
+
+  it("rejects hostile and invalid supplied configuration before startup side effects", async () => {
+    let accessorReads = 0;
+    const accessorConfig = {
+      experimental: Object.defineProperty({}, "rsc", {
+        enumerable: true,
+        get() {
+          accessorReads++;
+          return true;
+        },
+      }),
+    };
+    const revocableConfig = Proxy.revocable({ experimental: { rsc: true } }, {});
+    revocableConfig.revoke();
+    const cyclicConfig: Record<string, unknown> = { experimental: { rsc: true } };
+    cyclicConfig.self = cyclicConfig;
+
+    for (
+      const [config, errorType, expectedMessage] of [
+        [accessorConfig, TypeError, "accessor properties"],
+        [revocableConfig.proxy, TypeError, "proxies"],
+        [cyclicConfig, TypeError, "cyclic references"],
+        [{ experimental: { rsc: "yes" } }, Error, "Invalid veryfront.config"],
+      ] as const
+    ) {
+      let envReads = 0;
+      let serveCalls = 0;
+      let disposeCalls = 0;
+      const bootstrap = createBootstrapResult(() => {
+        disposeCalls++;
+      });
+      bootstrap.config = config as BootstrapResult["config"];
+      const originalEnv = bootstrap.adapter.env;
+      bootstrap.adapter.env = {
+        get(key) {
+          envReads++;
+          return originalEnv.get(key);
+        },
+        set: originalEnv.set.bind(originalEnv),
+        toObject: originalEnv.toObject.bind(originalEnv),
+      };
+      bootstrap.adapter.serve = () => {
+        serveCalls++;
+        return Promise.reject(new Error("listener must not start"));
+      };
+
+      await assertRejects(
+        () =>
+          startLocalCliProxyProductionServer({
+            projectDir: "/project",
+            port: 4_321,
+            bootstrapResult: bootstrap,
+          }),
+        errorType,
+        expectedMessage,
+      );
+      assertEquals([envReads, serveCalls, disposeCalls], [0, 0, 0]);
+    }
+    assertEquals(accessorReads, 0);
+  });
+
+  it("rejects hostile local-project maps before startup side effects", async () => {
+    let accessorReads = 0;
+    const accessorMap = Object.defineProperty({}, "demo", {
+      enumerable: true,
+      get() {
+        accessorReads++;
+        return "/project";
+      },
+    });
+    const revocableMap = Proxy.revocable({ demo: "/project" }, {});
+    revocableMap.revoke();
+
+    for (
+      const [localProjects, expectedMessage] of [
+        [accessorMap, "accessor properties"],
+        [revocableMap.proxy, "proxies"],
+        [{ Demo: "/project" }, "canonical slug"],
+      ] as const
+    ) {
+      let envReads = 0;
+      let serveCalls = 0;
+      let disposeCalls = 0;
+      const bootstrap = createBootstrapResult(() => {
+        disposeCalls++;
+      });
+      const originalEnv = bootstrap.adapter.env;
+      bootstrap.adapter.env = {
+        get(key) {
+          envReads++;
+          return originalEnv.get(key);
+        },
+        set: originalEnv.set.bind(originalEnv),
+        toObject: originalEnv.toObject.bind(originalEnv),
+      };
+      bootstrap.adapter.serve = () => {
+        serveCalls++;
+        return Promise.reject(new Error("listener must not start"));
+      };
+
+      await assertRejects(
+        () =>
+          startLocalCliProxyProductionServer({
+            projectDir: "/project",
+            port: 4_321,
+            localProjects: localProjects as Record<string, string>,
+            bootstrapResult: bootstrap,
+          }),
+        TypeError,
+        expectedMessage,
+      );
+      assertEquals([envReads, serveCalls, disposeCalls], [0, 0, 0]);
+    }
+    assertEquals(accessorReads, 0);
+  });
+
   it("retires the runtime handler after its listener stops", async () => {
     const bootstrap = createBootstrapResult(() => {});
     const runtimeHandlerDisposeStarted = Promise.withResolvers<void>();

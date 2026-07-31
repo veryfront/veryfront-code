@@ -6,7 +6,7 @@ import type { RSCPayload } from "#veryfront/rendering/rsc/types.ts";
 import {
   COMPONENT_ERROR,
   createError,
-  createErrorResponse,
+  errorToResponse,
   getErrorMessage,
   PAGE_NOT_FOUND,
   RENDER_ERROR,
@@ -312,7 +312,8 @@ export class RenderHandler {
       vfError = wrapUnknownError(error);
     }
 
-    const response = createErrorResponse(vfError);
+    const response = errorToResponse(vfError);
+    response.headers.set("cache-control", "no-store");
     const varyValues = (response.headers.get("vary") ?? "")
       .split(",")
       .map((value) => value.trim())

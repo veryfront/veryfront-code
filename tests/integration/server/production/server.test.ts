@@ -373,6 +373,7 @@ describe(
 
         const port = await context.allocatePort();
         const controller = new AbortController();
+        const localProjectSlug = "app-error-boundary";
         // Start the server with the project registered as local so the SSR
         // error overlay path is active (post-VULN-SRV-1/2, the overlay gates
         // strictly on `isLocalProject`).
@@ -381,9 +382,9 @@ describe(
           port,
           bindAddress: "127.0.0.1",
           signal: controller.signal,
-          defaultProjectSlug: context.projectId,
+          defaultProjectSlug: localProjectSlug,
           defaultProjectId: context.projectId,
-          localProjects: { [context.projectId]: context.projectDir },
+          localProjects: { [localProjectSlug]: context.projectDir },
         });
         await server.ready;
 
@@ -428,7 +429,7 @@ describe(
         assertMatch(res.headers.get("content-type") ?? "", /text\/html/i);
         const html = await res.text();
         assertStringIncludes(html, "Missing B");
-        assertStringIncludes(html, 'data-node-file="app/a/b/not-found.tsx"');
+        assertEquals(html.includes("data-node-file"), false);
         assertEquals(html.includes("Root Missing"), false);
 
         controller.abort();

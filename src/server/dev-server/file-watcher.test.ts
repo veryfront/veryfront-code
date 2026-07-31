@@ -53,7 +53,7 @@ describe("OptimizedFileWatcher", () => {
     });
 
     watcher.handleChange(["src/pages/hmr.tsx"]);
-    watcher.cleanup();
+    await watcher.cleanup();
 
     await delay(10);
 
@@ -65,5 +65,35 @@ describe("OptimizedFileWatcher", () => {
     expect(metrics.averageBatchSize).toBe("0");
     expect(metrics.largestBatch).toBe(0);
     expect(metrics.fsOperationReduction).toBe("100.0%");
+  });
+
+  it("waits for an in-flight batch before cleanup resolves and stays closed", async () => {
+    const callbackStarted = createDeferred<void>();
+    const releaseCallback = createDeferred<void>();
+    let callbackCount = 0;
+    let cleanupResolved = false;
+
+    const watcher = new OptimizedFileWatcher(0, async () => {
+      callbackCount++;
+      callbackStarted.resolve();
+      await releaseCallback.promise;
+    });
+
+    watcher.handleChange(["src/pages/in-flight.tsx"]);
+    await callbackStarted.promise;
+
+    const cleanup = Promise.resolve(watcher.cleanup()).then(() => {
+      cleanupResolved = true;
+    });
+    await Promise.resolve();
+
+    expect(cleanupResolved).toBe(false);
+
+    releaseCallback.resolve();
+    await cleanup;
+
+    watcher.handleChange(["src/pages/after-cleanup.tsx"]);
+    await Promise.resolve();
+    expect(callbackCount).toBe(1);
   });
 });

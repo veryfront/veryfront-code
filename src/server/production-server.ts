@@ -47,6 +47,10 @@ import { snapshotStudioCaptureBundleProvider } from "#veryfront/extensions/studi
 import { snapshotDevUiAssetProvider } from "#veryfront/extensions/dev-ui";
 import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 import { inheritRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import {
+  snapshotProductionConfig,
+  snapshotProductionLocalProjects,
+} from "./production-input-snapshot.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -246,7 +250,9 @@ export interface StartProductionServerOptions extends ServerOptions {
   /**
    * Pre-computed bootstrap result to skip internal bootstrap. Ownership is
    * transferred to the returned handle; callers must not dispose it directly.
-   * Public startup still enforces hosted-environment validation.
+   * Its config must be the loader-canonical value produced by bootstrap
+   * (schema-parsed with framework defaults merged). Public startup still
+   * enforces hosted-environment validation and structurally snapshots config.
    */
   bootstrapResult?: BootstrapResult;
 }
@@ -307,7 +313,7 @@ function snapshotSuppliedBootstrap(bootstrap: BootstrapResult): BootstrapResult 
     ? undefined
     : snapshotNodeWebSocketServerProvider(suppliedNodeWebSocketServerProvider);
   const adapter = bootstrap.adapter;
-  const config = bootstrap.config;
+  const config = snapshotProductionConfig(bootstrap.config);
   const usingFSAdapter = bootstrap.usingFSAdapter;
   const fsAdapterType = bootstrap.fsAdapterType;
   const extensionLoader = bootstrap.extensionLoader;
@@ -350,6 +356,7 @@ async function startProductionServerWithAuthorization(
     adapter: requestedAdapter,
     bootstrapResult: suppliedBootstrap,
   } = options;
+  const ownedLocalProjects = snapshotProductionLocalProjects(localProjects);
   const isAuthorizedLocalProxy = authorization === LOCAL_CLI_PROXY_SERVER_AUTHORIZATION;
   const ownedSuppliedBootstrap = suppliedBootstrap
     ? snapshotSuppliedBootstrap(suppliedBootstrap)
@@ -501,7 +508,7 @@ async function startProductionServerWithAuthorization(
           defaultProjectSlug,
           defaultProjectId,
           defaultEnvironment,
-          localProjects,
+          localProjects: ownedLocalProjects,
         });
 
         // Enable SSR fetch interception to handle relative URLs during SSR
@@ -568,7 +575,7 @@ async function startProductionServerWithAuthorization(
           defaultProjectId,
           defaultReleaseId,
           defaultEnvironment,
-          localProjects,
+          localProjects: ownedLocalProjects,
           projectEnvFetch,
           studioCaptureProvider: bootstrap.studioCaptureProvider,
           devUiAssetProvider: bootstrap.devUiAssetProvider,

@@ -134,7 +134,7 @@ export interface BootstrapResult {
   /** Enhanced runtime adapter (with FSAdapter if configured) */
   adapter: RuntimeAdapter;
 
-  /** Loaded configuration */
+  /** Loader-canonical configuration: schema-parsed with framework defaults merged. */
   config: VeryfrontConfig;
 
   /** Whether FSAdapter was initialized */

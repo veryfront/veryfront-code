@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow/types.ts";
+import { normalizeActiveTimerDelayMs, normalizePageSize } from "./option-normalization.ts";
 import { parseWorkflowListResponse } from "./workflow-list-response.ts";
 
 /** Default interval for auto-refreshing the workflow list */
@@ -31,6 +32,15 @@ export interface UseWorkflowListResult {
   filter: RunFilter;
 }
 
+interface WorkflowListIdentity {
+  readonly apiBase: string;
+  readonly filter: RunFilter;
+  active: boolean;
+  cursor: string | undefined;
+  requestController: AbortController | null;
+  requestPromise: Promise<void> | null;
+}
+
 /**
  * List and filter workflow runs.
  */
@@ -40,18 +50,22 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     status,
     createdAfter,
     createdBefore,
-    pageSize = 20,
+    pageSize: requestedPageSize = 20,
     apiBase = "/api/workflows",
     autoRefresh = false,
     refreshInterval = DEFAULT_REFRESH_INTERVAL_MS,
   } = options;
+  const pageSize = normalizePageSize(requestedPageSize);
+  const normalizedRefreshInterval = normalizeActiveTimerDelayMs(
+    refreshInterval,
+    "refreshInterval",
+  );
 
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
   const [totalCount, setTotalCount] = useState<number | undefined>();
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const [cursor, setCursor] = useState<string | undefined>();
 
   const [filter, setFilterState] = useState<RunFilter>({
     workflowId,
@@ -60,6 +74,14 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
     createdBefore,
     limit: pageSize,
   });
+  const identity = useMemo<WorkflowListIdentity>(() => ({
+    apiBase,
+    filter,
+    active: false,
+    cursor: undefined,
+    requestController: null,
+    requestPromise: null,
+  }), [apiBase, filter]);
 
   const buildQueryString = useCallback((filterToUse: RunFilter, cursorToUse?: string): string => {
     const params = new URLSearchParams();
@@ -86,94 +108,144 @@ export function useWorkflowList(options: UseWorkflowListOptions = {}): UseWorkfl
   }, []);
 
   const fetchRuns = useCallback(
-    async (append = false): Promise<void> => {
-      try {
-        const queryString = buildQueryString(filter, append ? cursor : undefined);
-        const response = await fetch(`${apiBase}/runs?${queryString}`);
-
-        if (!response.ok) {
-          throw REQUEST_ERROR.create({
-            detail: `Failed to fetch runs: ${response.status}`,
-            status: response.status,
-          });
-        }
-
-        const data = parseWorkflowListResponse(await response.json());
-        const fetchedRuns = data.runs;
-        const nextCursor = data.cursor;
-        const total = data.totalCount;
-
-        setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
-        setCursor(nextCursor);
-        setHasMore(Boolean(nextCursor) || fetchedRuns.length === filter.limit);
-        setTotalCount(total);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err : new Error(String(err)));
+    (
+      owner: WorkflowListIdentity,
+      append: boolean,
+      cursorSnapshot: string | undefined,
+      supersede: boolean,
+    ): Promise<void> => {
+      if (!owner.active) return Promise.resolve();
+      if (owner.requestPromise) {
+        if (!supersede) return Promise.resolve();
+        owner.requestController?.abort();
       }
+
+      const controller = new AbortController();
+      owner.requestController = controller;
+      setIsLoading(true);
+      const request = (async (): Promise<void> => {
+        try {
+          const queryString = buildQueryString(
+            owner.filter,
+            append ? cursorSnapshot : undefined,
+          );
+          const response = await fetch(`${owner.apiBase}/runs?${queryString}`, {
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            throw REQUEST_ERROR.create({
+              detail: `Failed to fetch runs: ${response.status}`,
+              status: response.status,
+            });
+          }
+
+          const data = parseWorkflowListResponse(await response.json());
+          const fetchedRuns = data.runs;
+          const nextCursor = data.cursor;
+          const total = data.totalCount;
+
+          if (
+            controller.signal.aborted || !owner.active
+          ) return;
+          setRuns((prev) => (append ? [...prev, ...fetchedRuns] : fetchedRuns));
+          owner.cursor = nextCursor;
+          setHasMore(Boolean(nextCursor));
+          setTotalCount(total);
+          setError(null);
+        } catch (err) {
+          if (
+            controller.signal.aborted || !owner.active ||
+            (err instanceof Error && err.name === "AbortError")
+          ) return;
+          setError(err instanceof Error ? err : new Error(String(err)));
+        } finally {
+          if (owner.requestController === controller) {
+            owner.requestController = null;
+            owner.requestPromise = null;
+            if (owner.active) setIsLoading(false);
+          }
+        }
+      })();
+      owner.requestPromise = request;
+      return request;
     },
-    [apiBase, buildQueryString, cursor, filter],
+    [buildQueryString],
   );
 
   useEffect(() => {
-    let cancelled = false;
-
-    async function doFetch(): Promise<void> {
-      setIsLoading(true);
-      await fetchRuns(false);
-      if (!cancelled) setIsLoading(false);
-    }
-
-    doFetch();
+    identity.active = true;
+    identity.cursor = undefined;
+    setRuns([]);
+    setTotalCount(undefined);
+    setHasMore(false);
+    setError(null);
+    void fetchRuns(identity, false, undefined, true);
 
     return () => {
-      cancelled = true;
+      identity.active = false;
+      identity.requestController?.abort();
     };
-  }, [fetchRuns, filter]);
+  }, [fetchRuns, identity]);
 
   useEffect(() => {
     if (!autoRefresh) return;
 
     const intervalId = setInterval(() => {
-      fetchRuns(false);
-    }, refreshInterval);
+      if (!identity.active || identity.requestPromise) return;
+      void fetchRuns(
+        identity,
+        false,
+        undefined,
+        false,
+      );
+    }, normalizedRefreshInterval);
 
     return () => clearInterval(intervalId);
-  }, [autoRefresh, fetchRuns, refreshInterval]);
+  }, [autoRefresh, fetchRuns, identity, normalizedRefreshInterval]);
 
   const loadMore = useCallback(async (): Promise<void> => {
-    if (!hasMore || isLoading) return;
-
-    setIsLoading(true);
-    await fetchRuns(true);
-    setIsLoading(false);
-  }, [fetchRuns, hasMore, isLoading]);
+    const cursor = identity.cursor;
+    if (!identity.active || !hasMore || !cursor || identity.requestPromise) return;
+    await fetchRuns(
+      identity,
+      true,
+      cursor,
+      false,
+    );
+  }, [fetchRuns, hasMore, identity]);
 
   const refresh = useCallback(async (): Promise<void> => {
-    setCursor(undefined);
-    setIsLoading(true);
-    await fetchRuns(false);
-    setIsLoading(false);
-  }, [fetchRuns]);
+    if (!identity.active) return;
+    identity.cursor = undefined;
+    await fetchRuns(identity, false, undefined, true);
+  }, [fetchRuns, identity]);
 
   const setFilter = useCallback((newFilter: Partial<UseWorkflowListOptions>): void => {
-    setCursor(undefined);
+    const nextLimit = Object.hasOwn(newFilter, "pageSize") && newFilter.pageSize !== undefined
+      ? normalizePageSize(newFilter.pageSize)
+      : newFilter.pageSize;
     setFilterState((prev) => ({
       ...prev,
-      workflowId: newFilter.workflowId ?? prev.workflowId,
-      status: newFilter.status ?? prev.status,
-      createdAfter: newFilter.createdAfter ?? prev.createdAfter,
-      createdBefore: newFilter.createdBefore ?? prev.createdBefore,
-      limit: newFilter.pageSize ?? prev.limit,
+      workflowId: Object.hasOwn(newFilter, "workflowId") ? newFilter.workflowId : prev.workflowId,
+      status: Object.hasOwn(newFilter, "status") ? newFilter.status : prev.status,
+      createdAfter: Object.hasOwn(newFilter, "createdAfter")
+        ? newFilter.createdAfter
+        : prev.createdAfter,
+      createdBefore: Object.hasOwn(newFilter, "createdBefore")
+        ? newFilter.createdBefore
+        : prev.createdBefore,
+      limit: Object.hasOwn(newFilter, "pageSize") ? nextLimit : prev.limit,
     }));
   }, []);
 
+  const ownsState = identity.active;
   return {
-    runs,
-    totalCount,
-    isLoading,
-    error,
-    hasMore,
+    runs: ownsState ? runs : [],
+    totalCount: ownsState ? totalCount : undefined,
+    isLoading: ownsState ? isLoading : true,
+    error: ownsState ? error : null,
+    hasMore: ownsState ? hasMore : false,
     loadMore,
     refresh,
     setFilter,

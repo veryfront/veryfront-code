@@ -213,6 +213,95 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       const body = await result!.json();
       assertEquals(body, { ok: true, rsc: true });
     });
+
+    it("keeps HEAD status and headers GET-equivalent while omitting the body", async () => {
+      const url = "http://localhost/_veryfront/rsc/probe";
+      const getResponse = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/probe",
+          config: rscEnabledConfig,
+          req: new Request(url),
+        }),
+      );
+      const headResponse = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/probe",
+          config: rscEnabledConfig,
+          req: new Request(url, { method: "HEAD" }),
+        }),
+      );
+
+      assertEquals(headResponse?.status, getResponse?.status);
+      assertEquals(
+        Object.fromEntries(headResponse!.headers),
+        Object.fromEntries(getResponse!.headers),
+      );
+      assertEquals((await getResponse!.text()).length > 0, true);
+      assertEquals(await headResponse!.text(), "");
+    });
+  });
+
+  describe("HTTP method admission", () => {
+    it("rejects disallowed methods before filesystem-backed endpoint initialization", async () => {
+      const cases = [
+        { sub: "probe", method: "POST", allow: "GET, HEAD" },
+        { sub: "render", method: "DELETE", allow: "GET, HEAD" },
+        { sub: "client.js", method: "PUT", allow: "GET, HEAD" },
+        { sub: "unknown", method: "PATCH", allow: "GET, HEAD" },
+        { sub: "action", method: "GET", allow: "POST" },
+      ] as const;
+
+      for (const { sub, method, allow } of cases) {
+        let filesystemCalls = 0;
+        const adapter = createMockAdapter({
+          exists: () => {
+            filesystemCalls++;
+            return Promise.resolve(false);
+          },
+          readFile: () => {
+            filesystemCalls++;
+            return Promise.reject(new Error("filesystem must not be read"));
+          },
+          stat: () => {
+            filesystemCalls++;
+            return Promise.reject(new Error("filesystem must not be inspected"));
+          },
+          readDir: () => {
+            filesystemCalls++;
+            return (async function* () {})();
+          },
+        });
+        const pathname = `/_veryfront/rsc/${sub}`;
+        const response = await handleRSCEndpoint(
+          makeParams({
+            pathname,
+            config: rscEnabledConfig,
+            adapter,
+            req: new Request(`http://localhost${pathname}`, { method }),
+          }),
+        );
+
+        assertEquals(response?.status, 405);
+        assertEquals(response?.headers.get("allow"), allow);
+        assertEquals(response?.headers.get("cache-control"), "no-store");
+        assertEquals(filesystemCalls, 0);
+      }
+    });
+
+    it("keeps a disallowed HEAD action response bodyless", async () => {
+      const response = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", { method: "HEAD" }),
+        }),
+      );
+
+      assertEquals(response?.status, 405);
+      assertEquals(response?.headers.get("allow"), "POST");
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(await response!.text(), "");
+    });
   });
 
   it("does not reuse a handler across two exact request import maps", async () => {
@@ -271,7 +360,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
               size: 1,
               mtime: null,
             })
-            : Promise.reject(new Error("not found")),
+            : Promise.reject(new Deno.errors.NotFound("not found")),
         readFile: (path) =>
           path === pagePath
             ? Promise.resolve("export default function Page() { return null; }")
@@ -295,6 +384,40 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       assertEquals(result instanceof Response, true);
       assertEquals(result!.status, 200);
     });
+
+    it("returns one sanitized 500 when component metadata inspection fails", async () => {
+      const sensitiveMessage = "component storage unavailable: credential=SENSITIVE";
+      const operationalFailure = new Error(sensitiveMessage);
+      let statCalls = 0;
+      const adapter = createMockAdapter({
+        stat: (path) => {
+          if (path.endsWith("/package.json")) {
+            return Promise.reject(new Deno.errors.NotFound("not found"));
+          }
+          statCalls++;
+          return Promise.reject(operationalFailure);
+        },
+      });
+
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/render",
+          req: new Request("http://localhost/_veryfront/rsc/render"),
+          projectDir: "/virtual/project",
+          projectId: "virtual-project-operational-failure",
+          contentSourceId: "preview-main",
+          adapter,
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          mode: "development",
+        }),
+      );
+
+      assertEquals(result?.status, 500);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
+      assertEquals((await result!.text()).includes(sensitiveMessage), false);
+      assertEquals(statCalls, 1);
+    });
   });
 
   describe("action endpoint", () => {
@@ -308,8 +431,9 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
       );
       assertEquals(result instanceof Response, true);
       assertEquals(result!.status, 405);
-      const body = await result!.text();
-      assertStringIncludes(body, "Method Not Allowed");
+      assertEquals(result!.headers.get("allow"), "POST");
+      assertEquals(result!.headers.get("cache-control"), "no-store");
+      assertEquals((await result!.text()).length > 0, true);
     });
 
     it("rejects PUT with 405", async () => {

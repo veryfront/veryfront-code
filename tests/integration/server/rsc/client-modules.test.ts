@@ -131,13 +131,14 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
           "../../../../src/server/production-server.ts"
         );
         const port = await context.allocatePort();
+        const projectSlug = "rsc-client-page-render";
         const server = await startProductionServer({
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
-          defaultProjectSlug: context.projectId,
+          defaultProjectSlug: projectSlug,
           defaultProjectId: context.projectId,
-          localProjects: { [context.projectId]: context.projectDir },
+          localProjects: { [projectSlug]: context.projectDir },
         });
         context.trackResource(server);
         await server.ready;

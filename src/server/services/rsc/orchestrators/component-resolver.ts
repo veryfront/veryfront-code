@@ -1,4 +1,4 @@
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -49,8 +49,8 @@ async function fileExists(filePath: string, fsAdapter?: FileSystemAdapter): Prom
   try {
     const stat = fsAdapter ? await fsAdapter.stat(filePath) : await fs.stat(filePath);
     return stat.isFile;
-  } catch (_) {
-    /* expected: file may not exist */
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
     return false;
   }
 }

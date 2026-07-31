@@ -10,6 +10,7 @@ import {
   isNativeErrorWithoutHooks,
   isNativePromiseWithoutHooks,
   isProxyWithoutHooks,
+  isUint8ArrayWithoutHooks,
   readNativeErrorNameWithoutHooks,
 } from "./error-introspection.ts";
 
@@ -301,6 +302,22 @@ describe("platform error introspection", () => {
     );
     assertEquals(isNativeErrorWithoutHooks(proxied), false);
     assertEquals(isProxyWithoutHooks(proxied), true);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("recognizes Uint8Array values without invoking proxy traps", () => {
+    let trapCalls = 0;
+    const bytes = new Uint8Array([1, 2, 3]);
+    const proxied = new Proxy(bytes, {
+      getPrototypeOf(target) {
+        trapCalls++;
+        return Reflect.getPrototypeOf(target);
+      },
+    });
+
+    assertEquals(isUint8ArrayWithoutHooks(bytes), true);
+    assertEquals(isUint8ArrayWithoutHooks(new Uint16Array([1])), false);
+    assertEquals(isUint8ArrayWithoutHooks(proxied), false);
     assertEquals(trapCalls, 0);
   });
 

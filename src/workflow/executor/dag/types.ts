@@ -7,6 +7,7 @@
  */
 
 import type { NodeState, WaitNodeConfig, WorkflowContext } from "../../types.ts";
+import type { WorkflowProjectionPath, WorkflowProjectionState } from "../../runtime-state.ts";
 import type { CheckpointManager } from "../checkpoint-manager.ts";
 import type { StepExecutor } from "../step-executor.ts";
 
@@ -14,6 +15,12 @@ import type { StepExecutor } from "../step-executor.ts";
 export interface ContextPatch {
   set: Record<string, unknown>;
   delete: string[];
+  /**
+   * Exact public-projection ownership for every top-level slot whose value or
+   * ownership changed. Projection-only changes are deliberately represented:
+   * a user may replace a framework-owned value with a deep-equal clone.
+   */
+  projection: Record<string, WorkflowProjectionPath[]>;
 }
 
 export interface DAGExecutorConfig {
@@ -39,11 +46,15 @@ export interface DAGExecutionResult {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
+  /** @internal Framework-only public projection ownership sidecar. */
+  _workflowProjection?: WorkflowProjectionState;
 }
 
 /** Internal result used when a composite node executes a child graph. */
 export interface DAGInternalExecutionResult extends DAGExecutionResult {
   contextPatch: ContextPatch;
+  /** Partial composite context retained only for an enclosing immediate retry. */
+  _retryContextPatch?: ContextPatch;
 }
 
 export interface NodeExecutionResult {

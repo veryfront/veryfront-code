@@ -1,20 +1,33 @@
+import type { WorkflowRun, WorkflowStatus } from "veryfront/workflow";
+
+type DemoNodeStatus = WorkflowRun["nodeStates"][string]["status"];
+
 export interface DemoWorkflowStep {
-  id: string;
-  name: string;
-  status: "pending" | "running" | "completed" | "waiting_for_approval" | "failed";
-  output?: string | Record<string, unknown>;
+  nodeId: string;
+  status: DemoNodeStatus;
+  input?: unknown;
+  output?: unknown;
+  error?: string;
+  attempt: number;
+  startedAt?: string;
+  completedAt?: string;
 }
 
 export interface DemoWorkflowRun {
   id: string;
   workflowId: string;
-  status: "pending" | "running" | "completed" | "waiting_for_approval" | "failed";
+  status: WorkflowStatus;
   input: { topic: string };
+  output?: unknown;
   createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
   currentNodes: string[];
-  nodeStates: Record<string, { status: DemoWorkflowStep["status"] }>;
-  pendingApprovals: Array<{ id: string; status: "pending" | "approved" | "rejected" }>;
-  steps: DemoWorkflowStep[];
+  nodeStates: Record<string, DemoWorkflowStep>;
+  context: Record<string, unknown> & { input: { topic: string } };
+  checkpoints: [];
+  pendingApprovals: [];
+  sourceIntegrationPolicy: { schemaVersion: 1; mode: "unrestricted" };
 }
 
 const globalStore = globalThis as typeof globalThis & {
@@ -30,45 +43,60 @@ export function createDemoWorkflowRun(
   topic = "Example content pipeline",
   workflowId = "content-pipeline",
 ): DemoWorkflowRun {
+  const timestamp = new Date().toISOString();
+  const input = { topic };
   return {
     id,
     workflowId,
     status: "completed",
-    input: { topic },
-    createdAt: new Date().toISOString(),
+    input,
+    output: { published: true },
+    createdAt: timestamp,
+    startedAt: timestamp,
+    completedAt: timestamp,
     currentNodes: [],
     nodeStates: {
-      research: { status: "completed" },
-      "write-article": { status: "completed" },
-      "editorial-review": { status: "completed" },
-      publish: { status: "completed" },
-    },
-    pendingApprovals: [],
-    steps: [
-      {
-        id: "research",
-        name: "Research",
+      research: {
+        nodeId: "research",
         status: "completed",
+        attempt: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
         output: "Found key points and source material.",
       },
-      {
-        id: "write-article",
-        name: "Write article",
+      "write-article": {
+        nodeId: "write-article",
         status: "completed",
+        attempt: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
         output: "Drafted a concise article from the research notes.",
       },
-      {
-        id: "editorial-review",
-        name: "Editorial review",
+      "editorial-review": {
+        nodeId: "editorial-review",
         status: "completed",
+        attempt: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
       },
-      {
-        id: "publish",
-        name: "Publish",
+      publish: {
+        nodeId: "publish",
         status: "completed",
+        attempt: 1,
+        startedAt: timestamp,
+        completedAt: timestamp,
         output: { published: true },
       },
-    ],
+    },
+    context: {
+      input,
+      research: "Found key points and source material.",
+      "write-article": "Drafted a concise article from the research notes.",
+      publish: { published: true },
+    },
+    checkpoints: [],
+    pendingApprovals: [],
+    sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
   };
 }
 

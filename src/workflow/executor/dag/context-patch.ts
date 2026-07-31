@@ -2,6 +2,12 @@ import { isDeepStrictEqual } from "node:util";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { WorkflowContext } from "../../types.ts";
 import type { ContextPatch } from "./types.ts";
+import {
+  getWorkflowContextRootProjection,
+  replaceWorkflowContextRootProjection,
+  type WorkflowContextProjection,
+  type WorkflowProjectionPath,
+} from "../../runtime-state.ts";
 
 /** An explicit top-level patch. A key is either set or deleted, never both. */
 export interface RecordPatch<T> {
@@ -49,14 +55,40 @@ export function createRecordPatch<T>(
 export function createContextPatch(
   before: WorkflowContext,
   after: WorkflowContext,
+  beforeProjection: WorkflowContextProjection = {},
+  afterProjection: WorkflowContextProjection = {},
 ): ContextPatch {
-  return createRecordPatch(before, after);
+  const patch = createRecordPatch(before, after);
+  const projection: Record<string, WorkflowProjectionPath[]> = Object.create(null);
+  for (const key of [...Object.keys(patch.set), ...patch.delete]) {
+    projection[key] = getWorkflowContextRootProjection(afterProjection, key);
+  }
+  const projectionRoots = new Set([
+    ...Object.keys(beforeProjection),
+    ...Object.keys(afterProjection),
+  ]);
+  for (const key of projectionRoots) {
+    const beforePaths = getWorkflowContextRootProjection(beforeProjection, key);
+    const afterPaths = getWorkflowContextRootProjection(afterProjection, key);
+    if (!isDeepStrictEqual(beforePaths, afterPaths)) projection[key] = afterPaths;
+  }
+  return { ...patch, projection };
 }
 
-export function createSetContextPatch(values: Record<string, unknown> = {}): ContextPatch {
+export function createSetContextPatch(
+  values: Record<string, unknown> = {},
+  projectionByRoot: Readonly<Record<string, readonly WorkflowProjectionPath[]>> = {},
+): ContextPatch {
   const set = Object.create(null) as Record<string, unknown>;
   for (const [key, value] of Object.entries(values)) defineOwnValue(set, key, value);
-  return { set, delete: [] };
+  const projection = Object.create(null) as Record<string, WorkflowProjectionPath[]>;
+  for (const key of new Set([...Object.keys(values), ...Object.keys(projectionByRoot)])) {
+    projection[key] = (projectionByRoot[key] ?? []).map((entry) => ({
+      kind: entry.kind,
+      path: [...entry.path],
+    }));
+  }
+  return { set, delete: [], projection };
 }
 
 /** Merge patches in order. A later operation wins when patches touch the same key. */
@@ -68,10 +100,22 @@ export function mergeContextPatches(...patches: ContextPatch[]): ContextPatch {
     for (const key of patch.delete) {
       Reflect.deleteProperty(merged.set, key);
       deleted.add(key);
+      merged.projection[key] = [];
     }
     for (const [key, value] of Object.entries(patch.set)) {
       deleted.delete(key);
       defineOwnValue(merged.set, key, value);
+    }
+    const projectionRoots = new Set([
+      ...patch.delete,
+      ...Object.keys(patch.set),
+      ...Object.keys(patch.projection),
+    ]);
+    for (const key of projectionRoots) {
+      merged.projection[key] = (patch.projection[key] ?? []).map((entry) => ({
+        kind: entry.kind,
+        path: [...entry.path],
+      }));
     }
   }
 
@@ -88,8 +132,21 @@ export function applyRecordPatch<T>(target: Record<string, T>, patch: RecordPatc
   for (const [key, value] of Object.entries(patch.set)) defineOwnValue(target, key, value);
 }
 
-export function applyContextPatch(target: WorkflowContext, patch: ContextPatch): void {
+export function applyContextPatch(
+  target: WorkflowContext,
+  patch: ContextPatch,
+  projection?: WorkflowContextProjection,
+): void {
   applyRecordPatch(target, patch);
+  if (!projection) return;
+  const projectionRoots = new Set([
+    ...Object.keys(patch.set),
+    ...patch.delete,
+    ...Object.keys(patch.projection),
+  ]);
+  for (const key of projectionRoots) {
+    replaceWorkflowContextRootProjection(projection, key, patch.projection[key] ?? []);
+  }
 }
 
 /** Read only an own record entry, never an inherited prototype property. */

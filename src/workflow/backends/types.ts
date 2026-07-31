@@ -37,6 +37,7 @@ export type WorkflowRunUpdate = Partial<
     | "heartbeatAt"
     | "completedAt"
     | "workerId"
+    | "_workflowProjection"
   >
 >;
 
@@ -51,6 +52,7 @@ const WORKFLOW_RUN_UPDATE_FIELDS = new Set<keyof WorkflowRunUpdate>([
   "heartbeatAt",
   "completedAt",
   "workerId",
+  "_workflowProjection",
 ]);
 
 /** Reject untyped callers that attempt to rewrite immutable run state. */
@@ -257,6 +259,12 @@ export interface WorkflowBackend {
   ): Promise<boolean>;
   deleteRun?(runId: string): Promise<void>;
   listRuns(filter: RunFilter): Promise<WorkflowRun[]>;
+  /**
+   * Managed-worker keyset scan in canonical `(createdAt DESC, id DESC)` order.
+   * A cursor is exclusive, so repeated bounded pages eventually cover every
+   * matching run without relying on the public offset ceiling.
+   */
+  listRunsAfterCursor?(filter: WorkflowRunCursorFilter): Promise<WorkflowRun[]>;
   countRuns?(filter: RunFilter): Promise<number>;
 
   /** Append a checkpoint to an existing run; reject when the run does not exist. */
@@ -364,6 +372,17 @@ export interface WorkflowBackend {
   initialize?(): Promise<void>;
   healthCheck?(): Promise<boolean>;
   destroy(): Promise<void>;
+}
+
+export interface WorkflowRunCursor {
+  readonly createdAt: Date;
+  readonly runId: string;
+}
+
+export interface WorkflowRunCursorFilter {
+  readonly status: WorkflowStatus;
+  readonly limit: number;
+  readonly cursor?: WorkflowRunCursor;
 }
 
 /** Apply a run update through the backend's atomic status/ownership compare-and-set. */
@@ -483,6 +502,7 @@ type WithWorkerSupport =
       | "updateRunIfStatusAndWorker"
       | "saveCheckpointIfStatusAndWorker"
       | "savePendingApprovalIfStatusAndWorker"
+      | "listRunsAfterCursor"
     >
   >;
 
@@ -496,5 +516,6 @@ export function hasWorkerSupport(backend: WorkflowBackend): backend is WithWorke
     typeof backend.updateRunIfStatusAndWorker === "function" &&
     typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
     typeof backend.savePendingApprovalIfStatusAndWorker === "function"
+    && typeof backend.listRunsAfterCursor === "function"
   );
 }

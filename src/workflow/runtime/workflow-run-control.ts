@@ -6,6 +6,7 @@ import {
   updateRunIfStatus,
   type WorkflowBackend,
 } from "../backends/types.ts";
+import { toDefaultWorkflowOutput } from "./public-run.ts";
 import type { CheckpointOwnership } from "../executor/checkpoint-manager.ts";
 import type { ApprovalDecision, NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
 import {
@@ -13,6 +14,7 @@ import {
   runWithWorkflowSourceIntegrationPolicy,
 } from "../source-integration-policy.ts";
 import type { RunExecutionConfig } from "../worker/executors/types.ts";
+import type { WorkflowProjectionState } from "../runtime-state.ts";
 
 const logger = baseLogger.component("workflow-run-control");
 
@@ -23,6 +25,7 @@ export interface WorkflowRunControlExecuteResult {
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
   error?: string;
+  _workflowProjection?: WorkflowProjectionState;
 }
 
 export interface WorkflowRunControlExecutionFence {
@@ -1121,7 +1124,7 @@ export async function executeWorkflowRunControl(
     }
 
     const error = ORCHESTRATION_ERROR.create({ detail: result.error || "Unknown error" });
-    const failed = await failRun(
+    const failedRun = await failRun(
       input,
       executionController,
       error,
@@ -1129,14 +1132,14 @@ export async function executeWorkflowRunControl(
       ["running"],
       lockToken ?? undefined,
     );
-    if (!failed) return { status: "ownership-lost" };
+    if (!failedRun) return { status: "ownership-lost" };
     if (useLocking) lockToken = null;
     await notifyTerminalObserver(
       "failure",
       runId,
-      input.onError ? () => input.onError!(run, error, result.context) : undefined,
+      input.onError ? () => input.onError!(failedRun, error, result.context) : undefined,
     );
-    return { status: "failed" };
+    return { status: "failed", run: failedRun };
   } catch (error) {
     const normalizedError = ensureError(error);
 
@@ -1179,7 +1182,7 @@ export async function executeWorkflowRunControl(
       }
     }
 
-    const failed = await failRun(
+    const failedRun = await failRun(
       input,
       executionController,
       normalizedError,
@@ -1190,14 +1193,14 @@ export async function executeWorkflowRunControl(
       pausedForWaiting ? ["waiting"] : ["running"],
       lockToken ?? undefined,
     );
-    if (!failed) return { status: "ownership-lost" };
+    if (!failedRun) return { status: "ownership-lost" };
     if (useLocking) lockToken = null;
 
     await notifyTerminalObserver(
       "failure",
       runId,
       input.onError
-        ? () => input.onError!(latestRun ?? run, normalizedError, failureContext)
+        ? () => input.onError!(failedRun, normalizedError, failureContext)
         : undefined,
     );
     throw normalizedError;
@@ -1282,8 +1285,10 @@ async function completeRun(
     !input.isCurrentExecution(run.id, executionController)
   ) return null;
 
-  const publicContext = toPublicContext(result.context);
-  const output = determineOutput(publicContext);
+  const output = toDefaultWorkflowOutput(
+    result.context,
+    result._workflowProjection?.context,
+  );
   const preparedOutput = input.prepareOutput ? input.prepareOutput(output) : output;
   const completed = await updateRunIfStatus(
     backend,
@@ -1291,9 +1296,11 @@ async function completeRun(
     ["running"],
     {
       status: "completed",
+      currentNodes: [],
       output: preparedOutput,
-      context: publicContext,
+      context: result.context,
       nodeStates: result.nodeStates,
+      _workflowProjection: result._workflowProjection,
       completedAt: new Date(),
     },
     expectedWorkerId,
@@ -1308,34 +1315,41 @@ async function failRun(
   input: WorkflowRunControlExecuteInput,
   executionController: AbortController,
   error: Error,
-  result: Pick<WorkflowRunControlExecuteResult, "context" | "nodeStates">,
+  result: Pick<
+    WorkflowRunControlExecuteResult,
+    "context" | "nodeStates" | "_workflowProjection"
+  >,
   expectedStatuses: WorkflowRun["status"][],
   lockToken?: string,
-): Promise<boolean> {
+): Promise<WorkflowRun | null> {
   const { backend, run, expectedWorkerId } = input;
   await input.waitForCancellationUpdate(run.id);
   const currentRun = await backend.getRun(run.id);
-  if (currentRun?.status === "cancelled") return false;
-  if (!input.isCurrentExecution(run.id, executionController)) return false;
+  if (currentRun?.status === "cancelled") return null;
+  if (!input.isCurrentExecution(run.id, executionController)) return null;
 
-  const publicContext = toPublicContext(result.context);
-  return await updateRunIfStatus(
+  const completedAt = new Date();
+  const patch = {
+    status: "failed" as const,
+    currentNodes: [],
+    context: result.context,
+    nodeStates: result.nodeStates,
+    _workflowProjection: result._workflowProjection,
+    error: {
+      message: error.message,
+      stack: error.stack,
+    },
+    completedAt,
+  };
+  const updated = await updateRunIfStatus(
     backend,
     run.id,
     expectedStatuses,
-    {
-      status: "failed",
-      context: publicContext,
-      nodeStates: result.nodeStates,
-      error: {
-        message: error.message,
-        stack: error.stack,
-      },
-      completedAt: new Date(),
-    },
+    patch,
     expectedWorkerId,
     lockToken,
   );
+  return updated ? structuredClone({ ...(currentRun ?? run), ...patch }) : null;
 }
 
 async function pauseRun(
@@ -1353,7 +1367,6 @@ async function pauseRun(
     !input.isCurrentExecution(run.id, executionController)
   ) return false;
 
-  const publicContext = toPublicContext(result.context);
   return await updateRunIfStatus(
     backend,
     run.id,
@@ -1361,20 +1374,11 @@ async function pauseRun(
     {
       status: "waiting",
       currentNodes: [result.waitingNode!],
-      context: publicContext,
+      context: result.context,
       nodeStates: result.nodeStates,
+      _workflowProjection: result._workflowProjection,
     },
     expectedWorkerId,
     lockToken,
   );
-}
-
-function toPublicContext(context: WorkflowContext): WorkflowContext {
-  const { _tenant: _tenant, ...publicContext } = context;
-  return publicContext;
-}
-
-function determineOutput(context: WorkflowContext): unknown {
-  const { input: _input, _tenant: _tenant, ...rest } = context;
-  return rest;
 }

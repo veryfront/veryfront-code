@@ -12,9 +12,21 @@ import type { Tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowRunUpdate } from "../backends/types.ts";
-import { branch, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
+import {
+  branch,
+  delay,
+  dependsOn,
+  loop,
+  map,
+  parallel,
+  step,
+  subWorkflow,
+  waitForApproval,
+  waitForEvent,
+  workflow,
+} from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
-import type { WorkflowDefinition, WorkflowRun } from "../types.ts";
+import type { WorkflowContext, WorkflowDefinition, WorkflowRun } from "../types.ts";
 import { reserveWorkflowStart, WorkflowExecutor } from "./workflow-executor.ts";
 import { getPrimaryAbortReason, isAbortCleanupError } from "./abortable-operation.ts";
 import { FakeTime } from "#std/testing/time";
@@ -94,6 +106,49 @@ class CompletesBeforeCancellationBackend extends MemoryBackend {
       expectedWorkerId,
       patch,
     );
+  }
+}
+
+class ReassignsAfterTimedWakeBackend extends MemoryBackend {
+  handoffs = 0;
+
+  private async handoffAfterWake(
+    runId: string,
+    updated: boolean,
+    patch: WorkflowRunUpdate,
+  ): Promise<void> {
+    if (!updated || patch.status !== "pending" || this.handoffs !== 0) return;
+    this.handoffs++;
+    await super.updateRunIfStatus(runId, ["pending"], {
+      status: "running",
+      workerId: "run-execution:replacement-owner",
+    });
+  }
+
+  override async updateRunIfStatus(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatus(runId, expectedStatuses, patch);
+    await this.handoffAfterWake(runId, updated, patch);
+    return updated;
+  }
+
+  override async updateRunIfStatusAndWorker(
+    runId: string,
+    expectedStatuses: WorkflowRun["status"][],
+    expectedWorkerId: string,
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean> {
+    const updated = await super.updateRunIfStatusAndWorker(
+      runId,
+      expectedStatuses,
+      expectedWorkerId,
+      patch,
+    );
+    await this.handoffAfterWake(runId, updated, patch);
+    return updated;
   }
 }
 
@@ -732,6 +787,846 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(await backend.isLocked(run.id), false);
   });
 
+  it("resumes a durably paused delay when its deadline is reached", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let prepareExecutions = 0;
+    let finishExecutions = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "timed-delay-resume",
+        steps: [
+          step("prepare", {
+            checkpoint: true,
+            tool: createTool("prepare", () => {
+              prepareExecutions++;
+              return { ready: true };
+            }),
+          }),
+          dependsOn(delay("pause", 5), "prepare"),
+          dependsOn(
+            step("finish", {
+              tool: createTool("finish", () => {
+                finishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "pause",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("timed-delay-resume", {});
+    await handle.settled();
+    assertEquals((await backend.getRun(handle.runId))?.status, "waiting");
+    assertExists(await backend.getLatestCheckpoint(handle.runId));
+
+    await time.tickAsync(4);
+    assertEquals((await backend.getRun(handle.runId))?.status, "waiting");
+
+    await time.tickAsync(1);
+    await time.tickAsync(0);
+    assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+    assertEquals(prepareExecutions, 1);
+    assertEquals(finishExecutions, 1);
+    assertEquals(await handle.result(), {
+      prepare: { ready: true },
+      finish: { done: true },
+    });
+    assertEquals((await backend.getRun(handle.runId))?.nodeStates.pause?.status, "completed");
+  });
+
+  it("does not adopt a replacement owner after the timed-wake CAS", async () => {
+    using time = new FakeTime();
+    const backend = new ReassignsAfterTimedWakeBackend();
+    let finishExecutions = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "timed-delay-owner-handoff",
+        steps: [
+          delay("pause", 5),
+          dependsOn(
+            step("finish", {
+              tool: createTool("owner-handoff-finish", () => {
+                finishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "pause",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("timed-delay-owner-handoff", {});
+    await handle.settled();
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+
+    const handedOff = await backend.getRun(handle.runId);
+    assertEquals(backend.handoffs, 1);
+    assertEquals(handedOff?.status, "running");
+    assertEquals(handedOff?.workerId, "run-execution:replacement-owner");
+    assertEquals(finishExecutions, 0);
+  });
+
+  it("schedules timed waits independently when run and node IDs contain NUL", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let firstFinishExecutions = 0;
+    let secondFinishExecutions = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "nul-key-first",
+        steps: [
+          delay("b\0c", 5),
+          dependsOn(
+            step("first-finish", {
+              tool: createTool("nul-key-first-finish", () => {
+                firstFinishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "b\0c",
+          ),
+        ],
+      }).definition,
+    );
+    executor.register(
+      workflow({
+        id: "nul-key-second",
+        steps: [
+          delay("c", 40),
+          dependsOn(
+            step("second-finish", {
+              tool: createTool("nul-key-second-finish", () => {
+                secondFinishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "c",
+          ),
+        ],
+      }).definition,
+    );
+    const firstRun = { ...createRun("nul-key-first"), id: "a" };
+    const secondRun = { ...createRun("nul-key-second"), id: "a\0b" };
+    await backend.createRun(firstRun);
+    await backend.createRun(secondRun);
+    await executor.resume(firstRun.id);
+    await executor.resume(secondRun.id);
+
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+    assertEquals((await backend.getRun(firstRun.id))?.status, "completed");
+    assertEquals((await backend.getRun(secondRun.id))?.status, "waiting");
+    assertEquals(firstFinishExecutions, 1);
+    assertEquals(secondFinishExecutions, 0);
+
+    await time.tickAsync(35);
+    await time.tickAsync(0);
+    assertEquals((await backend.getRun(secondRun.id))?.status, "completed");
+    assertEquals(secondFinishExecutions, 1);
+  });
+
+  it("fails a durably paused event wait when its timeout expires", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let errorCallbacks = 0;
+    const executor = new WorkflowExecutor({
+      backend,
+      onError: () => {
+        errorCallbacks++;
+      },
+    });
+    executor.register(
+      workflow({
+        id: "timed-event-timeout",
+        steps: [waitForEvent("signal", { eventName: "__delay__", timeout: 5 })],
+      }).definition,
+    );
+
+    const handle = await executor.start("timed-event-timeout", {});
+    await handle.settled();
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+
+    const failedRun = await backend.getRun(handle.runId);
+    assertEquals(failedRun?.status, "failed");
+    assertEquals(failedRun?.nodeStates.signal?.status, "failed");
+    assertEquals(errorCallbacks, 1);
+
+    const result = assertRejects(
+      () => handle.result(),
+      Error,
+      'Wait node "signal" timed out after 5ms',
+    );
+    await time.tickAsync(100);
+    await result;
+  });
+
+  it("keeps concurrent parallel delays waiting until every deadline has elapsed", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let finishExecutions = 0;
+    let skipCalls = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "parallel-timed-delays",
+        steps: [
+          parallel(
+            "waits",
+            [
+              step("writer", { tool: createTool("parallel-writer", () => ({ wrote: true })) }),
+              delay("short", 5),
+              delay("long", 50),
+            ],
+            {
+              skip: (context) => {
+                skipCalls++;
+                return context["waits/writer"] !== undefined;
+              },
+            },
+          ),
+          dependsOn(
+            step("finish", {
+              tool: createTool("finish", () => {
+                finishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "waits",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("parallel-timed-delays", {});
+    await handle.settled();
+
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+    const partiallyElapsed = await backend.getRun(handle.runId);
+    assertEquals(partiallyElapsed?.status, "waiting");
+    assertEquals(partiallyElapsed?.nodeStates["waits/short"]?.status, "completed");
+    assertEquals(partiallyElapsed?.nodeStates["waits/long"]?.status, "running");
+    assertEquals(partiallyElapsed?.nodeStates.waits?.status, "running");
+    assertEquals(finishExecutions, 0);
+
+    await time.tickAsync(45);
+    await time.tickAsync(0);
+    assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+    assertEquals(finishExecutions, 1);
+    assertEquals(skipCalls, 1);
+  });
+
+  it("re-enters a durably waiting branch without switching the selected arm", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let conditionCalls = 0;
+    let childExecutions = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "branch-timed-delay",
+        steps: [
+          branch("choice", {
+            condition: () => {
+              conditionCalls++;
+              return conditionCalls === 1;
+            },
+            then: [
+              delay("pause", 5),
+              dependsOn(
+                step("child", {
+                  tool: createTool("branch-child", () => {
+                    childExecutions++;
+                    return { branch: "then" };
+                  }),
+                }),
+                "pause",
+              ),
+            ],
+            else: [step("wrong-arm", { tool: createTool("wrong-arm", () => "wrong") })],
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("branch-timed-delay", {});
+    await handle.settled();
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+    assertEquals(conditionCalls, 1);
+    assertEquals(childExecutions, 1);
+    assertEquals(
+      (await backend.getRun(handle.runId))?.nodeStates["choice/else/wrong-arm"],
+      undefined,
+    );
+  });
+
+  it("resumes the in-flight loop iteration after a durable delay", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    const conditionIterations: number[] = [];
+    const selectedStepCounts: number[] = [];
+    let writerExecutions = 0;
+    let finishExecutions = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "loop-timed-delay",
+        steps: [
+          loop("repeat", {
+            while: (context, iteration) => {
+              conditionIterations.push(iteration.iteration);
+              return iteration.iteration < 1 && context["repeat/writer"] === undefined;
+            },
+            maxIterations: 2,
+            steps: (context) => {
+              const selected = [
+                step("writer", {
+                  tool: createTool("loop-writer", () => {
+                    writerExecutions++;
+                    return { wrote: true };
+                  }),
+                }),
+                dependsOn(delay("pause", 5), "writer"),
+              ];
+              if (context["repeat/writer"] === undefined) {
+                selected.push(dependsOn(
+                  step("finish", {
+                    tool: createTool("loop-finish", () => {
+                      finishExecutions++;
+                      return { finished: true };
+                    }),
+                  }),
+                  "pause",
+                ));
+              }
+              selectedStepCounts.push(selected.length);
+              return selected;
+            },
+          }),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("loop-timed-delay", {});
+    await handle.settled();
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+
+    const completed = await backend.getRun(handle.runId);
+    assertEquals(completed?.status, "completed");
+    assertEquals(completed?.nodeStates["repeat/writer"]?.status, "completed");
+    assertEquals(completed?.nodeStates["repeat/pause"]?.status, "completed");
+    assertEquals(completed?.nodeStates["repeat/finish"]?.status, "completed");
+    assertEquals(writerExecutions, 1);
+    assertEquals(finishExecutions, 1);
+    assertEquals(conditionIterations, [0, 1]);
+    assertEquals(selectedStepCounts, [3, 3]);
+    const loopOutput = completed?.nodeStates.repeat?.output as {
+      previousResults: Array<Record<string, unknown>>;
+    };
+    assertEquals(loopOutput.previousResults[0]?.["repeat/writer"], { wrote: true });
+    assertEquals(loopOutput.previousResults[0]?.["repeat/finish"], { finished: true });
+    assertEquals(completed?.context.repeat_loop_state, undefined);
+    assertEquals((completed?.output as Record<string, unknown>).repeat_loop_state, undefined);
+    assertEquals((await handle.result() as Record<string, unknown>).repeat_loop_state, undefined);
+  });
+
+  it("resumes mapped delay processors without completing the parent early", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let finishExecutions = 0;
+    const selectedItemCounts: number[] = [];
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "map-timed-delays",
+        steps: [
+          {
+            ...map("waits", {
+              items: (context) => {
+                const items = context.sibling === undefined ? ["a", "b"] : ["a"];
+                selectedItemCounts.push(items.length);
+                return items;
+              },
+              processor: delay("pause", 5),
+            }),
+            dependsOn: [],
+          },
+          {
+            ...step("sibling", {
+              tool: createTool("map-sibling", () => ({ changedParentContext: true })),
+            }),
+            dependsOn: [],
+          },
+          dependsOn(
+            step("finish", {
+              tool: createTool("map-finish", () => {
+                finishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "waits",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("map-timed-delays", {});
+    await handle.settled();
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+
+    const firstItemElapsed = await backend.getRun(handle.runId);
+    assertEquals(firstItemElapsed?.status, "waiting");
+    assertEquals(firstItemElapsed?.nodeStates.waits_0?.status, "completed");
+    assertEquals(firstItemElapsed?.nodeStates.waits_1?.status, "running");
+    assertEquals(finishExecutions, 0);
+
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+    assertEquals((await backend.getRun(handle.runId))?.nodeStates.waits?.status, "completed");
+    assertEquals(finishExecutions, 1);
+    assertEquals(selectedItemCounts, [2]);
+  });
+
+  it("retains partial map processor context across a durable wait", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let writerExecutions = 0;
+    const finishInputs: unknown[] = [];
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(workflow({
+      id: "map-partial-context",
+      steps: [map("items", {
+        items: ["one"],
+        processor: parallel("processor", [
+          step("writer", {
+            tool: createTool("map-context-writer", () => {
+              writerExecutions++;
+              return { wrote: true };
+            }),
+          }),
+          dependsOn(delay("pause", 5), "writer"),
+          dependsOn(
+            step("finish", {
+              input: (context) => ({ writer: context["items_0/writer"] }),
+              tool: createTool("map-context-finish", (input) => {
+                finishInputs.push(input);
+                return input;
+              }),
+            }),
+            "pause",
+          ),
+        ]),
+      })],
+    }).definition);
+
+    const handle = await executor.start("map-partial-context", {});
+    await handle.settled();
+    assertEquals((await backend.getRun(handle.runId))?.status, "waiting");
+
+    await time.tickAsync(5);
+    await time.tickAsync(0);
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "completed");
+    assertEquals(writerExecutions, 1);
+    assertEquals(finishInputs, [{ writer: { wrote: true } }]);
+  });
+
+  it("resumes a timed wait inside a sub-workflow with stable dynamic steps", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    const selectedStepCounts: number[] = [];
+    let innerFinishExecutions = 0;
+    let outerFinishExecutions = 0;
+    const inner = workflow({
+      id: "timed-sub-workflow-inner",
+      steps: ({ context }) => {
+        const selected = [delay("pause", 5)];
+        if (context.sibling === undefined) {
+          selected.push(dependsOn(
+            step("inner-finish", {
+              tool: createTool("sub-workflow-inner-finish", () => {
+                innerFinishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "pause",
+          ));
+        }
+        selectedStepCounts.push(selected.length);
+        return selected;
+      },
+    }).definition;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "timed-sub-workflow-outer",
+        steps: [
+          {
+            ...subWorkflow("nested", {
+              workflow: inner,
+              input: (context: WorkflowContext) => context.env,
+            }),
+            dependsOn: [],
+          },
+          {
+            ...step("sibling", {
+              tool: createTool("sub-workflow-sibling", () => ({ changedParentContext: true })),
+            }),
+            dependsOn: [],
+          },
+          dependsOn(
+            step("outer-finish", {
+              tool: createTool("sub-workflow-outer-finish", () => {
+                outerFinishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "nested",
+          ),
+        ],
+      }).definition,
+    );
+
+    const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+    try {
+      Deno.env.set(
+        "VERYFRONT_TASK_ENV_JSON",
+        JSON.stringify({ PROJECT_SECRET: "sub-workflow-secret" }),
+      );
+      const handle = await executor.start("timed-sub-workflow-outer", {});
+      await handle.settled();
+      const waitingInternal = await backend.getRun(handle.runId);
+      assertEquals(waitingInternal?.status, "waiting");
+      assertEquals(
+        (waitingInternal?.nodeStates.nested?.output as Record<string, unknown>).input,
+        { PROJECT_SECRET: "sub-workflow-secret" },
+      );
+      const waitingPublic = await handle.status();
+      assertEquals(
+        (waitingPublic.nodeStates.nested?.output as Record<string, unknown>).input,
+        undefined,
+      );
+
+      await time.tickAsync(5);
+      await time.tickAsync(0);
+
+      const completed = await backend.getRun(handle.runId);
+      assertEquals(completed?.status, "completed");
+      assertEquals(completed?.nodeStates["nested/pause"]?.status, "completed");
+      assertEquals(completed?.nodeStates["nested/inner-finish"]?.status, "completed");
+      assertEquals(completed?.nodeStates.nested?.status, "completed");
+      assertEquals(innerFinishExecutions, 1);
+      assertEquals(outerFinishExecutions, 1);
+      assertEquals(selectedStepCounts, [2, 2]);
+      assertEquals(
+        (completed?.nodeStates["nested/inner-finish"]?.input as Record<string, unknown>)
+          .PROJECT_SECRET,
+        "sub-workflow-secret",
+      );
+      assertEquals((await handle.status()).nodeStates["nested/inner-finish"]?.input, undefined);
+      assertEquals(
+        ((await handle.result() as Record<string, unknown>).nested as Record<string, unknown>).input,
+        undefined,
+      );
+    } finally {
+      if (originalTaskEnvJson === undefined) {
+        Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+      } else {
+        Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+      }
+    }
+  });
+
+  it("projects failed sub-workflow context inputs from status and failure observers", async () => {
+    const backend = new MemoryBackend();
+    let observedFailureRun: WorkflowRun | undefined;
+    const executor = new WorkflowExecutor({
+      backend,
+      onError: (run) => {
+        observedFailureRun = run;
+      },
+    });
+    const inner = workflow({
+      id: "failed-sub-workflow-inner",
+      steps: [
+        step("fail", {
+          tool: createTool("failed-sub-workflow-tool", () => {
+            throw new Error("inner failure");
+          }),
+        }),
+      ],
+    }).definition;
+    executor.register(
+      workflow({
+        id: "failed-sub-workflow-outer",
+        steps: [subWorkflow("nested", {
+          workflow: inner,
+          input: (context: WorkflowContext) => context.env,
+        })],
+      }).definition,
+    );
+
+    const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+    try {
+      Deno.env.set(
+        "VERYFRONT_TASK_ENV_JSON",
+        JSON.stringify({ PROJECT_SECRET: "failed-sub-workflow-secret" }),
+      );
+      const handle = await executor.start("failed-sub-workflow-outer", {});
+      await handle.settled();
+
+      const rawRun = await backend.getRun(handle.runId);
+      assertEquals(rawRun?.status, "failed");
+      assertEquals(
+        (rawRun?.nodeStates.nested?.output as Record<string, unknown>).input,
+        { PROJECT_SECRET: "failed-sub-workflow-secret" },
+      );
+      assertEquals(rawRun?.nodeStates["nested/fail"]?.input, {
+        PROJECT_SECRET: "failed-sub-workflow-secret",
+      });
+
+      const publicRun = await handle.status();
+      assertEquals(
+        (publicRun.nodeStates.nested?.output as Record<string, unknown>).input,
+        undefined,
+      );
+      assertEquals(publicRun.nodeStates["nested/fail"]?.input, undefined);
+      assertEquals(observedFailureRun?.status, "failed");
+      assertEquals(
+        (observedFailureRun?.nodeStates.nested?.output as Record<string, unknown>).input,
+        undefined,
+      );
+    } finally {
+      if (originalTaskEnvJson === undefined) {
+        Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+      } else {
+        Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+      }
+    }
+  });
+
+  it("preserves custom sub-workflow outputs that resemble framework context", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const inner = workflow({ id: "custom-sub-workflow-inner", steps: [] }).definition;
+    const customOutput = {
+      input: "keep-input",
+      env: { visible: true },
+      _tenant: {
+        projectSlug: "user-project",
+        token: "user-token",
+        productionMode: false,
+      },
+      payload: "keep-payload",
+    };
+    executor.register(workflow({
+      id: "custom-sub-workflow-outer",
+      steps: [subWorkflow("nested", {
+        workflow: inner,
+        output: () => customOutput,
+      })],
+    }).definition);
+
+    const handle = await executor.start("custom-sub-workflow-outer", {});
+    await handle.settled();
+
+    assertEquals((await handle.status()).nodeStates.nested?.output, customOutput);
+    assertEquals((await handle.result() as Record<string, unknown>).nested, customOutput);
+  });
+
+  it("projects completed sub-workflow context from workflow failure callbacks", async () => {
+    const backend = new MemoryBackend();
+    let observedContext: WorkflowContext | undefined;
+    const executor = new WorkflowExecutor({ backend });
+    const inner = workflow({
+      id: "completed-before-failure-inner",
+      steps: [step("done", { tool: createTool("inner-done", () => ({ done: true })) })],
+    }).definition;
+    executor.register(workflow({
+      id: "completed-before-failure-outer",
+      steps: [
+        subWorkflow("nested", {
+          workflow: inner,
+          input: (context: WorkflowContext) => context.env,
+        }),
+        dependsOn(
+          step("fail", {
+            tool: createTool("outer-fail", () => {
+              throw new Error("outer failure");
+            }),
+          }),
+          "nested",
+        ),
+      ],
+      onError: (_error, context) => {
+        observedContext = context;
+      },
+    }).definition);
+
+    const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+    try {
+      Deno.env.set(
+        "VERYFRONT_TASK_ENV_JSON",
+        JSON.stringify({ PROJECT_SECRET: "completed-before-failure-secret" }),
+      );
+      const handle = await executor.start("completed-before-failure-outer", {});
+      await handle.settled();
+
+      const raw = await backend.getRun(handle.runId);
+      assertEquals(
+        (raw?.context.nested as WorkflowContext).input,
+        { PROJECT_SECRET: "completed-before-failure-secret" },
+      );
+      assertEquals((observedContext?.nested as WorkflowContext).input, undefined);
+    } finally {
+      if (originalTaskEnvJson === undefined) {
+        Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+      } else {
+        Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+      }
+    }
+  });
+
+  it("projects map-of-subworkflow context composition from state, context, and result", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend });
+    const inner = workflow({
+      id: "mapped-sub-workflow-inner",
+      steps: [step("inner", { tool: createTool("mapped-inner", () => ({ done: true })) })],
+    }).definition;
+    executor.register(workflow({
+      id: "mapped-sub-workflow-outer",
+      steps: [map("mapped", {
+        items: (context) => [context.env],
+        processor: inner,
+      })],
+    }).definition);
+
+    const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+    try {
+      Deno.env.set(
+        "VERYFRONT_TASK_ENV_JSON",
+        JSON.stringify({ PROJECT_SECRET: "mapped-sub-workflow-secret" }),
+      );
+      const handle = await executor.start("mapped-sub-workflow-outer", {});
+      await handle.settled();
+
+      const raw = await backend.getRun(handle.runId);
+      assertEquals(
+        ((raw?.nodeStates.mapped?.output as unknown[])[0] as WorkflowContext).input,
+        { PROJECT_SECRET: "mapped-sub-workflow-secret" },
+      );
+      assertEquals((raw?.nodeStates.mapped_0?.output as WorkflowContext).input, {
+        PROJECT_SECRET: "mapped-sub-workflow-secret",
+      });
+      assertEquals(raw?.nodeStates["mapped_0/inner"]?.input, {
+        PROJECT_SECRET: "mapped-sub-workflow-secret",
+      });
+
+      const publicRun = await handle.status();
+      assertEquals(
+        ((publicRun.nodeStates.mapped?.output as unknown[])[0] as WorkflowContext).input,
+        undefined,
+      );
+      assertEquals((publicRun.nodeStates.mapped_0?.output as WorkflowContext).input, undefined);
+      assertEquals(publicRun.nodeStates["mapped_0/inner"]?.input, undefined);
+      assertEquals(
+        ((publicRun.context.mapped as unknown[])[0] as WorkflowContext).input,
+        undefined,
+      );
+      assertEquals(
+        (((await handle.result()) as Record<string, unknown>).mapped as WorkflowContext[])[0]?.input,
+        undefined,
+      );
+    } finally {
+      if (originalTaskEnvJson === undefined) {
+        Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+      } else {
+        Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+      }
+    }
+  });
+
+  it("does not resume a timed delay after cancellation", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let finishExecutions = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "cancel-timed-delay",
+        steps: [
+          delay("pause", 10),
+          dependsOn(
+            step("finish", {
+              tool: createTool("finish", () => {
+                finishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "pause",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("cancel-timed-delay", {});
+    await handle.settled();
+    await handle.cancel();
+    await time.tickAsync(10);
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "cancelled");
+    assertEquals(finishExecutions, 0);
+  });
+
+  it("leaves durable timed waits intact during destroy without a late local resume", async () => {
+    using time = new FakeTime();
+    const backend = new MemoryBackend();
+    let finishExecutions = 0;
+    const executor = new WorkflowExecutor({ backend });
+    executor.register(
+      workflow({
+        id: "destroy-timed-delay",
+        steps: [
+          delay("pause", 10),
+          dependsOn(
+            step("finish", {
+              tool: createTool("finish", () => {
+                finishExecutions++;
+                return { done: true };
+              }),
+            }),
+            "pause",
+          ),
+        ],
+      }).definition,
+    );
+
+    const handle = await executor.start("destroy-timed-delay", {});
+    await handle.settled();
+    await executor.destroy();
+    await time.tickAsync(10);
+
+    assertEquals((await backend.getRun(handle.runId))?.status, "waiting");
+    assertEquals(finishExecutions, 0);
+  });
+
   it("does not invoke a waiting callback after cancellation during lock handoff", async () => {
     const backend = new CancelOnLockHandoffBackend();
     let callbackCalls = 0;
@@ -1059,6 +1954,36 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(completedRun.status, "completed");
     assertEquals(completedRun.output, { normalized: "READY" });
     assertEquals(completionOutput, completedRun.output);
+  });
+
+  it("preserves framework-shaped fields owned by a versioned output transform", async () => {
+    const backend = new MemoryBackend();
+    let completionOutput: unknown;
+    const transformed = {
+      input: "keep-input",
+      env: { visible: true },
+      _tenant: { visible: true },
+    };
+    const executor = new WorkflowExecutor({
+      backend,
+      onComplete: (run) => {
+        completionOutput = run.output;
+      },
+    });
+    executor.register(workflow({
+      id: "framework-shaped-transformed-output",
+      outputSchema: defineSchema((v) =>
+        v.object({ finish: v.unknown() }).transform(() => transformed)
+      )(),
+      steps: [step("finish", { tool: createTool("transform-finish", () => "done") })],
+    }).definition);
+
+    const handle = await executor.start("framework-shaped-transformed-output", {});
+    await handle.settled();
+
+    assertEquals((await handle.status()).output, transformed);
+    assertEquals(await handle.result(), transformed);
+    assertEquals(completionOutput, transformed);
   });
 
   it("keeps terminal state authoritative when completion observers reject", async () => {

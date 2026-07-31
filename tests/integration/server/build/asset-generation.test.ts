@@ -269,7 +269,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
       });
     });
 
-    it("handles symlinks to files", async () => {
+    it("rejects symlinks to files", async () => {
       await withTestContext("asset-symlink-file", async (context) => {
         const adapter = await getAdapter();
         const publicDir = join(context.projectDir, "public");
@@ -280,20 +280,13 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await writeFile(realFile, "real content");
 
         const symlinkFile = join(publicDir, "link.txt");
-        try {
-          await writeFile(symlinkFile, { symlink: realFile });
+        await writeFile(symlinkFile, { symlink: realFile });
 
-          const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
-
-          expect(stats.assets).toBeGreaterThanOrEqual(1);
-          expect(await adapter.fs.exists(join(outputDir, "real.txt"))).toBe(true);
-        } catch (e) {
-          if ((e as Error).message?.includes("symlink")) {
-            console.log("Skipping symlink test - not supported on this platform");
-            return;
-          }
-          throw e;
-        }
+        await assertRejects(
+          () => copyStaticAssets(adapter, context.projectDir, outputDir),
+          Error,
+          "Symbolic links are not supported",
+        );
       });
     });
 

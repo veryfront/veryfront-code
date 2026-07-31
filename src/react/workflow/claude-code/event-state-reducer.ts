@@ -3,6 +3,17 @@ import type {
   ClaudeCodeEventExtended,
   ClaudeCodeResult,
 } from "#veryfront/workflow/claude-code/types.ts";
+import { MAX_CLAUDE_CODE_EVENT_HISTORY } from "./event-protocol.ts";
+import { normalizeHistoryLimit } from "../option-normalization.ts";
+
+/** Maximum rendered streaming text retained by one hook session. */
+export const MAX_CLAUDE_CODE_ACCUMULATED_TEXT_LENGTH = 1024 * 1024;
+
+/** Maximum retained tool-call records in each cumulative collection. */
+export const MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS = 1_000;
+
+const TEXT_TRUNCATED_ERROR = "Claude Code streaming text exceeded the retained text limit";
+const TOOL_CALLS_TRUNCATED_ERROR = "Claude Code tool calls exceeded the retained collection limit";
 
 export interface ClaudeCodeCurrentTool {
   id: string;
@@ -86,9 +97,14 @@ export function reduceClaudeCodeEventState<
   const next = { ...previous };
 
   if (options.keepEventHistory && Array.isArray(next.events)) {
-    next.events = [...(previous.events ?? []), event].slice(
-      -(options.maxEventHistory ?? 100),
+    const requestedLimit = options.maxEventHistory ?? 100;
+    const historyLimit = normalizeHistoryLimit(
+      requestedLimit,
+      MAX_CLAUDE_CODE_EVENT_HISTORY,
     );
+    next.events = historyLimit === 0
+      ? []
+      : [...(previous.events ?? []), event].slice(-historyLimit);
   }
 
   switch (event.type) {
@@ -101,7 +117,16 @@ export function reduceClaudeCodeEventState<
       break;
 
     case "text_delta":
-      next.text = previous.text + event.content;
+      if (previous.text.length >= MAX_CLAUDE_CODE_ACCUMULATED_TEXT_LENGTH) {
+        next.text = previous.text.slice(0, MAX_CLAUDE_CODE_ACCUMULATED_TEXT_LENGTH);
+        if (next.error === null) next.error = TEXT_TRUNCATED_ERROR;
+      } else {
+        const remaining = MAX_CLAUDE_CODE_ACCUMULATED_TEXT_LENGTH - previous.text.length;
+        next.text = previous.text + event.content.slice(0, remaining);
+        if (event.content.length > remaining && next.error === null) {
+          next.error = TEXT_TRUNCATED_ERROR;
+        }
+      }
       break;
 
     case "text_complete":
@@ -119,13 +144,17 @@ export function reduceClaudeCodeEventState<
     case "tool_call_complete":
       next.currentTool = null;
       next.toolCalls = [
-        ...previous.toolCalls,
+        ...previous.toolCalls.slice(-(MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS - 1)),
         {
           id: event.toolCallId,
           name: event.toolName,
           input: event.input,
         },
       ];
+      if (
+        previous.toolCalls.length >= MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS &&
+        next.error === null
+      ) next.error = TOOL_CALLS_TRUNCATED_ERROR;
       break;
 
     case "tool_result": {
@@ -140,7 +169,11 @@ export function reduceClaudeCodeEventState<
           toolCall.id === event.toolCallId
         );
         next.allToolCalls = [
-          ...(previous.allToolCalls ?? []),
+          ...(previous.allToolCalls ?? []).slice(
+            -(
+              MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS - 1
+            ),
+          ),
           {
             iteration: event.iteration ?? previous.currentIteration,
             id: event.toolCallId,
@@ -150,6 +183,10 @@ export function reduceClaudeCodeEventState<
             isError: event.isError,
           },
         ];
+        if (
+          (previous.allToolCalls?.length ?? 0) >= MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS &&
+          next.error === null
+        ) next.error = TOOL_CALLS_TRUNCATED_ERROR;
       }
       break;
     }

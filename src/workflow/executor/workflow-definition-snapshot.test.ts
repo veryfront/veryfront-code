@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { WorkflowDefinition, WorkflowNode } from "../types.ts";
+import type { WaitNodeConfig, WorkflowDefinition, WorkflowNode } from "../types.ts";
 import { captureWorkflowDefinition } from "./workflow-definition-snapshot.ts";
 
 function workflowWith(node: WorkflowNode): WorkflowDefinition {
@@ -87,6 +87,23 @@ describe("workflow definition snapshot", () => {
       Error,
       "timeout must be greater than zero",
     );
+  });
+
+  it("marks raw events using the legacy delay transport name as explicit events", () => {
+    const captured = captureWorkflowDefinition(workflowWith({
+      id: "not-a-delay",
+      config: {
+        type: "wait",
+        waitType: "event",
+        eventName: "__delay__",
+        timeout: 5,
+        checkpoint: true,
+      },
+    }));
+    const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
+
+    assertEquals(config.eventName, "__delay__");
+    assertEquals(config._waitKind, "event");
   });
 
   it("rejects Proxy callbacks without invoking them", () => {

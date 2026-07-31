@@ -27,6 +27,18 @@ function isHtmlResponse(contentType: string): boolean {
   return /\btext\/html\b/i.test(contentType);
 }
 
+function toStaticResponseBody(data: Uint8Array): BodyInit {
+  if (data.buffer instanceof ArrayBuffer) {
+    return data.byteOffset === 0 && data.byteLength === data.buffer.byteLength
+      ? data.buffer
+      : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  }
+  // BodyInit excludes SharedArrayBuffer-backed views in the type contract.
+  // Copy only that uncommon representation; ordinary asset bytes transfer
+  // their existing ArrayBuffer without the former unconditional slice.
+  return Uint8Array.from(data);
+}
+
 function isProductionBuildAssetPath(pathname: string): boolean {
   return pathname === "/_veryfront/app.js" ||
     pathname === "/_veryfront/client.js" ||
@@ -48,6 +60,33 @@ function isDynamicBuildFallbackPath(pathname: string): boolean {
 
 function isProjectApiPath(pathname: string): boolean {
   return pathname === "/api" || pathname.startsWith("/api/");
+}
+
+function createManifestCacheIdentity(ctx: HandlerContext): string {
+  const contentSourceId = ctx.enriched?.contentSourceId;
+  const contentIdentity = contentSourceId === undefined
+    ? [
+      "fallback",
+      ctx.resolvedEnvironment ?? null,
+      ctx.requestContext?.mode ?? null,
+      ctx.releaseId ?? null,
+      ctx.requestContext?.branch ?? null,
+    ]
+    : ["content-source-id", contentSourceId];
+
+  // JSON array encoding is collision-free for admitted string/null fields and
+  // preserves which authority supplied each value. Delimiter concatenation
+  // can alias distinct release/branch tuples when either contains `:` or NUL.
+  return JSON.stringify([
+    "static-manifest-cache-v1",
+    [
+      "project",
+      ctx.projectId ?? null,
+      ctx.projectSlug ?? null,
+      ctx.projectDir,
+    ],
+    contentIdentity,
+  ]);
 }
 
 export class StaticHandler extends BaseHandler {
@@ -92,6 +131,7 @@ export class StaticHandler extends BaseHandler {
         const isHead = method === "HEAD";
         const isLocal = !!ctx.isLocalProject;
         const isPreviewMode = ctx.requestContext?.mode === "preview" && !isLocal;
+        const manifestCacheIdentity = createManifestCacheIdentity(ctx);
         const builder = this.createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors);
         const resolveOptions = {
@@ -99,6 +139,7 @@ export class StaticHandler extends BaseHandler {
           adapter: ctx.adapter,
           isPreviewMode,
           isLocalProject: isLocal,
+          manifestCacheIdentity,
         };
 
         const result = await this.staticService.resolveFile(pathname, resolveOptions);
@@ -142,7 +183,7 @@ export class StaticHandler extends BaseHandler {
             .notModified(etag);
         }
 
-        const body: BodyInit | null = isHead ? null : responseData.slice();
+        const body: BodyInit | null = isHead ? null : toStaticResponseBody(responseData);
         const response = builder
           .withSecurity(ctx.securityConfig ?? undefined, req)
           .withCache(result.cacheStrategy)

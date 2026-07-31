@@ -138,6 +138,9 @@ export class FileWatchSetup {
   private watcherFailureReported = false;
   private watcherFailure?: unknown;
   private optimizedWatcher?: OptimizedFileWatcher;
+  private watcherGeneration = 0;
+  private setupPromise?: Promise<void>;
+  private cleanupPromise?: Promise<void>;
   private batchCount = 0;
   private primitiveDirs: string[];
   /** Content hashes to skip re-renders when file content is unchanged */
@@ -157,7 +160,23 @@ export class FileWatchSetup {
     this.primitiveDirs = Array.from(new Set(primitiveDirNames ?? DEFAULT_PRIMITIVE_DIRS));
   }
 
-  async setup(): Promise<void> {
+  setup(): Promise<void> {
+    if (
+      this.setupPromise || this.cleanupPromise || this.fileWatcher ||
+      this.watcherController || this.optimizedWatcher
+    ) {
+      return Promise.reject(new Error("File watcher setup is already active"));
+    }
+
+    const operation = this.initializeWatcher();
+    this.setupPromise = operation;
+    return operation.finally(() => {
+      if (this.setupPromise === operation) this.setupPromise = undefined;
+    });
+  }
+
+  private async initializeWatcher(): Promise<void> {
+    const generation = ++this.watcherGeneration;
     const watchPaths = await this.getWatchPaths();
     if (watchPaths.length === 0) {
       throw new Error("No directories are available for file watching");
@@ -169,7 +188,7 @@ export class FileWatchSetup {
 
     this.optimizedWatcher = new OptimizedFileWatcher(
       this.debounceMs,
-      (changes) => this.handleBatchedFileChanges(changes),
+      (changes) => this.handleBatchedFileChanges(changes, generation),
     );
 
     this.watcherController = new AbortController();
@@ -188,6 +207,7 @@ export class FileWatchSetup {
         watcher,
         this.watcherController.signal,
         hasCompletionSignal,
+        generation,
       );
       void this.watcherTask.catch((error) => this.reportWatcherFailure(error));
 
@@ -203,8 +223,9 @@ export class FileWatchSetup {
         );
       }
     } catch (error) {
+      if (this.watcherGeneration === generation) this.watcherGeneration++;
       this.watcherController.abort();
-      this.optimizedWatcher.cleanup();
+      await this.optimizedWatcher.cleanup();
       try {
         watcher?.close();
       } catch {
@@ -249,6 +270,7 @@ export class FileWatchSetup {
     watcher: AsyncIterable<{ kind: string; paths: string[] }>,
     signal: AbortSignal,
     hasCompletionSignal: boolean,
+    generation: number,
   ): Promise<void> {
     for await (const { paths } of watcher) {
       if (signal.aborted) break;
@@ -266,7 +288,7 @@ export class FileWatchSetup {
           continue;
         }
 
-        await this.handleImmediateFileChange(relevantPaths);
+        await this.handleImmediateFileChange(relevantPaths, generation);
       } catch (error) {
         hmrLog.error("Failed to handle file change", error);
       }
@@ -294,14 +316,26 @@ export class FileWatchSetup {
     }
   }
 
-  private async refreshAndReload(paths: string[], logMessage: string): Promise<void> {
+  private isWatcherGenerationActive(generation: number): boolean {
+    return this.watcherGeneration === generation &&
+      this.watcherController?.signal.aborted === false;
+  }
+
+  private async refreshAndReload(
+    paths: string[],
+    logMessage: string,
+    generation: number,
+  ): Promise<boolean> {
+    if (!this.isWatcherGenerationActive(generation)) return false;
     await this.routeDiscovery.discoverRoutes();
+    if (!this.isWatcherGenerationActive(generation)) return false;
     this.invalidateHandler();
 
     // Invalidate on-disk ESM cache for changed files immediately,
     // before the browser reloads, so the next SSR render picks up fresh content.
     const relativePaths = paths.map((p) => relative(this.projectDir, p).split(sep).join("/"));
     await invalidateModulePaths(relativePaths);
+    if (!this.isWatcherGenerationActive(generation)) return false;
 
     const display = paths.map((p) => p.replace(this.projectDir, ".")).join(", ");
     logger.debug(logMessage, { files: display });
@@ -310,6 +344,7 @@ export class FileWatchSetup {
     // ReloadNotifier immediately invalidates runtime caches and then sends
     // one debounced browser update for both local dev and preview clients.
     ReloadNotifier.triggerReload(relativePaths, this.reloadProject);
+    return true;
   }
 
   /**
@@ -359,11 +394,12 @@ export class FileWatchSetup {
     return changed;
   }
 
-  private async handleBatchedFileChanges(changes: string[]): Promise<void> {
+  private async handleBatchedFileChanges(changes: string[], generation: number): Promise<void> {
     const startTime = performance.now();
 
     // Skip files whose content hasn't actually changed (e.g., save without edits)
     const actualChanges = await this.filterChangedFiles(changes);
+    if (!this.isWatcherGenerationActive(generation)) return;
     if (actualChanges.length === 0) {
       hmrLog.debug("All file changes had identical content, skipping HMR");
       return;
@@ -373,9 +409,10 @@ export class FileWatchSetup {
     const hasPrimitiveChanges = actualChanges.some((p) => this.isPrimitivePath(p));
     if (hasPrimitiveChanges && this.rediscoverPrimitives) {
       await this.rediscoverPrimitives();
+      if (!this.isWatcherGenerationActive(generation)) return;
     }
 
-    await this.refreshAndReload(actualChanges, "");
+    if (!await this.refreshAndReload(actualChanges, "", generation)) return;
 
     const duration = (performance.now() - startTime).toFixed(0);
     hmrLog.debug(`Batch processed ${changes.length} file changes in ${duration}ms`, {
@@ -388,22 +425,43 @@ export class FileWatchSetup {
     }
   }
 
-  private async handleImmediateFileChange(paths: string[]): Promise<void> {
+  private async handleImmediateFileChange(paths: string[], generation: number): Promise<void> {
     const actualChanges = await this.filterChangedFiles(paths);
+    if (!this.isWatcherGenerationActive(generation)) return;
     if (actualChanges.length === 0) return;
-    await this.refreshAndReload(actualChanges, "[HMR] file change");
+    await this.refreshAndReload(actualChanges, "[HMR] file change", generation);
   }
 
   getMetrics() {
     return this.optimizedWatcher?.getMetrics() ?? null;
   }
 
-  async cleanup(): Promise<void> {
+  cleanup(): Promise<void> {
+    if (this.cleanupPromise) return this.cleanupPromise;
+
+    const operation = this.performCleanup();
+    this.cleanupPromise = operation;
+    return operation.finally(() => {
+      if (this.cleanupPromise === operation) this.cleanupPromise = undefined;
+    });
+  }
+
+  private async performCleanup(): Promise<void> {
+    // If cleanup races watcher acquisition, let acquisition either publish a
+    // complete generation or fully roll itself back, then retire that result.
+    // This prevents cleanup from returning while setup can still orphan a
+    // native watcher after its last ownership check.
+    await this.setupPromise?.catch(() => undefined);
+    this.watcherGeneration++;
     this.watcherController?.abort();
-    this.optimizedWatcher?.cleanup();
+    await this.optimizedWatcher?.cleanup();
 
     const watcher = this.fileWatcher;
-    if (!watcher) return;
+    if (!watcher) {
+      this.optimizedWatcher = undefined;
+      this.watcherController = undefined;
+      return;
+    }
 
     try {
       watcher.close();

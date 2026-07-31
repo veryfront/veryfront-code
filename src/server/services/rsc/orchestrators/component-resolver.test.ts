@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { extractParams, resolveComponentPath } from "./component-resolver.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -10,7 +10,7 @@ function createMockFs(existingFiles: Set<string>): FileSystemAdapter {
       if (existingFiles.has(path)) {
         return { isFile: true, isDirectory: false, size: 100 };
       }
-      throw new Error("ENOENT");
+      throw new Deno.errors.NotFound("not found");
     },
     readFile: async () => "",
     exists: async (path: string) => existingFiles.has(path),
@@ -64,6 +64,25 @@ describe("server/services/rsc/orchestrators/component-resolver", () => {
       const fs = createMockFs(new Set([]));
       const result = await resolveComponentPath("/nonexistent", "/project", fs);
       assertEquals(result, null);
+    });
+
+    it("propagates the first operational stat failure without probing sibling candidates", async () => {
+      const operationalFailure = new Error("component storage unavailable");
+      let statCalls = 0;
+      const fs = createMockFs(new Set());
+      fs.stat = () => {
+        statCalls++;
+        return Promise.reject(operationalFailure);
+      };
+
+      const rejected = await assertRejects(
+        () => resolveComponentPath("/reports", "/project", fs),
+        Error,
+        operationalFailure.message,
+      );
+
+      assertEquals(rejected, operationalFailure);
+      assertEquals(statCalls, 1);
     });
 
     it("should resolve .jsx files", async () => {

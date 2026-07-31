@@ -35,6 +35,8 @@ import {
   captureWorkflowStringList,
 } from "../executor/workflow-definition-snapshot.ts";
 import { MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS } from "../limits.ts";
+import { toPublicWorkflowRun, toPublicWorkflowRuns } from "../runtime/public-run.ts";
+import { INTERNAL_WAIT_KIND_FIELD } from "../timed-wait-state.ts";
 
 const logger = baseLogger.component("workflow-client");
 type WorkflowClientLifecycleState = "open" | "closing" | "closed";
@@ -53,6 +55,7 @@ const PERSISTED_WAIT_INPUT_KEYS = new Set([
   "approvers",
   "timeout",
   "eventName",
+  INTERNAL_WAIT_KIND_FIELD,
 ]);
 
 function invalidPersistedApprovalWait(detail: string): never {
@@ -99,6 +102,9 @@ function capturePersistedWaitRecord(value: unknown): Record<string, unknown> {
 function restoreApprovalWaitConfig(value: unknown): WaitNodeConfig | null {
   const input = capturePersistedWaitRecord(value);
   if (input.type !== "approval") return null;
+  if (input[INTERNAL_WAIT_KIND_FIELD] !== undefined) {
+    return invalidPersistedApprovalWait("contains an event-only wait marker");
+  }
 
   const message = input.message;
   if (
@@ -381,11 +387,17 @@ export class WorkflowClient {
   }
 
   getRun(runId: string): Promise<WorkflowRun | null> {
-    return this.trackOperation("read a workflow run", () => this.backend.getRun(runId));
+    return this.trackOperation("read a workflow run", async () => {
+      const run = await this.backend.getRun(runId);
+      return run ? toPublicWorkflowRun(run) : null;
+    });
   }
 
   listRuns(filter?: RunFilter): Promise<WorkflowRun[]> {
-    return this.trackOperation("list workflow runs", () => this.backend.listRuns(filter ?? {}));
+    return this.trackOperation(
+      "list workflow runs",
+      async () => toPublicWorkflowRuns(await this.backend.listRuns(filter ?? {})),
+    );
   }
 
   getRunsByStatus(
@@ -394,14 +406,14 @@ export class WorkflowClient {
   ): Promise<WorkflowRun[]> {
     return this.trackOperation(
       "list workflow runs",
-      () => this.backend.listRuns({ status, limit }),
+      async () => toPublicWorkflowRuns(await this.backend.listRuns({ status, limit })),
     );
   }
 
   getRunsForWorkflow(workflowId: string, limit?: number): Promise<WorkflowRun[]> {
     return this.trackOperation(
       "list workflow runs",
-      () => this.backend.listRuns({ workflowId, limit }),
+      async () => toPublicWorkflowRuns(await this.backend.listRuns({ workflowId, limit })),
     );
   }
 

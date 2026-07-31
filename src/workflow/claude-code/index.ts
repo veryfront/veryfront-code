@@ -86,6 +86,7 @@ export type {
 // Types
 export type {
   // Bidirectional types
+  ApproveCommand,
   ApprovalRequestEvent,
   BidirectionalPublisher,
   CancelCommand,
@@ -93,17 +94,22 @@ export type {
   // Streaming event types
   ClaudeCodeEvent,
   ClaudeCodeEventBase,
+  ClaudeCodeEventBaseExtended,
+  ClaudeCodeEventExtended,
   ClaudeCodeEventHandler,
   ClaudeCodeEventPublisher,
   ClaudeCodeEventSubscriber,
   ClaudeCodeEventType,
+  ClaudeCodeEventTypeExtended,
   // Core types
   ClaudeCodeMode,
   ClaudeCodeResult,
   ClaudeCodeToolInput,
   ClientCommand,
+  ClientCommandDisposition,
   ClientCommandHandler,
   ClientCommandType,
+  CommandAckEvent,
   CompleteEvent,
   ErrorEvent,
   InputCommand,
@@ -112,6 +118,7 @@ export type {
   IterationStartEvent,
   PingCommand,
   PongEvent,
+  RejectCommand,
   TextCompleteEvent,
   TextDeltaEvent,
   ThinkingCompleteEvent,

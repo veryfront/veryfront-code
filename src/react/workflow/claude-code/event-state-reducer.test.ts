@@ -6,6 +6,8 @@ import {
   type ClaudeCodeEventState,
   createClaudeCodeEventState,
   isClaudeCodeCoreEvent,
+  MAX_CLAUDE_CODE_ACCUMULATED_TEXT_LENGTH,
+  MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS,
   reduceClaudeCodeEventState,
 } from "./event-state-reducer.ts";
 import type {
@@ -13,6 +15,7 @@ import type {
   ClaudeCodeEventExtended,
   ClaudeCodeResult,
 } from "#veryfront/workflow/claude-code/types.ts";
+import { MAX_CLAUDE_CODE_EVENT_HISTORY } from "./event-protocol.ts";
 
 function result(overrides: Partial<ClaudeCodeResult> = {}): ClaudeCodeResult {
   return {
@@ -154,6 +157,78 @@ describe("workflow/claude-code/react/event-state-reducer", () => {
         isError: false,
       },
     ]);
+  });
+
+  it("caps caller-supplied event history limits", () => {
+    const events: ClaudeCodeEvent[] = Array.from(
+      { length: MAX_CLAUDE_CODE_EVENT_HISTORY + 1 },
+      (_, index) => ({
+        type: "text_delta",
+        timestamp: index,
+        content: "x",
+      }),
+    );
+    const initialState: ClaudeCodeEventState & { events: ClaudeCodeEvent[] } = {
+      ...createClaudeCodeEventState(),
+      events: [],
+    };
+
+    const state = events.reduce(
+      (previous, event) =>
+        reduceClaudeCodeEventState(previous, event, {
+          keepEventHistory: true,
+          maxEventHistory: Number.MAX_SAFE_INTEGER,
+        }),
+      initialState,
+    );
+
+    assertEquals(state.events.length, MAX_CLAUDE_CODE_EVENT_HISTORY);
+  });
+
+  it("bounds cumulative text across individually admitted deltas", () => {
+    const chunk = "x".repeat(1024);
+    let state = createClaudeCodeEventState();
+    for (let index = 0; index <= MAX_CLAUDE_CODE_ACCUMULATED_TEXT_LENGTH / 1024; index++) {
+      state = reduceClaudeCodeEventState(state, {
+        type: "text_delta",
+        timestamp: index,
+        content: chunk,
+      });
+    }
+
+    assertEquals(state.text.length, MAX_CLAUDE_CODE_ACCUMULATED_TEXT_LENGTH);
+    assertEquals(state.error, "Claude Code streaming text exceeded the retained text limit");
+  });
+
+  it("bounds current and all-iteration tool-call collections at 1,000 entries", () => {
+    let state: ClaudeCodeEventState & { allToolCalls: ClaudeCodeAllToolCall[] } = {
+      ...createClaudeCodeEventState(),
+      allToolCalls: [],
+    };
+    for (let index = 0; index <= MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS; index++) {
+      const toolCallId = `tool-${index}`;
+      state = reduceClaudeCodeEventState(state, {
+        type: "tool_call_complete",
+        timestamp: index * 2,
+        toolCallId,
+        toolName: "read",
+        input: { index },
+      }, { trackAllToolCalls: true });
+      state = reduceClaudeCodeEventState(state, {
+        type: "tool_result",
+        timestamp: index * 2 + 1,
+        toolCallId,
+        toolName: "read",
+        output: "ok",
+        isError: false,
+      }, { trackAllToolCalls: true });
+    }
+
+    assertEquals(state.toolCalls.length, MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS);
+    assertEquals(state.allToolCalls.length, MAX_CLAUDE_CODE_TRACKED_TOOL_CALLS);
+    assertEquals(state.toolCalls[0]?.id, "tool-1");
+    assertEquals(state.allToolCalls[0]?.id, "tool-1");
+    assertEquals(state.error, "Claude Code tool calls exceeded the retained collection limit");
   });
 
   it("identifies core events and rejects websocket-only events", () => {

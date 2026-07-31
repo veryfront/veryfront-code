@@ -23,7 +23,7 @@ import type {
 import { generateId, parseDurationWithLabel, parsePositiveDurationWithLabel } from "../types.ts";
 import { hasLockSupport, updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
-import { env as getProcessEnv } from "#veryfront/compat/process.ts";
+import { env as getProcessEnv, unrefTimer } from "#veryfront/compat/process.ts";
 import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
@@ -48,6 +48,15 @@ import {
 import { throwIfAbortedWithCleanup } from "./abortable-operation.ts";
 import { MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS } from "../limits.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { toPublicWorkflowRun, toPublicWorkflowRuns } from "../runtime/public-run.ts";
+import {
+  checkpointContainsTimedWaitWake,
+  getTimedWaitWakeNodeId,
+  getTimedWorkflowWait,
+  reconcileTimedWorkflowWait,
+  type TimedWorkflowWaitRegistration,
+} from "../runtime/timed-wait-reconciliation.ts";
+import { WORKFLOW_RUNTIME_STATE_VERSION } from "../runtime-state.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -65,6 +74,15 @@ type WorkflowExecutorLifecycleState = "open" | "closing" | "closed";
 interface ActiveWorkflowExecution extends WorkflowRunControlExecutionFence {
   readonly runId: string;
   readonly controller: AbortController;
+}
+
+interface ScheduledTimedWaitRegistration extends TimedWorkflowWaitRegistration {
+  readonly key: string;
+  timerId?: ReturnType<typeof setTimeout>;
+}
+
+function timedWaitRegistrationKey(runId: string, nodeId: string): string {
+  return JSON.stringify([runId, nodeId]);
 }
 
 type ShutdownCancellationOutcome = "cancelled" | "terminal" | "handed-off";
@@ -301,6 +319,8 @@ export class WorkflowExecutor {
   private activeRunExecutions = new Map<AbortController, ActiveWorkflowExecution>();
   private currentRunExecutions = new Map<string, ActiveWorkflowExecution>();
   private cancellationUpdates = new Map<string, Promise<void>>();
+  private timedWaits = new Map<string, ScheduledTimedWaitRegistration>();
+  private timedWaitReconciliations = new Map<string, Promise<void>>();
   private shutdownCancellationUpdates = new Map<
     ActiveWorkflowExecution,
     Promise<ShutdownCancellationOutcome>
@@ -586,6 +606,8 @@ export class WorkflowExecutor {
       workerId: executionWorkerId,
       sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
       _tenant: tenant,
+      _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+      _workflowProjection: { context: {} },
     };
 
     await this.config.backend.createRun(run);
@@ -663,9 +685,19 @@ export class WorkflowExecutor {
     // here can erase that decision immediately before execution resumes.
     // Explicit checkpoint recovery still restores the requested snapshot, and
     // pending/running recovery retains the existing latest-checkpoint behavior.
-    const resumeInfo = run.status === "waiting" && fromCheckpoint === undefined
+    const wakeNodeId = fromCheckpoint === undefined ? getTimedWaitWakeNodeId(run) : null;
+    let resumeInfo = run.status === "waiting" && fromCheckpoint === undefined
       ? null
       : await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
+    if (
+      wakeNodeId && resumeInfo &&
+      !checkpointContainsTimedWaitWake(run, resumeInfo.checkpoint, wakeNodeId)
+    ) {
+      // A pre-wait checkpoint is older than the durable deadline decision. It
+      // cannot erase the completed delay. A later checkpoint that contains the
+      // exact wake remains eligible for normal crash recovery.
+      resumeInfo = null;
+    }
 
     if (fromCheckpoint && !resumeInfo) {
       throw RESOURCE_NOT_FOUND.create({
@@ -683,6 +715,9 @@ export class WorkflowExecutor {
           status: "running",
           context: resumeInfo.context,
           nodeStates: resumeInfo.nodeStates,
+          ...(resumeInfo.workflowProjection === undefined
+            ? {}
+            : { _workflowProjection: resumeInfo.workflowProjection }),
         },
         expectedWorkerId,
         existingLockId,
@@ -811,23 +846,132 @@ export class WorkflowExecutor {
       prepareOutput: (output) => {
         return workflow.outputSchema ? workflow.outputSchema.parse(output) : output;
       },
-      onStart: (startedRun) => this.config.onStart?.(startedRun),
+      onStart: (startedRun) => {
+        this.clearTimedWaitsForRun(startedRun.id);
+        return this.config.onStart?.(toPublicWorkflowRun(startedRun));
+      },
       onComplete: async (finalRun) => {
+        this.clearTimedWaitsForRun(finalRun.id);
+        const publicRun = toPublicWorkflowRun(finalRun);
         await runLifecycleObservers("Workflow completion observer failed", [
           ...(workflow.onComplete
-            ? [() => workflow.onComplete!(finalRun.output, finalRun.context)]
+            ? [() => workflow.onComplete!(publicRun.output, publicRun.context)]
             : []),
-          ...(this.config.onComplete ? [() => this.config.onComplete!(finalRun)] : []),
+          ...(this.config.onComplete ? [() => this.config.onComplete!(publicRun)] : []),
         ]);
       },
-      onError: async (errorRun, error, context) => {
-        await runLifecycleObservers("Workflow failure observer failed", [
-          ...(workflow.onError ? [() => workflow.onError!(error, context)] : []),
-          ...(this.config.onError ? [() => this.config.onError!(errorRun, error)] : []),
-        ]);
+      onError: async (errorRun, error, _context) => {
+        this.clearTimedWaitsForRun(errorRun.id);
+        await this.notifyWorkflowFailure(workflow, errorRun, error);
       },
-      onWaiting: (waitingRun, nodeId) => this.config.onWaiting?.(waitingRun, nodeId),
+      onWaiting: async (waitingRun, nodeId) => {
+        await this.config.onWaiting?.(toPublicWorkflowRun(waitingRun), nodeId);
+        this.scheduleTimedWaits(waitingRun);
+      },
     });
+  }
+
+  private notifyWorkflowFailure(
+    workflow: WorkflowDefinition,
+    run: WorkflowRun,
+    error: Error,
+  ): Promise<void> {
+    const publicRun = toPublicWorkflowRun(run);
+    return runLifecycleObservers("Workflow failure observer failed", [
+      ...(workflow.onError ? [() => workflow.onError!(error, publicRun.context)] : []),
+      ...(this.config.onError ? [() => this.config.onError!(publicRun, error)] : []),
+    ]);
+  }
+
+  private scheduleTimedWaits(run: WorkflowRun): void {
+    this.clearTimedWaitsForRun(run.id);
+    if (this.lifecycleState !== "open" || run.status !== "waiting") return;
+
+    for (const [nodeId, state] of Object.entries(run.nodeStates)) {
+      const timedWait = getTimedWorkflowWait(run, nodeId, state);
+      if (!timedWait) continue;
+
+      const key = timedWaitRegistrationKey(run.id, nodeId);
+      const registration: ScheduledTimedWaitRegistration = { ...timedWait, key };
+      const timerId = setTimeout(
+        () => this.enqueueTimedWaitReconciliation(registration),
+        Math.max(0, timedWait.deadline - Date.now()),
+      );
+      registration.timerId = timerId;
+      this.timedWaits.set(key, registration);
+      unrefTimer(timerId);
+    }
+  }
+
+  private enqueueTimedWaitReconciliation(
+    registration: ScheduledTimedWaitRegistration,
+  ): Promise<void> {
+    if (this.timedWaits.get(registration.key) !== registration) return Promise.resolve();
+    this.timedWaits.delete(registration.key);
+
+    const previous = this.timedWaitReconciliations.get(registration.runId);
+    const operation = (previous ? previous.catch(() => undefined) : Promise.resolve())
+      .then(() => this.reconcileTimedWait(registration));
+    this.timedWaitReconciliations.set(registration.runId, operation);
+    const cleanup = () => {
+      if (this.timedWaitReconciliations.get(registration.runId) === operation) {
+        this.timedWaitReconciliations.delete(registration.runId);
+      }
+    };
+    const observed = operation.then(cleanup, (error) => {
+      try {
+        logger.error("Failed to reconcile timed workflow wait", {
+          runId: registration.runId,
+          nodeId: registration.nodeId,
+        }, error);
+      } finally {
+        cleanup();
+      }
+    });
+    return observed;
+  }
+
+  private async reconcileTimedWait(registration: ScheduledTimedWaitRegistration): Promise<void> {
+    if (this.lifecycleState !== "open") return;
+
+    const outcome = await reconcileTimedWorkflowWait(this.config.backend, registration);
+    if (outcome.status === "not-due") {
+      if (outcome.run) this.scheduleTimedWaits(outcome.run);
+      return;
+    }
+    if (outcome.status === "unchanged") return;
+    if (outcome.status === "awakened") {
+      if (this.lifecycleState !== "open") return;
+      await this.resumeOperation(outcome.run.id, undefined, outcome.run.workerId);
+      return;
+    }
+    if (outcome.status !== "failed") return;
+
+    this.clearTimedWaitsForRun(outcome.run.id);
+    const workflow = this.workflows.get(outcome.run.workflowId);
+    if (!workflow) return;
+    try {
+      await this.notifyWorkflowFailure(workflow, outcome.run, outcome.error);
+    } catch (observerError) {
+      logger.error("Workflow failure observer failed after timed wait persistence", {
+        runId: outcome.run.id,
+      }, observerError);
+    }
+  }
+
+  private clearTimedWaitsForRun(runId: string): void {
+    for (const [key, registration] of this.timedWaits) {
+      if (registration.runId !== runId) continue;
+      if (registration.timerId !== undefined) clearTimeout(registration.timerId);
+      this.timedWaits.delete(key);
+    }
+  }
+
+  private prepareTimedWaitShutdown(): void {
+    for (const registration of this.timedWaits.values()) {
+      if (registration.timerId !== undefined) clearTimeout(registration.timerId);
+    }
+    this.timedWaits.clear();
   }
 
   /**
@@ -950,7 +1094,7 @@ export class WorkflowExecutor {
           if (!run) {
             throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
           }
-          return run;
+          return toPublicWorkflowRun(run);
         }),
       result: (signal) =>
         this.trackOperation(
@@ -984,7 +1128,9 @@ export class WorkflowExecutor {
       signal?.throwIfAborted();
       if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
-      if (run.status === "completed") return run.output as TOutput;
+      if (run.status === "completed") {
+        return toPublicWorkflowRun(run).output as TOutput;
+      }
       if (run.status === "failed") {
         throw ORCHESTRATION_ERROR.create({ detail: run.error?.message || "Workflow failed" });
       }
@@ -1032,6 +1178,7 @@ export class WorkflowExecutor {
       if (run.status === "cancelled") return;
 
       if (run.status === "completed" || run.status === "failed") {
+        this.clearTimedWaitsForRun(runId);
         throw ORCHESTRATION_ERROR.create({
           detail: `Cannot cancel workflow run "${runId}": run has already ${run.status}. ` +
             `Only active runs (pending, running, waiting) can be cancelled.`,
@@ -1056,6 +1203,7 @@ export class WorkflowExecutor {
       }
       if (latest.status === "cancelled") return;
       if (latest.status === "completed" || latest.status === "failed") {
+        this.clearTimedWaitsForRun(runId);
         throw ORCHESTRATION_ERROR.create({
           detail: `Cannot cancel workflow run "${runId}": run has already ${latest.status}.`,
         });
@@ -1070,6 +1218,7 @@ export class WorkflowExecutor {
 
     cancellationUpdate.then(
       () => {
+        this.clearTimedWaitsForRun(runId);
         if (this.cancellationUpdates.get(runId) === cancellationUpdate) {
           this.cancellationUpdates.delete(runId);
         }
@@ -1167,7 +1316,10 @@ export class WorkflowExecutor {
   getStatus(runId: string): Promise<WorkflowRun | null> {
     return this.trackOperation(
       "read workflow status",
-      () => this.config.backend.getRun(runId),
+      async () => {
+        const run = await this.config.backend.getRun(runId);
+        return run ? toPublicWorkflowRun(run) : null;
+      },
     );
   }
 
@@ -1181,12 +1333,14 @@ export class WorkflowExecutor {
   }): Promise<WorkflowRun[]> {
     return this.trackOperation(
       "list workflow runs",
-      () =>
-        this.config.backend.listRuns({
-          workflowId: options?.workflowId,
-          status: options?.status,
-          limit: options?.limit,
-        }),
+      async () =>
+        toPublicWorkflowRuns(
+          await this.config.backend.listRuns({
+            workflowId: options?.workflowId,
+            status: options?.status,
+            limit: options?.limit,
+          }),
+        ),
     );
   }
 
@@ -1219,6 +1373,7 @@ export class WorkflowExecutor {
     const attemptedGlobalRunIds = new Set<string>();
 
     while (true) {
+      this.prepareTimedWaitShutdown();
       for (const execution of this.activeRunExecutions.values()) {
         this.shutdownExecutions.add(execution);
       }
@@ -1257,9 +1412,11 @@ export class WorkflowExecutor {
         ...this.activeOperations,
         ...this.activeExecutions,
         ...this.shutdownCancellationUpdates.values(),
+        ...this.timedWaitReconciliations.values(),
       ];
       if (pending.length > 0) await Promise.allSettled(pending);
 
+      this.prepareTimedWaitShutdown();
       for (const execution of this.activeRunExecutions.values()) {
         this.shutdownExecutions.add(execution);
       }
@@ -1276,7 +1433,8 @@ export class WorkflowExecutor {
         hasUnattemptedExecution || hasUnattemptedGlobalCancellation ||
         this.pendingAdmissions.size > 0 ||
         this.activeOperations.size > 0 ||
-        this.activeExecutions.size > 0
+        this.activeExecutions.size > 0 ||
+        this.timedWaitReconciliations.size > 0
       ) {
         continue;
       }

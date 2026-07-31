@@ -3,6 +3,7 @@ import type { Checkpoint, NodeState, WorkflowContext, WorkflowNode } from "../ty
 import { getOwnRecordValue } from "./dag/context-patch.ts";
 import { generateId } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
+import type { WorkflowProjectionState } from "../runtime-state.ts";
 
 const logger = baseLogger.component("checkpoint-manager");
 
@@ -16,6 +17,7 @@ export interface ResumeInfo {
   startFromNode: string;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
+  workflowProjection?: WorkflowProjectionState;
 }
 
 /** Canonical run identity used to fence auxiliary writes from stale workers. */
@@ -60,6 +62,7 @@ export class CheckpointManager {
     nodeId: string,
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
+    workflowProjection?: WorkflowProjectionState,
   ): Promise<Checkpoint> {
     const checkpoint: Checkpoint = {
       id: generateId("cp"),
@@ -67,6 +70,9 @@ export class CheckpointManager {
       timestamp: new Date(),
       context: structuredClone(context),
       nodeStates: structuredClone(nodeStates),
+      ...(workflowProjection === undefined
+        ? {}
+        : { _workflowProjection: structuredClone(workflowProjection) }),
     };
 
     await this.save(runId, checkpoint);
@@ -104,6 +110,9 @@ export class CheckpointManager {
       startFromNode,
       context: structuredClone(checkpoint.context),
       nodeStates: structuredClone(checkpoint.nodeStates),
+      ...(checkpoint._workflowProjection === undefined
+        ? {}
+        : { workflowProjection: structuredClone(checkpoint._workflowProjection) }),
     };
   }
 

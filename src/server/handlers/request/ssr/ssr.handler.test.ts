@@ -7,6 +7,12 @@ import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SSRRenderOptions } from "../../../services/rendering/ssr.service.ts";
 import { createMockAdapter, createMockSSRService, makeCtx } from "./ssr.handler.test-helpers.ts";
+import {
+  type ApplicationErrorContext,
+  setApplicationErrorReporter,
+} from "#veryfront/observability/application-errors.ts";
+import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import type { FSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 
 describe("server/handlers/request/ssr/ssr.handler", () => {
   describe("SSRHandler metadata", () => {
@@ -468,6 +474,93 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       const result = await handler.handle(new Request("http://localhost/test"), ctx);
       // Should not throw — continues to render
       assertEquals(result.response instanceof Response, true);
+    });
+
+    it("renders when a contextual adapter does not implement production-mode selection", async () => {
+      const baseFs = createMockAdapter().fs;
+      const underlying = {
+        exists: baseFs.exists.bind(baseFs),
+        readFile: baseFs.readFile.bind(baseFs),
+        readDir: baseFs.readDir.bind(baseFs),
+        mkdir: baseFs.mkdir.bind(baseFs),
+        remove: baseFs.remove.bind(baseFs),
+        stat: baseFs.stat.bind(baseFs),
+        writeFile: baseFs.writeFile.bind(baseFs),
+        setRequestToken: () => {},
+      } as unknown as FSAdapter;
+      const adapter = {
+        ...createMockAdapter(),
+        fs: new FSAdapterWrapper(underlying),
+      } as unknown as RuntimeAdapter;
+      let renderCalls = 0;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>rendered</html>",
+            isStreaming: false,
+            cacheStrategy: "short",
+            slug: "test",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+
+      const result = await handler.handle(
+        new Request("http://localhost/test"),
+        makeCtx({ adapter, resolvedEnvironment: "production" }),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(renderCalls, 1);
+    });
+
+    it("fails closed without rendering when production mode setup fails", async () => {
+      const setupFailure = new Error("private production-mode adapter detail");
+      const { fs } = createContextualAdapter();
+      fs.setProductionMode = () => {
+        throw setupFailure;
+      };
+      const adapter = { ...createMockAdapter(), fs } as unknown as RuntimeAdapter;
+      let renderCalls = 0;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          throw new Error("render must not run");
+        },
+      });
+      const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
+      setApplicationErrorReporter({
+        capture(error, context) {
+          captured.push({ error, context });
+          return "event-id";
+        },
+        flush: () => Promise.resolve(true),
+      });
+      const handler = new SSRHandler(mockService);
+      const ctx = makeCtx({ adapter, resolvedEnvironment: "production" });
+
+      try {
+        const result = await handler.handle(new Request("http://localhost/test"), ctx);
+
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 500);
+        assertEquals(
+          result.response?.headers.get("cache-control"),
+          "no-cache, no-store, must-revalidate",
+        );
+        assertEquals(renderCalls, 0);
+        const body = await result.response!.text();
+        assertStringIncludes(body, "Internal Server Error");
+        assertEquals(body.includes(setupFailure.message), false);
+        assertEquals(captured, [{
+          error: setupFailure,
+          context: { boundary: "ssr.context-setup", method: "GET" },
+        }]);
+      } finally {
+        setApplicationErrorReporter(undefined);
+      }
     });
   });
 

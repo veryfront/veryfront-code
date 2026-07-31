@@ -1,7 +1,18 @@
-import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
+import type {
+  BaseNodeConfig,
+  RetryConfig,
+  WaitNodeConfig,
+  WorkflowContext,
+  WorkflowNode,
+} from "../types.ts";
 import { captureApprovalApprovers } from "../types.ts";
 import { validateDelay, validateExecutionPolicy, validateNodeId } from "./validation.ts";
+import { INTERNAL_DELAY_EVENT_NAME, INTERNAL_WAIT_KIND_FIELD } from "../timed-wait-state.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+
+type MarkedEventWaitConfig = WaitNodeConfig & {
+  readonly [INTERNAL_WAIT_KIND_FIELD]: "delay" | "event";
+};
 
 /** Options accepted by wait for approval. */
 export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint"> {
@@ -60,11 +71,12 @@ export function waitForEvent(id: string, options: WaitForEventOptions): Workflow
       type: "wait",
       waitType: "event",
       eventName: options.eventName,
+      [INTERNAL_WAIT_KIND_FIELD]: "event",
       timeout: policy.timeout,
       checkpoint: true,
       retry: policy.retry,
       skip: options.skip,
-    },
+    } as MarkedEventWaitConfig,
   };
 }
 
@@ -78,9 +90,10 @@ export function delay(id: string, duration: string | number): WorkflowNode {
     config: {
       type: "wait",
       waitType: "event",
-      eventName: "__delay__",
+      eventName: INTERNAL_DELAY_EVENT_NAME,
+      [INTERNAL_WAIT_KIND_FIELD]: "delay",
       timeout: duration,
       checkpoint: false,
-    },
+    } as MarkedEventWaitConfig,
   };
 }

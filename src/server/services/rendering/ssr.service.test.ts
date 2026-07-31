@@ -631,6 +631,110 @@ describe("server/services/rendering/ssr.service", () => {
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
+      it("cancels the streaming shell and maps a generic allReady rejection to a server error", async () => {
+        const rejection = new Error("private allReady failure detail");
+        let cancelledWith: unknown;
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("<main>partial shell</main>"));
+          },
+          cancel(reason) {
+            cancelledWith = reason;
+          },
+        });
+        Object.assign(stream, { allReady: Promise.reject(rejection) });
+        const captured: Array<{ error: unknown; context: ApplicationErrorContext }> = [];
+        setApplicationErrorReporter({
+          capture(error, context) {
+            captured.push({ error, context });
+            return "event-id";
+          },
+          flush: () => Promise.resolve(true),
+        });
+        const adapter = createMockRendererAdapter({
+          renderPage: () =>
+            Promise.resolve({
+              html: "",
+              stream,
+              ssrHash: undefined,
+              frontmatter: {},
+            }),
+        });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(adapter),
+        });
+
+        try {
+          const result = await service.renderPage(
+            makeCtx(),
+            makeRenderOptions({ useNoCache: true }),
+          );
+
+          assertEquals(result.status, 500);
+          assertEquals(result.failure?.kind, "server-error");
+          assertEquals(result.isStreaming, false);
+          assertEquals(result.cacheStrategy, "no-cache");
+          assertEquals(cancelledWith, rejection);
+          assertEquals(result.html?.includes(rejection.message), false);
+          assertEquals(captured, [{
+            error: rejection,
+            context: { boundary: "ssr.render", method: "GET" },
+          }]);
+        } finally {
+          setApplicationErrorReporter(undefined);
+        }
+      });
+
+      it("does not delay the sanitized error response when stream cancellation never settles", async () => {
+        const rejection = new Error("private allReady failure detail");
+        let cancelCalled = false;
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("<main>partial shell</main>"));
+          },
+          cancel() {
+            cancelCalled = true;
+            return new Promise<void>(() => {});
+          },
+        });
+        Object.assign(stream, { allReady: Promise.reject(rejection) });
+        const service = new SSRService({
+          rendererProvider: createMockRendererProvider(
+            createMockRendererAdapter({
+              renderPage: () =>
+                Promise.resolve({
+                  html: "",
+                  stream,
+                  ssrHash: undefined,
+                  frontmatter: {},
+                }),
+            }),
+          ),
+        });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+
+        try {
+          const outcome = await Promise.race([
+            service.renderPage(
+              makeCtx(),
+              makeRenderOptions({ useNoCache: true }),
+            ).then((result) => ({ kind: "result" as const, result })),
+            new Promise<{ kind: "timeout" }>((resolve) => {
+              timer = setTimeout(() => resolve({ kind: "timeout" }), 100);
+            }),
+          ]);
+
+          assertEquals(outcome.kind, "result");
+          if (outcome.kind === "result") {
+            assertEquals(outcome.result.status, 500);
+            assertEquals(outcome.result.failure?.kind, "server-error");
+          }
+          assertEquals(cancelCalled, true);
+        } finally {
+          if (timer !== undefined) clearTimeout(timer);
+        }
+      });
+
       it("maps a permanent thrown redirect() to a 301", async () => {
         const adapter = createMockRendererAdapter({
           renderPage: () => {

@@ -32,7 +32,9 @@ Use `handlerOnly: true` when another HTTP server owns the listener.
 
 `startProductionServer` requires `StartProductionServerOptions`, including
 `projectDir` and `port`. An optional `bootstrapResult` transfers exclusive
-ownership of that bootstrap result to the returned server handle.
+ownership of that bootstrap result to the returned server handle. It must be a
+bootstrap-produced result whose config is already schema-parsed and merged with
+framework defaults.
 
 `createHandler` accepts:
 
@@ -92,6 +94,13 @@ Concurrent shutdown calls share the same in-flight cleanup. Successful cleanup
 is idempotent. If cleanup rejects, ownership remains held and a later shutdown
 call retries the unfinished phases; a replacement server remains blocked until
 that retry succeeds.
+
+Production startup detaches and freezes the plain-object and array structure of
+a supplied bootstrap config before asynchronous work begins. This is a
+structural snapshot, not recursive capability immutability: callable closures
+and extension `provides` implementations retain their identity and may hold
+mutable generation-owned state. Byte arrays are copied away from the caller,
+but elements in the generation-owned copy remain mutable.
 
 Process-level graceful shutdown drains tracked requests and then attempts every
 allowed cleanup phase within one deadline. A successful call returns whether

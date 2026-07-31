@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   NodeState,
   PendingApproval,
@@ -6,9 +6,36 @@ import type {
   WorkflowStatus,
 } from "#veryfront/workflow/types.ts";
 import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { normalizeActiveTimerDelayMs } from "./option-normalization.ts";
+import { parseWorkflowRunResponse } from "./workflow-wire.ts";
 
 /** Default polling interval for workflow status updates */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
+
+interface CommittedWorkflowCallbacks {
+  onStatusChange?: UseWorkflowOptions["onStatusChange"];
+  onComplete?: UseWorkflowOptions["onComplete"];
+  onError?: UseWorkflowOptions["onError"];
+  onApprovalRequired?: UseWorkflowOptions["onApprovalRequired"];
+}
+
+interface WorkflowIdentity {
+  readonly runId: string;
+  readonly apiBase: string;
+  active: boolean;
+  previousStatus: WorkflowStatus | null;
+  previousApprovals: Set<string>;
+  requestController: AbortController | null;
+  requestPromise: Promise<void> | null;
+  actionControllers: Set<AbortController>;
+}
+
+function workflowAbortError(cause?: unknown): Error {
+  if (cause instanceof Error && cause.name === "AbortError") return cause;
+  const error = new Error("Workflow request no longer belongs to the committed run");
+  error.name = "AbortError";
+  return error;
+}
 
 /** Options accepted by use workflow. */
 export interface UseWorkflowOptions {
@@ -49,14 +76,33 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     onError,
     onApprovalRequired,
   } = options;
+  const normalizedPollInterval = normalizeActiveTimerDelayMs(pollInterval, "pollInterval");
 
   const [run, setRun] = useState<WorkflowRun | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const previousStatusRef = useRef<WorkflowStatus | null>(null);
-  const previousApprovalsRef = useRef<Set<string>>(new Set());
-  const abortControllerRef = useRef<AbortController | null>(null);
+  const committedIdentityRef = useRef<WorkflowIdentity | null>(null);
+  const committedCallbacksRef = useRef<CommittedWorkflowCallbacks>({});
+  const identity = useMemo<WorkflowIdentity>(() => ({
+    runId,
+    apiBase,
+    active: false,
+    previousStatus: null,
+    previousApprovals: new Set(),
+    requestController: null,
+    requestPromise: null,
+    actionControllers: new Set(),
+  }), [apiBase, runId]);
+
+  useEffect(() => {
+    committedCallbacksRef.current = {
+      onStatusChange,
+      onComplete,
+      onError,
+      onApprovalRequired,
+    };
+  }, [onApprovalRequired, onComplete, onError, onStatusChange]);
 
   const calculateProgress = useCallback((workflowRun: WorkflowRun | null): number => {
     const states = Object.values(workflowRun?.nodeStates ?? {});
@@ -69,142 +115,216 @@ export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
     return Math.round((completed / states.length) * 100);
   }, []);
 
-  const fetchRun = useCallback(async (): Promise<void> => {
-    if (!runId) return;
+  const fetchRun = useCallback((
+    owner: WorkflowIdentity,
+    supersede: boolean,
+    rejectObsolete = false,
+  ): Promise<void> => {
+    if (
+      !owner.runId || !owner.active ||
+      committedIdentityRef.current !== owner
+    ) {
+      return rejectObsolete ? Promise.reject(workflowAbortError()) : Promise.resolve();
+    }
+    if (owner.requestPromise) {
+      if (!supersede) return Promise.resolve();
+      owner.requestController?.abort();
+    }
+
+    const controller = new AbortController();
+    owner.requestController = controller;
+    setIsLoading(true);
+    const request = (async (): Promise<void> => {
+      try {
+        const response = await fetch(
+          `${owner.apiBase}/runs/${encodeURIComponent(owner.runId)}`,
+          { signal: controller.signal },
+        );
+
+        if (!response.ok) {
+          throw REQUEST_ERROR.create({
+            detail: `Failed to fetch workflow: ${response.status}`,
+            status: response.status,
+          });
+        }
+
+        const workflowRun = parseWorkflowRunResponse(await response.json());
+        if (workflowRun.id !== owner.runId) {
+          throw REQUEST_ERROR.create({
+            detail: "Workflow response identity does not match the requested run",
+            status: 502,
+          });
+        }
+        if (
+          controller.signal.aborted || !owner.active ||
+          committedIdentityRef.current !== owner
+        ) return;
+
+        const previousStatus = owner.previousStatus;
+        if (previousStatus && previousStatus !== workflowRun.status) {
+          committedCallbacksRef.current.onStatusChange?.(workflowRun.status, previousStatus);
+        }
+
+        if (workflowRun.status === "completed" && previousStatus !== "completed") {
+          committedCallbacksRef.current.onComplete?.(workflowRun);
+        } else if (workflowRun.status === "failed" && previousStatus !== "failed") {
+          committedCallbacksRef.current.onError?.(
+            ORCHESTRATION_ERROR.create({ detail: "Workflow failed" }),
+            workflowRun,
+          );
+        }
+        owner.previousStatus = workflowRun.status;
+
+        for (const approval of workflowRun.pendingApprovals) {
+          if (approval.status !== "pending") continue;
+          if (owner.previousApprovals.has(approval.id)) continue;
+          owner.previousApprovals.add(approval.id);
+          committedCallbacksRef.current.onApprovalRequired?.(approval);
+        }
+
+        setRun(workflowRun);
+        setError(null);
+      } catch (err) {
+        if (
+          controller.signal.aborted || !owner.active ||
+          committedIdentityRef.current !== owner ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          if (rejectObsolete) throw workflowAbortError(err);
+          return;
+        }
+
+        const fetchError = err instanceof Error ? err : new Error(String(err));
+        setError(fetchError);
+        committedCallbacksRef.current.onError?.(fetchError);
+      } finally {
+        if (owner.requestController === controller) {
+          owner.requestController = null;
+          owner.requestPromise = null;
+          if (owner.active && committedIdentityRef.current === owner) {
+            setIsLoading(false);
+          }
+        }
+      }
+    })();
+    owner.requestPromise = request;
+    return request;
+  }, []);
+
+  const refresh = useCallback((): Promise<void> => {
+    return fetchRun(identity, true, true);
+  }, [fetchRun, identity]);
+
+  const runAction = useCallback(async (
+    owner: WorkflowIdentity,
+    action: "cancel" | "retry",
+  ): Promise<void> => {
+    if (!owner.runId) return;
+    if (!owner.active || committedIdentityRef.current !== owner) {
+      throw workflowAbortError();
+    }
+    const controller = new AbortController();
+    owner.actionControllers.add(controller);
 
     try {
-      const response = await fetch(`${apiBase}/runs/${runId}`, {
-        signal: abortControllerRef.current?.signal,
-      });
-
+      const response = await fetch(
+        `${owner.apiBase}/runs/${encodeURIComponent(owner.runId)}/${action}`,
+        { method: "POST", signal: controller.signal },
+      );
       if (!response.ok) {
         throw REQUEST_ERROR.create({
-          detail: `Failed to fetch workflow: ${response.status}`,
+          detail: `Failed to ${action} workflow: ${response.status}`,
           status: response.status,
         });
       }
-
-      const workflowRun = (await response.json()) as WorkflowRun;
-
-      const previousStatus = previousStatusRef.current;
-      if (previousStatus && previousStatus !== workflowRun.status) {
-        onStatusChange?.(workflowRun.status, previousStatus);
-      }
-      previousStatusRef.current = workflowRun.status;
-
-      if (workflowRun.status === "completed") {
-        onComplete?.(workflowRun);
-      } else if (workflowRun.status === "failed") {
-        onError?.(ORCHESTRATION_ERROR.create({ detail: "Workflow failed" }), workflowRun);
-      }
-
-      for (const approval of workflowRun.pendingApprovals ?? []) {
-        if (approval.status !== "pending") continue;
-        if (previousApprovalsRef.current.has(approval.id)) continue;
-
-        previousApprovalsRef.current.add(approval.id);
-        onApprovalRequired?.(approval);
-      }
-
-      setRun(workflowRun);
-      setError(null);
+      if (
+        controller.signal.aborted || !owner.active ||
+        committedIdentityRef.current !== owner
+      ) throw workflowAbortError();
+      await fetchRun(owner, true, true);
     } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") return;
-
-      const fetchError = err instanceof Error ? err : new Error(String(err));
-      setError(fetchError);
-      onError?.(fetchError);
+      if (
+        controller.signal.aborted || !owner.active ||
+        committedIdentityRef.current !== owner ||
+        (err instanceof Error && err.name === "AbortError")
+      ) throw workflowAbortError(err);
+      const actionError = err instanceof Error ? err : new Error(String(err));
+      setError(actionError);
+      throw actionError;
+    } finally {
+      owner.actionControllers.delete(controller);
     }
-  }, [apiBase, onApprovalRequired, onComplete, onError, onStatusChange, runId]);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-    await fetchRun();
-    setIsLoading(false);
   }, [fetchRun]);
 
-  const cancel = useCallback(async (): Promise<void> => {
-    if (!runId) return;
+  const cancel = useCallback(
+    (): Promise<void> => runAction(identity, "cancel"),
+    [identity, runAction],
+  );
 
-    try {
-      const response = await fetch(`${apiBase}/runs/${runId}/cancel`, { method: "POST" });
-      if (!response.ok) {
-        throw REQUEST_ERROR.create({
-          detail: `Failed to cancel workflow: ${response.status}`,
-          status: response.status,
-        });
-      }
-      await refresh();
-    } catch (err) {
-      const cancelError = err instanceof Error ? err : new Error(String(err));
-      setError(cancelError);
-      throw cancelError;
-    }
-  }, [apiBase, refresh, runId]);
-
-  const retry = useCallback(async (): Promise<void> => {
-    if (!runId) return;
-
-    try {
-      const response = await fetch(`${apiBase}/runs/${runId}/retry`, { method: "POST" });
-      if (!response.ok) {
-        throw REQUEST_ERROR.create({
-          detail: `Failed to retry workflow: ${response.status}`,
-          status: response.status,
-        });
-      }
-      await refresh();
-    } catch (err) {
-      const retryError = err instanceof Error ? err : new Error(String(err));
-      setError(retryError);
-      throw retryError;
-    }
-  }, [apiBase, refresh, runId]);
+  const retry = useCallback(
+    (): Promise<void> => runAction(identity, "retry"),
+    [identity, runAction],
+  );
 
   useEffect(() => {
-    abortControllerRef.current = new AbortController();
+    committedIdentityRef.current = identity;
+    identity.active = true;
+    identity.previousStatus = null;
+    identity.previousApprovals = new Set();
+    setRun(null);
+    setError(null);
 
-    refresh();
-
-    if (!autoRefresh) {
+    if (!identity.runId) {
+      setIsLoading(false);
       return () => {
-        abortControllerRef.current?.abort();
+        identity.active = false;
+        if (committedIdentityRef.current === identity) committedIdentityRef.current = null;
       };
     }
 
-    const intervalId = setInterval(() => {
-      const currentStatus = previousStatusRef.current;
-      if (!currentStatus) return;
+    void fetchRun(identity, true);
 
+    return () => {
+      identity.active = false;
+      identity.requestController?.abort();
+      for (const controller of identity.actionControllers) controller.abort();
+      identity.actionControllers.clear();
+      if (committedIdentityRef.current === identity) committedIdentityRef.current = null;
+    };
+  }, [fetchRun, identity]);
+
+  useEffect(() => {
+    if (!autoRefresh || !identity.runId) return;
+    const intervalId = setInterval(() => {
+      if (!identity.active || committedIdentityRef.current !== identity) return;
+      const currentStatus = identity.previousStatus;
       if (
         currentStatus === "completed" || currentStatus === "failed" || currentStatus === "cancelled"
       ) {
-        // Terminal: stop polling entirely instead of firing forever until the
-        // component unmounts.
-        clearInterval(intervalId);
+        // Keep the timer installed but idle. A successful retry can move the
+        // same run back to a non-terminal state without recreating this effect.
         return;
       }
 
-      fetchRun();
-    }, pollInterval);
+      if (!identity.requestPromise) void fetchRun(identity, false);
+    }, normalizedPollInterval);
 
-    return () => {
-      abortControllerRef.current?.abort();
-      clearInterval(intervalId);
-    };
-  }, [autoRefresh, fetchRun, pollInterval, refresh]);
+    return () => clearInterval(intervalId);
+  }, [autoRefresh, fetchRun, identity, normalizedPollInterval]);
 
+  const ownsState = identity.active && committedIdentityRef.current === identity;
+  const visibleRun = ownsState ? run : null;
   return {
-    run,
-    status: run?.status ?? "pending",
-    progress: calculateProgress(run),
-    currentNodes: run?.currentNodes ?? [],
-    nodeStates: run?.nodeStates ?? {},
-    pendingApprovals: run?.pendingApprovals?.filter((a) => a.status === "pending") ?? [],
+    run: visibleRun,
+    status: visibleRun?.status ?? "pending",
+    progress: calculateProgress(visibleRun),
+    currentNodes: visibleRun?.currentNodes ?? [],
+    nodeStates: visibleRun?.nodeStates ?? {},
+    pendingApprovals: visibleRun?.pendingApprovals?.filter((a) => a.status === "pending") ?? [],
     refresh,
     cancel,
     retry,
-    isLoading,
-    error,
+    isLoading: ownsState ? isLoading : Boolean(runId),
+    error: ownsState ? error : null,
   };
 }

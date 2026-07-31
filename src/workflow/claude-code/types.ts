@@ -276,6 +276,8 @@ interface ClientCommandBase {
   type: ClientCommandType;
   timestamp: number;
   runId: string;
+  /** Optional idempotency key used for acknowledgement and replay. */
+  commandId?: string;
 }
 
 /**
@@ -289,7 +291,7 @@ export interface CancelCommand extends ClientCommandBase {
 /**
  * Approve a pending tool call
  */
-interface ApproveCommand extends ClientCommandBase {
+export interface ApproveCommand extends ClientCommandBase {
   type: "approve";
   toolCallId: string;
 }
@@ -297,7 +299,7 @@ interface ApproveCommand extends ClientCommandBase {
 /**
  * Reject a pending tool call
  */
-interface RejectCommand extends ClientCommandBase {
+export interface RejectCommand extends ClientCommandBase {
   type: "reject";
   toolCallId: string;
   reason?: string;
@@ -309,6 +311,8 @@ interface RejectCommand extends ClientCommandBase {
 export interface InputCommand extends ClientCommandBase {
   type: "input";
   content: string;
+  /** Correlates input with a specific pending request. */
+  requestId?: string;
 }
 
 /**
@@ -331,22 +335,32 @@ export type ClientCommand =
 /**
  * Handler for client commands
  */
-export type ClientCommandHandler = (command: ClientCommand) => void | Promise<void>;
+export type ClientCommandDisposition =
+  | { status: "accepted" }
+  | { status: "rejected"; reason?: string };
+
+export type ClientCommandHandler = (
+  command: ClientCommand,
+) =>
+  | ClientCommandDisposition
+  | void
+  | Promise<ClientCommandDisposition | void>;
 
 /**
  * Extended event type including bidirectional events
  */
-type ClaudeCodeEventTypeExtended =
+export type ClaudeCodeEventTypeExtended =
   | ClaudeCodeEventType
   | "approval_request"
   | "input_request"
   | "pong"
-  | "cancelled";
+  | "cancelled"
+  | "command_ack";
 
 /**
  * Base interface for extended events (bidirectional communication)
  */
-interface ClaudeCodeEventBaseExtended {
+export interface ClaudeCodeEventBaseExtended {
   type: ClaudeCodeEventTypeExtended;
   timestamp: number;
   runId?: string;
@@ -370,6 +384,8 @@ export interface ApprovalRequestEvent extends ClaudeCodeEventBaseExtended {
  */
 export interface InputRequestEvent extends ClaudeCodeEventBaseExtended {
   type: "input_request";
+  /** Correlation identifier required by keyed input commands. */
+  requestId?: string;
   prompt: string;
   defaultValue?: string;
   timeout?: number;
@@ -390,6 +406,16 @@ export interface CancelledEvent extends ClaudeCodeEventBaseExtended {
   reason?: string;
 }
 
+/** Acknowledges the semantic disposition of a keyed client command. */
+export interface CommandAckEvent extends ClaudeCodeEventBaseExtended {
+  type: "command_ack";
+  commandId: string;
+  commandType: ClientCommandType;
+  status: "accepted" | "rejected";
+  requestId?: string;
+  reason?: string;
+}
+
 /**
  * Extended event union including bidirectional events
  */
@@ -398,7 +424,8 @@ export type ClaudeCodeEventExtended =
   | ApprovalRequestEvent
   | InputRequestEvent
   | PongEvent
-  | CancelledEvent;
+  | CancelledEvent
+  | CommandAckEvent;
 
 /**
  * Bidirectional publisher interface (WebSocket)

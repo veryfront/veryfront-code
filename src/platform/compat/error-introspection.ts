@@ -9,6 +9,7 @@ import {
   isNativeError as nativeErrorBrandCheck,
   isPromise as nativePromiseBrandCheck,
   isProxy as nativeProxyBrandCheck,
+  isUint8Array as nativeUint8ArrayBrandCheck,
 } from "node:util/types";
 
 const createObject = Object.create;
@@ -162,6 +163,11 @@ export function readNativeErrorNameWithoutHooks(error: Error): string {
 /** Identify a Proxy without evaluating any trap on the proxied value. */
 export function isProxyWithoutHooks(value: unknown): boolean {
   return nativeProxyBrandCheck(value);
+}
+
+/** Identify a genuine Uint8Array without evaluating project-owned hooks. */
+export function isUint8ArrayWithoutHooks(value: unknown): value is Uint8Array {
+  return nativeUint8ArrayBrandCheck(value);
 }
 
 /** Identify a genuine Promise across realms without reading instance fields. */

@@ -258,6 +258,7 @@ type FilesystemMethod = (...args: unknown[]) => unknown;
 type FilesystemMethodKey =
   | "readFile"
   | "readFileBytes"
+  | "readFileBytesBounded"
   | "writeFile"
   | "stat"
   | "lstat"
@@ -313,7 +314,10 @@ function snapshotFilesystemMethod(
 
 function requireFilesystemMethod(
   fileSystem: RuntimeAdapter["fs"],
-  key: Exclude<FilesystemMethodKey, "readFileBytes" | "lstat" | "realPath">,
+  key: Exclude<
+    FilesystemMethodKey,
+    "readFileBytes" | "readFileBytesBounded" | "lstat" | "realPath"
+  >,
 ): FilesystemMethod {
   const method = snapshotFilesystemMethod(fileSystem, key);
   if (method === undefined) {
@@ -325,6 +329,7 @@ function requireFilesystemMethod(
 function snapshotFilesystem(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["fs"] {
   const readFile = requireFilesystemMethod(fileSystem, "readFile");
   const readFileBytes = snapshotFilesystemMethod(fileSystem, "readFileBytes");
+  const readFileBytesBounded = snapshotFilesystemMethod(fileSystem, "readFileBytesBounded");
   const writeFile = requireFilesystemMethod(fileSystem, "writeFile");
   const stat = requireFilesystemMethod(fileSystem, "stat");
   const lstat = snapshotFilesystemMethod(fileSystem, "lstat");
@@ -361,6 +366,10 @@ function snapshotFilesystem(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["f
   if (readFileBytes !== undefined) {
     snapshot.readFileBytes = (path) =>
       Reflect.apply(readFileBytes, fileSystem, [path]) as Promise<Uint8Array>;
+  }
+  if (readFileBytesBounded !== undefined) {
+    snapshot.readFileBytesBounded = (path, byteLimit) =>
+      Reflect.apply(readFileBytesBounded, fileSystem, [path, byteLimit]) as Promise<Uint8Array>;
   }
   if (lstat !== undefined) {
     snapshot.lstat = (path) => Reflect.apply(lstat, fileSystem, [path]) as Promise<FileInfo>;
@@ -547,6 +556,10 @@ export class SecureFs {
   private readonly config: NormalizedSecureFsConfig;
   private readonly fileSystem: RuntimeAdapter["fs"];
   private readonly validationOptions: ValidationOptions;
+  readonly readFileBytesBounded?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
 
   constructor(config: SecureFsConfig) {
     const snapshot = snapshotOwnOptions(
@@ -616,6 +629,21 @@ export class SecureFs {
       this.config.contextOptions,
       validationAdapter,
     );
+
+    const boundedReader = this.fileSystem.readFileBytesBounded;
+    if (boundedReader) {
+      this.readFileBytesBounded = async (path: string, byteLimit: number) => {
+        if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+          throw new RangeError("SecureFs bounded read limit must be a positive safe integer");
+        }
+        const validation = await this.validatePathForOperation(
+          path,
+          "readFileBytesBounded",
+        );
+        const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+        return await boundedReader.call(this.fileSystem, canonicalPath, byteLimit);
+      };
+    }
   }
 
   private buildValidationOptions(

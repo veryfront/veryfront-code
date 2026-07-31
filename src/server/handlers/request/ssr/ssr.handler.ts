@@ -16,7 +16,7 @@ import type {
 } from "../../types.ts";
 import { PRIORITY_LOW } from "#veryfront/utils/constants/index.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isExtendedFSAdapter, NotSupportedError } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -42,6 +42,7 @@ import {
   snapshotConflictResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { captureApplicationError } from "#veryfront/observability/application-errors.ts";
 
 const logger = serverLogger.component("ssr");
 
@@ -166,19 +167,24 @@ export class SSRHandler extends BaseHandler {
           });
         }
 
-        // setProductionMode is more important than the token/branch hints: if it
-        // silently no-ops the request could run in the wrong environment. Adapters
-        // that don't implement it may still throw, so keep it non-fatal but surface
-        // the failure at warn (rather than swallowing it) so a genuinely broken
-        // production-mode setup is visible instead of silently serving draft content.
+        // Production-mode selection is part of request isolation. Rendering after
+        // this operation fails could serve draft content for a production request.
         try {
           const prodMode = isProductionMode(ctx, url);
           fsAdapter.setProductionMode(prodMode, ctx.releaseId);
         } catch (e) {
-          logger.warn("Adapter setProductionMode failed", {
-            error: e instanceof Error ? e.message : String(e),
-            projectSlug: ctx.projectSlug,
-          });
+          // Contextual wrappers cover several independent capabilities. Legacy
+          // adapters may support request tokens without supporting explicit
+          // production-mode selection at all; absence is not an attempted
+          // transition failure. Once an adapter implements the operation,
+          // however, every implementation error remains fail-closed.
+          if (e instanceof NotSupportedError) {
+            logger.debug("Adapter does not support production mode selection", {
+              projectSlug: ctx.projectSlug,
+            });
+          } else {
+            return this.handleProductionModeSetupFailure(req, ctx, slug, e);
+          }
         }
       }
 
@@ -196,6 +202,45 @@ export class SSRHandler extends BaseHandler {
       });
       return Promise.resolve(this.continue());
     }
+  }
+
+  private handleProductionModeSetupFailure(
+    req: Request,
+    ctx: HandlerContext,
+    slug: string,
+    error: unknown,
+  ): Promise<HandlerResult> {
+    captureApplicationError(error, {
+      boundary: "ssr.context-setup",
+      method: req.method,
+    });
+    logger.error("Adapter production mode setup failed", {
+      error,
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      releaseId: ctx.releaseId,
+    });
+
+    const internalError = error instanceof Error
+      ? error
+      : new Error("Adapter production mode setup failed", { cause: error });
+    return this.buildResponse(
+      req,
+      ctx,
+      {
+        status: 500,
+        html: ErrorPages.serverError(),
+        isStreaming: false,
+        cacheStrategy: "no-cache",
+        failure: {
+          kind: "server-error",
+          exposure: "generic",
+          error: internalError,
+        },
+        slug,
+      },
+      generateNonce(),
+    );
   }
 
   private handleWithContext(

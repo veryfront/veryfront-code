@@ -10,7 +10,7 @@ import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/as
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Tool } from "#veryfront/tool";
 import { MemoryBackend } from "../backends/memory.ts";
-import { dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
+import { delay, dependsOn, step, waitForApproval, workflow } from "../dsl/index.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import { MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES } from "../limits.ts";
 import type { WorkflowRun } from "../types.ts";
@@ -687,6 +687,46 @@ describe("runWorkflowRun", () => {
       assertEquals(approvals[0]?.nodeId, "review");
       assertEquals(approvals[0]?.message, "Review static run");
       assertEquals(backend.initializeCalls, 1);
+      assertEquals(backend.destroyCalls, 1);
+    });
+  });
+
+  it("leaves a timed delay waiting after canonical static entrypoint cleanup", async () => {
+    rememberEnv();
+
+    const backend = new EntrypointLifecycleBackend();
+    const workflowDefinition = workflow({
+      id: "static-timed-wait-workflow",
+      steps: [delay("pause", 60_000)],
+    });
+
+    await withDistributedProvider(backend, async () => {
+      const runEntrypoint = await createWorkflowRunEntrypoint({
+        workflows: [workflowDefinition],
+      });
+      const run: WorkflowRun = {
+        id: "run-static-timed-wait",
+        workflowId: workflowDefinition.id,
+        status: "running",
+        input: {},
+        nodeStates: {},
+        currentNodes: [],
+        context: { input: {} },
+        checkpoints: [],
+        pendingApprovals: [],
+        createdAt: new Date(),
+        startedAt: new Date(),
+        sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      };
+      await backend.createRun(run);
+      await prepareManagedExecution(backend, run, "static-timed-wait-execution");
+
+      const exitCode = await runEntrypoint();
+
+      const persisted = await backend.getRun(run.id);
+      assertEquals(exitCode, EXIT_CODES.SUCCESS);
+      assertEquals(persisted?.status, "waiting");
+      assertEquals(persisted?.nodeStates.pause?.status, "running");
       assertEquals(backend.destroyCalls, 1);
     });
   });

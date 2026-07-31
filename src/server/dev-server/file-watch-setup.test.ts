@@ -11,6 +11,18 @@ import {
   shouldIgnorePath,
 } from "./file-watch-setup.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
+import { ReloadNotifier } from "../reload-notifier.ts";
+
+function createDeferred<T = void>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 function createRouteDiscoveryStub(): RouteDiscovery {
   return {
@@ -115,6 +127,101 @@ describe("isConfiguredPrimitivePath", () => {
 });
 
 describe("FileWatchSetup lifecycle", () => {
+  it("rejects a second setup instead of orphaning the active watcher", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/pages/index.tsx", "export default () => null;");
+    let watchCalls = 0;
+    let closeCalls = 0;
+    adapter.fs.watch = () => {
+      watchCalls++;
+      return {
+        ready: Promise.resolve(),
+        done: Promise.resolve(),
+        async *[Symbol.asyncIterator]() {
+          // Completion is explicit through `done`, so an empty stream is valid.
+        },
+        close: () => closeCalls++,
+      } satisfies FileWatcher;
+    };
+    const setup = new FileWatchSetup(
+      "/project",
+      adapter,
+      createRouteDiscoveryStub(),
+      10,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => {},
+    );
+
+    try {
+      await setup.setup();
+      await assertRejects(
+        () => setup.setup(),
+        Error,
+        "File watcher setup is already active",
+      );
+      assertEquals(watchCalls, 1);
+    } finally {
+      await setup.cleanup();
+    }
+    assertEquals(closeCalls, 1);
+  });
+
+  it("serializes cleanup behind an in-progress watcher acquisition", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/pages/index.tsx", "export default () => null;");
+    const inspectionStarted = createDeferred<void>();
+    const releaseInspection = createDeferred<void>();
+    const originalStat = adapter.fs.stat;
+    let firstInspection = true;
+    adapter.fs.stat = async (path) => {
+      if (firstInspection) {
+        firstInspection = false;
+        inspectionStarted.resolve();
+        await releaseInspection.promise;
+      }
+      return await originalStat(path);
+    };
+    let watchCalls = 0;
+    let closeCalls = 0;
+    adapter.fs.watch = () => {
+      watchCalls++;
+      const stopped = createDeferred<void>();
+      return {
+        ready: Promise.resolve(),
+        done: stopped.promise,
+        [Symbol.asyncIterator]: () => ({
+          next: async () => {
+            await stopped.promise;
+            return { done: true, value: undefined };
+          },
+        }),
+        close: () => {
+          closeCalls++;
+          stopped.resolve();
+        },
+      } satisfies FileWatcher;
+    };
+    const setup = new FileWatchSetup("/project", adapter, createRouteDiscoveryStub(), 10);
+
+    const setupPromise = setup.setup();
+    await inspectionStarted.promise;
+    await assertRejects(
+      () => setup.setup(),
+      Error,
+      "File watcher setup is already active",
+    );
+    const cleanupPromise = setup.cleanup();
+    releaseInspection.resolve();
+
+    await setupPromise;
+    await cleanupPromise;
+    assertEquals(watchCalls, 1);
+    assertEquals(closeCalls, 1);
+  });
+
   it("rejects setup when HMR has no directory it can watch", async () => {
     const adapter = createMockAdapter();
     const setup = new FileWatchSetup("/project", adapter, createRouteDiscoveryStub(), 10);
@@ -228,6 +335,57 @@ describe("FileWatchSetup lifecycle", () => {
 
     assertEquals(invalidations, 0);
     await setup.cleanup();
+  });
+
+  it("fences downstream HMR work when cleanup begins during route discovery", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/pages/index.tsx", "export default () => null;");
+    adapter.fs.watch = (_paths, options) => ({
+      ready: Promise.resolve(),
+      async *[Symbol.asyncIterator]() {
+        yield { kind: "modify" as const, paths: ["/project/pages/index.tsx"] };
+        await new Promise<void>((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+        });
+      },
+      close: () => {},
+    });
+
+    const discoveryStarted = createDeferred<void>();
+    const releaseDiscovery = createDeferred<void>();
+    const discoveryFinished = createDeferred<void>();
+    const routeDiscovery = {
+      discoverRoutes: async () => {
+        discoveryStarted.resolve();
+        await releaseDiscovery.promise;
+        discoveryFinished.resolve();
+      },
+    } as unknown as RouteDiscovery;
+    let invalidations = 0;
+    let reloadInvalidations = 0;
+    const unsubscribeReload = ReloadNotifier.subscribeInvalidate(() => reloadInvalidations++);
+    const setup = new FileWatchSetup(
+      "/project",
+      adapter,
+      routeDiscovery,
+      0,
+      () => invalidations++,
+    );
+
+    try {
+      await setup.setup();
+      await discoveryStarted.promise;
+
+      const cleanup = setup.cleanup();
+      releaseDiscovery.resolve();
+      await cleanup;
+      await discoveryFinished.promise;
+
+      assertEquals(invalidations, 0);
+      assertEquals(reloadInvalidations, 0);
+    } finally {
+      unsubscribeReload();
+    }
   });
 
   it("propagates an underlying watcher cleanup failure", async () => {

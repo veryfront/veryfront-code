@@ -24,6 +24,7 @@ import {
   capturePendingApprovalMetadataUpdate,
   type PendingApprovalMetadataUpdate,
   type WorkflowBackend,
+  type WorkflowRunCursorFilter,
   type WorkflowRunUpdate,
 } from "./types.ts";
 import { requeueRun } from "./shared/requeue-run.ts";
@@ -34,7 +35,12 @@ import {
   WORKFLOW_RUN_CONFLICT,
 } from "#veryfront/errors";
 import { requireWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
-import { compareRunIdsDescending, resolveRunDateBounds, resolveRunListPage } from "./run-filter.ts";
+import {
+  compareRunIdsDescending,
+  resolveRunDateBounds,
+  resolveRunListPage,
+  resolveWorkflowRunCursorPage,
+} from "./run-filter.ts";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -258,6 +264,28 @@ export class MemoryBackend implements WorkflowBackend {
     });
 
     runs = runs.slice(offset, offset + limit);
+
+    return runs.map((run) => this.snapshotRun(run));
+  }
+
+  async listRunsAfterCursor(filter: WorkflowRunCursorFilter): Promise<WorkflowRun[]> {
+    const page = resolveWorkflowRunCursorPage(filter);
+    const cursorTime = page.cursor?.createdAtMs;
+
+    const runs = [...this.runs.values()]
+      .filter((run) => run.status === filter.status)
+      .filter((run) => {
+        if (!page.cursor || cursorTime === undefined) return true;
+        const createdAt = run.createdAt.getTime();
+        return createdAt < cursorTime ||
+          (createdAt === cursorTime &&
+            compareRunIdsDescending(run.id, page.cursor.runId) > 0);
+      })
+      .sort((left, right) => {
+        const timeOrder = right.createdAt.getTime() - left.createdAt.getTime();
+        return timeOrder !== 0 ? timeOrder : compareRunIdsDescending(left.id, right.id);
+      })
+      .slice(0, page.limit);
 
     return runs.map((run) => this.snapshotRun(run));
   }

@@ -5,6 +5,20 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RouteDirectory } from "./types.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+
+export const ROUTE_DISCOVERY_MAX_DEPTH = 64;
+export const ROUTE_DISCOVERY_MAX_DIRECTORIES = 10_000;
+export const ROUTE_DISCOVERY_MAX_ENTRIES = 100_000;
+export const ROUTE_DISCOVERY_MAX_ROUTES = 10_000;
+export const ROUTE_DISCOVERY_MAX_ENTRY_NAME_BYTES = 16 * 1024 * 1024;
+
+interface RouteDiscoveryBudget {
+  directories: number;
+  entries: number;
+  routes: number;
+  entryNameBytes: number;
+}
 
 const logger = serverLogger.component("server");
 
@@ -19,18 +33,33 @@ const VERYFRONT_EXCLUDED_DIRS = new Set([
   "css",
 ]);
 
+function hasCanonicalPathSegment(path: string, expectedSegment: string): boolean {
+  const canonicalSegments: string[] = [];
+  for (const segment of path.split(/[\\/]+/)) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === "..") {
+      canonicalSegments.pop();
+      continue;
+    }
+    canonicalSegments.push(segment);
+  }
+  return canonicalSegments.includes(expectedSegment);
+}
+
 /** Check if a directory entry should be skipped during route discovery */
 function shouldSkipEntry(name: string, parentPath?: string): boolean {
   if (name.startsWith("_")) return true;
   if (name === ".veryfront") return false;
   if (name.startsWith(".")) return true;
 
-  const inVeryfront = parentPath?.includes(".veryfront") || parentPath?.includes("/.veryfront");
+  const inVeryfront = parentPath !== undefined &&
+    hasCanonicalPathSegment(parentPath, ".veryfront");
   return Boolean(inVeryfront && VERYFRONT_EXCLUDED_DIRS.has(name));
 }
 
 export class RouteDiscovery {
   private useRelativePaths: boolean;
+  private discoveryGeneration = 0;
 
   constructor(
     private projectDir: string,
@@ -43,7 +72,14 @@ export class RouteDiscovery {
   }
 
   async discoverRoutes(): Promise<void> {
+    const discoveryGeneration = ++this.discoveryGeneration;
     const candidateRouter = new ApiRouteMatcher();
+    const budget: RouteDiscoveryBudget = {
+      directories: 0,
+      entries: 0,
+      routes: 0,
+      entryNameBytes: 0,
+    };
 
     try {
       logger.debug("Starting route discovery", {
@@ -64,15 +100,26 @@ export class RouteDiscovery {
       for (const routeDir of routeDirs) {
         if (routeDir.type === "app") {
           logger.debug(`Discovering app routes in: ${routeDir.path}`);
-          await this.discoverAppRoutes(routeDir.path, candidateRouter);
+          await this.discoverAppRoutes(routeDir.path, candidateRouter, budget);
           continue;
         }
 
         logger.debug(`Discovering pages routes in: ${routeDir.path}`);
-        await this.discoverPagesRoutes(routeDir.path, "", candidateRouter);
+        await this.discoverPagesRoutes(routeDir.path, "", candidateRouter, budget, 0);
       }
 
       const candidateRoutes = candidateRouter.listRoutes();
+
+      // Filesystem scans can overlap (startup/manual refreshes do not all flow
+      // through FileWatchSetup). An older snapshot that finishes last must not
+      // replace the generation requested most recently.
+      if (discoveryGeneration !== this.discoveryGeneration) {
+        logger.debug("Discarding superseded route discovery generation", {
+          discoveryGeneration,
+          latestGeneration: this.discoveryGeneration,
+        });
+        return;
+      }
 
       // Route discovery performs asynchronous filesystem I/O. Keep the live
       // matcher intact until the complete candidate has been validated, then
@@ -174,10 +221,14 @@ export class RouteDiscovery {
     dir: string,
     prefix: string,
     candidateRouter: ApiRouteMatcher,
+    budget: RouteDiscoveryBudget,
+    depth: number,
   ): Promise<void> {
+    this.enterDirectory(budget, depth);
     logger.debug(`Reading directory: ${dir}`);
 
     for await (const entry of this.adapter.fs.readDir(dir)) {
+      this.accountEntry(budget, entry.name);
       if (shouldSkipEntry(entry.name, dir)) continue;
 
       const fullPath = join(dir, entry.name);
@@ -192,7 +243,7 @@ export class RouteDiscovery {
       }
 
       if (entry.isDirectory) {
-        await this.discoverPagesRoutes(fullPath, routePath, candidateRouter);
+        await this.discoverPagesRoutes(fullPath, routePath, candidateRouter, budget, depth + 1);
         continue;
       }
 
@@ -203,23 +254,32 @@ export class RouteDiscovery {
       pattern = pattern.replace(/\/+/g, "/");
 
       const relativePath = this.toProjectRelativePath(fullPath);
+      this.accountRoute(budget);
       candidateRouter.addRoute(pattern, relativePath);
       logger.debug(`Discovered route: ${pattern} -> ${relativePath}`);
     }
   }
 
-  private async discoverAppRoutes(dir: string, candidateRouter: ApiRouteMatcher): Promise<void> {
-    await this.discoverAppRoutesRecursive(dir, [], candidateRouter);
+  private async discoverAppRoutes(
+    dir: string,
+    candidateRouter: ApiRouteMatcher,
+    budget: RouteDiscoveryBudget,
+  ): Promise<void> {
+    await this.discoverAppRoutesRecursive(dir, [], candidateRouter, budget, 0);
   }
 
   private async discoverAppRoutesRecursive(
     dir: string,
     segments: string[],
     candidateRouter: ApiRouteMatcher,
+    budget: RouteDiscoveryBudget,
+    depth: number,
   ): Promise<void> {
+    this.enterDirectory(budget, depth);
     logger.debug(`Reading app directory: ${dir}`);
 
     for await (const entry of this.adapter.fs.readDir(dir)) {
+      this.accountEntry(budget, entry.name);
       if (shouldSkipEntry(entry.name, dir)) continue;
 
       const fullPath = join(dir, entry.name);
@@ -227,7 +287,13 @@ export class RouteDiscovery {
       if (entry.isDirectory) {
         const normalizedSegment = this.normalizeAppPathSegment(entry.name);
         const nextSegments = normalizedSegment ? [...segments, normalizedSegment] : segments;
-        await this.discoverAppRoutesRecursive(fullPath, nextSegments, candidateRouter);
+        await this.discoverAppRoutesRecursive(
+          fullPath,
+          nextSegments,
+          candidateRouter,
+          budget,
+          depth + 1,
+        );
         continue;
       }
 
@@ -235,6 +301,7 @@ export class RouteDiscovery {
 
       const pattern = this.buildAppRoutePattern(segments);
       const relativePath = this.toProjectRelativePath(fullPath);
+      this.accountRoute(budget);
       candidateRouter.addRoute(pattern, relativePath);
       logger.debug(`Discovered app route: ${pattern} -> ${relativePath}`);
     }
@@ -249,6 +316,66 @@ export class RouteDiscovery {
   private buildAppRoutePattern(segments: string[]): string {
     if (segments.length === 0) return "/";
     return `/${segments.filter(Boolean).join("/")}`;
+  }
+
+  private enterDirectory(budget: RouteDiscoveryBudget, depth: number): void {
+    if (depth > ROUTE_DISCOVERY_MAX_DEPTH) {
+      throw new RangeError(
+        `Route discovery directory depth limit of ${ROUTE_DISCOVERY_MAX_DEPTH} was exceeded`,
+      );
+    }
+    if (budget.directories >= ROUTE_DISCOVERY_MAX_DIRECTORIES) {
+      throw new RangeError(
+        `Route discovery directory limit of ${ROUTE_DISCOVERY_MAX_DIRECTORIES} was exceeded`,
+      );
+    }
+    budget.directories++;
+  }
+
+  private accountEntry(budget: RouteDiscoveryBudget, name: unknown): void {
+    if (budget.entries >= ROUTE_DISCOVERY_MAX_ENTRIES) {
+      throw new RangeError(
+        `Route discovery entry limit of ${ROUTE_DISCOVERY_MAX_ENTRIES} was exceeded`,
+      );
+    }
+    if (typeof name !== "string") {
+      throw new TypeError("Route discovery received an invalid directory entry name");
+    }
+    if (
+      name.length === 0 || name === "." || name === ".." ||
+      name.includes("/") || name.includes("\\") || name.includes(":")
+    ) {
+      throw new TypeError("Route discovery entry name must be a canonical basename");
+    }
+    for (let index = 0; index < name.length; index++) {
+      const code = name.charCodeAt(index);
+      if (code <= 31 || code === 127) {
+        throw new TypeError("Route discovery entry name must be a canonical basename");
+      }
+    }
+
+    const remainingNameBytes = ROUTE_DISCOVERY_MAX_ENTRY_NAME_BYTES - budget.entryNameBytes;
+    const nameBytes = utf8ByteLength(name, remainingNameBytes);
+    if (nameBytes > remainingNameBytes) {
+      throw new RangeError(
+        `Route discovery entry-name byte budget of ${ROUTE_DISCOVERY_MAX_ENTRY_NAME_BYTES} was exceeded`,
+      );
+    }
+    if (name !== name.normalize("NFC")) {
+      throw new TypeError("Route discovery entry name must be a canonical basename");
+    }
+
+    budget.entries++;
+    budget.entryNameBytes += nameBytes;
+  }
+
+  private accountRoute(budget: RouteDiscoveryBudget): void {
+    if (budget.routes >= ROUTE_DISCOVERY_MAX_ROUTES) {
+      throw new RangeError(
+        `Route discovery route limit of ${ROUTE_DISCOVERY_MAX_ROUTES} was exceeded`,
+      );
+    }
+    budget.routes++;
   }
 
   private toProjectRelativePath(fullPath: string): string {

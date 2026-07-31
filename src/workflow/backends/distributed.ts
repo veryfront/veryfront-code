@@ -68,6 +68,7 @@ const OPTIONAL_WORKFLOW_BACKEND_METHODS = [
   "subscribeEvents",
   "initialize",
   "healthCheck",
+  "listRunsAfterCursor",
 ] as const satisfies readonly (keyof WorkflowBackend)[];
 
 const WORKFLOW_BACKEND_METHODS = [

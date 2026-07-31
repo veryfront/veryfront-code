@@ -39,7 +39,9 @@ import {
   requireWorkflowSourceIntegrationPolicy,
   resolveRunDateBounds,
   resolveRunListPage,
+  resolveWorkflowRunCursorPage,
   type WorkflowBackend,
+  type WorkflowRunCursorFilter,
   type WorkflowRunUpdate,
 } from "veryfront/extensions/distributed/workflow-support";
 import { arrayToObject } from "./array-to-object.ts";
@@ -446,18 +448,24 @@ local cursorScore = ARGV[10]
 local cursorMember = ARGV[11]
 local limit = tonumber(ARGV[12])
 local start = 0
-local reset = 0
 if cursorMember ~= '' then
   local actualScore = redis.call('zscore', KEYS[5], cursorMember)
-  if actualScore and tonumber(actualScore) == tonumber(cursorScore) then
-    local rank = redis.call('zrevrank', KEYS[5], cursorMember)
-    if rank then
-      start = rank + 1
-    else
-      reset = 1
+  if actualScore then
+    if tonumber(actualScore) ~= tonumber(cursorScore) then
+      return {2, processed, 'cursor-score-mismatch'}
     end
+    local rank = redis.call('zrevrank', KEYS[5], cursorMember)
+    if not rank then return {2, processed, 'cursor-rank-missing'} end
+    start = rank + 1
   else
-    reset = 1
+    -- Reconstruct the insertion point even after the cursor run left this
+    -- status index. Redis executes the script atomically, so the temporary
+    -- boundary member is never externally visible.
+    redis.call('zadd', KEYS[5], tonumber(cursorScore), cursorMember)
+    local rank = redis.call('zrevrank', KEYS[5], cursorMember)
+    redis.call('zrem', KEYS[5], cursorMember)
+    if not rank then return {2, processed, 'cursor-rank-missing'} end
+    start = rank
   end
 end
 local values = redis.call('zrevrange', KEYS[5], start, start + limit - 1, 'withscores')
@@ -478,7 +486,7 @@ if #values > 0 then
   nextMember = values[#values - 1]
   nextScore = values[#values]
 end
-return {1, processed, snapshots, nextScore, nextMember, reset}`;
+return {1, processed, snapshots, nextScore, nextMember, 0}`;
 
 /** Exact filtered count from disjoint ordered indexes, without run hydration. */
 const COUNT_RUNS_SCRIPT = `-- count-workflow-runs-exact
@@ -948,6 +956,12 @@ export class RedisBackend implements WorkflowBackend {
       status: run.status,
       workerId: run.workerId || "",
       tenant: run._tenant ? JSON.stringify(run._tenant) : "",
+      runtimeStateVersion: run._runtimeStateVersion === undefined
+        ? ""
+        : String(run._runtimeStateVersion),
+      workflowProjection: run._workflowProjection === undefined
+        ? ""
+        : JSON.stringify(run._workflowProjection),
       sourceIntegrationPolicy: JSON.stringify(sourceIntegrationPolicy),
       input: JSON.stringify(run.input),
       output: run.output !== undefined ? JSON.stringify(run.output) : "",
@@ -970,6 +984,9 @@ export class RedisBackend implements WorkflowBackend {
     if (patch.nodeStates !== undefined) fields.nodeStates = JSON.stringify(patch.nodeStates);
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
+    if (patch._workflowProjection !== undefined) {
+      fields.workflowProjection = JSON.stringify(patch._workflowProjection);
+    }
     if (patch.error !== undefined) fields.error = JSON.stringify(patch.error);
     if (patch.startedAt !== undefined) fields.startedAt = patch.startedAt.toISOString();
     if (patch.heartbeatAt !== undefined) fields.heartbeatAt = patch.heartbeatAt.toISOString();
@@ -1083,6 +1100,19 @@ export class RedisBackend implements WorkflowBackend {
       ),
     });
 
+    const runtimeStateVersion = data.runtimeStateVersion === undefined ||
+        data.runtimeStateVersion === ""
+      ? undefined
+      : Number(data.runtimeStateVersion);
+    if (
+      runtimeStateVersion !== undefined &&
+      (!Number.isSafeInteger(runtimeStateVersion) || runtimeStateVersion < 1)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Invalid workflow run data for run "${data.id}": runtime state version is invalid`,
+      });
+    }
+
     return {
       id: data.id,
       workflowId: data.workflowId,
@@ -1090,6 +1120,13 @@ export class RedisBackend implements WorkflowBackend {
       status: status ?? "pending",
       workerId: data.workerId || undefined,
       _tenant: parseJsonOr(data.id, "tenant", data.tenant, undefined),
+      _runtimeStateVersion: runtimeStateVersion,
+      _workflowProjection: parseJsonOr(
+        data.id,
+        "workflowProjection",
+        data.workflowProjection,
+        undefined,
+      ),
       sourceIntegrationPolicy,
       input: parseJsonOr(data.id, "input", data.input, undefined),
       output: parseJsonOr(data.id, "output", data.output, undefined),
@@ -1758,6 +1795,7 @@ export class RedisBackend implements WorkflowBackend {
   private async queryRunSnapshotCursorPage(
     filter: RunFilter,
     cursor: RunSnapshotCursor | null,
+    limit = MAX_WORKFLOW_RUN_LIST_LIMIT,
   ): Promise<CursorRunSnapshotPage> {
     const indexKeys = this.selectRunIndexKeys(filter);
     if (indexKeys.length !== 1) {
@@ -1773,7 +1811,7 @@ export class RedisBackend implements WorkflowBackend {
         ...this.retentionQueryArgs(),
         cursor?.score ?? "",
         cursor?.member ?? "",
-        String(MAX_WORKFLOW_RUN_LIST_LIMIT),
+        String(limit),
       ],
     );
     if (!Array.isArray(raw) || Number(raw[0]) !== 1) {
@@ -1831,6 +1869,19 @@ export class RedisBackend implements WorkflowBackend {
   async listRuns(filter: RunFilter): Promise<WorkflowRun[]> {
     const snapshots = await this.queryRunSnapshots(filter);
     return snapshots.map((snapshot) => this.snapshotToRun(snapshot));
+  }
+
+  async listRunsAfterCursor(filter: WorkflowRunCursorFilter): Promise<WorkflowRun[]> {
+    const page = resolveWorkflowRunCursorPage(filter);
+    const cursor = page.cursor
+      ? { score: String(page.cursor.createdAtMs), member: page.cursor.runId }
+      : null;
+    const result = await this.queryRunSnapshotCursorPage(
+      { status: filter.status },
+      cursor,
+      page.limit,
+    );
+    return result.snapshots.map((snapshot) => this.snapshotToRun(snapshot));
   }
 
   async countRuns(filter: RunFilter): Promise<number> {

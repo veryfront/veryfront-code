@@ -7,7 +7,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowRunUpdate } from "../backends/types.ts";
-import { waitForApproval, workflow } from "../dsl/index.ts";
+import { delay, waitForApproval, workflow } from "../dsl/index.ts";
 import type { WorkflowRun } from "../types.ts";
 import {
   acquireRunExecutionLock,
@@ -330,6 +330,28 @@ describe("workflow worker shared helpers", () => {
     assertEquals(approvals[0]?.nodeId, "review");
     assertEquals(approvals[0]?.message, "Review required");
     await runtime.destroy();
+  });
+
+  it("preserves a timed wait when an isolated runtime is normally destroyed", async () => {
+    const backend = new MemoryBackend();
+    const workerId = "run-execution:timed-wait-owner";
+    const runtime = createIsolatedWorkflowRuntime(backend);
+    runtime.executor.register(
+      workflow({
+        id: "workflow-1",
+        steps: [delay("pause", 60_000)],
+      }).definition,
+    );
+    const run = createRun("run-timed-wait", "running", workerId);
+    await backend.createRun(run);
+
+    await runtime.executor.resume(run.id, undefined, workerId);
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+
+    await runtime.destroy();
+
+    assertEquals((await backend.getRun(run.id))?.status, "waiting");
+    assertEquals((await backend.getRun(run.id))?.nodeStates.pause?.status, "running");
   });
 
   it("destroys an isolated runtime without destroying its borrowed backend", async () => {

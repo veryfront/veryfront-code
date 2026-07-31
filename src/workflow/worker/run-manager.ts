@@ -14,13 +14,20 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import { hasWorkerSupport, updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasWorkerSupport,
+  updateRunIfStatus,
+  type WorkflowBackend,
+  type WorkflowRunCursor,
+} from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId, parsePositiveDurationWithLabel } from "../types.ts";
 import type { RunExecutionStatus, RunExecutor } from "./executors/types.ts";
 import { CONFIG_INVALID, ensureError, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { claimWorkflowRunControl } from "../runtime/workflow-run-control.ts";
 import { validatePositiveSafeInteger } from "../dsl/validation.ts";
+import { reconcileDueTimedWorkflowWait } from "../runtime/timed-wait-reconciliation.ts";
+import { compareRunIdsDescending } from "../backends/run-filter.ts";
 
 const logger = baseLogger.component("workflow-run-manager");
 
@@ -35,6 +42,9 @@ const DEFAULT_STALLED_THRESHOLD_MS = 60_000;
 
 /** Default child polling interval while the manager releases its claim lease. */
 const DEFAULT_LOCK_RETRY_INTERVAL_MS = 50;
+
+/** Bounded keyset page reconciled per poll; the cursor wraps after the tail. */
+const TIMED_WAIT_RECOVERY_BATCH_SIZE = 100;
 
 // Re-export types for convenience
 export type { RunExecutionInfo, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
@@ -151,6 +161,7 @@ export class WorkflowRunManager {
   private teardownCandidates = new Map<string, TeardownCandidate>();
   private stats: ManagerStats;
   private managerId: string;
+  private timedWaitRecoveryCursor?: WorkflowRunCursor;
 
   constructor(config: WorkflowRunManagerConfig) {
     if (!hasWorkerSupport(config.backend)) {
@@ -158,7 +169,8 @@ export class WorkflowRunManager {
         detail: "Backend does not support managed workflow execution. " +
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, extendLock, releaseLock, " +
           "updateRunIfStatusAndLock, findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
-          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker.",
+          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker, " +
+          "listRunsAfterCursor.",
       });
     }
     this.managerId = generateId("mgr");
@@ -399,6 +411,12 @@ export class WorkflowRunManager {
       await this.syncRunExecutionStatuses();
       if (this.status !== "running") return;
 
+      // Timed waits are durable state, not child-process timers. Reconcile
+      // deadlines before selecting pending runs so an awakened delay can be
+      // claimed by the normal isolated-execution path in this same poll.
+      await this.reconcileTimedWaitingRuns();
+      if (this.status !== "running") return;
+
       // 2. Find workflows that need execution
       const availableSlots = this.config.maxConcurrentExecutions -
         this.activeExecutions.size - this.teardownCandidates.size;
@@ -441,6 +459,68 @@ export class WorkflowRunManager {
     } catch (error) {
       this.recordError(error);
       logger.error(`Poll error:`, error);
+    }
+  }
+
+  /** Reconcile one bounded keyset page; wrap after the tail for eventual coverage. */
+  private async reconcileTimedWaitingRuns(): Promise<void> {
+    const requestedCursor = this.timedWaitRecoveryCursor;
+    const page = await this.config.backend.listRunsAfterCursor!({
+      status: "waiting",
+      limit: TIMED_WAIT_RECOVERY_BATCH_SIZE,
+      cursor: requestedCursor,
+    });
+    if (page.length > TIMED_WAIT_RECOVERY_BATCH_SIZE) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow backend exceeded the timed-wait recovery page limit",
+      });
+    }
+
+    let previous = requestedCursor;
+    for (const run of page) {
+      let createdAtMs: number;
+      try {
+        createdAtMs = Date.prototype.getTime.call(run.createdAt);
+      } catch {
+        createdAtMs = Number.NaN;
+      }
+      if (
+        run.status !== "waiting" || typeof run.id !== "string" || run.id.length === 0 ||
+        !Number.isFinite(createdAtMs)
+      ) {
+        throw ORCHESTRATION_ERROR.create({
+          detail: "Workflow backend returned an invalid timed-wait recovery row",
+        });
+      }
+      if (previous) {
+        const previousMs = previous.createdAt.getTime();
+        const isStrictlyAfter = createdAtMs < previousMs ||
+          (createdAtMs === previousMs &&
+            compareRunIdsDescending(run.id, previous.runId) > 0);
+        if (!isStrictlyAfter) {
+          throw ORCHESTRATION_ERROR.create({
+            detail:
+              "Workflow backend returned a duplicate or out-of-order timed-wait recovery page",
+          });
+        }
+      }
+      previous = { createdAt: new Date(createdAtMs), runId: run.id };
+    }
+
+    const last = page.at(-1);
+    this.timedWaitRecoveryCursor = page.length === TIMED_WAIT_RECOVERY_BATCH_SIZE && last
+      ? { createdAt: new Date(last.createdAt), runId: last.id }
+      : undefined;
+
+    const now = Date.now();
+    for (const run of page) {
+      if (this.status !== "running") return;
+      try {
+        await reconcileDueTimedWorkflowWait(this.config.backend, run, { now });
+      } catch (error) {
+        this.recordError(error);
+        logger.error(`Failed to reconcile timed wait for workflow run ${run.id}:`, error);
+      }
     }
   }
 

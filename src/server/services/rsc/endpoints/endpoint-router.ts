@@ -71,9 +71,52 @@ export function getBrowserModuleEndpointStatsForTesting() {
  * @returns Response or null if not an RSC endpoint
  */
 export async function handleRSCEndpoint(
+  params: RSCEndpointParams,
+): Promise<Response | null> {
+  const { req, pathname } = params;
+  if (!pathname.startsWith("/_veryfront/rsc/")) {
+    return null;
+  }
+
+  const sub = pathname.replace("/_veryfront/rsc/", "");
+  const method = req.method.toUpperCase();
+  const allowedMethods = sub === "action" ? ["POST"] : ["GET", "HEAD"];
+  if (!allowedMethods.includes(method)) {
+    return await omitHeadResponseBody(
+      method,
+      methodNotAllowed(allowedMethods, {
+        headers: { "cache-control": "no-store" },
+      }),
+    );
+  }
+
+  return await omitHeadResponseBody(
+    method,
+    await handleAdmittedRSCEndpoint(params, sub, method),
+  );
+}
+
+async function omitHeadResponseBody(
+  method: string,
+  response: Response | null,
+): Promise<Response | null> {
+  if (method !== "HEAD" || !response) return response;
+
+  try {
+    await response.body?.cancel();
+  } catch (error) {
+    rscEndpointRouterLog.debug("Failed to cancel RSC HEAD response body", error);
+  }
+  return new Response(null, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+async function handleAdmittedRSCEndpoint(
   {
     req,
-    pathname,
     projectDir,
     projectId,
     projectSlug,
@@ -88,13 +131,9 @@ export async function handleRSCEndpoint(
     mode,
     nonce,
   }: RSCEndpointParams,
+  sub: string,
+  method: string,
 ): Promise<Response | null> {
-  if (!pathname.startsWith("/_veryfront/rsc/")) {
-    return null;
-  }
-
-  const sub = pathname.replace("/_veryfront/rsc/", "");
-
   // Always serve client.js and dom.js regardless of RSC being enabled
   // These are needed for basic hydration even without full RSC
   if (sub === "client.js") {
@@ -112,13 +151,6 @@ export async function handleRSCEndpoint(
   // Do not remove until those clients/tests stop exercising the endpoint.
   if (sub === "flight_page") {
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
-  }
-
-  const method = req.method.toUpperCase();
-  if (sub === "module" && method !== "GET" && method !== "HEAD") {
-    return methodNotAllowed(["GET", "HEAD"], {
-      headers: { "cache-control": "no-store" },
-    });
   }
 
   const url = new URL(req.url);
@@ -244,10 +276,6 @@ export async function handleRSCEndpoint(
     }
 
     if (sub === "action") {
-      if (req.method !== "POST") {
-        return new Response("Method Not Allowed", { status: 405 });
-      }
-
       metrics.recordRSC("action");
       try {
         return await handleActionRequest({

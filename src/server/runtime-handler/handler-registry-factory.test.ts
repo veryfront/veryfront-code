@@ -16,6 +16,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Handler, HandlerResult } from "#veryfront/types";
 import { HandlerPriority } from "#veryfront/types";
 import { createHandlerRegistry, HANDLER_NAMES } from "./index.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 /** Minimal mock adapter — only `env.get` is needed by the factory. */
 function createMockAdapter(): RuntimeAdapter {
@@ -227,10 +228,16 @@ describe("server/runtime-handler/createHandlerRegistry", () => {
     const { registry } = createHandlerRegistry(projectDir, adapter, {
       devUiAssetProvider: { browserBundle: extensionBundle },
     });
+    const request = new Request("http://localhost/_dev/ui/index.js", {
+      headers: { host: "localhost" },
+    });
+    recordRequestPeerFromTransport(request, {
+      runtime: "node",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+    });
     const response = await registry.execute(
-      new Request("http://localhost/_dev/ui/index.js", {
-        headers: { host: "localhost" },
-      }),
+      request,
       {
         projectDir,
         adapter,

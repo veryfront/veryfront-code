@@ -671,6 +671,66 @@ export function registerWorkflowBackendPersistenceContract(
       );
     });
 
+    it("keyset-pages waiting runs across equal timestamps and a removed cursor", async () => {
+      const backend = getBackend();
+      if (!backend.listRunsAfterCursor) {
+        throw new Error("Built-in workflow backend is missing managed recovery pagination");
+      }
+      const createdAt = new Date("2026-02-02T00:00:00.000Z");
+      for (const id of ["cursor-a", "cursor-\uE000", "cursor-😀"]) {
+        await backend.createRun(createContractRun(id, { status: "waiting", createdAt }));
+      }
+      await backend.createRun(createContractRun("cursor-not-waiting", { createdAt }));
+
+      const first = await backend.listRunsAfterCursor({ status: "waiting", limit: 2 });
+      assertEquals(first.map((run) => run.id), ["cursor-😀", "cursor-\uE000"]);
+      first[0]!.context.input = "mutated-page";
+
+      // The cursor row may leave the waiting index between polls. Its immutable
+      // tuple must still define the next exclusive position.
+      await backend.updateRun("cursor-\uE000", { status: "pending" });
+      await backend.createRun(createContractRun("cursor-new-head", {
+        status: "waiting",
+        createdAt: new Date(createdAt.getTime() + 1),
+      }));
+      await backend.createRun(createContractRun("cursor-old-tail", {
+        status: "waiting",
+        createdAt: new Date(createdAt.getTime() - 1),
+      }));
+
+      const second = await backend.listRunsAfterCursor({
+        status: "waiting",
+        limit: 10,
+        cursor: { createdAt, runId: "cursor-\uE000" },
+      });
+      assertEquals(second.map((run) => run.id), ["cursor-a", "cursor-old-tail"]);
+      assertEquals((await backend.getRun("cursor-😀"))?.context.input, {
+        nested: { value: "created" },
+      });
+      assertEquals(
+        (await backend.listRunsAfterCursor({ status: "waiting", limit: 10 })).map((run) =>
+          run.id
+        ),
+        ["cursor-new-head", "cursor-😀", "cursor-a", "cursor-old-tail"],
+      );
+
+      await assertRejects(
+        () => backend.listRunsAfterCursor!({ status: "waiting", limit: 0 }),
+        Error,
+        "limit must be an integer between 1 and 1000",
+      );
+      await assertRejects(
+        () =>
+          backend.listRunsAfterCursor!({
+            status: "waiting",
+            limit: 1,
+            cursor: { createdAt: new Date(Number.NaN), runId: "cursor-a" },
+          }),
+        Error,
+        "cursor createdAt must be a valid date",
+      );
+    });
+
     it("uses inclusive creation bounds and rejects invalid dates", async () => {
       const backend = getBackend();
       const boundary = new Date("2026-03-01T00:00:00.000Z");

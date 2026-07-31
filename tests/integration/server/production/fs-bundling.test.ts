@@ -1,15 +1,15 @@
 import { delay } from "#std/async";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
-import { assert, assertEquals, assertMatch } from "#veryfront/testing/assert";
+import { assertEquals } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 
-// Tests the production /_veryfront/fs/<b64>.js bundling endpoint
+// Production must not expose the development-only /_veryfront/fs transport.
 
 describe(
-  "Production FS bundling endpoint",
+  "Production FS bundling restriction",
   {
     sanitizeResources: false,
     sanitizeOps: false,
@@ -20,7 +20,7 @@ describe(
       await cleanupBundler();
     });
 
-    it("bundles TSX to ESM and sets no-cache", async () => {
+    it("does not expose local TSX source through the development transport", async () => {
       await withTestContext("production-fs-bundle", async (context) => {
         const file = join(context.projectDir, "components", "Widget.tsx");
 
@@ -34,6 +34,7 @@ describe(
         );
 
         const port = await context.allocatePort();
+        const projectSlug = "production-fs-bundle";
         const { startProductionServer } = await import(
           "../../../../src/server/production-server.ts"
         );
@@ -42,9 +43,9 @@ describe(
           projectDir: context.projectDir,
           port,
           bindAddress: "127.0.0.1",
-          defaultProjectSlug: context.projectId,
+          defaultProjectSlug: projectSlug,
           defaultProjectId: context.projectId,
-          localProjects: { [context.projectId]: context.projectDir },
+          localProjects: { [projectSlug]: context.projectDir },
         });
 
         await server.ready;
@@ -60,20 +61,15 @@ describe(
             headers: { origin: "https://foo.example" },
           });
 
-          assertEquals(res.status, 200);
-
-          const contentType = res.headers.get("content-type") ?? "";
-          assertMatch(contentType, /javascript/i);
-
-          const cacheControl = res.headers.get("cache-control") ?? "";
-          assertMatch(cacheControl, /no-cache/i);
+          assertEquals(res.status, 404);
 
           // CORS is disabled by default, so no access-control-allow-origin header
           const allowOrigin = res.headers.get("access-control-allow-origin");
           assertEquals(allowOrigin, null);
 
-          const code = await res.text();
-          assert(code.includes("export"), "should output ESM code");
+          const body = await res.text();
+          assertEquals(body.includes("Widget"), false);
+          assertEquals(body.includes("export default"), false);
         } finally {
           await server.stop();
           await delay(100);

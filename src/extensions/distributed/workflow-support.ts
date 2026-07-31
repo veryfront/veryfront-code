@@ -13,6 +13,8 @@ export type {
   BackendConfig,
   PendingApprovalMetadataUpdate,
   WorkflowBackend,
+  WorkflowRunCursor,
+  WorkflowRunCursorFilter,
   WorkflowRunUpdate,
 } from "#veryfront/workflow/backends/types.ts";
 export { requeueRun } from "#veryfront/workflow/backends/shared/requeue-run.ts";
@@ -20,6 +22,7 @@ export {
   MAX_WORKFLOW_RUN_LIST_LIMIT,
   resolveRunDateBounds,
   resolveRunListPage,
+  resolveWorkflowRunCursorPage,
 } from "#veryfront/workflow/backends/run-filter.ts";
 export { requireWorkflowSourceIntegrationPolicy } from "#veryfront/workflow/source-integration-policy.ts";
 export type {

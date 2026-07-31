@@ -29,7 +29,7 @@ describe(
       restoreLogs();
     });
 
-    it("starts and stops in production mode (default)", async () => {
+    it("starts and stops in production mode", async () => {
       await withTestContext("unified-prod-mode", async (context) => {
         await writeTextFile(
           join(context.projectDir, "public", "health.txt"),
@@ -38,6 +38,7 @@ describe(
 
         const port = await context.allocatePort();
         const controller = new AbortController();
+        const projectSlug = "unified-prod-mode";
 
         const server = await startServer({
           mode: "production",
@@ -45,9 +46,9 @@ describe(
           port,
           bindAddress: "127.0.0.1",
           signal: controller.signal,
-          defaultProjectSlug: context.projectId,
+          defaultProjectSlug: projectSlug,
           defaultProjectId: context.projectId,
-          localProjects: { [context.projectId]: context.projectDir },
+          localProjects: { [projectSlug]: context.projectDir },
         });
 
         context.addCleanup(async () => {
@@ -79,6 +80,7 @@ describe(
         await withTestContext("unified-prod-memory-monitoring", async (context) => {
           const port = await context.allocatePort();
           const controller = new AbortController();
+          const projectSlug = "unified-prod-memory-monitoring";
 
           const server = await startServer({
             mode: "production",
@@ -86,9 +88,9 @@ describe(
             port,
             bindAddress: "127.0.0.1",
             signal: controller.signal,
-            defaultProjectSlug: context.projectId,
+            defaultProjectSlug: projectSlug,
             defaultProjectId: context.projectId,
-            localProjects: { [context.projectId]: context.projectDir },
+            localProjects: { [projectSlug]: context.projectDir },
           });
 
           let stopped = false;
@@ -137,6 +139,7 @@ describe(
       try {
         await withTestContext("unified-prod-memory-monitoring-startup-failure", async (context) => {
           const port = await context.allocatePort();
+          const projectSlug = "unified-prod-startup-failure";
 
           await assertRejects(async () => {
             await startServer({
@@ -145,9 +148,9 @@ describe(
               port,
               // TEST-NET-3 address should not be bindable in local test env.
               bindAddress: "203.0.113.1",
-              defaultProjectSlug: context.projectId,
+              defaultProjectSlug: projectSlug,
               defaultProjectId: context.projectId,
-              localProjects: { [context.projectId]: context.projectDir },
+              localProjects: { [projectSlug]: context.projectDir },
             });
           });
 
@@ -221,7 +224,7 @@ describe(
       });
     });
 
-    it("defaults to production mode when mode is omitted", async () => {
+    it("defaults to development mode when mode is omitted", async () => {
       await withTestContext("unified-default-mode", async (context) => {
         await writeTextFile(
           join(context.projectDir, "public", "test.txt"),
@@ -236,9 +239,8 @@ describe(
           port,
           bindAddress: "127.0.0.1",
           signal: controller.signal,
-          defaultProjectSlug: context.projectId,
+          defaultProjectSlug: "unified-default-mode",
           defaultProjectId: context.projectId,
-          localProjects: { [context.projectId]: context.projectDir },
         });
 
         context.addCleanup(async () => {
@@ -253,7 +255,7 @@ describe(
         await server.ready;
 
         const res = await fetch(`http://127.0.0.1:${port}/test.txt`);
-        assertEquals(res.status, 200, "Default mode should serve files");
+        assertEquals(res.status, 200, "Default development mode should serve files");
         assertEquals(await res.text(), "default");
       });
     });

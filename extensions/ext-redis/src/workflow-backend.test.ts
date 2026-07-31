@@ -507,13 +507,21 @@ class MockRedisAdapter implements RedisAdapter {
 
       const rows = this.orderedIndexRows(keys[4]!, "-inf", "+inf");
       let start = 0;
-      let reset = 0;
       if (cursorMember !== "") {
+        const cursorScoreNumber = Number(cursorScore);
         const cursorIndex = rows.findIndex(([member, score]) =>
-          member === cursorMember && score === Number(cursorScore)
+          member === cursorMember && score === cursorScoreNumber
         );
-        if (cursorIndex === -1) {
-          reset = 1;
+        const existing = rows.find(([member]) => member === cursorMember);
+        if (existing && existing[1] !== cursorScoreNumber) {
+          return [2, processed, "cursor-score-mismatch"];
+        } else if (cursorIndex === -1) {
+          const insertionPoint = rows.findIndex(([member, score]) =>
+            score < cursorScoreNumber ||
+            (score === cursorScoreNumber &&
+              compareRunIdsDescending(member, cursorMember) > 0)
+          );
+          start = insertionPoint === -1 ? rows.length : insertionPoint;
         } else {
           start = cursorIndex + 1;
         }
@@ -532,7 +540,7 @@ class MockRedisAdapter implements RedisAdapter {
         ]);
       }
       const next = page.at(-1);
-      return [1, processed, snapshots, next ? String(next[1]) : "", next?.[0] ?? "", reset];
+      return [1, processed, snapshots, next ? String(next[1]) : "", next?.[0] ?? "", 0];
     }
 
     if (script.includes("list-workflow-runs-exact")) {

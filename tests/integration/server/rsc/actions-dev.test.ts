@@ -65,16 +65,14 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
       assertEquals(res.status, 400);
       await res.body?.cancel();
 
-      // Invalid args type -> converts to empty array (current behavior)
+      // Invalid args type -> rejected at the request boundary
       res = await fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ id: "echo", args: { bad: true } }),
       });
-      assertEquals(res.status, 200);
-      const json2 = await res.json();
-      assertEquals(json2.ok, true);
-      assertEquals(json2.result, "ok:undefined");
+      assertEquals(res.status, 400);
+      await res.body?.cancel();
 
       // Invalid id traversal -> 400
       res = await fetch(url, {

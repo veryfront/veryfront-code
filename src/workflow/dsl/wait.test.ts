@@ -97,6 +97,15 @@ describe("waitForEvent()", () => {
     const config = expectWaitConfig(node);
     assertEquals(config.eventName, "order.updated");
   });
+
+  it("keeps the legacy delay transport name available to explicit events", () => {
+    const config = expectWaitConfig(
+      waitForEvent("not-a-delay", { eventName: "__delay__", timeout: 5 }),
+    ) as WaitNodeConfig & { _waitKind?: string };
+
+    assertEquals(config.eventName, "__delay__");
+    assertEquals(config._waitKind, "event");
+  });
 });
 
 describe("delay()", () => {
@@ -108,6 +117,7 @@ describe("delay()", () => {
     assertEquals(config.type, "wait");
     assertEquals(config.waitType, "event");
     assertEquals(config.timeout, "5m");
+    assertEquals((config as WaitNodeConfig & { _waitKind?: string })._waitKind, "delay");
   });
 
   it("should support numeric duration", () => {

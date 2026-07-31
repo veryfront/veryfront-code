@@ -2,7 +2,27 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
+import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
+import { StaticFileService } from "../../services/static/static-file.service.ts";
 import { StaticHandler } from "./static.handler.ts";
+
+type StaticHandlerTestAccess = {
+  staticService: {
+    resolveFile: (
+      pathname: string,
+      options: { manifestCacheIdentity?: string },
+    ) => Promise<null>;
+    isAssetRequest: (pathname: string) => boolean;
+  };
+};
+
+type StaticHandlerConcreteServiceAccess = {
+  staticService: StaticFileService;
+};
+
+type StaticHandlerServicePortAccess = {
+  staticService: Pick<StaticFileService, "resolveFile" | "isAssetRequest">;
+};
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -23,6 +43,46 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 }
 
 describe("server/handlers/request/static.handler", () => {
+  it("uses collision-free manifest identities for adversarial release and branch delimiters", async () => {
+    const handler = new StaticHandler();
+    const identities: string[] = [];
+    (handler as unknown as StaticHandlerTestAccess).staticService = {
+      resolveFile: (_pathname: string, options: { manifestCacheIdentity?: string }) => {
+        identities.push(options.manifestCacheIdentity ?? "");
+        return Promise.resolve(null);
+      },
+      isAssetRequest: () => true,
+    };
+
+    await handler.handle(
+      new Request("http://localhost/_veryfront/chunks/app.js"),
+      makeCtx({
+        projectId: "project",
+        releaseId: "release:segment",
+        resolvedEnvironment: "production",
+        requestContext: {
+          mode: "production",
+          branch: "branch",
+        } as HandlerContext["requestContext"],
+      }),
+    );
+    await handler.handle(
+      new Request("http://localhost/_veryfront/chunks/app.js"),
+      makeCtx({
+        projectId: "project",
+        releaseId: "release",
+        resolvedEnvironment: "production",
+        requestContext: {
+          mode: "production",
+          branch: "segment:branch",
+        } as HandlerContext["requestContext"],
+      }),
+    );
+
+    assertEquals(identities.length, 2);
+    assertEquals(identities[0] === identities[1], false);
+  });
+
   it("never claims dotted project API routes as static assets", async () => {
     const handler = new StaticHandler();
     let staticLookupCount = 0;
@@ -111,6 +171,82 @@ describe("server/handlers/request/static.handler", () => {
       "application/javascript; charset=utf-8",
     );
     assertEquals(await result.response.text(), "export const page = true;");
+  });
+
+  it("does not explicitly duplicate non-HTML asset bytes for GET responses", async () => {
+    const handler = new StaticHandler();
+    const data = new TextEncoder().encode("export const bounded = true;");
+    let sliceCalls = 0;
+    Object.defineProperty(data, "slice", {
+      configurable: true,
+      value: () => {
+        sliceCalls++;
+        throw new Error("static handler must not duplicate asset bytes");
+      },
+    });
+    (handler as unknown as StaticHandlerServicePortAccess).staticService = {
+      resolveFile: () =>
+        Promise.resolve({
+          path: "/tmp/test-project/public/asset.js",
+          data,
+          etag: '"asset-etag"',
+          contentType: "application/javascript; charset=utf-8",
+          cacheStrategy: "medium",
+          source: "public",
+        }),
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/asset.js"),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(await result.response.text(), "export const bounded = true;");
+    assertEquals(sliceCalls, 0);
+  });
+
+  it("keeps HEAD asset reads within the configured byte admission bound", async () => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+    let boundedLimit = 0;
+    let wholeReads = 0;
+    const repo = {
+      readFile: () => Promise.resolve(""),
+      readFileBytes: () => {
+        wholeReads++;
+        return Promise.resolve(data);
+      },
+      readFileBytesBounded: (_path: string, byteLimit: number) => {
+        boundedLimit = byteLimit;
+        return Promise.resolve(data);
+      },
+      stat: (path: string) => {
+        if (path === "public/asset.bin") {
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            mtime: new Date(1),
+            size: data.byteLength,
+          });
+        }
+        return Promise.reject(Object.assign(new Error("not found"), { code: "ENOENT" }));
+      },
+    } as unknown as FileSystemRepository;
+    const handler = new StaticHandler();
+    (handler as unknown as StaticHandlerConcreteServiceAccess).staticService =
+      new StaticFileService(repo, { maxAssetBytes: data.byteLength });
+
+    const result = await handler.handle(
+      new Request("http://localhost/asset.bin", { method: "HEAD" }),
+      makeCtx({ isLocalProject: true }),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals((await result.response.arrayBuffer()).byteLength, 0);
+    assertEquals(boundedLimit, data.byteLength + 1);
+    assertEquals(wholeReads, 0);
   });
 
   it("serves generated hydration runtime under /_veryfront", async () => {

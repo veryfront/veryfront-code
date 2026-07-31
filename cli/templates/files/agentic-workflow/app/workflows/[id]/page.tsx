@@ -8,8 +8,15 @@ const STEP_ICONS: Record<string, string> = {
   completed: "\u2713",
   running: "\u25C9",
   pending: "\u25CB",
-  waiting_for_approval: "\u23F8",
+  skipped: "\u2212",
   failed: "\u2717",
+};
+
+const STEP_LABELS: Record<string, string> = {
+  research: "Research",
+  "write-article": "Write article",
+  "editorial-review": "Editorial review",
+  publish: "Publish",
 };
 
 export default function WorkflowDetail(): React.JSX.Element {
@@ -66,14 +73,16 @@ export default function WorkflowDetail(): React.JSX.Element {
 
         {/* Steps */}
         <div className="space-y-4 mb-8">
-          {run.steps?.map((step: any) => (
+          {Object.entries(run.nodeStates).map(([nodeId, step]) => (
             <div
-              key={step.id}
+              key={nodeId}
               className="flex items-start gap-3 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-xl p-4"
             >
               <span className="text-lg mt-0.5">{STEP_ICONS[step.status] || "\u25CB"}</span>
               <div className="flex-1">
-                <p className="font-medium text-neutral-900 dark:text-white text-sm">{step.name}</p>
+                <p className="font-medium text-neutral-900 dark:text-white text-sm">
+                  {STEP_LABELS[nodeId] ?? nodeId}
+                </p>
                 {step.output && (
                   <p className="text-xs text-neutral-500 mt-1 line-clamp-2">
                     {typeof step.output === "string" ? step.output : JSON.stringify(step.output)}
@@ -96,6 +105,7 @@ export default function WorkflowDetail(): React.JSX.Element {
             </p>
             <div className="flex gap-3">
               <button
+                type="button"
                 onClick={() => handleApproval(pendingApprovals[0].id, true)}
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-emerald-500 text-white font-medium rounded-lg hover:bg-emerald-600 disabled:opacity-50 transition-colors text-sm"
@@ -103,6 +113,7 @@ export default function WorkflowDetail(): React.JSX.Element {
                 Approve
               </button>
               <button
+                type="button"
                 onClick={() => handleApproval(pendingApprovals[0].id, false)}
                 disabled={isSubmitting}
                 className="px-4 py-2 bg-white dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-neutral-700 dark:text-neutral-300 font-medium rounded-lg hover:bg-neutral-50 dark:hover:bg-neutral-700 disabled:opacity-50 transition-colors text-sm"

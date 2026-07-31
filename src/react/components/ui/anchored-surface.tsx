@@ -112,7 +112,7 @@ export function createAnchoredSurfaceParts() {
    * `ui` component does; refs pass as regular props on function components in
    * React 19). A child that drops `ref` leaves the surface unanchored —
    * `Floating` warns in that case instead of silently rendering nothing.
-  */
+   */
   function AnchoredTrigger(
     {
       children,

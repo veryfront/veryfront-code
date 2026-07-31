@@ -6,7 +6,6 @@ import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { delay } from "#std/async";
 
 function baseUrl(port: number): string {
   return `http://127.0.0.1:${port}`;
@@ -74,6 +73,7 @@ describe(
         }
       `,
             );
+            await writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
 
             const server = await context.createProductionServer();
             assertExists(server.port);
@@ -90,9 +90,6 @@ describe(
             assertEquals(b.status, 200);
             const bj = await b.json();
             assertEquals(bj.youSent.ok, true);
-
-            await writeTextFile(join(context.projectDir, "app", "page.mdx"), `# Hello World`);
-            await delay(50);
 
             const p = await fetch(`${url}/`);
             assertEquals(p.status, 200);

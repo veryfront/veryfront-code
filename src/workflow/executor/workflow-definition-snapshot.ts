@@ -20,6 +20,7 @@ import {
   parsePositiveDurationWithLabel,
   validateRetryConfig,
 } from "../types.ts";
+import { INTERNAL_DELAY_EVENT_NAME, INTERNAL_WAIT_KIND_FIELD } from "../timed-wait-state.ts";
 
 const DEFINITION_KEYS = new Set([
   "id",
@@ -54,6 +55,7 @@ const CONFIG_KEYS = {
     "payload",
     "approvers",
     "eventName",
+    INTERNAL_WAIT_KIND_FIELD,
   ]),
   subWorkflow: new Set([...COMMON_CONFIG_KEYS, "workflow", "input", "output"]),
   map: new Set([...COMMON_CONFIG_KEYS, "items", "processor", "concurrency"]),
@@ -815,6 +817,19 @@ function captureNodeConfig(
       if (waitType === "event" && eventName === undefined) {
         fail(`${label} event wait requires eventName`);
       }
+      const configuredWaitKind = fields.get(INTERNAL_WAIT_KIND_FIELD);
+      if (
+        configuredWaitKind !== undefined &&
+        configuredWaitKind !== "delay" && configuredWaitKind !== "event"
+      ) {
+        fail(`${label} ${INTERNAL_WAIT_KIND_FIELD} is invalid`);
+      }
+      if (
+        configuredWaitKind === "delay" &&
+        (waitType !== "event" || eventName !== INTERNAL_DELAY_EVENT_NAME)
+      ) {
+        fail(`${label} delay marker requires the reserved delay event name`);
+      }
       const payload = fields.get("payload");
       if (typeof payload === "function") assertFunction(payload, `${label} payload builder`);
       return Object.freeze({
@@ -830,6 +845,11 @@ function captureNodeConfig(
           requireNonEmpty: true,
         }),
         eventName,
+        ...(waitType === "event"
+          ? {
+            [INTERNAL_WAIT_KIND_FIELD]: configuredWaitKind === "delay" ? "delay" : "event",
+          }
+          : {}),
       }) as WorkflowNodeConfig;
     }
     case "subWorkflow": {

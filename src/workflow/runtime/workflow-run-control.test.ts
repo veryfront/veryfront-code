@@ -894,7 +894,7 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(persisted?.output, undefined);
   });
 
-  it("persists only public context and output", async () => {
+  it("keeps internal execution context while omitting framework fields from default output", async () => {
     const backend = new MemoryBackend();
     const run = { ...createRun("public-context"), status: "running" as const };
     await backend.createRun(run);
@@ -917,10 +917,10 @@ describe("workflow/runtime/workflow-run-control execute", () => {
     assertEquals(persisted.context, {
       input: {},
       env: { PUBLIC_VALUE: "kept" },
+      _tenant: { projectSlug: "private", token: "token", productionMode: false },
       finish: { ok: true },
     });
     assertEquals(persisted.output, {
-      env: { PUBLIC_VALUE: "kept" },
       finish: { ok: true },
     });
   });

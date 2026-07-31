@@ -35,6 +35,11 @@ import type { WorkflowBackend } from "../../backends/types.ts";
 import { MemoryBackend } from "../../backends/memory.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { branch, parallel, sequence, step } from "../../dsl/index.ts";
+import {
+  FRAMEWORK_CONTEXT_PROJECTION_KIND,
+  WORKFLOW_RUNTIME_STATE_VERSION,
+} from "../../runtime-state.ts";
+import { toPublicWorkflowContext } from "../../runtime/public-run.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 
@@ -523,6 +528,48 @@ describe("DAGExecutor", () => {
       assertEquals(result.context.shared, "second");
     });
 
+    it("keeps a deep-equal user replacement unowned across a sibling no-op", async () => {
+      const ownedValue = { input: { secret: true }, child: "same" };
+      const projectionExecutor = new MockStepExecutor(new Map(), (node, context) => {
+        if (node.id === "replacement") {
+          context.owned = structuredClone(context.owned);
+        }
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: projectionExecutor });
+      const result = await exec.execute(
+        [
+          {
+            id: "replacement",
+            dependsOn: [],
+            config: { type: "step", tool: "test" } as any,
+          },
+          { id: "no-op", dependsOn: [], config: { type: "step", tool: "test" } as any },
+        ],
+        createTestRun({
+          context: { input: {}, owned: ownedValue },
+          _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+          _workflowProjection: {
+            context: {
+              owned: [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: [] }],
+            },
+          },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(result._workflowProjection?.context.owned, undefined);
+      assertEquals(
+        toPublicWorkflowContext(result.context, result._workflowProjection?.context),
+        {
+          input: {},
+          owned: ownedValue,
+          replacement: "replacement",
+          "no-op": "no-op",
+        },
+      );
+    });
+
     it("does not let parallel or branch nodes restore stale sibling context", async () => {
       const staleExecutor = new MockStepExecutor(new Map(), (node, context) => {
         if (node.id === "writer") context.shared = "fresh";
@@ -556,6 +603,71 @@ describe("DAGExecutor", () => {
         const childId = config.type === "parallel" ? "compound/child" : "compound/then/child";
         assertEquals(result.context[childId], childId);
       }
+    });
+
+    it("materializes composite outputs from child deltas without framework context", async () => {
+      const userOutput = {
+        env: { visible: "user-owned" },
+        _tenant: { visible: "user-owned" },
+      };
+      const exec = new DAGExecutor({
+        stepExecutor: new MockStepExecutor(new Map(), (node) => ({
+          success: true,
+          output: { ...userOutput, nodeId: node.id },
+          executionTime: 1,
+        })),
+      });
+      const internalContext: WorkflowContext = {
+        input: {},
+        env: { SECRET: "project-secret" },
+        _tenant: {
+          projectSlug: "private-project",
+          token: "tenant-secret",
+          productionMode: false,
+        },
+        existing: "not-a-child-delta",
+      };
+
+      const parallelResult = await exec.execute(
+        [parallel("parallel", [step("child", { tool: "test" })])],
+        createTestRun({ context: structuredClone(internalContext) }),
+      );
+      const branchResult = await exec.execute(
+        [branch("branch", {
+          condition: () => true,
+          then: [step("child", { tool: "test" })],
+        })],
+        createTestRun({ context: structuredClone(internalContext) }),
+      );
+      const loopResult = await exec.execute(
+        [{
+          id: "loop",
+          config: {
+            type: "loop",
+            while: (_context: WorkflowContext, loop: LoopExecutionContext) => loop.iteration === 0,
+            steps: [step("child", { tool: "test" })],
+            maxIterations: 1,
+          },
+        }],
+        createTestRun({ context: structuredClone(internalContext) }),
+      );
+
+      assertEquals(parallelResult.nodeStates.parallel?.output, {
+        "parallel/child": { ...userOutput, nodeId: "parallel/child" },
+      });
+      assertEquals(branchResult.nodeStates.branch?.output, {
+        branch: "then",
+        result: {
+          "branch/then/child": { ...userOutput, nodeId: "branch/then/child" },
+        },
+      });
+      assertEquals(loopResult.nodeStates.loop?.output, {
+        exitReason: "maxIterations",
+        iterations: 1,
+        previousResults: [{
+          "loop/child": { ...userOutput, nodeId: "loop/child" },
+        }],
+      });
     });
 
     it("propagates top-level context deletions", async () => {
@@ -2212,7 +2324,13 @@ describe("DAGExecutor", () => {
     it("starts a fresh active timeout window after a durable wait", async () => {
       using time = new FakeTime();
       let conditionCalls = 0;
-      const exec = new DAGExecutor({ stepExecutor });
+      const timedStepExecutor = new MockStepExecutor(new Map(), async (node) => {
+        if (node.id === "after") {
+          await new Promise((resolve) => setTimeout(resolve, 4));
+        }
+        return { success: true, output: "done", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: timedStepExecutor });
       const nodes: WorkflowNode[] = [{
         id: "timed-resume-loop",
         config: {
@@ -2229,6 +2347,9 @@ describe("DAGExecutor", () => {
           steps: [{
             id: "approval",
             config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+          }, {
+            id: "after",
+            config: { type: "step", tool: "test" },
           }],
         },
       }];
@@ -2256,7 +2377,7 @@ describe("DAGExecutor", () => {
       const second = await secondExecution;
 
       assertEquals(second.completed, true);
-      assertEquals(conditionCalls, 2);
+      assertEquals(conditionCalls, 1);
     });
   });
 
@@ -2317,6 +2438,40 @@ describe("DAGExecutor", () => {
       const result = await executor.execute(nodes, createTestRun());
       assertEquals(result.completed, true);
       assertEquals((result.nodeStates["sub-out"]!.output as any).transformed, true);
+    });
+
+    it("projects a sub-workflow whose legal node ID is __proto__", async () => {
+      const result = await executor.execute(
+        [{
+          id: "__proto__",
+          config: {
+            type: "subWorkflow",
+            workflow: {
+              id: "prototype-safe-sub-workflow",
+              steps: [{ id: "child", config: { type: "step", tool: "test" } as any }],
+            },
+          },
+        }],
+        createTestRun({
+          _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+          _workflowProjection: { context: {} },
+        }),
+      );
+
+      assertEquals(result.completed, true);
+      assertEquals(Object.hasOwn(result.context, "__proto__"), true);
+      assertEquals(result._workflowProjection?.context["__proto__"], [{
+        kind: FRAMEWORK_CONTEXT_PROJECTION_KIND,
+        path: [],
+      }]);
+      const projected = toPublicWorkflowContext(
+        result.context,
+        result._workflowProjection?.context,
+      );
+      assertEquals(Object.hasOwn(projected, "__proto__"), true);
+      assertEquals(projected["__proto__"], {
+        "__proto__/child": { result: "__proto__/child" },
+      });
     });
   });
 
@@ -2386,6 +2541,16 @@ describe("DAGExecutor", () => {
       const run = createTestRun({
         id: "canonical-resume-run",
         workerId: "run-execution:resume-owner",
+        context: {
+          input: { topic: "test" },
+          owned: { input: { secret: true }, value: "keep" },
+        },
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        _workflowProjection: {
+          context: {
+            owned: [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: [] }],
+          },
+        },
       });
       const ownership = { runId: run.id, workerId: run.workerId! };
       const nodes: WorkflowNode[] = [{
@@ -2431,6 +2596,7 @@ describe("DAGExecutor", () => {
       assertEquals(firstResult.waiting, true);
       const resumeInfo = await checkpointManager.prepareResume(run.id, nodes);
       assertExists(resumeInfo);
+      assertEquals(resumeInfo.workflowProjection, run._workflowProjection);
 
       const resumedResult = await executor.execute(
         nodes,
@@ -2438,6 +2604,7 @@ describe("DAGExecutor", () => {
           ...run,
           context: resumeInfo.context,
           nodeStates: resumeInfo.nodeStates,
+          _workflowProjection: resumeInfo.workflowProjection,
         },
         resumeInfo.startFromNode,
         undefined,
@@ -3255,6 +3422,65 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["map-policy"]!.attempt, 2);
     });
 
+    it("keeps map admission and successful processor context across an immediate retry", async () => {
+      let itemCalls = 0;
+      let prepareRuns = 0;
+      let flakyRuns = 0;
+      const observedPrepare: unknown[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (child, context) => {
+        if (child.id === "retrying-map_0/then/prepare") {
+          prepareRuns++;
+          return { success: true, output: "prepared", executionTime: 1 };
+        }
+        observedPrepare.push(context["retrying-map_0/then/prepare"]);
+        flakyRuns++;
+        return flakyRuns === 1
+          ? { success: false, error: "retry map child", executionTime: 1 }
+          : { success: true, output: "recovered", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "retrying-map",
+        config: {
+          type: "map",
+          items: () => [++itemCalls === 1 ? "admitted" : "drifted"],
+          processor: {
+            id: "processor-branch",
+            config: {
+              type: "branch",
+              condition: () => true,
+              then: [
+                { id: "prepare", config: { type: "step", tool: "test" } },
+                { id: "flaky", config: { type: "step", tool: "test" } },
+              ],
+            },
+          },
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+        },
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(itemCalls, 1);
+      assertEquals(prepareRuns, 1);
+      assertEquals(flakyRuns, 2);
+      assertEquals(observedPrepare, ["prepared", "prepared"]);
+      assertEquals(result.nodeStates["retrying-map"]?.output, [{
+        branch: "then",
+        result: {
+          "retrying-map_0/then/prepare": "prepared",
+          "retrying-map_0/then/flaky": "recovered",
+        },
+      }]);
+    });
+
     it("applies timeout and retry to a loop node", async () => {
       let attempts = 0;
       const nodes: WorkflowNode[] = [{
@@ -3280,6 +3506,60 @@ describe("DAGExecutor", () => {
       assertEquals(result.nodeStates["loop-policy"]!.attempt, 2);
     });
 
+    it("does not re-evaluate an admitted loop iteration after its child fails", async () => {
+      let whileCalls = 0;
+      let stepsCalls = 0;
+      let prepareRuns = 0;
+      let flakyRuns = 0;
+      const observedPrepare: unknown[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (child, context) => {
+        if (child.id === "retrying-loop/prepare") {
+          prepareRuns++;
+          return { success: true, output: "prepared", executionTime: 1 };
+        }
+        observedPrepare.push(context["retrying-loop/prepare"]);
+        flakyRuns++;
+        return flakyRuns === 1
+          ? { success: false, error: "retry loop child", executionTime: 1 }
+          : { success: true, output: "recovered", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "retrying-loop",
+        config: {
+          type: "loop",
+          maxIterations: 1,
+          while: () => ++whileCalls === 1,
+          steps: () => {
+            stepsCalls++;
+            return [
+              { id: "prepare", config: { type: "step", tool: "test" } },
+              { id: "flaky", config: { type: "step", tool: "test" } },
+            ];
+          },
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+        },
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["retrying-loop"]?.attempt, 2);
+      assertEquals(whileCalls, 1);
+      assertEquals(stepsCalls, 1);
+      assertEquals(prepareRuns, 1);
+      assertEquals(flakyRuns, 2);
+      assertEquals(observedPrepare, ["prepared", "prepared"]);
+      assertEquals(result.context["retrying-loop/prepare"], "prepared");
+      assertEquals(result.context["retrying-loop/flaky"], "recovered");
+    });
+
     it("applies timeout and retry to a subworkflow node", async () => {
       let attempts = 0;
       const nodes: WorkflowNode[] = [{
@@ -3302,6 +3582,48 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, true);
       assertEquals(attempts, 2);
       assertEquals(result.nodeStates["subworkflow-policy"]!.attempt, 2);
+    });
+
+    it("retains successful child context across an immediate subworkflow retry", async () => {
+      let flakyAttempts = 0;
+      const observedPrepare: unknown[] = [];
+      const trackingExecutor = new MockStepExecutor(new Map(), (child, context) => {
+        if (child.id.endsWith("/prepare")) {
+          return { success: true, output: "prepared", executionTime: 1 };
+        }
+        observedPrepare.push(context["retrying-subworkflow/prepare"]);
+        flakyAttempts++;
+        return flakyAttempts === 1
+          ? { success: false, error: "retry flaky", executionTime: 1 }
+          : { success: true, output: "done", executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+      const nodes: WorkflowNode[] = [{
+        id: "retrying-subworkflow",
+        config: {
+          type: "subWorkflow",
+          workflow: {
+            id: "retrying-child",
+            steps: [
+              { id: "prepare", config: { type: "step", tool: "test" } },
+              { id: "flaky", config: { type: "step", tool: "test" } },
+            ],
+          },
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+        } as any,
+      }];
+
+      const result = await exec.execute(nodes, createTestRun());
+
+      assertEquals(result.completed, true);
+      assertEquals(result.nodeStates["retrying-subworkflow/prepare"]?.attempt, 1);
+      assertEquals(observedPrepare, ["prepared", "prepared"]);
     });
 
     it("detaches static exotic subworkflow input for every retry attempt", async () => {

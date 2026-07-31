@@ -1,5 +1,6 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { RunFilter } from "../types.ts";
+import type { WorkflowRunCursorFilter } from "./types.ts";
 import {
   DEFAULT_WORKFLOW_RUN_LIST_LIMIT,
   MAX_WORKFLOW_RUN_LIST_LIMIT,
@@ -22,6 +23,11 @@ export interface ResolvedRunDateBounds {
   createdBeforeMs?: number;
 }
 
+export interface ResolvedWorkflowRunCursorPage {
+  readonly limit: number;
+  readonly cursor?: { readonly createdAtMs: number; readonly runId: string };
+}
+
 const UTF8_ENCODER = new TextEncoder();
 
 /** Apply deterministic UTF-8 byte ordering across every backend. */
@@ -37,7 +43,10 @@ export function compareRunIdsDescending(left: string, right: string): number {
   return rightBytes.length - leftBytes.length;
 }
 
-function readDateMilliseconds(value: Date, field: "createdAfter" | "createdBefore"): number {
+function readDateMilliseconds(
+  value: Date,
+  field: "createdAfter" | "createdBefore" | "cursor createdAt",
+): number {
   let milliseconds: number;
   try {
     milliseconds = Date.prototype.getTime.call(value);
@@ -89,4 +98,28 @@ export function resolveRunListPage(filter: RunFilter): ResolvedRunListPage {
   }
 
   return { limit, offset };
+}
+
+/** Validate the bounded exclusive cursor contract shared by managed backends. */
+export function resolveWorkflowRunCursorPage(
+  filter: WorkflowRunCursorFilter,
+): ResolvedWorkflowRunCursorPage {
+  if (
+    !Number.isSafeInteger(filter.limit) || filter.limit < 1 ||
+    filter.limit > MAX_WORKFLOW_RUN_LIST_LIMIT
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `Workflow recovery page limit must be an integer between 1 and ${MAX_WORKFLOW_RUN_LIST_LIMIT}`,
+    });
+  }
+  if (!filter.cursor) return { limit: filter.limit };
+  if (typeof filter.cursor.runId !== "string" || filter.cursor.runId.length === 0) {
+    throw INVALID_ARGUMENT.create({ detail: "Workflow recovery cursor runId is invalid" });
+  }
+  const createdAtMs = readDateMilliseconds(filter.cursor.createdAt, "cursor createdAt");
+  return {
+    limit: filter.limit,
+    cursor: { createdAtMs, runId: filter.cursor.runId },
+  };
 }

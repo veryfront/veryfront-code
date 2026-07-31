@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
+import { parseWorkflowStartResponse, readWorkflowErrorDetail } from "./workflow-wire.ts";
 
 /** Options accepted by use workflow start. */
 export interface UseWorkflowStartOptions {
@@ -18,6 +19,21 @@ export interface UseWorkflowStartResult<TInput = unknown> {
   resetError: () => void;
 }
 
+interface WorkflowStartIdentity {
+  readonly workflowId: string;
+  readonly apiBase: string;
+  active: boolean;
+  pendingCount: number;
+  controllers: Set<AbortController>;
+}
+
+function workflowStartAbortError(cause?: unknown): Error {
+  if (cause instanceof Error && cause.name === "AbortError") return cause;
+  const error = new Error("Workflow start request became obsolete");
+  error.name = "AbortError";
+  return error;
+}
+
 /** React hook for workflow start. */
 export function useWorkflowStart<TInput = unknown>(
   options: UseWorkflowStartOptions,
@@ -27,52 +43,106 @@ export function useWorkflowStart<TInput = unknown>(
   const [isStarting, setIsStarting] = useState(false);
   const [lastRunId, setLastRunId] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
+  const committedIdentityRef = useRef<WorkflowStartIdentity | null>(null);
+  const identity = useMemo<WorkflowStartIdentity>(() => ({
+    workflowId,
+    apiBase,
+    active: false,
+    pendingCount: 0,
+    controllers: new Set(),
+  }), [apiBase, workflowId]);
+
+  useEffect(() => {
+    committedIdentityRef.current = identity;
+    identity.active = true;
+    identity.pendingCount = 0;
+    setIsStarting(false);
+    setLastRunId(null);
+    setError(null);
+
+    return () => {
+      identity.active = false;
+      identity.pendingCount = 0;
+      for (const controller of identity.controllers) controller.abort();
+      identity.controllers.clear();
+      if (committedIdentityRef.current === identity) committedIdentityRef.current = null;
+    };
+  }, [identity]);
 
   const start = useCallback(
     async (input: TInput): Promise<string> => {
+      if (!identity.active || committedIdentityRef.current !== identity) {
+        throw workflowStartAbortError();
+      }
+      const controller = new AbortController();
+      identity.controllers.add(controller);
+      identity.pendingCount += 1;
       setIsStarting(true);
       setError(null);
 
       try {
-        const response = await fetch(`${apiBase}/${workflowId}/start`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ input }),
-        });
+        const response = await fetch(
+          `${identity.apiBase}/${encodeURIComponent(identity.workflowId)}/start`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ input }),
+            signal: controller.signal,
+          },
+        );
 
         if (!response.ok) {
-          const errorData = (await response.json().catch(() => ({}))) as {
-            message?: string;
-          };
-
           throw REQUEST_ERROR.create({
-            detail: errorData.message ?? `Failed to start workflow: ${response.status}`,
+            detail: await readWorkflowErrorDetail(
+              response,
+              `Failed to start workflow: ${response.status}`,
+            ),
             status: response.status,
           });
         }
 
-        const data = (await response.json()) as { runId?: string; id?: string };
-        const runId = data.runId ?? data.id ?? "";
+        const runId = parseWorkflowStartResponse(await response.json());
+        if (
+          controller.signal.aborted || !identity.active ||
+          committedIdentityRef.current !== identity
+        ) {
+          throw workflowStartAbortError();
+        }
 
         setLastRunId(runId);
+        setError(null);
         onStart?.(runId);
 
         return runId;
       } catch (err) {
         const startError = err instanceof Error ? err : new Error(String(err));
+        const obsolete = controller.signal.aborted || !identity.active ||
+          committedIdentityRef.current !== identity || startError.name === "AbortError";
+        if (obsolete) throw workflowStartAbortError(startError);
         setError(startError);
         onError?.(startError);
         throw startError;
       } finally {
-        setIsStarting(false);
+        identity.controllers.delete(controller);
+        if (identity.active && committedIdentityRef.current === identity) {
+          identity.pendingCount = Math.max(0, identity.pendingCount - 1);
+          setIsStarting(identity.pendingCount > 0);
+        }
       }
     },
-    [apiBase, onError, onStart, workflowId],
+    [identity, onError, onStart],
   );
 
   const resetError = useCallback((): void => {
-    setError(null);
-  }, []);
+    if (identity.active && committedIdentityRef.current === identity) setError(null);
+  }, [identity]);
 
-  return { start, isStarting, lastRunId, error, resetError };
+  const ownsState = identity.active && committedIdentityRef.current === identity;
+  return {
+    start,
+    isStarting: ownsState ? isStarting : false,
+    lastRunId: ownsState ? lastRunId : null,
+    error: ownsState ? error : null,
+    resetError,
+  };
 }

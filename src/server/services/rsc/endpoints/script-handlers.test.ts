@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleClientScript, handleDomScript } from "./script-handlers.ts";
+import { createScriptHandlers, handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 
 /**
@@ -27,7 +27,11 @@ function createMockAdapter(
     },
     fs: {
       exists: () => Promise.resolve(false),
-      readFile: fsOverrides.readFile ?? (() => Promise.reject(new Error("path not found"))),
+      readFile: fsOverrides.readFile ??
+        (() =>
+          Promise.reject(
+            Object.assign(new Error("path not found"), { code: "ENOENT" }),
+          )),
       writeFile: () => Promise.resolve(),
       readDir: () => Promise.resolve([]),
       mkdir: () => Promise.resolve(),
@@ -49,14 +53,19 @@ function createMockAdapter(
 
 describe("script-handlers", () => {
   describe("handleClientScript", () => {
-    it("should not throw when source file is missing (compiled binary)", async () => {
-      // Simulates the compiled binary where client-boot.ts is not at the resolved path.
-      // The handler should return a response, not throw.
-      const adapter = createMockAdapter();
+    it("serves the generated first-party bundle without reading source", async () => {
+      let sourceReads = 0;
+      const adapter = createMockAdapter({
+        readFile: () => {
+          sourceReads++;
+          return Promise.reject(new Error("source should not be read"));
+        },
+      });
       const response = await handleClientScript(adapter);
+
       assertEquals(response.status, 200);
-      const contentType = response.headers.get("content-type");
-      assertStringIncludes(contentType ?? "", "javascript");
+      assertStringIncludes(response.headers.get("content-type") ?? "", "javascript");
+      assertEquals(sourceReads, 0);
     });
 
     it("should return JavaScript content-type", async () => {
@@ -74,17 +83,162 @@ describe("script-handlers", () => {
       assertStringIncludes(response.headers.get("cache-control") ?? "", "no-cache");
     });
 
-    it("should serve source when file exists and esbuild unavailable", async () => {
-      // When esbuild is not available but the file exists, it should
-      // still return a response (either the raw source or a fallback).
-      const adapter = createMockAdapter({
-        readFile: () => Promise.resolve("const boot = () => {}; boot();"),
+    it("uses the explicitly loaded Bundler extension for a development build", async () => {
+      const handlers = createScriptHandlers({
+        clientBundle: "",
+        loadBundler: () =>
+          Promise.resolve(
+            {
+              build: () =>
+                Promise.resolve({
+                  outputFiles: [{ text: 'console.log("bundled")' }],
+                }),
+            } as unknown as typeof import("veryfront/extensions/bundler"),
+          ),
       });
-      const response = await handleClientScript(adapter);
+      const adapter = createMockAdapter({
+        readFile: () => Promise.resolve("const boot: boolean = true;"),
+      });
+      const response = await handlers.handleClientScript(adapter);
+
       assertEquals(response.status, 200);
+      assertEquals(await response.text(), 'console.log("bundled")');
+      assertStringIncludes(response.headers.get("content-type") ?? "", "javascript");
+    });
+
+    it("returns a no-store 404 when development source is genuinely missing", async () => {
+      const handlers = createScriptHandlers({ clientBundle: "" });
+      const response = await handlers.handleClientScript(createMockAdapter());
+
+      assertEquals(response.status, 404);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(await response.text(), "Not Found");
+    });
+
+    it("sanitizes operational source read failures as no-store 500", async () => {
+      const handlers = createScriptHandlers({ clientBundle: "" });
+      const adapter = createMockAdapter({
+        readFile: () => Promise.reject(new Error("storage credential leaked")),
+      });
+      const response = await handlers.handleClientScript(adapter);
       const body = await response.text();
-      // Should contain something (either bundled output or raw source)
-      assertEquals(body.length > 0, true);
+
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(body, "Internal Server Error");
+      assertEquals(body.includes("credential"), false);
+      assertEquals(body.includes("source not available"), false);
+    });
+
+    it("does not serve raw TypeScript when Bundler loading fails", async () => {
+      let sourceReads = 0;
+      const handlers = createScriptHandlers({
+        clientBundle: "",
+        loadBundler: () => Promise.reject(new Error("extension import secret")),
+      });
+      const adapter = createMockAdapter({
+        readFile: () => {
+          sourceReads++;
+          return Promise.resolve("const typed: string = 'raw secret';");
+        },
+      });
+      const response = await handlers.handleClientScript(adapter);
+      const body = await response.text();
+
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(response.headers.get("content-type"), "text/plain; charset=utf-8");
+      assertEquals(body, "Internal Server Error");
+      assertEquals(sourceReads, 1);
+      assertEquals(body.includes("raw secret"), false);
+      assertEquals(body.includes("extension import secret"), false);
+    });
+
+    it("does not serve raw TypeScript when the Bundler build rejects", async () => {
+      let stopped = 0;
+      const handlers = createScriptHandlers({
+        clientBundle: "",
+        loadBundler: () =>
+          Promise.resolve(
+            {
+              build: () => Promise.reject(new Error("build internals leaked")),
+              stop: () => {
+                stopped++;
+                return Promise.resolve();
+              },
+            } as unknown as typeof import("veryfront/extensions/bundler"),
+          ),
+      });
+      const response = await handlers.handleClientScript(
+        createMockAdapter({
+          readFile: () => Promise.resolve("const typed: string = 'raw secret';"),
+        }),
+      );
+      const body = await response.text();
+
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(body, "Internal Server Error");
+      assertEquals(body.includes("raw secret"), false);
+      assertEquals(body.includes("build internals"), false);
+      assertEquals(stopped, 1);
+    });
+
+    it("keeps dependencies isolated across concurrently used handler instances", async () => {
+      const first = createScriptHandlers({ clientBundle: 'console.log("first")' });
+      const second = createScriptHandlers({ clientBundle: 'console.log("second")' });
+
+      const [firstResponse, secondResponse] = await Promise.all([
+        first.handleClientScript(createMockAdapter()),
+        second.handleClientScript(createMockAdapter()),
+      ]);
+
+      assertEquals(await firstResponse.text(), 'console.log("first")');
+      assertEquals(await secondResponse.text(), 'console.log("second")');
+    });
+
+    it("decodes file-URL paths before reading development source", async () => {
+      let sourcePath = "";
+      const handlers = createScriptHandlers({
+        clientBundle: "",
+        moduleUrl:
+          "file:///workspace%20source/src/server/services/rsc/endpoints/script-handlers.ts",
+      });
+      const response = await handlers.handleClientScript(
+        createMockAdapter({
+          readFile: (path) => {
+            sourcePath = path;
+            return Promise.reject(
+              Object.assign(new Error("path not found"), { code: "ENOENT" }),
+            );
+          },
+        }),
+      );
+
+      assertEquals(response.status, 404);
+      assertEquals(sourcePath, "/workspace source/src/rendering/rsc/client-boot.ts");
+    });
+
+    it("converts Windows file URLs with the platform path converter", async () => {
+      if (Deno.build.os !== "windows") return;
+
+      let sourcePath = "";
+      const handlers = createScriptHandlers({
+        clientBundle: "",
+        moduleUrl: "file:///C:/workspace/src/server/services/rsc/endpoints/script-handlers.ts",
+      });
+      await handlers.handleClientScript(
+        createMockAdapter({
+          readFile: (path) => {
+            sourcePath = path;
+            return Promise.reject(
+              Object.assign(new Error("path not found"), { code: "ENOENT" }),
+            );
+          },
+        }),
+      );
+
+      assertEquals(sourcePath, String.raw`C:\workspace\src\rendering\rsc\client-boot.ts`);
     });
 
     it("does not embed unsafe eval in the compiled fallback bundle", async () => {

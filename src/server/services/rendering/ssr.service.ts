@@ -8,7 +8,7 @@ import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
 import type { SSRFailureOutcome } from "#veryfront/rendering/ssr-outcome.ts";
-import { findSSRControlOutcome, resolveSSRFailure } from "#veryfront/rendering/ssr-outcome.ts";
+import { resolveSSRFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
   abortRenderSession,
@@ -326,9 +326,24 @@ export class SSRService implements SSRServiceLike {
           try {
             await allReady;
           } catch (error) {
-            if (findSSRControlOutcome(error)) {
-              return this.handleRenderError(error, ctx, slug, request, nonce);
+            try {
+              const cancellation = result.stream?.cancel(error);
+              // Cancellation is cleanup, not part of producing the sanitized
+              // error response. Observe late rejection without allowing a
+              // stalled underlying stream to hold the request open forever.
+              void cancellation?.catch((cancelError) => {
+                logger.debug("Failed to cancel rejected SSR stream", {
+                  slug,
+                  error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+                });
+              });
+            } catch (cancelError) {
+              logger.debug("Failed to cancel rejected SSR stream", {
+                slug,
+                error: cancelError instanceof Error ? cancelError.message : String(cancelError),
+              });
             }
+            return this.handleRenderError(error, ctx, slug, request, nonce);
           }
         }
       }

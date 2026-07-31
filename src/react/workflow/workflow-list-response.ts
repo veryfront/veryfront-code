@@ -1,5 +1,9 @@
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { WorkflowRun } from "#veryfront/workflow/types.ts";
+import { parseWorkflowRunResponse, snapshotWorkflowJson } from "./workflow-wire.ts";
+
+const MAX_WORKFLOW_RUN_LIST_ITEMS = 1_000;
+const MAX_WORKFLOW_RUN_LIST_CURSOR_LENGTH = 256 * 1024;
 
 /** A validated response from the workflow run-list endpoint. */
 export interface WorkflowListResponse {
@@ -37,13 +41,18 @@ export function parseWorkflowListResponse(value: unknown): WorkflowListResponse 
   }
 
   const runs = readDataProperty(value, "runs");
-  if (!Array.isArray(runs)) {
-    invalidResponse("runs must be an array");
+  if (!Array.isArray(runs) || runs.length > MAX_WORKFLOW_RUN_LIST_ITEMS) {
+    invalidResponse("runs must be a bounded array");
   }
+  const capturedRuns = snapshotWorkflowJson(runs, "workflow run list");
+  if (!Array.isArray(capturedRuns)) invalidResponse("runs must be an array");
 
   const cursor = readDataProperty(value, "cursor");
-  if (cursor !== undefined && typeof cursor !== "string") {
-    invalidResponse("cursor must be a string when present");
+  if (
+    cursor !== undefined &&
+    (typeof cursor !== "string" || cursor.length > MAX_WORKFLOW_RUN_LIST_CURSOR_LENGTH)
+  ) {
+    invalidResponse("cursor must be a bounded string when present");
   }
 
   const totalCount = readDataProperty(value, "totalCount");
@@ -55,7 +64,7 @@ export function parseWorkflowListResponse(value: unknown): WorkflowListResponse 
   }
 
   return {
-    runs: runs.slice() as WorkflowRun[],
+    runs: capturedRuns.map((run) => parseWorkflowRunResponse(run)),
     ...(cursor === undefined ? {} : { cursor }),
     ...(totalCount === undefined ? {} : { totalCount }),
   };

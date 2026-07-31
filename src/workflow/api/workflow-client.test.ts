@@ -564,14 +564,159 @@ describe("WorkflowClient", () => {
       );
 
       const output = await handle.result();
-      const run = await backend.getRun(handle.runId);
+      const run = await client.getRun(handle.runId);
+      const internalRun = await backend.getRun(handle.runId);
 
       assertExists(run);
-      assertEquals(run._tenant?.token, "internal-runtime-token");
+      assertExists(internalRun);
+      assertEquals(internalRun._tenant?.token, "internal-runtime-token");
+      assertEquals(internalRun.context._tenant?.token, "internal-runtime-token");
+      assertEquals(run._tenant, undefined);
       assertEquals((output as Record<string, unknown>)["_tenant"], undefined);
       assertEquals((run.output as Record<string, unknown>)["_tenant"], undefined);
       assertEquals((run.context as Record<string, unknown>)["_tenant"], undefined);
       assertEquals(run.output, { "tenant-step": { result: "ok" } });
+    });
+
+    it("projects framework metadata from handles, callbacks, and every client run read", async () => {
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      const sensitiveBackend = new MemoryBackend();
+      let startCallbackRun: WorkflowRun | undefined;
+      let completeCallbackRun: WorkflowRun | undefined;
+      let workflowCallbackContext: WorkflowRun["context"] | undefined;
+      const sensitiveClient = createWorkflowClient({
+        backend: sensitiveBackend,
+        executor: {
+          onStart: (run) => {
+            startCallbackRun = run;
+          },
+          onComplete: (run) => {
+            completeCallbackRun = run;
+          },
+        },
+      });
+      const nestedUserOutput = {
+        env: { visible: "user-owned" },
+        _tenant: { visible: "user-owned" },
+      };
+      sensitiveClient.register(
+        workflow({
+          id: "public-run-projection",
+          steps: [
+            step("safe-step", {
+              checkpoint: true,
+              tool: createMockTool("safe-tool", nestedUserOutput),
+            }),
+          ],
+          onComplete: (_result, context) => {
+            workflowCallbackContext = context;
+          },
+        }),
+      );
+
+      try {
+        Deno.env.set(
+          "VERYFRONT_TASK_ENV_JSON",
+          JSON.stringify({ PROJECT_SECRET: "project-secret" }),
+        );
+        const handle = await runWithRequestContext(
+          {
+            projectSlug: "private-project",
+            projectId: "project-1",
+            token: "tenant-secret",
+            productionMode: false,
+            branch: "preview-branch",
+          },
+          () => sensitiveClient.start("public-run-projection", {}),
+        );
+
+        await handle.settled();
+        await sensitiveBackend.updateRun(handle.runId, {
+          output: {
+            input: {},
+            env: { PROJECT_SECRET: "historical-project-secret" },
+            _tenant: { token: "historical-tenant-secret" },
+            "safe-step": nestedUserOutput,
+          },
+        });
+        const output = await handle.result();
+        const rawCheckpoint = await sensitiveBackend.getLatestCheckpoint(handle.runId);
+        assertExists(rawCheckpoint);
+        const internalRun = await sensitiveBackend.getRun(handle.runId);
+        assertExists(internalRun);
+        await sensitiveBackend.createRun({
+          ...internalRun,
+          id: "embedded-checkpoint-public-projection",
+          checkpoints: [rawCheckpoint],
+          createdAt: new Date(),
+        });
+
+        const publicRuns = [
+          await handle.status(),
+          await sensitiveClient.getRun(handle.runId),
+          (await sensitiveClient.listRuns()).find((run) => run.id === handle.runId),
+          (await sensitiveClient.getRunsByStatus("completed")).find((run) =>
+            run.id === handle.runId
+          ),
+          (await sensitiveClient.getRunsForWorkflow("public-run-projection")).find((run) =>
+            run.id === handle.runId
+          ),
+        ];
+        const expectedOutput = { "safe-step": nestedUserOutput };
+
+        assertEquals(output, expectedOutput);
+        for (const publicRun of publicRuns) {
+          assertExists(publicRun);
+          assertEquals(publicRun._tenant, undefined);
+          assertEquals(publicRun.context.env, undefined);
+          assertEquals(publicRun.context._tenant, undefined);
+          assertEquals(publicRun.output, expectedOutput);
+        }
+
+        const publicCheckpointRun = await sensitiveClient.getRun(
+          "embedded-checkpoint-public-projection",
+        );
+        assertExists(publicCheckpointRun);
+        assertEquals(publicCheckpointRun.checkpoints[0]?.context.env, undefined);
+        assertEquals(publicCheckpointRun.checkpoints[0]?.context._tenant, undefined);
+        assertEquals(publicCheckpointRun.checkpoints[0]?.context["safe-step"], nestedUserOutput);
+
+        assertExists(startCallbackRun);
+        assertEquals(startCallbackRun._tenant, undefined);
+        assertEquals(startCallbackRun.context.env, undefined);
+        assertEquals(startCallbackRun.context._tenant, undefined);
+        assertExists(completeCallbackRun);
+        assertEquals(completeCallbackRun._tenant, undefined);
+        assertEquals(completeCallbackRun.context.env, undefined);
+        assertEquals(completeCallbackRun.context._tenant, undefined);
+        assertExists(workflowCallbackContext);
+        assertEquals(workflowCallbackContext.env, undefined);
+        assertEquals(workflowCallbackContext._tenant, undefined);
+        assertEquals(workflowCallbackContext["safe-step"], nestedUserOutput);
+
+        assertEquals(internalRun._tenant?.token, "tenant-secret");
+        assertEquals(internalRun.context.env, { PROJECT_SECRET: "project-secret" });
+        assertEquals((internalRun.output as Record<string, unknown>).env, {
+          PROJECT_SECRET: "historical-project-secret",
+        });
+        assertEquals(rawCheckpoint.context.env, { PROJECT_SECRET: "project-secret" });
+        assertEquals(rawCheckpoint.context._tenant, {
+          projectSlug: "private-project",
+          token: "tenant-secret",
+          projectId: "project-1",
+          productionMode: false,
+          releaseId: null,
+          branch: "preview-branch",
+          environmentName: null,
+        });
+      } finally {
+        if (originalTaskEnvJson === undefined) {
+          Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+        } else {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+        }
+        await sensitiveClient.destroy();
+      }
     });
 
     it("passes captured tenant metadata to workflow tool execution context", async () => {

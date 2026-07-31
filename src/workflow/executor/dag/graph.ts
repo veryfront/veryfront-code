@@ -92,12 +92,19 @@ export function buildGraph(nodes: WorkflowNode[]): DAGGraph {
 export function getReadyNodes(
   inDegree: Map<string, number>,
   nodeStates: Record<string, NodeState>,
+  reentrantRunningNodes: ReadonlySet<string> = new Set(),
 ): string[] {
   const ready: string[] = [];
 
   for (const [nodeId, degree] of inDegree) {
     const state = getOwnRecordValue(nodeStates, nodeId);
-    if (degree === 0 && (!state || state.status === "pending" || state.status === "failed")) {
+    if (
+      degree === 0 &&
+      (
+        !state || state.status === "pending" || state.status === "failed" ||
+        (state.status === "running" && reentrantRunningNodes.has(nodeId))
+      )
+    ) {
       ready.push(nodeId);
     }
   }

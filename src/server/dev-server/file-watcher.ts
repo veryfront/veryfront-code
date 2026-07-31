@@ -6,6 +6,8 @@ const logger = serverLogger.component("hmr");
 export class OptimizedFileWatcher {
   private readonly changeQueue = new Set<string>();
   private debounceTimer?: ReturnType<typeof setTimeout>;
+  private processingTail: Promise<void> = Promise.resolve();
+  private closed = false;
   private readonly metrics = {
     totalEvents: 0,
     batchedOperations: 0,
@@ -19,6 +21,8 @@ export class OptimizedFileWatcher {
   ) {}
 
   handleChange(paths: string[]): void {
+    if (this.closed) return;
+
     this.metrics.totalEvents += paths.length;
 
     for (const path of paths) {
@@ -29,12 +33,17 @@ export class OptimizedFileWatcher {
   }
 
   private debounceChanges(): void {
+    if (this.closed) return;
+
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
     }
 
     this.debounceTimer = setTimeout(() => {
-      void this.processChanges();
+      this.debounceTimer = undefined;
+      if (this.closed) return;
+
+      this.processingTail = this.processingTail.then(() => this.processChanges());
     }, this.debounceMs);
   }
 
@@ -68,13 +77,16 @@ export class OptimizedFileWatcher {
     }
   }
 
-  cleanup(): void {
+  async cleanup(): Promise<void> {
+    this.closed = true;
+
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = undefined;
     }
 
     this.changeQueue.clear();
+    await this.processingTail;
   }
 
   getMetrics(): FileWatcherMetrics {

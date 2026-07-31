@@ -183,3 +183,107 @@ export type ChatReactBarrelContracts = [
   ChatUseConversationsPersistenceState,
   ChatUseConversationsResult,
 ];
+
+type CompoundChatRuntimeExport =
+  | "AgentAvatar"
+  | "ChatEmptyState"
+  | "ChatMessagesSkeleton"
+  | "SkillBadge"
+  | "SourcePill"
+  | "isSkillToolPart"
+  | "useAttachmentPill"
+  | "useAttachments"
+  | "useAttachmentsPanel"
+  | "useModelSelector"
+  | "useSources"
+  | "useStepIndicator"
+  | "useStickToBottom"
+  | "useUpload"
+  | "useUploadsRegistry";
+
+type ContainsRuntimeExports<TModule, TName extends PropertyKey> =
+  Exclude<TName, keyof TModule> extends never ? true : never;
+
+const compoundRuntimeParity: [
+  ContainsRuntimeExports<typeof import("./public.ts"), CompoundChatRuntimeExport>,
+  ContainsRuntimeExports<
+    typeof import("./components/chat/index.ts"),
+    CompoundChatRuntimeExport
+  >,
+] = [true, true];
+
+void compoundRuntimeParity;
+
+export type CompoundChatPublicTypeContracts = [
+  import("./public.ts").AgentAvatarProps,
+  import("./public.ts").AttachmentPillContextValue,
+  import("./public.ts").AttachmentsPanelActionProps,
+  import("./public.ts").AttachmentsPanelContextValue,
+  import("./public.ts").AttachmentsPanelEmptyProps,
+  import("./public.ts").AttachmentsPanelHeaderProps,
+  import("./public.ts").AttachmentsPanelItemProps,
+  import("./public.ts").AttachmentsPanelListProps,
+  import("./public.ts").AttachmentsPanelLoadingProps,
+  import("./public.ts").ChatEmptyStateAvatarProps,
+  import("./public.ts").ChatEmptyStateHeadingProps,
+  import("./public.ts").ChatEmptyStateRootProps,
+  import("./public.ts").ChatEmptyStateSuggestionProps,
+  import("./public.ts").ChatEmptyStateSuggestionsProps,
+  import("./public.ts").ChatMessagesSkeletonProps,
+  import("./public.ts").ModelSelectorContentProps,
+  import("./public.ts").ModelSelectorContextValue,
+  import("./public.ts").ModelSelectorItemProps,
+  import("./public.ts").ModelSelectorTriggerProps,
+  import("./public.ts").SkillBadgeProps,
+  import("./public.ts").SourcePillProps,
+  import("./public.ts").SourcesContextValue,
+  import("./public.ts").SourcesListProps,
+  import("./public.ts").StepIndicatorContextValue,
+  import("./public.ts").UseAttachmentsOptions,
+  import("./public.ts").UseAttachmentsRequestState,
+  import("./public.ts").UseAttachmentsResult,
+  import("./public.ts").UseAttachmentsStorageState,
+  import("./public.ts").UseStickToBottomOptions,
+  import("./public.ts").UseStickToBottomResult<HTMLElement>,
+  import("./public.ts").UseUploadOptions,
+  import("./public.ts").UseUploadResult,
+  import("./public.ts").UseUploadsRegistryOptions,
+  import("./public.ts").UseUploadsRegistryResult,
+];
+
+export type CompoundChatComponentTypeContracts = [
+  import("./components/chat/index.ts").AgentAvatarProps,
+  import("./components/chat/index.ts").AttachmentPillContextValue,
+  import("./components/chat/index.ts").AttachmentsPanelActionProps,
+  import("./components/chat/index.ts").AttachmentsPanelContextValue,
+  import("./components/chat/index.ts").AttachmentsPanelEmptyProps,
+  import("./components/chat/index.ts").AttachmentsPanelHeaderProps,
+  import("./components/chat/index.ts").AttachmentsPanelItemProps,
+  import("./components/chat/index.ts").AttachmentsPanelListProps,
+  import("./components/chat/index.ts").AttachmentsPanelLoadingProps,
+  import("./components/chat/index.ts").ChatEmptyStateAvatarProps,
+  import("./components/chat/index.ts").ChatEmptyStateHeadingProps,
+  import("./components/chat/index.ts").ChatEmptyStateRootProps,
+  import("./components/chat/index.ts").ChatEmptyStateSuggestionProps,
+  import("./components/chat/index.ts").ChatEmptyStateSuggestionsProps,
+  import("./components/chat/index.ts").ChatMessagesSkeletonProps,
+  import("./components/chat/index.ts").ModelSelectorContentProps,
+  import("./components/chat/index.ts").ModelSelectorContextValue,
+  import("./components/chat/index.ts").ModelSelectorItemProps,
+  import("./components/chat/index.ts").ModelSelectorTriggerProps,
+  import("./components/chat/index.ts").SkillBadgeProps,
+  import("./components/chat/index.ts").SourcePillProps,
+  import("./components/chat/index.ts").SourcesContextValue,
+  import("./components/chat/index.ts").SourcesListProps,
+  import("./components/chat/index.ts").StepIndicatorContextValue,
+  import("./components/chat/index.ts").UseAttachmentsOptions,
+  import("./components/chat/index.ts").UseAttachmentsRequestState,
+  import("./components/chat/index.ts").UseAttachmentsResult,
+  import("./components/chat/index.ts").UseAttachmentsStorageState,
+  import("./components/chat/index.ts").UseStickToBottomOptions,
+  import("./components/chat/index.ts").UseStickToBottomResult<HTMLElement>,
+  import("./components/chat/index.ts").UseUploadOptions,
+  import("./components/chat/index.ts").UseUploadResult,
+  import("./components/chat/index.ts").UseUploadsRegistryOptions,
+  import("./components/chat/index.ts").UseUploadsRegistryResult,
+];
