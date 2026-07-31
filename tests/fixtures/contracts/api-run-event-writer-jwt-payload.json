@@ -1,5 +1,5 @@
 {
-  "contractId": "veryfront.run-event-writer.jwt-payload.v1",
+  "contractId": "veryfront.run-event-writer.jwt-payload.v2",
   "producer": "veryfront-api/src/usecases/agent-runs/run-event-writer-token.ts",
   "serviceIdentity": "veryfront-server",
   "payloadSha256": "7b2984cbb583ffe6c524de2657b667fb4f76b501d76f4dbb0a16739ae67de339",

@@ -74,6 +74,7 @@ export type HostedServiceProjectAccessResult =
 /** Configuration used by hosted service auth. */
 export type HostedServiceAuthConfig = {
   OAUTH_PUBLIC_KEY?: string | null;
+  SERVICE_ACCOUNT_VERYFRONT_SERVER_ID?: string | null;
   NODE_ENV?: string | null;
   VERYFRONT_API_URL: string;
 };
@@ -408,7 +409,7 @@ export function createHostedServiceAuth(
   ): Promise<boolean> {
     return await trace("auth.verifyRunEventAppendToken", async () => {
       const config = options.getConfig();
-      if (!config.OAUTH_PUBLIC_KEY) {
+      if (!config.OAUTH_PUBLIC_KEY || !config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID) {
         return false;
       }
 
@@ -428,6 +429,7 @@ export function createHostedServiceAuth(
           payload.tokenUse === RUN_EVENT_WRITER_TOKEN_USE &&
           typeof payload.serviceAccountId === "string" &&
           payload.userId === payload.serviceAccountId &&
+          payload.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
           payload.projectId === input.projectId &&
           payload.runId === input.runId &&
           hasExactRunEventWriterScopes(payload.scopes);

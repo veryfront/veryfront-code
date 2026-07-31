@@ -231,13 +231,14 @@ describe("agent/agent-service-auth", () => {
   });
 
   it("accepts only the dedicated writer claims for exactly one project and run", async () => {
-    assertEquals(apiRunEventWriterContract.contractId, "veryfront.run-event-writer.jwt-payload.v1");
+    assertEquals(apiRunEventWriterContract.contractId, "veryfront.run-event-writer.jwt-payload.v2");
     assertEquals(apiRunEventWriterContract.serviceIdentity, "veryfront-server");
     const fixture = await createRs256JwtFixture(apiRunEventWriterContract.payload);
     const auth = createHostedServiceAuth({
       authProvider: webCryptoAuthProvider,
       getConfig: () => ({
         OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: apiRunEventWriterContract.payload.serviceAccountId,
         NODE_ENV: "production",
         VERYFRONT_API_URL: "https://api.example.test",
       }),
@@ -302,6 +303,11 @@ describe("agent/agent-service-auth", () => {
         ...exactWriterClaims,
         userId: "another-service-account",
       },
+      {
+        ...exactWriterClaims,
+        userId: "22222222-2222-4222-8222-222222222222",
+        serviceAccountId: "22222222-2222-4222-8222-222222222222",
+      },
       { ...exactWriterClaims, projectId: "project_other" },
       { ...exactWriterClaims, runId: "run_other" },
       { ...exactWriterClaims, scope: exactWriterClaims.scopes, scopes: undefined },
@@ -316,6 +322,7 @@ describe("agent/agent-service-auth", () => {
         authProvider: webCryptoAuthProvider,
         getConfig: () => ({
           OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+          SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: exactWriterClaims.serviceAccountId,
           NODE_ENV: "production",
           VERYFRONT_API_URL: "https://api.example.test",
         }),

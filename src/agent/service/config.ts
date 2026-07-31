@@ -40,6 +40,7 @@ export type AgentServiceConfig = {
   NODE_ENV: "development" | "test" | "production";
   PORT: number;
   OAUTH_PUBLIC_KEY?: string;
+  SERVICE_ACCOUNT_VERYFRONT_SERVER_ID?: string;
   ALLOWED_ORIGINS: string[];
   OTEL_ENABLED: boolean;
   OTEL_EXPORTER_OTLP_ENDPOINT?: string;
@@ -74,6 +75,7 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     NODE_ENV: v.enum(["development", "test", "production"] as const).default("development"),
     PORT: v.coerce.number().default(3001),
     OAUTH_PUBLIC_KEY: v.string().optional(),
+    SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: v.string().min(1).optional(),
     VERYFRONT_STUDIO_MCP_URL: v.string().default(""),
     VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: booleanFlagSchema,
     VERYFRONT_ENABLE_DURABLE_TASK: booleanFlagSchema,
@@ -130,6 +132,7 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     NODE_ENV: env.NODE_ENV,
     PORT: env.PORT,
     OAUTH_PUBLIC_KEY: env.OAUTH_PUBLIC_KEY,
+    SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: env.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID,
     ALLOWED_ORIGINS: splitAllowedOrigins(env.ALLOWED_ORIGINS),
     OTEL_ENABLED: env.OTEL_ENABLED,
     OTEL_EXPORTER_OTLP_ENDPOINT: env.OTEL_EXPORTER_OTLP_ENDPOINT,
