@@ -8,7 +8,6 @@ order: 32
 
 ```ts
 import {
-  buildSkillManifestPrompt,
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
   createLoadSkillTool,
@@ -46,7 +45,6 @@ validateSkillMetadata(parsed.frontmatter, "review");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `buildSkillManifestPrompt` | Build the skill manifest prompt section for an agent's system prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L23) |
 | `createExecuteSkillScriptTool` | Create the execute_skill_script tool. Executes a script from a skill's scripts/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L328) |
 | `createLoadSkillReferenceTool` | Create the load_skill_reference tool. Reads a reference file from a skill's references/, resources/, or assets/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L291) |
 | `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L235) |
