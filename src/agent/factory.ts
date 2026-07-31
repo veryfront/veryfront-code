@@ -4,10 +4,8 @@ import type {
   AgentMiddleware,
   AgentResponse,
   AgentStreamResult,
-  AgentToolLoadingBenchmarkObservation,
   Message,
   ResolvedAgentConfig,
-  ToolLoading,
 } from "./types.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import { isRuntimeLocalTool } from "./runtime/local-tool.ts";
@@ -58,42 +56,6 @@ const getAgentRespondRequestSchema = defineSchema((v) =>
     maxOutputTokens: v.number().int().positive().optional(),
   })
 );
-
-type AgentGenerateInput = Parameters<Agent["generate"]>[0];
-
-type AgentToolLoadingBenchmarkControls = {
-  toolLoading?: ToolLoading;
-  observer?: (observation: AgentToolLoadingBenchmarkObservation) => void;
-};
-
-const toolLoadingBenchmarkRunners = new WeakMap<
-  Agent,
-  (
-    input: AgentGenerateInput,
-    controls: AgentToolLoadingBenchmarkControls,
-  ) => Promise<AgentResponse>
->();
-
-/**
- * Run one factory-created agent with eval-only tool-loading controls.
- *
- * @internal This direct-module adapter is intentionally excluded from the
- * public `veryfront/agent` barrel and hosted request contracts.
- */
-export function runAgentToolLoadingBenchmark(
-  assistant: Agent,
-  input: AgentGenerateInput,
-  controls: AgentToolLoadingBenchmarkControls,
-): Promise<AgentResponse> {
-  const runner = toolLoadingBenchmarkRunners.get(assistant);
-  if (!runner) {
-    throw INVALID_ARGUMENT.create({
-      detail:
-        "Tool-loading benchmark agent is not registered. Pass the exact Agent instance returned by agent().",
-    });
-  }
-  return runner(input, controls);
-}
 
 async function parseAgentRespondRequest(request: Request) {
   let data: unknown;
@@ -292,35 +254,6 @@ export function agent(config: AgentConfig): Agent {
     middleware: resolvedMiddleware,
   });
 
-  const generate = (
-    input: AgentGenerateInput,
-    benchmarkControls?: AgentToolLoadingBenchmarkControls,
-  ): Promise<AgentResponse> =>
-    withSpan(
-      "agent.factory.generate",
-      () => {
-        const skillSnapshot = resolveSkillSnapshot();
-        return runtime.generate(
-          input.input,
-          withAllowedSkillIdsContext(
-            input.context,
-            skillSnapshot.allowedSkillIds,
-            shouldAttachAllowedSkillIds,
-          ),
-          input.model,
-          input.maxOutputTokens,
-          input.abortSignal,
-          {
-            toolReplacements: input.tools,
-            retainSkillLoaderTools: input.retainSkillLoaderTools,
-            toolLoadingOverride: benchmarkControls?.toolLoading,
-            toolLoadingBenchmarkObserver: benchmarkControls?.observer,
-          },
-        );
-      },
-      { "agent.id": id },
-    );
-
   const agentInstance: Agent = {
     id,
     config: {
@@ -329,7 +262,28 @@ export function agent(config: AgentConfig): Agent {
     },
 
     generate(input): Promise<AgentResponse> {
-      return generate(input);
+      return withSpan(
+        "agent.factory.generate",
+        () => {
+          const skillSnapshot = resolveSkillSnapshot();
+          return runtime.generate(
+            input.input,
+            withAllowedSkillIdsContext(
+              input.context,
+              skillSnapshot.allowedSkillIds,
+              shouldAttachAllowedSkillIds,
+            ),
+            input.model,
+            input.maxOutputTokens,
+            input.abortSignal,
+            {
+              toolReplacements: input.tools,
+              retainSkillLoaderTools: input.retainSkillLoaderTools,
+            },
+          );
+        },
+        { "agent.id": id },
+      );
     },
 
     stream(input): Promise<AgentStreamResult> {
@@ -425,7 +379,6 @@ export function agent(config: AgentConfig): Agent {
     },
   };
 
-  toolLoadingBenchmarkRunners.set(agentInstance, generate);
   setEffectiveAgentSystem(agentInstance, augmentedSystem);
   agentRegistry.register(id, agentInstance);
 

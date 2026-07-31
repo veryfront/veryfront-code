@@ -23,19 +23,10 @@ import {
   sanitizeProviderToolSchema,
   selectProviderCompatibleTools,
 } from "./provider-tool-compat.ts";
-import type { ToolExposurePlan } from "./tool-exposure.ts";
-import { createToolSearchDefinition, TOOL_SEARCH_TOOL_NAME } from "./tool-exposure.ts";
-
-export type NativeToolSearchProjection = {
-  mode: "hosted" | "client";
-  variant?: "regex" | "bm25";
-};
 
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
   providerTools?: string[];
-  toolExposurePlan?: ToolExposurePlan;
-  nativeToolSearch?: NativeToolSearchProjection;
 }
 
 function resolveProviderNativeTools(
@@ -79,13 +70,7 @@ export function convertToolsToRuntimeTools(
   const toolSet: RuntimeToolSet = {};
   const providerNativeTools = resolveProviderNativeTools(options);
   const providerNativeToolNames = new Set(Object.keys(providerNativeTools ?? {}));
-  const sourceTools = options?.nativeToolSearch && options.toolExposurePlan
-    ? [...options.toolExposurePlan.authorized, createToolSearchDefinition()]
-    : tools;
-  const deferredToolNames = options?.nativeToolSearch && options.toolExposurePlan
-    ? new Set(options.toolExposurePlan.deferred.map((tool) => tool.name))
-    : new Set<string>();
-  const compatibleTools = selectProviderCompatibleTools(sourceTools, {
+  const compatibleTools = selectProviderCompatibleTools(tools, {
     model: options?.model,
   });
 
@@ -98,10 +83,6 @@ export function convertToolsToRuntimeTools(
       def.name,
       createRuntimeTool({
         description: def.description,
-        deferLoading: deferredToolNames.has(def.name),
-        nativeToolSearch: def.name === TOOL_SEARCH_TOOL_NAME
-          ? options?.nativeToolSearch
-          : undefined,
         inputSchema: createRuntimeJsonSchema(
           sanitizeProviderToolSchema(normalizeProviderToolInputSchema(def.parameters), {
             model: options?.model,

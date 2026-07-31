@@ -42,16 +42,6 @@ describe("ext-llm-google/google-request-builder", () => {
         content: [
           { type: "text", text: "I will check." },
           {
-            type: "provider-block",
-            provider: "anthropic",
-            block: {
-              type: "server_tool_use",
-              id: "srvtoolu_ignored",
-              name: "tool_search",
-              input: { query: "must not reach Google" },
-            },
-          },
-          {
             type: "tool-call",
             toolCallId: "tool_1",
             toolName: "lookup",

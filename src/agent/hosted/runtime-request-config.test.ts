@@ -4,54 +4,11 @@ import { it } from "#veryfront/testing/bdd.ts";
 import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
-  getServerResolvedProviderReplayCheckpoints,
   getServerResolvedToolExposureCheckpoint,
   getServerResolvedToolSearchAuthorization,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
 } from "./runtime-request-config.ts";
-
-it("server-resolved provider replay checkpoints require verified envelope provenance", () => {
-  const block = {
-    type: "provider-block" as const,
-    provider: "anthropic" as const,
-    block: {
-      type: "server_tool_use" as const,
-      id: "srvtoolu_1",
-      name: "tool_search",
-      input: { query: "deploy" },
-    },
-  };
-  const checkpoint = {
-    version: 1 as const,
-    messageId: "assistant-1",
-    provider: "anthropic" as const,
-    providerBlocks: [block],
-    providerBlockPositions: [0],
-    totalPartCount: 2,
-  };
-  assertEquals(
-    getServerResolvedProviderReplayCheckpoints({
-      serverResolvedProviderReplayCheckpoints: [checkpoint],
-    }, true),
-    [checkpoint],
-  );
-  assertEquals(
-    getServerResolvedProviderReplayCheckpoints({
-      serverResolvedProviderReplayCheckpoints: [{
-        ...checkpoint,
-        providerBlocks: [{ ...block, provider: "openai-responses" }],
-      }],
-    }, true),
-    [],
-  );
-  assertEquals(
-    getServerResolvedProviderReplayCheckpoints({
-      serverResolvedProviderReplayCheckpoints: [checkpoint],
-    }, false),
-    [],
-  );
-});
 
 it("server-resolved tool exposure checkpoint parses strictly and fails closed", () => {
   const checkpoint = {

@@ -37,8 +37,6 @@ export function createInitialReducerState(): StreamReducerState {
       phase: "awaiting_first_progress",
       accumulatedText: "",
       reasoning: [],
-      providerBlocks: [],
-      providerReplayOrder: [],
       tools: [],
       finishReason: null,
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
@@ -86,17 +84,6 @@ export function reduceStreamSignal(
   if (signal.kind === "diagnostic_candidate") {
     return { state, frames, semanticProgress };
   }
-  if (signal.kind === "provider_block") {
-    state.snapshot = {
-      ...state.snapshot,
-      providerBlocks: [...(state.snapshot.providerBlocks ?? []), signal.block],
-      providerReplayOrder: [
-        ...(state.snapshot.providerReplayOrder ?? []),
-        signal.block,
-      ],
-    };
-    return { state, frames, semanticProgress };
-  }
 
   const closeReasoning = () => {
     if (state.activeReasoningId === null) return;
@@ -128,7 +115,6 @@ export function reduceStreamSignal(
       closeText();
       closeReasoning();
       state.activeReasoningId = signal.event.id;
-      appendReasoningReplayPartOnce(state, signal.event.id);
       emit({ class: "semantic", event: signal.event });
       break;
     case "reasoning_content": {
@@ -137,7 +123,6 @@ export function reduceStreamSignal(
       if (state.activeReasoningId !== id) {
         closeReasoning();
         state.activeReasoningId = id;
-        appendReasoningReplayPartOnce(state, id);
         emit({
           class: "semantic",
           event: { type: "reasoning_start", id },
@@ -155,10 +140,6 @@ export function reduceStreamSignal(
       if (index >= 0) reasoning[index] = updated;
       else reasoning.push(updated);
       state.snapshot = { ...state.snapshot, reasoning };
-      updateReasoningReplayPart(state, id, (part) => ({
-        ...part,
-        text: part.text + delta,
-      }));
       emit({ class: "semantic", event: signal.event });
       if (delta.length > 0) markProgress();
       break;
@@ -179,11 +160,6 @@ export function reduceStreamSignal(
               : part
           ),
         };
-        updateReasoningReplayPart(state, id, (part) => ({
-          ...part,
-          ...(signature !== undefined ? { signature } : {}),
-          ...(redactedData !== undefined ? { redactedData } : {}),
-        }));
       }
       emit({ class: "semantic", event: signal.event });
       state.activeReasoningId = null;
@@ -217,7 +193,6 @@ export function reduceStreamSignal(
         hasStreamOutput: state.snapshot.hasStreamOutput ||
           signal.event.delta.length > 0,
       };
-      appendTextReplayDelta(state, signal.event.delta);
       emit({
         class: "semantic",
         event: { ...signal.event, id: state.activeTextId },
@@ -276,10 +251,6 @@ function cloneReducerState(current: StreamReducerState): StreamReducerState {
     snapshot: {
       ...current.snapshot,
       reasoning: current.snapshot.reasoning.map((part) => ({ ...part })),
-      providerBlocks: [...(current.snapshot.providerBlocks ?? [])],
-      providerReplayOrder: (current.snapshot.providerReplayOrder ?? []).map(
-        (part) => part.type === "provider-block" ? part : { ...part },
-      ),
       tools: current.snapshot.tools.map((tool) => ({
         ...tool,
         inputDeltas: [...tool.inputDeltas],
@@ -311,7 +282,6 @@ function reduceNonTextProtocolEvent(
 
     case "tool_input_start": {
       closeOpenContent(state, emit);
-      appendToolReplayPartOnce(state, event.toolCallId);
       state.tools.set(event.toolCallId, {
         id: event.toolCallId,
         name: event.toolName,
@@ -355,7 +325,6 @@ function reduceNonTextProtocolEvent(
         ? prior?.inputText.length ? prior.inputText : "null"
         : mergeToolCallInput(prior?.inputText ?? "", serializedInput);
       if (!prior) {
-        appendToolReplayPartOnce(state, event.toolCallId);
         emit({
           class: "semantic",
           event: {
@@ -528,82 +497,6 @@ function serializeToolInput(input: unknown): string | null {
   } catch {
     return null;
   }
-}
-
-function appendTextReplayDelta(
-  state: StreamReducerState,
-  delta: string,
-): void {
-  const replayOrder = [...(state.snapshot.providerReplayOrder ?? [])];
-  const previous = replayOrder.at(-1);
-  if (previous?.type === "text") {
-    replayOrder[replayOrder.length - 1] = {
-      type: "text",
-      text: previous.text + delta,
-    };
-  } else {
-    replayOrder.push({ type: "text", text: delta });
-  }
-  state.snapshot = { ...state.snapshot, providerReplayOrder: replayOrder };
-}
-
-function appendToolReplayPartOnce(
-  state: StreamReducerState,
-  toolCallId: string,
-): void {
-  const replayOrder = state.snapshot.providerReplayOrder ?? [];
-  if (
-    replayOrder.some((part) => part.type === "tool-call" && part.toolCallId === toolCallId)
-  ) {
-    return;
-  }
-  state.snapshot = {
-    ...state.snapshot,
-    providerReplayOrder: [
-      ...replayOrder,
-      { type: "tool-call", toolCallId },
-    ],
-  };
-}
-
-function appendReasoningReplayPartOnce(
-  state: StreamReducerState,
-  id: string,
-): void {
-  const replayOrder = state.snapshot.providerReplayOrder ?? [];
-  if (
-    replayOrder.some((part) => part.type === "reasoning" && part.id === id)
-  ) {
-    return;
-  }
-  state.snapshot = {
-    ...state.snapshot,
-    providerReplayOrder: [
-      ...replayOrder,
-      { type: "reasoning", id, text: "" },
-    ],
-  };
-}
-
-function updateReasoningReplayPart(
-  state: StreamReducerState,
-  id: string,
-  update: (
-    part: Extract<
-      NonNullable<StreamSnapshot["providerReplayOrder"]>[number],
-      { type: "reasoning" }
-    >,
-  ) => Extract<
-    NonNullable<StreamSnapshot["providerReplayOrder"]>[number],
-    { type: "reasoning" }
-  >,
-): void {
-  state.snapshot = {
-    ...state.snapshot,
-    providerReplayOrder: (state.snapshot.providerReplayOrder ?? []).map(
-      (part) => part.type === "reasoning" && part.id === id ? update(part) : part,
-    ),
-  };
 }
 
 function isBareEmptyObjectPlaceholder(inputText: string): boolean {

@@ -209,10 +209,6 @@ export function applyLifecycleSnapshotToChatStreamState(
 ): void {
   state.accumulatedText = snapshot.accumulatedText;
   state.reasoningParts = snapshot.reasoning.map((part) => ({ ...part }));
-  state.providerBlocks = [...(snapshot.providerBlocks ?? [])];
-  state.providerReplayOrder = (snapshot.providerReplayOrder ?? []).map(
-    (part) => part.type === "provider-block" ? part : { ...part },
-  );
   state.finishReason = snapshot.finishReason;
   state.toolCalls = new Map(
     snapshot.tools.filter(isAvailableTool).map((tool) => [

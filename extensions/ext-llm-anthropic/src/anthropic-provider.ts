@@ -9,11 +9,7 @@
  */
 
 import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
-import type {
-  RuntimeAnthropicProviderBlock,
-  RuntimeProviderBlock,
-  RuntimeUsage,
-} from "veryfront/provider/shared";
+import type { RuntimeUsage } from "veryfront/provider/shared";
 import type { ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,
@@ -128,7 +124,6 @@ function buildAnthropicGenerateResult(payload: unknown): {
   content: Array<
     | AnthropicTextContent
     | AnthropicReasoningContent
-    | RuntimeProviderBlock
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
     | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
   >;
@@ -140,7 +135,6 @@ function buildAnthropicGenerateResult(payload: unknown): {
   const normalized: Array<
     | AnthropicTextContent
     | AnthropicReasoningContent
-    | RuntimeProviderBlock
     | { type: "tool-call"; toolCallId: string; toolName: string; input: string }
     | { type: "tool-result"; toolCallId: string; toolName: string; result: unknown }
   > = [];
@@ -194,31 +188,11 @@ function buildAnthropicGenerateResult(payload: unknown): {
       typeof block?.id === "string" &&
       typeof block?.name === "string"
     ) {
-      if (blockType === "server_tool_use" && block.name.startsWith("tool_search_tool_")) {
-        normalized.push({
-          type: "provider-block",
-          provider: "anthropic",
-          block: block as RuntimeAnthropicProviderBlock,
-        });
-        continue;
-      }
       normalized.push({
         type: "tool-call",
         toolCallId: block.id,
         toolName: block.name,
         input: stringifyJsonValue(block.input ?? {}),
-      });
-      continue;
-    }
-
-    if (
-      blockType === "tool_search_tool_result" &&
-      typeof block?.tool_use_id === "string"
-    ) {
-      normalized.push({
-        type: "provider-block",
-        provider: "anthropic",
-        block: block as RuntimeAnthropicProviderBlock,
       });
       continue;
     }

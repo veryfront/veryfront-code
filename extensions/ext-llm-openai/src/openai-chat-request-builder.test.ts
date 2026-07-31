@@ -284,28 +284,4 @@ describe("ext-llm-openai/openai-chat-request-builder", () => {
       "frequencyPenalty",
     ]);
   });
-
-  it("omits Responses-only tool-search metadata from Chat Completions", () => {
-    const body = buildOpenAIChatRequest(
-      "gpt-5.4",
-      "openai",
-      {
-        prompt: [{ role: "user", content: [{ type: "text", text: "Find a tool" }] }],
-        tools: [{
-          type: "function",
-          name: "get_release",
-          inputSchema: { type: "object" },
-          deferLoading: true,
-        }],
-        providerOptions: {
-          openai: { toolSearch: { mode: "hosted" } },
-        },
-      },
-      false,
-      createWarningCollector(),
-    );
-
-    assertEquals("toolSearch" in body, false);
-    assertEquals(body.tools, undefined);
-  });
 });

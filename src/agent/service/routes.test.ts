@@ -304,7 +304,6 @@ it("ordinary durable-chat routes strip spoofed server-resolved tool state", asyn
           authorizedCatalogFingerprint: "spoofed",
           loadedToolNames: ["delete_project"],
         },
-        serverResolvedProviderReplayCheckpoints: [],
         serverResolvedFutureCapability: { enabled: true },
       },
     }),

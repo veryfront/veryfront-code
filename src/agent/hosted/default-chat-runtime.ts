@@ -401,7 +401,6 @@ export async function createDefaultHostedChatRuntime(
             conversationId: taskContext.conversationId,
             authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
-            persistProviderReplayBlocks: input.options.persistProviderReplayBlocks,
             runStream: (operation) =>
               runWithDefaultHostedRequestContext({
                 taskContext,

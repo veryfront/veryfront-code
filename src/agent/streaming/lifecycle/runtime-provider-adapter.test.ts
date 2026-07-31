@@ -36,24 +36,6 @@ describe("runtime stream Provider Adapter", () => {
     );
   });
 
-  it("retains opaque provider blocks as private lifecycle signals", () => {
-    const block = {
-      type: "provider-block" as const,
-      provider: "openai-responses" as const,
-      block: {
-        type: "tool_search_call",
-        execution: "server",
-        call_id: null,
-        unknown: { keep: true },
-      },
-    } as const;
-
-    assertEquals(
-      decodeRuntimeStreamPart(block, snapshot, options),
-      [{ kind: "provider_block", block }],
-    );
-  });
-
   it("normalizes result and output payload names", () => {
     const toolSnapshot = {
       ...snapshot,

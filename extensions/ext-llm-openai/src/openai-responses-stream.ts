@@ -34,7 +34,6 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
       : undefined);
   const inputDetails = readRecord(usage.input_tokens_details);
   const cachedTokens = inputDetails?.cached_tokens;
-  const cacheWriteTokens = inputDetails?.cache_write_tokens;
   const outputDetails = readRecord(usage.output_tokens_details);
   const reasoningTokens = outputDetails?.reasoning_tokens;
   const veryfront = readRecord(usage.veryfront);
@@ -47,7 +46,6 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
     outputTokens,
     totalTokens,
     ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-    ...(typeof cacheWriteTokens === "number" ? { cacheWriteInputTokens: cacheWriteTokens } : {}),
     ...(typeof reasoningTokens === "number" ? { reasoningTokens } : {}),
     ...(typeof veryfront?.billable_input_tokens === "number"
       ? { billableInputTokens: veryfront.billable_input_tokens }
@@ -209,14 +207,6 @@ export async function* streamOpenAIResponsesParts(
         const item = readRecord(record?.item);
         const itemType = typeof item?.type === "string" ? item.type : undefined;
         const itemId = typeof item?.id === "string" ? item.id : undefined;
-        if (itemType === "tool_search_call" || itemType === "tool_search_output") {
-          yield {
-            type: "provider-block",
-            provider: "openai-responses",
-            block: item,
-          };
-          continue;
-        }
         if (itemType === "reasoning" && itemId) {
           const state = reasoningBlocks.get(itemId);
           if (state?.emittedStart) {

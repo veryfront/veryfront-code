@@ -9,7 +9,6 @@
  */
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
-import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 import { sendSSE } from "./sse-utils.ts";
 import {
   mergeToolCallInput,
@@ -96,25 +95,12 @@ export interface StreamingReasoningPart {
   redactedData?: string;
 }
 
-export interface StreamingReasoningReplayPart extends StreamingReasoningPart {
-  type: "reasoning";
-}
-
 export interface ChatStreamState {
   accumulatedText: string;
   reasoningParts: StreamingReasoningPart[];
   finishReason: string | null;
   toolCalls: Map<string, StreamingToolCall>;
   toolResults: StreamingToolResult[];
-  /** Framework-private provider blocks retained verbatim for stored-message replay. */
-  providerBlocks?: RuntimeProviderBlock[];
-  /** Exact provider-visible assistant part order for private replay sidecars. */
-  providerReplayOrder?: Array<
-    RuntimeProviderBlock | { type: "text"; text: string } | {
-      type: "tool-call";
-      toolCallId: string;
-    } | StreamingReasoningReplayPart
-  >;
   suppressedToolCalls: { id: string; name: string }[];
   usage: {
     promptTokens: number;
@@ -122,7 +108,6 @@ export interface ChatStreamState {
     totalTokens: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
-    cacheWriteInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -151,7 +136,6 @@ export interface ChatStreamCallbacks {
     totalTokens?: number;
     cachedInputTokens?: number;
     cacheCreationInputTokens?: number;
-    cacheWriteInputTokens?: number;
     cacheReadInputTokens?: number;
     reasoningTokens?: number;
     billableInputTokens?: number;
@@ -350,8 +334,6 @@ export function createStreamState(): ChatStreamState {
     finishReason: null,
     toolCalls: new Map(),
     toolResults: [],
-    providerBlocks: [],
-    providerReplayOrder: [],
     suppressedToolCalls: [],
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   };
@@ -580,7 +562,6 @@ export function processStreamInternal(
     let textOpen = false;
     let activeReasoningId: string | null = null;
     const reasoningParts = new Map<string, StreamingReasoningPart>();
-    const reasoningReplayParts = new Map<string, StreamingReasoningReplayPart>();
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
     const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
@@ -644,20 +625,9 @@ export function processStreamInternal(
 
       activeReasoningId = reasoningId;
       if (!reasoningParts.has(reasoningId)) {
-        const part: StreamingReasoningPart = {
-          id: reasoningId,
-          text: "",
-        };
-        const replayPart: StreamingReasoningReplayPart = {
-          type: "reasoning",
-          id: reasoningId,
-          text: "",
-        };
+        const part = { id: reasoningId, text: "" };
         reasoningParts.set(reasoningId, part);
-        reasoningReplayParts.set(reasoningId, replayPart);
         state.reasoningParts.push(part);
-        state.providerReplayOrder ??= [];
-        state.providerReplayOrder.push(replayPart);
       }
       sendSSE(controller, encoder, {
         type: "reasoning-start",
@@ -680,18 +650,6 @@ export function processStreamInternal(
       activeReasoningId = null;
     };
 
-    const appendReplayToolCallOnce = (toolCallId: string) => {
-      state.providerReplayOrder ??= [];
-      if (
-        state.providerReplayOrder.some((entry) =>
-          entry.type === "tool-call" && entry.toolCallId === toolCallId
-        )
-      ) {
-        return;
-      }
-      state.providerReplayOrder.push({ type: "tool-call", toolCallId });
-    };
-
     const commitParseablePendingToolInputs = () => {
       for (const tc of state.toolCalls.values()) {
         if (tc.inputAvailable === true || tc.providerExecuted === true) {
@@ -712,7 +670,6 @@ export function processStreamInternal(
           continue;
         }
         tc.inputAvailable = true;
-        appendReplayToolCallOnce(tc.id);
         const dynamic = tc.dynamic ?? isDynamicTool(tc.name);
         if (dynamic) {
           tc.dynamic = true;
@@ -764,7 +721,6 @@ export function processStreamInternal(
       const dynamic = part.dynamic ?? isDynamicTool(part.toolName);
       const providerExecuted = resolveProviderExecuted(part.toolName, part.providerExecuted);
       const existing = state.toolCalls.get(part.toolCallId);
-      appendReplayToolCallOnce(part.toolCallId);
 
       if (!existing) {
         const normalizedInput = parseToolInputObject(part.input);
@@ -893,25 +849,10 @@ export function processStreamInternal(
       }
 
       switch (typedPart.type) {
-        case "provider-block": {
-          state.providerBlocks ??= [];
-          state.providerBlocks.push(typedPart);
-          state.providerReplayOrder ??= [];
-          state.providerReplayOrder.push(typedPart);
-          break;
-        }
-
         case "text-delta": {
           closeReasoningSegment();
           openTextSegment();
           state.accumulatedText += typedPart.text;
-          state.providerReplayOrder ??= [];
-          const previousReplayPart = state.providerReplayOrder.at(-1);
-          if (previousReplayPart?.type === "text") {
-            previousReplayPart.text += typedPart.text;
-          } else {
-            state.providerReplayOrder.push({ type: "text", text: typedPart.text });
-          }
           sendSSE(controller, encoder, {
             type: "text-delta",
             id: textPartId,
@@ -932,18 +873,13 @@ export function processStreamInternal(
           const reasoningId = normalizeReasoningId(typedPart);
           openReasoningSegment(reasoningId);
           const reasoningPart = reasoningParts.get(reasoningId);
-          const reasoningReplayPart = reasoningReplayParts.get(reasoningId);
-          const delta = typeof typedPart.delta === "string" ? typedPart.delta : "";
           if (reasoningPart) {
-            reasoningPart.text += delta;
-          }
-          if (reasoningReplayPart) {
-            reasoningReplayPart.text += delta;
+            reasoningPart.text += typeof typedPart.delta === "string" ? typedPart.delta : "";
           }
           sendSSE(controller, encoder, {
             type: "reasoning-delta",
             id: reasoningId,
-            delta,
+            delta: typeof typedPart.delta === "string" ? typedPart.delta : "",
           });
           break;
         }
@@ -954,21 +890,12 @@ export function processStreamInternal(
             activeReasoningId = normalizeReasoningId(typedPart);
           }
           const reasoningPart = reasoningParts.get(activeReasoningId);
-          const reasoningReplayPart = reasoningReplayParts.get(activeReasoningId);
           if (reasoningPart) {
             if (typeof typedPart.signature === "string") {
               reasoningPart.signature = typedPart.signature;
             }
             if (typeof typedPart.redactedData === "string") {
               reasoningPart.redactedData = typedPart.redactedData;
-            }
-          }
-          if (reasoningReplayPart) {
-            if (typeof typedPart.signature === "string") {
-              reasoningReplayPart.signature = typedPart.signature;
-            }
-            if (typeof typedPart.redactedData === "string") {
-              reasoningReplayPart.redactedData = typedPart.redactedData;
             }
           }
           closeReasoningSegment();
@@ -990,7 +917,6 @@ export function processStreamInternal(
             typedPart.providerExecuted,
           );
           hasActiveLocalToolInput = providerExecuted !== true;
-          appendReplayToolCallOnce(toolId);
           state.toolCalls.set(toolId, {
             id: toolId,
             name: typedPart.toolName,
@@ -1029,7 +955,6 @@ export function processStreamInternal(
           if (!tc) break;
 
           tc.inputAvailable = true;
-          appendReplayToolCallOnce(toolId);
           hasActiveLocalToolInput = false;
           const dynamic = tc.dynamic ?? isDynamicTool(tc.name);
           if (dynamic) {
@@ -1081,7 +1006,6 @@ export function processStreamInternal(
             providerExecuted,
             dynamic,
           });
-          appendReplayToolCallOnce(toolId);
 
           if (!wasInputAvailable) {
             sendSSE(controller, encoder, {
@@ -1130,7 +1054,6 @@ export function processStreamInternal(
             dynamic: typedPart.dynamic,
           };
           state.toolCalls.set(toolId, toolCall);
-          appendReplayToolCallOnce(toolId);
 
           const dynamic = isDynamicTool(typedPart.toolName);
           const inputObj = parseToolInputObject(typedPart.input);
@@ -1283,7 +1206,6 @@ export function processStreamInternal(
             const output = typedPart.totalUsage.outputTokens ?? 0;
             const cacheReadInputTokens = typedPart.totalUsage.cacheReadInputTokens;
             const cacheCreationInputTokens = typedPart.totalUsage.cacheCreationInputTokens;
-            const cacheWriteInputTokens = typedPart.totalUsage.cacheWriteInputTokens;
             const cachedInputTokens = typedPart.totalUsage.cachedInputTokens ??
               cacheReadInputTokens;
             state.usage = {
@@ -1292,7 +1214,6 @@ export function processStreamInternal(
               totalTokens: typedPart.totalUsage.totalTokens ?? input + output,
               ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
               ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-              ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
               ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
               ...(typedPart.totalUsage.reasoningTokens !== undefined
                 ? { reasoningTokens: typedPart.totalUsage.reasoningTokens }

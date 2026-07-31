@@ -6,20 +6,12 @@ import {
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
-import type { RuntimeAnthropicProviderBlock } from "veryfront/provider/shared";
 
 type AnthropicStreamToolCallState = {
   id: string;
   name: string;
   input: string;
   providerExecuted?: boolean;
-};
-
-type AnthropicStreamToolSearchState = {
-  id: string;
-  name: string;
-  input: string;
-  block: RuntimeAnthropicProviderBlock;
 };
 
 type AnthropicStreamReasoningState = {
@@ -51,15 +43,6 @@ function isEmptyRecord(value: unknown): value is Record<string, never> {
       !Array.isArray(value) &&
       Object.keys(value).length === 0,
   );
-}
-
-function parseToolSearchInput(input: string): unknown {
-  if (input.length === 0) return {};
-  try {
-    return JSON.parse(input);
-  } catch {
-    return input;
-  }
 }
 
 export function normalizeAnthropicFinishReason(
@@ -254,7 +237,6 @@ export async function* streamAnthropicCompatibleParts(
   let readerReleased = false;
   let buffer = "";
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
-  const toolSearchCalls = new Map<number, AnthropicStreamToolSearchState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: RuntimeUsage | undefined;
@@ -394,20 +376,6 @@ export async function* streamAnthropicCompatibleParts(
             typeof contentBlock?.id === "string" &&
             typeof contentBlock?.name === "string"
           ) {
-            if (
-              blockType === "server_tool_use" &&
-              contentBlock.name.startsWith("tool_search_tool_")
-            ) {
-              toolSearchCalls.set(index, {
-                id: contentBlock.id,
-                name: contentBlock.name,
-                input: contentBlock.input === undefined || isEmptyRecord(contentBlock.input)
-                  ? ""
-                  : stringifyJsonValue(contentBlock.input ?? {}),
-                block: contentBlock as RuntimeAnthropicProviderBlock,
-              });
-              continue;
-            }
             const providerExecuted = blockType === "server_tool_use" ? true : undefined;
             const current: AnthropicStreamToolCallState = {
               id: contentBlock.id,
@@ -436,18 +404,6 @@ export async function* streamAnthropicCompatibleParts(
                 delta: serializedInput,
               };
             }
-            continue;
-          }
-
-          if (
-            blockType === "tool_search_tool_result" &&
-            typeof contentBlock?.tool_use_id === "string"
-          ) {
-            yield {
-              type: "provider-block",
-              provider: "anthropic",
-              block: contentBlock,
-            };
             continue;
           }
 
@@ -521,11 +477,6 @@ export async function* streamAnthropicCompatibleParts(
           }
 
           if (deltaType === "input_json_delta" && typeof delta?.partial_json === "string") {
-            const toolSearch = toolSearchCalls.get(index);
-            if (toolSearch) {
-              toolSearch.input += delta.partial_json;
-              continue;
-            }
             const current = toolCalls.get(index);
             if (!current) {
               continue;
@@ -557,19 +508,6 @@ export async function* streamAnthropicCompatibleParts(
           }
 
           const current = toolCalls.get(index);
-          const toolSearch = toolSearchCalls.get(index);
-          if (toolSearch) {
-            yield {
-              type: "provider-block",
-              provider: "anthropic",
-              block: {
-                ...toolSearch.block,
-                input: parseToolSearchInput(toolSearch.input),
-              },
-            };
-            toolSearchCalls.delete(index);
-            continue;
-          }
           if (!current) {
             continue;
           }

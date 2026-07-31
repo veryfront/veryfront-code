@@ -29,8 +29,6 @@ const USAGE_NUMERIC_KEYS = [
   "cachedInputTokens",
   "cacheCreationInputTokens",
   "cacheReadInputTokens",
-  "cacheWriteInputTokens",
-  "effectiveInputTokens",
   "reasoningTokens",
   "costUsd",
   "providerInputCostUsd",

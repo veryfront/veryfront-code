@@ -5,8 +5,7 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
-import { runAgentToolLoadingBenchmark } from "veryfront/_internal/agent-tool-loading-benchmark";
-import type { AgentConfig, AgentToolLoadingBenchmarkObservation } from "../types.ts";
+import type { AgentConfig } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import type { ToolExposureCheckpoint } from "./tool-exposure.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
@@ -47,57 +46,6 @@ function systemPrompt(options: unknown): string {
       .map((message) => message.content as string)
       .join("\n")
     : "";
-}
-
-async function observeDeferredTransport(input: {
-  modelId: string;
-  provider: string;
-}): Promise<AgentToolLoadingBenchmarkObservation> {
-  const observations: AgentToolLoadingBenchmarkObservation[] = [];
-  const model: ModelRuntime = {
-    provider: input.provider,
-    modelId: input.modelId.split("/").at(-1) ?? input.modelId,
-    async doGenerate() {
-      return {
-        content: [{ type: "text", text: "done" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  const assistant = agent(
-    {
-      id: `transport-${input.modelId.replaceAll("/", "-")}`,
-      model: input.modelId,
-      system: "Answer directly.",
-      skills: false,
-      tools: {
-        get_release: tool({
-          id: "get_release",
-          description: "Get the current release",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => ({ id: "rel-1" }),
-        }),
-      },
-      maxSteps: 1,
-      resolveModelTransport: () => ({ model }),
-      __vfNativeProviderToolSearchEnabled: true,
-    } as AgentConfig & RuntimeToolFilterConfig,
-  );
-
-  await runAgentToolLoadingBenchmark(
-    assistant,
-    { input: "hi" },
-    {
-      toolLoading: "deferred",
-      observer: (observation) => observations.push(observation),
-    },
-  );
-
-  return observations[0]!;
 }
 
 it("deferred generate searches, exposes on the next step, and executes once", async () => {
@@ -1175,82 +1123,6 @@ it("stream resume drops revoked checkpoint tools after the authorized catalog ch
   assertEquals(resumedTools.includes("tool_search"), true);
 });
 
-it("internal eval override runs one agent eagerly and deferred without mutating it", async () => {
-  const observedTools: string[][] = [];
-  const observations: AgentToolLoadingBenchmarkObservation[] = [];
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/eval-tool-loading-override",
-    async doGenerate(options: unknown) {
-      observedTools.push(toolNames(options));
-      return {
-        content: [{ type: "text", text: "done" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  const assistant = agent({
-    id: "eval-tool-loading-override-test",
-    model: "hosted/eval-tool-loading-override",
-    system: "Answer directly.",
-    skills: false,
-    tools: {
-      get_release: tool({
-        id: "get_release",
-        description: "Get the current release",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({ id: "rel-1" }),
-      }),
-    },
-    maxSteps: 1,
-    resolveModelTransport: () => ({ model }),
-  });
-
-  await runAgentToolLoadingBenchmark(
-    assistant,
-    { input: "hi" },
-    {
-      toolLoading: "eager",
-      observer: (observation) => observations.push(observation),
-    },
-  );
-  await runAgentToolLoadingBenchmark(
-    assistant,
-    { input: "hi" },
-    {
-      toolLoading: "deferred",
-      observer: (observation) => observations.push(observation),
-    },
-  );
-
-  assertEquals(observedTools, [
-    ["get_release"],
-    ["tool_search"],
-  ]);
-  assertEquals(observations, [{
-    step: 0,
-    authorizedSearchableSchemaCount: 1,
-    visibleSchemaCount: 1,
-    deferredSchemaCount: 0,
-    providerRequestToolDefinitionCount: 1,
-    providerWireDeferredMetadataCount: 0,
-    loadingPath: "eager",
-  }, {
-    step: 0,
-    authorizedSearchableSchemaCount: 1,
-    visibleSchemaCount: 0,
-    deferredSchemaCount: 1,
-    providerRequestToolDefinitionCount: 1,
-    providerWireDeferredMetadataCount: 0,
-    loadingPath: "framework-fallback",
-  }]);
-  assertEquals(assistant.config.toolLoading, "deferred");
-});
-
 it("host operational loading override wins for generate, stream, and respond ingress", async () => {
   const observedTools: string[][] = [];
   const model: ModelRuntime = {
@@ -1287,14 +1159,10 @@ it("host operational loading override wins for generate, stream, and respond ing
     } as AgentConfig & RuntimeToolFilterConfig,
   );
 
-  await runAgentToolLoadingBenchmark(
-    assistant,
-    {
-      input: "hi",
-      context: { __vfOperationalToolLoadingOverride: "eager" },
-    },
-    { toolLoading: "eager" },
-  );
+  await assistant.generate({
+    input: "hi",
+    context: { __vfOperationalToolLoadingOverride: "eager" },
+  });
   await (await assistant.stream({
     input: "hi",
     context: { __vfOperationalToolLoadingOverride: "eager" },
@@ -1318,267 +1186,6 @@ it("host operational loading override wins for generate, stream, and respond ing
     assertEquals(tools.includes("get_release"), false);
     assertEquals(tools.includes("tool_search"), true);
   }
-});
-
-it("benchmark observer separates native model context from wire metadata", async () => {
-  const observations: AgentToolLoadingBenchmarkObservation[] = [];
-  const model: ModelRuntime = {
-    provider: "anthropic",
-    modelId: "claude-opus-4-6",
-    async doGenerate() {
-      return {
-        content: [{ type: "text", text: "done" }],
-        finishReason: "stop",
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      };
-    },
-    async doStream() {
-      return { stream: new ReadableStream() };
-    },
-  };
-  const assistant = agent(
-    {
-      id: "native-tool-loading-observer-test",
-      model: "anthropic/claude-opus-4-6",
-      system: "Answer directly.",
-      skills: false,
-      tools: {
-        get_release: tool({
-          id: "get_release",
-          description: "Get the current release",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => ({ id: "rel-1" }),
-        }),
-      },
-      maxSteps: 1,
-      resolveModelTransport: () => ({ model }),
-      __vfNativeProviderToolSearchEnabled: true,
-    } as AgentConfig & RuntimeToolFilterConfig,
-  );
-
-  await runAgentToolLoadingBenchmark(
-    assistant,
-    { input: "hi" },
-    {
-      toolLoading: "deferred",
-      observer: (observation) => observations.push(observation),
-    },
-  );
-
-  assertEquals(observations, [{
-    step: 0,
-    authorizedSearchableSchemaCount: 1,
-    visibleSchemaCount: 0,
-    deferredSchemaCount: 1,
-    providerRequestToolDefinitionCount: 1,
-    providerWireDeferredMetadataCount: 1,
-    loadingPath: "provider-native",
-  }]);
-  assertEquals(assistant.config.toolLoading, "deferred");
-});
-
-it("direct Anthropic and OpenAI transports preserve native loading", async () => {
-  const anthropic = await observeDeferredTransport({
-    modelId: "anthropic/claude-opus-4-6",
-    provider: "anthropic",
-  });
-  const openai = await observeDeferredTransport({
-    modelId: "openai/gpt-5.5",
-    provider: "openai",
-  });
-
-  for (const observation of [anthropic, openai]) {
-    assertEquals(observation.loadingPath, "provider-native");
-    assertEquals(observation.providerRequestToolDefinitionCount, 1);
-    assertEquals(observation.providerWireDeferredMetadataCount, 1);
-  }
-});
-
-it("native OpenAI search selection authorizes only the selected deferred generate call", async () => {
-  for (const selected of [true, false]) {
-    let step = 0;
-    let executionCount = 0;
-    let checkpointPersistedBeforeExecution = false;
-    const model: ModelRuntime = {
-      provider: "openai",
-      modelId: "gpt-5.5",
-      async doGenerate() {
-        step++;
-        if (step === 1) {
-          return {
-            content: [
-              {
-                type: "provider-block",
-                provider: "openai-responses",
-                block: {
-                  type: "tool_search_call",
-                  execution: "server",
-                  call_id: "search-1",
-                  status: "completed",
-                },
-              },
-              {
-                type: "provider-block",
-                provider: "openai-responses",
-                block: {
-                  type: "tool_search_output",
-                  execution: "server",
-                  call_id: "search-1",
-                  status: "completed",
-                  tools: selected
-                    ? [
-                      { type: "function", name: "get_release" },
-                      { type: "function", name: "get_native_status" },
-                    ]
-                    : [],
-                },
-              },
-              {
-                type: "tool-call",
-                toolCallId: "release-1",
-                toolName: "get_release",
-                input: "{}",
-              },
-            ],
-            finishReason: "tool-calls",
-          };
-        }
-        return {
-          content: [{ type: "text", text: "done" }],
-          finishReason: "stop",
-        };
-      },
-      async doStream() {
-        return { stream: new ReadableStream() };
-      },
-    };
-    const assistant = agent(
-      {
-        id: `native-openai-selection-${selected}`,
-        model: "openai/gpt-5.5",
-        system: "Use tools.",
-        skills: false,
-        tools: {
-          get_release: tool({
-            id: "get_release",
-            description: "Get the current release",
-            inputSchema: defineSchema((v) => v.object({}))(),
-            execute: () => {
-              executionCount++;
-              assertEquals(checkpointPersistedBeforeExecution, true);
-              return { id: "rel-1" };
-            },
-          }),
-          get_native_status: tool({
-            id: "get_native_status",
-            description: "Get the current status",
-            inputSchema: defineSchema((v) => v.object({}))(),
-            execute: () => ({ status: "ready" }),
-          }),
-        },
-        maxSteps: 2,
-        resolveModelTransport: () => ({ model }),
-        __vfNativeProviderToolSearchEnabled: true,
-        __vfPersistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) => {
-          checkpointPersistedBeforeExecution = checkpoint.loadedToolNames.includes("get_release") &&
-            checkpoint.loadedToolNames.includes("get_native_status");
-        },
-      } as AgentConfig & RuntimeToolFilterConfig,
-    );
-
-    const response = await assistant.generate({ input: "Find a release" });
-
-    assertEquals(executionCount, selected ? 1 : 0);
-    assertEquals(response.toolCalls[0]?.status, selected ? "completed" : "error");
-    assertEquals(checkpointPersistedBeforeExecution, selected);
-  }
-});
-
-it("native Anthropic search selection authorizes a deferred legacy stream call", async () => {
-  let step = 0;
-  let executionCount = 0;
-  let checkpointPersistedBeforeExecution = false;
-  const model: ModelRuntime = {
-    provider: "anthropic",
-    modelId: "claude-opus-4-6",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream() {
-      step++;
-      if (step === 1) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "provider-block",
-              provider: "anthropic",
-              block: {
-                type: "server_tool_use",
-                id: "search-1",
-                name: "tool_search_tool_regex",
-                input: { query: "release" },
-              },
-            },
-            {
-              type: "provider-block",
-              provider: "anthropic",
-              block: {
-                type: "tool_search_tool_result",
-                tool_use_id: "search-1",
-                content: {
-                  type: "tool_search_tool_search_result",
-                  tool_references: [{ type: "tool_reference", tool_name: "get_release" }],
-                },
-              },
-            },
-            {
-              type: "tool-call",
-              toolCallId: "release-1",
-              toolName: "get_release",
-              input: {},
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ]),
-        };
-      }
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "done" },
-          { type: "finish", finishReason: "stop" },
-        ]),
-      };
-    },
-  };
-  const assistant = agent(
-    {
-      id: "native-anthropic-selection-stream",
-      model: "anthropic/claude-opus-4-6",
-      system: "Use tools.",
-      skills: false,
-      tools: {
-        get_release: tool({
-          id: "get_release",
-          description: "Get the current release",
-          inputSchema: defineSchema((v) => v.object({}))(),
-          execute: () => {
-            executionCount++;
-            assertEquals(checkpointPersistedBeforeExecution, true);
-            return { id: "rel-1" };
-          },
-        }),
-      },
-      maxSteps: 2,
-      resolveModelTransport: () => ({ model }),
-      __vfNativeProviderToolSearchEnabled: true,
-      __vfPersistToolExposureCheckpoint: (checkpoint: ToolExposureCheckpoint) => {
-        checkpointPersistedBeforeExecution = checkpoint.loadedToolNames.includes("get_release");
-      },
-    } as AgentConfig & RuntimeToolFilterConfig,
-  );
-
-  await (await assistant.stream({ input: "Find a release" })).toDataStreamResponse().text();
-
-  assertEquals(executionCount, 1);
 });
 
 it("provider-executed tools bypass local deferred exposure gating", async () => {
@@ -1626,19 +1233,37 @@ it("provider-executed tools bypass local deferred exposure gating", async () => 
 });
 
 it("veryfront-cloud Anthropic and OpenAI transports default to framework fallback", async () => {
-  const anthropic = await observeDeferredTransport({
-    modelId: "veryfront-cloud/anthropic/claude-opus-4-6",
-    provider: "veryfront-cloud",
-  });
-  const openai = await observeDeferredTransport({
-    modelId: "veryfront-cloud/openai/gpt-5.5",
-    provider: "veryfront-cloud",
-  });
+  for (
+    const modelId of [
+      "veryfront-cloud/anthropic/claude-opus-4-6",
+      "veryfront-cloud/openai/gpt-5.5",
+    ]
+  ) {
+    let observedTools: string[] = [];
+    const model: ModelRuntime = {
+      provider: "veryfront-cloud",
+      modelId: modelId.split("/").at(-1) ?? modelId,
+      async doGenerate(options: unknown) {
+        observedTools = toolNames(options);
+        return { content: [{ type: "text", text: "done" }], finishReason: "stop" };
+      },
+      async doStream() {
+        return { stream: new ReadableStream() };
+      },
+    };
+    const assistant = agent({
+      id: `framework-fallback-${modelId.replaceAll("/", "-")}`,
+      model: modelId,
+      system: "Answer directly.",
+      skills: false,
+      tools: { get_release: releaseTool() },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+    });
 
-  for (const observation of [anthropic, openai]) {
-    assertEquals(observation.loadingPath, "framework-fallback");
-    assertEquals(observation.providerRequestToolDefinitionCount, 1);
-    assertEquals(observation.providerWireDeferredMetadataCount, 0);
+    await assistant.generate({ input: "hi" });
+
+    assertEquals(observedTools, ["tool_search"]);
   }
 });
 

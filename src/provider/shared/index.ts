@@ -36,12 +36,6 @@ export {
 // SSE chunk parser
 export { parseSseChunk } from "../runtime-loader/provider-sse.ts";
 
-// Provider-native tool-search model capability gates
-export {
-  supportsAnthropicNativeToolSearchModel,
-  supportsOpenAINativeToolSearchModel,
-} from "./native-tool-search-capabilities.ts";
-
 // Retry / error / HTTP plumbing (currently in runtime-loader.ts).
 export {
   buildProviderError,
@@ -70,11 +64,6 @@ export type {
   OpenAICompatibleChatMessage,
   OpenAICompatibleChatRequest,
   ProviderWarning,
-  RuntimeAnthropicProviderBlock,
-  RuntimeNativeToolSearch,
-  RuntimeOpenAIProviderBlock,
   RuntimePromptMessage,
-  RuntimeProviderBlock,
-  RuntimeToolDefinition,
   RuntimeUsage,
 } from "../runtime-loader.ts";

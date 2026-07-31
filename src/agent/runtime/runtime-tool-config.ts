@@ -5,7 +5,6 @@ import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "./tool-exposure.ts";
 import { resolveToolLoading } from "./agent-definition.ts";
-import { resolveProviderReplayProvider } from "./provider-replay.ts";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
 
@@ -19,19 +18,17 @@ export type RuntimeToolFilterConfig = AgentConfig & {
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
   __vfOperationalToolLoadingOverride?: ToolLoading;
-  __vfNativeProviderToolSearchEnabled?: boolean;
 } & RuntimeRemoteToolConfig;
 
 /** Effective runtime loading mode and the trusted source that selected it. */
 export type RuntimeToolLoadingResolution = {
   mode: ToolLoading;
-  provenance: "host-operational-override" | "eval-override" | "agent-config";
+  provenance: "host-operational-override" | "agent-config";
 };
 
 /** Resolve tool loading without accepting request context as configuration. */
 export function resolveRuntimeToolLoading(
   config: AgentConfig,
-  evalOverride?: ToolLoading,
 ): RuntimeToolLoadingResolution {
   const operationalOverride =
     (config as RuntimeToolFilterConfig).__vfOperationalToolLoadingOverride;
@@ -41,35 +38,10 @@ export function resolveRuntimeToolLoading(
       provenance: "host-operational-override",
     };
   }
-  if (evalOverride === "eager" || evalOverride === "deferred") {
-    return { mode: evalOverride, provenance: "eval-override" };
-  }
   return {
     mode: resolveToolLoading(config.toolLoading),
     provenance: "agent-config",
   };
-}
-
-/** Select provider-native tool search only when the trusted host rollout explicitly enables it. */
-export function resolveRuntimeNativeToolSearch(
-  config: AgentConfig,
-  model: string,
-  authorization: ToolSearchAuthorization,
-): { mode: "hosted"; variant?: "regex" } | undefined {
-  if (
-    (config as RuntimeToolFilterConfig).__vfNativeProviderToolSearchEnabled !== true ||
-    authorization.canConfigureAgentTools
-  ) {
-    return undefined;
-  }
-  const provider = resolveProviderReplayProvider(model);
-  if (provider === "anthropic") {
-    return { mode: "hosted", variant: "regex" };
-  }
-  if (provider === "openai-responses") {
-    return { mode: "hosted" };
-  }
-  return undefined;
 }
 
 export function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {

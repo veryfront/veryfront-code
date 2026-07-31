@@ -14,7 +14,6 @@ export type RuntimeUsage = {
   outputTokens?: number;
   totalTokens?: number;
   cacheCreationInputTokens?: number;
-  cacheWriteInputTokens?: number;
   cacheReadInputTokens?: number;
   reasoningTokens?: number;
   billableInputTokens?: number;
@@ -156,7 +155,6 @@ export function mergeUsage(
   const outputTokens = next.outputTokens ?? current.outputTokens;
   const cacheCreationInputTokens = next.cacheCreationInputTokens ??
     current.cacheCreationInputTokens;
-  const cacheWriteInputTokens = next.cacheWriteInputTokens ?? current.cacheWriteInputTokens;
   const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
   const reasoningTokens = next.reasoningTokens ?? current.reasoningTokens;
   const billableInputTokens = next.billableInputTokens ?? current.billableInputTokens;
@@ -193,7 +191,6 @@ export function mergeUsage(
     outputTokens,
     totalTokens,
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-    ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),

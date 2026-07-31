@@ -25,7 +25,6 @@ import {
   ManualMonotonicClock,
   StreamLifecycleFailure,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
-import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 
 afterEach(() => {
   _resetShimForTests();
@@ -91,7 +90,6 @@ describe("chat-stream-handler", () => {
       assertEquals(state.finishReason, null);
       assertEquals(state.toolCalls.size, 0);
       assertEquals(state.toolResults.length, 0);
-      assertEquals(state.providerBlocks, []);
       assertEquals(state.suppressedToolCalls, []);
       assertEquals(state.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     });
@@ -212,49 +210,6 @@ describe("chat-stream-handler", () => {
       assertEquals(events[1], { type: "text-delta", id: "text-1", delta: "Hello " });
       assertEquals(events[2], { type: "text-delta", id: "text-1", delta: "world" });
       assertEquals(events[3], { type: "text-end", id: "text-1" });
-    });
-
-    it("accumulates opaque provider blocks without exposing them as SSE events", async () => {
-      const { events, controller, encoder } = createSSECollector();
-      const state = createStreamState();
-      const blocks = [
-        {
-          type: "provider-block" as const,
-          provider: "anthropic" as const,
-          block: {
-            type: "server_tool_use",
-            id: "srvtoolu_stream",
-            name: "tool_search",
-            input: { query: "invoices" },
-            unknown: { exact: true },
-          },
-        },
-        {
-          type: "provider-block" as const,
-          provider: "anthropic" as const,
-          block: {
-            type: "tool_search_tool_result",
-            tool_use_id: "srvtoolu_stream",
-            content: [{ type: "tool_reference", tool_name: "get_invoice" }],
-          },
-        },
-      ] satisfies RuntimeProviderBlock[];
-
-      await processStream(
-        createMockResult([...blocks, {
-          type: "finish",
-          finishReason: "stop",
-          totalUsage: null,
-        }]),
-        state,
-        controller,
-        encoder,
-        "text-1",
-        undefined,
-      );
-
-      assertEquals(state.providerBlocks, blocks);
-      assertEquals(events, []);
     });
 
     it("passes through data-tool-call-status events", async () => {
@@ -1989,11 +1944,6 @@ describe("processStream active mode", () => {
     assertEquals(active.state.accumulatedText, legacy.state.accumulatedText);
     assertEquals(active.state.finishReason, legacy.state.finishReason);
     assertEquals(active.state.reasoningParts, legacy.state.reasoningParts);
-    assertEquals(active.state.providerBlocks, legacy.state.providerBlocks);
-    assertEquals(
-      active.state.providerReplayOrder,
-      legacy.state.providerReplayOrder,
-    );
     assertEquals(
       active.state.suppressedToolCalls,
       legacy.state.suppressedToolCalls,
@@ -2043,67 +1993,6 @@ describe("processStream active mode", () => {
       { type: "finish", finishReason: "stop", totalUsage: null },
     ]);
     assertEquals(active.state.streamOutcome?.status, "completed");
-  });
-
-  it("matches legacy private provider replay without exposing provider blocks", async () => {
-    const blocks = [
-      {
-        type: "provider-block" as const,
-        provider: "openai-responses" as const,
-        block: {
-          type: "tool_search_call",
-          execution: "server",
-          call_id: null,
-          unknown: { keep: true },
-        },
-      },
-      {
-        type: "provider-block" as const,
-        provider: "openai-responses" as const,
-        block: {
-          type: "tool_search_output",
-          execution: "server",
-          call_id: null,
-          tools: [{ type: "tool_reference", name: "create_file" }],
-        },
-      },
-      {
-        type: "provider-block" as const,
-        provider: "openai-responses" as const,
-        block: {
-          type: "tool_search_output",
-          execution: "server",
-          call_id: null,
-          tools: [{ type: "tool_reference", name: "create_file" }],
-          afterToolStart: true,
-        },
-      },
-    ] satisfies RuntimeProviderBlock[];
-    const { active } = await assertModeParity([
-      blocks[0]!,
-      { type: "text-delta", text: "Found " },
-      blocks[1]!,
-      { type: "tool-input-start", id: "local-1", toolName: "create_file" },
-      blocks[2]!,
-      { type: "tool-input-delta", id: "local-1", delta: '{"path":"a.md"}' },
-      { type: "tool-input-end", id: "local-1" },
-      { type: "text-delta", text: "it." },
-      { type: "finish", finishReason: "stop", totalUsage: null },
-    ]);
-
-    assertEquals(active.state.providerBlocks, blocks);
-    assertEquals(active.state.providerReplayOrder, [
-      blocks[0]!,
-      { type: "text", text: "Found " },
-      blocks[1]!,
-      { type: "tool-call", toolCallId: "local-1" },
-      blocks[2]!,
-      { type: "text", text: "it." },
-    ]);
-    assertEquals(
-      JSON.stringify(active.events).includes("provider-block"),
-      false,
-    );
   });
 
   it("matches legacy SSE and state for reasoning segments", async () => {

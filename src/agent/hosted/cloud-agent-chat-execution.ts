@@ -64,7 +64,6 @@ import {
   setFilteredTraceAttributes,
 } from "./cloud-agent-child-tools.ts";
 import {
-  getServerResolvedProviderReplayCheckpoints,
   getServerResolvedToolExposureCheckpoint,
   getServerResolvedToolSearchAuthorization,
 } from "./runtime-request-config.ts";
@@ -329,10 +328,6 @@ export async function prepareChatExecutionWithinProjectRuntime(
       req.serverEnvelopeVerified === true,
     ),
     serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
-      req.forwardedProps,
-      req.serverEnvelopeVerified === true,
-    ),
-    serverResolvedProviderReplayCheckpoints: getServerResolvedProviderReplayCheckpoints(
       req.forwardedProps,
       req.serverEnvelopeVerified === true,
     ),

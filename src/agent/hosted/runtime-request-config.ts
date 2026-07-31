@@ -10,10 +10,6 @@ import {
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "../runtime/tool-exposure.ts";
-import {
-  parseProviderReplayCheckpoints,
-  type ProviderReplayCheckpoints,
-} from "../runtime/provider-replay.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -126,17 +122,6 @@ export function getServerResolvedToolExposureCheckpoint(
     authorizedCatalogFingerprint: value.authorizedCatalogFingerprint,
     loadedToolNames: [...value.loadedToolNames],
   };
-}
-
-/** Read provider replay history only from a verified server envelope. */
-export function getServerResolvedProviderReplayCheckpoints(
-  forwardedProps: Record<string, unknown> | undefined,
-  serverEnvelopeVerified: boolean,
-): ProviderReplayCheckpoints {
-  if (!serverEnvelopeVerified) return [];
-  return parseProviderReplayCheckpoints(
-    forwardedProps?.serverResolvedProviderReplayCheckpoints,
-  ) ?? [];
 }
 
 /** Return forwarded hosted model ID. */

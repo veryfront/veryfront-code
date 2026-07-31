@@ -17,11 +17,6 @@ export type RuntimeToolDefinition =
     name: string;
     description?: string;
     inputSchema: unknown;
-    deferLoading?: boolean;
-    nativeToolSearch?: {
-      mode: "hosted" | "client";
-      variant?: "regex" | "bm25";
-    };
   }
   | {
     type: "provider";
@@ -97,9 +92,6 @@ export function buildOpenAIChatRequest(
   const samplingRejected = rejectsOpenAISamplingParams(modelId);
   const fixedSampling = isFixedSamplingModel(modelId);
   const dropSamplingParams = reasoningEnabled || samplingRejected || fixedSampling;
-  const chatTools = options.tools?.filter((tool) =>
-    tool.type !== "function" || tool.deferLoading !== true
-  );
 
   // OpenAI Chat Completions has no top_k surface.
   if (options.topK !== undefined) {
@@ -152,7 +144,9 @@ export function buildOpenAIChatRequest(
     ...(options.stopSequences && options.stopSequences.length > 0
       ? { stop: options.stopSequences }
       : {}),
-    ...(toOpenAICompatibleTools(chatTools) ? { tools: toOpenAICompatibleTools(chatTools) } : {}),
+    ...(toOpenAICompatibleTools(options.tools)
+      ? { tools: toOpenAICompatibleTools(options.tools) }
+      : {}),
     ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
     ...(!dropSamplingParams && options.presencePenalty !== undefined
@@ -204,7 +198,6 @@ export function buildOpenAIChatRequest(
       normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
     );
   }
-  delete providerOpts.toolSearch;
 
   Object.assign(body, providerOpts);
   return body;

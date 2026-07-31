@@ -18,7 +18,6 @@ import { markCurrentVeryfrontCloudBillingGroupUsed } from "veryfront/provider";
 import type { ModelRuntime } from "veryfront/provider";
 import { type Tool, tool } from "veryfront/tool";
 import type { ProjectAgentRuntimeDiscovery } from "../../../src/agent/project/agent-runtime.ts";
-import type { AgentToolLoadingBenchmarkObservation } from "../../../src/agent/types.ts";
 import { getActiveSourceIntegrationPolicy } from "../../../src/integrations/source-policy-context.ts";
 import {
   normalizeSourceIntegrationPolicy,
@@ -579,7 +578,6 @@ describe("eval CLI command helpers", () => {
         totalTokens: 17,
         cachedInputTokens: 3,
         cacheCreationInputTokens: 2,
-        cacheWriteInputTokens: 7,
         cacheReadInputTokens: 1,
         reasoningTokens: 4,
         billableInputTokens: 10,
@@ -599,41 +597,13 @@ describe("eval CLI command helpers", () => {
       },
     } satisfies AgentResponse;
 
-    assertEquals(normalizeUsage(response, "anthropic"), {
+    assertEquals(normalizeUsage(response), {
       inputTokens: 12,
       outputTokens: 5,
       totalTokens: 17,
       cachedInputTokens: 3,
       cacheCreationInputTokens: 2,
-      cacheWriteInputTokens: 7,
       cacheReadInputTokens: 1,
-      effectiveInputTokens: 15,
-      reasoningTokens: 4,
-      billableInputTokens: 10,
-      billableOutputTokens: 5,
-      costUsd: 0.001,
-      providerInputCostUsd: 0.0004,
-      providerOutputCostUsd: 0.0006,
-      providerCostUsd: 0.001,
-      veryfrontInputChargeUsd: 0.001,
-      veryfrontOutputChargeUsd: 0.0015,
-      veryfrontChargeUsd: 0.0025,
-      veryfrontBilledUsd: 0.1,
-      costCredits: 0.025,
-      costSource: "gateway",
-      billingMode: "deferred",
-      usageCaptureStatus: "complete",
-    });
-
-    assertEquals(normalizeUsage(response, "openai"), {
-      inputTokens: 12,
-      outputTokens: 5,
-      totalTokens: 17,
-      cachedInputTokens: 3,
-      cacheCreationInputTokens: 2,
-      cacheWriteInputTokens: 7,
-      cacheReadInputTokens: 1,
-      effectiveInputTokens: 12,
       reasoningTokens: 4,
       billableInputTokens: 10,
       billableOutputTokens: 5,
@@ -738,70 +708,6 @@ describe("eval CLI command helpers", () => {
     }]);
   });
 
-  it("runs the internal eager benchmark path and reports actual exposure", async () => {
-    const observedToolNames: string[][] = [];
-    const observations: AgentToolLoadingBenchmarkObservation[] = [];
-    const model: ModelRuntime = {
-      provider: "hosted",
-      modelId: "hosted/eval-tool-loading-override",
-      async doGenerate(options: unknown) {
-        const tools = (options as {
-          tools?: Array<{ name?: string }> | Record<string, unknown>;
-        }).tools;
-        observedToolNames.push(
-          Array.isArray(tools)
-            ? tools.map((entry) => entry.name ?? "").filter(Boolean).sort()
-            : Object.keys(tools ?? {}).sort(),
-        );
-        return {
-          content: [{ type: "text", text: "real answer" }],
-          finishReason: "stop",
-          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-        };
-      },
-      async doStream() {
-        return { stream: new ReadableStream() };
-      },
-    };
-    const agent = createAgent({
-      id: "eval-tool-loading-override-agent",
-      model: "hosted/eval-tool-loading-override",
-      system: "Answer directly.",
-      skills: false,
-      tools: { search_docs: makeEvalTool("search_docs") },
-      maxSteps: 1,
-      resolveModelTransport: async () => ({ model }),
-    });
-    const definition = evalAgent({
-      id: "eval:tool-loading-override",
-      target: "agent:assistant",
-      dataset: datasets.inline([{ id: "q1", input: "hi" }]),
-    });
-
-    await createAgentAdapter(
-      agent,
-      createEvalOptions({
-        internalToolLoadingOverride: "eager",
-        internalToolLoadingBenchmarkObserver: (observation) => observations.push(observation),
-      }),
-    )({
-      definition,
-      example: { id: "q1", input: "hi" },
-      repetition: 1,
-    });
-
-    assertEquals(observedToolNames, [["search_docs"]]);
-    assertEquals(observations, [{
-      step: 0,
-      authorizedSearchableSchemaCount: 1,
-      visibleSchemaCount: 1,
-      deferredSchemaCount: 0,
-      providerRequestToolDefinitionCount: 1,
-      providerWireDeferredMetadataCount: 0,
-      loadingPath: "eager",
-    }]);
-  });
-
   it("resolves mock tools once for each example repetition", async () => {
     const calls: string[] = [];
     const agent = makeAgentStub(async () => completedAgentResponse("search_docs"));
@@ -878,6 +784,7 @@ describe("eval CLI command helpers", () => {
       model: "hosted/eval-skill-mocks",
       system: "Use skills.",
       skills: true,
+      toolLoading: "eager",
       tools: {
         load_skill: makeEvalTool("load_skill"),
         load_skill_reference: makeEvalTool("load_skill_reference"),
@@ -892,10 +799,7 @@ describe("eval CLI command helpers", () => {
       mockTools: { search_docs: makeEvalTool("search_docs") },
     });
 
-    await createAgentAdapter(
-      agent,
-      createEvalOptions({ internalToolLoadingOverride: "eager" }),
-    )({
+    await createAgentAdapter(agent, createEvalOptions())({
       definition,
       example: { id: "q1", input: "Use skill" },
       repetition: 1,
@@ -942,6 +846,7 @@ describe("eval CLI command helpers", () => {
       id: "eval-default-skills-agent",
       model: "hosted/eval-default-skills-mocks",
       system: "Use skills.",
+      toolLoading: "eager",
       tools: {
         load_skill: makeEvalTool("load_skill"),
         load_skill_reference: makeEvalTool("load_skill_reference"),
@@ -954,6 +859,7 @@ describe("eval CLI command helpers", () => {
       model: "hosted/eval-default-skills-mocks",
       system: "Do not use skills.",
       skills: false,
+      toolLoading: "eager",
       tools: {
         load_skill: makeEvalTool("load_skill"),
         load_skill_reference: makeEvalTool("load_skill_reference"),
@@ -962,18 +868,12 @@ describe("eval CLI command helpers", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    await createAgentAdapter(
-      defaultSkillsAgent,
-      createEvalOptions({ internalToolLoadingOverride: "eager" }),
-    )({
+    await createAgentAdapter(defaultSkillsAgent, createEvalOptions())({
       definition,
       example: { id: "q1", input: "Use skill" },
       repetition: 1,
     });
-    await createAgentAdapter(
-      disabledSkillsAgent,
-      createEvalOptions({ internalToolLoadingOverride: "eager" }),
-    )({
+    await createAgentAdapter(disabledSkillsAgent, createEvalOptions())({
       definition,
       example: { id: "q1", input: "Use skill" },
       repetition: 1,

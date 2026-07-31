@@ -12,11 +12,6 @@ interface RuntimeToolDefinition {
   description: string;
   inputSchema: RuntimeJsonSchema;
   type?: "function" | "dynamic";
-  deferLoading?: boolean;
-  nativeToolSearch?: {
-    mode: "hosted" | "client";
-    variant?: "regex" | "bm25";
-  };
   execute?: (...args: unknown[]) => unknown;
   onInputAvailable?: (...args: unknown[]) => unknown;
   onInputStart?: (...args: unknown[]) => unknown;
@@ -54,18 +49,11 @@ export function createRuntimeTool(definition: {
   description: string;
   inputSchema: RuntimeJsonSchema;
   type?: "function" | "dynamic";
-  deferLoading?: boolean;
-  nativeToolSearch?: {
-    mode: "hosted" | "client";
-    variant?: "regex" | "bm25";
-  };
 }): RuntimeToolDefinition {
   return {
     type: definition.type ?? "function",
     description: definition.description,
     inputSchema: definition.inputSchema,
-    ...(definition.deferLoading === true ? { deferLoading: true } : {}),
-    ...(definition.nativeToolSearch ? { nativeToolSearch: definition.nativeToolSearch } : {}),
   };
 }
 

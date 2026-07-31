@@ -23,43 +23,6 @@ function getRuntimeToolSchema(tool: unknown): unknown {
 }
 
 describe("model-tool-converter", () => {
-  it("marks only deferred authorized schemas for provider-native search", () => {
-    const visible: ToolDefinition = {
-      name: "form_input",
-      description: "Ask for input",
-      parameters: { type: "object", properties: {} },
-    };
-    const deferred: ToolDefinition = {
-      name: "get_release",
-      description: "Get a release",
-      parameters: { type: "object", properties: {} },
-    };
-    const result = convertToolsToRuntimeTools([visible], {
-      model: "anthropic/claude-opus-4-6",
-      nativeToolSearch: { mode: "hosted", variant: "regex" },
-      toolExposurePlan: {
-        authorized: [visible, deferred],
-        visible: [visible],
-        deferred: [deferred],
-        loadedToolNames: new Set(),
-      },
-    })!;
-
-    assertEquals(Object.keys(result).sort(), ["form_input", "get_release", "tool_search"]);
-    assertEquals(
-      (result.form_input as { deferLoading?: boolean }).deferLoading,
-      undefined,
-    );
-    assertEquals(
-      (result.get_release as { deferLoading?: boolean }).deferLoading,
-      true,
-    );
-    assertEquals(
-      (result.tool_search as { nativeToolSearch?: unknown }).nativeToolSearch,
-      { mode: "hosted", variant: "regex" },
-    );
-  });
-
   it("mirrors JSON schema fields on runtime schema wrappers for provider compatibility", () => {
     const result = convertToolsToRuntimeTools([
       {

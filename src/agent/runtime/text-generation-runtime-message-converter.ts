@@ -11,15 +11,13 @@ import type {
   TextGenerationRuntimeAssistantMessage,
   TextGenerationRuntimeFilePart,
   TextGenerationRuntimeMessage,
+  TextGenerationRuntimeTextPart,
   TextGenerationRuntimeToolCallPart,
   TextGenerationRuntimeToolMessage,
   TextGenerationRuntimeToolResultPart,
 } from "./text-generation-runtime-message-types.ts";
-import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import { getTextFromParts, getToolArguments, type Message, type ToolCallPart } from "../types.ts";
-import { getProviderReplayMessageParts } from "./provider-replay.ts";
-import { getAgentRuntimeReasoningPart } from "./message-adapter.ts";
 
 function getStringPartField(part: unknown, key: string): string | undefined {
   if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
@@ -30,14 +28,6 @@ function getStringPartField(part: unknown, key: string): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function isRuntimeProviderBlock(part: unknown): part is RuntimeProviderBlock {
-  if (!isRecord(part) || part.type !== "provider-block" || !isRecord(part.block)) {
-    return false;
-  }
-
-  return part.provider === "anthropic" || part.provider === "openai-responses";
 }
 
 function getRecordPartField(part: unknown, key: string): Record<string, unknown> | undefined {
@@ -270,22 +260,11 @@ export function convertToTextGenerationRuntimeMessage(
     }
 
     case "assistant": {
-      const content: TextGenerationRuntimeAssistantMessage["content"] = [];
+      const content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart> = [];
 
-      for (const part of getProviderReplayMessageParts(msg)) {
-        if (isRuntimeProviderBlock(part)) {
-          content.push(part);
-          continue;
-        }
-
+      for (const part of msg.parts) {
         if (part.type === "text" && "text" in part) {
           content.push({ type: "text", text: (part as { text: string }).text });
-          continue;
-        }
-
-        const reasoningPart = getAgentRuntimeReasoningPart(part);
-        if (reasoningPart) {
-          content.push(reasoningPart);
           continue;
         }
 
@@ -346,18 +325,10 @@ export function convertToTextGenerationRuntimeMessage(
 function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
 
-  return getProviderReplayMessageParts(message).some((part) => {
+  return message.parts.some((part) => {
     if (part.type === "text" && "text" in part) {
       return typeof (part as { text?: unknown }).text === "string" &&
         (part as { text: string }).text.length > 0;
-    }
-
-    if (isRuntimeProviderBlock(part)) {
-      return true;
-    }
-
-    if (getAgentRuntimeReasoningPart(part)) {
-      return true;
     }
 
     return getTextGenerationToolCallPart(part) !== null;
@@ -394,7 +365,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   };
 
   const pushAssistantPart = (
-    part: TextGenerationRuntimeAssistantMessage["content"][number],
+    part: TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart,
   ) => {
     if (part.type === "tool-call") {
       providerExecutedToolCallIds.delete(part.toolCallId);
@@ -434,7 +405,7 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     pendingToolCallIds.delete(part.toolCallId);
   };
 
-  for (const part of getProviderReplayMessageParts(message)) {
+  for (const part of message.parts) {
     const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
     if (providerExecutedToolCallId) {
       providerExecutedToolCallIds.add(providerExecutedToolCallId);
@@ -442,17 +413,6 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
 
     if (part.type === "text" && "text" in part) {
       pushAssistantPart({ type: "text", text: (part as { text: string }).text });
-      continue;
-    }
-
-    if (isRuntimeProviderBlock(part)) {
-      pushAssistantPart(part);
-      continue;
-    }
-
-    const reasoningPart = getAgentRuntimeReasoningPart(part);
-    if (reasoningPart) {
-      pushAssistantPart(reasoningPart);
       continue;
     }
 

@@ -13,7 +13,6 @@ import type {
   EvalToolCallCountOptions,
   EvalToolCallMatchOptions,
 } from "./types.ts";
-import { calculateEffectiveInputTokens } from "./tool-loading-benchmark.ts";
 import {
   evaluateCalledTool,
   evaluateNotCalledTool,
@@ -1105,28 +1104,6 @@ export const metrics = {
           evidence: { usage: record.usage, limits: options },
         };
       }, options as Record<string, unknown>);
-    },
-
-    effectiveInputTokens(options: {
-      provider: "anthropic" | "openai";
-      max: number;
-    }): EvalMetric {
-      return createMetric("ops.effectiveInputTokens", "ops", (record) => {
-        const effectiveInputTokens = calculateEffectiveInputTokens(options.provider, record.usage);
-        const pass = effectiveInputTokens !== undefined && effectiveInputTokens <= options.max;
-        return {
-          name: "ops.effectiveInputTokens",
-          family: "ops",
-          severity: "budget",
-          score: pass ? 1 : 0,
-          pass,
-          evidence: {
-            provider: options.provider,
-            ...(effectiveInputTokens !== undefined ? { effectiveInputTokens } : {}),
-            max: options.max,
-          },
-        };
-      }, options);
     },
 
     cost(options: { maxUsd: number }): EvalMetric {

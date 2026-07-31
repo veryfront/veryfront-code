@@ -141,17 +141,6 @@ export type AgentMcpServerConfig = AgentHttpMcpServerConfig | AgentVeryfrontMcpS
 /** Controls when authorized tool schemas become visible to the model. */
 export type ToolLoading = "eager" | "deferred";
 
-/** @internal Actual per-step tool exposure observed by eval benchmarks. */
-export type AgentToolLoadingBenchmarkObservation = {
-  step: number;
-  authorizedSearchableSchemaCount: number;
-  visibleSchemaCount: number;
-  deferredSchemaCount: number;
-  providerRequestToolDefinitionCount: number;
-  providerWireDeferredMetadataCount: number;
-  loadingPath: "eager" | "framework-fallback" | "provider-native";
-};
-
 /** Configuration used by agent. */
 export interface AgentConfig {
   id?: string;

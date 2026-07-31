@@ -11,7 +11,6 @@ import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "../runtime/tool-exposure.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
-import type { ProviderReplayBlockPersister } from "../runtime/input-utils.ts";
 
 /** Public API contract for hosted chat runtime finish part. */
 export type HostedChatRuntimeFinishPart = {
@@ -160,6 +159,4 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   persistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
-  /** @internal Persists provider-native replay state outside public UI chunks. */
-  persistProviderReplayBlocks?: ProviderReplayBlockPersister;
 };

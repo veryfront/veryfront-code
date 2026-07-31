@@ -1,10 +1,7 @@
 {
   "name": "@veryfront/ext-llm-openai",
   "version": "0.1.0",
-  "exports": {
-    ".": "./src/index.ts",
-    "./testing": "./src/testing.ts"
-  },
+  "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
     "contracts": {

@@ -11,7 +11,6 @@ import {
   getRuntimeSourceIntegrationPolicyFromContext,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolSearchAuthorization,
-  resolveRuntimeNativeToolSearch,
   resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 
@@ -24,25 +23,17 @@ function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
 }
 
 describe("agent/runtime-tool-config", () => {
-  it("resolves tool loading with host override ahead of eval override and records provenance", () => {
+  it("resolves tool loading with host override ahead of agent config and records provenance", () => {
     assertEquals(resolveRuntimeToolLoading(runtimeConfig({ toolLoading: "deferred" })), {
       mode: "deferred",
       provenance: "agent-config",
     });
-    assertEquals(
-      resolveRuntimeToolLoading(runtimeConfig({ toolLoading: "deferred" }), "eager"),
-      {
-        mode: "eager",
-        provenance: "eval-override",
-      },
-    );
     assertEquals(
       resolveRuntimeToolLoading(
         runtimeConfig({
           toolLoading: "eager",
           __vfOperationalToolLoadingOverride: "deferred",
         }),
-        "eager",
       ),
       {
         mode: "deferred",
@@ -76,57 +67,6 @@ describe("agent/runtime-tool-config", () => {
       })),
       { canConfigureAgentTools: false, attachableCatalog: [] },
     );
-  });
-
-  describe("resolveRuntimeNativeToolSearch", () => {
-    const authorization = {
-      canConfigureAgentTools: false,
-      attachableCatalog: [],
-    };
-
-    it("defaults provider-native search off and retains framework fallback", () => {
-      assertEquals(
-        resolveRuntimeNativeToolSearch(
-          runtimeConfig({ toolLoading: "deferred" }),
-          "anthropic/claude-sonnet-4-5",
-          authorization,
-        ),
-        undefined,
-      );
-    });
-
-    it("enables Anthropic native search through trusted internal config", () => {
-      assertEquals(
-        resolveRuntimeNativeToolSearch(
-          runtimeConfig({ __vfNativeProviderToolSearchEnabled: true }),
-          "anthropic/claude-sonnet-4-5",
-          authorization,
-        ),
-        { mode: "hosted", variant: "regex" },
-      );
-    });
-
-    it("enables OpenAI native search through trusted internal config", () => {
-      assertEquals(
-        resolveRuntimeNativeToolSearch(
-          runtimeConfig({ __vfNativeProviderToolSearchEnabled: true }),
-          "openai/gpt-5.4",
-          authorization,
-        ),
-        { mode: "hosted" },
-      );
-    });
-
-    it("uses framework fallback when trusted internal config explicitly disables native search", () => {
-      assertEquals(
-        resolveRuntimeNativeToolSearch(
-          runtimeConfig({ __vfNativeProviderToolSearchEnabled: false }),
-          "openai/gpt-5.4",
-          authorization,
-        ),
-        undefined,
-      );
-    });
   });
 
   it("accepts only supported private checkpoint state from internal config", () => {

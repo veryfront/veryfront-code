@@ -27,7 +27,6 @@ import {
   resolveHostedRuntimeRequestConfig,
 } from "./runtime-request-config.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
-import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
   resolveRuntimeSkillSelectorForAgent,
   type RuntimeSkillDefinition,
@@ -43,15 +42,6 @@ import { findSubmittedFormInputResult } from "./form-input-tool.ts";
 import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "../runtime/tool-exposure.ts";
 import { createToolExposureCheckpointEvent } from "../runtime/tool-exposure.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
-import {
-  applyProviderReplayCheckpoints,
-  createProviderReplayCheckpointEvent,
-  type ProviderReplayCheckpoint,
-  type ProviderReplayCheckpoints,
-  resolveProviderReplayProvider,
-} from "../runtime/provider-replay.ts";
-import type { RuntimeProviderBlock } from "#veryfront/provider/runtime-loader.ts";
-import type { ProviderReplayPersistenceInput } from "../runtime/input-utils.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -128,8 +118,6 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   serverResolvedToolSearchAuthorization?: ToolSearchAuthorization;
   /** Trusted checkpoint resolved after hosted service authentication. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
-  /** Trusted provider replay history resolved from a verified server envelope. */
-  serverResolvedProviderReplayCheckpoints?: ProviderReplayCheckpoints;
   resolveModelId: (modelId: string | undefined) => string | undefined;
   resolveModelThinking?: (
     modelId: string | undefined,
@@ -156,31 +144,16 @@ export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> 
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
-function getProviderToolNames(agentConfig: { providerTools?: unknown }): string[] {
-  return Array.isArray(agentConfig.providerTools)
-    ? agentConfig.providerTools.filter((toolName): toolName is string =>
-      typeof toolName === "string" && toolName.length > 0
-    )
-    : [];
-}
-
 function getProviderOwnedToolNames(input: {
   agentConfig: { providerTools?: unknown };
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 }): string[] {
-  const providerNativeToolNames = new Set(
-    getProviderNativeToolNames({ model: input.runtimeConfig.requestedModel }),
-  );
-  const requestedProviderToolNames = input.runtimeConfig.requestedAllowedProviderTools.filter(
-    (toolName) => providerNativeToolNames.has(toolName),
-  );
-
-  return [
-    ...new Set([
-      ...getProviderToolNames(input.agentConfig),
-      ...requestedProviderToolNames,
-    ]),
-  ];
+  const configured = Array.isArray(input.agentConfig.providerTools)
+    ? input.agentConfig.providerTools.filter((toolName): toolName is string =>
+      typeof toolName === "string" && toolName.length > 0
+    )
+    : [];
+  return [...new Set([...configured, ...input.runtimeConfig.requestedAllowedProviderTools])];
 }
 
 async function flushRequiredContextCompactionEvent(
@@ -222,65 +195,6 @@ function createDurableToolExposureCheckpointPersister(
       privateDurableRunMirror.dispose();
       throw new Error(
         "Tool exposure checkpoint was not durably persisted before model execution",
-      );
-    }
-  };
-}
-
-function createDurableProviderReplayPersister(input: {
-  rootRunContext: HostedChatRuntimePreparationRootRunContext | undefined;
-  provider: ProviderReplayCheckpoint["provider"] | undefined;
-  restoredCheckpoints: readonly ProviderReplayCheckpoint[];
-}): ((input: ProviderReplayPersistenceInput) => Promise<void>) | undefined {
-  const durableRootRun = input.rootRunContext?.durableRootRun;
-  if (!durableRootRun || !input.provider) return undefined;
-  const durableRunMirror = input.rootRunContext?.privateDurableRunMirror;
-  if (!durableRunMirror) {
-    return async () => {
-      throw new Error(
-        "A trusted run-event append token is required to persist provider replay state",
-      );
-    };
-  }
-  const restoredCheckpoint = input.restoredCheckpoints.find((checkpoint) =>
-    checkpoint.messageId === durableRootRun.messageId &&
-    checkpoint.provider === input.provider
-  );
-  const providerBlocks: RuntimeProviderBlock[] = [
-    ...(restoredCheckpoint?.providerBlocks ?? []),
-  ];
-  const providerBlockPositions = [
-    ...(restoredCheckpoint?.providerBlockPositions ?? []),
-  ];
-  let totalPartCount = restoredCheckpoint?.totalPartCount ?? 0;
-  return async (replay) => {
-    if (
-      replay.providerBlocks.length === 0 ||
-      replay.providerBlocks.some((block) => block.provider !== input.provider) ||
-      replay.providerBlockPositions.length !== replay.providerBlocks.length
-    ) {
-      throw new Error("Provider replay blocks did not match the active hosted provider");
-    }
-    providerBlocks.push(...replay.providerBlocks);
-    providerBlockPositions.push(
-      ...replay.providerBlockPositions.map((position) => position + totalPartCount),
-    );
-    totalPartCount += replay.totalPartCount;
-    await durableRunMirror.appendEvents([
-      createProviderReplayCheckpointEvent({
-        version: 1,
-        messageId: durableRootRun.messageId,
-        provider: input.provider!,
-        providerBlocks: [...providerBlocks],
-        providerBlockPositions: [...providerBlockPositions],
-        totalPartCount,
-      }),
-    ]);
-    const snapshot = await durableRunMirror.flush();
-    if (snapshot.disabled || snapshot.pendingEventCount > 0 || snapshot.inFlight) {
-      durableRunMirror.dispose();
-      throw new Error(
-        "Provider replay checkpoint was not durably persisted before model continuation",
       );
     }
   };
@@ -348,8 +262,6 @@ export type HostedChatExecutionPreparationInput<
   serverResolvedToolSearchAuthorization?: ToolSearchAuthorization;
   /** Trusted checkpoint resolved by the authenticated hosted service. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
-  /** Trusted provider replay history resolved from a verified server envelope. */
-  serverResolvedProviderReplayCheckpoints?: ProviderReplayCheckpoints;
 };
 
 /** Result returned from hosted chat execution preparation. */
@@ -436,12 +348,6 @@ export async function prepareHostedChatRuntimeCreationOptions<
     resolveModelId: input.resolveModelId,
     resolveModelThinking: input.resolveModelThinking,
   });
-  const persistProviderReplayBlocks = createDurableProviderReplayPersister({
-    rootRunContext: input.rootRunContext,
-    provider: resolveProviderReplayProvider(runtimeConfig.requestedModel),
-    restoredCheckpoints: input.serverResolvedProviderReplayCheckpoints ?? [],
-  });
-
   return {
     creationOptions: {
       projectId: input.projectId,
@@ -508,7 +414,6 @@ export async function prepareHostedChatRuntimeCreationOptions<
           persistToolExposureCheckpoint: createDurableToolExposureCheckpointPersister(
             input.rootRunContext,
           ),
-          ...(persistProviderReplayBlocks ? { persistProviderReplayBlocks } : {}),
         }
         : {}),
       clientProfile: runtimeConfig.clientProfile,
@@ -585,7 +490,6 @@ export async function prepareHostedChatExecution<
     buildInstructions: input.buildInstructions,
     serverResolvedToolSearchAuthorization: input.serverResolvedToolSearchAuthorization,
     serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
-    serverResolvedProviderReplayCheckpoints: input.serverResolvedProviderReplayCheckpoints,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);
   const historicalToolInputCompactions: HistoricalToolInputCompactionDiagnostic[] = [];
@@ -605,11 +509,7 @@ export async function prepareHostedChatExecution<
       },
     },
   );
-  const finalMessages = applyProviderReplayCheckpoints(
-    preparedMessages,
-    input.serverResolvedProviderReplayCheckpoints ?? [],
-    resolveProviderReplayProvider(runtimePreparation.runtimeConfig.requestedModel),
-  );
+  const finalMessages = preparedMessages;
   if (historicalToolInputCompactions.length > 0) {
     input.contextBudget?.logger?.debug?.("Hosted chat historical tool inputs compacted", {
       toolInputCompactions: historicalToolInputCompactions,

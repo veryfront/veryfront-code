@@ -388,9 +388,6 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
   const cacheCreationInputTokens = readNumber(record.cacheCreationInputTokens) ??
     readNumber(record.cacheCreationTokens) ??
     readNumber(record.cache_creation_input_tokens);
-  const cacheWriteInputTokens = readNumber(record.cacheWriteInputTokens) ??
-    readNumber(record.cacheWriteTokens) ??
-    readNumber(record.cache_write_input_tokens);
   const cacheReadInputTokens = readNumber(record.cacheReadInputTokens) ??
     readNumber(record.cacheReadTokens) ??
     readNumber(record.cache_read_input_tokens);
@@ -427,7 +424,6 @@ function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | und
     ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-    ...(cacheWriteInputTokens !== undefined ? { cacheWriteInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     ...(costUsd !== undefined ? { costUsd } : {}),

@@ -38,52 +38,6 @@ export {
 export type { RuntimeUsage };
 
 /** Message shape for runtime prompt. */
-export type RuntimeAnthropicProviderBlock =
-  | ({
-    type: "server_tool_use";
-    id: string;
-    name: string;
-    input: unknown;
-  } & Record<string, unknown>)
-  | ({
-    type: "tool_search_tool_result";
-    tool_use_id: string;
-    content: unknown;
-  } & Record<string, unknown>);
-
-export type RuntimeOpenAIProviderBlock =
-  | ({
-    type: "tool_search_call";
-    execution?: "server" | "client";
-    call_id?: string | null;
-    status?: string;
-    arguments?: unknown;
-  } & Record<string, unknown>)
-  | ({
-    type: "tool_search_output";
-    execution?: "server" | "client";
-    call_id?: string | null;
-    status?: string;
-    tools?: unknown[];
-  } & Record<string, unknown>);
-
-export type RuntimeNativeToolSearch = {
-  mode: "hosted" | "client";
-  variant?: "regex" | "bm25";
-};
-
-export type RuntimeProviderBlock =
-  | {
-    type: "provider-block";
-    provider: "anthropic";
-    block: RuntimeAnthropicProviderBlock;
-  }
-  | {
-    type: "provider-block";
-    provider: "openai-responses";
-    block: RuntimeOpenAIProviderBlock;
-  };
-
 export type RuntimePromptMessage =
   | { role: "system"; content: string }
   | {
@@ -116,7 +70,6 @@ export type RuntimePromptMessage =
         signature?: string;
         redactedData?: string;
       }
-      | RuntimeProviderBlock
     >;
   }
   | {
@@ -128,24 +81,12 @@ export type RuntimePromptMessage =
       output: { type: "json"; value: unknown };
     }>;
   };
-export type RuntimeToolDefinition =
+type RuntimeToolDefinition =
   | {
     type: "function";
     name: string;
     description?: string;
     inputSchema: unknown;
-    /**
-     * Internal provider hint. The framework keeps authorization and fallback
-     * search authoritative; compatible native adapters may exclude this
-     * definition from initial model context while retaining it on the wire.
-     */
-    deferLoading?: boolean;
-    /**
-     * Framework-owned internal projection. Set only on the framework
-     * `tool_search` definition after authorization and capability selection.
-     * Provider options cannot enable native loading.
-     */
-    nativeToolSearch?: RuntimeNativeToolSearch;
   }
   | {
     type: "provider";
@@ -500,11 +441,6 @@ export function toOpenAICompatibleMessages(
           // OpenAI Chat Completions has no roundtrip slot for Anthropic
           // thinking blocks — they get dropped on replay. Anthropic-only.
           if (part.type === "reasoning") {
-            continue;
-          }
-          // Provider-native replay blocks are routed only by their matching
-          // Responses/Messages adapter and never leak into Chat Completions.
-          if (part.type === "provider-block") {
             continue;
           }
 

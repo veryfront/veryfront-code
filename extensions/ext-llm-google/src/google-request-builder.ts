@@ -126,9 +126,6 @@ function toGoogleContents(
             parts.push({ text: part.text });
             continue;
           }
-          if (part.type === "provider-block") {
-            continue;
-          }
           if (part.type === "reasoning") {
             continue;
           }

@@ -7,9 +7,6 @@ import {
   createHostedChatRuntimeAgentAdapter,
   type HostedChatRuntimeAgentAdapterInput,
 } from "./chat-runtime-agent-adapter.ts";
-import { agent } from "../factory.ts";
-import type { ModelRuntime } from "#veryfront/provider";
-import { attachProviderReplaySidecar } from "../runtime/provider-replay.ts";
 
 const encoder = new TextEncoder();
 const unrestrictedSourceIntegrationPolicy = {
@@ -53,70 +50,6 @@ function publishDataEventFrom(
 }
 
 describe("createHostedChatRuntimeAgentAdapter", () => {
-  it("preserves trusted provider replay blocks loaded by the hosted runtime", async () => {
-    let prompt: unknown;
-    const model: ModelRuntime = {
-      provider: "anthropic",
-      modelId: "anthropic/claude-opus-4-6",
-      async doGenerate() {
-        return { content: [{ type: "text", text: "unused" }] };
-      },
-      async doStream(options: unknown) {
-        prompt = (options as { prompt?: unknown }).prompt;
-        return {
-          stream: new ReadableStream<unknown>({
-            start(controller) {
-              controller.enqueue({ type: "text-delta", text: "resumed" });
-              controller.enqueue({ type: "finish", finishReason: "stop" });
-              controller.close();
-            },
-          }),
-        };
-      },
-    };
-    const adapter = createHostedChatRuntimeAgentAdapter({
-      runtimeAgent: agent({
-        id: "hosted-provider-replay",
-        model: "anthropic/claude-opus-4-6",
-        system: "Resume trusted hosted history.",
-        maxSteps: 1,
-        resolveModelTransport: () => ({ model }),
-      }),
-      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    });
-
-    const trustedAssistantMessage = attachProviderReplaySidecar({
-      id: "assistant-provider-state",
-      role: "assistant",
-      parts: [{ type: "text", text: "Prior native search." }],
-      timestamp: 1,
-    }, {
-      providerBlocks: [{
-        type: "provider-block",
-        provider: "anthropic",
-        block: {
-          type: "server_tool_use",
-          id: "trusted-server-state",
-          name: "tool_search",
-          input: { query: "tools" },
-        },
-      }],
-      providerBlockPositions: [0],
-    });
-    const result = await adapter.stream({
-      messages: [trustedAssistantMessage, {
-        id: "user-resume",
-        role: "user",
-        parts: [{ type: "text", text: "Continue" }],
-        timestamp: 2,
-      }],
-      abortSignal: new AbortController().signal,
-    });
-    await collectChunks(result.toUIMessageStream());
-
-    assertEquals(JSON.stringify(prompt).includes("trusted-server-state"), true);
-  });
-
   it("keeps the source policy active through lazy stream construction and consumption", async () => {
     const observedPolicies: Array<ReturnType<typeof getActiveSourceIntegrationPolicy>> = [];
     const runtimeAgent: HostedChatRuntimeAgentAdapterInput["runtimeAgent"] = {
