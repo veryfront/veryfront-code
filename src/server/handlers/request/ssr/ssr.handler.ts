@@ -230,8 +230,12 @@ export class SSRHandler extends BaseHandler {
         if (memoryStatus.shouldReject) {
           this.logDebug("Rejecting due to memory pressure", { slug }, ctx);
           const result = this.ssrService.createMemoryPressureResult(slug);
-          result.dependencyPinningCacheKey = dependencySnapshot.cacheKey;
-          return this.buildResponse(req, ctx, result, generateNonce());
+          return this.buildResponse(
+            req,
+            ctx,
+            { ...result, dependencyPinningCacheKey: dependencySnapshot.cacheKey },
+            generateNonce(),
+          );
         }
 
         const nonce = generateNonce();
@@ -261,40 +265,48 @@ export class SSRHandler extends BaseHandler {
           dependencyPinningDependencies: dependencySnapshot.dependencies,
           dependencyPinningSource: dependencySource,
         });
-        result.dependencyPinningCacheKey = dependencySnapshot.cacheKey;
+        const rendered: SSRRenderResult = {
+          ...result,
+          dependencyPinningCacheKey: dependencySnapshot.cacheKey,
+        };
 
         endRequest(requestId);
 
-        if (result.errorType === "redirect" && result.redirectLocation) {
-          return this.handleRedirect(req, ctx, result, nonce);
+        const failure = rendered.failure;
+        switch (failure?.kind) {
+          case "redirect":
+            return this.handleRedirect(req, ctx, rendered, failure.location, nonce);
+          case "not-found":
+            return this.handleNotFound(
+              applicationRequest,
+              ctx,
+              slug,
+              nonce,
+              dependencySnapshot,
+            );
+          case "overloaded":
+          case "runtime":
+          case "server-error": {
+            // Project error pages should beat the dev overlay for runtime
+            // errors. Build/import errors stay visible because their overlay is
+            // actionable, and only a runtime failure raises one.
+            const overlayWins = failure.kind === "runtime" && isSSRBuildFailure(failure.error);
+            if (!overlayWins) {
+              const customResponse = await this.tryCustomErrorFallback(
+                applicationRequest,
+                ctx,
+                rendered,
+                failure.error,
+                nonce,
+                dependencySnapshot,
+              );
+              if (customResponse) return customResponse;
+            }
+            break;
+          }
         }
 
-        if (result.errorType === "not-found") {
-          return this.handleNotFound(
-            applicationRequest,
-            ctx,
-            slug,
-            nonce,
-            dependencySnapshot,
-          );
-        }
-
-        const isServerError = result.errorType === "server-error" ||
-          result.errorType === "runtime";
-        // Project error pages should beat the dev overlay for runtime errors.
-        // Build/import errors stay visible because their overlay is actionable.
-        if (isServerError && !(result.showDevOverlay && isSSRBuildFailure(result.error))) {
-          const customResponse = await this.tryCustomErrorFallback(
-            applicationRequest,
-            ctx,
-            result,
-            nonce,
-            dependencySnapshot,
-          );
-          if (customResponse) return customResponse;
-        }
-
-        return this.buildResponse(req, ctx, result, nonce);
+        return this.buildResponse(req, ctx, rendered, nonce);
       },
       { "ssr.slug": slug, "ssr.projectSlug": ctx.projectSlug || "unknown" },
     );
@@ -304,6 +316,7 @@ export class SSRHandler extends BaseHandler {
     req: Request,
     ctx: HandlerContext,
     result: SSRRenderResult,
+    location: string,
     nonce: string,
   ): HandlerResult {
     const response = this.createSnapshotResponseBuilder(
@@ -314,7 +327,7 @@ export class SSRHandler extends BaseHandler {
       .withCORS(req, ctx.securityConfig?.cors)
       .withSecurity(ctx.securityConfig ?? undefined, req)
       .withCache(result.cacheStrategy)
-      .withHeaders({ Location: result.redirectLocation ?? "/" })
+      .withHeaders({ Location: location })
       .build(null, result.status);
 
     return this.respond(response);
@@ -353,7 +366,7 @@ export class SSRHandler extends BaseHandler {
       html: ErrorPages.notFound(slug || "/"),
       isStreaming: false,
       cacheStrategy: "no-cache",
-      errorType: "not-found",
+      failure: { kind: "not-found" },
       slug,
       dependencyPinningCacheKey: dependencySnapshot.cacheKey,
     };
@@ -365,6 +378,7 @@ export class SSRHandler extends BaseHandler {
     req: Request,
     ctx: HandlerContext,
     result: SSRRenderResult,
+    error: Error,
     nonce: string,
     dependencySnapshot: DependencyPinningSnapshot,
   ): Promise<HandlerResult | null> {
@@ -375,7 +389,7 @@ export class SSRHandler extends BaseHandler {
     );
     const customResponse = await tryErrorPageFallback(req, ctx, builder, {
       statusCode: result.status,
-      error: result.error,
+      error,
       pathname: result.slug || "/",
     }, dependencySnapshot);
 

@@ -143,7 +143,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html>not found</html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            errorType: "not-found" as const,
+            failure: { kind: "not-found" } as const,
             slug: "missing-page",
           }),
       });
@@ -165,8 +165,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             status: 302,
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            errorType: "redirect" as const,
-            redirectLocation: "/login",
+            failure: { kind: "redirect", location: "/login", permanent: false } as const,
             slug: "redirect-source",
           }),
       });
@@ -189,8 +188,11 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html>server error</html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            errorType: "server-error" as const,
-            error: new Error("Render failed"),
+            failure: {
+              kind: "server-error",
+              exposure: "generic",
+              error: new Error("Render failed"),
+            } as const,
             slug: "broken",
           }),
       });
@@ -211,8 +213,11 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html><body>segment boundary</body></html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            errorType: "app-router-error-boundary" as const,
-            error: new Error("Render failed"),
+            failure: {
+              kind: "app-router-error-boundary",
+              html: "<html><body>segment boundary</body></html>",
+              error: new Error("Render failed"),
+            } as const,
             slug: "broken",
           }),
       });
@@ -478,8 +483,13 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       return { ctx: makeCtx({ adapter }), statted };
     }
 
-    for (const errorType of ["server-error", "runtime"] as const) {
-      it(`looks for a custom error page for ${errorType} even with the dev overlay`, async () => {
+    const applicationFailures = [
+      { kind: "server-error", exposure: "generic", error: new Error("Oops") },
+      { kind: "runtime", exposure: "development-overlay", error: new Error("Oops") },
+    ] as const;
+
+    for (const failure of applicationFailures) {
+      it(`looks for a custom error page for ${failure.kind} even with the dev overlay`, async () => {
         const mockService = createMockSSRService({
           renderPage: () =>
             Promise.resolve({
@@ -487,9 +497,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
               html: "<html>dev overlay</html>",
               isStreaming: false,
               cacheStrategy: "no-cache" as const,
-              errorType,
-              showDevOverlay: true,
-              error: new Error("Oops"),
+              failure,
               slug: "page",
             }),
         });
@@ -511,9 +519,11 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html>dev overlay</html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            errorType: "server-error" as const,
-            showDevOverlay: true,
-            error: new Error("Oops"),
+            failure: {
+              kind: "server-error",
+              exposure: "generic",
+              error: new Error("Oops"),
+            } as const,
             slug: "page",
           }),
       });
@@ -532,8 +542,11 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             html: "<html>runtime error overlay</html>",
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            errorType: "runtime" as const,
-            showDevOverlay: true,
+            failure: {
+              kind: "runtime",
+              exposure: "development-overlay" as const,
+              error: new Error("Dev error"),
+            },
             slug: "broken",
           }),
       });
@@ -563,8 +576,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
             status: 301,
             isStreaming: false,
             cacheStrategy: "no-cache" as const,
-            errorType: "redirect" as const,
-            redirectLocation: "/moved",
+            failure: { kind: "redirect", location: "/moved", permanent: false } as const,
             slug: "redirect-source",
           }),
       });
@@ -730,15 +742,17 @@ describe("handle - build errors bypass the custom error page", () => {
           html: "<html>dev overlay</html>",
           isStreaming: false,
           cacheStrategy: "no-cache" as const,
-          errorType: "runtime" as const,
-          showDevOverlay: true,
-          error: RENDER_ERROR.create({
-            detail: "Critical page module(s) failed to load",
-            context: {
-              criticalFailures: [{ path: "pages/test/y.tsx", error: "bad import", buildFailure }],
-              buildFailure,
-            },
-          }),
+          failure: {
+            kind: "runtime" as const,
+            exposure: "development-overlay" as const,
+            error: RENDER_ERROR.create({
+              detail: "Critical page module(s) failed to load",
+              context: {
+                criticalFailures: [{ path: "pages/test/y.tsx", error: "bad import", buildFailure }],
+                buildFailure,
+              },
+            }),
+          },
           slug: "page",
         }),
     });
@@ -790,9 +804,11 @@ describe("handle - build errors bypass the custom error page", () => {
           html: "<html>dev overlay</html>",
           isStreaming: false,
           cacheStrategy: "no-cache" as const,
-          errorType: "runtime" as const,
-          showDevOverlay: true,
-          error: new Error("intentional test error from getServerData"),
+          failure: {
+            kind: "runtime" as const,
+            exposure: "development-overlay" as const,
+            error: new Error("intentional test error from getServerData"),
+          },
           slug: "page",
         }),
     }));
