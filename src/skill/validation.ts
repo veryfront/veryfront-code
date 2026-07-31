@@ -23,6 +23,9 @@ const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
+const mapForEach = Map.prototype.forEach;
+const NativeRangeError = RangeError;
+const NativeTypeError = TypeError;
 const ownKeys = Reflect.ownKeys;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
@@ -34,6 +37,15 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
     !isProxyWithoutHooks(value);
 }
 
+function isOpaqueObjectReference(value: unknown): value is object {
+  if (value === null || typeof value !== "object") return false;
+  try {
+    return !arrayIsArray(value);
+  } catch {
+    return false;
+  }
+}
+
 function ownDataValue(
   record: Record<string, unknown>,
   key: string,
@@ -41,7 +53,7 @@ function ownDataValue(
   const descriptor = getOwnPropertyDescriptor(record, key);
   if (!descriptor) return undefined;
   if (!hasOwn(descriptor, "value")) {
-    throw new TypeError(`Skill field "${key}" must be a data property`);
+    throw new NativeTypeError(`Skill field "${key}" must be a data property`);
   }
   return descriptor.value;
 }
@@ -52,13 +64,13 @@ function requireBoundedString(
   maxLength: number,
 ): string {
   if (typeof value !== "string" || value.length === 0) {
-    throw new TypeError(`${field} must be a non-empty string`);
+    throw new NativeTypeError(`${field} must be a non-empty string`);
   }
   if (value.length > maxLength) {
-    throw new RangeError(`${field} must be at most ${maxLength} characters`);
+    throw new NativeRangeError(`${field} must be at most ${maxLength} characters`);
   }
   if (!isWellFormedUtf16(value)) {
-    throw new TypeError(`${field} must contain well-formed UTF-16`);
+    throw new NativeTypeError(`${field} must contain well-formed UTF-16`);
   }
   return value;
 }
@@ -70,7 +82,7 @@ function requireBoundedIdentity(
 ): string {
   const normalized = requireBoundedString(value, field, maxLength);
   if (hasControlCharacters(normalized)) {
-    throw new TypeError(`${field} must not contain control characters`);
+    throw new NativeTypeError(`${field} must not contain control characters`);
   }
   return normalized;
 }
@@ -96,7 +108,7 @@ function optionalBoundedString(
 function normalizeStringMetadata(value: unknown): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   if (!isObjectRecord(value)) {
-    throw new TypeError("Skill metadata.metadata must be an object");
+    throw new NativeTypeError("Skill metadata.metadata must be an object");
   }
   const descriptors = getOwnPropertyDescriptors(value);
   const entries: Array<readonly [string, PropertyDescriptor]> = [];
@@ -106,7 +118,7 @@ function normalizeStringMetadata(value: unknown): Record<string, string> | undef
     const descriptor = descriptors[key as keyof typeof descriptors];
     if (!descriptor?.enumerable) continue;
     if (typeof key !== "string") {
-      throw new TypeError("Skill metadata keys must be strings");
+      throw new NativeTypeError("Skill metadata keys must be strings");
     }
     defineProperty(entries, entries.length, {
       configurable: true,
@@ -116,7 +128,9 @@ function normalizeStringMetadata(value: unknown): Record<string, string> | undef
     });
   }
   if (entries.length > SKILL_METADATA_MAX_ENTRIES) {
-    throw new RangeError(`Skill metadata accepts at most ${SKILL_METADATA_MAX_ENTRIES} entries`);
+    throw new NativeRangeError(
+      `Skill metadata accepts at most ${SKILL_METADATA_MAX_ENTRIES} entries`,
+    );
   }
   if (entries.length === 0) return undefined;
 
@@ -126,25 +140,25 @@ function normalizeStringMetadata(value: unknown): Record<string, string> | undef
     const key = entry[0];
     const descriptor = entry[1];
     if (!hasOwn(descriptor, "value") || typeof descriptor.value !== "string") {
-      throw new TypeError("Skill metadata values must be strings");
+      throw new NativeTypeError("Skill metadata values must be strings");
     }
     if (key.length === 0 || key.length > SKILL_METADATA_KEY_MAX_LENGTH) {
-      throw new RangeError(
+      throw new NativeRangeError(
         `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} characters`,
       );
     }
     if (!isWellFormedUtf16(key) || hasControlCharacters(key)) {
-      throw new TypeError(
+      throw new NativeTypeError(
         `Skill metadata keys must be 1-${SKILL_METADATA_KEY_MAX_LENGTH} printable characters`,
       );
     }
     if (descriptor.value.length > SKILL_METADATA_VALUE_MAX_LENGTH) {
-      throw new RangeError(
+      throw new NativeRangeError(
         `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} characters`,
       );
     }
     if (!isWellFormedUtf16(descriptor.value) || hasControlCharacters(descriptor.value)) {
-      throw new TypeError(
+      throw new NativeTypeError(
         `Skill metadata values must be at most ${SKILL_METADATA_VALUE_MAX_LENGTH} printable characters`,
       );
     }
@@ -160,7 +174,7 @@ function normalizeStringMetadata(value: unknown): Record<string, string> | undef
 
 function normalizeSkillMetadata(value: unknown): SkillMetadata {
   if (!isObjectRecord(value)) {
-    throw new TypeError("Skill metadata must be an object");
+    throw new NativeTypeError("Skill metadata must be an object");
   }
 
   // Programmatic definitions historically permit a display-oriented name.
@@ -182,7 +196,7 @@ function normalizeSkillMetadata(value: unknown): SkillMetadata {
   );
   const rawAllowedTools = ownDataValue(value, "allowedTools");
   if (rawAllowedTools !== undefined && !arrayIsArray(rawAllowedTools)) {
-    throw new TypeError("Skill metadata allowedTools must be an array");
+    throw new NativeTypeError("Skill metadata allowedTools must be an array");
   }
   const allowedTools = rawAllowedTools === undefined
     ? undefined
@@ -219,9 +233,9 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
   const registryId = requireBoundedIdentity(id, "Skill registry id", SKILL_ID_MAX_LENGTH);
   if (!isObjectRecord(value)) {
     if (isProxyWithoutHooks(value)) {
-      throw new TypeError("Skill definition must not be a proxy");
+      throw new NativeTypeError("Skill definition must not be a proxy");
     }
-    throw new TypeError("Skill definition must be an object");
+    throw new NativeTypeError("Skill definition must be an object");
   }
 
   requireBoundedIdentity(
@@ -237,7 +251,7 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
     SKILL_ROOT_PATH_MAX_LENGTH,
   );
   if (!isAbsolute(rootPath)) {
-    throw new TypeError("Skill rootPath must be an absolute path");
+    throw new NativeTypeError("Skill rootPath must be an absolute path");
   }
   const ownerAgentId = optionalBoundedIdentity(
     ownDataValue(value, "ownerAgentId"),
@@ -250,15 +264,15 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
     64,
   );
   if (ownerAgentId === undefined && shortName !== undefined) {
-    throw new TypeError("Skill shortName requires ownerAgentId");
+    throw new NativeTypeError("Skill shortName requires ownerAgentId");
   }
   if (shortName !== undefined && !isValidProviderSafeSkillId(shortName)) {
-    throw new TypeError(`Skill shortName "${shortName}" is not a valid skill name`);
+    throw new NativeTypeError(`Skill shortName "${shortName}" is not a valid skill name`);
   }
 
   const fsAdapter = ownDataValue(value, "fsAdapter");
-  if (fsAdapter !== undefined && !isObjectRecord(fsAdapter)) {
-    throw new TypeError("Skill fsAdapter must be an object");
+  if (fsAdapter !== undefined && !isOpaqueObjectReference(fsAdapter)) {
+    throw new NativeTypeError("Skill fsAdapter must be an object");
   }
 
   return freeze({
@@ -311,15 +325,15 @@ export function validateSkillRegistryCandidate(
 ): void {
   if (incoming.ownerAgentId === undefined || incoming.shortName === undefined) return;
 
-  for (const [existingId, existing] of registry) {
-    if (existingId === id) continue;
+  apply(mapForEach, registry, [(existing: Skill, existingId: string) => {
+    if (existingId === id) return;
     if (
       existing.ownerAgentId === incoming.ownerAgentId &&
       existing.shortName === incoming.shortName
     ) {
-      throw new TypeError(
+      throw new NativeTypeError(
         `Agent "${incoming.ownerAgentId}" already owns skill short name "${incoming.shortName}" under id "${existingId}"`,
       );
     }
-  }
+  }]);
 }

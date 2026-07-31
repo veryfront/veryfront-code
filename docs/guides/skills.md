@@ -230,6 +230,145 @@ curl -N http://localhost:3000/api/ag-ui \
 
 The agent should call `load_skill` before applying the skill instructions.
 
+## Provide a Skill script executor
+
+Use the `SkillScriptExecutorProvider` extension contract when Skill scripts
+must run through a custom execution service. The exact registration name is
+`SkillScriptExecutorProvider`; use `SkillScriptExecutorProviderName` instead of
+repeating that string.
+
+The provider must prepare an inert execution before it starts any work. This
+example registers a complete provider that asynchronously echoes the validated
+script content:
+
+```ts
+import type { ExtensionFactory } from "veryfront/extensions";
+import {
+  type SkillScriptExecutorProvider,
+  SkillScriptExecutorProviderName,
+} from "veryfront/extensions/skill";
+
+const createEchoSkillScriptExecutor: ExtensionFactory = () => ({
+  name: "echo-skill-script-executor",
+  version: "1.0.0",
+  capabilities: [],
+  contracts: { provides: [SkillScriptExecutorProviderName] },
+  setup(context) {
+    const provider: SkillScriptExecutorProvider = {
+      prepare(input, reporter) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        let finished = false;
+
+        return {
+          activate() {
+            timer = setTimeout(() => {
+              if (finished) return;
+              finished = true;
+              timer = undefined;
+              reporter.resolveResult({
+                stdout: input.scriptContent ?? "",
+                stderr: "",
+                exitCode: 0,
+              });
+              reporter.resolveTerminal();
+            }, 0);
+          },
+          terminate(reason) {
+            if (finished) return;
+            finished = true;
+            if (timer !== undefined) clearTimeout(timer);
+            reporter.rejectResult(
+              reason ?? new Error("Skill script execution terminated"),
+            );
+            reporter.resolveTerminal();
+          },
+        };
+      },
+    };
+
+    context.provide<SkillScriptExecutorProvider>(
+      SkillScriptExecutorProviderName,
+      provider,
+    );
+  },
+});
+
+export default createEchoSkillScriptExecutor;
+```
+
+Declare the contract in `contracts.provides`, then publish it with
+`context.provide()` during extension setup. This gives the extension loader
+ownership of registration, replacement, and teardown.
+
+Follow these lifecycle requirements when adapting the example:
+
+1. `prepare(input, reporter)` must return inert controls synchronously. It must
+   not spawn a process, provision a sandbox, issue a request, schedule
+   execution, or report settlement. Start external work only from `activate()`.
+2. `activate()` must complete synchronously, without returning a Promise. It
+   can start asynchronous work and report its outcome later.
+3. The validated `terminate(reason)` control is synchronous and idempotent.
+   Veryfront forwards its first call to the provider and ignores later calls.
+   Initiate cancellation synchronously, then report asynchronous cleanup
+   through the reporter.
+4. Report the script outcome with `resolveResult(result)` or
+   `rejectResult(reason)`. Report `resolveTerminal()` only after all
+   provider-owned cleanup is complete, or use `rejectTerminal(reason)` if
+   cleanup fails. Always report a terminal settlement, including after
+   cancellation or an activation failure.
+
+Reporter calls before activation are a contract violation. The
+`execute_skill_script` call waits for both the result and terminal cleanup, so
+a successful result does not return while cleanup is pending. Independent
+result and cleanup failures are preserved in an `AggregateError`.
+
+The provider and prepared controls have exact security shapes. The provider
+must be a non-proxy plain object with only one own, enumerable function data
+property, `prepare`. `prepare` must return a non-proxy plain object with exactly
+the own, enumerable function data properties `activate` and `terminate`. Plain
+objects may use `Object.prototype` or a null prototype. Extra or symbol keys,
+accessors, inherited class methods, proxied functions, async functions, and
+Promise-returning callbacks are rejected. Veryfront invokes the captured
+functions without a receiver, so use closures instead of `this`.
+
+`SkillScriptResult` has a structural boundary rather than this exact-object
+requirement. No class or prototype brand is required, and extra fields are
+allowed, but `stdout`, `stderr`, and `exitCode` must be own, enumerable data
+properties on a non-proxy object. The two outputs must be well-formed strings
+with a combined limit of 1 MiB, and `exitCode` must be a safe integer. Veryfront
+copies only those three fields into a detached, frozen result and discards the
+source prototype and extra fields. It rejects accessors for the required
+fields instead of invoking them.
+
+Backend selection follows this precedence for each execution:
+
+1. A `SkillScriptExecutor` passed as
+   `createExecuteSkillScriptTool({ executor })`.
+2. The active `SkillScriptExecutorProvider` registration.
+3. The built-in executor, which selects cloud execution when cloud
+   authentication is available and local execution otherwise.
+
+An explicit executor prevents provider-registry inspection. A registered
+provider is snapshotted for that execution. A malformed or transition-
+unavailable registration fails closed instead of falling back to the built-in
+executor.
+
+Loader-owned providers also participate in extension generation retirement.
+When retirement begins, the loader seals the current generation synchronously,
+before extension context abort or teardown, so no new execution can enter it.
+Context abort and generation drain can both request cancellation, but the
+validated execution forwards `terminate(reason)` at most once. The drain waits
+for every admitted execution to report its result and terminal cleanup. Only
+after those generation leases drain does the provider extension run teardown
+and a successfully staged replacement become active.
+
+Provider resolution fails closed while a generation is retiring or a
+replacement is staging. If replacement setup fails, contracts remain
+unavailable until a later generation commits successfully; Veryfront does not
+silently select the built-in executor. An execution already admitted to a
+generation keeps its provider snapshot until terminal cleanup, while a
+captured provider that did not start before retirement cannot start afterward.
+
 ## Tool restrictions
 
 The `allowed-tools` field restricts which tools an agent can use while a skill is active. Use exact IDs or prefix wildcards:

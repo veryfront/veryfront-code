@@ -1,4 +1,10 @@
 import { dynamicImport } from "../dynamic-import.ts";
+import {
+  addAbortSignalListenerOnce,
+  isAbortSignalAborted,
+  isAbortSignalWithoutHooks,
+  removeAbortSignalListener,
+} from "../abort-signal.ts";
 import { getDenoRuntime, isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
 import { isWindowsPlatform, runtimeProcess } from "./runtime-process.ts";
 
@@ -103,7 +109,7 @@ function createTerminationResult(
 
 function validateAbortSignal(signal: unknown): asserts signal is AbortSignal | undefined {
   if (signal === undefined) return;
-  if (typeof AbortSignal === "undefined" || !(signal instanceof AbortSignal)) {
+  if (!isAbortSignalWithoutHooks(signal)) {
     throw new TypeError("signal must be an AbortSignal");
   }
 }
@@ -265,8 +271,8 @@ function createProcessGuard(
     }, timeoutMs);
   }
   if (signal) {
-    signal.addEventListener("abort", abortListener, { once: true });
-    if (signal.aborted) stop("abort");
+    addAbortSignalListenerOnce(signal, abortListener);
+    if (isAbortSignalAborted(signal)) stop("abort");
   }
 
   return {
@@ -274,7 +280,7 @@ function createProcessGuard(
     reason: () => terminationReason,
     clear: () => {
       if (timeoutId) clearTimeout(timeoutId);
-      signal?.removeEventListener("abort", abortListener);
+      if (signal) removeAbortSignalListener(signal, abortListener);
       if (terminationReason === null) {
         if (forceKillId) clearTimeout(forceKillId);
         return;
@@ -457,7 +463,7 @@ export async function runCommand(
   if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) {
     throw new RangeError("maxOutputBytes must be a positive safe integer");
   }
-  if (signal?.aborted) {
+  if (signal && isAbortSignalAborted(signal)) {
     return createTerminationResult("abort", 0);
   }
 
@@ -652,7 +658,7 @@ export async function runCommand(
   const process = runtimeProcess;
 
   const { spawn } = await dynamicImport<typeof import("node:child_process")>("node:child_process");
-  if (signal?.aborted) {
+  if (signal && isAbortSignalAborted(signal)) {
     return createTerminationResult("abort", 0);
   }
 

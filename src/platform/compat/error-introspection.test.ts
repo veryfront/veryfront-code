@@ -1,10 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { types as nodeUtilTypes } from "node:util";
 import { isNativeError as nodeNativeErrorBrandCheck } from "node:util/types";
+import { runInNewContext } from "node:vm";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   canInspectErrorStackDescriptorWithoutHooks,
+  isNativeAsyncFunctionWithoutHooks,
   isNativeErrorWithoutHooks,
   isNativePromiseWithoutHooks,
   isProxyWithoutHooks,
@@ -380,5 +382,37 @@ describe("platform error introspection", () => {
     assertEquals(isNativePromiseWithoutHooks(proxy), false);
     assertEquals(isNativePromiseWithoutHooks({ then: () => undefined }), false);
     assertEquals(thenReads, 0);
+  });
+
+  it("recognizes async functions across realms without invoking hooks", () => {
+    let hookCalls = 0;
+    const hostile = Object.defineProperty(function () {}, Symbol.toStringTag, {
+      configurable: true,
+      get() {
+        hookCalls += 1;
+        throw new Error("toStringTag must not be read");
+      },
+    });
+    const asyncFunction = async () => undefined;
+    const boundAsyncFunction = asyncFunction.bind(undefined);
+    const asyncProxy = new Proxy(asyncFunction, {
+      getPrototypeOf(target) {
+        hookCalls += 1;
+        return Reflect.getPrototypeOf(target);
+      },
+    });
+    const crossRealmAsync = runInNewContext("(async function crossRealm() {})") as unknown;
+    const crossRealmBoundAsync = runInNewContext(
+      "(async function crossRealmBound() {}).bind(undefined)",
+    ) as unknown;
+
+    assertEquals(isNativeAsyncFunctionWithoutHooks(asyncFunction), true);
+    assertEquals(isNativeAsyncFunctionWithoutHooks(boundAsyncFunction), true);
+    assertEquals(isNativeAsyncFunctionWithoutHooks(crossRealmAsync), true);
+    assertEquals(isNativeAsyncFunctionWithoutHooks(crossRealmBoundAsync), true);
+    assertEquals(isNativeAsyncFunctionWithoutHooks(() => Promise.resolve()), false);
+    assertEquals(isNativeAsyncFunctionWithoutHooks(hostile), false);
+    assertEquals(isNativeAsyncFunctionWithoutHooks(asyncProxy), false);
+    assertEquals(hookCalls, 0);
   });
 });

@@ -39,13 +39,13 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 |------|-------------|--------|
 | `buildSkillManifestPrompt` | Build a bounded, injection-safe skill manifest for an agent system prompt. Catalog IDs and descriptions are JSON-quoted and explicitly labeled as untrusted metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L152) |
 | `buildUnsafeLegacySkillManifestPrompt` | **Deprecated:** This helper does not encode untrusted skill metadata and must not be used in system prompts. Use `buildSkillManifestPrompt`. Reproduce the historical raw Markdown manifest format. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L42) |
-| `createExecuteSkillScriptTool` | Create the execute_skill_script tool. Executes a script from a skill's scripts/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L515) |
-| `createLoadSkillReferenceTool` | Create the load_skill_reference tool. Reads a reference file from a skill's references/, resources/, or assets/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L452) |
-| `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L372) |
+| `createExecuteSkillScriptTool` | Create the execute_skill_script tool. Executes a script from a skill's scripts/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L581) |
+| `createLoadSkillReferenceTool` | Create the load_skill_reference tool. Reads a reference file from a skill's references/, resources/, or assets/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L517) |
+| `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L436) |
 | `filterToolsForSkill` | Layer 1: Filter tool definitions before sending to model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L106) |
 | `getAllSkills` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L283) |
 | `getSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L279) |
-| `getSkillScriptExecutor` | Get the appropriate script executor. Checks cloud auth availability on every call so request-scoped credentials and environment overrides are respected. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/executor.ts#L1013) |
+| `getSkillScriptExecutor` | Get the appropriate script executor. Checks cloud auth availability on every call so request-scoped credentials and environment overrides are respected. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/executor.ts#L757) |
 | `isSkillVisibleTo` | Whether a skill is visible to the caller identified by the scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L64) |
 | `isToolAllowedBySkill` | Layer 2: Check if a specific tool call is allowed at execution time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L140) |
 | `isValidProviderSafeSkillId` | Framework-owned provider-safe owned skill-id grammar check. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L66) |
@@ -56,9 +56,9 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 | `parseSkillFileFrontmatter` | Parse and bound an untrusted SKILL.md document read from a filesystem boundary. YAML frontmatter is decoded by the explicit provider, or by the active `SkillDocumentParserProvider` registration when the argument is omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L136) |
 | `parseSkillFrontmatter` | Parse SKILL.md content through the bounded, fail-closed format. Malformed YAML, invalid Unicode, and oversized documents are rejected. YAML frontmatter is decoded by the explicit provider, or by the active `SkillDocumentParserProvider` registration when the argument is omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L104) |
 | `parseUnsafeLegacySkillFrontmatter` | **Deprecated:** This parser can reinterpret malformed YAML. Use `parseSkillFrontmatter` or `parseSkillFileFrontmatter`. Parse using the historical unbounded YAML contract, retaining its lossy line-oriented fallback only when the decoder is unavailable or rejects the input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L119) |
-| `readBoundedSkillTextFile` | Read one skill-owned text file through a fixed byte budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/bounded-text-file.ts#L698) |
+| `readBoundedSkillTextFile` | Read one skill-owned text file through a fixed byte budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/bounded-text-file.ts#L702) |
 | `registerSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L275) |
-| `snapshotSkillScriptResult` | Validate, output-bound, detach, and freeze an executor-provided result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/script-result.ts#L108) |
+| `snapshotSkillScriptResult` | Validate, output-bound, detach, and freeze an executor-provided result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/script-result.ts#L70) |
 | `validateAllowedToolPatterns` | Validate allowed-tool patterns at parse time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L191) |
 | `validateSkillFileMetadata` | Validate metadata loaded from a filesystem skill. The caller-supplied directory/runtime identity remains canonical; a differing authored `name` is display metadata and never participates in lookup or authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L484) |
 | `validateSkillMetadata` | Validate and normalize parsed frontmatter into SkillMetadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L221) |
@@ -69,14 +69,14 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ActiveSkillContext` | Active skill context for runtime policy tracking | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L252) |
+| `ActiveSkillContext` | Active skill context for runtime policy tracking | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L254) |
 | `AgentCapabilityScope` | Caller scope used for owner-aware capability resolution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L58) |
 | `Skill` | Registered skill instance | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L177) |
 | `SkillContent` | Full skill content returned by load_skill tool | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L163) |
 | `SkillMetadata` | Parsed frontmatter metadata from SKILL.md | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L145) |
-| `SkillScriptExecutor` | Script executor interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L247) |
-| `SkillScriptExecutorInput` | Input for the script executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L210) |
-| `SkillScriptResult` | Result from executing a skill script. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L203) |
+| `SkillScriptExecutor` | Script executor interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L249) |
+| `SkillScriptExecutorInput` | Input for the script executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L212) |
+| `SkillScriptResult` | Result from executing a skill script. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L205) |
 
 ### Constants
 

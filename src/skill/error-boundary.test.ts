@@ -52,7 +52,8 @@ Deno.test("Skill error boundary ignores inherited descriptor values for error st
 });
 
 Deno.test("Skill error boundary ignores inherited descriptor values for timeouts", () => {
-  const source = new SkillOperationTimeoutError(25);
+  const source = new Error("Skill operation timed out after 25ms");
+  Object.setPrototypeOf(source, SkillOperationTimeoutError.prototype);
   let timeoutAccessorCalls = 0;
   Object.defineProperty(source, "timeoutMs", {
     configurable: true,

@@ -32,6 +32,26 @@ import {
 import { agentLogger } from "#veryfront/utils";
 import { AsyncLocalStorage } from "node:async_hooks";
 
+const apply = Reflect.apply;
+const mapForEach = Map.prototype.forEach;
+const mapSet = Map.prototype.set;
+const NativeMap = Map;
+
+function copyNativeMapEntries<K, V>(
+  source: ReadonlyMap<K, V>,
+  target: Map<K, V>,
+): void {
+  apply(mapForEach, source, [(value: V, key: K) => {
+    apply(mapSet, target, [key, value]);
+  }]);
+}
+
+function cloneNativeMap<K, V>(source?: ReadonlyMap<K, V>): Map<K, V> {
+  const clone = new NativeMap<K, V>();
+  if (source) copyNativeMapEntries(source, clone);
+  return clone;
+}
+
 const DEFAULT_SCOPE_ID = "__default__";
 
 type RegistryMutation<T> =
@@ -404,8 +424,8 @@ export class ProjectScopedRegistryManager<T> {
     registry: ReadonlyMap<string, T>,
     sharedRegistry: ReadonlyMap<string, T> = this.sharedRegistry,
   ): Map<string, T> {
-    const effective = new Map(sharedRegistry);
-    for (const [id, item] of registry) effective.set(id, item);
+    const effective = cloneNativeMap(sharedRegistry);
+    copyNativeMapEntries(registry, effective);
     return effective;
   }
 
@@ -430,8 +450,8 @@ export class ProjectScopedRegistryManager<T> {
     }
     if (!this.options.validateRegistry) return;
 
-    const candidate = new Map(registry);
-    candidate.set(id, incoming);
+    const candidate = cloneNativeMap(registry);
+    apply(mapSet, candidate, [id, incoming]);
     this.options.validateRegistry(candidate);
   }
 
@@ -451,13 +471,13 @@ export class ProjectScopedRegistryManager<T> {
   private validateSharedCandidateRegistration(id: string, incoming: T): void {
     this.validateRegistration(this.sharedRegistry, id, incoming);
     this.validateCandidateAgainstRegistry(this.sharedRegistry, id, incoming);
-    for (const registry of this.registriesByScope.values()) {
+    apply(mapForEach, this.registriesByScope, [(registry: Map<string, T>) => {
       this.validateCandidateAgainstRegistry(
         this.buildEffectiveRegistry(registry),
         id,
         incoming,
       );
-    }
+    }]);
   }
 
   private applyMutation(
@@ -557,9 +577,9 @@ export class ProjectScopedRegistryManager<T> {
       | undefined;
     if (existing) return existing;
 
-    const baseRegistry = new Map(this.registriesByScope.get(scopeId));
-    const registry = new Map(baseRegistry);
-    const validationRegistry = new Map(baseRegistry);
+    const baseRegistry = cloneNativeMap(this.registriesByScope.get(scopeId));
+    const registry = cloneNativeMap(baseRegistry);
+    const validationRegistry = cloneNativeMap(baseRegistry);
     const mutations: RegistryMutation<T>[] = [];
     let closed = false;
 
@@ -581,7 +601,7 @@ export class ProjectScopedRegistryManager<T> {
         this.applyMutation(validationRegistry, mutation);
       },
       prepare: () => {
-        const replacement = new Map(baseRegistry);
+        const replacement = cloneNativeMap(baseRegistry);
         for (const mutation of mutations) {
           this.applyMutation(replacement, mutation, true);
         }
@@ -801,10 +821,10 @@ export class ProjectScopedRegistryManager<T> {
     const projectRegistry = this.getActiveScopeRegistry(
       this.getCurrentScopeAccess(),
     );
-    if (!projectRegistry) return new Map(this.sharedRegistry);
+    if (!projectRegistry) return cloneNativeMap(this.sharedRegistry);
 
-    const result = new Map<string, T>(this.sharedRegistry);
-    for (const [id, item] of projectRegistry) result.set(id, item);
+    const result = cloneNativeMap(this.sharedRegistry);
+    copyNativeMapEntries(projectRegistry, result);
     return result;
   }
 

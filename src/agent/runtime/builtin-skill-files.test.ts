@@ -6,6 +6,7 @@ import {
   SKILL_SUBDIR_MAX_ENTRIES,
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "#veryfront/skill/limits.ts";
+import { SKILL_STRICT_NAME_REGEX } from "#veryfront/skill/types.ts";
 import {
   listRuntimeBuiltinSkillReferenceFiles,
   listRuntimeBuiltinSkillReferences,
@@ -93,6 +94,21 @@ Deno.test("readRuntimeBuiltinSkill prefers directory skills over flat skills", (
 
     assertEquals(readRuntimeBuiltinSkill(rootDir, "writer"), "directory skill");
     assertEquals(readRuntimeBuiltinFlatSkill(rootDir, "writer"), "flat skill");
+  });
+});
+
+Deno.test("runtime built-in skill admission ignores mutation of the public name matcher", () => {
+  withTempDir((rootDir) => {
+    const invalidId = "invalid_name";
+    Deno.mkdirSync(resolve(rootDir, invalidId), { recursive: true });
+    Deno.writeTextFileSync(resolve(rootDir, invalidId, "SKILL.md"), "must not load");
+    const originalTest = SKILL_STRICT_NAME_REGEX.test;
+    try {
+      SKILL_STRICT_NAME_REGEX.test = () => true;
+      assertEquals(readRuntimeBuiltinSkill(rootDir, invalidId), null);
+    } finally {
+      SKILL_STRICT_NAME_REGEX.test = originalTest;
+    }
   });
 });
 

@@ -319,6 +319,31 @@ extension teardown does not destroy those dedicated results. Use the default
 another composition-root owner will stop every borrower and destroy the backend
 exactly once.
 
+For example, a composition root that intentionally shares one backend between
+two clients owns the backend separately from both borrowers:
+
+```typescript
+import { createDistributedWorkflowBackend, WorkflowClient } from "veryfront/workflow";
+
+const sharedBackend = createDistributedWorkflowBackend({});
+const apiClient = new WorkflowClient({
+  backend: sharedBackend,
+  backendOwnership: "borrowed",
+});
+const maintenanceClient = new WorkflowClient({
+  backend: sharedBackend,
+  backendOwnership: "borrowed",
+});
+
+await apiClient.initialize();
+await maintenanceClient.initialize();
+
+// During shutdown, stop every borrower before destroying the shared backend.
+await apiClient.destroy();
+await maintenanceClient.destroy();
+await sharedBackend.destroy();
+```
+
 #### Custom backend contract
 
 Custom backends used by `WorkflowWorker` must implement the queue, lock, and stalled-run methods in

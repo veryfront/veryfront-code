@@ -196,9 +196,11 @@ export interface Skill {
 /**
  * Result from executing a skill script.
  *
- * Executor implementations return a plain object with exactly these own,
- * enumerable data properties. Skill tools detach and freeze the result and
- * enforce their combined stdout/stderr byte budget before returning it.
+ * Executor implementations return a structural object with these three own,
+ * enumerable data properties. Skill tools snapshot only the documented
+ * fields, detach and freeze them, and enforce their combined stdout/stderr
+ * byte budget before returning the result. Additional structural fields and
+ * the source object's prototype are not retained.
  */
 export interface SkillScriptResult {
   stdout: string;

@@ -9,56 +9,43 @@
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
 import type { SkillScriptResult } from "./types.ts";
+import { isWellFormedUtf16 } from "./string-safety.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
 const apply = Reflect.apply;
+const createObject = Object.create;
 const freeze = Object.freeze;
-const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-const getPrototypeOf = Object.getPrototypeOf;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
-const NativeObjectPrototype = Object.prototype;
+const NativeRangeError = RangeError;
+const NativeTypeError = TypeError;
 const numberIsSafeInteger = Number.isSafeInteger;
-const ownKeys = Reflect.ownKeys;
-const stringCharCodeAt = String.prototype.charCodeAt;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(hasOwnProperty, object, [key]) as boolean;
 }
 
-function inspectResult(value: unknown): Record<PropertyKey, PropertyDescriptor> {
+function inspectResult(value: unknown): {
+  readonly stdout: PropertyDescriptor | undefined;
+  readonly stderr: PropertyDescriptor | undefined;
+  readonly exitCode: PropertyDescriptor | undefined;
+} {
   if (typeof value !== "object" || value === null) {
-    throw new TypeError("Skill script result must be an object");
+    throw new NativeTypeError("Skill script result must be an object");
   }
   if (isProxyWithoutHooks(value)) {
-    throw new TypeError("Skill script result must not be a proxy");
+    throw new NativeTypeError("Skill script result must not be a proxy");
   }
 
-  let prototype: object | null;
-  let descriptors: Record<PropertyKey, PropertyDescriptor>;
   try {
-    prototype = getPrototypeOf(value);
-    descriptors = getOwnPropertyDescriptors(value) as Record<
-      PropertyKey,
-      PropertyDescriptor
-    >;
+    return {
+      stdout: getOwnPropertyDescriptor(value, "stdout"),
+      stderr: getOwnPropertyDescriptor(value, "stderr"),
+      exitCode: getOwnPropertyDescriptor(value, "exitCode"),
+    };
   } catch (cause) {
-    throw new TypeError("Skill script result could not be inspected", { cause });
+    throw new NativeTypeError("Skill script result could not be inspected", { cause });
   }
-  if (prototype !== NativeObjectPrototype && prototype !== null) {
-    throw new TypeError("Skill script result must be a plain object");
-  }
-
-  const keys = ownKeys(descriptors);
-  if (
-    keys.length !== 3 ||
-    !hasOwn(descriptors, "stdout") ||
-    !hasOwn(descriptors, "stderr") ||
-    !hasOwn(descriptors, "exitCode")
-  ) {
-    throw new TypeError(
-      "Skill script result must contain only stdout, stderr, and exitCode",
-    );
-  }
-  return descriptors;
 }
 
 function readEnumerableDataValue(
@@ -70,36 +57,11 @@ function readEnumerableDataValue(
     descriptor.enumerable !== true ||
     !hasOwn(descriptor, "value")
   ) {
-    throw new TypeError(
+    throw new NativeTypeError(
       `Skill script result ${field} must be an enumerable data property; all result fields must be data properties`,
     );
   }
   return descriptor.value;
-}
-
-function utf8ByteLengthWithin(value: string, maxBytes: number): number | undefined {
-  let byteLength = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = apply(stringCharCodeAt, value, [index]) as number;
-    if (code <= 0x7f) {
-      byteLength += 1;
-    } else if (code <= 0x7ff) {
-      byteLength += 2;
-    } else if (code >= 0xd800 && code <= 0xdbff) {
-      const next = apply(stringCharCodeAt, value, [index + 1]) as number;
-      if (index + 1 >= value.length || next < 0xdc00 || next > 0xdfff) {
-        throw new TypeError("Skill script output must contain well-formed UTF-16");
-      }
-      byteLength += 4;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      throw new TypeError("Skill script output must contain well-formed UTF-16");
-    } else {
-      byteLength += 3;
-    }
-    if (byteLength > maxBytes) return undefined;
-  }
-  return byteLength;
 }
 
 /**
@@ -107,33 +69,49 @@ function utf8ByteLengthWithin(value: string, maxBytes: number): number | undefin
  */
 export function snapshotSkillScriptResult(value: unknown): Readonly<SkillScriptResult> {
   const descriptors = inspectResult(value);
+  if (!descriptors.stdout || !descriptors.stderr || !descriptors.exitCode) {
+    throw new NativeTypeError(
+      "Skill script result must contain stdout, stderr, and exitCode",
+    );
+  }
   const stdout = readEnumerableDataValue(descriptors.stdout, "stdout");
   const stderr = readEnumerableDataValue(descriptors.stderr, "stderr");
   const exitCode = readEnumerableDataValue(descriptors.exitCode, "exitCode");
 
   if (typeof stdout !== "string" || typeof stderr !== "string") {
-    throw new TypeError("Skill script stdout and stderr must be strings");
+    throw new NativeTypeError("Skill script stdout and stderr must be strings");
   }
   if (!numberIsSafeInteger(exitCode)) {
-    throw new TypeError("Skill script exitCode must be a safe integer");
+    throw new NativeTypeError("Skill script exitCode must be a safe integer");
+  }
+  if (!isWellFormedUtf16(stdout) || !isWellFormedUtf16(stderr)) {
+    throw new NativeTypeError("Skill script output must contain well-formed UTF-16");
   }
 
-  const stdoutBytes = utf8ByteLengthWithin(stdout, SKILL_SCRIPT_MAX_OUTPUT_BYTES);
-  if (stdoutBytes === undefined) {
-    throw new RangeError(
+  const stdoutBytes = utf8ByteLength(stdout, SKILL_SCRIPT_MAX_OUTPUT_BYTES);
+  if (stdoutBytes > SKILL_SCRIPT_MAX_OUTPUT_BYTES) {
+    throw new NativeRangeError(
       `Skill script output must total at most ${SKILL_SCRIPT_MAX_OUTPUT_BYTES} bytes`,
     );
   }
   if (
-    utf8ByteLengthWithin(
+    utf8ByteLength(
       stderr,
       SKILL_SCRIPT_MAX_OUTPUT_BYTES - stdoutBytes,
-    ) === undefined
+    ) > SKILL_SCRIPT_MAX_OUTPUT_BYTES - stdoutBytes
   ) {
-    throw new RangeError(
+    throw new NativeRangeError(
       `Skill script output must total at most ${SKILL_SCRIPT_MAX_OUTPUT_BYTES} bytes`,
     );
   }
 
-  return freeze({ stdout, stderr, exitCode: exitCode as number });
+  const snapshot = createObject(null) as {
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  };
+  snapshot.stdout = stdout;
+  snapshot.stderr = stderr;
+  snapshot.exitCode = exitCode as number;
+  return freeze(snapshot);
 }

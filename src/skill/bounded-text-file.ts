@@ -5,6 +5,10 @@ import type {
   FileSystemAdapter,
 } from "#veryfront/platform/adapters/base.ts";
 import { isNativeFileSystemAdapter } from "#veryfront/platform/adapters/native-file-system-provenance.ts";
+import {
+  getAbortSignalReason,
+  isAbortSignalAborted,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import { SKILL_ROOT_PATH_MAX_LENGTH, SKILL_TEXT_FILE_MAX_BYTES } from "./limits.ts";
 import type { SkillOperationBudget } from "./operation-budget.ts";
 import { sanitizeSkillBoundaryFailure } from "./error-boundary.ts";
@@ -800,9 +804,11 @@ export async function readValidatedSkillTextFile(
   try {
     return options.budget ? await options.budget.run(() => read()) : await read();
   } catch (error) {
+    const abortSignal = options.budget?.abortSignal;
     if (
-      options.budget?.abortSignal?.aborted &&
-      error === options.budget.abortSignal.reason
+      abortSignal &&
+      isAbortSignalAborted(abortSignal) &&
+      error === getAbortSignalReason(abortSignal)
     ) {
       throw error;
     }

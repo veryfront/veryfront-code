@@ -34,15 +34,16 @@ import {
   resolveSkillSelector,
 } from "#veryfront/skill/selector.ts";
 import {
+  isValidProviderSafeSkillId,
+  isValidSkillName,
   SKILL_DESCRIPTION_MAX_LENGTH,
   SKILL_METADATA_KEY_MAX_LENGTH,
   SKILL_METADATA_MAX_ENTRIES,
   SKILL_METADATA_VALUE_MAX_LENGTH,
-  SKILL_NAME_REGEX,
-  SKILL_PROVIDER_SAFE_ID_REGEX,
   type SkillMetadata,
 } from "#veryfront/skill/types.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
 /** Maximum model identifier length accepted from hosted skill metadata. */
 export const MAX_RUNTIME_SKILL_MODEL_LENGTH = 256;
@@ -54,7 +55,6 @@ const RUNTIME_SKILL_ALLOWED_TOOLS_STRING_MAX_LENGTH =
   SKILL_ALLOWED_TOOL_MAX_PATTERNS * SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH +
   SKILL_ALLOWED_TOOL_MAX_PATTERNS - 1;
 const RUNTIME_WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:\//;
-const UTF8_ENCODER = new TextEncoder();
 
 /** Whether a hosted skill model override is a bounded, printable identifier. */
 export function isValidRuntimeSkillModel(value: unknown): value is string {
@@ -888,12 +888,10 @@ function isRuntimeSkillIdValid(input: {
     return input.ownerAgentId !== undefined &&
       input.shortName !== undefined &&
       isBoundedRuntimeIdentity(input.ownerAgentId) &&
-      typeof input.shortName === "string" &&
-      SKILL_PROVIDER_SAFE_ID_REGEX.test(input.shortName) &&
-      typeof input.id === "string" &&
-      SKILL_PROVIDER_SAFE_ID_REGEX.test(input.id);
+      isValidProviderSafeSkillId(input.shortName) &&
+      isValidProviderSafeSkillId(input.id);
   }
-  return typeof input.id === "string" && SKILL_NAME_REGEX.test(input.id);
+  return isValidSkillName(input.id);
 }
 
 function normalizeRuntimeSkillSourcePath(value: unknown): string | null {
@@ -901,7 +899,8 @@ function normalizeRuntimeSkillSourcePath(value: unknown): string | null {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > SKILL_RELATIVE_PATH_MAX_LENGTH ||
-    UTF8_ENCODER.encode(value).byteLength > SKILL_RELATIVE_PATH_MAX_LENGTH ||
+    utf8ByteLength(value, SKILL_RELATIVE_PATH_MAX_LENGTH) >
+      SKILL_RELATIVE_PATH_MAX_LENGTH ||
     value !== value.trim() ||
     value.includes("\\") ||
     !isWellFormedUtf16(value) ||
@@ -1203,7 +1202,8 @@ export function normalizeStrictRuntimeSkillReferencePath(path: string): string |
     typeof path !== "string" ||
     path.length === 0 ||
     path.length > SKILL_RELATIVE_PATH_MAX_LENGTH ||
-    UTF8_ENCODER.encode(path).byteLength > SKILL_RELATIVE_PATH_MAX_LENGTH ||
+    utf8ByteLength(path, SKILL_RELATIVE_PATH_MAX_LENGTH) >
+      SKILL_RELATIVE_PATH_MAX_LENGTH ||
     !isWellFormedUtf16(path) ||
     hasControlCharacters(path)
   ) {

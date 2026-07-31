@@ -200,6 +200,76 @@ describe("src/skill/executor", () => {
       assertEquals((await execution.result).exitCode, 130);
     });
 
+    it("uses native cancellation without invoking hostile signal properties", async () => {
+      let hookCalls = 0;
+      const abortedController = new AbortController();
+      const cancellation = new Error("cancel hostile signal test");
+      abortedController.abort(cancellation);
+      Object.defineProperties(abortedController.signal, {
+        aborted: {
+          configurable: true,
+          get() {
+            hookCalls += 1;
+            throw new Error("own aborted hook ran");
+          },
+        },
+        addEventListener: {
+          configurable: true,
+          value() {
+            hookCalls += 1;
+            throw new Error("own addEventListener hook ran");
+          },
+        },
+        removeEventListener: {
+          configurable: true,
+          value() {
+            hookCalls += 1;
+            throw new Error("own removeEventListener hook ran");
+          },
+        },
+      });
+
+      const abortedResult = await new LocalScriptExecutor().execute({
+        scriptPath: "unused",
+        abortSignal: abortedController.signal,
+      });
+      assertEquals(abortedResult.exitCode, 130);
+
+      const activeController = new AbortController();
+      Object.defineProperties(activeController.signal, {
+        aborted: {
+          configurable: true,
+          get() {
+            hookCalls += 1;
+            throw new Error("own active aborted hook ran");
+          },
+        },
+        addEventListener: {
+          configurable: true,
+          value() {
+            hookCalls += 1;
+            throw new Error("own active addEventListener hook ran");
+          },
+        },
+        removeEventListener: {
+          configurable: true,
+          value() {
+            hookCalls += 1;
+            throw new Error("own active removeEventListener hook ran");
+          },
+        },
+      });
+      const activeResult = await new LocalScriptExecutor().execute({
+        scriptPath: "deno",
+        args: ["eval", "console.log('ok')"],
+        timeoutMs: 1_000,
+        abortSignal: activeController.signal,
+      });
+
+      assertEquals(activeResult.exitCode, 0);
+      assertEquals(hookCalls, 0);
+    });
+
     it("should execute a simple echo command", async () => {
       const executor = new LocalScriptExecutor();
       const result = await executor.execute({

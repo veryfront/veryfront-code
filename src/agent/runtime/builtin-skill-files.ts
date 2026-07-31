@@ -20,9 +20,9 @@ import {
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "#veryfront/skill/limits.ts";
 import {
+  isValidStrictSkillName,
   SKILL_READABLE_DIRS,
   SKILL_REFERENCES_DIR,
-  SKILL_STRICT_NAME_REGEX,
 } from "#veryfront/skill/types.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
 import { normalizeStrictRuntimeSkillReferencePath } from "./skill-metadata.ts";
@@ -206,7 +206,7 @@ function readBoundedTextFile(skillsDir: string, path: string): string | null {
 }
 
 function isSafeSkillId(skillId: unknown): skillId is string {
-  return typeof skillId === "string" && SKILL_STRICT_NAME_REGEX.test(skillId);
+  return isValidStrictSkillName(skillId);
 }
 
 function isSafePathSegment(segment: string): boolean {

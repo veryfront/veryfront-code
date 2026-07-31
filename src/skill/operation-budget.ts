@@ -1,27 +1,92 @@
 /** Shared cancellation/deadline budget for one skill file operation. */
 
+import {
+  addAbortSignalListenerOnce,
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  isAbortSignalWithoutHooks,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
+
+const NativeDOMException = DOMException;
+const NativePromise = Promise;
+const apply = Reflect.apply;
+const clearScheduledTimeout = clearTimeout;
+const defineOwnProperty = Object.defineProperty;
+const freeze = Object.freeze;
+const mathCeil = Math.ceil;
+const mathMax = Math.max;
+const monotonicClock = performance;
+const monotonicNow = Performance.prototype.now;
+const scheduleTimeout = setTimeout;
+
+function now(): number {
+  return apply(monotonicNow, monotonicClock, []) as number;
+}
+
 export interface SkillOperationBudget {
   readonly abortSignal?: AbortSignal;
   readonly timeoutMs?: number;
+  /** One immutable timeout reason shared by every deadline observation. */
+  readonly timeoutError?: SkillOperationTimeoutError;
   remainingMs(): number | undefined;
   throwIfTerminated(): void;
   run<T>(operation: (abortSignal: AbortSignal | undefined) => Promise<T>): Promise<T>;
 }
 
 export class SkillOperationTimeoutError extends Error {
-  readonly timeoutMs: number;
+  readonly timeoutMs!: number;
 
   constructor(timeoutMs: number) {
     super(`Skill operation timed out after ${timeoutMs}ms`);
-    this.name = "SkillOperationTimeoutError";
-    this.timeoutMs = timeoutMs;
+    defineOwnProperty(this, "name", {
+      configurable: false,
+      enumerable: false,
+      value: "SkillOperationTimeoutError",
+      writable: false,
+    });
+    defineOwnProperty(this, "timeoutMs", {
+      configurable: false,
+      enumerable: true,
+      value: timeoutMs,
+      writable: false,
+    });
+    freeze(this);
   }
 }
 
+async function observeRejection(promise: Promise<unknown>): Promise<void> {
+  try {
+    await promise;
+  } catch (_) {
+    // The caller intentionally abandoned this settlement after cancellation.
+  }
+}
+
+function racePromises<T>(left: Promise<T>, right: Promise<never>): Promise<T> {
+  return new NativePromise<T>((resolve, reject) => {
+    void (async () => {
+      try {
+        resolve(await left);
+      } catch (error) {
+        reject(error);
+      }
+    })();
+    void (async () => {
+      try {
+        resolve(await right);
+      } catch (error) {
+        reject(error);
+      }
+    })();
+  });
+}
+
 function abortReason(signal: AbortSignal): unknown {
-  return signal.reason === undefined
-    ? new DOMException("The operation was aborted", "AbortError")
-    : signal.reason;
+  const reason = getAbortSignalReason(signal);
+  return reason === undefined
+    ? new NativeDOMException("The operation was aborted", "AbortError")
+    : reason;
 }
 
 /** Create one monotonic budget at the outermost skill-tool boundary. */
@@ -29,6 +94,10 @@ export function createSkillOperationBudget(options: {
   abortSignal?: AbortSignal;
   timeoutMs?: number;
 } = {}): SkillOperationBudget {
+  const abortSignal = options.abortSignal;
+  if (abortSignal !== undefined && !isAbortSignalWithoutHooks(abortSignal)) {
+    throw new TypeError("Skill operation abortSignal must be an AbortSignal");
+  }
   const timeoutMs = options.timeoutMs;
   if (
     timeoutMs !== undefined &&
@@ -36,23 +105,27 @@ export function createSkillOperationBudget(options: {
   ) {
     throw new RangeError("Skill operation timeout must be a positive safe integer");
   }
-  const deadline = timeoutMs === undefined ? undefined : performance.now() + timeoutMs;
+  const timeoutError = timeoutMs === undefined
+    ? undefined
+    : new SkillOperationTimeoutError(timeoutMs);
+  const deadline = timeoutMs === undefined ? undefined : now() + timeoutMs;
 
   const remainingMs = (): number | undefined =>
-    deadline === undefined ? undefined : Math.max(0, Math.ceil(deadline - performance.now()));
+    deadline === undefined ? undefined : mathMax(0, mathCeil(deadline - now()));
 
   const throwIfTerminated = (): void => {
-    if (options.abortSignal?.aborted) {
-      throw abortReason(options.abortSignal);
+    if (abortSignal && isAbortSignalAborted(abortSignal)) {
+      throw abortReason(abortSignal);
     }
     if (remainingMs() === 0) {
-      throw new SkillOperationTimeoutError(timeoutMs!);
+      throw timeoutError!;
     }
   };
 
-  return Object.freeze({
-    ...(options.abortSignal === undefined ? {} : { abortSignal: options.abortSignal }),
+  return freeze({
+    ...(abortSignal === undefined ? {} : { abortSignal }),
     ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(timeoutError === undefined ? {} : { timeoutError }),
     remainingMs,
     throwIfTerminated,
     async run<T>(
@@ -61,7 +134,7 @@ export function createSkillOperationBudget(options: {
       throwIfTerminated();
       let promise: Promise<T>;
       try {
-        promise = Promise.resolve(operation(options.abortSignal));
+        promise = operation(abortSignal);
       } catch (error) {
         throwIfTerminated();
         throw error;
@@ -69,27 +142,27 @@ export function createSkillOperationBudget(options: {
       try {
         throwIfTerminated();
       } catch (error) {
-        void promise.catch(() => undefined);
+        void observeRejection(promise);
         throw error;
       }
-      if (deadline === undefined && options.abortSignal === undefined) {
+      if (deadline === undefined && abortSignal === undefined) {
         return await promise;
       }
 
       let timeoutId: ReturnType<typeof setTimeout> | undefined;
       let abortListener: (() => void) | undefined;
-      const termination = new Promise<never>((_resolve, reject) => {
+      const termination = new NativePromise<never>((_resolve, reject) => {
         const remaining = remainingMs();
         if (remaining !== undefined) {
-          timeoutId = setTimeout(
-            () => reject(new SkillOperationTimeoutError(timeoutMs!)),
+          timeoutId = scheduleTimeout(
+            () => reject(timeoutError!),
             remaining,
           );
         }
-        if (options.abortSignal) {
-          abortListener = () => reject(abortReason(options.abortSignal!));
-          options.abortSignal.addEventListener("abort", abortListener, { once: true });
-          if (options.abortSignal.aborted) {
+        if (abortSignal) {
+          abortListener = () => reject(abortReason(abortSignal));
+          addAbortSignalListenerOnce(abortSignal, abortListener);
+          if (isAbortSignalAborted(abortSignal)) {
             abortListener();
           }
         }
@@ -98,7 +171,7 @@ export function createSkillOperationBudget(options: {
       try {
         let result: T;
         try {
-          result = await Promise.race([promise, termination]);
+          result = await racePromises(promise, termination);
         } catch (error) {
           throwIfTerminated();
           throw error;
@@ -106,9 +179,9 @@ export function createSkillOperationBudget(options: {
         throwIfTerminated();
         return result;
       } finally {
-        if (timeoutId !== undefined) clearTimeout(timeoutId);
-        if (abortListener) {
-          options.abortSignal?.removeEventListener("abort", abortListener);
+        if (timeoutId !== undefined) clearScheduledTimeout(timeoutId);
+        if (abortSignal && abortListener) {
+          removeAbortSignalListener(abortSignal, abortListener);
         }
       }
     },

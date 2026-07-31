@@ -3,8 +3,9 @@
   // ./README.md.
   //
   // Requires `deno task build:npm` to have produced `npm/`. The public
-  // `veryfront/ui`, `veryfront/chat`, `veryfront/markdown`, and
-  // `veryfront/mdx`, and `veryfront/release-assets` specifiers
+  // `veryfront/ui`, `veryfront/chat`, `veryfront/markdown`,
+  // `veryfront/mdx`, `veryfront/release-assets`, `veryfront/extensions`, and
+  // `veryfront/extensions/skill` specifiers
   // resolve to the emitted `.d.ts`; `react` resolves to a real `@types/react`
   // (as any consumer has). This is the ONLY configuration that exercises the
   // published declarations the way an external React-19 app compiles them —
@@ -48,6 +49,10 @@
       "veryfront/resource": ["./npm/esm/src/resource/index.d.ts"],
       "veryfront/schemas": ["./npm/esm/src/schemas/index.d.ts"],
       "veryfront/skill": ["./npm/esm/src/skill/index.d.ts"],
+      "veryfront/extensions": ["./npm/esm/src/extensions/index.d.ts"],
+      "veryfront/extensions/skill": [
+        "./npm/esm/src/extensions/skill/index.d.ts"
+      ],
       "veryfront/tool": ["./npm/esm/src/tool/index.d.ts"],
       "@veryfront/ext-observability-sentry/node": [
         "./npm/extensions/ext-observability-sentry/esm/node.d.ts"

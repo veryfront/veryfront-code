@@ -2,8 +2,19 @@ import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testi
 import { SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
 import { snapshotSkillScriptResult } from "./script-result.ts";
 
-Deno.test("skill script result snapshots a detached, frozen exact result", () => {
-  const source = { stdout: "ok\n", stderr: "warning\n", exitCode: 7 };
+Deno.test("skill script result snapshots documented fields and drops structural extras", () => {
+  let telemetryGetterCalls = 0;
+  const source = Object.defineProperty(
+    { stdout: "ok\n", stderr: "warning\n", exitCode: 7, durationMs: 12 },
+    "hostileTelemetry",
+    {
+      enumerable: true,
+      get() {
+        telemetryGetterCalls += 1;
+        return "must not be observed";
+      },
+    },
+  );
   const snapshot = snapshotSkillScriptResult(source);
   source.stdout = "mutated";
   source.exitCode = 99;
@@ -14,7 +25,20 @@ Deno.test("skill script result snapshots a detached, frozen exact result", () =>
     exitCode: 7,
   });
   assertEquals(Object.isFrozen(snapshot), true);
+  assertEquals(Object.getPrototypeOf(snapshot), null);
   assertEquals(snapshot === source, false);
+  assertEquals(telemetryGetterCalls, 0);
+
+  class ExistingExecutorResult {
+    stdout = "class output";
+    stderr = "";
+    exitCode = 0;
+  }
+  assertEquals(snapshotSkillScriptResult(new ExistingExecutorResult()), {
+    stdout: "class output",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 Deno.test("skill script result rejects hostile shapes without invoking traps or accessors", () => {
@@ -59,24 +83,7 @@ Deno.test("skill script result rejects hostile shapes without invoking traps or 
   assertThrows(
     () => snapshotSkillScriptResult({ stdout: "", stderr: "" }),
     TypeError,
-    "contain only",
-  );
-  assertThrows(
-    () => snapshotSkillScriptResult({ stdout: "", stderr: "", exitCode: 0, pid: 1 }),
-    TypeError,
-    "contain only",
-  );
-  assertThrows(
-    () =>
-      snapshotSkillScriptResult(
-        Object.assign(Object.create({ inherited: true }), {
-          stdout: "",
-          stderr: "",
-          exitCode: 0,
-        }),
-      ),
-    TypeError,
-    "plain object",
+    "must contain",
   );
   assertEquals(getterCalls, 0);
   assertEquals(trapCalls, 0);
@@ -120,12 +127,14 @@ Deno.test("skill script result validates field types, Unicode, and combined UTF-
 Deno.test("skill script result validation is independent of later built-in mutation", () => {
   const targets = [
     [Object, "freeze"],
-    [Object, "getOwnPropertyDescriptors"],
+    [Object, "getOwnPropertyDescriptor"],
     [Object, "getPrototypeOf"],
     [Object.prototype, "hasOwnProperty"],
     [Reflect, "ownKeys"],
     [String.prototype, "charCodeAt"],
     [Number, "isSafeInteger"],
+    [globalThis, "TypeError"],
+    [globalThis, "RangeError"],
   ] as const;
   const originals = targets.map(([target, property]) =>
     Object.getOwnPropertyDescriptor(target, property)

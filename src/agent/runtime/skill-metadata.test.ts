@@ -15,6 +15,7 @@ import {
   SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "#veryfront/skill/limits.ts";
+import { SKILL_NAME_REGEX, SKILL_PROVIDER_SAFE_ID_REGEX } from "#veryfront/skill/types.ts";
 import {
   buildLegacyRuntimeFlatSkillDefinition,
   buildRuntimeDirectorySkillDefinition,
@@ -274,6 +275,35 @@ Body`,
 
   assertEquals(skill, null);
   assertEquals(errors[0]?.id, "Process Email");
+});
+
+Deno.test("runtime skill identity admission ignores mutation of public matchers", () => {
+  const originalNameTest = SKILL_NAME_REGEX.test;
+  const originalProviderTest = SKILL_PROVIDER_SAFE_ID_REGEX.test;
+  try {
+    SKILL_NAME_REGEX.test = () => true;
+    SKILL_PROVIDER_SAFE_ID_REGEX.test = () => true;
+
+    assertEquals(
+      buildRuntimeSkillDefinition({
+        id: "invalid_name",
+        content: "---\ndescription: Invalid global skill\n---\nBody",
+      }),
+      null,
+    );
+    assertEquals(
+      buildRuntimeSkillDefinition({
+        id: "invalid owned id",
+        ownerAgentId: "owner",
+        shortName: "invalid short name",
+        content: "---\ndescription: Invalid owned skill\n---\nBody",
+      }),
+      null,
+    );
+  } finally {
+    SKILL_NAME_REGEX.test = originalNameTest;
+    SKILL_PROVIDER_SAFE_ID_REGEX.test = originalProviderTest;
+  }
 });
 
 Deno.test("buildRuntimeSkillDefinition accepts provider-safe owned namespaced ids", () => {
@@ -955,6 +985,30 @@ Deno.test("normalizeStrictRuntimeSkillReferencePath rejects unsafe bounded paths
     normalizeStrictRuntimeSkillReferencePath(`references/${"x".repeat(256)}.md`),
     null,
   );
+});
+
+Deno.test("strict runtime path byte limits ignore TextEncoder prototype mutation", () => {
+  const originalEncode = Object.getOwnPropertyDescriptor(TextEncoder.prototype, "encode");
+  let hookCalls = 0;
+  const oversizedMultibytePath = Array.from({ length: 5 }, () => "é".repeat(200)).join("/");
+
+  try {
+    Object.defineProperty(TextEncoder.prototype, "encode", {
+      configurable: true,
+      value() {
+        hookCalls += 1;
+        return new Uint8Array();
+      },
+      writable: true,
+    });
+    assertEquals(normalizeStrictRuntimeSkillReferencePath(oversizedMultibytePath), null);
+  } finally {
+    if (originalEncode) {
+      Object.defineProperty(TextEncoder.prototype, "encode", originalEncode);
+    }
+  }
+
+  assertEquals(hookCalls, 0);
 });
 
 Deno.test("generic runtime parser and path helpers fail closed", () => {

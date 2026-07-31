@@ -167,7 +167,8 @@ const output = `/**
  * Do not edit manually.
  */
 
-export const DEV_UI_STYLES_SHA256 = ${JSON.stringify(identity)} as const;
+export const DEV_UI_STYLES_SHA256 =
+  ${JSON.stringify(identity)} as const;
 // deno-fmt-ignore - preserve the generated CSS as one JSON string.
 export const DEV_UI_STYLES = ${JSON.stringify(styles)} as const;
 `;

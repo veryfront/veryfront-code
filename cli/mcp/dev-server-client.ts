@@ -21,7 +21,16 @@ const MAX_DEV_SERVER_FILTER_CHARACTERS = 1024;
 const MAX_HMR_PATH_CHARACTERS = 4 * 1024;
 const MAX_LOG_ENTRY_LIMIT = 10_000;
 const CANONICAL_CONTENT_LENGTH_PATTERN = /^(?:0|[1-9]\d*)$/;
-const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
+const ASCII_CONTROL_END = 0x1f;
+const ASCII_DELETE = 0x7f;
+
+function containsAsciiControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= ASCII_CONTROL_END || codeUnit === ASCII_DELETE) return true;
+  }
+  return false;
+}
 
 interface DashboardSession {
   cookie: string;
@@ -139,7 +148,7 @@ export class DevServerClient {
       path.length > MAX_DEV_SERVER_REQUEST_PATH_CHARACTERS ||
       !path.startsWith("/") ||
       path.startsWith("//") ||
-      CONTROL_CHARACTER_PATTERN.test(path)
+      containsAsciiControlCharacter(path)
     ) {
       throw new TypeError("Dev server request path is invalid or exceeds its limit");
     }
@@ -226,7 +235,7 @@ function admitQueryValue(
   if (
     (!allowEmpty && value.length === 0) ||
     value.length > maxCharacters ||
-    CONTROL_CHARACTER_PATTERN.test(value)
+    containsAsciiControlCharacter(value)
   ) {
     throw new TypeError(`${label} is invalid or exceeds its ${maxCharacters}-character limit`);
   }

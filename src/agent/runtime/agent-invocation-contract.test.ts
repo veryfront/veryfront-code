@@ -356,6 +356,39 @@ describe("agent/runtime-agent-invocation-contract", () => {
     );
   });
 
+  it("enforces JSON byte limits independently of TextEncoder mutation", () => {
+    const originalEncode = Object.getOwnPropertyDescriptor(TextEncoder.prototype, "encode");
+    let encodeHooks = 0;
+    try {
+      Object.defineProperty(TextEncoder.prototype, "encode", {
+        configurable: true,
+        value() {
+          encodeHooks += 1;
+          return new Uint8Array();
+        },
+        writable: true,
+      });
+      assertThrows(
+        () =>
+          RuntimeAgentRunInvocationSchema.parse(createInvocation({
+            agentConfig: {
+              id: "builder",
+              name: "Builder",
+              description: "Builds with project skills.",
+              instructions: "😀".repeat(20_000),
+            },
+          })),
+        Error,
+        "agentConfig must be less than 64 KB",
+      );
+    } finally {
+      if (originalEncode) {
+        Object.defineProperty(TextEncoder.prototype, "encode", originalEncode);
+      }
+    }
+    assertEquals(encodeHooks, 0);
+  });
+
   it("parses runtime agent invocation request bodies through the public helper", async () => {
     const parsed = await parseRuntimeAgentRunInvocation(
       new Request("http://localhost/api/control-plane/runs/run_1/stream", {

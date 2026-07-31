@@ -46,8 +46,13 @@ consumer's own `@types/react`. This gate is the regression guard.
   `veryfront/mcp`, `veryfront/prompt`, `veryfront/resource`, and
   the related primitive entry points.
 - [`fixtures/release-assets.ts`](./fixtures/release-assets.ts) — manifest
-  parsing, immutable URL construction, release-scoped fetchers, and dependency
-  vendor result contracts via `veryfront/release-assets`.
+  parsing, immutable URL construction, and release-scoped fetchers via
+  `veryfront/release-assets`.
+- [`fixtures/skill-extension-contracts.ts`](./fixtures/skill-extension-contracts.ts):
+  skill script provider authoring contracts from `veryfront/extensions` and
+  `veryfront/extensions/skill`, including structural result classes, reporter
+  settlement callbacks, exact provider and control literals, snapshots, and
+  cross-import type assignment.
 
 Add a fixture whenever a new public compound ships; keep them importing the
 published specifiers (not relative `src` paths) so they exercise the real

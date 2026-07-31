@@ -77,7 +77,8 @@ const generated = `/**
 
 // deno-fmt-ignore - preserve the generated JavaScript as one JSON string.
 export const DEV_UI_BROWSER_BUNDLE: string = ${JSON.stringify(bundle)};
-export const DEV_UI_BROWSER_BUNDLE_SHA256 = ${JSON.stringify(digest)};
+export const DEV_UI_BROWSER_BUNDLE_SHA256 =
+  ${JSON.stringify(digest)};
 `;
 
 if (checkOnly) {

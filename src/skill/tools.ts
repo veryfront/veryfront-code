@@ -14,12 +14,21 @@ import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { basename } from "#veryfront/compat/path";
 import { createError, toError } from "#veryfront/errors";
+import {
+  getAbortSignalReason,
+  isAbortSignalAborted,
+  isAbortSignalWithoutHooks,
+} from "#veryfront/platform/compat/abort-signal.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { skillRegistryInternal } from "./registry.ts";
 import { parseSkillFileFrontmatter, validateSkillFileMetadata } from "./parser.ts";
 import { listStrictSkillSubdir } from "./path-safety.ts";
-import { getSkillScriptExecutor } from "./executor.ts";
-import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
+import type {
+  Skill,
+  SkillContent,
+  SkillScriptExecutor,
+  SkillScriptExecutorInput,
+} from "./types.ts";
 import {
   isValidProviderSafeSkillId,
   isValidSkillName,
@@ -34,6 +43,7 @@ import {
   isValidSkillScriptEnvironmentKey,
   SKILL_ID_MAX_LENGTH,
   SKILL_RELATIVE_PATH_MAX_LENGTH,
+  SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
   SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
   SKILL_SCRIPT_DEFAULT_TIMEOUT_MS,
   SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
@@ -52,20 +62,27 @@ import { readValidatedSkillTextFile } from "./bounded-text-file.ts";
 import { createSkillOperationBudget, SkillOperationTimeoutError } from "./operation-budget.ts";
 import { sanitizeSkillBoundaryFailure } from "./error-boundary.ts";
 import { snapshotSkillScriptResult } from "./script-result.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
+import {
+  executeSkillScriptWithProvider,
+  resolveSkillScriptExecutionBackend,
+} from "./provider-executor.ts";
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
   resolveAllowedSkillIds?: (context: ToolExecutionContext | undefined) => readonly string[];
 };
+type CapturedSelectorResolver = SkillSelectorToolOptions["resolveAllowedSkillIds"];
 
-const UTF8_ENCODER = new TextEncoder();
 const apply = Reflect.apply;
 const arrayIncludes = Array.prototype.includes;
 const arrayIsArray = Array.isArray;
 const defineOwnProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
+const ownKeys = Reflect.ownKeys;
 const stringIncludes = String.prototype.includes;
 const EMPTY_STRING_ALLOWLIST = freeze([] as string[]);
 
@@ -112,12 +129,12 @@ function sanitizeSkillToolFailure(
   skillRoot: string | undefined,
   context?: ToolExecutionContext,
 ): unknown {
-  if (
-    context?.abortSignal?.aborted &&
-    context.abortSignal.reason !== undefined &&
-    error === context.abortSignal.reason
-  ) {
-    return error;
+  const abortSignal = context?.abortSignal;
+  if (abortSignal && isAbortSignalWithoutHooks(abortSignal)) {
+    const reason = getAbortSignalReason(abortSignal);
+    if (isAbortSignalAborted(abortSignal) && reason !== undefined && error === reason) {
+      return error;
+    }
   }
   return sanitizeSkillBoundaryFailure(error, skillRoot ?? "");
 }
@@ -125,19 +142,61 @@ function sanitizeSkillToolFailure(
 function scriptArgsFitByteBudget(value: readonly string[] | undefined): boolean {
   if (value === undefined) return true;
   let totalBytes = 0;
-  for (const arg of value) {
-    totalBytes += UTF8_ENCODER.encode(arg).byteLength;
-    if (totalBytes > SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL) return false;
+  for (let index = 0; index < value.length; index += 1) {
+    const descriptor = getOwnPropertyDescriptor(value, index);
+    if (
+      descriptor === undefined ||
+      !hasOwn(descriptor, "value") ||
+      typeof descriptor.value !== "string"
+    ) {
+      return false;
+    }
+    const remaining = SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL - totalBytes;
+    const bytes = utf8ByteLength(descriptor.value, remaining);
+    if (bytes > remaining) return false;
+    totalBytes += bytes;
   }
   return true;
 }
 
 function scriptEnvFitsByteBudget(value: Record<string, string> | undefined): boolean {
   if (value === undefined) return true;
+  if (isProxyWithoutHooks(value)) return false;
   let totalBytes = 0;
-  for (const [key, envValue] of Object.entries(value)) {
-    totalBytes += UTF8_ENCODER.encode(`${key}=${envValue}\0`).byteLength;
-    if (totalBytes > SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL) return false;
+  const descriptors = getOwnPropertyDescriptors(value);
+  const keys = ownKeys(descriptors);
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    const descriptor = descriptors[key as keyof typeof descriptors];
+    if (!descriptor?.enumerable) continue;
+    if (
+      typeof key !== "string" ||
+      !hasOwn(descriptor, "value") ||
+      typeof descriptor.value !== "string"
+    ) {
+      return false;
+    }
+    const remaining = SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL - totalBytes;
+    const bytes = utf8ByteLength(`${key}=${descriptor.value}\0`, remaining);
+    if (bytes > remaining) return false;
+    totalBytes += bytes;
+  }
+  return true;
+}
+
+function scriptEnvEntryCountFits(value: Record<string, string> | undefined): boolean {
+  if (value === undefined) return true;
+  if (isProxyWithoutHooks(value)) return false;
+  const descriptors = getOwnPropertyDescriptors(value);
+  const keys = ownKeys(descriptors);
+  let entryCount = 0;
+  for (let index = 0; index < keys.length; index += 1) {
+    const key = keys[index];
+    const descriptor = descriptors[key as keyof typeof descriptors];
+    if (!descriptor?.enumerable) continue;
+    if (typeof key !== "string" || !hasOwn(descriptor, "value")) return false;
+    entryCount += 1;
+    if (entryCount > SKILL_SCRIPT_MAX_ENV_ENTRIES) return false;
   }
   return true;
 }
@@ -185,12 +244,9 @@ const getExecuteSkillScriptInputSchema = defineSchema((v) =>
         v.string().max(SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH),
       )
       .optional()
-      .refine(
-        (value) =>
-          value === undefined ||
-          Object.keys(value).length <= SKILL_SCRIPT_MAX_ENV_ENTRIES,
-        { message: `Environment accepts at most ${SKILL_SCRIPT_MAX_ENV_ENTRIES} entries` },
-      )
+      .refine(scriptEnvEntryCountFits, {
+        message: `Environment accepts at most ${SKILL_SCRIPT_MAX_ENV_ENTRIES} entries`,
+      })
       .refine(scriptEnvFitsByteBudget, {
         message: `Environment must total at most ${SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL} bytes`,
       })
@@ -219,10 +275,10 @@ const getExecuteSkillScriptInputSchema = defineSchema((v) =>
 function resolveVisibleSkillOrThrow(
   skillId: string,
   context: ToolExecutionContext | undefined,
-  options: SkillSelectorToolOptions = {},
+  resolver: CapturedSelectorResolver,
 ): Skill {
   const scope = { agentId: context?.agentId };
-  const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
+  const allowedSkillIds = getSelectorAllowedSkillIds(context, resolver);
   const skill = skillRegistryInternal.resolveVisibleSkill(skillId, scope);
   if (skill) {
     assertSkillAllowedBySelector(skill, allowedSkillIds);
@@ -281,10 +337,13 @@ function createSkillUnavailableError(): Error {
 
 function getSelectorAllowedSkillIds(
   context: ToolExecutionContext | undefined,
-  options: SkillSelectorToolOptions,
+  resolver: CapturedSelectorResolver,
 ): readonly string[] | undefined {
-  const resolved = options.resolveAllowedSkillIds?.(context);
-  if (resolved !== undefined) {
+  if (resolver !== undefined) {
+    if (typeof resolver !== "function" || isProxyWithoutHooks(resolver)) {
+      return EMPTY_STRING_ALLOWLIST;
+    }
+    const resolved = apply(resolver, undefined, [context]);
     return snapshotStringAllowlist(
       resolved,
       SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
@@ -354,7 +413,12 @@ function assertActiveSkillFileAvailable(
   const advertised = input.kind === "reference"
     ? availability.references ?? []
     : availability.scripts ?? [];
-  const advertisedSnapshot = snapshotStringAllowlist(advertised, SKILL_SUBDIR_MAX_ENTRIES);
+  const advertisedSnapshot = snapshotStringAllowlist(
+    advertised,
+    input.kind === "reference"
+      ? SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES
+      : SKILL_SUBDIR_MAX_ENTRIES,
+  );
   if (!containsExactString(advertisedSnapshot, input.path)) {
     throw toError(
       createError({
@@ -370,6 +434,7 @@ function assertActiveSkillFileAvailable(
  * Loads a skill's full instructions, available references, and scripts.
  */
 export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Tool {
+  const selectorResolver = options.resolveAllowedSkillIds;
   return tool({
     id: "load_skill",
     description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
@@ -380,7 +445,7 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       let skillRoot: string | undefined;
       try {
         return await budget.run(async () => {
-          const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context, selectorResolver);
           skillRoot = skill.rootPath;
 
           // Read SKILL.md
@@ -450,6 +515,7 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
  * Reads a reference file from a skill's references/, resources/, or assets/ directory.
  */
 export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions = {}): Tool {
+  const selectorResolver = options.resolveAllowedSkillIds;
   return tool({
     id: "load_skill_reference",
     description: "Read a reference file from a skill. Only files in the skill's " +
@@ -460,7 +526,7 @@ export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions =
       let skillRoot: string | undefined;
       try {
         return await budget.run(async () => {
-          const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context, selectorResolver);
           skillRoot = skill.rootPath;
           assertActiveSkillFileAvailable(
             {
@@ -515,6 +581,8 @@ function abortedScriptResult() {
 export function createExecuteSkillScriptTool(
   options: { executor?: SkillScriptExecutor } & SkillSelectorToolOptions = {},
 ): Tool {
+  const selectorResolver = options.resolveAllowedSkillIds;
+  const configuredExecutor = options.executor;
   return tool({
     id: "execute_skill_script",
     description:
@@ -528,8 +596,8 @@ export function createExecuteSkillScriptTool(
         timeoutMs,
       });
       try {
-        return await budget.run(async () => {
-          const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
+        const execution = await budget.run(async () => {
+          const skill = resolveVisibleSkillOrThrow(input.skillId, context, selectorResolver);
           skillRoot = skill.rootPath;
           assertActiveSkillFileAvailable(
             {
@@ -553,8 +621,8 @@ export function createExecuteSkillScriptTool(
           );
           budget.throwIfTerminated();
 
-          const executor = options.executor ?? getSkillScriptExecutor();
-          const result = await executor.execute({
+          const backend = resolveSkillScriptExecutionBackend(configuredExecutor);
+          const executorInput: SkillScriptExecutorInput = {
             scriptPath: scriptFile.path,
             scriptContent: scriptFile.content,
             args: input.args,
@@ -563,11 +631,41 @@ export function createExecuteSkillScriptTool(
             validatedSourceRoot: skill.rootPath,
             timeoutMs: budget.remainingMs() ?? timeoutMs,
             abortSignal: context?.abortSignal,
-          });
-          return snapshotSkillScriptResult(result);
+          };
+          if (backend.kind === "provider") {
+            return {
+              kind: "provider" as const,
+              input: executorInput,
+              provider: backend.provider,
+              contractReference: backend.contractReference,
+            };
+          }
+
+          return {
+            kind: "result" as const,
+            result: snapshotSkillScriptResult(
+              await backend.executor.execute(executorInput),
+            ),
+          };
         });
+
+        if (execution.kind === "provider") {
+          return snapshotSkillScriptResult(
+            await executeSkillScriptWithProvider(
+              execution.provider,
+              execution.input,
+              budget,
+              execution.contractReference,
+            ),
+          );
+        }
+        return execution.result;
       } catch (error) {
-        if (context?.abortSignal?.aborted) {
+        if (
+          context?.abortSignal &&
+          isAbortSignalWithoutHooks(context.abortSignal) &&
+          isAbortSignalAborted(context.abortSignal)
+        ) {
           return abortedScriptResult();
         }
         const failure = sanitizeSkillToolFailure(error, skillRoot, context);

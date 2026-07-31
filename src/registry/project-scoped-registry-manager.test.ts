@@ -14,6 +14,31 @@ import {
   runWithRegistryTransaction,
 } from "./project-scoped-registry-manager.ts";
 
+async function withEmptyPublicMapIterator<T>(
+  operation: () => T | Promise<T>,
+): Promise<{ iteratorCalls: number; value: T }> {
+  const originalIterator = Object.getOwnPropertyDescriptor(Map.prototype, Symbol.iterator);
+  let iteratorCalls = 0;
+  try {
+    Object.defineProperty(Map.prototype, Symbol.iterator, {
+      configurable: true,
+      value: function* () {
+        iteratorCalls += 1;
+        yield* [];
+      },
+      writable: true,
+    });
+    const value = await operation();
+    return { iteratorCalls, value };
+  } finally {
+    if (originalIterator) {
+      Object.defineProperty(Map.prototype, Symbol.iterator, originalIterator);
+    } else {
+      Reflect.deleteProperty(Map.prototype, Symbol.iterator);
+    }
+  }
+}
+
 describe("ProjectScopedRegistryManager", () => {
   function createManager<T>(name: string): ProjectScopedRegistryManager<T> {
     return new ProjectScopedRegistryManager<T>(name);
@@ -77,6 +102,25 @@ describe("ProjectScopedRegistryManager", () => {
         { projectId: "proj-1", mode: "preview", versionId: "feature-a" },
         () => assertEquals(manager.get("shared-tool"), "feature-value"),
       );
+    });
+
+    it("preserves existing candidates independently of public Map iteration", async () => {
+      const manager = new ProjectScopedRegistryManager<string>("tool", {
+        validateRegistryCandidate: (registry, id) => {
+          if (id === "second" && registry.get("first") !== "one") {
+            throw new Error("effective registry lost its existing candidate");
+          }
+        },
+      });
+      manager.register("first", "one");
+
+      const result = await withEmptyPublicMapIterator(() => {
+        manager.register("second", "two");
+        return manager.get("second");
+      });
+
+      assertEquals(result.value, "two");
+      assertEquals(result.iteratorCalls, 0);
     });
   });
 
@@ -534,6 +578,34 @@ describe("ProjectScopedRegistryManager transactions", () => {
 
     runWithCacheKeyContext(scope, () => {
       assertEquals(manager.get("local"), undefined);
+    });
+  });
+
+  it("preserves transaction candidates independently of public Map iteration", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider", {
+      validateRegistryCandidate: (registry, id) => {
+        if (id === "second" && registry.get("first") !== "one") {
+          throw new Error("transaction registry lost its existing candidate");
+        }
+      },
+    });
+    runWithCacheKeyContext(scope, () => manager.register("first", "one"));
+
+    const result = await withEmptyPublicMapIterator(() =>
+      runWithCacheKeyContext(
+        scope,
+        () =>
+          runWithRegistryTransaction(async () => {
+            manager.register("second", "two");
+            assertEquals(manager.get("first"), "one");
+          }),
+      )
+    );
+
+    assertEquals(result.iteratorCalls, 0);
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("first"), "one");
+      assertEquals(manager.get("second"), "two");
     });
   });
 

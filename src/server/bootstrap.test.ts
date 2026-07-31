@@ -16,7 +16,7 @@ import {
   assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import type { ConfigLoadResult, VeryfrontConfig } from "#veryfront/config/loader.ts";
 import {
@@ -26,7 +26,7 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { deleteEnv, getEnv } from "#veryfront/platform/compat/process.ts";
-import { register, reset, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import {
   MAX_STUDIO_CAPTURE_BUNDLE_BYTES,
   type StudioCaptureBundleProvider,
@@ -625,21 +625,33 @@ describe("wireTracingShim()", () => {
     };
   }
 
-  function resetTelemetryTestState(): void {
-    reset();
+  function clearTelemetryTestState(): void {
+    unregister("TracingExporter");
     _resetShimForTests();
     __resetLogRecordEmitterForTests();
   }
 
-  it("replaces exporter A with a fresh no-op generation", () => {
-    resetTelemetryTestState();
+  let previousTracingExporter: TracingExporter | undefined;
 
+  beforeEach(() => {
+    previousTracingExporter = tryResolve<TracingExporter>("TracingExporter");
+    clearTelemetryTestState();
+  });
+
+  afterEach(() => {
+    clearTelemetryTestState();
+    if (previousTracingExporter !== undefined) {
+      register("TracingExporter", previousTracingExporter);
+    }
+  });
+
+  it("replaces exporter A with a fresh no-op generation", () => {
     const emitted: string[] = [];
     const a = createExporter("A", emitted);
     register("TracingExporter", a.exporter);
     const aInstallation = wireTracingShim();
 
-    reset();
+    unregister("TracingExporter");
     const noExporterInstallation = wireTracingShim();
     const snapshot = getGlobalTelemetryAPISnapshot();
     // ERROR is never filtered by a supported LOG_LEVEL, so this assertion
@@ -653,12 +665,9 @@ describe("wireTracingShim()", () => {
     assertEquals(emitted, []);
     assertEquals(aInstallation.dispose(), false);
     assertEquals(noExporterInstallation.dispose(), true);
-    resetTelemetryTestState();
   });
 
   it("keeps exporter B installed when stale exporter A is disposed", () => {
-    resetTelemetryTestState();
-
     const emitted: string[] = [];
     const a = createExporter("A", emitted);
     const b = createExporter("B", emitted);
@@ -681,12 +690,9 @@ describe("wireTracingShim()", () => {
     assertNotStrictEquals(getGlobalTelemetryAPISnapshot().tracerProvider, b.tracerProvider);
     logger.error("after B disposal");
     assertEquals(emitted, ["B:owned by B"]);
-    resetTelemetryTestState();
   });
 
   it("leaves exporter A intact when an exporter B getter throws", () => {
-    resetTelemetryTestState();
-
     const emitted: string[] = [];
     const a = createExporter("A", emitted);
     const b = createExporter("B", emitted);
@@ -714,6 +720,5 @@ describe("wireTracingShim()", () => {
     assertEquals(emitted, ["A:still owned by A"]);
 
     assertEquals(aInstallation.dispose(), true);
-    resetTelemetryTestState();
   });
 });

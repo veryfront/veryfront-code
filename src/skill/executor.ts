@@ -10,6 +10,11 @@ import { getEnv, runCommand } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import {
+  addAbortSignalListenerOnce,
+  isAbortSignalAborted,
+  removeAbortSignalListener,
+} from "#veryfront/platform/compat/abort-signal.ts";
+import {
   getPathIdentity,
   lstat,
   type PathIdentity,
@@ -17,50 +22,25 @@ import {
   realPath,
 } from "#veryfront/platform/compat/fs.ts";
 import { dirname, extname, isAbsolute, relative, resolve } from "#veryfront/compat/path";
-import { createError, toError } from "#veryfront/errors";
-import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
-import {
-  isValidSkillScriptEnvironmentKey,
-  SKILL_ROOT_PATH_MAX_LENGTH,
-  SKILL_SCRIPT_DEFAULT_TIMEOUT_MS,
-  SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
-  SKILL_SCRIPT_MAX_ARG_LENGTH,
-  SKILL_SCRIPT_MAX_ARGS,
-  SKILL_SCRIPT_MAX_CONTENT_BYTES,
-  SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL,
-  SKILL_SCRIPT_MAX_ENV_ENTRIES,
-  SKILL_SCRIPT_MAX_ENV_KEY_LENGTH,
-  SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH,
-  SKILL_SCRIPT_MAX_OUTPUT_BYTES,
-  SKILL_SCRIPT_MAX_TIMEOUT_MS,
-} from "./limits.ts";
+import { SKILL_SCRIPT_MAX_CONTENT_BYTES, SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
 import { readBoundedSkillTextFile } from "./bounded-text-file.ts";
-import { isWellFormedUtf16 } from "./string-safety.ts";
-const apply = Reflect.apply;
-const arrayIsArray = Array.isArray;
+import {
+  type NormalizedSkillScriptExecutorInput,
+  snapshotSkillScriptExecutorInput,
+} from "./script-executor-input.ts";
 const defineOwnProperty = Object.defineProperty;
 const freeze = Object.freeze;
-const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const getOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
-const hasOwnProperty = Object.prototype.hasOwnProperty;
-const ownKeys = Reflect.ownKeys;
-const stringIncludes = String.prototype.includes;
 const TIMEOUT_EXIT_CODE = 124;
 const OUTPUT_LIMIT_EXIT_CODE = 125;
 const ABORT_EXIT_CODE = 130;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
 const ABORT_SENTINEL = Symbol("skill-script-abort");
-const UTF8_ENCODER = new TextEncoder();
 const SANDBOX_PREPARATION_TIMEOUT_MS = 5_000;
 const SANDBOX_CLEANUP_TIMEOUT_SECONDS = 5;
 const SANDBOX_CLEANUP_MAX_OUTPUT_BYTES = 65_536;
 
 type TerminationSentinel = typeof ABORT_SENTINEL | typeof TIMEOUT_SENTINEL;
-
-function hasOwn(object: object, key: PropertyKey): boolean {
-  return apply(hasOwnProperty, object, [key]) as boolean;
-}
 
 function appendOwnArrayElement<T>(values: T[], value: T): void {
   defineOwnProperty(values, values.length, {
@@ -88,7 +68,7 @@ function currentTermination(
   budget: ExecutionBudget,
   abortSignal?: AbortSignal,
 ): TerminationSentinel | undefined {
-  if (abortSignal?.aborted) return ABORT_SENTINEL;
+  if (abortSignal && isAbortSignalAborted(abortSignal)) return ABORT_SENTINEL;
   if (budget.remainingMs() === 0) return TIMEOUT_SENTINEL;
   return undefined;
 }
@@ -105,19 +85,12 @@ function throwCollectedFailures(failures: readonly unknown[], message: string): 
   throw new AggregateError([...failures], message);
 }
 
-function resolveTimeoutMs(timeoutMs?: number): number {
-  if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return SKILL_SCRIPT_DEFAULT_TIMEOUT_MS;
-  }
-  return Math.min(Math.floor(timeoutMs), SKILL_SCRIPT_MAX_TIMEOUT_MS);
-}
-
 async function withTermination<T>(
   promise: Promise<T>,
   timeoutMs: number,
   abortSignal?: AbortSignal,
 ): Promise<T | typeof ABORT_SENTINEL | typeof TIMEOUT_SENTINEL> {
-  if (abortSignal?.aborted) return ABORT_SENTINEL;
+  if (abortSignal && isAbortSignalAborted(abortSignal)) return ABORT_SENTINEL;
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeoutPromise = new Promise<typeof TIMEOUT_SENTINEL>((resolve) => {
@@ -127,14 +100,14 @@ async function withTermination<T>(
   const abortPromise = new Promise<typeof ABORT_SENTINEL>((resolve) => {
     if (!abortSignal) return;
     abortListener = () => resolve(ABORT_SENTINEL);
-    abortSignal.addEventListener("abort", abortListener, { once: true });
+    addAbortSignalListenerOnce(abortSignal, abortListener);
   });
 
   try {
     return await Promise.race([promise, timeoutPromise, abortPromise]);
   } finally {
     if (timeoutId) clearTimeout(timeoutId);
-    if (abortListener) abortSignal?.removeEventListener("abort", abortListener);
+    if (abortSignal && abortListener) removeAbortSignalListener(abortSignal, abortListener);
   }
 }
 
@@ -188,239 +161,6 @@ function shellEscapeArg(value: string): string {
 
 function buildShellCommand(parts: string[]): string {
   return parts.map(shellEscapeArg).join(" ");
-}
-
-interface NormalizedSkillScriptExecutorInput {
-  readonly scriptPath: string;
-  readonly scriptContent?: string;
-  readonly args: readonly string[];
-  readonly env?: Readonly<Record<string, string>>;
-  readonly cwd?: string;
-  readonly validatedSourceRoot?: string;
-  readonly timeoutMs: number;
-  readonly abortSignal?: AbortSignal;
-}
-
-function isObjectRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !arrayIsArray(value);
-}
-
-function ownDataValue(record: Record<string, unknown>, key: string): unknown {
-  const descriptor = getOwnPropertyDescriptor(record, key);
-  if (!descriptor) return undefined;
-  if (!hasOwn(descriptor, "value")) {
-    throw new TypeError(`Skill script field "${key}" must be a data property`);
-  }
-  return descriptor.value;
-}
-
-function requireBoundedString(
-  value: unknown,
-  field: string,
-  maxLength: number,
-  allowEmpty = false,
-): string {
-  if (typeof value !== "string" || (!allowEmpty && value.length === 0)) {
-    throw new TypeError(`${field} must be ${allowEmpty ? "a" : "a non-empty"} string`);
-  }
-  if (!isWellFormedUtf16(value) || apply(stringIncludes, value, ["\0"])) {
-    throw new TypeError(`${field} must be valid text without NUL characters`);
-  }
-  if (value.length > maxLength) {
-    throw new RangeError(`${field} must be at most ${maxLength} characters`);
-  }
-  return value;
-}
-
-function requireScriptContent(
-  value: unknown,
-  enforceToolLimits: boolean,
-): string {
-  const content = requireBoundedString(
-    value,
-    "Skill script content",
-    enforceToolLimits ? SKILL_SCRIPT_MAX_CONTENT_BYTES : Number.MAX_SAFE_INTEGER,
-    true,
-  );
-  if (
-    enforceToolLimits &&
-    UTF8_ENCODER.encode(content).byteLength > SKILL_SCRIPT_MAX_CONTENT_BYTES
-  ) {
-    throw new RangeError(
-      `Skill script content must be at most ${SKILL_SCRIPT_MAX_CONTENT_BYTES} bytes`,
-    );
-  }
-  return content;
-}
-
-function normalizeScriptArgs(
-  value: unknown,
-  enforceToolLimits: boolean,
-): readonly string[] {
-  if (value === undefined) return [];
-  if (!arrayIsArray(value)) {
-    throw new TypeError("Skill script args must be an array");
-  }
-  if (isProxyWithoutHooks(value)) {
-    throw new TypeError("Skill script args must not be a proxy");
-  }
-  if (enforceToolLimits && value.length > SKILL_SCRIPT_MAX_ARGS) {
-    throw new RangeError(`Skill script args accepts at most ${SKILL_SCRIPT_MAX_ARGS} entries`);
-  }
-
-  const args: string[] = [];
-  let totalBytes = 0;
-  for (let index = 0; index < value.length; index++) {
-    const descriptor = getOwnPropertyDescriptor(value, index);
-    if (!descriptor || !hasOwn(descriptor, "value")) {
-      throw new TypeError(`Skill script arg ${index} must be a data property`);
-    }
-    const arg = requireBoundedString(
-      descriptor.value,
-      `Skill script arg ${index}`,
-      enforceToolLimits ? SKILL_SCRIPT_MAX_ARG_LENGTH : Number.MAX_SAFE_INTEGER,
-      true,
-    );
-    if (enforceToolLimits) {
-      totalBytes += UTF8_ENCODER.encode(arg).byteLength;
-    }
-    if (enforceToolLimits && totalBytes > SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL) {
-      throw new RangeError(
-        `Skill script args must total at most ${SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL} bytes`,
-      );
-    }
-    appendOwnArrayElement(args, arg);
-  }
-  return freeze(args);
-}
-
-function normalizeScriptEnv(
-  value: unknown,
-  enforceToolLimits: boolean,
-): Readonly<Record<string, string>> | undefined {
-  if (value === undefined) return undefined;
-  if (!isObjectRecord(value)) {
-    throw new TypeError("Skill script env must be an object");
-  }
-  if (isProxyWithoutHooks(value)) {
-    throw new TypeError("Skill script env must not be a proxy");
-  }
-
-  const descriptors = getOwnPropertyDescriptors(value);
-  const entries: Array<readonly [string, PropertyDescriptor]> = [];
-  const descriptorKeys = ownKeys(descriptors);
-  for (let index = 0; index < descriptorKeys.length; index += 1) {
-    const key = descriptorKeys[index]!;
-    const descriptor = descriptors[key as keyof typeof descriptors];
-    if (!descriptor?.enumerable) continue;
-    if (typeof key !== "string") {
-      throw new TypeError("Skill script env keys must be strings");
-    }
-    appendOwnArrayElement(entries, [key, descriptor] as const);
-  }
-  if (enforceToolLimits && entries.length > SKILL_SCRIPT_MAX_ENV_ENTRIES) {
-    throw new RangeError(
-      `Skill script env accepts at most ${SKILL_SCRIPT_MAX_ENV_ENTRIES} entries`,
-    );
-  }
-
-  const env: Record<string, string> = {};
-  let totalBytes = 0;
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index]!;
-    const key = entry[0];
-    const descriptor = entry[1];
-    if (!hasOwn(descriptor, "value")) {
-      throw new TypeError(`Skill script env "${key}" must be a data property`);
-    }
-    if (!isValidSkillScriptEnvironmentKey(key)) {
-      throw toError(
-        createError({
-          type: "agent",
-          message: `Invalid environment variable name: "${key}"`,
-        }),
-      );
-    }
-    if (enforceToolLimits && key.length > SKILL_SCRIPT_MAX_ENV_KEY_LENGTH) {
-      throw new RangeError(
-        `Skill script environment names must be at most ${SKILL_SCRIPT_MAX_ENV_KEY_LENGTH} characters`,
-      );
-    }
-    const envValue = requireBoundedString(
-      descriptor.value,
-      `Skill script environment value for "${key}"`,
-      enforceToolLimits ? SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH : Number.MAX_SAFE_INTEGER,
-      true,
-    );
-    if (enforceToolLimits) {
-      totalBytes += UTF8_ENCODER.encode(`${key}=${envValue}\0`).byteLength;
-    }
-    if (enforceToolLimits && totalBytes > SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL) {
-      throw new RangeError(
-        `Skill script environment must total at most ${SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL} bytes`,
-      );
-    }
-    defineOwnProperty(env, key, {
-      configurable: false,
-      enumerable: true,
-      value: envValue,
-      writable: false,
-    });
-  }
-  return freeze(env);
-}
-
-function normalizeExecutorInput(
-  input: SkillScriptExecutorInput,
-): NormalizedSkillScriptExecutorInput {
-  if (!isObjectRecord(input)) {
-    throw new TypeError("Skill script executor input must be an object");
-  }
-  if (isProxyWithoutHooks(input)) {
-    throw new TypeError("Skill script executor input must not be a proxy");
-  }
-
-  const rawValidatedSourceRoot = ownDataValue(input, "validatedSourceRoot");
-  const validatedSourceRoot = rawValidatedSourceRoot === undefined
-    ? undefined
-    : requireBoundedString(
-      rawValidatedSourceRoot,
-      "Skill script validated source root",
-      SKILL_ROOT_PATH_MAX_LENGTH,
-    );
-  const enforceToolLimits = validatedSourceRoot !== undefined;
-  const scriptPath = requireBoundedString(
-    ownDataValue(input, "scriptPath"),
-    "Skill script path",
-    enforceToolLimits ? SKILL_ROOT_PATH_MAX_LENGTH : Number.MAX_SAFE_INTEGER,
-  );
-  const rawScriptContent = ownDataValue(input, "scriptContent");
-  const scriptContent = rawScriptContent === undefined
-    ? undefined
-    : requireScriptContent(rawScriptContent, enforceToolLimits);
-  const rawCwd = ownDataValue(input, "cwd");
-  const cwd = rawCwd === undefined ? undefined : requireBoundedString(
-    rawCwd,
-    "Skill script cwd",
-    enforceToolLimits ? SKILL_ROOT_PATH_MAX_LENGTH : Number.MAX_SAFE_INTEGER,
-  );
-  const timeoutMs = resolveTimeoutMs(ownDataValue(input, "timeoutMs") as number | undefined);
-  const rawAbortSignal = ownDataValue(input, "abortSignal");
-  if (rawAbortSignal !== undefined && !(rawAbortSignal instanceof AbortSignal)) {
-    throw new TypeError("Skill script abortSignal must be an AbortSignal");
-  }
-  const env = normalizeScriptEnv(ownDataValue(input, "env"), enforceToolLimits);
-
-  return freeze({
-    scriptPath,
-    ...(scriptContent === undefined ? {} : { scriptContent }),
-    args: normalizeScriptArgs(ownDataValue(input, "args"), enforceToolLimits),
-    ...(env === undefined ? {} : { env }),
-    ...(cwd === undefined ? {} : { cwd }),
-    ...(validatedSourceRoot === undefined ? {} : { validatedSourceRoot }),
-    timeoutMs,
-    ...(rawAbortSignal === undefined ? {} : { abortSignal: rawAbortSignal }),
-  });
 }
 
 interface SandboxScriptLocation {
@@ -744,8 +484,10 @@ async function prepareValidatedLocalScript(
  */
 export class LocalScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
-    const normalized = normalizeExecutorInput(input);
-    if (normalized.abortSignal?.aborted) return abortedResult();
+    const normalized = snapshotSkillScriptExecutorInput(input);
+    if (normalized.abortSignal && isAbortSignalAborted(normalized.abortSignal)) {
+      return abortedResult();
+    }
     const budget = createExecutionBudget(normalized.timeoutMs);
 
     if (normalized.validatedSourceRoot === undefined) {
@@ -901,8 +643,10 @@ async function executeCloudScriptInSandbox(
  */
 class CloudScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
-    const normalized = normalizeExecutorInput(input);
-    if (normalized.abortSignal?.aborted) return abortedResult();
+    const normalized = snapshotSkillScriptExecutorInput(input);
+    if (normalized.abortSignal && isAbortSignalAborted(normalized.abortSignal)) {
+      return abortedResult();
+    }
     const budget = createExecutionBudget(normalized.timeoutMs);
 
     let cloudInput = normalized;

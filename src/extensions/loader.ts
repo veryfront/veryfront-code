@@ -10,7 +10,22 @@ import {
   EXTENSION_SETUP_TIMEOUT_ERROR,
   EXTENSION_VALIDATION_ERROR,
 } from "./errors.ts";
-import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
+import { resolve as resolveContract } from "./contracts.ts";
+import {
+  assertContractGenerationAdmissionAllowed,
+  beginContractGeneration,
+  commitContractGeneration,
+  completeContractGenerationRetirement,
+  type ContractGeneration,
+  drainContractGeneration,
+  failContractGeneration,
+  isContractGenerationDrained,
+  runWithContractGenerationEpoch,
+  runWithContractGenerationResolution,
+  sealContractGeneration,
+  stageContract,
+  tryResolveContractForGeneration,
+} from "./contract-registry-internal.ts";
 import { formatCapabilities, mapToDenoPermissions } from "./capabilities.ts";
 import {
   detectConflicts,
@@ -36,12 +51,92 @@ import {
   MAX_EXTENSION_NAME_CHARACTERS,
   MAX_EXTENSION_VERSION_CHARACTERS,
 } from "./metadata-policy.ts";
+import {
+  createIntrinsicPromise,
+  createIntrinsicPromiseContinuation,
+  createResolvedIntrinsicPromise,
+} from "./promise-intrinsics-internal.ts";
 
 const DEFAULT_SETUP_TIMEOUT_MS = 30_000;
 // JavaScript runtimes clamp larger delays to an implementation-specific short
 // delay (Node uses 1 ms), which would turn an oversized safety timeout into an
 // immediate failure.
 const MAX_SETUP_TIMEOUT_MS = 2_147_483_647;
+const NativeAggregateError = AggregateError;
+const NativeError = Error;
+const NativeSet = Set;
+const apply = Reflect.apply;
+const arrayIteratorSymbol: typeof Symbol.iterator = Symbol.iterator;
+const arrayIterator = Array.prototype[arrayIteratorSymbol];
+const createObject = Object.create;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const setAdd = Set.prototype.add;
+const setDelete = Set.prototype.delete;
+const setForEach = Set.prototype.forEach;
+const setHas = Set.prototype.has;
+const setSizeGetter = (() => {
+  const getter = getOwnPropertyDescriptor(Set.prototype, "size")?.get;
+  if (getter === undefined) {
+    throw new NativeError("Set.prototype.size getter is unavailable");
+  }
+  return getter;
+})();
+
+function createDataDescriptor(value: unknown): PropertyDescriptor {
+  const descriptor = createObject(null) as PropertyDescriptor;
+  descriptor.configurable = false;
+  descriptor.enumerable = false;
+  descriptor.value = value;
+  descriptor.writable = false;
+  return descriptor;
+}
+
+function appendArrayValue<T>(array: T[], value: T): void {
+  const descriptor = createObject(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.value = value;
+  descriptor.writable = true;
+  defineProperty(array, array.length, descriptor);
+}
+
+function copyArrayValues<T>(source: readonly T[]): T[] {
+  const copy: T[] = [];
+  for (let index = 0; index < source.length; index += 1) {
+    appendArrayValue(copy, source[index]);
+  }
+  return copy;
+}
+
+function addSetValue<T>(set: Set<T>, value: T): void {
+  apply(setAdd, set, [value]);
+}
+
+function deleteSetValue<T>(set: Set<T>, value: T): boolean {
+  return apply(setDelete, set, [value]) as boolean;
+}
+
+function forEachSetValue<T>(set: Set<T>, callback: (value: T) => void): void {
+  apply(setForEach, set, [callback]);
+}
+
+function hasSetValue<T>(set: Set<T>, value: T): boolean {
+  return apply(setHas, set, [value]) as boolean;
+}
+
+function getSetSize<T>(set: Set<T>): number {
+  return apply(setSizeGetter, set, []) as number;
+}
+
+function prepareAggregateErrorValues(values: unknown[]): unknown[] {
+  defineProperty(
+    values,
+    arrayIteratorSymbol,
+    createDataDescriptor(arrayIterator),
+  );
+  return values;
+}
 
 interface ContextAuthority {
   active: boolean;
@@ -92,6 +187,12 @@ export interface SetupAllOptions {
    */
   setupTimeoutMs?: number;
   /**
+   * @internal Runs after candidate preflight but before this candidate owns the
+   * process-wide transition fence. It may finish cleanup for an already
+   * failed transition, but must not retire the currently active generation.
+   */
+  beforeTransition?: () => void | Promise<void>;
+  /**
    * @internal Runs after the candidate plan is fully preflighted but before
    * any current generation is torn down or candidate side effects begin.
    * Reserved for the process-wide orchestration coordinator.
@@ -110,9 +211,10 @@ export class ExtensionLoader {
   private readonly logger: ExtensionLogger;
   private setupOrder: SetupRecord[] = [];
   private primed: Record<string, unknown> = {};
-  private ownsContracts = false;
-  private lifecycleTail: Promise<void> = Promise.resolve();
-  private readonly lateSetups = new Set<Promise<void>>();
+  private contractGeneration: ContractGeneration | undefined;
+  private contractGenerationActivationFailed = false;
+  private lifecycleTail: Promise<void> = createResolvedIntrinsicPromise();
+  private readonly lateSetups = new NativeSet<Promise<void>>();
   private quarantineFailure: unknown;
 
   constructor(logger: ExtensionLogger) {
@@ -125,6 +227,7 @@ export class ExtensionLoader {
    * (e.g. `LLMProviderRegistry`) before per-extension `setup()` runs.
    */
   primeContracts(contracts: Record<string, unknown>): void {
+    assertContractGenerationAdmissionAllowed();
     let descriptors: Record<string, PropertyDescriptor>;
     try {
       descriptors = Object.getOwnPropertyDescriptors(contracts);
@@ -356,6 +459,7 @@ export class ExtensionLoader {
     projectConfig: Record<string, unknown>,
     options?: SetupAllOptions,
   ): Promise<void> {
+    assertContractGenerationAdmissionAllowed();
     const timeoutMs = this.normalizeSetupTimeout(options?.setupTimeoutMs);
     const materialized = await this.materializeExtensions(extensions);
     const { activationSnapshots, contractSnapshots, loadOrder, contractWinner } = this
@@ -365,8 +469,21 @@ export class ExtensionLoader {
     // activate a replacement until that work settles and receives a final
     // cleanup pass, or it could mutate resources owned by the new generation.
     await this.waitForLateSetups();
-    await options?.beforeActivate?.();
-    await this.teardownAllInternal();
+    await options?.beforeTransition?.();
+    const candidateGeneration = beginContractGeneration();
+    try {
+      // Fence lifecycle-aware consumers before process-wide orchestration
+      // tears down the previous loader. The candidate remains unpublished
+      // until every setup and declared-contract check succeeds.
+      await options?.beforeActivate?.();
+      await this.teardownAllInternal();
+    } catch (error) {
+      failContractGeneration(candidateGeneration);
+      throw error;
+    }
+
+    this.contractGeneration = candidateGeneration;
+    this.contractGenerationActivationFailed = false;
 
     try {
       for (const [name, impl] of Object.entries(this.primed)) {
@@ -407,6 +524,7 @@ export class ExtensionLoader {
             authority,
             projectConfig,
             contractWinner,
+            candidateGeneration,
           );
           await this.runExtensionSetup(record, context, timeoutMs);
         }
@@ -416,13 +534,17 @@ export class ExtensionLoader {
           activation.extensionName,
           contracts,
           contractWinner,
+          candidateGeneration,
         );
 
         this.logger.debug(
           `Extension "${activation.extensionName}" v${activation.version} loaded from ${activation.source}`,
         );
       }
+      commitContractGeneration(candidateGeneration);
     } catch (error) {
+      this.contractGenerationActivationFailed = true;
+      sealContractGeneration(candidateGeneration, error);
       const rollback = this.teardownAllInternal();
 
       if (error instanceof ExtensionSetupTimeoutFailure) {
@@ -637,9 +759,11 @@ export class ExtensionLoader {
     extensionName: string,
     contracts: ExtensionContractSnapshot,
     contractWinner: Map<string, ResolvedExtension>,
+    generation: ContractGeneration,
   ): void {
     const missing = contracts.declaredProvides.filter((contract) =>
-      contractWinner.get(contract) === resolved && tryResolve(contract) === undefined
+      contractWinner.get(contract) === resolved &&
+      tryResolveContractForGeneration(generation, contract) === undefined
     );
     if (missing.length === 0) return;
 
@@ -669,11 +793,12 @@ export class ExtensionLoader {
     authority: ContextAuthority,
     projectConfig: Record<string, unknown>,
     contractWinner: Map<string, ResolvedExtension>,
+    generation: ContractGeneration,
   ): ExtensionContext {
     return {
       get: <T>(contract: string): T | undefined => {
         if (!authority.active) return undefined;
-        return tryResolve<T>(contract);
+        return tryResolveContractForGeneration<T>(generation, contract);
       },
       require: <T>(contract: string): T => {
         if (!authority.active) {
@@ -681,7 +806,11 @@ export class ExtensionLoader {
             `Extension context for "${authority.extensionName}" is no longer active`,
           );
         }
-        return resolveContract<T>(contract);
+        const implementation = tryResolveContractForGeneration<T>(
+          generation,
+          contract,
+        );
+        return implementation === undefined ? resolveContract<T>(contract) : implementation;
       },
       provide: <T>(contract: string, impl: T): void => {
         if (!authority.active) {
@@ -698,7 +827,7 @@ export class ExtensionLoader {
           });
         }
         if (winner === resolved) {
-          this.registerOwned(contract, impl);
+          this.registerOwned(contract, impl, generation);
         }
       },
       signal: authority.controller.signal,
@@ -739,6 +868,9 @@ export class ExtensionLoader {
         // Reject the race before dispatching abort listeners so an abort-aware
         // setup cannot replace the deterministic timeout error with its own.
         reject(failure);
+        if (this.contractGeneration !== undefined) {
+          sealContractGeneration(this.contractGeneration, failure);
+        }
         this.revokeAuthority(record.authority);
       }, timeoutMs);
     });
@@ -750,9 +882,16 @@ export class ExtensionLoader {
     }
   }
 
-  private registerOwned<T>(contract: string, impl: T): void {
-    this.ownsContracts = true;
-    register(contract, impl);
+  private registerOwned<T>(
+    contract: string,
+    impl: T,
+    generation?: ContractGeneration,
+  ): void {
+    const owner = generation ?? this.contractGeneration;
+    if (owner === undefined) {
+      throw new Error("Extension contract generation is not available");
+    }
+    stageContract(owner, contract, impl);
   }
 
   private revokeAuthority(authority: ContextAuthority | undefined): void {
@@ -762,24 +901,77 @@ export class ExtensionLoader {
   }
 
   private trackTimedOutCleanup(rollback: Promise<void>): void {
-    const cleanup = rollback.catch((error) => {
-      // Keep the tracked promise fulfilled to avoid an unhandled rejection,
-      // but retain the failure as a sticky quarantine. Activating another
-      // generation would overlap resources that cleanup failed to close.
-      this.quarantineFailure ??= error;
-    });
-    this.lateSetups.add(cleanup);
-    void cleanup.then(
-      () => this.lateSetups.delete(cleanup),
-      () => this.lateSetups.delete(cleanup),
+    const cleanup = createIntrinsicPromiseContinuation(
+      rollback,
+      () => undefined,
+      (error) => {
+        // Keep the tracked promise fulfilled to avoid an unhandled rejection,
+        // but retain the failure as a sticky quarantine. Activating another
+        // generation would overlap resources that cleanup failed to close.
+        this.quarantineFailure ??= error;
+      },
+    );
+    addSetValue(this.lateSetups, cleanup);
+    createIntrinsicPromiseContinuation(
+      cleanup,
+      () => {
+        deleteSetValue(this.lateSetups, cleanup);
+      },
+      () => {
+        deleteSetValue(this.lateSetups, cleanup);
+      },
     );
   }
 
-  private async waitForLateSetups(throwOnQuarantine = true): Promise<void> {
-    while (this.lateSetups.size > 0) {
-      await Promise.all([...this.lateSetups]);
-    }
-    if (throwOnQuarantine) this.throwIfQuarantined();
+  private waitForLateSetups(throwOnQuarantine = true): Promise<void> {
+    return createIntrinsicPromise<void>((resolve, reject) => {
+      let settled = false;
+      const fail = (reason: unknown): void => {
+        if (settled) return;
+        settled = true;
+        reject(reason);
+      };
+      const finish = (): void => {
+        if (settled) return;
+        try {
+          if (throwOnQuarantine) this.throwIfQuarantined();
+          settled = true;
+          resolve();
+        } catch (error) {
+          fail(error);
+        }
+      };
+      const waitForCurrentBatch = (): void => {
+        if (settled) return;
+        if (getSetSize(this.lateSetups) === 0) {
+          finish();
+          return;
+        }
+
+        let remaining = 0;
+        const markSettled = (): void => {
+          if (settled) return;
+          remaining -= 1;
+          if (remaining === 0) waitForCurrentBatch();
+        };
+        try {
+          forEachSetValue(this.lateSetups, (cleanup) => {
+            remaining += 1;
+            createIntrinsicPromiseContinuation(
+              cleanup,
+              markSettled,
+              fail,
+            );
+          });
+        } catch (error) {
+          fail(error);
+          return;
+        }
+        if (remaining === 0) waitForCurrentBatch();
+      };
+
+      waitForCurrentBatch();
+    });
   }
 
   /**
@@ -798,40 +990,119 @@ export class ExtensionLoader {
 
   /** Teardown all loaded extensions in reverse order. */
   teardownAll(): Promise<void> {
-    return this.enqueueLifecycle(async () => {
-      // A public shutdown is a full barrier: if a setup outlived its timeout,
-      // do not report disposal complete until that setup settles and receives
-      // its teardown pass. A failed pass retains the owning records, so a
-      // later explicit shutdown call can retry only those failed hooks.
-      await this.waitForLateSetups(false);
-      await this.teardownAllInternal();
-      await this.waitForLateSetups(false);
-      this.throwIfQuarantined();
+    return this.enqueueLifecycle(() => this.runTeardownBarrier());
+  }
+
+  private runTeardownBarrier(): Promise<void> {
+    return createIntrinsicPromise<void>((resolve, reject) => {
+      const fail = (reason: unknown): void => reject(reason);
+      const finish = (): void => {
+        try {
+          this.throwIfQuarantined();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      };
+      const waitAfterTeardown = (): void => {
+        let lateSetupBarrier: Promise<void>;
+        try {
+          lateSetupBarrier = this.waitForLateSetups(false);
+          createIntrinsicPromiseContinuation(
+            lateSetupBarrier,
+            finish,
+            fail,
+          );
+        } catch (error) {
+          reject(error);
+        }
+      };
+      const startTeardown = (): void => {
+        let teardown: Promise<void>;
+        try {
+          // This call reaches generation sealing and retirement notification
+          // synchronously before its first suspension point.
+          teardown = this.teardownAllInternal();
+          createIntrinsicPromiseContinuation(
+            teardown,
+            waitAfterTeardown,
+            fail,
+          );
+        } catch (error) {
+          reject(error);
+        }
+      };
+
+      try {
+        // A public shutdown is a full barrier: if a setup outlived its timeout,
+        // do not overlap its cleanup with another teardown pass.
+        const lateSetupBarrier = this.waitForLateSetups(false);
+        createIntrinsicPromiseContinuation(
+          lateSetupBarrier,
+          startTeardown,
+          fail,
+        );
+      } catch (error) {
+        reject(error);
+      }
     });
   }
 
   private async teardownAllInternal(): Promise<void> {
-    const setupOrder = [...this.setupOrder];
+    const setupOrder = copyArrayValues(this.setupOrder);
+    const generation = this.contractGeneration;
+
+    // Admission closes before context abort dispatch. Abort listeners run
+    // synchronously and must not start one last generation-owned operation.
+    if (generation !== undefined) {
+      sealContractGeneration(generation);
+    }
 
     // Revoke every context before the first teardown hook runs. This prevents
     // an earlier extension from observing or mutating registry state while a
     // later extension is already being dismantled.
-    for (const record of setupOrder) {
-      this.revokeAuthority(record.authority);
+    for (let index = 0; index < setupOrder.length; index += 1) {
+      this.revokeAuthority(setupOrder[index]!.authority);
     }
 
     const failures: unknown[] = [];
-    const failedRecords = new Set<SetupRecord>();
+    const retirementFailures: unknown[] = [];
+    const failedRecords = new NativeSet<SetupRecord>();
     const pendingSetups: SetupRecord[] = [];
+
+    if (generation !== undefined) {
+      try {
+        // Notify cancellation only after all extension contexts are revoked,
+        // then wait for every admitted operation to release its lease.
+        await drainContractGeneration(generation);
+      } catch (error) {
+        this.logger.error("Error draining extension contract generation:", error);
+        if (!isContractGenerationDrained(generation)) {
+          // A failed drain is an admission barrier, not permission to dismantle
+          // resources that an admitted operation can still be using.
+          this.quarantineFailure = error;
+          throw error;
+        }
+        appendArrayValue(retirementFailures, error);
+      }
+    }
 
     const teardownRecord = async (record: SetupRecord): Promise<void> => {
       const { extensionName, teardown } = record.activation;
       if (!teardown) return;
       try {
-        await teardown();
+        if (generation !== undefined) {
+          if (this.contractGenerationActivationFailed) {
+            await runWithContractGenerationResolution(generation, teardown);
+          } else {
+            await runWithContractGenerationEpoch(generation, teardown);
+          }
+        } else {
+          await teardown();
+        }
       } catch (error) {
-        failures.push(error);
-        failedRecords.add(record);
+        appendArrayValue(failures, error);
+        addSetValue(failedRecords, record);
         this.logger.error(`Error tearing down "${extensionName}":`, error);
       }
     };
@@ -839,39 +1110,69 @@ export class ExtensionLoader {
     // Teardown every extension whose setup has already settled. A timed-out
     // non-cooperative setup is deferred until settlement so its hook runs
     // after its final resource acquisition is possible.
-    for (const record of [...setupOrder].reverse()) {
+    for (let index = setupOrder.length - 1; index >= 0; index -= 1) {
+      const record = setupOrder[index]!;
       if (record.setupState === "pending") {
-        pendingSetups.push(record);
+        appendArrayValue(pendingSetups, record);
         continue;
       }
       await teardownRecord(record);
     }
 
-    for (const record of pendingSetups) {
+    for (let index = 0; index < pendingSetups.length; index += 1) {
+      const record = pendingSetups[index]!;
       await record.setupSettled;
       await teardownRecord(record);
     }
 
     if (failures.length === 0) {
       this.setupOrder = [];
-      // Teardown hooks may resolve dependencies from the retiring registry.
-      // Clear it only after every hook (including a retry) completed.
-      const shouldResetContracts = this.ownsContracts;
-      this.ownsContracts = false;
-      if (shouldResetContracts) reset();
+      // Entries stay available through teardown hooks. Compare-delete only
+      // this generation's exact entries so newer/unrelated registrations live.
+      if (generation !== undefined) {
+        if (this.contractGenerationActivationFailed) {
+          failContractGeneration(generation);
+        } else {
+          completeContractGenerationRetirement(generation);
+        }
+        if (this.contractGeneration === generation) {
+          this.contractGeneration = undefined;
+        }
+      }
+      this.contractGenerationActivationFailed = false;
       this.quarantineFailure = undefined;
+      if (retirementFailures.length === 1) throw retirementFailures[0];
+      if (retirementFailures.length > 1) {
+        throw new NativeAggregateError(
+          prepareAggregateErrorValues(retirementFailures),
+          "Extension contract generation retirement failed",
+        );
+      }
       return;
     }
 
     // Successful hooks are never repeated. Failed hooks and the retiring
     // registry remain owned so an explicit retry has the same dependencies
     // and cannot overlap a replacement generation.
-    this.setupOrder = setupOrder.filter((record) => failedRecords.has(record));
-    const details = failures
-      .map(describeThrownValue)
-      .join("; ");
-    const failure = new AggregateError(
-      failures,
+    const retryOrder: SetupRecord[] = [];
+    for (let index = 0; index < setupOrder.length; index += 1) {
+      const record = setupOrder[index]!;
+      if (hasSetValue(failedRecords, record)) {
+        appendArrayValue(retryOrder, record);
+      }
+    }
+    this.setupOrder = retryOrder;
+    const lifecycleFailures = copyArrayValues(retirementFailures);
+    for (let index = 0; index < failures.length; index += 1) {
+      appendArrayValue(lifecycleFailures, failures[index]);
+    }
+    let details = "";
+    for (let index = 0; index < lifecycleFailures.length; index += 1) {
+      if (details.length > 0) details += "; ";
+      details += describeThrownValue(lifecycleFailures[index]);
+    }
+    const failure = new NativeAggregateError(
+      prepareAggregateErrorValues(lifecycleFailures),
       `Extension teardown failed${details ? `: ${details}` : ""}`,
     );
     this.quarantineFailure = failure;
@@ -882,9 +1183,38 @@ export class ExtensionLoader {
     if (this.quarantineFailure !== undefined) throw this.quarantineFailure;
   }
 
-  private enqueueLifecycle<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.lifecycleTail.then(operation);
-    this.lifecycleTail = result.then(
+  private enqueueLifecycle(operation: () => Promise<void>): Promise<void> {
+    const result = createIntrinsicPromise<void>((resolve, reject) => {
+      const runOperation = (): void => {
+        let operationResult: Promise<void>;
+        try {
+          operationResult = operation();
+        } catch (error) {
+          reject(error);
+          return;
+        }
+        try {
+          createIntrinsicPromiseContinuation(
+            operationResult,
+            resolve,
+            reject,
+          );
+        } catch (error) {
+          reject(error);
+        }
+      };
+      try {
+        createIntrinsicPromiseContinuation(
+          this.lifecycleTail,
+          runOperation,
+          reject,
+        );
+      } catch (error) {
+        reject(error);
+      }
+    });
+    this.lifecycleTail = createIntrinsicPromiseContinuation(
+      result,
       () => undefined,
       () => undefined,
     );

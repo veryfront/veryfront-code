@@ -1,12 +1,15 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { afterEach, beforeEach, it } from "#veryfront/testing/bdd.ts";
-import { ensureTestSkillDocumentParser } from "#veryfront/skill/_test-setup.ts";
 import { join, resolve } from "node:path";
 import {
   createHostedAgentProjectSteering,
   createStrictHostedAgentProjectSteering,
 } from "./agent-project-steering.ts";
-import { reset, tryResolve } from "../../extensions/contracts.ts";
+import { register, tryResolve, unregister } from "../../extensions/contracts.ts";
+import {
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+} from "../../extensions/parser/skill-document-parser.ts";
 import type { SchemaValidator } from "../../extensions/schema/index.ts";
 import type { RuntimeProjectFilesFetch } from "../runtime/project-files-client.ts";
 
@@ -45,17 +48,47 @@ function createJsonResponse(body: unknown): Response {
   });
 }
 
-afterEach(() => {
-  reset();
+let previousSchemaValidator: SchemaValidator | undefined;
+let previousSkillDocumentParserProvider: SkillDocumentParserProvider | undefined;
+
+function restorePreviousContractRegistrations(): void {
+  unregister("SchemaValidator");
+  if (previousSchemaValidator !== undefined) {
+    register<SchemaValidator>("SchemaValidator", previousSchemaValidator);
+  }
+
+  unregister(SkillDocumentParserProviderName);
+  if (previousSkillDocumentParserProvider !== undefined) {
+    register(
+      SkillDocumentParserProviderName,
+      previousSkillDocumentParserProvider,
+    );
+  }
+}
+
+beforeEach(async () => {
+  previousSchemaValidator = tryResolve<SchemaValidator>("SchemaValidator");
+  previousSkillDocumentParserProvider = tryResolve<SkillDocumentParserProvider>(
+    SkillDocumentParserProviderName,
+  );
+  unregister("SchemaValidator");
+  unregister(SkillDocumentParserProviderName);
+
+  try {
+    const { ensureTestSkillDocumentParser } = await import(
+      "#veryfront/skill/_test-setup.ts"
+    );
+    ensureTestSkillDocumentParser();
+  } catch (error) {
+    restorePreviousContractRegistrations();
+    throw error;
+  }
 });
 
-beforeEach(() => {
-  ensureTestSkillDocumentParser();
-});
+afterEach(restorePreviousContractRegistrations);
 
 it("createHostedAgentProjectSteering registers the built-in schema validator when used directly", async () => {
   await withTempDir((rootDir) => {
-    reset();
     assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
 
     const baseDir = writeAgentDefinition({ rootDir, agentId: "writer" });

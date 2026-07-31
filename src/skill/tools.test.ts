@@ -1,6 +1,6 @@
-import "#veryfront/schemas/_test-setup.ts";
-import "#veryfront/skill/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { ensureTestSchemaValidator } from "#veryfront/schemas/_test-setup.ts";
+import { ensureTestSkillDocumentParser } from "#veryfront/skill/_test-setup.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistryInternal } from "./registry.ts";
 import {
@@ -12,7 +12,21 @@ import type { Skill } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
-import { SKILL_SCRIPT_ENV_KEY_REGEX, SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
+import {
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  SKILL_SCRIPT_ENV_KEY_REGEX,
+  SKILL_SCRIPT_MAX_OUTPUT_BYTES,
+} from "./limits.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type SkillScriptExecutionReporter,
+  type SkillScriptExecutorProvider,
+  type SkillScriptExecutorProviderInput,
+  SkillScriptExecutorProviderName,
+} from "#veryfront/extensions/skill/script-executor-provider.ts";
+import { ExtensionLoader } from "#veryfront/extensions/loader.ts";
+import type { ExtensionLogger } from "#veryfront/extensions/types.ts";
+import { resolveSkillScriptExecutionBackend } from "./provider-executor.ts";
 
 type Settlement<T> =
   | { kind: "fulfilled"; value: T }
@@ -33,6 +47,20 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs = 50): Promise<Set
     ]);
   } finally {
     if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
+}
+
+async function withRegisteredScriptProvider<T>(
+  provider: unknown,
+  run: () => T | Promise<T>,
+): Promise<T> {
+  const previous = tryResolve<unknown>(SkillScriptExecutorProviderName);
+  register(SkillScriptExecutorProviderName, provider);
+  try {
+    return await run();
+  } finally {
+    unregister(SkillScriptExecutorProviderName);
+    if (previous !== undefined) register(SkillScriptExecutorProviderName, previous);
   }
 }
 
@@ -60,8 +88,17 @@ function createNamedTestSkill(id: string, fsAdapter: FileSystemAdapter): Skill {
   };
 }
 
+const noopExtensionLogger: ExtensionLogger = {
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+};
+
 describe("src/skill/tools", () => {
   beforeEach(() => {
+    ensureTestSchemaValidator();
+    ensureTestSkillDocumentParser();
     skillRegistryInternal.clearAll();
   });
 
@@ -373,9 +410,9 @@ Hidden work.`,
     });
     const countingAdapter: FileSystemAdapter = {
       ...adapter,
-      async readFile(path) {
+      async readFileBytesBounded(path, byteLimit) {
         readCount += 1;
-        return await adapter.readFile(path);
+        return await adapter.readFileBytesBounded!(path, byteLimit);
       },
     };
     const allowlist = new Proxy(["my-skill"], {
@@ -399,6 +436,43 @@ Hidden work.`,
       "not available",
     );
     assertEquals(trapCalls, 0);
+    assertEquals(readCount, 0);
+  });
+
+  it("load_skill snapshots a configured selector and treats invalid results as deny-all", async () => {
+    let readCount = 0;
+    const root = "/project/skills/my-skill";
+    const adapter = createSkillTestAdapter({
+      [`${root}/SKILL.md`]: "---\nname: my-skill\ndescription: Test\n---\nBody",
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...adapter,
+      async readFileBytesBounded(path, byteLimit) {
+        readCount += 1;
+        return await adapter.readFileBytesBounded!(path, byteLimit);
+      },
+    };
+    registerSkill("my-skill", createTestSkill(countingAdapter));
+    const options: {
+      resolveAllowedSkillIds?: () => readonly string[];
+    } = { resolveAllowedSkillIds: () => [] };
+    const capturedTool = createLoadSkillTool(options);
+    options.resolveAllowedSkillIds = undefined;
+
+    await assertRejects(
+      () => capturedTool.execute({ skillId: "my-skill" }),
+      Error,
+      "not available",
+    );
+
+    const invalidTool = createLoadSkillTool({
+      resolveAllowedSkillIds: () => undefined as never,
+    });
+    await assertRejects(
+      () => invalidTool.execute({ skillId: "my-skill" }),
+      Error,
+      "not available",
+    );
     assertEquals(readCount, 0);
   });
 
@@ -606,6 +680,60 @@ Do work.`,
     assertEquals(result.path, "references/guide.md");
   });
 
+  it("load_skill_reference accepts the documented aggregate reference capability ceiling", async () => {
+    const requestedPath = "assets/final.txt";
+    let readCount = 0;
+    const adapter = createSkillTestAdapter({
+      [`/project/skills/my-skill/${requestedPath}`]: "Final reference",
+    });
+    const countingAdapter: FileSystemAdapter = {
+      ...adapter,
+      async readFileBytesBounded(path, byteLimit) {
+        readCount += 1;
+        return await adapter.readFileBytesBounded!(path, byteLimit);
+      },
+    };
+    registerSkill("my-skill", createTestSkill(countingAdapter));
+    const advertised = Array.from(
+      { length: SKILL_LOADABLE_REFERENCE_MAX_ENTRIES - 1 },
+      (_, index) => `references/generated-${index}.md`,
+    );
+    advertised.push(requestedPath);
+    const tool = createLoadSkillReferenceTool();
+
+    const result = await tool.execute(
+      { skillId: "my-skill", reference: requestedPath },
+      {
+        activeSkillId: "my-skill",
+        activeSkillToolAvailability: {
+          hasActiveSkill: true,
+          references: advertised,
+          scripts: [],
+        },
+      },
+    );
+    assertEquals(result.content, "Final reference");
+    assertEquals(readCount, 2);
+
+    await assertRejects(
+      () =>
+        tool.execute(
+          { skillId: "my-skill", reference: requestedPath },
+          {
+            activeSkillId: "my-skill",
+            activeSkillToolAvailability: {
+              hasActiveSkill: true,
+              references: [...advertised, "references/over-limit.md"],
+              scripts: [],
+            },
+          },
+        ),
+      Error,
+      "advertised",
+    );
+    assertEquals(readCount, 2);
+  });
+
   it("load_skill_reference should reject a different skill than the active loaded skill", async () => {
     const activeAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/references/guide.md": "Guide",
@@ -734,6 +862,298 @@ Do work.`,
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+
+  it("execute_skill_script late-resolves a provider and delivers validated input", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo provider" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    const tool = createExecuteSkillScriptTool();
+    const controller = new AbortController();
+    let receivedInput: Readonly<SkillScriptExecutorProviderInput> | undefined;
+    const provider: SkillScriptExecutorProvider = {
+      prepare(input, reporter) {
+        receivedInput = input;
+        return {
+          activate() {
+            reporter.resolveResult({ stdout: "provider", stderr: "", exitCode: 0 });
+            reporter.resolveTerminal();
+          },
+          terminate(reason) {
+            reporter.rejectResult(reason);
+            reporter.resolveTerminal();
+          },
+        };
+      },
+    };
+
+    const result = await withRegisteredScriptProvider(
+      provider,
+      () =>
+        tool.execute(
+          {
+            skillId: "my-skill",
+            script: "scripts/run.sh",
+            args: ["one"],
+            env: { MODE: "test" },
+            timeoutMs: 1_000,
+          },
+          { abortSignal: controller.signal },
+        ),
+    );
+
+    assertEquals(result, { stdout: "provider", stderr: "", exitCode: 0 });
+    assertEquals(receivedInput?.scriptPath, scriptPath);
+    assertEquals(receivedInput?.scriptContent, "echo provider");
+    assertEquals(receivedInput?.cwd, "/project/skills/my-skill");
+    assertEquals(receivedInput?.validatedSourceRoot, "/project/skills/my-skill");
+    assertEquals(receivedInput?.args, ["one"]);
+    assertEquals(receivedInput?.env, { MODE: "test" });
+    assertEquals(receivedInput?.abortSignal, controller.signal);
+    assert(
+      receivedInput !== undefined &&
+        receivedInput.timeoutMs > 0 &&
+        receivedInput.timeoutMs <= 1_000,
+    );
+  });
+
+  it("execute_skill_script does not settle provider success before terminal cleanup", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo provider" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let reporter!: Readonly<SkillScriptExecutionReporter>;
+    const provider: SkillScriptExecutorProvider = {
+      prepare(_input, candidate) {
+        reporter = candidate;
+        return {
+          activate() {
+            reporter.resolveResult({ stdout: "waiting", stderr: "", exitCode: 0 });
+          },
+          terminate(reason) {
+            reporter.rejectResult(reason);
+            reporter.resolveTerminal();
+          },
+        };
+      },
+    };
+
+    await withRegisteredScriptProvider(provider, async () => {
+      const execution = createExecuteSkillScriptTool().execute({
+        skillId: "my-skill",
+        script: "scripts/run.sh",
+        timeoutMs: 1_000,
+      });
+      assertEquals((await settleWithin(execution, 20)).kind, "pending");
+      reporter.resolveTerminal();
+      assertEquals(await execution, { stdout: "waiting", stderr: "", exitCode: 0 });
+    });
+  });
+
+  it("execute_skill_script drains loader-owned execution before extension teardown", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo provider" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let reporter: Readonly<SkillScriptExecutionReporter> | undefined;
+    let activationCalls = 0;
+    let terminationCalls = 0;
+    let teardownCalls = 0;
+    const loader = new ExtensionLoader(noopExtensionLogger);
+    await loader.setupAll(
+      [{
+        extension: {
+          name: "skill-provider-generation-a",
+          version: "1.0.0",
+          capabilities: [],
+          contracts: { provides: [SkillScriptExecutorProviderName] },
+          setup(context) {
+            context.provide<SkillScriptExecutorProvider>(
+              SkillScriptExecutorProviderName,
+              {
+                prepare(_input, candidate) {
+                  reporter = candidate;
+                  return {
+                    activate() {
+                      activationCalls += 1;
+                    },
+                    terminate(reason) {
+                      terminationCalls += 1;
+                      reporter?.rejectResult(reason);
+                    },
+                  };
+                },
+              },
+            );
+          },
+          teardown() {
+            teardownCalls += 1;
+          },
+        },
+        source: "config",
+        origin: "test",
+      }],
+      {},
+    );
+
+    const execution = createExecuteSkillScriptTool().execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+      timeoutMs: 1_000,
+    });
+    let teardown: Promise<void> | undefined;
+    try {
+      assertEquals((await settleWithin(execution, 20)).kind, "pending");
+      assertEquals(activationCalls, 1);
+
+      teardown = loader.teardownAll();
+      assertEquals((await settleWithin(teardown, 20)).kind, "pending");
+      assertEquals(terminationCalls, 1);
+      assertEquals(teardownCalls, 0);
+
+      reporter?.resolveTerminal();
+      await assertRejects(() => execution, Error);
+      await teardown;
+      assertEquals(teardownCalls, 1);
+    } finally {
+      reporter?.rejectResult(new Error("test cleanup"));
+      reporter?.resolveTerminal();
+      try {
+        await execution;
+      } catch {
+        // Expected when generation retirement cancels the execution.
+      }
+      if (teardown) {
+        try {
+          await teardown;
+        } catch {
+          // Preserve the primary test failure.
+        }
+      }
+      await loader.teardownAll();
+    }
+  });
+
+  it("execute_skill_script fails closed while a loader generation is staging", async () => {
+    const setupStarted = Promise.withResolvers<void>();
+    const continueSetup = Promise.withResolvers<void>();
+    const loader = new ExtensionLoader(noopExtensionLogger);
+    const setup = loader.setupAll(
+      [{
+        extension: {
+          name: "staged-skill-provider",
+          version: "1.0.0",
+          capabilities: [],
+          contracts: { provides: [SkillScriptExecutorProviderName] },
+          async setup(context) {
+            setupStarted.resolve();
+            await continueSetup.promise;
+            context.provide(
+              SkillScriptExecutorProviderName,
+              {
+                prepare(_input, reporter) {
+                  return {
+                    activate() {
+                      reporter.resolveResult({
+                        stdout: "staged",
+                        stderr: "",
+                        exitCode: 0,
+                      });
+                      reporter.resolveTerminal();
+                    },
+                    terminate(reason) {
+                      reporter.rejectResult(reason);
+                      reporter.resolveTerminal();
+                    },
+                  };
+                },
+              } satisfies SkillScriptExecutorProvider,
+            );
+          },
+        },
+        source: "config",
+        origin: "test",
+      }],
+      {},
+      { setupTimeoutMs: 0 },
+    );
+
+    try {
+      await setupStarted.promise;
+      assertThrows(
+        () => resolveSkillScriptExecutionBackend(),
+        Error,
+        "Extension contracts are unavailable while a generation is staging",
+      );
+
+      continueSetup.resolve();
+      await setup;
+      assertEquals(resolveSkillScriptExecutionBackend().kind, "provider");
+    } finally {
+      continueSetup.resolve();
+      try {
+        await setup;
+      } catch {
+        // Preserve the primary test failure.
+      }
+      await loader.teardownAll();
+    }
+  });
+
+  it("execute_skill_script waits for provider cleanup before returning timeout", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo provider" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let reporter!: Readonly<SkillScriptExecutionReporter>;
+    let terminationCalls = 0;
+    const provider: SkillScriptExecutorProvider = {
+      prepare(_input, candidate) {
+        reporter = candidate;
+        return {
+          activate() {},
+          terminate(reason) {
+            terminationCalls += 1;
+            reporter.rejectResult(reason);
+          },
+        };
+      },
+    };
+
+    await withRegisteredScriptProvider(provider, async () => {
+      const execution = createExecuteSkillScriptTool().execute({
+        skillId: "my-skill",
+        script: "scripts/run.sh",
+        timeoutMs: 5,
+      });
+      assertEquals((await settleWithin(execution, 30)).kind, "pending");
+      assertEquals(terminationCalls, 1);
+      reporter.resolveTerminal();
+      assertEquals(await execution, {
+        stdout: "",
+        stderr: "Script execution timed out after 5ms",
+        exitCode: 124,
+      });
+    });
+  });
+
+  it("execute_skill_script completes filesystem preflight before inspecting a provider", async () => {
+    const adapter = createSkillTestAdapter({});
+    registerSkill("my-skill", createTestSkill(adapter));
+
+    await withRegisteredScriptProvider("malformed-provider", async () => {
+      let failure: unknown;
+      try {
+        await createExecuteSkillScriptTool().execute({
+          skillId: "my-skill",
+          script: "scripts/missing.sh",
+        });
+      } catch (error) {
+        failure = error;
+      }
+      assertEquals(failure instanceof Error, true);
+      assertEquals(
+        failure instanceof Error ? failure.message.includes("provider") : true,
+        false,
+      );
+    });
   });
 
   it("execute_skill_script preserves script-relative imports across supported runtimes", async () => {
@@ -1120,6 +1540,63 @@ Do work.`,
 
     assert(failure instanceof Error);
     assertEquals(executorCalled, false);
+  });
+
+  it("enforces aggregate argument and environment bytes independently of TextEncoder mutation", async () => {
+    const scriptPath = "/project/skills/my-skill/scripts/run.sh";
+    const adapter = createSkillTestAdapter({ [scriptPath]: "echo run" });
+    registerSkill("my-skill", createTestSkill(adapter));
+    let executorCalls = 0;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        async execute() {
+          executorCalls += 1;
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+      },
+    });
+    const originalEncode = Object.getOwnPropertyDescriptor(TextEncoder.prototype, "encode");
+    let encodeHookCalls = 0;
+
+    try {
+      Object.defineProperty(TextEncoder.prototype, "encode", {
+        configurable: true,
+        value() {
+          encodeHookCalls += 1;
+          return new Uint8Array();
+        },
+        writable: true,
+      });
+      await assertRejects(
+        () =>
+          tool.execute({
+            skillId: "my-skill",
+            script: "scripts/run.sh",
+            args: Array.from({ length: 17 }, () => "x".repeat(4_096)),
+          }),
+        Error,
+        "Arguments must total",
+      );
+      await assertRejects(
+        () =>
+          tool.execute({
+            skillId: "my-skill",
+            script: "scripts/run.sh",
+            env: Object.fromEntries(
+              Array.from({ length: 9 }, (_, index) => [`VALUE_${index}`, "x".repeat(8_192)]),
+            ),
+          }),
+        Error,
+        "Environment must total",
+      );
+    } finally {
+      if (originalEncode) {
+        Object.defineProperty(TextEncoder.prototype, "encode", originalEncode);
+      }
+    }
+
+    assertEquals(encodeHookCalls, 0);
+    assertEquals(executorCalls, 0);
   });
 
   it("rejects untrusted custom-executor result shapes without invoking accessors", async () => {

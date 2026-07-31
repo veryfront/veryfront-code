@@ -5,6 +5,7 @@
  * across supported runtimes without consulting mutable global constructors.
  */
 import {
+  isAsyncFunction as nativeAsyncFunctionBrandCheck,
   isNativeError as nativeErrorBrandCheck,
   isPromise as nativePromiseBrandCheck,
   isProxy as nativeProxyBrandCheck,
@@ -18,6 +19,8 @@ const objectHasOwnProperty = Object.prototype.hasOwnProperty;
 const deleteProperty = Reflect.deleteProperty;
 const apply = Reflect.apply;
 const NativeError = Error;
+const NativeAsyncFunctionPrototype = getPrototypeOf(async function () {});
+const toStringTagSymbol = Symbol.toStringTag;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
@@ -166,4 +169,29 @@ export function isNativePromiseWithoutHooks(
   value: unknown,
 ): value is Promise<unknown> {
   return nativePromiseBrandCheck(value);
+}
+
+/**
+ * Identify native and bound async functions across realms without invoking
+ * project hooks. The descriptor fallback is deliberately conservative because
+ * runtime brand checks do not recognize bound async functions.
+ */
+export function isNativeAsyncFunctionWithoutHooks(
+  value: unknown,
+): value is (...args: unknown[]) => Promise<unknown> {
+  if (nativeAsyncFunctionBrandCheck(value)) return true;
+  if (typeof value !== "function" || nativeProxyBrandCheck(value)) return false;
+
+  try {
+    const prototype = getPrototypeOf(value);
+    if (prototype === NativeAsyncFunctionPrototype) return true;
+    if (prototype === null || nativeProxyBrandCheck(prototype)) return false;
+
+    const tag = getOwnPropertyDescriptor(prototype, toStringTagSymbol);
+    return tag !== undefined &&
+      hasOwn(tag, "value") &&
+      tag.value === "AsyncFunction";
+  } catch (_) {
+    return false;
+  }
 }

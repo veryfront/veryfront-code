@@ -211,16 +211,19 @@ async function orchestrateExtensionGeneration(
   try {
     await loader.setupAll(merged, config as Record<string, unknown>, {
       setupTimeoutMs: options.setupTimeoutMs,
-      beforeActivate: async () => {
-        // Candidate discovery, factory loading, flattening, validation,
-        // conflict checks, and topology all completed before this hook. A bad
-        // candidate therefore cannot tear down the active generation.
+      beforeTransition: async () => {
+        // A failed candidate already owns the fail-closed transition fence.
+        // Finish its late cleanup before the replacement acquires a new fence.
         const failed = failedCandidate;
         if (failed) {
           await failed.awaitLateSetupCleanup();
           if (failedCandidate === failed) failedCandidate = undefined;
         }
-
+      },
+      beforeActivate: async () => {
+        // Candidate discovery, factory loading, flattening, validation,
+        // conflict checks, and topology all completed before this hook. The
+        // new transition fence is active before old-generation teardown.
         const previous = activeLoader;
         if (previous) {
           await previous.teardownAll();

@@ -44,6 +44,7 @@ await loader.teardownAll();
 | `IsolatedSsrRendererProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L11) |
 | `NodeWebSocketServerProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L11) |
 | `SandboxShellToolsProviderName` | Render sandbox shell tools provider name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L5) |
+| `SkillScriptExecutorProviderName` | Contract name registered by one composed script-execution extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L48) |
 | `StudioCaptureBundleProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L15) |
 
 ### Functions
@@ -70,12 +71,14 @@ await loader.teardownAll();
 | `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L169) |
 | `orchestrateExtensions` | Run the full extension pipeline against a resolved project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L117) |
 | `parsePackageMetadata` | Parse veryfront extension metadata from a package.json-like object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L132) |
-| `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L14) |
+| `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L18) |
 | `snapshotDevUiAssetProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L27) |
 | `snapshotIsolatedSsrRendererProvider` | Snapshot an extension-owned provider without invoking accessors or retaining mutable provider metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L84) |
 | `snapshotNodeWebSocketServerProvider` | Capture a provider generation without retaining its mutable registration object or invoking extension-owned accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/websocket/node-websocket-server-provider.ts#L189) |
+| `snapshotSkillScriptExecutorProvider` | Capture a provider and validate inert controls before returning ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L711) |
+| `snapshotSkillScriptPreparedExecution` | Capture inert controls without retaining mutable method properties. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L433) |
 | `snapshotStudioCaptureBundleProvider` | Snapshot an untrusted extension contract without invoking accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L40) |
-| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L33) |
+| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L37) |
 | `validateDevUiBundle` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/dev-ui/dev-ui-asset-provider.ts#L23) |
 | `validateExtension` | Validate the shape of an extension object. Returns an array of issue descriptions (empty array = valid). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L353) |
 | `validateIsolatedSsrRendererModuleUrl` | Validate one worker renderer module URL without resolving or importing it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/rendering/isolated-ssr-renderer.ts#L72) |
@@ -85,7 +88,7 @@ await loader.teardownAll();
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ExtensionLoader` | Implement extension loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/loader.ts#L109) |
+| `ExtensionLoader` | Implement extension loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/loader.ts#L210) |
 
 ### Types
 
@@ -127,6 +130,12 @@ await loader.teardownAll();
 | `SandboxShellToolExecute` | Public API contract for sandbox shell tool execute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L8) |
 | `SandboxShellToolSet` | Public API contract for sandbox shell tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L27) |
 | `SandboxShellToolsProvider` | Public API contract for sandbox shell tools provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L47) |
+| `SkillScriptExecutionHandle` | Core-owned execution lifecycle returned to application composition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L67) |
+| `SkillScriptExecutionReporter` | Provider callbacks used to report one result and one terminal settlement. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L51) |
+| `SkillScriptExecutorProvider` | Extension-owned implementation selected by application composition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L78) |
+| `SkillScriptExecutorProviderInput` | Canonical detached input delivered to a composed execution provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L75) |
+| `SkillScriptExecutorProviderSnapshot` | Validated provider facade that owns settlement promises for its caller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L92) |
+| `SkillScriptPreparedExecution` | Inert provider-owned controls returned before execution begins. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L59) |
 | `StudioCaptureBundleProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/studio/studio-capture-bundle-provider.ts#L24) |
 
 ### Constants
@@ -297,11 +306,11 @@ import { register, reset, resolve } from "veryfront/extensions/contracts";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `register` | Register. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L39) |
-| `reset` | Reset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L54) |
-| `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L14) |
-| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L33) |
-| `unregister` | Unregister. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L48) |
+| `register` | Register. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L43) |
+| `reset` | Reset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L58) |
+| `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L18) |
+| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L37) |
+| `unregister` | Unregister. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L52) |
 
 ### `veryfront/extensions/css`
 
@@ -868,6 +877,38 @@ import "veryfront/extensions/schema";
 | `ValidationIssue` | A single validation issue with location context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L123) |
 | `ValidationResult` | Discriminated union of validation outcomes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L149) |
 | `ValidationSuccess` | Successful validation outcome. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L133) |
+
+### `veryfront/extensions/skill`
+
+Contracts for extension-owned skill execution implementations.
+
+```ts
+import { snapshotSkillScriptExecutorProvider, snapshotSkillScriptPreparedExecution, SkillScriptExecutorProviderName } from "veryfront/extensions/skill";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `SkillScriptExecutorProviderName` | Contract name registered by one composed script-execution extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L48) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `snapshotSkillScriptExecutorProvider` | Capture a provider and validate inert controls before returning ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L711) |
+| `snapshotSkillScriptPreparedExecution` | Capture inert controls without retaining mutable method properties. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L433) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `SkillScriptExecutionHandle` | Core-owned execution lifecycle returned to application composition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L67) |
+| `SkillScriptExecutionReporter` | Provider callbacks used to report one result and one terminal settlement. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L51) |
+| `SkillScriptExecutorProvider` | Extension-owned implementation selected by application composition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L78) |
+| `SkillScriptExecutorProviderInput` | Canonical detached input delivered to a composed execution provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L75) |
+| `SkillScriptExecutorProviderSnapshot` | Validated provider facade that owns settlement promises for its caller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L92) |
+| `SkillScriptPreparedExecution` | Inert provider-owned controls returned before execution begins. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/skill/script-executor-provider.ts#L59) |
 
 ### `veryfront/extensions/websocket`
 

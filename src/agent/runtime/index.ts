@@ -28,6 +28,7 @@ import {
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateId } from "#veryfront/utils/id.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 import { detectPlatform } from "#veryfront/platform/core-platform.ts";
 import { createAgentMemory, type Memory } from "../memory/index.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -221,6 +222,7 @@ import { resolveAgentModelTransport, type ResolvedModelTransport } from "./model
 import { buildRuntimeUsageTraceAttributes } from "./trace-usage.ts";
 
 const logger = serverLogger.component("agent");
+const jsonStringify = JSON.stringify;
 const EVAL_RETAINED_SKILL_LOADER_TOOL_IDS = ["load_skill", "load_skill_reference"] as const;
 
 function buildStreamFinishUsage(
@@ -412,9 +414,9 @@ type RuntimeTraceAttributes = Record<string, string | number | boolean | undefin
 
 function estimateSerializedSizeBytes(value: unknown): number | undefined {
   try {
-    const serialized = typeof value === "string" ? value : JSON.stringify(value);
+    const serialized = typeof value === "string" ? value : jsonStringify(value);
     if (serialized === undefined) return undefined;
-    return new TextEncoder().encode(serialized).length;
+    return utf8ByteLength(serialized);
   } catch {
     return undefined;
   }

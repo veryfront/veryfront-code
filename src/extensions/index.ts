@@ -160,3 +160,16 @@ export {
   NodeWebSocketServerProviderName,
   snapshotNodeWebSocketServerProvider,
 } from "./websocket/index.ts";
+
+// Skill script execution implementation boundary
+export {
+  type SkillScriptExecutionHandle,
+  type SkillScriptExecutionReporter,
+  type SkillScriptExecutorProvider,
+  type SkillScriptExecutorProviderInput,
+  SkillScriptExecutorProviderName,
+  type SkillScriptExecutorProviderSnapshot,
+  type SkillScriptPreparedExecution,
+  snapshotSkillScriptExecutorProvider,
+  snapshotSkillScriptPreparedExecution,
+} from "./skill/index.ts";

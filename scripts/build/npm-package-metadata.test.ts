@@ -70,6 +70,21 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
+Deno.test("exports extension-owned skill execution contracts", async () => {
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+
+  assertEquals(
+    exports["./extensions/skill"],
+    "./src/extensions/skill/index.ts",
+  );
+  assertEquals(
+    imports["veryfront/extensions/skill"],
+    "./src/extensions/skill/index.ts",
+  );
+});
+
 Deno.test("keeps platform infrastructure import-mapped but package-private", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;

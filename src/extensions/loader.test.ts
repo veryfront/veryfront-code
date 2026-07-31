@@ -8,7 +8,23 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
-import { register, reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
+import {
+  register,
+  reset,
+  resolve as resolveContract,
+  tryResolve,
+  unregister,
+} from "./contracts.ts";
+import {
+  acquireContractLease,
+  beginContractGeneration,
+  commitContractGeneration,
+  type ContractSnapshot,
+  runWithContractGenerationResolution,
+  sealContractGeneration,
+  stageContract,
+  trySnapshotContractForUse,
+} from "./contract-registry-internal.ts";
 import type {
   Capability,
   Extension,
@@ -922,6 +938,153 @@ describe("ExtensionLoader", () => {
       assertEquals(tryResolve("SharedDependency"), undefined);
     });
 
+    it("removes only the exact contracts owned by the retiring generation", async () => {
+      const owned = { generation: "retiring" };
+      const replacement = { generation: "replacement" };
+      const unrelated = { owner: "external" };
+      const extension = makeExt("owner", {
+        provides: { OwnedContract: owned },
+        teardown() {
+          register("OwnedContract", replacement);
+          register("UnrelatedContract", unrelated);
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(extension)], {});
+      assertEquals(tryResolve("OwnedContract"), owned);
+
+      await loader.teardownAll();
+
+      assertEquals(tryResolve("OwnedContract"), replacement);
+      assertEquals(tryResolve("UnrelatedContract"), unrelated);
+    });
+
+    it("preserves immediate unmanaged replacement visibility during teardown", async () => {
+      const owned = Object.freeze({ generation: "retiring" });
+      const replacement = Object.freeze({ generation: "replacement" });
+      let observedAfterReplacement: unknown;
+      const extension = makeExt("replacement-observer", {
+        provides: { ReplacementVisibilityContract: owned },
+        teardown() {
+          register("ReplacementVisibilityContract", replacement);
+          observedAfterReplacement = tryResolve(
+            "ReplacementVisibilityContract",
+          );
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(extension)], {});
+      await loader.teardownAll();
+
+      assertEquals(observedAfterReplacement, replacement);
+      assertEquals(
+        tryResolve("ReplacementVisibilityContract"),
+        replacement,
+      );
+    });
+
+    it("blocks nested generation admission during current teardown", async () => {
+      const nestedLoader = new ExtensionLoader(noopLogger);
+      let nestedFailure: unknown;
+      let nestedMaterializationCalls = 0;
+      let nestedBeforeTransitionCalls = 0;
+      let nestedSetupCalls = 0;
+      const extension = makeExt("nested-generation-owner", {
+        async teardown() {
+          try {
+            await nestedLoader.setupAll(
+              [
+                makeDeferred(
+                  "nested-generation-candidate",
+                  () => {
+                    nestedMaterializationCalls += 1;
+                    return Promise.resolve(
+                      makeExt("nested-generation-candidate", {
+                        contracts: {
+                          provides: ["NestedGenerationDependency"],
+                        },
+                        setup(context) {
+                          nestedSetupCalls += 1;
+                          context.provide(
+                            "NestedGenerationDependency",
+                            Object.freeze({ id: "nested" }),
+                          );
+                        },
+                      }),
+                    );
+                  },
+                ),
+              ],
+              {},
+              {
+                beforeTransition() {
+                  nestedBeforeTransitionCalls += 1;
+                },
+              },
+            );
+          } catch (error) {
+            nestedFailure = error;
+          }
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(extension)], {});
+      await loader.teardownAll();
+      const nestedDependency = tryResolve("NestedGenerationDependency");
+      await nestedLoader.teardownAll();
+
+      assertEquals(nestedFailure instanceof Error, true);
+      assertEquals(
+        nestedFailure instanceof Error
+          ? nestedFailure.message.includes("during extension teardown")
+          : false,
+        true,
+      );
+      assertEquals(nestedDependency, undefined);
+      assertEquals(nestedMaterializationCalls, 0);
+      assertEquals(nestedBeforeTransitionCalls, 0);
+      assertEquals(nestedSetupCalls, 0);
+
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("post-teardown-generation", {
+          contracts: { provides: ["PostTeardownDependency"] },
+          setup(context) {
+            context.provide(
+              "PostTeardownDependency",
+              Object.freeze({ id: "external" }),
+            );
+          },
+        })),
+      ], {});
+      assertEquals(
+        tryResolve("PostTeardownDependency"),
+        { id: "external" },
+      );
+      await replacementLoader.teardownAll();
+    });
+
+    it("remains teardown-safe after the low-level registry is reset", async () => {
+      let teardownCalls = 0;
+      const extension = makeExt("reset-owner", {
+        provides: { ResetOwnedContract: { active: true } },
+        teardown() {
+          teardownCalls += 1;
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(extension)], {});
+      reset();
+      assertEquals(tryResolve("ResetOwnedContract"), undefined);
+
+      await loader.teardownAll();
+      assertEquals(teardownCalls, 1);
+    });
+
     it("attempts every teardown, propagates all failures, and quarantines replacement", async () => {
       const order: string[] = [];
       let replacementStarted = false;
@@ -1043,6 +1206,151 @@ describe("ExtensionLoader", () => {
       releaseSetup.resolve();
       await teardown;
       assertEquals(teardownCount, 1);
+    });
+
+    it("reports a late retirement-handler failure after final lease release", async () => {
+      const retirementStarted = Promise.withResolvers<void>();
+      let ownerSignal: AbortSignal | undefined;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("late-retirement-failure-owner", {
+          contracts: {
+            provides: ["LateRetirementFailureDependency"],
+          },
+          setup(context) {
+            ownerSignal = (context as AbortAwareExtensionContext).signal;
+            context.provide(
+              "LateRetirementFailureDependency",
+              Object.freeze({ id: "retiring" }),
+            );
+          },
+        })),
+      ], {});
+      if (ownerSignal === undefined) {
+        throw new Error("Expected the owner extension abort signal");
+      }
+      ownerSignal.addEventListener(
+        "abort",
+        () => retirementStarted.resolve(),
+        { once: true },
+      );
+      const snapshot = trySnapshotContractForUse(
+        "LateRetirementFailureDependency",
+      );
+      if (snapshot === undefined) {
+        throw new Error("Expected a late retirement failure snapshot");
+      }
+      const lease = acquireContractLease(snapshot.reference);
+      const retirementFailure = new Error(
+        "late retirement handler failed after release",
+      );
+
+      const teardown = loader.teardownAll();
+      await retirementStarted.promise;
+      lease.setRetirementHandler(() => {
+        lease.release();
+        throw retirementFailure;
+      });
+
+      const failure = await assertRejects(() => teardown, Error);
+      assertEquals(failure, retirementFailure);
+    });
+
+    it("revokes detached retirement-handler descendants before same-epoch replacement", async () => {
+      const owned = Object.freeze({ id: "retiring" });
+      const replacement = Object.freeze({ id: "replacement" });
+      const staleRegistration = Object.freeze({ id: "stale" });
+      const continueDescendant = Promise.withResolvers<void>();
+      const descendantSettled = Promise.withResolvers<void>();
+      let descendantDependency: unknown = owned;
+      let descendantLoader: ExtensionLoader | undefined;
+      let descendantSetupCalls = 0;
+      let registerFailure: unknown;
+      let resetFailure: unknown;
+      const ownerLoader = new ExtensionLoader(noopLogger);
+      await ownerLoader.setupAll([
+        makeResolved(makeExt("retirement-descendant-owner", {
+          contracts: {
+            provides: ["RetirementDescendantDependency"],
+          },
+          setup(context) {
+            context.provide("RetirementDescendantDependency", owned);
+          },
+        })),
+      ], {});
+      const snapshot = trySnapshotContractForUse(
+        "RetirementDescendantDependency",
+      );
+      if (snapshot === undefined) {
+        throw new Error("Expected a retirement descendant snapshot");
+      }
+      const lease = acquireContractLease(snapshot.reference);
+      lease.setRetirementHandler(() => {
+        void (async () => {
+          await continueDescendant.promise;
+          descendantDependency = tryResolve(
+            "RetirementDescendantDependency",
+          );
+          try {
+            register(
+              "RetirementDescendantDependency",
+              staleRegistration,
+            );
+          } catch (error) {
+            registerFailure = error;
+          }
+          try {
+            reset();
+          } catch (error) {
+            resetFailure = error;
+          }
+          descendantLoader = new ExtensionLoader(noopLogger);
+          try {
+            await descendantLoader.setupAll([
+              makeResolved(makeExt("retirement-descendant-nested", {
+                setup() {
+                  descendantSetupCalls += 1;
+                },
+              })),
+            ], {});
+          } catch {
+            // The observable invariant is that setup never receives authority.
+          }
+          descendantSettled.resolve();
+        })();
+        lease.release();
+      });
+
+      await ownerLoader.teardownAll();
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("retirement-descendant-replacement", {
+          contracts: {
+            provides: ["RetirementDescendantDependency"],
+          },
+          setup(context) {
+            context.provide(
+              "RetirementDescendantDependency",
+              replacement,
+            );
+          },
+        })),
+      ], {});
+
+      continueDescendant.resolve();
+      await descendantSettled.promise;
+      assertEquals(descendantDependency, undefined);
+      assertEquals(registerFailure instanceof Error, true);
+      assertEquals(resetFailure instanceof Error, true);
+      assertEquals(descendantSetupCalls, 0);
+      assertEquals(
+        tryResolve("RetirementDescendantDependency"),
+        replacement,
+      );
+      if (descendantLoader !== undefined) {
+        await descendantLoader.teardownAll();
+      }
+      await replacementLoader.teardownAll();
     });
   });
 
@@ -1204,6 +1512,907 @@ describe("ExtensionLoader", () => {
         "boom",
       );
       assertEquals(order, ["a-setup", "a-teardown"]);
+    });
+
+    it("keeps candidate contracts available to rollback teardown hooks", async () => {
+      const candidateDependency = Object.freeze({ id: "candidate" });
+      let rollbackResolvedCandidate = false;
+      const provider = makeExt("candidate-provider", {
+        contracts: { provides: ["CandidateDependency"] },
+        setup(context) {
+          context.provide("CandidateDependency", candidateDependency);
+        },
+        teardown() {
+          rollbackResolvedCandidate =
+            resolveContract("CandidateDependency") === candidateDependency;
+        },
+      });
+      const setupFailure = new Error("candidate setup failed");
+      const failing = makeExt("candidate-failure", {
+        setup() {
+          throw setupFailure;
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const failure = await assertRejects(
+        () => loader.setupAll([makeResolved(provider), makeResolved(failing)], {}),
+        Error,
+      );
+
+      assertEquals((failure as Error).message, setupFailure.message);
+      assertEquals(rollbackResolvedCandidate, true);
+      assertEquals(tryResolve("CandidateDependency"), undefined);
+    });
+
+    it("restores a displaced unmanaged contract after candidate rollback", async () => {
+      const unmanagedDependency = Object.freeze({ id: "unmanaged" });
+      const candidateDependency = Object.freeze({ id: "candidate" });
+      const rollbackStarted = Promise.withResolvers<void>();
+      const continueRollback = Promise.withResolvers<void>();
+      register("RollbackDependency", unmanagedDependency);
+      let rollbackDependency: unknown;
+      const provider = makeExt("rollback-provider", {
+        contracts: { provides: ["RollbackDependency"] },
+        setup(context) {
+          context.provide("RollbackDependency", candidateDependency);
+          assertEquals(context.require("RollbackDependency"), candidateDependency);
+        },
+        async teardown() {
+          rollbackStarted.resolve();
+          await continueRollback.promise;
+          rollbackDependency = resolveContract("RollbackDependency");
+        },
+      });
+      const setupFailure = new Error("replacement setup failed");
+      const failing = makeExt("replacement-failure", {
+        setup() {
+          throw setupFailure;
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const activation = loader.setupAll(
+        [makeResolved(provider), makeResolved(failing)],
+        {},
+      );
+      await rollbackStarted.promise;
+      try {
+        assertEquals(tryResolve("RollbackDependency"), unmanagedDependency);
+      } finally {
+        continueRollback.resolve();
+      }
+      const failure = await assertRejects(() => activation, Error);
+
+      assertEquals((failure as Error).message, setupFailure.message);
+      assertEquals(rollbackDependency, candidateDependency);
+      assertEquals(tryResolve("RollbackDependency"), unmanagedDependency);
+    });
+
+    it("preserves register read-your-writes during candidate rollback", async () => {
+      const candidateDependency = Object.freeze({ id: "candidate" });
+      const replacementDependency = Object.freeze({ id: "replacement" });
+      let observedAfterRegister: unknown = candidateDependency;
+      const provider = makeExt("rollback-register-provider", {
+        contracts: { provides: ["RollbackRegisterDependency"] },
+        setup(context) {
+          context.provide(
+            "RollbackRegisterDependency",
+            candidateDependency,
+          );
+        },
+      });
+      const setupFailure = new Error("rollback register setup failed");
+      const failing = makeExt("rollback-register-failure", {
+        setup() {
+          throw setupFailure;
+        },
+        teardown() {
+          register(
+            "RollbackRegisterDependency",
+            replacementDependency,
+          );
+          observedAfterRegister = tryResolve(
+            "RollbackRegisterDependency",
+          );
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const failure = await assertRejects(
+        () => loader.setupAll([makeResolved(provider), makeResolved(failing)], {}),
+        Error,
+      );
+
+      assertEquals((failure as Error).message, setupFailure.message);
+      assertEquals(observedAfterRegister, replacementDependency);
+      assertEquals(
+        tryResolve("RollbackRegisterDependency"),
+        replacementDependency,
+      );
+      await loader.teardownAll();
+    });
+
+    it("preserves unregister visibility across candidate rollback hooks", async () => {
+      const candidateDependency = Object.freeze({ id: "candidate" });
+      let observedAfterUnregister: unknown = candidateDependency;
+      let observedByLaterHook: unknown = candidateDependency;
+      const provider = makeExt("rollback-unregister-provider", {
+        contracts: { provides: ["RollbackUnregisterDependency"] },
+        setup(context) {
+          context.provide(
+            "RollbackUnregisterDependency",
+            candidateDependency,
+          );
+        },
+        teardown() {
+          observedByLaterHook = tryResolve(
+            "RollbackUnregisterDependency",
+          );
+        },
+      });
+      const setupFailure = new Error("rollback unregister setup failed");
+      const failing = makeExt("rollback-unregister-failure", {
+        setup() {
+          throw setupFailure;
+        },
+        teardown() {
+          unregister("RollbackUnregisterDependency");
+          observedAfterUnregister = tryResolve(
+            "RollbackUnregisterDependency",
+          );
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const failure = await assertRejects(
+        () => loader.setupAll([makeResolved(provider), makeResolved(failing)], {}),
+        Error,
+      );
+
+      assertEquals((failure as Error).message, setupFailure.message);
+      assertEquals(observedAfterUnregister, undefined);
+      assertEquals(observedByLaterHook, undefined);
+      assertEquals(tryResolve("RollbackUnregisterDependency"), undefined);
+      await loader.teardownAll();
+    });
+
+    it("isolates stale rollback resolution from a replacement after a low-level reset", async () => {
+      const candidateDependency = Object.freeze({ id: "candidate" });
+      const replacementDependency = Object.freeze({ id: "replacement" });
+      const rollbackPaused = Promise.withResolvers<void>();
+      const continueRollback = Promise.withResolvers<void>();
+      let pausedHookDependency: unknown = candidateDependency;
+      let providerTeardownCalls = 0;
+      const provider = makeExt("reset-candidate-provider", {
+        contracts: { provides: ["ResetCandidateDependency"] },
+        setup(context) {
+          context.provide("ResetCandidateDependency", candidateDependency);
+        },
+        teardown() {
+          providerTeardownCalls += 1;
+        },
+      });
+      const setupFailure = new Error("reset candidate setup failed");
+      const failing = makeExt("reset-candidate-failure", {
+        setup() {
+          throw setupFailure;
+        },
+        async teardown() {
+          rollbackPaused.resolve();
+          await continueRollback.promise;
+          pausedHookDependency = tryResolve("ResetCandidateDependency");
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+      const activation = loader.setupAll(
+        [makeResolved(provider), makeResolved(failing)],
+        {},
+      );
+      const replacementLoader = new ExtensionLoader(noopLogger);
+
+      await rollbackPaused.promise;
+      reset();
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("reset-replacement-provider", {
+          contracts: { provides: ["ResetCandidateDependency"] },
+          setup(context) {
+            context.provide(
+              "ResetCandidateDependency",
+              replacementDependency,
+            );
+          },
+        })),
+      ], {});
+      continueRollback.resolve();
+      const failure = await assertRejects(() => activation, Error);
+
+      assertEquals((failure as Error).message, setupFailure.message);
+      assertEquals(pausedHookDependency, undefined);
+      assertEquals(providerTeardownCalls, 1);
+      assertEquals(
+        tryResolve("ResetCandidateDependency"),
+        replacementDependency,
+      );
+      await loader.teardownAll();
+      await replacementLoader.teardownAll();
+    });
+
+    it("does not let stale failure finalization reassert the reset transition barrier", async () => {
+      const rollbackPaused = Promise.withResolvers<void>();
+      const continueRollback = Promise.withResolvers<void>();
+      const setupFailure = new Error("stale reset failure");
+      const failing = makeExt("stale-reset-failure", {
+        setup() {
+          throw setupFailure;
+        },
+        async teardown() {
+          rollbackPaused.resolve();
+          await continueRollback.promise;
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+      const activation = loader.setupAll(
+        [makeResolved(failing)],
+        {},
+      );
+
+      await rollbackPaused.promise;
+      reset();
+      assertEquals(
+        trySnapshotContractForUse("AbsentAfterReset"),
+        undefined,
+      );
+      continueRollback.resolve();
+      const failure = await assertRejects(() => activation, Error);
+
+      assertEquals((failure as Error).message, setupFailure.message);
+      assertEquals(
+        trySnapshotContractForUse("AbsentAfterReset"),
+        undefined,
+      );
+      await loader.teardownAll();
+    });
+
+    it("keeps detached rollback descendants isolated from a later registry epoch", async () => {
+      const candidateDependency = Object.freeze({ id: "detached-candidate" });
+      const replacementDependency = Object.freeze({ id: "detached-replacement" });
+      const continueDescendant = Promise.withResolvers<void>();
+      const descendantSettled = Promise.withResolvers<void>();
+      let descendantDependency: unknown = candidateDependency;
+      const provider = makeExt("detached-reset-provider", {
+        contracts: { provides: ["DetachedResetDependency"] },
+        setup(context) {
+          context.provide("DetachedResetDependency", candidateDependency);
+        },
+        teardown() {
+          void (async () => {
+            await continueDescendant.promise;
+            descendantDependency = tryResolve("DetachedResetDependency");
+            descendantSettled.resolve();
+          })();
+        },
+      });
+      const setupFailure = new Error("detached reset setup failed");
+      const failing = makeExt("detached-reset-failure", {
+        setup() {
+          throw setupFailure;
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const failure = await assertRejects(
+        () => loader.setupAll([makeResolved(provider), makeResolved(failing)], {}),
+        Error,
+      );
+      assertEquals((failure as Error).message, setupFailure.message);
+      reset();
+
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("detached-reset-replacement", {
+          contracts: { provides: ["DetachedResetDependency"] },
+          setup(context) {
+            context.provide(
+              "DetachedResetDependency",
+              replacementDependency,
+            );
+          },
+        })),
+      ], {});
+
+      continueDescendant.resolve();
+      await descendantSettled.promise;
+      assertEquals(descendantDependency, undefined);
+      assertEquals(
+        tryResolve("DetachedResetDependency"),
+        replacementDependency,
+      );
+      await loader.teardownAll();
+      await replacementLoader.teardownAll();
+    });
+
+    it("isolates retirement handlers from a replacement registry epoch", async () => {
+      const owned = Object.freeze({ id: "retiring" });
+      const replacement = Object.freeze({ id: "replacement" });
+      const staleRegistration = Object.freeze({ id: "stale" });
+      const ownerLoader = new ExtensionLoader(noopLogger);
+      await ownerLoader.setupAll([
+        makeResolved(makeExt("retirement-handler-owner", {
+          contracts: { provides: ["RetirementHandlerDependency"] },
+          setup(context) {
+            context.provide("RetirementHandlerDependency", owned);
+          },
+        })),
+      ], {});
+      const snapshot = trySnapshotContractForUse(
+        "RetirementHandlerDependency",
+      );
+      if (snapshot === undefined) {
+        throw new Error("Expected a retirement-handler contract snapshot");
+      }
+      const lease = acquireContractLease(snapshot.reference);
+      const nestedLoader = new ExtensionLoader(noopLogger);
+      let nestedSetup: Promise<void> | undefined;
+      let registerFailure: unknown;
+      let resetFailure: unknown;
+      let resolvedInHandler: unknown = owned;
+      let unregisterFailure: unknown;
+      lease.setRetirementHandler(() => {
+        try {
+          resolvedInHandler = tryResolve("RetirementHandlerDependency");
+          try {
+            register("RetirementHandlerDependency", staleRegistration);
+          } catch (error) {
+            registerFailure = error;
+          }
+          try {
+            unregister("RetirementHandlerDependency");
+          } catch (error) {
+            unregisterFailure = error;
+          }
+          try {
+            reset();
+          } catch (error) {
+            resetFailure = error;
+          }
+          nestedSetup = nestedLoader.setupAll([
+            makeResolved(makeExt("retirement-handler-nested", {
+              contracts: {
+                provides: ["RetirementHandlerNestedDependency"],
+              },
+              setup(context) {
+                context.provide(
+                  "RetirementHandlerNestedDependency",
+                  Object.freeze({ id: "nested" }),
+                );
+              },
+            })),
+          ], {});
+        } finally {
+          lease.release();
+        }
+      });
+
+      reset();
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("retirement-handler-replacement", {
+          contracts: { provides: ["RetirementHandlerDependency"] },
+          setup(context) {
+            context.provide("RetirementHandlerDependency", replacement);
+          },
+        })),
+      ], {});
+
+      await ownerLoader.teardownAll();
+      let nestedFailure: unknown;
+      if (nestedSetup !== undefined) {
+        try {
+          await nestedSetup;
+        } catch (error) {
+          nestedFailure = error;
+        }
+      }
+      await nestedLoader.teardownAll();
+
+      assertEquals(resolvedInHandler, undefined);
+      assertEquals(registerFailure instanceof Error, true);
+      assertEquals(resetFailure instanceof Error, true);
+      assertEquals(unregisterFailure instanceof Error, true);
+      assertEquals(nestedFailure instanceof Error, true);
+      assertEquals(
+        nestedFailure instanceof Error
+          ? nestedFailure.message.includes("during extension teardown")
+          : false,
+        true,
+      );
+      assertEquals(
+        tryResolve("RetirementHandlerDependency"),
+        replacement,
+      );
+      assertEquals(
+        tryResolve("RetirementHandlerNestedDependency"),
+        undefined,
+      );
+      await replacementLoader.teardownAll();
+    });
+
+    it("isolates a retirement handler registered after draining starts", async () => {
+      const owned = Object.freeze({ id: "retiring-late-handler" });
+      const replacement = Object.freeze({ id: "replacement-late-handler" });
+      const retirementStarted = Promise.withResolvers<void>();
+      let ownerSignal: AbortSignal | undefined;
+      const ownerLoader = new ExtensionLoader(noopLogger);
+      await ownerLoader.setupAll([
+        makeResolved(makeExt("late-retirement-handler-owner", {
+          contracts: {
+            provides: ["LateRetirementHandlerDependency"],
+          },
+          setup(context) {
+            ownerSignal = (context as AbortAwareExtensionContext).signal;
+            context.provide("LateRetirementHandlerDependency", owned);
+          },
+        })),
+      ], {});
+      if (ownerSignal === undefined) {
+        throw new Error("Expected the owner extension abort signal");
+      }
+      ownerSignal.addEventListener(
+        "abort",
+        () => retirementStarted.resolve(),
+        { once: true },
+      );
+      const snapshot = trySnapshotContractForUse(
+        "LateRetirementHandlerDependency",
+      );
+      if (snapshot === undefined) {
+        throw new Error("Expected a late retirement-handler contract snapshot");
+      }
+      const lease = acquireContractLease(snapshot.reference);
+
+      reset();
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("late-retirement-handler-replacement", {
+          contracts: {
+            provides: ["LateRetirementHandlerDependency"],
+          },
+          setup(context) {
+            context.provide(
+              "LateRetirementHandlerDependency",
+              replacement,
+            );
+          },
+        })),
+      ], {});
+
+      const teardown = ownerLoader.teardownAll();
+      await retirementStarted.promise;
+      let resetFailure: unknown;
+      let resolvedInHandler: unknown = owned;
+      lease.setRetirementHandler(() => {
+        try {
+          resolvedInHandler = tryResolve(
+            "LateRetirementHandlerDependency",
+          );
+          try {
+            reset();
+          } catch (error) {
+            resetFailure = error;
+          }
+        } finally {
+          lease.release();
+        }
+      });
+      await teardown;
+
+      assertEquals(resolvedInHandler, undefined);
+      assertEquals(resetFailure instanceof Error, true);
+      assertEquals(
+        tryResolve("LateRetirementHandlerDependency"),
+        replacement,
+      );
+      await replacementLoader.teardownAll();
+    });
+
+    it("revokes detached rollback descendants before a same-epoch replacement", async () => {
+      const candidateDependency = Object.freeze({ id: "same-epoch-candidate" });
+      const replacementDependency = Object.freeze({ id: "same-epoch-replacement" });
+      const continueDescendant = Promise.withResolvers<void>();
+      const descendantSettled = Promise.withResolvers<void>();
+      let descendantDependency: unknown = candidateDependency;
+      let descendantFailure: unknown;
+      let descendantLoader: ExtensionLoader | undefined;
+      let descendantSetupCalls = 0;
+      const provider = makeExt("detached-same-epoch-provider", {
+        contracts: { provides: ["DetachedSameEpochDependency"] },
+        setup(context) {
+          context.provide("DetachedSameEpochDependency", candidateDependency);
+        },
+        teardown() {
+          void (async () => {
+            await continueDescendant.promise;
+            descendantDependency = tryResolve("DetachedSameEpochDependency");
+            descendantLoader = new ExtensionLoader(noopLogger);
+            try {
+              await descendantLoader.setupAll([
+                makeResolved(makeExt("detached-same-epoch-nested", {
+                  setup() {
+                    descendantSetupCalls += 1;
+                  },
+                })),
+              ], {});
+            } catch (error) {
+              descendantFailure = error;
+            }
+            descendantSettled.resolve();
+          })();
+        },
+      });
+      const setupFailure = new Error("same epoch setup failed");
+      const failing = makeExt("detached-same-epoch-failure", {
+        setup() {
+          throw setupFailure;
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const failure = await assertRejects(
+        () => loader.setupAll([makeResolved(provider), makeResolved(failing)], {}),
+        Error,
+      );
+      assertEquals((failure as Error).message, setupFailure.message);
+      await loader.setupAll([
+        makeResolved(makeExt("detached-same-epoch-replacement", {
+          contracts: { provides: ["DetachedSameEpochDependency"] },
+          setup(context) {
+            context.provide(
+              "DetachedSameEpochDependency",
+              replacementDependency,
+            );
+          },
+        })),
+      ], {});
+
+      continueDescendant.resolve();
+      await descendantSettled.promise;
+      assertEquals(descendantDependency, undefined);
+      assertEquals(descendantFailure instanceof Error, true);
+      assertEquals(
+        descendantFailure instanceof Error
+          ? descendantFailure.message.includes("during extension teardown")
+          : false,
+        true,
+      );
+      assertEquals(descendantSetupCalls, 0);
+      assertEquals(
+        tryResolve("DetachedSameEpochDependency"),
+        replacementDependency,
+      );
+      if (descendantLoader !== undefined) {
+        await descendantLoader.teardownAll();
+      }
+      await loader.teardownAll();
+    });
+
+    it("blocks detached rollback descendants from starting a new generation", async () => {
+      const continueDescendant = Promise.withResolvers<void>();
+      const descendantSettled = Promise.withResolvers<void>();
+      let descendantFailure: unknown;
+      let descendantLoader: ExtensionLoader | undefined;
+      let descendantSetupCalls = 0;
+      const provider = makeExt("detached-generation-provider", {
+        teardown() {
+          void (async () => {
+            await continueDescendant.promise;
+            descendantLoader = new ExtensionLoader(noopLogger);
+            try {
+              await descendantLoader.setupAll([
+                makeResolved(makeExt("detached-generation-replacement", {
+                  contracts: { provides: ["DetachedGenerationDependency"] },
+                  setup(context) {
+                    descendantSetupCalls += 1;
+                    context.provide(
+                      "DetachedGenerationDependency",
+                      { id: "detached" },
+                    );
+                  },
+                })),
+              ], {});
+            } catch (error) {
+              descendantFailure = error;
+            }
+            descendantSettled.resolve();
+          })();
+        },
+      });
+      const setupFailure = new Error("detached generation setup failed");
+      const failing = makeExt("detached-generation-failure", {
+        setup() {
+          throw setupFailure;
+        },
+      });
+      const loader = new ExtensionLoader(noopLogger);
+
+      const failure = await assertRejects(
+        () => loader.setupAll([makeResolved(provider), makeResolved(failing)], {}),
+        Error,
+      );
+      assertEquals((failure as Error).message, setupFailure.message);
+      reset();
+
+      continueDescendant.resolve();
+      await descendantSettled.promise;
+      assertEquals(descendantFailure instanceof Error, true);
+      assertEquals(
+        descendantFailure instanceof Error
+          ? descendantFailure.message.includes("during extension teardown")
+          : false,
+        true,
+      );
+      assertEquals(tryResolve("DetachedGenerationDependency"), undefined);
+      assertEquals(descendantSetupCalls, 0);
+      if (descendantLoader !== undefined) {
+        await descendantLoader.teardownAll();
+      }
+      await loader.teardownAll();
+    });
+
+    it("blocks stale teardown scopes from committing a pre-existing generation", async () => {
+      const staleGeneration = beginContractGeneration();
+      sealContractGeneration(staleGeneration);
+      reset();
+      const currentGeneration = beginContractGeneration();
+      const staged = Object.freeze({ id: "pre-existing" });
+      stageContract(
+        currentGeneration,
+        "PreExistingGenerationContract",
+        staged,
+      );
+
+      await assertRejects(
+        () =>
+          runWithContractGenerationResolution(
+            staleGeneration,
+            () => commitContractGeneration(currentGeneration),
+          ),
+        Error,
+        "during extension teardown",
+      );
+      assertEquals(tryResolve("PreExistingGenerationContract"), undefined);
+      commitContractGeneration(currentGeneration);
+      assertEquals(tryResolve("PreExistingGenerationContract"), staged);
+      reset();
+    });
+
+    it("isolates a successful teardown from replacements committed after reset", async () => {
+      const activeDependency = Object.freeze({ id: "active" });
+      const replacementDependency = Object.freeze({ id: "replacement" });
+      const teardownPaused = Promise.withResolvers<void>();
+      const continueTeardown = Promise.withResolvers<void>();
+      let teardownDependency: unknown = activeDependency;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("successful-reset-owner", {
+          contracts: { provides: ["SuccessfulResetDependency"] },
+          setup(context) {
+            context.provide("SuccessfulResetDependency", activeDependency);
+          },
+          async teardown() {
+            teardownPaused.resolve();
+            await continueTeardown.promise;
+            teardownDependency = tryResolve("SuccessfulResetDependency");
+          },
+        })),
+      ], {});
+      const teardown = loader.teardownAll();
+
+      await teardownPaused.promise;
+      reset();
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("successful-reset-replacement", {
+          contracts: { provides: ["SuccessfulResetDependency"] },
+          setup(context) {
+            context.provide(
+              "SuccessfulResetDependency",
+              replacementDependency,
+            );
+          },
+        })),
+      ], {});
+
+      continueTeardown.resolve();
+      await teardown;
+      assertEquals(teardownDependency, undefined);
+      assertEquals(
+        tryResolve("SuccessfulResetDependency"),
+        replacementDependency,
+      );
+      await replacementLoader.teardownAll();
+    });
+
+    it("blocks lifecycle-aware resolution inside a stale teardown scope", async () => {
+      const teardownPaused = Promise.withResolvers<void>();
+      const continueTeardown = Promise.withResolvers<void>();
+      let snapshotFailure: unknown;
+      let capturedReplacement: unknown;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("snapshot-reset-owner", {
+          teardown: async () => {
+            teardownPaused.resolve();
+            await continueTeardown.promise;
+            try {
+              capturedReplacement = trySnapshotContractForUse(
+                "SnapshotResetDependency",
+              );
+            } catch (error) {
+              snapshotFailure = error;
+            }
+          },
+        })),
+      ], {});
+      const teardown = loader.teardownAll();
+
+      await teardownPaused.promise;
+      reset();
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("snapshot-reset-replacement", {
+          contracts: { provides: ["SnapshotResetDependency"] },
+          setup(context) {
+            context.provide("SnapshotResetDependency", { id: "replacement" });
+          },
+        })),
+      ], {});
+
+      continueTeardown.resolve();
+      await teardown;
+      assertEquals(capturedReplacement, undefined);
+      assertEquals(snapshotFailure instanceof Error, true);
+      assertEquals(
+        snapshotFailure instanceof Error
+          ? snapshotFailure.message.includes("during extension teardown")
+          : false,
+        true,
+      );
+      await replacementLoader.teardownAll();
+    });
+
+    it("blocks replacement lease acquisition inside a stale teardown scope", async () => {
+      const teardownPaused = Promise.withResolvers<void>();
+      const continueTeardown = Promise.withResolvers<void>();
+      const replacement = {
+        snapshot: undefined as Readonly<ContractSnapshot<unknown>> | undefined,
+      };
+      let leaseAcquired = false;
+      let leaseFailure: unknown;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("lease-reset-owner", {
+          teardown: async () => {
+            teardownPaused.resolve();
+            await continueTeardown.promise;
+            if (replacement.snapshot === undefined) {
+              throw new Error("Expected a replacement snapshot");
+            }
+            try {
+              const lease = acquireContractLease(
+                replacement.snapshot.reference,
+              );
+              leaseAcquired = true;
+              lease.release();
+            } catch (error) {
+              leaseFailure = error;
+            }
+          },
+        })),
+      ], {});
+      const teardown = loader.teardownAll();
+
+      await teardownPaused.promise;
+      reset();
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("lease-reset-replacement", {
+          contracts: { provides: ["LeaseResetDependency"] },
+          setup(context) {
+            context.provide("LeaseResetDependency", { id: "replacement" });
+          },
+        })),
+      ], {});
+      replacement.snapshot = trySnapshotContractForUse(
+        "LeaseResetDependency",
+      );
+
+      continueTeardown.resolve();
+      await teardown;
+      assertEquals(leaseAcquired, false);
+      assertEquals(leaseFailure instanceof Error, true);
+      assertEquals(
+        leaseFailure instanceof Error
+          ? leaseFailure.message.includes("during extension teardown")
+          : false,
+        true,
+      );
+      await replacementLoader.teardownAll();
+    });
+
+    it("blocks stale teardown mutations without restricting current teardown", async () => {
+      const replacementRegistered = Object.freeze({ id: "registered-replacement" });
+      const staleRegistered = Object.freeze({ id: "stale-registration" });
+      const replacementUnregistered = Object.freeze({ id: "unregister-replacement" });
+      const teardownPaused = Promise.withResolvers<void>();
+      const continueTeardown = Promise.withResolvers<void>();
+      let registerFailure: unknown;
+      let resetFailure: unknown;
+      let unregisterFailure: unknown;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("mutation-reset-owner", {
+          teardown: async () => {
+            teardownPaused.resolve();
+            await continueTeardown.promise;
+            try {
+              register("StaleRegisterDependency", staleRegistered);
+            } catch (error) {
+              registerFailure = error;
+            }
+            try {
+              unregister("StaleUnregisterDependency");
+            } catch (error) {
+              unregisterFailure = error;
+            }
+            try {
+              reset();
+            } catch (error) {
+              resetFailure = error;
+            }
+          },
+        })),
+      ], {});
+      const teardown = loader.teardownAll();
+
+      await teardownPaused.promise;
+      reset();
+      const replacementLoader = new ExtensionLoader(noopLogger);
+      await replacementLoader.setupAll([
+        makeResolved(makeExt("mutation-reset-replacement", {
+          contracts: {
+            provides: [
+              "StaleRegisterDependency",
+              "StaleUnregisterDependency",
+            ],
+          },
+          setup(context) {
+            context.provide(
+              "StaleRegisterDependency",
+              replacementRegistered,
+            );
+            context.provide(
+              "StaleUnregisterDependency",
+              replacementUnregistered,
+            );
+          },
+        })),
+      ], {});
+
+      continueTeardown.resolve();
+      await teardown;
+      assertEquals(registerFailure instanceof Error, true);
+      assertEquals(resetFailure instanceof Error, true);
+      assertEquals(unregisterFailure instanceof Error, true);
+      assertEquals(
+        tryResolve("StaleRegisterDependency"),
+        replacementRegistered,
+      );
+      assertEquals(
+        tryResolve("StaleUnregisterDependency"),
+        replacementUnregistered,
+      );
+      await replacementLoader.teardownAll();
     });
 
     it("should call teardown() on the failing extension (best-effort)", async () => {
@@ -1668,6 +2877,61 @@ describe("ExtensionLoader", () => {
 });
 
 describe("ExtensionLoader primeContracts", () => {
+  afterEach(() => {
+    reset();
+  });
+
+  it("rejects stale teardown scopes before inspecting or retaining primed contracts", async () => {
+    const staleGeneration = beginContractGeneration();
+    sealContractGeneration(staleGeneration);
+    reset();
+
+    const loader = new ExtensionLoader(noopLogger);
+    const injected = Object.freeze({ id: "stale" });
+    let inspectionCalls = 0;
+    const hostileContracts = new Proxy(
+      Object.create(null) as Record<string, unknown>,
+      {
+        ownKeys() {
+          inspectionCalls += 1;
+          return ["Bridge"];
+        },
+        getOwnPropertyDescriptor(_target, name) {
+          inspectionCalls += 1;
+          return name === "Bridge"
+            ? {
+              configurable: true,
+              enumerable: true,
+              value: injected,
+              writable: true,
+            }
+            : undefined;
+        },
+      },
+    );
+
+    await assertRejects(
+      () =>
+        runWithContractGenerationResolution(
+          staleGeneration,
+          () => loader.primeContracts(hostileContracts),
+        ),
+      Error,
+      "during extension teardown",
+    );
+    assertEquals(inspectionCalls, 0);
+
+    await loader.setupAll([], {});
+    assertEquals(tryResolve("Bridge"), undefined);
+    await loader.teardownAll();
+
+    const trusted = Object.freeze({ id: "trusted" });
+    loader.primeContracts({ Bridge: trusted });
+    await loader.setupAll([], {});
+    assertEquals(tryResolve("Bridge"), trusted);
+    await loader.teardownAll();
+  });
+
   it("rejects blank names and undefined implementations before activation", () => {
     const loader = new ExtensionLoader(noopLogger);
 

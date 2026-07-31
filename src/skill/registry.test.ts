@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getAllSkills,
   getSkill,
@@ -162,6 +163,73 @@ describe("src/skill/registry", () => {
         TypeError,
         "already owns",
       );
+    });
+
+    it("rejects ambiguous short names independently of Map iterator mutation", () => {
+      registerSkill("agent--first", {
+        ...createTestSkill("agent--first"),
+        ownerAgentId: "agent",
+        shortName: "shared",
+      });
+      const originalIterator = Object.getOwnPropertyDescriptor(
+        Map.prototype,
+        Symbol.iterator,
+      );
+      let iteratorCalls = 0;
+
+      try {
+        Object.defineProperty(Map.prototype, Symbol.iterator, {
+          configurable: true,
+          value: function* () {
+            iteratorCalls += 1;
+            yield* [];
+          },
+          writable: true,
+        });
+        assertThrows(
+          () =>
+            registerSkill("agent--second", {
+              ...createTestSkill("agent--second"),
+              ownerAgentId: "agent",
+              shortName: "shared",
+            }),
+          TypeError,
+          "already owns",
+        );
+      } finally {
+        if (originalIterator) {
+          Object.defineProperty(Map.prototype, Symbol.iterator, originalIterator);
+        }
+      }
+
+      assertEquals(iteratorCalls, 0);
+      assertEquals(getSkill("agent--second"), undefined);
+    });
+
+    it("retains an opaque proxied filesystem adapter without invoking traps", () => {
+      let trapCalls = 0;
+      const adapter = new Proxy({} as FileSystemAdapter, {
+        get(target, property, receiver) {
+          trapCalls += 1;
+          return Reflect.get(target, property, receiver);
+        },
+        getOwnPropertyDescriptor(target, property) {
+          trapCalls += 1;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+        ownKeys(target) {
+          trapCalls += 1;
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      registerSkill("proxied-adapter", {
+        ...createTestSkill("proxied-adapter"),
+        fsAdapter: adapter,
+      });
+
+      assertStrictEquals(skillRegistryInternal.get("proxied-adapter")?.fsAdapter, adapter);
+      assertEquals(trapCalls, 0);
     });
 
     it("preserves owner-only exact-id skills while rejecting ownerless aliases", () => {
