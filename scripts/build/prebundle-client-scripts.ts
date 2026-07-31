@@ -48,7 +48,7 @@ const staleFiles: string[] = [];
  * Format through stdin rather than writing and formatting in place, so --check
  * can compare against the same shape the write path lands on disk.
  */
-async function formatTypeScript(source: string): Promise<string> {
+async function formatTypeScript(source: string, path: string): Promise<string> {
   const fmt = new Deno.Command("deno", {
     args: ["fmt", "-", "--ext", "ts"],
     stdin: "piped",
@@ -63,8 +63,10 @@ async function formatTypeScript(source: string): Promise<string> {
   const result = await fmt.output();
   if (!result.success) {
     const errorOutput = new TextDecoder().decode(result.stderr).trim();
+    // This script generates two files; without the path the failure says
+    // nothing about which one to go and look at.
     throw new Error(
-      `Failed to format generated output${errorOutput ? `: ${errorOutput}` : ""}`,
+      `Failed to format generated file ${path}${errorOutput ? `: ${errorOutput}` : ""}`,
     );
   }
   return new TextDecoder().decode(result.stdout);
@@ -80,7 +82,7 @@ async function emitGeneratedFile(
   contents: string,
   detail: string,
 ): Promise<void> {
-  const formatted = await formatTypeScript(contents);
+  const formatted = await formatTypeScript(contents, path);
 
   if (checkMode) {
     const existing = await Deno.readTextFile(path).catch(() => null);
