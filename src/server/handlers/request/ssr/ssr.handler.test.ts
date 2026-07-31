@@ -489,7 +489,10 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
     ] as const;
 
     for (const failure of applicationFailures) {
-      it(`looks for a custom error page for ${failure.kind} even with the dev overlay`, async () => {
+      const title = failure.exposure === "development-overlay"
+        ? `looks for a custom error page for ${failure.kind} even with the dev overlay`
+        : `looks for a custom error page for ${failure.kind}`;
+      it(title, async () => {
         const mockService = createMockSSRService({
           renderPage: () =>
             Promise.resolve({
