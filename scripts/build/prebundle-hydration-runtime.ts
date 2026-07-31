@@ -103,20 +103,45 @@ const output = `/**
 export const HYDRATION_RUNTIME_BUNDLE: string = ${JSON.stringify(bundle)};
 `;
 
-await Deno.writeTextFile(outputPath, output);
+/** `deno fmt` decides the committed shape, so compare post-format both ways. */
+async function formatTypeScript(source: string): Promise<string> {
+  const formatted = await new Deno.Command("deno", {
+    args: ["fmt", "-", "--ext", "ts"],
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
 
-const fmtResult = await new Deno.Command("deno", {
-  args: ["fmt", outputPath],
-  stdout: "null",
-  stderr: "piped",
-}).output();
+  const writer = formatted.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(source));
+  await writer.close();
 
-if (!fmtResult.success) {
-  const err = new TextDecoder().decode(fmtResult.stderr).trim();
-  console.warn(`[prebundle-hydration-runtime] Warning: could not format output: ${err}`);
+  const result = await formatted.output();
+  if (!result.success) {
+    const err = new TextDecoder().decode(result.stderr).trim();
+    throw new Error(`Failed to format the generated bundle${err ? `: ${err}` : ""}`);
+  }
+  return new TextDecoder().decode(result.stdout);
 }
 
+const formattedOutput = await formatTypeScript(output);
 await esbuild.stop();
 
-console.log(`[prebundle-hydration-runtime] Written to ${outputPath}`);
-console.log(`  hydration runtime: ${(bundle.length / 1024).toFixed(1)} KB`);
+// --check makes a stale committed bundle fail verify:quick instead of relying
+// on someone noticing it missing from a PR diff.
+if (Deno.args.includes("--check")) {
+  const committed = await Deno.readTextFile(outputPath).catch(() => null);
+  if (committed !== formattedOutput) {
+    console.error(
+      `[prebundle-hydration-runtime] ${outputPath} is stale.\n` +
+        `  The committed bundle does not match src/html/hydration-script-builder/runtime/.\n` +
+        `  Run \`deno task generate\` and commit the result.`,
+    );
+    Deno.exit(1);
+  }
+  console.log("[prebundle-hydration-runtime] Committed bundle is up to date");
+} else {
+  await Deno.writeTextFile(outputPath, formattedOutput);
+  console.log(`[prebundle-hydration-runtime] Written to ${outputPath}`);
+  console.log(`  hydration runtime: ${(bundle.length / 1024).toFixed(1)} KB`);
+}
