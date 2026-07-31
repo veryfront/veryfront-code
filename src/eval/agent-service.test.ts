@@ -12,6 +12,7 @@ import {
   createDurableRunTokenGrowthCanaryCase,
   createLiveEvalCaseSupport,
   type DurableRunCanaryApiClient,
+  type DurableRunCanaryExecution,
   type DurableRunCanaryRunSummary,
   evaluateAgentServiceEvalEnvironment,
   evaluateRuntimeConfidenceEnv,
@@ -34,7 +35,10 @@ function createSseResponse(
   );
 }
 
-function createCompletedDurableRunCanaryApiClient(conversationId: string): {
+function createCompletedDurableRunCanaryApiClient(
+  conversationId: string,
+  options: { failStartPrompt?: string } = {},
+): {
   apiClient: DurableRunCanaryApiClient;
   createdRunIds: string[];
 } {
@@ -67,7 +71,11 @@ function createCompletedDurableRunCanaryApiClient(conversationId: string): {
         role: "user",
         parts: [],
       }),
-      startDurableRun: async () => {},
+      startDurableRun: async ({ prompt }) => {
+        if (prompt === options.failStartPrompt) {
+          throw new Error(`failed to start ${prompt}`);
+        }
+      },
     },
   };
 }
@@ -620,7 +628,7 @@ describe("eval/agent-service", () => {
   it("retains ordered run identities for a two-prompt durable canary", async () => {
     const conversationId = "11111111-1111-4111-8111-111111111111";
     const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(conversationId);
-    let validationRunIds: string[] = [];
+    let validationExecutions: DurableRunCanaryExecution[] = [];
     const runner = createDurableRunCanaryRunner(
       {
         agentId: "veryfront",
@@ -643,14 +651,14 @@ describe("eval/agent-service", () => {
         prompt: "initial",
         title: "Two prompt",
         validate: ({ executions }) => {
-          validationRunIds = executions.map(({ runId }) => runId);
+          validationExecutions = executions;
         },
       }),
     });
 
     assertEquals(createdRunIds.length, 2);
     assertEquals(result.runIds, createdRunIds);
-    assertEquals(validationRunIds, createdRunIds);
+    assertEquals(validationExecutions.map(({ runId }) => runId), createdRunIds);
     assertEquals(result.runId, createdRunIds[1]);
   });
 
@@ -688,6 +696,81 @@ describe("eval/agent-service", () => {
     assertEquals(result.runIds, createdRunIds);
     assertEquals(validationRunIds, createdRunIds);
     assertEquals(result.runId, createdRunIds[0]);
+  });
+
+  it("retains the created initial run identity when starting it fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(
+      conversationId,
+      { failStartPrompt: "initial" },
+    );
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "initial-start-failure",
+      label: "Initial start failure",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        prompt: "initial",
+        title: "Initial start failure",
+        validate: () => {
+          throw new Error("validation must not run");
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 1);
+    assertEquals(result.runIds, createdRunIds);
+    assertStringIncludes(result.details, "failed to start initial");
+  });
+
+  it("retains the created follow-up run identity when starting it fails", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(
+      conversationId,
+      { failStartPrompt: "follow up" },
+    );
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "follow-up-start-failure",
+      label: "Follow-up start failure",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        followUpPrompt: "follow up",
+        prompt: "initial",
+        title: "Follow-up start failure",
+        validate: () => {
+          throw new Error("validation must not run");
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 2);
+    assertEquals(result.runIds, createdRunIds);
+    assertStringIncludes(result.details, "failed to start follow up");
   });
 
   it("fails a follow-up durable canary when its setup run fails", async () => {

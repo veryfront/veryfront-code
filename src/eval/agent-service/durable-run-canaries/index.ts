@@ -15,6 +15,7 @@ export {
   type DurableRunCanaryApiConfig,
   type DurableRunCanaryCase,
   type DurableRunCanaryCreateRootRunInput,
+  type DurableRunCanaryExecution,
   type DurableRunCanaryMessage,
   type DurableRunCanaryPreparedCase,
   type DurableRunCanaryResult,

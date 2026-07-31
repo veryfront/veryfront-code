@@ -400,6 +400,7 @@ interface WaitForRunInput extends RunSummaryLocator {
 
 interface ExecuteDurableRunPromptInput {
   conversationId: string;
+  createdRunIds: string[];
   prompt: string;
 }
 
@@ -572,6 +573,7 @@ export function createDurableRunCanaryRunner(
       conversationId: input.conversationId,
       runId: currentRunId,
     });
+    input.createdRunIds.push(currentRunId);
     const visibleRun = await waitForRunSummaryVisibility({
       conversationId: input.conversationId,
       getRunSummary,
@@ -603,6 +605,7 @@ export function createDurableRunCanaryRunner(
     const startedAt = Date.now();
     const prepared = await testCase.prepare();
     let runId = "unknown";
+    const runIds: string[] = [];
     const executions: DurableRunCanaryExecution[] = [];
     const stopSidecar = await prepared.startSidecar?.();
     const resolveArtifactPaths = (currentRunId: string): string[] | undefined =>
@@ -613,6 +616,7 @@ export function createDurableRunCanaryRunner(
     try {
       const initialRun = await executeDurableRunPrompt({
         conversationId: prepared.conversationId,
+        createdRunIds: runIds,
         prompt: prepared.prompt,
       });
       executions.push(initialRun);
@@ -624,6 +628,7 @@ export function createDurableRunCanaryRunner(
       if (prepared.followUpPrompt) {
         terminalRun = await executeDurableRunPrompt({
           conversationId: prepared.conversationId,
+          createdRunIds: runIds,
           prompt: prepared.followUpPrompt,
         });
         executions.push(terminalRun);
@@ -651,7 +656,7 @@ export function createDurableRunCanaryRunner(
         durationMs: Date.now() - startedAt,
         conversationId: prepared.conversationId,
         runId,
-        runIds: executions.map((execution) => execution.runId),
+        runIds,
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
     } catch (error) {
@@ -665,7 +670,7 @@ export function createDurableRunCanaryRunner(
         durationMs: Date.now() - startedAt,
         conversationId: prepared.conversationId,
         runId,
-        runIds: executions.map((execution) => execution.runId),
+        runIds,
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
     } finally {
