@@ -6,6 +6,9 @@
   "minimumDependencyAge": {
     "age": "P2D",
     "exclude": [
+      "npm:@ai-sdk/gateway",
+      "npm:@ai-sdk/provider-utils",
+      "npm:ai",
       "npm:brace-expansion",
       "npm:esbuild",
       "npm:@esbuild/aix-ppc64",
