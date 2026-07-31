@@ -13,6 +13,7 @@ export interface DurableRunCanaryApiConfig {
   agentId: string;
   projectId: string | null;
   branchId?: string | null;
+  model?: string | null;
   requestTimeoutMs: number;
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
@@ -241,6 +242,7 @@ function buildStartRunBody(
           message_id: input.messageId,
         },
         forwarded_props: {
+          ...(config.model ? { model: config.model } : {}),
           veryfront: {
             client: {
               id: "veryfront-studio",

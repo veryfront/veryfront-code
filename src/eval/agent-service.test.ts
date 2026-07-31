@@ -14,10 +14,12 @@ import {
   createLiveEvalCaseSupport,
   type DurableRunCanaryApiClient,
   type DurableRunCanaryExecution,
+  type DurableRunCanaryRunnerConfig,
   type DurableRunCanaryRunSummary,
   evaluateAgentServiceEvalEnvironment,
   evaluateRuntimeConfidenceEnv,
   resolveAgentServiceEvalEnvironment,
+  resolveDurableRunCanaryEnvironment,
   runDurableRunCanaryCli,
   runLiveEvalCli,
 } from "veryfront/eval/agent-service";
@@ -102,6 +104,54 @@ describe("eval/agent-service", () => {
       branchId: "branch_123",
       model: "provider/model",
     });
+  });
+
+  it("resolves an explicit direct model for durable canaries", () => {
+    const environment = resolveDurableRunCanaryEnvironment({
+      VERYFRONT_API_URL: "https://api.example.test",
+      VERYFRONT_TOKEN: "token",
+      AG_UI_EVAL_PROJECT_ID: "project_123",
+      AG_UI_EVAL_MODEL: "anthropic/claude-sonnet-4-6",
+    });
+
+    assertEquals(environment.model, "anthropic/claude-sonnet-4-6");
+  });
+
+  it("forwards the durable canary model into the runner and report", async () => {
+    const reportDirectory = await Deno.makeTempDir();
+    const reportPath = `${reportDirectory}/durable.json`;
+    let runnerConfig: DurableRunCanaryRunnerConfig | undefined;
+
+    try {
+      const exitCode = await runDurableRunCanaryCli({
+        agentId: "veryfront",
+        env: {
+          VERYFRONT_API_URL: "https://api.example.test",
+          VERYFRONT_TOKEN: "token",
+          AG_UI_EVAL_PROJECT_ID: "project_123",
+          AG_UI_EVAL_MODEL: "anthropic/claude-sonnet-4-6",
+          DURABLE_CANARY_REPORT_PATH: reportPath,
+        },
+        createCases: () => [],
+        createRunner: (config) => {
+          runnerConfig = config;
+          return createDurableRunCanaryRunner(
+            config,
+            createCompletedDurableRunCanaryApiClient(
+              "11111111-1111-4111-8111-111111111111",
+            ).apiClient,
+          );
+        },
+        log: () => {},
+      });
+
+      assertEquals(exitCode, 0);
+      assertEquals(runnerConfig?.model, "anthropic/claude-sonnet-4-6");
+      const report = JSON.parse(await Deno.readTextFile(reportPath));
+      assertEquals(report.model, "anthropic/claude-sonnet-4-6");
+    } finally {
+      await Deno.remove(reportDirectory, { recursive: true });
+    }
   });
 
   it("reports missing live eval environment blockers", () => {
@@ -670,6 +720,7 @@ describe("eval/agent-service", () => {
       apiUrl: "https://api.example.test",
       authToken: "token",
       projectId: "11111111-1111-4111-8111-111111111111",
+      model: "anthropic/claude-sonnet-4-6",
       requestTimeoutMs: 1_000,
       fetch: async (_input, init) => {
         requestBody = JSON.parse(String(init?.body));
@@ -713,6 +764,7 @@ describe("eval/agent-service", () => {
             message_id: "22222222-2222-4222-8222-222222222222",
           },
           forwarded_props: {
+            model: "anthropic/claude-sonnet-4-6",
             veryfront: {
               client: {
                 id: "veryfront-studio",
