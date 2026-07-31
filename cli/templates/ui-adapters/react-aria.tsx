@@ -15,9 +15,12 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt React
- * Aria for just some parts and leave the rest zero-dependency. This template
- * covers `popover` / `dialog` / `menu` / `tooltip`; `select` / `combobox` /
- * `toast` stay builtin.
+ * Aria for just some parts and leave the rest zero-dependency. This template is
+ * **full coverage — 7/7**: `popover` / `dialog` / `menu` / `tooltip` / `select`
+ * / `combobox` / `toast`, all mapped onto `react-aria-components`. No slot falls
+ * back to the builtin. `combobox` (and, for the same reason, `select`) is a
+ * *contract-faithful hand-rolled* mapping — see reconciliation (5) below and the
+ * per-slot docstrings for why RAC's collection primitives can't drive it.
  *
  * ## Component layer, not hooks (contract reconciliation)
  * We build against **`react-aria-components`** (the high-level component layer:
@@ -49,6 +52,24 @@
  *      press/hover wiring on its own trigger, so the consumer's element is
  *      rendered *inside* that wrapper. Minor semantic difference — the child
  *      still receives the interaction, but through RAC's press abstraction.
+ *   5. Collection-vs-registry (select + combobox): RAC's `Select` / `ListBox` /
+ *      `ComboBox` are COLLECTION components — they own their trigger (`Button` /
+ *      `Input`) and their items (`ListBoxItem`), filter internally, and surface
+ *      selection through `onSelectionChange` over that collection. The veryfront
+ *      contract inverts this: the skin renders its OWN `role="option"` items that
+ *      register into an adapter-owned registry (`registerOption` / `matches` /
+ *      `activeId`) and drive state through `useSelect()` / `useCombobox()`. RAC's
+ *      collection model does NOT invert onto that, so — per the engine-adapter
+ *      spec's combobox note — both slots own their state here (mirroring the
+ *      builtin) and use the one RAC mechanic that *does* invert: the standalone
+ *      `Popover` (`triggerRef` + controlled `isOpen`) for positioning / portal /
+ *      dismiss. A bare `Popover` (no `Dialog` child) doesn't steal focus, so the
+ *      combobox's `aria-activedescendant` nav stays in the input. Still a valid,
+ *      swappable engine slot.
+ *   6. Toast is imperative in RAC too — a `ToastQueue` you `.add()`/`.close()`
+ *      plus a `ToastRegion` — so it maps directly onto the `{ toast, dismiss }`
+ *      contract with no hand-rolled queue. RAC's toast API is newer/unstable
+ *      (`UNSTABLE_`-prefixed): verify the exports vs your installed version.
  *
  * @module ui-adapters/react-aria
  */
@@ -66,15 +87,31 @@ import {
   Modal,
   Popover,
   Pressable,
+  Text,
   Tooltip,
   TooltipTrigger,
+  // RAC's toast primitives are newer/unstable and ship `UNSTABLE_`-prefixed —
+  // verify these names (and the queue/region API shape) vs your installed
+  // react-aria-components version.
+  UNSTABLE_Toast as RACToast,
+  UNSTABLE_ToastContent as ToastContent,
+  UNSTABLE_ToastQueue as ToastQueue,
+  UNSTABLE_ToastRegion as ToastRegion,
 } from "react-aria-components";
 import { useTokenScope } from "veryfront/ui";
 import type {
+  ComboboxParts,
+  ComboboxState,
   DialogParts,
   MenuParts,
   ModalState,
   PopoverParts,
+  SelectParts,
+  SelectState,
+  ToastFn,
+  ToastOptions,
+  ToastParts,
+  ToastState,
   TooltipParts,
   UIAdapter,
 } from "veryfront/ui";
@@ -309,10 +346,533 @@ export const reactAriaTooltip: TooltipParts = {
   ),
 };
 
+// ---------------------------------------------------------------------------
+// Select (dual state — value + open; the skin drives selection via setValue)
+// ---------------------------------------------------------------------------
+// See reconciliation (5): RAC's `Select`/`ListBox` are collection components that
+// own their trigger (`Button`) + items (`ListBoxItem`) and surface selection via
+// `onSelectionChange`. The veryfront skin renders its OWN `role="combobox"`
+// trigger and `role="option"` items and drives state through `useSelect()`
+// (`setOpen`/`setValue`), so RAC's Select collection does NOT invert onto this
+// contract. We therefore own the dual value+open state here (mirroring the
+// builtin) and use the RAC mechanic that *does* invert — the standalone
+// `Popover` (`triggerRef` + `isOpen`/`onOpenChange`) — for positioning, portal,
+// and outside-click/Escape dismiss. Selection flows through the skin's `Item` →
+// `setValue` (the contract's selection path); there is no RAC collection for an
+// `onSelectionChange` to fire from.
+interface SelectStateInternal extends SelectState {
+  /** The Root's wrapper element — the Popover's positioning anchor. */
+  anchorRef: React.RefObject<HTMLElement | null>;
+}
+
+const SelectContext = React.createContext<SelectStateInternal | null>(null);
+
+function useSelectState(): SelectStateInternal {
+  const ctx = React.useContext(SelectContext);
+  if (!ctx) throw new Error("Select parts must be used within <Select>");
+  return ctx;
+}
+
+export const reactAriaSelect: SelectParts = {
+  Root: (
+    { children, value, defaultValue, onValueChange, open, defaultOpen, onOpenChange, labels },
+  ) => {
+    const [internalValue, setInternalValue] = React.useState(defaultValue);
+    const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
+    const anchorRef = React.useRef<HTMLElement | null>(null);
+
+    const isValueControlled = value !== undefined;
+    const isOpenControlled = open !== undefined;
+    const currentValue = isValueControlled ? value : internalValue;
+    const isOpen = isOpenControlled ? open : internalOpen;
+
+    const setValue = React.useCallback((next: string) => {
+      if (!isValueControlled) setInternalValue(next);
+      onValueChange?.(next);
+    }, [isValueControlled, onValueChange]);
+
+    const setOpen = React.useCallback((next: boolean) => {
+      if (!isOpenControlled) setInternalOpen(next);
+      onOpenChange?.(next);
+    }, [isOpenControlled, onOpenChange]);
+
+    const ctx = React.useMemo<SelectStateInternal>(() => ({
+      value: currentValue,
+      setValue,
+      open: isOpen,
+      setOpen,
+      labels,
+      anchorRef,
+    }), [currentValue, setValue, isOpen, setOpen, labels]);
+
+    return (
+      <SelectContext.Provider value={ctx}>
+        {/* The anchor the standalone Popover positions against + matches width to. */}
+        <span ref={anchorRef} className="relative inline-block w-full">{children}</span>
+      </SelectContext.Provider>
+    );
+  },
+  Content: ({ className, children, ref, ...rest }) => {
+    const ctx = useSelectState();
+    return (
+      <ScopedPortal>
+        {(container) => (
+          // Standalone Popover (triggerRef + controlled isOpen) supplies the real
+          // RAC positioning/portal/dismiss; the skin classes + normalized state +
+          // listbox role land on the surface div.
+          <Popover
+            triggerRef={ctx.anchorRef}
+            isOpen={ctx.open}
+            onOpenChange={ctx.setOpen}
+            placement="bottom start"
+            offset={4}
+            UNSTABLE_portalContainer={container}
+          >
+            <div
+              ref={ref}
+              role="listbox"
+              className={className}
+              data-vf-state="open"
+              // RAC exposes the trigger's width as `--trigger-width` on the Popover
+              // (inherited here) — mirrors the builtin's `matchTriggerWidth`.
+              // verify the var name vs your react-aria-components version.
+              style={{ minWidth: "var(--trigger-width)" }}
+              {...rest}
+            >
+              {children}
+            </div>
+          </Popover>
+        )}
+      </ScopedPortal>
+    );
+  },
+  // Exposed to skin parts; returns the richer internal state (skin ignores anchorRef).
+  useSelect: useSelectState as () => SelectState,
+};
+
+// ---------------------------------------------------------------------------
+// Combobox (contract-faithful hand-rolled state machine + RAC Popover surface)
+// ---------------------------------------------------------------------------
+// See reconciliation (5): RAC's `ComboBox` OWNS its collection + filtering (it
+// renders `ListBoxItem`s and filters them internally) and does NOT invert onto
+// this contract's skin-driven registry, where the skin's `Item`s call
+// `registerOption`/`matches`/`activeId` and the ADAPTER owns `query`, the
+// substring filter, and the `aria-activedescendant` walk over the *filtered*
+// set. Per the engine-adapter spec's combobox note, forcing RAC's ComboBox onto
+// that model would be a broken mapping, so this slot uses a contract-faithful
+// HAND-ROLLED state machine (mirrors the builtin combobox) — still a valid,
+// swappable engine slot. The one part that DOES invert — the floating surface —
+// uses RAC's real standalone `Popover` (a bare Popover with no `Dialog` child
+// does not steal focus, so `aria-activedescendant` nav stays in the input).
+interface ComboboxStateInternal extends ComboboxState {
+  anchorRef: React.RefObject<HTMLInputElement | null>;
+}
+
+const ComboboxContext = React.createContext<ComboboxStateInternal | null>(null);
+
+function useComboboxState(): ComboboxStateInternal {
+  const ctx = React.useContext(ComboboxContext);
+  if (!ctx) throw new Error("Combobox parts must be used within <Combobox>");
+  return ctx;
+}
+
+interface ComboboxOption {
+  id: string;
+  value: string;
+  text: string;
+}
+
+export const reactAriaCombobox: ComboboxParts = {
+  Root: (
+    {
+      children,
+      value,
+      defaultValue,
+      onValueChange,
+      open,
+      defaultOpen,
+      onOpenChange,
+      defaultInputValue,
+      onInputValueChange,
+    },
+  ) => {
+    const listboxId = React.useId();
+    const anchorRef = React.useRef<HTMLInputElement | null>(null);
+    const optionsRef = React.useRef<ComboboxOption[]>([]);
+
+    const [query, setQueryState] = React.useState(defaultInputValue ?? "");
+    const [internalValue, setInternalValue] = React.useState(defaultValue);
+    const [internalOpen, setInternalOpen] = React.useState(defaultOpen ?? false);
+    const [activeId, setActiveId] = React.useState<string | undefined>(undefined);
+
+    const isValueControlled = value !== undefined;
+    const isOpenControlled = open !== undefined;
+    const currentValue = isValueControlled ? value : internalValue;
+    const isOpen = isOpenControlled ? open : internalOpen;
+
+    const matches = React.useCallback(
+      (text: string) => !query || text.toLowerCase().includes(query.toLowerCase()),
+      [query],
+    );
+
+    const setOpen = React.useCallback((next: boolean) => {
+      if (!isOpenControlled) setInternalOpen(next);
+      onOpenChange?.(next);
+      if (!next) setActiveId(undefined);
+    }, [isOpenControlled, onOpenChange]);
+
+    const setQuery = React.useCallback((next: string) => {
+      setQueryState(next);
+      onInputValueChange?.(next);
+      setActiveId(undefined);
+      if (!isOpenControlled) setInternalOpen(true);
+      onOpenChange?.(true);
+    }, [isOpenControlled, onOpenChange, onInputValueChange]);
+
+    const select = React.useCallback((nextValue: string, text: string) => {
+      if (!isValueControlled) setInternalValue(nextValue);
+      onValueChange?.(nextValue);
+      setQueryState(text);
+      onInputValueChange?.(text);
+      setActiveId(undefined);
+      if (!isOpenControlled) setInternalOpen(false);
+      onOpenChange?.(false);
+    }, [isValueControlled, onValueChange, isOpenControlled, onOpenChange, onInputValueChange]);
+
+    const registerOption = React.useCallback((id: string, optValue: string, text: string) => {
+      const existing = optionsRef.current.find((o) => o.id === id);
+      if (existing) {
+        existing.value = optValue;
+        existing.text = text;
+      } else {
+        optionsRef.current.push({ id, value: optValue, text });
+      }
+    }, []);
+    const unregisterOption = React.useCallback((id: string) => {
+      optionsRef.current = optionsRef.current.filter((o) => o.id !== id);
+    }, []);
+
+    const onInputKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+      const visible = optionsRef.current.filter((o) => matches(o.text));
+      const currentIndex = visible.findIndex((o) => o.id === activeId);
+      const move = (nextIndex: number) => {
+        const clamped = Math.max(0, Math.min(visible.length - 1, nextIndex));
+        setActiveId(visible[clamped]?.id);
+      };
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          if (!isOpen) setOpen(true);
+          else move(currentIndex + 1);
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          if (!isOpen) setOpen(true);
+          else move(currentIndex <= 0 ? 0 : currentIndex - 1);
+          break;
+        case "Home":
+          if (isOpen && visible.length) {
+            event.preventDefault();
+            move(0);
+          }
+          break;
+        case "End":
+          if (isOpen && visible.length) {
+            event.preventDefault();
+            move(visible.length - 1);
+          }
+          break;
+        case "Enter": {
+          const active = visible.find((o) => o.id === activeId);
+          if (isOpen && active) {
+            event.preventDefault();
+            select(active.value, active.text);
+          }
+          break;
+        }
+        case "Escape":
+          if (isOpen) {
+            event.preventDefault();
+            setOpen(false);
+          }
+          break;
+      }
+    }, [matches, activeId, isOpen, setOpen, select]);
+
+    const ctx = React.useMemo<ComboboxStateInternal>(() => ({
+      query,
+      setQuery,
+      open: isOpen,
+      setOpen,
+      value: currentValue,
+      select,
+      activeId,
+      matches,
+      listboxId,
+      registerOption,
+      unregisterOption,
+      onInputKeyDown,
+      anchorRef,
+    }), [
+      query,
+      setQuery,
+      isOpen,
+      setOpen,
+      currentValue,
+      select,
+      activeId,
+      matches,
+      listboxId,
+      registerOption,
+      unregisterOption,
+      onInputKeyDown,
+    ]);
+
+    return <ComboboxContext.Provider value={ctx}>{children}</ComboboxContext.Provider>;
+  },
+  Input: ({ className, onChange, onKeyDown, onFocus, ref, ...props }) => {
+    const ctx = useComboboxState();
+    const setRef = React.useCallback((node: HTMLInputElement | null) => {
+      ctx.anchorRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref != null) (ref as React.MutableRefObject<HTMLInputElement | null>).current = node;
+    }, [ctx.anchorRef, ref]);
+
+    return (
+      <input
+        ref={setRef}
+        role="combobox"
+        aria-expanded={ctx.open}
+        aria-controls={ctx.listboxId}
+        aria-activedescendant={ctx.activeId}
+        aria-autocomplete="list"
+        autoComplete="off"
+        value={ctx.query}
+        className={className}
+        onChange={(event) => {
+          onChange?.(event);
+          ctx.setQuery(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (!event.defaultPrevented) ctx.onInputKeyDown(event);
+        }}
+        onFocus={(event) => {
+          onFocus?.(event);
+          if (!ctx.open) ctx.setOpen(true);
+        }}
+        {...props}
+      />
+    );
+  },
+  Content: ({ className, children, ref, ...rest }) => {
+    const ctx = useComboboxState();
+    return (
+      <ScopedPortal>
+        {(container) => (
+          // Bare standalone Popover: real RAC positioning/portal/dismiss without a
+          // Dialog child, so focus is NOT pulled out of the input — the
+          // aria-activedescendant pattern keeps working.
+          <Popover
+            triggerRef={ctx.anchorRef}
+            isOpen={ctx.open}
+            onOpenChange={ctx.setOpen}
+            placement="bottom start"
+            offset={4}
+            UNSTABLE_portalContainer={container}
+          >
+            <div
+              ref={ref}
+              role="listbox"
+              id={ctx.listboxId}
+              className={className}
+              data-vf-state="open"
+              // verify `--trigger-width` vs your react-aria-components version.
+              style={{ minWidth: "var(--trigger-width)" }}
+              {...rest}
+            >
+              {children}
+            </div>
+          </Popover>
+        )}
+      </ScopedPortal>
+    );
+  },
+  useCombobox: useComboboxState as () => ComboboxState,
+};
+
+// ---------------------------------------------------------------------------
+// Toast (imperative — RAC's ToastQueue + ToastRegion behind {toast, dismiss})
+// ---------------------------------------------------------------------------
+// See reconciliation (6): RAC's toast IS imperative — a `ToastQueue` you
+// `.add()`/`.close()` plus a `ToastRegion` that renders the live region + the
+// visible toasts. We hold one queue in the Provider, mount its ToastRegion, and
+// expose `{ toast, dismiss }` via context so `useToast()` returns the imperative
+// API: `toast(options)` / `toast.custom(render)` map onto `queue.add`,
+// `dismiss(id)` onto `queue.close`. No hand-rolled queue needed (unlike a
+// render-only engine). The RAC toast API is `UNSTABLE_`-prefixed — verify names.
+type ReactAriaToastContent =
+  | ({ kind: "structured" } & ToastOptions)
+  | { kind: "custom"; render: (id: string) => React.ReactNode };
+
+const ToastContext = React.createContext<ToastState | null>(null);
+
+function ReactAriaToastProvider(
+  { children, duration = 5000 }: { children: React.ReactNode; duration?: number },
+): React.ReactElement {
+  // One stable queue for the Provider's lifetime.
+  const [queue] = React.useState(
+    () => new ToastQueue<ReactAriaToastContent>({ maxVisibleToasts: 5 }),
+  );
+
+  const api = React.useMemo<ToastState>(() => {
+    const enqueue = (content: ReactAriaToastContent, ms: number | undefined) => {
+      const timeout = ms ?? duration;
+      // RAC auto-dismisses on a finite timeout (and pauses on hover/focus);
+      // Infinity → omit `timeout` to persist. verify vs your RAC version (RAC
+      // warns on timeouts under 5000ms).
+      return queue.add(content, timeout === Infinity ? undefined : { timeout });
+    };
+    const toast = ((options: ToastOptions) =>
+      enqueue({ kind: "structured", ...options }, options.duration)) as ToastFn;
+    toast.custom = (render: (id: string) => React.ReactNode) =>
+      enqueue({ kind: "custom", render }, undefined);
+    return {
+      toast,
+      dismiss: (id: string) =>
+        queue.close(id),
+    };
+  }, [queue, duration]);
+
+  return (
+    <ToastContext.Provider value={api}>
+      {children}
+      {
+        /* ToastRegion stays in the app subtree (inside the token scope) so
+          `var(--…)` resolves — it is fixed-positioned, not an anchored overlay,
+          so it needs no ScopedPortal. */
+      }
+      <ToastRegion
+        queue={queue}
+        className="pointer-events-none fixed bottom-0 right-0 z-[100] flex w-full max-w-full flex-col-reverse gap-2 p-4 sm:max-w-sm"
+      >
+        {({ toast }) => {
+          const content = toast.content;
+          if (content.kind === "custom") {
+            return (
+              <RACToast toast={toast} className="pointer-events-auto">
+                {content.render(toast.key)}
+              </RACToast>
+            );
+          }
+          const { icon, title, description, action, cancel, variant } = content;
+          return (
+            <RACToast
+              toast={toast}
+              data-variant={variant ?? "default"}
+              data-vf-state="open"
+              className="pointer-events-auto relative flex w-full items-start gap-3 rounded-lg border border-[var(--edge)] bg-[var(--popover)] p-4 pr-8 text-sm text-[var(--foreground)] shadow-lg"
+            >
+              {icon
+                ? (
+                  <span
+                    aria-hidden="true"
+                    className="mt-0.5 shrink-0 text-[var(--foreground)] [&_svg]:size-5"
+                  >
+                    {icon}
+                  </span>
+                )
+                : null}
+              <ToastContent className="flex-1 space-y-1">
+                {title
+                  ? (
+                    <Text slot="title" className="text-sm font-medium text-[var(--foreground)]">
+                      {title}
+                    </Text>
+                  )
+                  : null}
+                {description
+                  ? (
+                    <Text slot="description" className="text-sm text-[var(--muted-foreground)]">
+                      {description}
+                    </Text>
+                  )
+                  : null}
+                {action || cancel
+                  ? (
+                    <div className="mt-2 flex gap-2">
+                      {cancel
+                        ? (
+                          // `slot="close"` lets RAC dismiss the toast; `onPress`
+                          // adds the consumer's side effect.
+                          <Button
+                            slot="close"
+                            onPress={() => cancel.onClick?.()}
+                            className="rounded-md px-2 py-1 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+                          >
+                            {cancel.label}
+                          </Button>
+                        )
+                        : null}
+                      {action
+                        ? (
+                          <Button
+                            slot="close"
+                            onPress={() => action.onClick()}
+                            className="rounded-md bg-[var(--primary)] px-2 py-1 text-sm font-medium text-[var(--secondary)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+                          >
+                            {action.label}
+                          </Button>
+                        )
+                        : null}
+                    </div>
+                  )
+                  : null}
+              </ToastContent>
+              <Button
+                slot="close"
+                aria-label="Dismiss notification"
+                className="absolute right-2 top-2 inline-flex size-6 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+              >
+                <svg
+                  className="size-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </Button>
+            </RACToast>
+          );
+        }}
+      </ToastRegion>
+    </ToastContext.Provider>
+  );
+}
+ReactAriaToastProvider.displayName = "ReactAriaToastProvider";
+
+export const reactAriaToast: ToastParts = {
+  Provider: ReactAriaToastProvider,
+  // Throws outside a <ToastProvider>, matching the contract.
+  useToast: () => {
+    const ctx = React.useContext(ToastContext);
+    if (!ctx) throw new Error("useToast must be used within a <ToastProvider>");
+    return ctx;
+  },
+};
+
 /**
- * Partial adapter map — adopt React Aria for popover + dialog + menu + tooltip,
- * keep select / combobox / toast zero-dependency (builtin). Extend as you vendor
- * more parts.
+ * FULL adapter map — React Aria for all 7 primitives: popover + dialog + menu +
+ * tooltip + select + combobox + toast. No slot falls back to the builtin.
+ * `select` + `combobox` bridge their state locally (RAC's collection primitives
+ * don't invert onto the skin-driven registry — reconciliation (5)); `toast` maps
+ * straight onto RAC's imperative `ToastQueue` (reconciliation (6)).
  */
 export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   name: "react-aria",
@@ -320,4 +880,7 @@ export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   dialog: reactAriaDialog,
   menu: reactAriaMenu,
   tooltip: reactAriaTooltip,
+  select: reactAriaSelect,
+  combobox: reactAriaCombobox,
+  toast: reactAriaToast,
 };

@@ -489,32 +489,63 @@ describe("veryfront/ui: leaf composition (one node · ref · {...props})", () =>
 
 // ---------------------------------------------------------------------------
 // ENGINE coverage — the bring-your-own-engine adapters (RFC 0001 / #3090).
-// `builtin` is the zero-dep default that lives IN core (adapter/builtin/). The
-// third-party engines are NOT in core — core stays engine-free (CI guard). They
-// ship as REFERENCE TEMPLATES under `cli/templates/ui-adapters/<engine>.tsx`,
-// vendored into a consumer's repo by `veryfront generate adapter <engine>`; the
-// engine package is the consumer's dependency. An engine is "shipped" when its
-// template exists, exports an `<engine>Adapter`, and maps the four overlay
-// archetypes (popover · dialog · menu · tooltip); select/combobox/toast fall back
-// to builtin via the partial merge. The interop SEAM is proven separately
-// (adapter/*.conformance.test.tsx + the chat-adapter-interop testbed).
+// `builtin` is the zero-dep default that lives IN core (adapter/builtin/) and
+// implements ALL seven slots. The third-party engines are NOT in core — core
+// stays engine-free (CI guard). They ship as REFERENCE TEMPLATES under
+// `cli/templates/ui-adapters/<engine>.tsx`, vendored into a consumer's repo by
+// `veryfront generate adapter <engine>`; the engine package is the consumer's
+// dependency. Each engine must map EVERY slot its library actually provides;
+// where a library genuinely lacks a primitive the slot falls back to builtin via
+// the partial merge — those two exceptions (Radix has no combobox, Ariakit has no
+// toast) are declared per-engine below, so "delegates to builtin" is enforced as
+// an intentional decision, not an accidental gap. The interop SEAM is proven
+// separately (adapter/*.conformance.test.tsx + the chat-adapter-interop testbed).
 // ---------------------------------------------------------------------------
 const ENGINE_TEMPLATES_DIR =
   new URL("../../../../cli/templates/ui-adapters/", import.meta.url).pathname;
-const OVERLAY_ARCHETYPES = ["popover", "dialog", "menu", "tooltip"] as const;
+const ALL_SLOTS = ["popover", "dialog", "menu", "tooltip", "select", "combobox", "toast"] as const;
+type Slot = typeof ALL_SLOTS[number];
 
 interface EngineRow {
   name: string;
   /** "" = builtin (core); otherwise the template basename. */
   template: string;
+  /** Slots this engine's library can map; the rest correctly delegate to builtin. */
+  slots: readonly Slot[];
+  /** Slots intentionally left to builtin because the library lacks the primitive. */
+  builtinFallback: readonly Slot[];
   status: "shipped" | "planned";
 }
 const UI_ENGINES: EngineRow[] = [
-  { name: "builtin", template: "", status: "shipped" },
-  { name: "Base UI", template: "base-ui.tsx", status: "shipped" },
-  { name: "Radix", template: "radix.tsx", status: "shipped" },
-  { name: "React Aria", template: "react-aria.tsx", status: "shipped" },
-  { name: "Ariakit", template: "ariakit.tsx", status: "shipped" },
+  { name: "builtin", template: "", slots: ALL_SLOTS, builtinFallback: [], status: "shipped" },
+  {
+    name: "Base UI",
+    template: "base-ui.tsx",
+    slots: ALL_SLOTS,
+    builtinFallback: [],
+    status: "shipped",
+  },
+  {
+    name: "Radix",
+    template: "radix.tsx",
+    slots: ["popover", "dialog", "menu", "tooltip", "select", "toast"],
+    builtinFallback: ["combobox"], // Radix has no combobox primitive
+    status: "shipped",
+  },
+  {
+    name: "React Aria",
+    template: "react-aria.tsx",
+    slots: ALL_SLOTS,
+    builtinFallback: [],
+    status: "shipped",
+  },
+  {
+    name: "Ariakit",
+    template: "ariakit.tsx",
+    slots: ["popover", "dialog", "menu", "tooltip", "select", "combobox"],
+    builtinFallback: ["toast"], // Ariakit has no toast primitive
+    status: "shipped",
+  },
 ];
 
 describe("veryfront/ui: bring-your-own-engine adapters (swappable engines)", () => {
@@ -531,7 +562,7 @@ describe("veryfront/ui: bring-your-own-engine adapters (swappable engines)", () 
       continue;
     }
 
-    it(`${e.name}: ships a generatable adapter template covering the overlay archetypes`, () => {
+    it(`${e.name}: template maps every slot its library provides (${e.slots.length}/${ALL_SLOTS.length})`, () => {
       let src = "";
       try {
         src = Deno.readTextFileSync(`${ENGINE_TEMPLATES_DIR}${e.template}`);
@@ -541,12 +572,20 @@ describe("veryfront/ui: bring-your-own-engine adapters (swappable engines)", () 
         `${e.name} (${e.status}) has no reference template at cli/templates/ui-adapters/${e.template} ` +
           `— add it (\`veryfront generate adapter\` vendors it into a consumer repo).`,
       );
-      const missing = OVERLAY_ARCHETYPES.filter((slot) => !new RegExp(`\\b${slot}:`).test(src));
+      // Every slot the engine claims must be wired on its adapter map (`popover:` …).
+      const missing = e.slots.filter((slot) => !new RegExp(`\\b${slot}:`).test(src));
       assert(
         missing.length === 0,
-        `${e.name} template does not map the overlay archetypes: ${missing.join(", ")} ` +
-          `(each floating primitive must resolve through the engine).`,
+        `${e.name} template does not map declared slots: ${missing.join(", ")} ` +
+          `(each must resolve through the engine).`,
       );
+      // A builtin-fallback slot must NOT be silently mapped — the doc must say why.
+      for (const slot of e.builtinFallback) {
+        assert(
+          new RegExp(`builtin[\\s\\S]{0,80}${slot}|${slot}[\\s\\S]{0,80}builtin`, "i").test(src),
+          `${e.name} leaves ${slot} to builtin (library lacks it) — document that in the template.`,
+        );
+      }
       assert(
         /Adapter[^=]*=/.test(src) && /Partial<UIAdapter>/.test(src),
         `${e.name} template must export an \`<engine>Adapter: Partial<UIAdapter>\` map.`,

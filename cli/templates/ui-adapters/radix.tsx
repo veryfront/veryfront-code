@@ -15,9 +15,11 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so this adapter adopts
- * Radix for the four floating overlays (popover / dialog / menu / tooltip) and
- * leaves select / combobox / toast zero-dependency (builtin). Extend the map as
- * you vendor more parts.
+ * Radix for six slots — the four floating overlays (popover / dialog / menu /
+ * tooltip) plus select and toast. Coverage: 6/7 (popover / dialog / menu /
+ * tooltip / select / toast; combobox stays builtin — Radix has NO combobox
+ * primitive, so there is nothing to map it onto). Extend the map as you vendor
+ * more parts.
  *
  * How Radix maps onto the contract (the fault lines from RFC 0001 §13.2):
  *   1. `onOpenChange` is ALREADY single-arg `(open: boolean) => void` in Radix —
@@ -30,6 +32,28 @@
  *      (via `useTokenScope`) — otherwise every `var(--…)` resolves to nothing.
  *   4. `asChild` is native Radix: pass `asChild` and Radix merges its behaviour
  *      onto the single child element.
+ *   5. Select: `SelectParts` exposes ONLY `Root` / `Content` / `useSelect` — no
+ *      Trigger slot — because the SKIN renders the visible `role="combobox"`
+ *      trigger and the `role="option"` items itself and drives them through
+ *      `useSelect()`. So we use `Select.Root` as the CONTROLLED value+open state
+ *      owner, bridge that state into a context (like Dialog/Menu do with
+ *      `ModalState`), and let `Content` render Radix's `Portal` / `Content` /
+ *      `Viewport` as the floating listbox. Selection flows skin → `setValue`
+ *      (not through Radix's own `Select.Item`, which the skin supersedes).
+ *   6. Toast: Radix Toast is RENDER-BASED (no imperative `toast()` — you mount
+ *      one `<Toast.Root>` per notification), but the contract's `useToast()`
+ *      returns an imperative `{ toast, dismiss }`. So the `Provider` holds a tiny
+ *      queue (like the builtin), mounts `<Toast.Provider>` + `<Toast.Viewport>`,
+ *      renders one `<Toast.Root>` per queued item, and exposes `{ toast, dismiss }`
+ *      via context. Auto-dismiss rides Radix's per-root `duration` →
+ *      `onOpenChange(false)` → `dismiss(id)`. The Viewport renders IN PLACE (Radix
+ *      does not portal it to `document.body`), so it stays inside the token scope
+ *      without a `ScopedPortal` — unlike the overlays above.
+ *
+ * Combobox is intentionally LEFT ON THE BUILTIN: Radix ships no combobox
+ * primitive to invert onto `ComboboxParts` (query + substring filter + option
+ * registry + `aria-activedescendant`), so there is nothing to adapt — the
+ * zero-dependency builtin combobox remains in force via the partial-map merge.
  *
  * @module ui-adapters/radix
  */
@@ -39,12 +63,20 @@ import * as Popover from "@radix-ui/react-popover";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { useTokenScope } from "veryfront/ui";
+import * as Select from "@radix-ui/react-select";
+import * as Toast from "@radix-ui/react-toast";
+import { cx, useTokenScope } from "veryfront/ui";
 import type {
   DialogParts,
   MenuParts,
   ModalState,
   PopoverParts,
+  SelectParts,
+  SelectState,
+  ToastFn,
+  ToastOptions,
+  ToastParts,
+  ToastState,
   TooltipParts,
   TooltipSide,
   UIAdapter,
@@ -71,7 +103,11 @@ function ScopedPortal(
 export const radixPopover: PopoverParts = {
   Root: ({ open, defaultOpen, onOpenChange, children }) => (
     // (1) Radix `onOpenChange` is already single-arg — pass straight through.
-    <Popover.Root open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
+    <Popover.Root
+      open={open}
+      defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
+    >
       {children}
     </Popover.Root>
   ),
@@ -116,7 +152,10 @@ export const radixDialog: DialogParts = {
       if (!isControlled) setInternal(next);
       onOpenChange?.(next);
     }, [isControlled, onOpenChange]);
-    const state = React.useMemo<ModalState>(() => ({ open: isOpen, setOpen }), [isOpen, setOpen]);
+    const state = React.useMemo<ModalState>(() => ({ open: isOpen, setOpen }), [
+      isOpen,
+      setOpen,
+    ]);
     return (
       <DialogStateContext.Provider value={state}>
         <Dialog.Root open={isOpen} onOpenChange={setOpen}>
@@ -167,7 +206,10 @@ export const radixMenu: MenuParts = {
       if (!isControlled) setInternal(next);
       onOpenChange?.(next);
     }, [isControlled, onOpenChange]);
-    const state = React.useMemo<ModalState>(() => ({ open: isOpen, setOpen }), [isOpen, setOpen]);
+    const state = React.useMemo<ModalState>(() => ({ open: isOpen, setOpen }), [
+      isOpen,
+      setOpen,
+    ]);
     return (
       <MenuStateContext.Provider value={state}>
         <DropdownMenu.Root open={isOpen} onOpenChange={setOpen}>
@@ -177,7 +219,9 @@ export const radixMenu: MenuParts = {
     );
   },
   Trigger: ({ asChild, children, ...rest }) => (
-    <DropdownMenu.Trigger asChild={asChild} {...rest}>{children}</DropdownMenu.Trigger>
+    <DropdownMenu.Trigger asChild={asChild} {...rest}>
+      {children}
+    </DropdownMenu.Trigger>
   ),
   Content: ({ align = "start", className, children, ...rest }) => (
     <ScopedPortal>
@@ -206,7 +250,9 @@ export const radixMenu: MenuParts = {
 export const radixTooltip: TooltipParts = {
   // Radix groups delay at the Provider level — map `delayDuration` onto it.
   Provider: ({ children, delayDuration }) => (
-    <Tooltip.Provider delayDuration={delayDuration}>{children}</Tooltip.Provider>
+    <Tooltip.Provider delayDuration={delayDuration}>
+      {children}
+    </Tooltip.Provider>
   ),
   Root: ({ children }) => <Tooltip.Root>{children}</Tooltip.Root>,
   Trigger: ({ asChild, children, ...rest }) => (
@@ -231,10 +277,290 @@ export const radixTooltip: TooltipParts = {
   ),
 };
 
+// ---------------------------------------------------------------------------
+// Select (dual-state listbox: value + open + a skin-supplied labels map)
+// ---------------------------------------------------------------------------
+const SelectStateContext = React.createContext<SelectState | null>(null);
+
+export const radixSelect: SelectParts = {
+  // Radix `Select.Root` owns the controlled value + open state; we mirror it into
+  // a context so the skin's Trigger/Value/Item read `useSelect()`. The skin owns
+  // item rendering (plain `role="option"` divs) and collected the `labels` map,
+  // so this Root only needs the value/open machine + Radix as the state carrier.
+  Root: (
+    {
+      children,
+      value,
+      defaultValue,
+      onValueChange,
+      open,
+      defaultOpen,
+      onOpenChange,
+      labels,
+    },
+  ) => {
+    const [internalValue, setInternalValue] = React.useState(defaultValue);
+    const [internalOpen, setInternalOpen] = React.useState(
+      defaultOpen ?? false,
+    );
+    const isValueControlled = value !== undefined;
+    const isOpenControlled = open !== undefined;
+    const currentValue = isValueControlled ? value : internalValue;
+    const isOpen = isOpenControlled ? open : internalOpen;
+
+    const setValue = React.useCallback((next: string) => {
+      if (!isValueControlled) setInternalValue(next);
+      onValueChange?.(next);
+    }, [isValueControlled, onValueChange]);
+
+    const setOpen = React.useCallback((next: boolean) => {
+      if (!isOpenControlled) setInternalOpen(next);
+      onOpenChange?.(next);
+    }, [isOpenControlled, onOpenChange]);
+
+    const state = React.useMemo<SelectState>(
+      () => ({ value: currentValue, setValue, open: isOpen, setOpen, labels }),
+      [currentValue, setValue, isOpen, setOpen, labels],
+    );
+
+    return (
+      <SelectStateContext.Provider value={state}>
+        {/* Radix reflects OUR state; selection is driven by the skin via setValue. */}
+        <Select.Root
+          value={currentValue}
+          onValueChange={setValue}
+          open={isOpen}
+          onOpenChange={setOpen}
+        >
+          {children}
+        </Select.Root>
+      </SelectStateContext.Provider>
+    );
+  },
+  Content: ({ className, children, ...rest }) => (
+    <ScopedPortal>
+      {(container) => (
+        // (3) portal into the token scope; one popper Content carries classes + state.
+        <Select.Portal container={container}>
+          <Select.Content
+            position="popper"
+            sideOffset={4}
+            className={className}
+            data-vf-state="open"
+            {...rest}
+          >
+            <Select.Viewport>{children}</Select.Viewport>
+          </Select.Content>
+        </Select.Portal>
+      )}
+    </ScopedPortal>
+  ),
+  useSelect: () => {
+    const ctx = React.useContext(SelectStateContext);
+    if (!ctx) throw new Error("Select parts must be used within <Select>");
+    return ctx;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Toast (imperative queue over Radix's render-based Toast)
+// ---------------------------------------------------------------------------
+const ToastStateContext = React.createContext<ToastState | null>(null);
+
+/** One queued notification — structured `ToastOptions`, or a `toast.custom` node. */
+interface RadixToastRecord extends ToastOptions {
+  /** Stable id used as the React key and dismiss handle. */
+  id: string;
+  /** When set (via `toast.custom`), renders this node instead of the built-in surface. */
+  render?: (id: string) => React.ReactNode;
+}
+
+export const radixToast: ToastParts = {
+  // Radix Toast is render-based (no imperative add), so hold a queue like the
+  // builtin, mount <Toast.Provider> + <Toast.Viewport>, and render one
+  // <Toast.Root> per queued item. Expose the imperative { toast, dismiss }.
+  Provider: ({ children, duration = 5000 }) => {
+    const [toasts, setToasts] = React.useState<RadixToastRecord[]>([]);
+    const idRef = React.useRef(0);
+
+    const dismiss = React.useCallback((id: string) => {
+      setToasts((list) => list.filter((t) => t.id !== id));
+    }, []);
+
+    const enqueue = React.useCallback(
+      (record: Omit<RadixToastRecord, "id">) => {
+        const id = `toast-${idRef.current++}`;
+        setToasts((list) => [...list, { duration, ...record, id }]);
+        return id;
+      },
+      [duration],
+    );
+
+    const toast = React.useMemo<ToastFn>(() => {
+      const fn = ((options: ToastOptions) => enqueue(options)) as ToastFn;
+      fn.custom = (render: (id: string) => React.ReactNode) =>
+        enqueue({ render });
+      return fn;
+    }, [enqueue]);
+
+    const value = React.useMemo<ToastState>(() => ({ toast, dismiss }), [
+      toast,
+      dismiss,
+    ]);
+
+    return (
+      <ToastStateContext.Provider value={value}>
+        <Toast.Provider duration={duration}>
+          {children}
+          {toasts.map((t) => (
+            <RadixToastItem
+              key={t.id}
+              record={t}
+              onDismiss={() => dismiss(t.id)}
+            />
+          ))}
+          {
+            /* Radix renders the Viewport in place (no body portal), so it stays in
+              the token scope without a ScopedPortal — unlike the overlays. */
+          }
+          <Toast.Viewport className="pointer-events-none fixed bottom-0 right-0 z-[100] m-0 flex w-full max-w-full list-none flex-col-reverse gap-2 p-4 outline-none sm:max-w-sm" />
+        </Toast.Provider>
+      </ToastStateContext.Provider>
+    );
+  },
+  useToast: () => {
+    const ctx = React.useContext(ToastStateContext);
+    if (!ctx) throw new Error("useToast must be used within a <ToastProvider>");
+    return ctx;
+  },
+};
+
+/** Renders one queued toast as a Radix `Toast.Root` — a custom node, or the surface. */
+function RadixToastItem(
+  { record, onDismiss }: { record: RadixToastRecord; onDismiss: () => void },
+): React.ReactElement {
+  // Radix auto-dismisses after `duration`, then fires onOpenChange(false).
+  const onOpenChange = (open: boolean) => {
+    if (!open) onDismiss();
+  };
+  if (record.render) {
+    return (
+      <Toast.Root
+        duration={record.duration}
+        onOpenChange={onOpenChange}
+        asChild
+      >
+        {record.render(record.id)}
+      </Toast.Root>
+    );
+  }
+  const { icon, title, description, action, cancel, variant, duration } =
+    record;
+  return (
+    <Toast.Root
+      duration={duration}
+      onOpenChange={onOpenChange}
+      data-variant={variant ?? "default"}
+      data-vf-state="open"
+      className={cx(
+        "pointer-events-auto relative flex w-full items-start gap-3 rounded-lg border border-[var(--edge)] bg-[var(--popover)] p-4 pr-8 text-sm text-[var(--foreground)] shadow-lg",
+        variant === "success" && "border-l-4 border-l-[var(--status-success)]",
+        variant === "destructive" &&
+          "border-l-4 border-l-[var(--status-error)]",
+      )}
+    >
+      {icon
+        ? (
+          <span
+            aria-hidden="true"
+            className="mt-0.5 shrink-0 text-[var(--foreground)] [&_svg]:size-5"
+          >
+            {icon}
+          </span>
+        )
+        : null}
+      <div className="flex-1 space-y-1">
+        {title
+          ? (
+            <Toast.Title className="text-sm font-medium text-[var(--foreground)]">
+              {title}
+            </Toast.Title>
+          )
+          : null}
+        {description
+          ? (
+            <Toast.Description className="text-sm text-[var(--muted-foreground)]">
+              {description}
+            </Toast.Description>
+          )
+          : null}
+        {action || cancel
+          ? (
+            <div className="mt-2 flex gap-2">
+              {cancel
+                ? (
+                  // `Toast.Close` dismisses; run the caller's onClick first.
+                  <Toast.Close asChild>
+                    <button
+                      type="button"
+                      onClick={() => cancel.onClick?.()}
+                      className="rounded-md px-2 py-1 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+                    >
+                      {cancel.label}
+                    </button>
+                  </Toast.Close>
+                )
+                : null}
+              {action
+                ? (
+                  // `Toast.Action` needs `altText` for the screen-reader summary.
+                  <Toast.Action
+                    altText={typeof action.label === "string"
+                      ? action.label
+                      : "Action"}
+                    asChild
+                  >
+                    <button
+                      type="button"
+                      onClick={() => action.onClick()}
+                      className="rounded-md bg-[var(--primary)] px-2 py-1 text-sm font-medium text-[var(--secondary)] transition-colors hover:bg-[var(--secondary)] hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+                    >
+                      {action.label}
+                    </button>
+                  </Toast.Action>
+                )
+                : null}
+            </div>
+          )
+          : null}
+      </div>
+      <Toast.Close
+        aria-label="Dismiss notification"
+        className="absolute right-2 top-2 inline-flex size-6 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]"
+      >
+        <svg
+          className="size-4"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </Toast.Close>
+    </Toast.Root>
+  );
+}
+
 /**
- * Partial adapter map — adopt Radix for the four floating overlays and keep
- * select / combobox / toast zero-dependency (builtin). Extend as you vendor
- * more parts.
+ * Partial adapter map — adopt Radix for six slots (four floating overlays +
+ * select + toast). Combobox is deliberately ABSENT: Radix has no combobox
+ * primitive, so that key falls through to the zero-dependency builtin via the
+ * partial-map merge. Extend as you vendor more parts.
  */
 export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   name: "radix",
@@ -242,4 +568,8 @@ export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   dialog: radixDialog,
   menu: radixMenu,
   tooltip: radixTooltip,
+  select: radixSelect,
+  toast: radixToast,
+  // combobox: intentionally omitted — Radix ships no combobox primitive; the
+  // builtin combobox stays in force through the partial-map merge.
 };

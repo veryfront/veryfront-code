@@ -393,6 +393,8 @@ export {
 export { UIAdapterProvider, useAdapter } from "./adapter/context.tsx";
 export { useTokenScope } from "./adapter/token-scope.tsx";
 export type {
+  ComboboxParts,
+  ComboboxState,
   DialogParts,
   DisclosureProps,
   MenuParts,
@@ -401,6 +403,8 @@ export type {
   PopoverParts,
   SelectParts,
   SelectState,
+  ToastParts,
+  ToastState,
   TooltipParts,
   TooltipSide,
   UIAdapter,

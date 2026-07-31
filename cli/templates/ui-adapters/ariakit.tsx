@@ -14,9 +14,12 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Ariakit
- * for just some parts and leave the rest zero-dependency. This template covers
- * `popover` / `dialog` / `menu` / `tooltip`; `select` / `combobox` / `toast`
- * stay builtin.
+ * for just some parts and leave the rest zero-dependency. Slot coverage: 6/7 —
+ * `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` map to
+ * Ariakit; `toast` STAYS builtin because Ariakit ships NO toast primitive (no
+ * toast store / region / queue). Don't hand-roll one here — the zero-dependency
+ * builtin toast already satisfies `ToastParts`, so leaving `toast` unset lets the
+ * provider fall back to it.
  *
  * Ariakit is STORE-based: each primitive is `useXStore(...)` → an imperative
  * store shared via `<XProvider store={store}>`, with role components (`Popover`,
@@ -32,16 +35,38 @@
  *      `[data-vf-ui]` token scope (via `useTokenScope`) so every `var(--…)`
  *      resolves. `asChild` maps to Ariakit's polymorphic `render={children}`.
  *
+ * Two of the added slots need extra reconciliation notes:
+ *   - **select**: `useSelectStore` owns value + open faithfully, and we bridge
+ *     both into a `SelectState` context so the skin's Trigger/Value/Item read
+ *     `useSelect()`. Ariakit's `SelectPopover` normally anchors to Ariakit's own
+ *     `<Select>` button, but our skin renders the Trigger itself, so we anchor the
+ *     popover to `Root`'s wrapper span via `getAnchorRect` (mirrors the builtin's
+ *     `anchorRef` span) instead of an Ariakit disclosure.
+ *   - **combobox**: Ariakit's combobox is store-based and drives filtering + the
+ *     active-descendant over its OWN `ComboboxItem` registry. The contract instead
+ *     makes the ADAPTER own a skin-provided option registry (`registerOption` /
+ *     substring `matches` / `activeId` / `onInputKeyDown`). That model does NOT
+ *     cleanly invert onto Ariakit's item registry, so — per the engine-adapter
+ *     note — the registry + substring filter + active-descendant keyboard machine
+ *     is HAND-ROLLED here (React-only, mirroring `builtin/combobox.tsx`), while
+ *     the Ariakit combobox store still provides the real engine surface: the
+ *     `role="combobox"` input anchor, open state, and the portalled, positioned,
+ *     dismiss-managed `ComboboxPopover`. Still a valid, swappable engine slot.
+ *
  * @module ui-adapters/ariakit
  */
 import * as React from "react";
 import * as Ariakit from "@ariakit/react";
 import { useTokenScope } from "veryfront/ui";
 import type {
+  ComboboxParts,
+  ComboboxState,
   DialogParts,
   MenuParts,
   ModalState,
   PopoverParts,
+  SelectParts,
+  SelectState,
   TooltipParts,
   UIAdapter,
 } from "veryfront/ui";
@@ -271,10 +296,340 @@ export const ariakitTooltip: TooltipParts = {
   ),
 };
 
+// ---------------------------------------------------------------------------
+// Select (dual state — value + open — via Ariakit's select store)
+// ---------------------------------------------------------------------------
+// The skin renders Trigger/Value/Item and reads them all through `useSelect()`,
+// so we bridge Ariakit's store value/open into one `SelectState` context. The
+// skin also owns item rendering and hands us the collected `labels` map — the
+// adapter just supplies value/open state + the portalled listbox surface.
+const SelectStateContext = React.createContext<SelectState | null>(null);
+
+export const ariakitSelect: SelectParts = {
+  Root: (
+    { children, value, defaultValue, onValueChange, open, defaultOpen, onOpenChange, labels },
+  ) => {
+    // Ariakit's select store owns value + open; both setters are single-arg,
+    // matching our `onValueChange` / `onOpenChange` (no `eventDetails` to drop).
+    const store = Ariakit.useSelectStore({
+      value,
+      defaultValue,
+      setValue: (next) => onValueChange?.(next as string),
+      open,
+      defaultOpen,
+      setOpen: onOpenChange,
+    });
+    const currentValue = store.useState("value") as string | undefined;
+    const isOpen = store.useState("open");
+    // Skin renders its own Trigger, so anchor the popover to this wrapper span
+    // (via `getAnchorRect` below) rather than to an Ariakit `<Select>` button.
+    const anchorRef = React.useRef<HTMLSpanElement | null>(null);
+
+    const state = React.useMemo<SelectState & { anchorRef: typeof anchorRef }>(() => ({
+      value: currentValue,
+      setValue: (next: string) => store.setValue(next),
+      open: isOpen,
+      setOpen: (next: boolean) => store.setOpen(next),
+      labels,
+      anchorRef,
+    }), [currentValue, isOpen, labels, store]);
+
+    return (
+      <span ref={anchorRef} className="relative inline-block w-full">
+        <SelectStateContext.Provider value={state}>
+          <Ariakit.SelectProvider store={store}>{children}</Ariakit.SelectProvider>
+        </SelectStateContext.Provider>
+      </span>
+    );
+  },
+  Content: ({ className, children, ...rest }) => {
+    const state = React.useContext(SelectStateContext) as
+      | (SelectState & { anchorRef: React.RefObject<HTMLSpanElement | null> })
+      | null;
+    return (
+      <ScopedPortal>
+        {(container) => (
+          <Ariakit.SelectPopover
+            portal
+            portalElement={container}
+            // Anchor to the skin's trigger wrapper, since we don't render
+            // Ariakit's own `<Select>` disclosure. `sameWidth` matches the
+            // builtin's `matchTriggerWidth`; verify prop names vs your version.
+            getAnchorRect={() => state?.anchorRef.current?.getBoundingClientRect() ?? null}
+            sameWidth
+            gutter={4}
+            role="listbox"
+            className={className}
+            data-vf-state="open"
+            {...rest}
+          >
+            {children}
+          </Ariakit.SelectPopover>
+        )}
+      </ScopedPortal>
+    );
+  },
+  // Bridge Ariakit's store value/open into the contract's SelectState; throws
+  // outside <Select> so the skin's Trigger/Value/Item fail loudly if misused.
+  useSelect: (): SelectState => {
+    const state = React.useContext(SelectStateContext);
+    if (!state) throw new Error("Select parts must be used within <Select>");
+    return state;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// Combobox (registry + filter HAND-ROLLED; Ariakit store owns the surface)
+// ---------------------------------------------------------------------------
+// See the module docstring: Ariakit's combobox drives filtering + the active-
+// descendant over its OWN `ComboboxItem` registry, which does not invert onto
+// the contract's skin-provided `registerOption`/`matches`/`activeId` registry.
+// So we hand-roll that state machine (mirroring `builtin/combobox.tsx`) and use
+// the Ariakit combobox store ONLY for the real engine surface: the input anchor,
+// open state, and the portalled, positioned `ComboboxPopover`. `store.value`
+// (Ariakit's input text) IS the contract's `query`; the committed `value` is
+// separate (Ariakit conflates them), so we track that by hand.
+interface ComboboxOption {
+  id: string;
+  value: string;
+  text: string;
+}
+
+const ComboboxStateContext = React.createContext<
+  (ComboboxState & { store: Ariakit.ComboboxStore }) | null
+>(null);
+
+function useAriakitCombobox(): ComboboxState & { store: Ariakit.ComboboxStore } {
+  const ctx = React.useContext(ComboboxStateContext);
+  if (!ctx) throw new Error("Combobox parts must be used within <Combobox>");
+  return ctx;
+}
+
+const AriakitComboboxRoot: ComboboxParts["Root"] = ({
+  children,
+  value,
+  defaultValue,
+  onValueChange,
+  open,
+  defaultOpen,
+  onOpenChange,
+  defaultInputValue,
+  onInputValueChange,
+}) => {
+  const listboxId = React.useId();
+  const optionsRef = React.useRef<ComboboxOption[]>([]);
+  const [activeId, setActiveId] = React.useState<string | undefined>(undefined);
+
+  // Ariakit combobox store: its `value` is the INPUT TEXT (our `query`); it also
+  // owns open + provides the popover surface + input anchor. Its `setValue`
+  // single-arg matches our `onInputValueChange` (text changed).
+  const store = Ariakit.useComboboxStore({
+    defaultValue: defaultInputValue,
+    setValue: (next) => onInputValueChange?.(next as string),
+    open,
+    defaultOpen,
+    setOpen: onOpenChange,
+  });
+  const query = store.useState("value") as string;
+  const isOpen = store.useState("open");
+
+  // Committed selection value is separate from the input text in our contract,
+  // but Ariakit conflates them — so track the committed value by hand.
+  const isValueControlled = value !== undefined;
+  const [internalValue, setInternalValue] = React.useState(defaultValue);
+  const currentValue = isValueControlled ? value : internalValue;
+
+  const matches = React.useCallback(
+    (text: string) => !query || text.toLowerCase().includes(query.toLowerCase()),
+    [query],
+  );
+
+  const setOpen = React.useCallback((next: boolean) => {
+    store.setOpen(next);
+    if (!next) setActiveId(undefined);
+  }, [store]);
+
+  const setQuery = React.useCallback((next: string) => {
+    store.setValue(next); // fires the store's setValue → onInputValueChange
+    setActiveId(undefined);
+    store.setOpen(true);
+  }, [store]);
+
+  const select = React.useCallback((nextValue: string, text: string) => {
+    if (!isValueControlled) setInternalValue(nextValue);
+    onValueChange?.(nextValue);
+    store.setValue(text);
+    setActiveId(undefined);
+    store.setOpen(false);
+  }, [isValueControlled, onValueChange, store]);
+
+  const registerOption = React.useCallback((id: string, value: string, text: string) => {
+    const existing = optionsRef.current.find((o) => o.id === id);
+    if (existing) {
+      existing.value = value;
+      existing.text = text;
+    } else {
+      optionsRef.current.push({ id, value, text });
+    }
+  }, []);
+  const unregisterOption = React.useCallback((id: string) => {
+    optionsRef.current = optionsRef.current.filter((o) => o.id !== id);
+  }, []);
+
+  // Keyboard nav walks the *filtered* option set (active-descendant), exactly
+  // like the builtin — Ariakit's own composite nav is inert here (no
+  // `ComboboxItem`s registered), so `preventDefault` hands control to us.
+  const onInputKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>) => {
+      const visible = optionsRef.current.filter((o) => matches(o.text));
+      const currentIndex = visible.findIndex((o) => o.id === activeId);
+      const move = (nextIndex: number) => {
+        const clamped = Math.max(0, Math.min(visible.length - 1, nextIndex));
+        setActiveId(visible[clamped]?.id);
+      };
+      switch (event.key) {
+        case "ArrowDown":
+          event.preventDefault();
+          if (!isOpen) setOpen(true);
+          else move(currentIndex + 1);
+          break;
+        case "ArrowUp":
+          event.preventDefault();
+          if (!isOpen) setOpen(true);
+          else move(currentIndex <= 0 ? 0 : currentIndex - 1);
+          break;
+        case "Home":
+          if (isOpen && visible.length) {
+            event.preventDefault();
+            move(0);
+          }
+          break;
+        case "End":
+          if (isOpen && visible.length) {
+            event.preventDefault();
+            move(visible.length - 1);
+          }
+          break;
+        case "Enter": {
+          const active = visible.find((o) => o.id === activeId);
+          if (isOpen && active) {
+            event.preventDefault();
+            select(active.value, active.text);
+          }
+          break;
+        }
+        case "Escape":
+          if (isOpen) {
+            event.preventDefault();
+            setOpen(false);
+          }
+          break;
+      }
+    },
+    [matches, activeId, isOpen, setOpen, select],
+  );
+
+  const ctx = React.useMemo(() => ({
+    query,
+    setQuery,
+    open: isOpen,
+    setOpen,
+    value: currentValue,
+    select,
+    activeId,
+    matches,
+    listboxId,
+    registerOption,
+    unregisterOption,
+    onInputKeyDown,
+    store,
+  }), [
+    query,
+    setQuery,
+    isOpen,
+    setOpen,
+    currentValue,
+    select,
+    activeId,
+    matches,
+    listboxId,
+    registerOption,
+    unregisterOption,
+    onInputKeyDown,
+    store,
+  ]);
+
+  return (
+    <ComboboxStateContext.Provider value={ctx}>
+      <Ariakit.ComboboxProvider store={store}>{children}</Ariakit.ComboboxProvider>
+    </ComboboxStateContext.Provider>
+  );
+};
+
+export const ariakitCombobox: ComboboxParts = {
+  Root: AriakitComboboxRoot,
+  // Render Ariakit's `Combobox` for the input so the store gets its anchor
+  // element (positions the popover) — but our hand-rolled state owns value,
+  // active-descendant, and keydown. `role`/`aria-controls`/`aria-activedescendant`
+  // are set explicitly; verify Ariakit doesn't re-own `aria-activedescendant`
+  // in your version (it stays undefined here since no `ComboboxItem`s register).
+  Input: ({ className, onChange, onKeyDown, ref, ...props }) => {
+    const ctx = useAriakitCombobox();
+    return (
+      <Ariakit.Combobox
+        ref={ref}
+        role="combobox"
+        aria-controls={ctx.listboxId}
+        aria-activedescendant={ctx.activeId}
+        aria-autocomplete="list"
+        autoComplete="off"
+        className={className}
+        onChange={(event) => {
+          onChange?.(event);
+          // Ariakit's store already captured the text; re-run `setQuery` with it
+          // to reset the active-descendant + keep the list open (idempotent on
+          // the store's value, so no double text write of consequence).
+          ctx.setQuery(event.target.value);
+        }}
+        onKeyDown={(event) => {
+          onKeyDown?.(event);
+          if (!event.defaultPrevented) ctx.onInputKeyDown(event);
+        }}
+        {...props}
+      />
+    );
+  },
+  Content: ({ className, children, ...rest }) => {
+    const ctx = useAriakitCombobox();
+    return (
+      <ScopedPortal>
+        {(container) => (
+          <Ariakit.ComboboxPopover
+            store={ctx.store}
+            portal
+            portalElement={container}
+            sameWidth
+            gutter={4}
+            role="listbox"
+            id={ctx.listboxId}
+            className={className}
+            data-vf-state="open"
+            {...rest}
+          >
+            {children}
+          </Ariakit.ComboboxPopover>
+        )}
+      </ScopedPortal>
+    );
+  },
+  useCombobox: useAriakitCombobox as () => ComboboxState,
+};
+
 /**
- * Partial adapter map — adopt Ariakit for popover + dialog + menu + tooltip,
- * keep select / combobox / toast zero-dependency (builtin). Extend as you
- * vendor more parts.
+ * Partial adapter map — adopt Ariakit for popover + dialog + menu + tooltip +
+ * select + combobox (6/7). `toast` is intentionally ABSENT: Ariakit ships no
+ * toast primitive, so it falls back to the zero-dependency builtin toast. Extend
+ * as you vendor more parts.
  */
 export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   name: "ariakit",
@@ -282,4 +637,8 @@ export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   dialog: ariakitDialog,
   menu: ariakitMenu,
   tooltip: ariakitTooltip,
+  select: ariakitSelect,
+  combobox: ariakitCombobox,
+  // toast: intentionally omitted — Ariakit has no toast primitive; provider
+  // falls back to builtin toast.
 };
