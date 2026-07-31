@@ -34,6 +34,44 @@ function createSseResponse(
   );
 }
 
+function createCompletedDurableRunCanaryApiClient(conversationId: string): {
+  apiClient: DurableRunCanaryApiClient;
+  createdRunIds: string[];
+} {
+  const createdRunIds: string[] = [];
+
+  return {
+    createdRunIds,
+    apiClient: {
+      createDurableRootRun: async ({ runId }) => {
+        createdRunIds.push(runId);
+      },
+      getRunSummary: async ({ runId }) => ({
+        runId,
+        conversationId,
+        messageId: "22222222-2222-4222-8222-222222222222",
+        agentId: "veryfront",
+        status: "completed",
+        latestEventId: 1,
+        latestExternalEventSequence: null,
+        waitingToolCallId: null,
+        waitingToolName: null,
+        terminalErrorCode: null,
+        terminalErrorMessage: null,
+        startedAt: "2026-07-05T19:00:00.000Z",
+        finishedAt: "2026-07-05T19:00:01.000Z",
+      }),
+      listMessagesForCanary: async () => [],
+      sendUserMessageForCanary: async () => ({
+        id: "33333333-3333-4333-8333-333333333333",
+        role: "user",
+        parts: [],
+      }),
+      startDurableRun: async () => {},
+    },
+  };
+}
+
 describe("eval/agent-service", () => {
   it("resolves environment values for agent-service evals", () => {
     const environment = resolveAgentServiceEvalEnvironment({
@@ -577,6 +615,79 @@ describe("eval/agent-service", () => {
     assertEquals(prepared.conversationId, "11111111-1111-4111-8111-111111111111");
     assertStringIncludes(prepared.prompt, "TOKEN_GROWTH_TEST_MARKER");
     assertStringIncludes(prepared.followUpPrompt ?? "", "TOKEN_GROWTH_TEST_MARKER");
+  });
+
+  it("retains ordered run identities for a two-prompt durable canary", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(conversationId);
+    let validationRunIds: string[] = [];
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "two-prompt",
+      label: "Two prompt",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        followUpPrompt: "follow up",
+        prompt: "initial",
+        title: "Two prompt",
+        validate: ({ executions }) => {
+          validationRunIds = executions.map(({ runId }) => runId);
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 2);
+    assertEquals(result.runIds, createdRunIds);
+    assertEquals(validationRunIds, createdRunIds);
+    assertEquals(result.runId, createdRunIds[1]);
+  });
+
+  it("reports exactly one run identity for a one-prompt durable canary", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const { apiClient, createdRunIds } = createCompletedDurableRunCanaryApiClient(conversationId);
+    let validationRunIds: string[] = [];
+    const runner = createDurableRunCanaryRunner(
+      {
+        agentId: "veryfront",
+        apiUrl: "https://api.example.test",
+        authToken: "token",
+        keepSuccessfulEvidence: false,
+        projectId: "project_123",
+        requestTimeoutMs: 1_000,
+      },
+      apiClient,
+    );
+
+    const result = await runner.runCase({
+      id: "one-prompt",
+      label: "One prompt",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        prompt: "initial",
+        title: "One prompt",
+        validate: ({ executions }) => {
+          validationRunIds = executions.map(({ runId }) => runId);
+        },
+      }),
+    });
+
+    assertEquals(createdRunIds.length, 1);
+    assertEquals(result.runIds, createdRunIds);
+    assertEquals(validationRunIds, createdRunIds);
+    assertEquals(result.runId, createdRunIds[0]);
   });
 
   it("fails a follow-up durable canary when its setup run fails", async () => {
