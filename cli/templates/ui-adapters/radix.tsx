@@ -15,12 +15,12 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so this adapter adopts
- * Radix for eight slots — the four floating overlays (popover / dialog / menu /
- * tooltip) plus select, toast, the inline disclosure, and the toggle group.
- * Coverage: 8/9 (popover / dialog / menu / tooltip / select / toast /
- * disclosure / toggleGroup; combobox stays builtin — Radix has NO combobox
- * primitive, so there is nothing to map it onto). Extend the map as you vendor
- * more parts.
+ * Radix for nine slots — the four floating overlays (popover / dialog / menu /
+ * tooltip) plus select, toast, the inline disclosure, the toggle group, and the
+ * toolbar. Coverage: 9/10 (popover / dialog / menu / tooltip / select / toast /
+ * disclosure / toggleGroup / toolbar; combobox stays builtin — Radix has NO
+ * combobox primitive, so there is nothing to map it onto). Extend the map as you
+ * vendor more parts.
  *
  * How Radix maps onto the contract (the fault lines from RFC 0001 §13.2):
  *   1. `onOpenChange` is ALREADY single-arg `(open: boolean) => void` in Radix —
@@ -68,6 +68,7 @@ import * as Select from "@radix-ui/react-select";
 import * as Toast from "@radix-ui/react-toast";
 import * as Collapsible from "@radix-ui/react-collapsible";
 import * as ToggleGroup from "@radix-ui/react-toggle-group";
+import * as Toolbar from "@radix-ui/react-toolbar";
 import { cx, useTokenScope } from "veryfront/ui";
 import type {
   DialogParts,
@@ -82,6 +83,7 @@ import type {
   ToastParts,
   ToastState,
   ToggleGroupParts,
+  ToolbarParts,
   TooltipParts,
   TooltipSide,
   UIAdapter,
@@ -355,6 +357,31 @@ export const radixToggleGroup: ToggleGroupParts = {
     <ToggleGroup.Item value={value} asChild={asChild} {...rest}>
       {children}
     </ToggleGroup.Item>
+  ),
+};
+
+// ---------------------------------------------------------------------------
+// Toolbar (roving-tabindex container — inline, NOT portalled)
+// ---------------------------------------------------------------------------
+export const radixToolbar: ToolbarParts = {
+  // Radix's `Toolbar.Root` owns the roving-tabindex focus machine and emits
+  // `role="toolbar"` itself, so Root maps `orientation` straight onto it and lets
+  // the wrapper `div` attrs + `className` flow through via `...rest`. Inline
+  // region, so no `ScopedPortal` — the toolbar renders in the token scope in place.
+  Root: ({ orientation = "horizontal", children, ...rest }) => (
+    <Toolbar.Root orientation={orientation} {...rest}>
+      {children}
+    </Toolbar.Root>
+  ),
+  // `Toolbar.Button` is the engine's roving-focus stop — Radix's Toolbar governs
+  // it. (4) `asChild` is native Radix, so ToolbarLink's `<a>` child is merged and
+  // roved just like a button. The Item carries no visual classes of its own —
+  // `className` (and the rest of the button attrs) arrive via `...rest` from the
+  // skin.
+  Item: ({ asChild, children, ...rest }) => (
+    <Toolbar.Button asChild={asChild} {...rest}>
+      {children}
+    </Toolbar.Button>
   ),
 };
 
@@ -638,11 +665,11 @@ function RadixToastItem(
 }
 
 /**
- * Partial adapter map — adopt Radix for eight slots (four floating overlays +
- * select + toast + the inline disclosure + the toggle group). Combobox is
- * deliberately ABSENT: Radix has no combobox primitive, so that key falls
- * through to the zero-dependency builtin via the partial-map merge. Extend as
- * you vendor more parts.
+ * Partial adapter map — adopt Radix for nine slots (four floating overlays +
+ * select + toast + the inline disclosure + the toggle group + the toolbar).
+ * Combobox is deliberately ABSENT: Radix has no combobox primitive, so that key
+ * falls through to the zero-dependency builtin via the partial-map merge. Extend
+ * as you vendor more parts.
  */
 export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   name: "radix",
@@ -654,6 +681,7 @@ export const radixAdapter: Partial<UIAdapter> & { name: string } = {
   toast: radixToast,
   disclosure: radixDisclosure,
   toggleGroup: radixToggleGroup,
+  toolbar: radixToolbar,
   // combobox: intentionally omitted — Radix ships no combobox primitive; the
   // builtin combobox stays in force through the partial-map merge.
 };

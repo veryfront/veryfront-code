@@ -100,6 +100,30 @@ export interface ToggleGroupParts {
   >;
 }
 
+/**
+ * Role-tagged slots an adapter provides for the Toolbar primitive — a
+ * `role="toolbar"` container sharing one tab stop, with roving-tabindex arrow-key
+ * navigation over its items. The Root owns the roving mechanics; each Item
+ * registers as a roving stop (engines rove their own item components, so the skin
+ * routes its buttons/links through `Item`). Separators stay pure skin.
+ */
+export interface ToolbarParts {
+  /** Owns roving focus + `role="toolbar"`; renders the wrapper node. */
+  Root: React.FC<
+    & React.HTMLAttributes<HTMLDivElement>
+    & {
+      orientation?: "horizontal" | "vertical";
+      children: React.ReactNode;
+      ref?: React.Ref<HTMLDivElement>;
+    }
+  >;
+  /** A roving-focus stop (a button, or the consumer's element via `asChild`). */
+  Item: React.FC<
+    & React.ButtonHTMLAttributes<HTMLButtonElement>
+    & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
+  >;
+}
+
 /** Open/close state a modal skin part (e.g. a Cancel button) can read. */
 export interface ModalState {
   open: boolean;
@@ -309,6 +333,7 @@ export interface UIAdapter {
   toast: ToastParts;
   disclosure: DisclosureParts;
   toggleGroup: ToggleGroupParts;
+  toolbar: ToolbarParts;
 }
 
 /**

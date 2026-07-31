@@ -22,6 +22,7 @@
  */
 import * as React from "react";
 import { cva, cx as cn } from "./cva.ts";
+import { useAdapter } from "./adapter/context.tsx";
 
 export const toolbarVariants = cva(
   "inline-flex gap-1 rounded-md border border-[var(--border)] bg-[var(--background)] p-1",
@@ -36,18 +37,6 @@ export const toolbarVariants = cva(
   },
 );
 
-/** All focusable items the toolbar governs, in DOM order. */
-function toolbarItems(root: HTMLElement): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
-}
-
-/** Toolbar items that can currently take focus (not disabled). */
-function enabledItems(root: HTMLElement): HTMLElement[] {
-  return toolbarItems(root).filter(
-    (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
-  );
-}
-
 /** Props accepted by `<Toolbar>`. */
 export interface ToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Layout + arrow-key axis. `horizontal` uses Left/Right; `vertical` uses Up/Down. @default "horizontal" */
@@ -56,75 +45,23 @@ export interface ToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** A container that groups controls behind one tab stop with roving focus. */
-export function Toolbar({
-  orientation = "horizontal",
-  className,
-  children,
-  onKeyDown,
-  ref,
-  ...props
-}: ToolbarProps): React.ReactElement {
-  const innerRef = React.useRef<HTMLDivElement | null>(null);
-
-  const setRef = React.useCallback((node: HTMLDivElement | null) => {
-    innerRef.current = node;
-    if (typeof ref === "function") ref(node);
-    else if (ref) (ref as React.RefObject<HTMLDivElement | null>).current = node;
-  }, [ref]);
-
-  // Roving tabindex: exactly one item (the first enabled) is tabbable; re-run on
-  // every render so the resting state survives item add/remove/enable changes.
-  React.useLayoutEffect(() => {
-    const root = innerRef.current;
-    if (!root) return;
-    const items = enabledItems(root);
-    items.forEach((el, i) => {
-      el.tabIndex = i === 0 ? 0 : -1;
-    });
-  });
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    onKeyDown?.(event);
-    if (event.defaultPrevented) return;
-    const root = innerRef.current;
-    if (!root) return;
-    const items = enabledItems(root);
-    if (items.length === 0) return;
-
-    const nextKey = orientation === "vertical" ? "ArrowDown" : "ArrowRight";
-    const prevKey = orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
-    const current = items.indexOf(root.ownerDocument.activeElement as HTMLElement);
-
-    let nextIndex: number;
-    if (event.key === nextKey) nextIndex = current < 0 ? 0 : (current + 1) % items.length;
-    else if (event.key === prevKey) {
-      nextIndex = current < 0 ? 0 : (current - 1 + items.length) % items.length;
-    } else if (event.key === "Home") nextIndex = 0;
-    else if (event.key === "End") nextIndex = items.length - 1;
-    else return;
-
-    event.preventDefault();
-    const next = items[nextIndex];
-    if (!next) return;
-    items.forEach((el) => {
-      el.tabIndex = el === next ? 0 : -1;
-    });
-    next.focus();
-  };
-
+/**
+ * A container that groups controls behind one tab stop with roving focus. The
+ * roving MECHANICS come from the active adapter's `toolbar` slot
+ * (`useAdapter().toolbar`) — builtin by default, swappable via `UIAdapterProvider`.
+ */
+export function Toolbar(
+  { orientation = "horizontal", className, children, ...props }: ToolbarProps,
+): React.ReactElement {
+  const { toolbar } = useAdapter();
   return (
-    <div
-      ref={setRef}
-      role="toolbar"
-      aria-orientation={orientation}
-      data-orientation={orientation}
-      onKeyDown={handleKeyDown}
+    <toolbar.Root
+      orientation={orientation}
       className={cn(toolbarVariants({ orientation }), className)}
       {...props}
     >
       {children}
-    </div>
+    </toolbar.Root>
   );
 }
 
@@ -135,16 +72,10 @@ export interface ToolbarButtonProps extends React.ButtonHTMLAttributes<HTMLButto
 }
 
 /** A ghost icon button that participates in the toolbar's roving focus. */
-export function ToolbarButton({
-  className,
-  ref,
-  ...props
-}: ToolbarButtonProps): React.ReactElement {
+export function ToolbarButton({ className, ...props }: ToolbarButtonProps): React.ReactElement {
+  const { toolbar } = useAdapter();
   return (
-    <button
-      ref={ref}
-      type="button"
-      data-toolbar-item=""
+    <toolbar.Item
       className={cn(
         "inline-flex h-8 min-w-8 items-center justify-center rounded-sm px-2 text-sm",
         "text-[var(--foreground)] transition-colors",
@@ -166,15 +97,11 @@ export interface ToolbarLinkProps extends React.AnchorHTMLAttributes<HTMLAnchorE
 }
 
 /** An anchor styled like a {@link ToolbarButton} that joins the roving focus. */
-export function ToolbarLink({
-  className,
-  ref,
-  ...props
-}: ToolbarLinkProps): React.ReactElement {
+export function ToolbarLink({ className, ...props }: ToolbarLinkProps): React.ReactElement {
+  const { toolbar } = useAdapter();
   return (
-    <a
-      ref={ref}
-      data-toolbar-item=""
+    <toolbar.Item
+      asChild
       className={cn(
         "inline-flex h-8 min-w-8 items-center justify-center rounded-sm px-2 text-sm",
         "text-[var(--foreground)] no-underline transition-colors",
@@ -183,8 +110,9 @@ export function ToolbarLink({
         "[&_svg]:size-4 [&_svg]:shrink-0",
         className,
       )}
-      {...props}
-    />
+    >
+      <a {...props} />
+    </toolbar.Item>
   );
 }
 

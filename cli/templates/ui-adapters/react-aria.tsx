@@ -16,11 +16,13 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt React
  * Aria for just some parts and leave the rest zero-dependency. This template is
- * **full coverage — 9/9**: `popover` / `dialog` / `menu` / `tooltip` /
- * `disclosure` / `toggleGroup` / `select` / `combobox` / `toast`, all mapped onto
- * `react-aria-components`. No slot falls back to the builtin. `toggleGroup` maps
- * onto RAC's `ToggleButtonGroup` / `ToggleButton` (bridging the contract's
- * `type`/string `value` onto RAC's `selectionMode`/`Set` selection). `disclosure`
+ * **full coverage — 10/10**: `popover` / `dialog` / `menu` / `tooltip` /
+ * `disclosure` / `toggleGroup` / `toolbar` / `select` / `combobox` / `toast`, all
+ * mapped onto `react-aria-components`. No slot falls back to the builtin.
+ * `toggleGroup` maps onto RAC's `ToggleButtonGroup` / `ToggleButton` (bridging the
+ * contract's `type`/string `value` onto RAC's `selectionMode`/`Set` selection).
+ * `toolbar` maps onto RAC's inline `Toolbar`, which roves its own focusable
+ * children (`role="toolbar"`, arrow-key nav, one tab stop). `disclosure`
  * is
  * RAC's inline `Disclosure`/`DisclosurePanel` (the overlay disclosure minus the
  * portal). `combobox` (and, for the same reason, `select`) is a
@@ -103,6 +105,10 @@ import {
   // installed react-aria-components version.
   ToggleButton,
   ToggleButtonGroup,
+  // `Toolbar` owns roving-tabindex focus (`role="toolbar"`, arrow-key nav, one
+  // shared tab stop) over its focusable children — verify the name (and the
+  // `orientation` prop) vs your react-aria-components version.
+  Toolbar,
   Tooltip,
   TooltipTrigger,
   // RAC's toast primitives are newer/unstable and ship `UNSTABLE_`-prefixed —
@@ -132,6 +138,7 @@ import type {
   ToastParts,
   ToastState,
   ToggleGroupParts,
+  ToolbarParts,
   TooltipParts,
   UIAdapter,
 } from "veryfront/ui";
@@ -500,6 +507,33 @@ export const reactAriaToggleGroup: ToggleGroupParts = {
       </ToggleButton>
     );
   },
+};
+
+// ---------------------------------------------------------------------------
+// Toolbar (roving-tabindex — one tab stop, arrow-key nav over its items)
+// ---------------------------------------------------------------------------
+// RAC's `Toolbar` owns the roving-tabindex mechanics (`role="toolbar"`,
+// arrow-key navigation, Home/End, one shared tab stop) over its focusable
+// children, so the skin just routes its buttons/links through `Item` and RAC
+// roves them. A Toolbar is inline (no anchored surface), so there is NO
+// `ScopedPortal` here. Two mappings the contract forces:
+//   1. `orientation` maps straight through to `Toolbar`; our `className` arrives
+//      via `...rest` (the adapter adds no visual classes).
+//   2. `asChild` renders the consumer's element inside RAC's `Pressable` (React
+//      Aria owns the press/focus wiring, cf. reconciliation (4)), so RAC roves
+//      the consumer's node — the path ToolbarLink → `<a>` takes. Otherwise a RAC
+//      `Button` is the roving stop.
+export const reactAriaToolbar: ToolbarParts = {
+  // verify the `orientation` prop vs your react-aria-components version.
+  Root: ({ orientation = "horizontal", children, ...rest }) => (
+    <Toolbar orientation={orientation} {...rest}>
+      {children}
+    </Toolbar>
+  ),
+  Item: ({ asChild, children, ...rest }) =>
+    asChild
+      ? <Pressable>{React.cloneElement(children as React.ReactElement, rest)}</Pressable>
+      : <Button {...rest}>{children}</Button>,
 };
 
 // ---------------------------------------------------------------------------
@@ -1024,14 +1058,16 @@ export const reactAriaToast: ToastParts = {
 };
 
 /**
- * FULL adapter map — React Aria for all 9 primitives: popover + dialog + menu +
- * tooltip + disclosure + toggleGroup + select + combobox + toast. No slot falls
- * back to the builtin. `disclosure` maps onto RAC's inline
+ * FULL adapter map — React Aria for all 10 primitives: popover + dialog + menu +
+ * tooltip + disclosure + toggleGroup + toolbar + select + combobox + toast. No
+ * slot falls back to the builtin. `disclosure` maps onto RAC's inline
  * `Disclosure`/`DisclosurePanel` (no portal); `toggleGroup` bridges the contract's
  * `type`/string `value` onto RAC's `ToggleButtonGroup` `selectionMode`/`Set`
- * selection; `select` + `combobox` bridge their state locally (RAC's collection
- * primitives don't invert onto the skin-driven registry — reconciliation (5));
- * `toast` maps straight onto RAC's imperative `ToastQueue` (reconciliation (6)).
+ * selection; `toolbar` maps onto RAC's inline `Toolbar` (it roves its own
+ * focusable children); `select` + `combobox` bridge their state locally (RAC's
+ * collection primitives don't invert onto the skin-driven registry —
+ * reconciliation (5)); `toast` maps straight onto RAC's imperative `ToastQueue`
+ * (reconciliation (6)).
  */
 export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   name: "react-aria",
@@ -1041,6 +1077,7 @@ export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   tooltip: reactAriaTooltip,
   disclosure: reactAriaDisclosure,
   toggleGroup: reactAriaToggleGroup,
+  toolbar: reactAriaToolbar,
   select: reactAriaSelect,
   combobox: reactAriaCombobox,
   toast: reactAriaToast,

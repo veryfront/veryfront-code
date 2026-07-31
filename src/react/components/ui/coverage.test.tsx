@@ -145,7 +145,13 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "DatePicker", kind: "overlay", interactive: true, status: "shipped" },
   { name: "AlertDialog", kind: "overlay", interactive: true, status: "shipped" },
   { name: "NavigationMenu", kind: "overlay", interactive: true, status: "shipped" },
-  { name: "Toolbar", kind: "structure", interactive: true, status: "shipped" },
+  {
+    name: "Toolbar",
+    kind: "structure",
+    interactive: true,
+    adapterKey: "toolbar",
+    status: "shipped",
+  },
   { name: "Breadcrumb", kind: "structure", interactive: false, status: "shipped" },
   { name: "Pagination", kind: "structure", interactive: false, status: "shipped" },
   { name: "ScrollArea", kind: "structure", interactive: false, status: "shipped" },
@@ -525,6 +531,7 @@ const ALL_SLOTS = [
   "toast",
   "disclosure",
   "toggleGroup",
+  "toolbar",
 ] as const;
 type Slot = typeof ALL_SLOTS[number];
 
@@ -550,7 +557,17 @@ const UI_ENGINES: EngineRow[] = [
   {
     name: "Radix",
     template: "radix.tsx",
-    slots: ["popover", "dialog", "menu", "tooltip", "select", "toast", "disclosure", "toggleGroup"],
+    slots: [
+      "popover",
+      "dialog",
+      "menu",
+      "tooltip",
+      "select",
+      "toast",
+      "disclosure",
+      "toggleGroup",
+      "toolbar",
+    ],
     builtinFallback: ["combobox"], // Radix has no combobox primitive
     status: "shipped",
   },
@@ -564,7 +581,7 @@ const UI_ENGINES: EngineRow[] = [
   {
     name: "Ariakit",
     template: "ariakit.tsx",
-    slots: ["popover", "dialog", "menu", "tooltip", "select", "combobox", "disclosure"],
+    slots: ["popover", "dialog", "menu", "tooltip", "select", "combobox", "disclosure", "toolbar"],
     // Ariakit ships no toast and no dedicated toggle-group primitive.
     builtinFallback: ["toast", "toggleGroup"],
     status: "shipped",

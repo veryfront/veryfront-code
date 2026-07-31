@@ -15,6 +15,7 @@ import { builtinCombobox } from "./combobox.tsx";
 import { builtinToast } from "./toast.tsx";
 import { builtinDisclosure } from "./disclosure.tsx";
 import { builtinToggleGroup } from "./toggle-group.tsx";
+import { builtinToolbar } from "./toolbar.tsx";
 
 export const builtinAdapter: UIAdapter = {
   name: "builtin",
@@ -27,4 +28,5 @@ export const builtinAdapter: UIAdapter = {
   toast: builtinToast,
   disclosure: builtinDisclosure,
   toggleGroup: builtinToggleGroup,
+  toolbar: builtinToolbar,
 };

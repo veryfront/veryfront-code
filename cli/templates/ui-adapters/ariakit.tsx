@@ -14,12 +14,13 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Ariakit
- * for just some parts and leave the rest zero-dependency. Slot coverage: 7/8 —
+ * for just some parts and leave the rest zero-dependency. Slot coverage: 8/10 —
  * `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
- * `disclosure` map to Ariakit; `toast` STAYS builtin because Ariakit ships NO
- * toast primitive (no toast store / region / queue). Don't hand-roll one here —
- * the zero-dependency builtin toast already satisfies `ToastParts`, so leaving
- * `toast` unset lets the provider fall back to it.
+ * `disclosure` / `toolbar` map to Ariakit; `toast` and `toggleGroup` STAY
+ * builtin because Ariakit ships NO toast primitive (no toast store / region /
+ * queue) and no dedicated toggle-group primitive. Don't hand-roll them here —
+ * the zero-dependency builtins already satisfy `ToastParts` / `ToggleGroupParts`,
+ * so leaving those unset lets the provider fall back to them.
  *
  * Ariakit is STORE-based: each primitive is `useXStore(...)` → an imperative
  * store shared via `<XProvider store={store}>`, with role components (`Popover`,
@@ -68,6 +69,7 @@ import type {
   PopoverParts,
   SelectParts,
   SelectState,
+  ToolbarParts,
   TooltipParts,
   UIAdapter,
 } from "veryfront/ui";
@@ -698,10 +700,42 @@ export const ariakitDisclosure: DisclosureParts = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Toolbar (roving-tabindex composite — Ariakit's toolbar store owns the roving)
+// ---------------------------------------------------------------------------
+// Ariakit's `useToolbarStore` owns the roving-tabindex composite (one shared tab
+// stop, arrow-key nav, Home/End) and `Toolbar` renders the `role="toolbar"`
+// wrapper; each `ToolbarItem` registers itself as a roving stop with the store
+// it reads from context. This maps cleanly onto the contract: Root builds the
+// store (mapping `orientation`) + renders `Toolbar`; Item is a `ToolbarItem`
+// whose polymorphic `render` handles `asChild`. Inline, NOT portalled — no
+// `ScopedPortal`. `className` + the rest of the skin's props ride through
+// `...rest`; separators stay pure skin (not routed through `Item`).
+export const ariakitToolbar: ToolbarParts = {
+  Root: ({ orientation = "horizontal", children, ref, ...rest }) => {
+    // `orientation` is a toolbar store option; verify vs your @ariakit/react
+    // version (in some releases it's instead a prop on <Toolbar>).
+    const store = Ariakit.useToolbarStore({ orientation });
+    return (
+      <Ariakit.Toolbar ref={ref} store={store} {...rest}>
+        {children}
+      </Ariakit.Toolbar>
+    );
+  },
+  // `ToolbarItem` registers as a roving stop with the toolbar store from
+  // context (the engine's roving governs it). `asChild` maps to Ariakit's
+  // polymorphic `render={children}` (used by ToolbarLink → <a>); otherwise it
+  // renders a button. No visual classes — those arrive via `...rest`.
+  Item: ({ asChild, children, ref, ...rest }) =>
+    asChild
+      ? <Ariakit.ToolbarItem ref={ref} render={children as React.ReactElement} {...rest} />
+      : <Ariakit.ToolbarItem ref={ref} {...rest}>{children}</Ariakit.ToolbarItem>,
+};
+
 /**
  * Partial adapter map — adopt Ariakit for popover + dialog + menu + tooltip +
- * select + combobox + disclosure (7/9). `toast` and `toggleGroup` are
- * intentionally ABSENT: Ariakit ships no toast primitive and no dedicated
+ * select + combobox + disclosure + toolbar (8/10). `toast` and `toggleGroup`
+ * are intentionally ABSENT: Ariakit ships no toast primitive and no dedicated
  * toggle-group primitive, so both fall back to the zero-dependency builtin.
  * Extend as you vendor more parts.
  */
@@ -714,6 +748,7 @@ export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   select: ariakitSelect,
   combobox: ariakitCombobox,
   disclosure: ariakitDisclosure,
+  toolbar: ariakitToolbar,
   // toast: intentionally omitted — Ariakit has no toast primitive; falls back
   // to builtin toast.
   // toggleGroup: intentionally omitted — Ariakit has no dedicated toggle-group

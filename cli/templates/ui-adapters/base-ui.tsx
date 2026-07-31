@@ -15,8 +15,8 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Base UI
  * for just some parts and leave the rest zero-dependency. This template maps ALL
- * 9/9 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
- * `toast` / `disclosure` / `toggleGroup`. Eight wrap real Base UI primitives; `combobox` is a contract-faithful,
+ * 10/10 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
+ * `toast` / `disclosure` / `toggleGroup` / `toolbar`. Nine wrap real Base UI primitives; `combobox` is a contract-faithful,
  * React-only hand-roll — Base UI's `Autocomplete` is data-driven (owns its own
  * `items` + filtering) and does NOT invert onto our `register`/`matches`/
  * `activeId` option registry, so that one slot owns query + filter + active-
@@ -43,6 +43,7 @@ import { Select as BaseSelect } from "@base-ui/react/select";
 import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Collapsible as BaseCollapsible } from "@base-ui/react/collapsible";
 import { Toggle as BaseToggle, ToggleGroup as BaseToggleGroup } from "@base-ui/react/toggle-group";
+import { Toolbar as BaseToolbar } from "@base-ui/react/toolbar";
 import { useTokenScope } from "veryfront/ui";
 import type {
   ComboboxParts,
@@ -59,6 +60,7 @@ import type {
   ToastParts,
   ToastState,
   ToggleGroupParts,
+  ToolbarParts,
   TooltipParts,
   UIAdapter,
 } from "veryfront/ui";
@@ -947,13 +949,37 @@ export const baseUiToggleGroup: ToggleGroupParts = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Toolbar (roving-tabindex — one tab stop, arrow-key nav over its items)
+// ---------------------------------------------------------------------------
+// Base UI's Toolbar owns the roving-tabindex mechanics (`role="toolbar"`,
+// arrow-key navigation, Home/End, one shared tab stop) via `Toolbar.Root`
+// (`orientation`) + `Toolbar.Button` (each a roving focus stop). A Toolbar is
+// inline (no portal / positioning), so there is NO `ScopedPortal` here.
+// Two mappings the contract forces:
+//   1. `orientation` maps straight through to `Toolbar.Root`; our `className`
+//      arrives via `...rest` (no visual classes are added by the adapter).
+//   2. `asChild` merges onto the consumer's element via Base UI's `render` prop
+//      (used by ToolbarLink → `<a>`), so the engine roves the consumer's node.
+export const baseUiToolbar: ToolbarParts = {
+  Root: ({ orientation = "horizontal", children, ...rest }) => (
+    <BaseToolbar.Root orientation={orientation} {...rest}>
+      {children}
+    </BaseToolbar.Root>
+  ),
+  Item: ({ asChild, children, ...rest }) =>
+    asChild
+      ? <BaseToolbar.Button render={children as React.ReactElement} {...rest} />
+      : <BaseToolbar.Button {...rest}>{children}</BaseToolbar.Button>,
+};
+
 /**
- * Partial adapter map — Base UI covers ALL 9/9 parts: popover + dialog + menu +
- * tooltip + select + combobox + toast + disclosure + toggleGroup. `combobox` is
- * a contract-faithful, React-only hand-roll (Base UI's data-driven `Autocomplete`
- * doesn't invert onto our `register`/`matches`/`activeId` registry — see the
- * Combobox section); the rest wrap real Base UI primitives. Drop any key to fall
- * back to the builtin.
+ * Partial adapter map — Base UI covers ALL 10/10 parts: popover + dialog + menu +
+ * tooltip + select + combobox + toast + disclosure + toggleGroup + toolbar.
+ * `combobox` is a contract-faithful, React-only hand-roll (Base UI's data-driven
+ * `Autocomplete` doesn't invert onto our `register`/`matches`/`activeId` registry
+ * — see the Combobox section); the rest wrap real Base UI primitives. Drop any
+ * key to fall back to the builtin.
  */
 export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   name: "base-ui",
@@ -966,4 +992,5 @@ export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   toast: baseUiToast,
   disclosure: baseUiDisclosure,
   toggleGroup: baseUiToggleGroup,
+  toolbar: baseUiToolbar,
 };
