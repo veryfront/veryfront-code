@@ -136,6 +136,24 @@ function identityResponse(): Response {
   return Response.json({ id: "user-1", email: "dev@example.com" });
 }
 
+/**
+ * Fetch stub for the cases whose only legitimate call is the auth check.
+ *
+ * Everything else rejects: with Deploy Execution injected, up should reach the
+ * network for nothing but `GET /me`, and a stub that answers anything would
+ * hide the day up starts calling the control plane again.
+ */
+function authCheckOnlyFetch(): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/me") {
+      return Promise.resolve(identityResponse());
+    }
+    throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+  }) as typeof fetch;
+}
+
 async function createLinkedProjectDir(): Promise<string> {
   const projectDir = await Deno.makeTempDir();
   await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
@@ -252,7 +270,7 @@ describe("Up Command", () => {
 
         const { result: exitCode, output } = await captureLog(() =>
           withMockFetch(
-            () => Promise.resolve(identityResponse()),
+            authCheckOnlyFetch(),
             () => captureExit(() => upCommand({ projectDir: tempDir }, env, { deployProject })),
           )
         );
@@ -284,7 +302,7 @@ describe("Up Command", () => {
         setNonInteractive(true);
         const { output } = await captureLog(() =>
           withMockFetch(
-            () => Promise.resolve(identityResponse()),
+            authCheckOnlyFetch(),
             () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
           )
         );
@@ -323,7 +341,7 @@ describe("Up Command", () => {
         setNonInteractive(true);
         const { output } = await captureLog(() =>
           withMockFetch(
-            () => Promise.resolve(identityResponse()),
+            authCheckOnlyFetch(),
             () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
           )
         );
@@ -357,7 +375,7 @@ describe("Up Command", () => {
         setNonInteractive(true);
         const { output } = await captureLog(() =>
           withMockFetch(
-            () => Promise.resolve(identityResponse()),
+            authCheckOnlyFetch(),
             () =>
               upCommand({ projectDir, dryRun: true }, authenticatedEnv(projectDir), {
                 deployProject,
@@ -400,7 +418,7 @@ describe("Up Command", () => {
         setNonInteractive(true);
         const { output } = await captureLog(() =>
           withMockFetch(
-            () => Promise.resolve(identityResponse()),
+            authCheckOnlyFetch(),
             () =>
               upCommand({ projectDir, dryRun: true }, authenticatedEnv(projectDir), {
                 deployProject,
@@ -578,7 +596,7 @@ describe("Up Command", () => {
         await captureLog(async () => {
           try {
             await withMockFetch(
-              () => Promise.resolve(identityResponse()),
+              authCheckOnlyFetch(),
               () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
             );
           } catch (error) {

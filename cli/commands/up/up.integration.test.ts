@@ -13,7 +13,10 @@ import {
 } from "#veryfront/compat/fs.ts";
 import { upCommand } from "./index.ts";
 import { createDeployProject } from "../../shared/deployment/deploy-project.ts";
-import type { DeployEnvironment } from "../../shared/deployment/control-plane.ts";
+import type {
+  DeployEnvironment,
+  DeployReleaseFile,
+} from "../../shared/deployment/control-plane.ts";
 import {
   commitProject,
   CONTROL_PLANE,
@@ -191,7 +194,10 @@ class PreviewControlPlane extends InMemoryDeployControlPlane {
     return environment ? { ...environment, domains: [PREVIEW_DOMAIN] } : environment;
   }
 
-  override async *listReleaseFiles() {
+  override async *listReleaseFiles(
+    _reference: string,
+    _releaseId: string,
+  ): AsyncIterable<DeployReleaseFile> {
     for (const [path, content] of this.pushedFiles) yield { path, content };
   }
 }
@@ -296,10 +302,10 @@ async function runUp(options: UpRunOptions = {}): Promise<UpRun> {
             ? Response.json({ id: "branch-1", name: "main", projectId: PROJECT_ID })
             : Response.json({ data: [], page_info: {} });
         }
-        return Response.json(
-          { message: `unstubbed ${request.method} ${url.pathname}` },
-          { status: 404 },
-        );
+        // Fail closed: a 404 here would be read as a transient status and
+        // retried until the readiness deadline, turning an unexpected call
+        // into a timeout instead of naming it.
+        throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
       }, () =>
         upCommand({ projectDir, dryRun }, undefined, {
           deployProject: createDeployProject({
