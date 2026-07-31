@@ -12,9 +12,6 @@ import {
   type HostedServiceAuthFetch,
   type HostedServiceJwtVerifier,
 } from "./auth.ts";
-import apiRunEventWriterContract from "../../../tests/fixtures/contracts/api-run-event-writer-jwt-payload.json" with {
-  type: "json",
-};
 
 type JwtFixture = {
   token: string;
@@ -53,13 +50,6 @@ function decodeBase64UrlBytes(input: string): Uint8Array<ArrayBuffer> {
 
 function encodeJsonBase64Url(value: Record<string, unknown>): string {
   return encodeBase64Url(JSON.stringify(value));
-}
-
-async function sha256(value: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return Array.from(new Uint8Array(digest))
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
 }
 
 function spkiDerToPem(der: ArrayBuffer): string {
@@ -237,25 +227,16 @@ describe("agent/agent-service-auth", () => {
     assertEquals(result.token, fixture.token);
   });
 
-  it("accepts the API-minted dedicated writer contract for exactly one project and run", async () => {
-    assertEquals(
-      apiRunEventWriterContract.contractId,
-      "veryfront.run-event-writer.jwt-payload.v1",
-    );
-    assertEquals(apiRunEventWriterContract.serviceIdentity, "veryfront-server");
-    assertEquals(
-      apiRunEventWriterContract.producer,
-      "veryfront-api/src/usecases/agent-runs/run-event-writer-token.ts",
-    );
-    assertEquals(
-      apiRunEventWriterContract.payloadSha256,
-      "525450414064fd31343aea799d42ad17f9c664c914a7a329c821e36271c66a04",
-    );
-    assertEquals(
-      await sha256(JSON.stringify(apiRunEventWriterContract.payload)),
-      apiRunEventWriterContract.payloadSha256,
-    );
-    const fixture = await createRs256JwtFixture(apiRunEventWriterContract.payload);
+  it("accepts only the dedicated writer claims for exactly one project and run", async () => {
+    const fixture = await createRs256JwtFixture({
+      actorType: "service_account",
+      userId: "00000000-0000-0000-0000-000000000001",
+      serviceAccountId: "00000000-0000-0000-0000-000000000001",
+      tokenUse: "run_event_writer",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_1",
+      scopes: ["agent-runs:events:append"],
+    });
     const auth = createHostedServiceAuth({
       authProvider: webCryptoAuthProvider,
       getConfig: () => ({
@@ -283,38 +264,50 @@ describe("agent/agent-service-auth", () => {
     );
   });
 
-  it("rejects obsolete, broader, malformed, or user run-event append credentials", async () => {
+  it("rejects user, generic service, broader, duplicate, or wrongly bound writer claims", async () => {
+    const exactWriterClaims = {
+      actorType: "service_account",
+      userId: "00000000-0000-0000-0000-000000000001",
+      serviceAccountId: "00000000-0000-0000-0000-000000000001",
+      tokenUse: "run_event_writer",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      runId: "run_1",
+      scopes: ["agent-runs:events:append"],
+    };
     const userFixture = await createRs256JwtFixture({
       userId: "user-1",
       projectId: "11111111-1111-4111-8111-111111111111",
       runId: "run_1",
-      scope: ["projects:read", "runs:write"],
+      scopes: ["agent-runs:events:append"],
     });
     const invalidPayloads = [
       {
-        ...apiRunEventWriterContract.payload,
-        tokenUse: "project_scoped_service_account",
+        ...exactWriterClaims,
+        tokenUse: "generic_service",
       },
       {
-        ...apiRunEventWriterContract.payload,
-        scope: ["projects:read", "runs:write", "files:read"],
+        ...exactWriterClaims,
+        scopes: ["agent-runs:events:append", "agent-runs:read"],
       },
       {
-        ...apiRunEventWriterContract.payload,
-        scope: ["projects:read", "runs:write", "runs:write"],
+        ...exactWriterClaims,
+        scopes: ["agent-runs:events:append", "agent-runs:events:append"],
       },
       {
-        ...apiRunEventWriterContract.payload,
-        scope: ["projects:*", "runs:write"],
+        ...exactWriterClaims,
+        scopes: ["agent-runs:*"],
       },
       {
-        ...apiRunEventWriterContract.payload,
-        scope: ["projects:read", "runs:write", 42],
+        ...exactWriterClaims,
+        scopes: ["agent-runs:events:append", 42],
       },
       {
-        ...apiRunEventWriterContract.payload,
+        ...exactWriterClaims,
         userId: "another-service-account",
       },
+      { ...exactWriterClaims, projectId: "project_other" },
+      { ...exactWriterClaims, runId: "run_other" },
+      { ...exactWriterClaims, scope: exactWriterClaims.scopes, scopes: undefined },
     ];
     const fixtures = await Promise.all([
       userFixture,

@@ -175,6 +175,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
   }> = [];
   const parentEvents: unknown[] = [];
   const checkpointPersistenceOperations: string[] = [];
+  let publicCheckpointAppends = 0;
   let checkpointFlushComplete = true;
 
   const result = await prepareHostedChatRuntimeCreationOptions({
@@ -213,6 +214,35 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       publishParentRunEvents: (events) => {
         parentEvents.push(...events);
         return Promise.resolve();
+      },
+      durableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: () => {
+          publicCheckpointAppends++;
+          return Promise.resolve();
+        },
+        flush: () =>
+          Promise.resolve({
+            latestEventId: 1,
+            latestExternalEventSequence: 1,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          }),
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
       },
       privateDurableRunMirror: {
         handleChunk: () => Promise.resolve(),
@@ -325,6 +355,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     },
     publishParentRunEvents: result.creationOptions.publishParentRunEvents,
     persistToolExposureCheckpoint: result.creationOptions.persistToolExposureCheckpoint,
+    requireToolExposureCheckpointPersistence: true,
     clientProfile: null,
     serverResolvedToolSearchAuthorization: {
       canConfigureAgentTools: true,
@@ -369,6 +400,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
     "flush",
   ]);
+  assertEquals(publicCheckpointAppends, 0);
 
   checkpointFlushComplete = false;
   await assertRejects(
@@ -479,6 +511,100 @@ it("private checkpoints fail closed without a trusted run-event append token", a
     "trusted run-event append token",
   );
   assertEquals(publicMirrorAppends, 0);
+  assertEquals(
+    (result.creationOptions as unknown as Record<string, unknown>)
+      .requireToolExposureCheckpointPersistence,
+    undefined,
+  );
+});
+
+it("resolves private checkpoint persistence only after the durable flush completes", async () => {
+  const operations: string[] = [];
+  let resolveFlush: (() => void) | undefined;
+  const flushGate = new Promise<void>((resolve) => {
+    resolveFlush = resolve;
+  });
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      model: "openai/gpt-5.4",
+      tools: ["get_release"],
+    },
+    projectId: "project-1",
+    authToken: "user-api-token",
+    rootRunContext: {
+      durableRootRun: {
+        runId: "run-1",
+        conversationId: "conversation-1",
+        messageId: "message-1",
+        latestEventId: 1,
+        latestExternalEventSequence: 1,
+      },
+      privateDurableRunMirror: {
+        handleChunk: () => Promise.resolve(),
+        appendEvents: (events) => {
+          operations.push(`append:${events.map((event) => event.type).join(",")}`);
+          return Promise.resolve();
+        },
+        flush: async () => {
+          operations.push("flush:start");
+          await flushGate;
+          operations.push("flush:end");
+          return {
+            latestEventId: 2,
+            latestExternalEventSequence: 2,
+            pendingEventCount: 0,
+            consecutiveFailures: 0,
+            disabled: false,
+            hasFlushTimer: false,
+            hasRetryTimer: false,
+            inFlight: false,
+          };
+        },
+        getSnapshot: () => ({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+          hasFlushTimer: false,
+          hasRetryTimer: false,
+          inFlight: false,
+        }),
+        dispose: () => {},
+      },
+    },
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+    buildInstructions: () => "Agent instructions",
+  });
+
+  let resolved = false;
+  const persistence = Promise.resolve(
+    result.creationOptions.persistToolExposureCheckpoint?.({
+      version: 1,
+      authorizedCatalogFingerprint: "v1-catalog",
+      loadedToolNames: ["get_release"],
+    }),
+  ).then(() => {
+    resolved = true;
+  });
+  await Promise.resolve();
+
+  assertEquals(operations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush:start",
+  ]);
+  assertEquals(resolved, false);
+  resolveFlush?.();
+  await persistence;
+  assertEquals(operations, [
+    "append:AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT",
+    "flush:start",
+    "flush:end",
+  ]);
+  assertEquals(resolved, true);
 });
 
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {

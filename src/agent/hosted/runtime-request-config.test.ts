@@ -176,6 +176,10 @@ Deno.test("getForwardedHostedRuntimeOverrides parses non-empty forwarded runtime
   assertEquals(getForwardedHostedRuntimeOverrides({ maxOutputTokens: 1200 }), {
     maxOutputTokens: 1200,
   });
+  assertEquals(
+    getForwardedHostedRuntimeOverrides({ runtimeOverrides: { toolLoading: "eager" } }),
+    undefined,
+  );
 });
 
 Deno.test("resolveHostedRuntimeThinkingOverride applies optional thinking override", () => {

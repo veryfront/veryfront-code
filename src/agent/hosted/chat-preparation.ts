@@ -414,6 +414,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
           persistToolExposureCheckpoint: createDurableToolExposureCheckpointPersister(
             input.rootRunContext,
           ),
+          ...(input.rootRunContext.privateDurableRunMirror
+            ? { requireToolExposureCheckpointPersistence: true as const }
+            : {}),
         }
         : {}),
       clientProfile: runtimeConfig.clientProfile,

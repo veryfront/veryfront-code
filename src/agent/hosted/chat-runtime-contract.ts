@@ -159,4 +159,6 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   persistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
+  /** @internal Fail closed when a trusted hosted durable run cannot persist exposure state. */
+  requireToolExposureCheckpointPersistence?: true;
 };

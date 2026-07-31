@@ -103,14 +103,14 @@ type AuthJwtExtensionModule = {
 };
 
 const RUN_EVENT_WRITER_TOKEN_USE = "run_event_writer";
-const RUN_EVENT_WRITER_SCOPES = ["projects:read", "runs:write"] as const;
+const RUN_EVENT_WRITER_SCOPES = ["agent-runs:events:append"] as const;
 
-function hasExactRunEventWriterScopes(scope: unknown): boolean {
-  return Array.isArray(scope) &&
-    scope.length === RUN_EVENT_WRITER_SCOPES.length &&
-    scope.every((value): value is string => typeof value === "string") &&
-    new Set(scope).size === scope.length &&
-    RUN_EVENT_WRITER_SCOPES.every((requiredScope) => scope.includes(requiredScope));
+function hasExactRunEventWriterScopes(scopes: unknown): boolean {
+  return Array.isArray(scopes) &&
+    scopes.length === RUN_EVENT_WRITER_SCOPES.length &&
+    scopes.every((value): value is string => typeof value === "string") &&
+    new Set(scopes).size === scopes.length &&
+    RUN_EVENT_WRITER_SCOPES.every((requiredScope) => scopes.includes(requiredScope));
 }
 
 /** Options accepted by hosted service auth. */
@@ -430,7 +430,7 @@ export function createHostedServiceAuth(
           payload.userId === payload.serviceAccountId &&
           payload.projectId === input.projectId &&
           payload.runId === input.runId &&
-          hasExactRunEventWriterScopes(payload.scope);
+          hasExactRunEventWriterScopes(payload.scopes);
       } catch (error) {
         options.logger?.debug?.("Run-event append token verification failed", {
           error: error instanceof Error ? error.message : String(error),

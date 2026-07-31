@@ -135,6 +135,7 @@ async function withVerifiedRunEventAppendToken(
   request: Request,
   parsedRequest: ParsedHostedChatRequest,
   verifyRunEventAppendToken: ParseHostedChatRequestOptions["verifyRunEventAppendToken"],
+  trustServerEnvelope: boolean,
 ): Promise<ParsedHostedChatRequest | Response> {
   const token = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER)?.trim();
   if (!token) {
@@ -163,7 +164,10 @@ async function withVerifiedRunEventAppendToken(
   return {
     ...parsedRequest,
     runEventAppendToken: token,
-    serverEnvelopeVerified: true,
+    ...(trustServerEnvelope ? { serverEnvelopeVerified: true as const } : {}),
+    forwardedProps: trustServerEnvelope
+      ? parsedRequest.forwardedProps
+      : stripUnverifiedServerResolvedForwardedProps(parsedRequest.forwardedProps),
   };
 }
 
@@ -454,6 +458,7 @@ export async function parseHostedChatRequestFromRequest(
     request,
     parsedRequest,
     options.verifyRunEventAppendToken,
+    false,
   );
 }
 
@@ -515,5 +520,6 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     request,
     parsedRequest,
     options.verifyRunEventAppendToken,
+    true,
   );
 }

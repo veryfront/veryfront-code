@@ -275,6 +275,8 @@ function createRuntimeAgentConfig(input: {
     __vfToolSearchAuthorization: input.options.serverResolvedToolSearchAuthorization,
     __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
+    __vfToolExposureCheckpointPersistenceRequired:
+      input.options.requireToolExposureCheckpointPersistence === true,
     __vfOperationalToolLoadingOverride: input.operationalToolLoadingOverride,
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,

@@ -237,7 +237,7 @@ it("agent service routes bind verified run-event tokens on both production launc
       {
         authToken: createDevToken({ userId: "user-1" }),
         runEventAppendToken: "run-event-service-token",
-        serverEnvelopeVerified: true,
+        serverEnvelopeVerified: undefined,
       },
       {
         authToken: createDevToken({ userId: "user-1" }),
@@ -321,7 +321,7 @@ it("ordinary durable-chat routes strip spoofed server-resolved tool state", asyn
   }]);
 });
 
-it("verified durable-chat envelopes accept server-resolved tool state", async () => {
+it("a verified writer token does not trust ordinary durable-chat body state", async () => {
   const resolved: unknown[] = [];
   const { routeSet, preparedRequests } = createRouteSet({
     verifyRunEventAppendToken: () => Promise.resolve(true),
@@ -377,8 +377,69 @@ it("verified durable-chat envelopes accept server-resolved tool state", async ()
   });
 
   assertEquals(response.status, 202);
+  assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
+  assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
+  assertEquals(preparedRequests[0]?.forwardedProps, undefined);
+  assertEquals(resolved, [{
+    authorization: { canConfigureAgentTools: false, attachableCatalog: [] },
+    checkpoint: undefined,
+  }]);
+});
+
+it("verified control-plane envelopes accept private state without returning it publicly", async () => {
+  const resolved: unknown[] = [];
+  const { routeSet, preparedRequests } = createRouteSet({
+    verifyRunEventAppendToken: () => Promise.resolve(true),
+    prepareExecution: (request) => {
+      resolved.push({
+        authorization: getServerResolvedToolSearchAuthorization(
+          request.forwardedProps,
+          request.serverEnvelopeVerified === true,
+        ),
+        checkpoint: getServerResolvedToolExposureCheckpoint(
+          request.forwardedProps,
+          request.serverEnvelopeVerified === true,
+        ),
+      });
+      return Promise.resolve({ executionId: "exec-control-plane" });
+    },
+  });
+  const authorization = {
+    canConfigureAgentTools: true,
+    attachableCatalog: [{
+      name: "list_agents",
+      description: "List configured agents",
+      attachVia: "tool_ids",
+    }],
+  };
+  const checkpoint = {
+    version: 1,
+    authorizedCatalogFingerprint: "trusted-catalog",
+    loadedToolNames: ["get_release"],
+  };
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/runs/run-1/stream",
+      {
+        ...createRuntimeAgentInvocationBody(),
+        forwardedProps: {
+          serverResolvedToolSearchAuthorization: authorization,
+          serverResolvedToolExposureCheckpoint: checkpoint,
+        },
+      },
+      "POST",
+      { "X-Veryfront-Run-Event-Token": "verified-event-token" },
+    ),
+    runId: "run-1",
+  });
+
+  assertEquals(response.status, 202);
   assertEquals(preparedRequests[0]?.serverEnvelopeVerified, true);
+  assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
   assertEquals(resolved, [{ authorization, checkpoint }]);
+  const publicBody = await response.text();
+  assertEquals(publicBody.includes("AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"), false);
+  assertEquals(publicBody.includes("trusted-catalog"), false);
 });
 
 Deno.test("agent service routes reject unbound control-plane source selection", async () => {
