@@ -1,6 +1,6 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { cliLogger, exitProcess } from "#cli/utils";
+import { cliLogger, exitProcess, isVerbose } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import { brand, createNoopSpinner, dim } from "#cli/ui";
@@ -22,9 +22,14 @@ import {
   resolveOrCreateProject,
 } from "#cli/shared/project-resolution";
 import { getProjectTarget } from "../../shared/deployment-provenance.ts";
-import { pushCommand } from "../push/index.ts";
-import { deployCommand } from "../deploy/index.ts";
-import { buildPushUrls } from "../push/command.ts";
+import {
+  createDeployProject,
+  type DeployPlan,
+  type DeployProject,
+  type DeployProjectOutcome,
+} from "../../shared/deployment/deploy-project.ts";
+import { deployProgressText, initialDeployProgressText } from "../../shared/deployment/progress.ts";
+import { buildStudioUrl } from "../studio/command.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { AUTHENTICATION_REQUIRED, PROJECT_SOURCE_EMPTY } from "veryfront/errors";
@@ -93,9 +98,29 @@ async function analyzeDirectory(
   };
 }
 
+export interface UpDependencies {
+  /** Deploy Execution override for tests; production uses createDeployProject(). */
+  deployProject?: DeployProject;
+}
+
+/**
+ * Actions `up` reports for a dry run, derived from the Deploy Execution plan.
+ *
+ * Release creation and deployment are one user-visible step for `up`, which
+ * only ever targets the preview environment.
+ */
+function plannedUpActions(plan: DeployPlan): string[] {
+  return [
+    ...(plan.plannedActions.includes("create-project") ? ["create-project"] : []),
+    ...(plan.plannedActions.includes("push-source") ? ["push-source"] : []),
+    "deploy-preview",
+  ];
+}
+
 export async function upCommand(
   options: Partial<UpOptions> = {},
   env: EnvironmentConfig = getEnvironmentConfig(),
+  dependencies: UpDependencies = {},
 ): Promise<void> {
   const { projectDir = cwd(), force = false, dryRun = false } = options;
   const jsonOutput = isJsonMode();
@@ -215,20 +240,37 @@ export async function upCommand(
 
   if (!jsonOutput) cliLogger.info("");
 
+  // Deploy Execution owns the rest: the bootstrap push, the release, the
+  // deployment, and the readiness probe behind the URL printed below.
+  const verbose = isVerbose();
+  let progressText = initialDeployProgressText(verbose);
+  const deploySpinner = jsonOutput ? createNoopSpinner() : createSpinner(progressText);
+  let outcome: DeployProjectOutcome;
+
   try {
-    await pushCommand({
+    outcome = await (dependencies.deployProject ?? createDeployProject()).execute({
       projectDir,
       branch: "main",
-      force: true,
-      dryRun,
-      quiet: true,
+      environment: "preview",
+      mode: dryRun ? "dry-run" : "apply",
+      source: { kind: "ensure-pushed" },
+    }, {
+      onEvent(event) {
+        if (event.kind !== "step") return;
+        const next = deployProgressText(event, "preview", verbose);
+        if (!next || next === progressText) return;
+        progressText = next;
+        deploySpinner.update(next);
+      },
     });
   } catch (error) {
+    deploySpinner.stop();
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Push failed: ${message}`, { cause: error });
+    throw new Error(`Preview deployment failed: ${message}`, { cause: error });
   }
+  deploySpinner.stop();
 
-  if (dryRun) {
+  if (outcome.kind === "dry-run") {
     if (jsonOutput) {
       streamJsonLine({
         type: "result",
@@ -236,11 +278,7 @@ export async function upCommand(
         data: {
           projectSlug,
           dryRun: true,
-          plannedActions: [
-            ...(context.type === "has-project" ? [] : ["create-project"]),
-            "push-source",
-            "deploy-preview",
-          ],
+          plannedActions: plannedUpActions(outcome.plan),
         },
       });
     } else {
@@ -249,42 +287,28 @@ export async function upCommand(
     return;
   }
 
-  try {
-    await deployCommand({
-      projectDir,
-      branch: "main",
-      env: "preview",
-      force: true,
-      dryRun,
-      quiet: true,
-      skipSourcePush: true,
-      suppressJsonOutput: true,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Preview deployment failed: ${message}`, { cause: error });
-  }
+  const result = outcome.result;
+  const studioUrl = buildStudioUrl(result.projectSlug, { branch: result.branch });
 
-  const urls = buildPushUrls(projectSlug, "main");
   if (jsonOutput) {
     streamJsonLine({
       type: "result",
       success: true,
       data: {
-        projectSlug,
+        projectSlug: result.projectSlug,
         dryRun: false,
-        studioUrl: urls.studio,
-        previewUrl: urls.preview,
+        studioUrl,
+        previewUrl: result.url,
         nextCommand: "veryfront deploy",
       },
     });
     return;
   }
 
-  logSuccess(`${projectSlug} is ready`);
+  logSuccess(`${result.projectSlug} is ready`);
   console.log();
-  console.log(`  Studio:  ${brand(urls.studio)}`);
-  console.log(`  Preview: ${brand(urls.preview)}`);
+  console.log(`  Studio:  ${brand(studioUrl)}`);
+  console.log(`  Preview: ${brand(result.url)}`);
   console.log();
   console.log(`  Deploy:  ${brand("veryfront deploy")}`);
   console.log();

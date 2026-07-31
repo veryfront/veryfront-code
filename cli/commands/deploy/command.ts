@@ -17,12 +17,12 @@ import { brand, createNoopSpinner, createSpinner, dim, formatDuration } from "#c
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import {
   createDeployProject,
-  type DeployEvent,
   type DeployPlan,
   type DeployProject,
   type DeployProjectOutcome,
   type DeployStepName,
 } from "../../shared/deployment/deploy-project.ts";
+import { deployProgressText, initialDeployProgressText } from "../../shared/deployment/progress.ts";
 import type { DeployResult } from "../../shared/deployment/result.ts";
 
 /**
@@ -52,12 +52,8 @@ export const DeployArgsSchema = lazySchema(getDeployArgsSchema);
 type ParsedDeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
 export type DeployOptions = Omit<ParsedDeployOptions, "skipSourcePush"> & {
   skipSourcePush?: boolean;
-  /** Internal composition control for parent commands that own the JSON result. */
-  suppressJsonOutput?: boolean;
-  assetManifestPollIntervalMs?: number;
-  assetManifestTimeoutMs?: number;
-  environmentPollIntervalMs?: number;
-  environmentTimeoutMs?: number;
+  /** Deploy Execution override for tests; production uses createDeployProject(). */
+  deployProject?: DeployProject;
 };
 
 /**
@@ -82,36 +78,12 @@ export type { DeployResult };
  * Create a release and deploy to an environment
  */
 export async function deployCommand(options: DeployOptions): Promise<DeployResult | null> {
-  return deployCommandWithProjectForTesting(options);
+  if (isJsonMode()) return deployCommandJson(options);
+  return deployCommandHuman(options);
 }
 
-export interface DeployCommandTestingSeams {
-  createDeployProject?: (options: DeployOptions) => DeployProject;
-}
-
-export async function deployCommandWithProjectForTesting(
-  options: DeployOptions,
-  seams: DeployCommandTestingSeams = {},
-): Promise<DeployResult | null> {
-  if (isJsonMode() && !options.suppressJsonOutput) {
-    return deployCommandJson(options, seams);
-  }
-
-  return deployCommandHuman(options, seams);
-}
-
-function createDeployRunner(options: DeployOptions, seams: DeployCommandTestingSeams) {
-  const fakeProject = seams.createDeployProject?.(options);
-  if (fakeProject) return fakeProject;
-
-  return createDeployProject({
-    polling: {
-      assetManifestPollIntervalMs: options.assetManifestPollIntervalMs,
-      assetManifestTimeoutMs: options.assetManifestTimeoutMs,
-      environmentPollIntervalMs: options.environmentPollIntervalMs,
-      environmentTimeoutMs: options.environmentTimeoutMs,
-    },
-  });
+function deployRunner(options: DeployOptions): DeployProject {
+  return options.deployProject ?? createDeployProject();
 }
 
 function toDeployRequest(options: DeployOptions) {
@@ -143,57 +115,11 @@ function commandStepName(stepName: DeployStepName): string {
   return stepName === "create-deployment" ? "deploy" : stepName;
 }
 
-function progressForEvent(
-  event: Extract<DeployEvent, { kind: "step" }>,
-  env: string,
-  verbose: boolean,
-): string | null {
-  if (event.phase !== "started") return null;
-  switch (event.step) {
-    case "resolve-config":
-      return verbose ? "Resolving configuration..." : "Linking project...";
-    case "push-source":
-      return verbose ? "Pushing source..." : "Uploading source...";
-    case "resolve-target":
-    case "verify-source":
-    case "create-release":
-    case "verify-release-source":
-    case "wait-release-assets":
-      return verbose ? progressDetailForBuildStep(event.step, env) : "Building release...";
-    case "create-deployment":
-      return `Deploying to ${env}...`;
-    case "verify-deployment":
-      return verbose ? `Verifying ${env} deployment...` : `Deploying to ${env}...`;
-    case "wait-environment-url":
-      return verbose ? `Waiting for ${env} URL...` : `Verifying ${env} URL...`;
-  }
-}
-
-function progressDetailForBuildStep(stepName: DeployStepName, env: string): string {
-  switch (stepName) {
-    case "resolve-target":
-      return `Looking up environment "${env}"...`;
-    case "verify-source":
-      return "Verifying pushed source...";
-    case "create-release":
-      return "Creating release...";
-    case "verify-release-source":
-      return "Verifying release source...";
-    case "wait-release-assets":
-      return "Waiting for release assets...";
-    default:
-      return "Building release...";
-  }
-}
-
-async function deployCommandHuman(
-  options: DeployOptions,
-  seams: DeployCommandTestingSeams,
-): Promise<DeployResult | null> {
+async function deployCommandHuman(options: DeployOptions): Promise<DeployResult | null> {
   const { env, quiet = false } = options;
   const startedAt = Date.now();
   const verbose = isVerbose();
-  let progressText = verbose ? "Resolving configuration..." : "Linking project...";
+  let progressText = initialDeployProgressText(verbose);
   const spinner = quiet ? createNoopSpinner() : createSpinner(progressText);
   const updateProgress = (next: string | null): void => {
     if (!next) return;
@@ -204,13 +130,13 @@ async function deployCommandHuman(
   let warning: string | null = null;
   let outcome: DeployProjectOutcome;
   try {
-    outcome = await createDeployRunner(options, seams).execute(toDeployRequest(options), {
+    outcome = await deployRunner(options).execute(toDeployRequest(options), {
       onEvent(event) {
         if (event.kind === "warning") {
           warning = event.message;
           return;
         }
-        updateProgress(progressForEvent(event, env, verbose));
+        updateProgress(deployProgressText(event, env, verbose));
       },
     });
   } catch (error) {
@@ -273,12 +199,9 @@ async function deployCommandHuman(
   return result;
 }
 
-async function deployCommandJson(
-  options: DeployOptions,
-  seams: DeployCommandTestingSeams,
-): Promise<DeployResult | null> {
+async function deployCommandJson(options: DeployOptions): Promise<DeployResult | null> {
   try {
-    const outcome = await createDeployRunner(options, seams).execute(toDeployRequest(options), {
+    const outcome = await deployRunner(options).execute(toDeployRequest(options), {
       onEvent(event) {
         if (event.kind === "warning") {
           streamJsonLine({
