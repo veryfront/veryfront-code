@@ -1,4 +1,5 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   captureWithSentryPolicy,
   flushWithSentryPolicy,
@@ -16,7 +17,6 @@ function createSentrySdk(options: {
     contexts: [] as Array<[string, Record<string, unknown>]>,
     fingerprints: [] as string[][],
     flushTimeouts: [] as Array<number | undefined>,
-    levels: [] as string[],
     tags: [] as Array<[string, string]>,
   };
   const scope = {
@@ -25,9 +25,6 @@ function createSentrySdk(options: {
     },
     setFingerprint(fingerprint: string[]) {
       state.fingerprints.push(fingerprint);
-    },
-    setLevel(level: string) {
-      state.levels.push(level);
     },
     setTag(key: string, value: string) {
       state.tags.push([key, value]);
@@ -52,7 +49,7 @@ function createSentrySdk(options: {
   return { sdk, state };
 }
 
-Deno.test("policy redacts sensitive event fields and preserves service fingerprint", () => {
+it("policy redacts sensitive event fields and preserves service fingerprint", () => {
   const event = prepareSentryEvent(
     {
       breadcrumbs: [{ message: "synthetic breadcrumb" }],
@@ -90,7 +87,7 @@ Deno.test("policy redacts sensitive event fields and preserves service fingerpri
   );
 });
 
-Deno.test("policy removes filesystem prefixes from stack frames", () => {
+it("policy removes filesystem prefixes from stack frames", () => {
   const event = prepareSentryEvent(
     {
       exception: {
@@ -117,7 +114,7 @@ Deno.test("policy removes filesystem prefixes from stack frames", () => {
   );
 });
 
-Deno.test("policy captures service and Grafana trace correlation", () => {
+it("policy captures service and Grafana trace correlation", () => {
   const { sdk, state } = createSentrySdk();
   const error = new Error("proxy failed");
 
@@ -144,23 +141,7 @@ Deno.test("policy captures service and Grafana trace correlation", () => {
   ]]);
 });
 
-Deno.test("policy applies native Sentry severity level when provided", () => {
-  const { sdk, state } = createSentrySdk();
-
-  captureWithSentryPolicy(sdk, "veryfront-agent", new Error("slow request"), {
-    boundary: "agent.process",
-    level: "warning",
-  });
-
-  captureWithSentryPolicy(sdk, "veryfront-agent", new Error("startup failed"), {
-    boundary: "process.startup",
-    level: "fatal",
-  });
-
-  assertEquals(state.levels, ["warning", "fatal"]);
-});
-
-Deno.test("policy preserves process_role as a native Sentry tag", () => {
+it("policy preserves process_role as a native Sentry tag", () => {
   const { sdk, state } = createSentrySdk();
 
   captureWithSentryPolicy(sdk, "veryfront-api", new Error("request failed"), {
@@ -174,7 +155,7 @@ Deno.test("policy preserves process_role as a native Sentry tag", () => {
   );
 });
 
-Deno.test("policy redacts application error attribute keys and credential-shaped values", () => {
+it("policy redacts application error attribute keys and credential-shaped values", () => {
   assertEquals(
     sanitizeApplicationErrorAttributes({
       "auth.token": "synthetic-token-value",
@@ -195,7 +176,7 @@ Deno.test("policy redacts application error attribute keys and credential-shaped
   );
 });
 
-Deno.test("policy applies sanitized application error attributes to Sentry scope", () => {
+it("policy applies sanitized application error attributes to Sentry scope", () => {
   const { sdk, state } = createSentrySdk();
   const error = new Error("agent failed");
 
@@ -219,7 +200,7 @@ Deno.test("policy applies sanitized application error attributes to Sentry scope
   ]]);
 });
 
-Deno.test("policy isolates capture and scope failures from the original error path", () => {
+it("policy isolates capture and scope failures from the original error path", () => {
   assertEquals(
     captureWithSentryPolicy(createSentrySdk({ captureThrows: true }).sdk, "svc", new Error(), {
       boundary: "process.startup",
@@ -234,7 +215,7 @@ Deno.test("policy isolates capture and scope failures from the original error pa
   );
 });
 
-Deno.test("policy keeps flush bounded and isolates SDK flush failures", async () => {
+it("policy keeps flush bounded and isolates SDK flush failures", async () => {
   const { sdk, state } = createSentrySdk();
   assertEquals(await flushWithSentryPolicy(sdk, 1_500), true);
   assertEquals(state.flushTimeouts, [1_500]);

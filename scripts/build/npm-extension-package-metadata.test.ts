@@ -218,6 +218,11 @@ describe("createExtensionPackageSpec", () => {
       veryfront: {
         extension: true,
         npm: {
+          stagedSources: [{
+            specifier: "#veryfront/observability/application-error-contract.ts",
+            source: "src/observability/application-error-contract.ts",
+            target: "src/application-error-contract.ts",
+          }],
           runtimePackages: [
             {
               name: "@veryfront/ext-observability-sentry-node",
@@ -254,6 +259,13 @@ describe("createExtensionPackageSpec", () => {
       "@veryfront/ext-observability-sentry-node",
       "@veryfront/ext-observability-sentry-deno",
     ]);
+    for (const spec of specs) {
+      assertEquals(spec.stagedSources, [{
+        specifier: "#veryfront/observability/application-error-contract.ts",
+        source: "src/observability/application-error-contract.ts",
+        target: "src/application-error-contract.ts",
+      }]);
+    }
 
     const legacy = specs[0]!;
     assertEquals(legacy.entryPoints.map((entryPoint) => entryPoint.name), [
@@ -323,6 +335,37 @@ describe("createExtensionPackageSpec", () => {
     assertEquals(
       mappings.some((mapping) => mapping.subPath === "transforms/frontmatter"),
       false,
+    );
+  });
+
+  it("rejects staged source paths that escape the repository", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-example",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: {
+          stagedSources: [{
+            specifier: "#veryfront/example.ts",
+            source: "../outside.ts",
+            target: "src/example.ts",
+          }],
+        },
+      },
+    };
+
+    assertThrows(
+      () =>
+        createExtensionPackageSpecs({
+          manifestPath: "extensions/ext-example/deno.json",
+          manifest,
+          rootConfig,
+          rootDir: "/repo",
+          version: "0.1.985",
+          license: "Apache-2.0",
+        }),
+      Error,
+      "staged source path must stay within the repository",
     );
   });
 });

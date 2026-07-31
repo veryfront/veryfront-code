@@ -6,9 +6,8 @@ export {
 } from "./deno.ts";
 export type {
   ApplicationErrorContext,
-  ApplicationErrorLevel,
   ApplicationErrorReporter,
-} from "../../../src/observability/application-error-contract.ts";
+} from "#veryfront/observability/application-error-contract.ts";
 export type { SentryConfig } from "./config.ts";
 
 const extSentry: ExtensionFactory = () => ({

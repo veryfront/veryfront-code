@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import { createDenoSentryApplicationErrorReporter } from "./deno.ts";
 
 function createDenoSentrySdk(options: {
@@ -9,15 +10,11 @@ function createDenoSentrySdk(options: {
     captured: [] as unknown[],
     flushTimeouts: [] as Array<number | undefined>,
     initOptions: undefined as Parameters<typeof import("@sentry/deno").init>[0] | undefined,
-    levels: [] as string[],
     tags: [] as Array<[string, string]>,
   };
   const scope = {
     setContext() {},
     setFingerprint() {},
-    setLevel(level: string) {
-      state.levels.push(level);
-    },
     setTag(key: string, value: string) {
       state.tags.push([key, value]);
     },
@@ -43,7 +40,7 @@ function createDenoSentrySdk(options: {
   return { sdk, state };
 }
 
-Deno.test("Deno adapter uses V1 error-only privacy-preserving configuration", async () => {
+it("Deno adapter uses V1 error-only privacy-preserving configuration", async () => {
   const { sdk, state } = createDenoSentrySdk();
   createDenoSentryApplicationErrorReporter(
     {
@@ -82,7 +79,7 @@ Deno.test("Deno adapter uses V1 error-only privacy-preserving configuration", as
   assertEquals(event.tags, { "service.name": "veryfront-server" });
 });
 
-Deno.test("Deno adapter captures with policy tags and bounded flush", async () => {
+it("Deno adapter captures with policy tags and bounded flush", async () => {
   const { sdk, state } = createDenoSentrySdk();
   const reporter = createDenoSentryApplicationErrorReporter(
     {
@@ -109,31 +106,7 @@ Deno.test("Deno adapter captures with policy tags and bounded flush", async () =
   assertEquals(state.flushTimeouts, [1_500]);
 });
 
-Deno.test("Deno adapter propagates warning and fatal levels to native Sentry scope", () => {
-  const { sdk, state } = createDenoSentrySdk();
-  const reporter = createDenoSentryApplicationErrorReporter(
-    {
-      dsn: "https://public@example.ingest.sentry.io/1",
-      environment: "",
-      release: "",
-      serviceName: "veryfront-server",
-    },
-    sdk,
-  );
-
-  reporter.capture(new Error("slow request"), {
-    boundary: "server.request",
-    level: "warning",
-  });
-  reporter.capture(new Error("startup failed"), {
-    boundary: "process.startup",
-    level: "fatal",
-  });
-
-  assertEquals(state.levels, ["warning", "fatal"]);
-});
-
-Deno.test("Deno adapter propagates process role to native Sentry tag", () => {
+it("Deno adapter propagates process role to native Sentry tag", () => {
   const { sdk, state } = createDenoSentrySdk();
   const reporter = createDenoSentryApplicationErrorReporter(
     {
@@ -156,7 +129,7 @@ Deno.test("Deno adapter propagates process role to native Sentry tag", () => {
   );
 });
 
-Deno.test("Deno adapter isolates SDK capture and flush failures", async () => {
+it("Deno adapter isolates SDK capture and flush failures", async () => {
   const captureReporter = createDenoSentryApplicationErrorReporter(
     {
       dsn: "https://public@example.ingest.sentry.io/1",

@@ -99,6 +99,24 @@ describe("Sentry runtime package generation", () => {
       });
 
       await assertIsolatedNodeConsumer({
+        packageDir: join(packageRoot, "ext-observability-sentry"),
+        packageName: LEGACY_PACKAGE,
+        expectedInstalled: ["@sentry/deno", "@sentry/node"],
+        forbiddenInstalled: [],
+        importStatement:
+          `import { createNodeSentryApplicationErrorReporter } from "${LEGACY_PACKAGE}/node"; if (typeof createNodeSentryApplicationErrorReporter !== "function") throw new Error("missing legacy node reporter");`,
+      });
+
+      await assertIsolatedDenoConsumer({
+        packageDir: join(packageRoot, "ext-observability-sentry"),
+        packageName: LEGACY_PACKAGE,
+        expectedInstalled: ["@sentry/deno", "@sentry/node"],
+        forbiddenInstalled: [],
+        importStatement:
+          `import { createDenoSentryApplicationErrorReporter } from "${LEGACY_PACKAGE}/deno"; if (typeof createDenoSentryApplicationErrorReporter !== "function") throw new Error("missing legacy deno reporter");`,
+      });
+
+      await assertIsolatedNodeConsumer({
         packageDir: join(packageRoot, "ext-observability-sentry-node"),
         packageName: NODE_PACKAGE,
         expectedInstalled: ["@sentry/node"],

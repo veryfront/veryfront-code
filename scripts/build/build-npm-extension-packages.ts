@@ -130,25 +130,11 @@ export function createDntExtensionEntryPoints(input: {
 
 async function prepareDntExtensionBuildInput(input: {
   rootDir: string;
-  spec: Pick<ExtensionPackageSpec, "entryPoints" | "manifestDir">;
+  spec: Pick<ExtensionPackageSpec, "entryPoints" | "manifestDir" | "stagedSources">;
 }): Promise<
   { entryPoints: { name: string; path: string }[]; cleanup(): Promise<void> }
 > {
-  // dnt chooses an extension-local source base for extension entrypoints and
-  // fails before postBuild when a relative import resolves outside that base.
-  // The Sentry runtime packages need the canonical framework contract from
-  // src/observability without turning it into a `veryfront` peer, so stage that
-  // tiny source file beside the copied extension inputs and rewrite only the
-  // build input. Repository source keeps the canonical relative import.
-  const sourceImport =
-    "../../../src/observability/application-error-contract.ts";
-  const usesSharedApplicationErrorContract = await extensionSourceUsesImport({
-    rootDir: input.rootDir,
-    spec: input.spec,
-    importSpecifier: sourceImport,
-  });
-
-  if (!usesSharedApplicationErrorContract) {
+  if (input.spec.stagedSources.length === 0) {
     return {
       entryPoints: createDntExtensionEntryPoints({
         rootDir: input.rootDir,
@@ -164,25 +150,43 @@ async function prepareDntExtensionBuildInput(input: {
   const stagedExtensionDir = join(tempDir, basename(input.spec.manifestDir));
   const sourceExtensionDir = join(input.rootDir, input.spec.manifestDir);
   await copyDirectory(sourceExtensionDir, stagedExtensionDir);
-  await Deno.copyFile(
-    join(input.rootDir, "src/observability/application-error-contract.ts"),
-    join(stagedExtensionDir, "src/application-error-contract.ts"),
-  );
+
+  const stagedSourceTargets = new Map<string, string>();
+  for (const stagedSource of input.spec.stagedSources) {
+    const targetPath = join(stagedExtensionDir, stagedSource.target);
+    await Deno.mkdir(dirname(targetPath), { recursive: true });
+    await Deno.copyFile(join(input.rootDir, stagedSource.source), targetPath);
+    stagedSourceTargets.set(stagedSource.specifier, targetPath);
+  }
+
+  const usedSpecifiers = new Set<string>();
 
   for await (const filePath of walkFiles(stagedExtensionDir)) {
     if (!filePath.endsWith(".ts")) continue;
     const original = await Deno.readTextFile(filePath);
-    const next = original
-      .replaceAll(
-        sourceImport,
-        "./application-error-contract.ts",
-      )
-      .replaceAll(
-        '"veryfront/extensions"',
-        `"${toFileUrl(join(input.rootDir, "src/extensions/index.ts")).href}"`,
-      );
+    let next = original;
+    for (const [specifier, targetPath] of stagedSourceTargets) {
+      if (!next.includes(specifier)) continue;
+      let targetSpecifier = relative(dirname(filePath), targetPath).replaceAll("\\", "/");
+      if (!targetSpecifier.startsWith(".")) targetSpecifier = `./${targetSpecifier}`;
+      next = next.replaceAll(specifier, targetSpecifier);
+      usedSpecifiers.add(specifier);
+    }
+    next = next.replaceAll(
+      '"veryfront/extensions"',
+      `"${toFileUrl(join(input.rootDir, "src/extensions/index.ts")).href}"`,
+    );
     if (next !== original) {
       await Deno.writeTextFile(filePath, next);
+    }
+  }
+
+  for (const stagedSource of input.spec.stagedSources) {
+    if (!usedSpecifiers.has(stagedSource.specifier)) {
+      await Deno.remove(tempDir, { recursive: true });
+      throw new Error(
+        `${input.spec.manifestDir} staged source specifier "${stagedSource.specifier}" is not imported by extension source`,
+      );
     }
   }
 
@@ -196,20 +200,6 @@ async function prepareDntExtensionBuildInput(input: {
     })),
     cleanup: () => Deno.remove(tempDir, { recursive: true }),
   };
-}
-
-async function extensionSourceUsesImport(input: {
-  rootDir: string;
-  spec: Pick<ExtensionPackageSpec, "manifestDir">;
-  importSpecifier: string;
-}): Promise<boolean> {
-  const sourceDir = join(input.rootDir, input.spec.manifestDir, "src");
-  for await (const filePath of walkFiles(sourceDir)) {
-    if (!filePath.endsWith(".ts")) continue;
-    const source = await Deno.readTextFile(filePath);
-    if (source.includes(input.importSpecifier)) return true;
-  }
-  return false;
 }
 
 async function copyDirectory(

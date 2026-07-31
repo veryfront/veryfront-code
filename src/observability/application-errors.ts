@@ -6,7 +6,6 @@ import type {
 export type {
   ApplicationErrorAttributeValue,
   ApplicationErrorContext,
-  ApplicationErrorLevel,
   ApplicationErrorReporter,
 } from "./application-error-contract.ts";
 

@@ -1,18 +1,25 @@
+/** Scalar metadata value attached to an application error. */
 export type ApplicationErrorAttributeValue = string | number | boolean;
 
-export type ApplicationErrorLevel = "fatal" | "error" | "warning" | "info" | "debug";
-
+/** Sanitized context attached when a runtime reports an application error. */
 export type ApplicationErrorContext = {
+  /** Stable boundary name for the failing runtime operation. */
   boundary: string;
-  level?: ApplicationErrorLevel;
+  /** HTTP method associated with the failure. */
   method?: string;
+  /** Stable process role used by Sentry dashboards and alerts. */
   processRole?: string;
+  /** Request correlation identifier. */
   requestId?: string;
+  /** OpenTelemetry span correlation identifier. */
   spanId?: string;
+  /** OpenTelemetry trace correlation identifier. */
   traceId?: string;
+  /** Sanitized scalar metadata for the failure boundary. */
   attributes?: Record<string, ApplicationErrorAttributeValue>;
 };
 
+/** Provider-neutral application error capture and flush interface. */
 export type ApplicationErrorReporter = {
   capture(error: unknown, context: ApplicationErrorContext): string | undefined;
   flush(timeoutMs?: number): Promise<boolean>;

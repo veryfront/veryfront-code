@@ -8,11 +8,7 @@ import {
 } from "./application-errors.ts";
 
 export { captureApplicationError, flushApplicationErrors };
-export type {
-  ApplicationErrorContext,
-  ApplicationErrorLevel,
-  ApplicationErrorReporter,
-} from "./application-errors.ts";
+export type { ApplicationErrorContext, ApplicationErrorReporter } from "./application-errors.ts";
 
 const DEFAULT_SERVICE_NAME = "veryfront-server";
 const SENTRY_ERROR_REPORTER = "sentry";

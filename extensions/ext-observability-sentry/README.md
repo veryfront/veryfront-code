@@ -32,10 +32,7 @@ request bodies, user data, and OpenTelemetry provider setup remain disabled.
 
 The runtime-specific packages do not require the `veryfront` package at runtime
 or type-resolution time. They export the shared application-error declarations
-(`ApplicationErrorContext`, `ApplicationErrorLevel`, and
-`ApplicationErrorReporter`) from the same source used by the framework reporter.
-Set `context.level` to `fatal`, `error`, `warning`, `info`, or `debug` to pass a
-native Sentry severity level for the captured exception. Set
-`context.processRole` to preserve the `process_role` Sentry tag used by
-dashboards and alerts. Host or server names are not captured by default because
-they can identify deployment infrastructure.
+(`ApplicationErrorContext` and `ApplicationErrorReporter`) from the same source
+used by the framework reporter. Set `context.processRole` to preserve the
+`process_role` Sentry tag used by dashboards and alerts. Host and server names
+are not captured by default because they identify deployment infrastructure.

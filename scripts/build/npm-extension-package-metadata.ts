@@ -14,6 +14,7 @@ export type ExtensionManifest = {
     capabilities?: unknown[];
     npm?: {
       publish?: boolean;
+      stagedSources?: ExtensionStagedSourceManifest[];
       runtimePackages?: ExtensionRuntimePackageManifest[];
     };
   };
@@ -25,6 +26,12 @@ export type ExtensionRuntimePackageManifest = {
   export: string;
   dependencies: string[];
   peerVeryfront?: boolean;
+};
+
+export type ExtensionStagedSourceManifest = {
+  specifier: string;
+  source: string;
+  target: string;
 };
 
 export type RootPackageConfig = {
@@ -60,6 +67,7 @@ export type ExtensionPackageSpec = {
   manifestDependencies: Record<string, string>;
   peerVeryfront: boolean;
   readmePath: string;
+  stagedSources: ExtensionStagedSourceManifest[];
 };
 
 const TEST_ONLY_IMPORTS = new Set([
@@ -206,6 +214,10 @@ function createBaseExtensionPackageSpec(input: {
     manifestDir,
     exports: input.manifest.exports,
   });
+  const stagedSources = normalizeExtensionStagedSources(
+    input.manifestPath,
+    input.manifest.veryfront?.npm?.stagedSources ?? [],
+  );
 
   return {
     manifestPath: input.manifestPath,
@@ -218,6 +230,7 @@ function createBaseExtensionPackageSpec(input: {
     manifestDependencies: dependencies,
     peerVeryfront: true,
     readmePath: join(manifestDir, "README.md"),
+    stagedSources,
     dntMappings: createVeryfrontDntMappings({
       manifest: input.manifest,
       manifestDir,
@@ -352,9 +365,51 @@ function createRuntimeExtensionPackageSpec(input: {
     manifestDependencies: dependencies,
     peerVeryfront,
     readmePath: input.baseSpec.readmePath,
+    stagedSources: input.baseSpec.stagedSources,
     dntMappings: peerVeryfront ? input.baseSpec.dntMappings : {},
     packageJson,
   };
+}
+
+function normalizeExtensionStagedSources(
+  manifestPath: string,
+  stagedSources: ExtensionStagedSourceManifest[],
+): ExtensionStagedSourceManifest[] {
+  return stagedSources.map((stagedSource) => {
+    if (!stagedSource.specifier || stagedSource.specifier.startsWith(".")) {
+      throw new Error(
+        `${manifestPath} staged source specifier must be a non-relative import; received "${stagedSource.specifier}"`,
+      );
+    }
+    validateRepositoryRelativePath(
+      manifestPath,
+      "source",
+      stagedSource.source,
+    );
+    validateRepositoryRelativePath(
+      manifestPath,
+      "target",
+      stagedSource.target,
+    );
+    return { ...stagedSource };
+  });
+}
+
+function validateRepositoryRelativePath(
+  manifestPath: string,
+  field: "source" | "target",
+  path: string,
+): void {
+  if (
+    !path ||
+    path.startsWith("/") ||
+    /^[A-Za-z]:[\\/]/.test(path) ||
+    path.split(/[\\/]/).includes("..")
+  ) {
+    throw new Error(
+      `${manifestPath} staged ${field} path must stay within the repository; received "${path}"`,
+    );
+  }
 }
 
 export function normalizeExtensionPackageJson(input: {

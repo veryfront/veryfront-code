@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   type ApplicationErrorContext,
   captureApplicationError,
@@ -7,7 +8,7 @@ import {
 } from "./application-errors.ts";
 import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
 
-Deno.test("application error reporter is optional", async () => {
+it("application error reporter is optional", async () => {
   setApplicationErrorReporter(undefined);
 
   assertEquals(
@@ -17,7 +18,7 @@ Deno.test("application error reporter is optional", async () => {
   assertEquals(await flushApplicationErrors(), true);
 });
 
-Deno.test("application error reporter receives unexpected failures and correlation context", async () => {
+it("application error reporter receives unexpected failures and correlation context", async () => {
   const captures: Array<{ error: unknown; boundary: string; traceId?: string }> = [];
   let flushTimeout: number | undefined;
   setApplicationErrorReporter({
@@ -44,19 +45,17 @@ Deno.test("application error reporter receives unexpected failures and correlati
   assertEquals(flushTimeout, 1_500);
 });
 
-Deno.test("application error context is exported from the shared contract with severity level", () => {
+it("application error context exports process role from the shared contract", () => {
   const context: ApplicationErrorContext = {
     boundary: "renderer.request",
-    level: "warning",
     processRole: "api",
   };
   const sharedContext: SharedApplicationErrorContext = context;
 
-  assertEquals(sharedContext.level, "warning");
   assertEquals(sharedContext.processRole, "api");
 });
 
-Deno.test("application error reporter ignores expected cancellation", () => {
+it("application error reporter ignores expected cancellation", () => {
   let captured = false;
   setApplicationErrorReporter({
     capture() {
