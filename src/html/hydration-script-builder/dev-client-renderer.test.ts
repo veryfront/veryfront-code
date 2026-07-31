@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateDevClientRendererScript } from "./dev-client-renderer.ts";
+import { generateProdHydrationModule } from "./prod-scripts.ts";
 
 describe("hydration-script-builder/dev-client-renderer", () => {
   describe("generateDevClientRendererScript", () => {
@@ -21,24 +22,17 @@ describe("hydration-script-builder/dev-client-renderer", () => {
       assertEquals(result.includes("nonce="), false);
     });
 
-    it("should import React", () => {
+    it("should leave React and the react runtime as bare imports for the import map", () => {
       const result = generateDevClientRendererScript();
-      assertEquals(result.includes("import * as React from 'react'"), true);
+      assertEquals(result.includes('import * as React from "react"'), true);
+      assertEquals(result.includes('from "react-dom/client"'), true);
+      assertEquals(result.includes('from "veryfront/router"'), true);
+      assertEquals(result.includes('from "veryfront/context"'), true);
     });
 
-    it("should import createRoot from react-dom/client", () => {
+    it("should serve the same bundled runtime as production", () => {
       const result = generateDevClientRendererScript();
-      assertEquals(result.includes("import { createRoot } from 'react-dom/client'"), true);
-    });
-
-    it("should import RouterProvider from veryfront/router", () => {
-      const result = generateDevClientRendererScript();
-      assertEquals(result.includes("from 'veryfront/router'"), true);
-    });
-
-    it("should import PageContextProvider from veryfront/context", () => {
-      const result = generateDevClientRendererScript();
-      assertEquals(result.includes("from 'veryfront/context'"), true);
+      assertEquals(result.includes(generateProdHydrationModule()), true);
     });
   });
 });
