@@ -162,6 +162,13 @@ export const myPopover: PopoverParts = {
 `useAdapter()` reads the active adapter (defaulting to builtin) — the skins use it
 internally, so you rarely call it directly.
 
+## Verify it worked
+
+- `import { Button, UIAdapterProvider, useAdapter } from "veryfront/ui"` resolves — the primitives and the adapter provider are public exports.
+- With no `UIAdapterProvider`, `useAdapter().name` is `"builtin"`; wrapping a subtree in `<UIAdapterProvider adapter={{ name: "x" }}>` changes it — the swap seam resolves.
+- `deno task storybook` renders a docs page for every primitive; `deno task storybook:check` passes.
+- `npx veryfront generate adapter base-ui` writes `ui-adapters/base-ui.tsx` into your project — a vendored engine adapter you own.
+
 ## See also
 
 - [UI + chat overview](./chat-ui.md) — the chat surface built on these primitives.

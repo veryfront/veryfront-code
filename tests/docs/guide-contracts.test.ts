@@ -709,6 +709,17 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/tool.md"],
     snippets: ["tool", "inputSchema", "toolRegistry"],
   },
+  "guides/ui-components.md": {
+    references: ["../api-reference/veryfront/ui.md"],
+    snippets: [
+      "veryfront/ui",
+      "UIAdapterProvider",
+      "useTokenScope",
+      "builtin",
+      "asChild",
+      "baseUiAdapter",
+    ],
+  },
   "guides/workflows.md": {
     references: ["../api-reference/veryfront/workflow.md"],
     snippets: ["workflow", "parallel", "waitForApproval"],
