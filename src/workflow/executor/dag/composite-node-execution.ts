@@ -18,7 +18,9 @@ interface CompositeNodeExecutionInput {
   node: WorkflowNode;
   parentSignal?: AbortSignal;
   cancellationGracePeriod?: number;
-  execute: (abortSignal: AbortSignal) => Promise<NodeExecutionResult>;
+  /** Durable active attempt restored from a running composite checkpoint. */
+  initialAttempt?: number;
+  execute: (abortSignal: AbortSignal, attempt: number) => Promise<NodeExecutionResult>;
 }
 
 export async function executeCompositeNodeWithPolicy(
@@ -29,27 +31,39 @@ export async function executeCompositeNodeWithPolicy(
   if (retry !== undefined) validateRetryConfig(retry);
 
   const maxAttempts = retry?.maxAttempts ?? 1;
+  const initialAttempt = input.initialAttempt ?? 1;
+  if (
+    !Number.isSafeInteger(initialAttempt) || initialAttempt < 1 ||
+    initialAttempt > maxAttempts
+  ) {
+    throw new Error(
+      `Composite node "${node.id}" has invalid persisted retry attempt ${initialAttempt}`,
+    );
+  }
   const timeout = node.config.timeout === undefined ? undefined : parsePositiveDurationWithLabel(
     node.config.timeout,
     `Composite node "${node.id}" timeout`,
   );
   const startedAt = new Date();
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let attempt = initialAttempt; attempt <= maxAttempts; attempt++) {
     parentSignal?.throwIfAborted();
 
     try {
-      const result = await runAbortableOperation(execute, {
-        label: `Composite node "${node.id}"`,
-        parentSignal,
-        cancellationGracePeriod: input.cancellationGracePeriod,
-        timeout: timeout === undefined ? undefined : {
-          milliseconds: timeout,
-          reason: TIMEOUT_ERROR.create({
-            detail: `Composite node "${node.id}" timed out after ${timeout}ms`,
-          }),
+      const result = await runAbortableOperation(
+        (abortSignal) => execute(abortSignal, attempt),
+        {
+          label: `Composite node "${node.id}"`,
+          parentSignal,
+          cancellationGracePeriod: input.cancellationGracePeriod,
+          timeout: timeout === undefined ? undefined : {
+            milliseconds: timeout,
+            reason: TIMEOUT_ERROR.create({
+              detail: `Composite node "${node.id}" timed out after ${timeout}ms`,
+            }),
+          },
         },
-      });
+      );
       const attemptedResult = withAttempt(result, attempt);
 
       if (attemptedResult.state.status !== "failed") return attemptedResult;

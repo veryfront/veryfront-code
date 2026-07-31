@@ -18,6 +18,8 @@ export interface FSAdapter {
   readFile(path: string): Promise<Uint8Array | string>;
   /** Read raw bytes without an intermediate text decode when supported. */
   readFileBytes?(path: string): Promise<Uint8Array>;
+  /** Fixed upstream whole-object ceiling enforced before materialization. */
+  readonly maxWholeFileReadBytes?: number;
   /**
    * Read through EOF or at most `byteLimit` bytes directly from the backing
    * store.
@@ -26,6 +28,12 @@ export interface FSAdapter {
    * whole-object reads.
    */
   readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /**
+   * Return the complete file when it fits within `byteLimit`, otherwise reject
+   * with `RangeError` without materializing or retaining bytes beyond that
+   * limit. Other I/O failures propagate unchanged.
+   */
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
   readTextFile?(path: string): Promise<string>;
   readOptionalTextFile?(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;

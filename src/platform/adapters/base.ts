@@ -236,6 +236,17 @@ export interface FileSystemAdapter {
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;
   /**
+   * Fixed whole-object ceiling enforced by the backing store or transport
+   * before a complete response can be materialized.
+   *
+   * This capability is distinct from `readFileBytesBounded`: the caller does
+   * not choose the read size, and the implementation may materialize up to
+   * this advertised ceiling even for a smaller file. It may be advertised
+   * only alongside `readFileBytes` and only when the upstream boundary itself
+   * rejects larger objects before returning them.
+   */
+  readonly maxWholeFileReadBytes?: number;
+  /**
    * Read a prefix without materializing more than `byteLimit` bytes.
    *
    * Implementations must enforce the limit while reading from their backing
@@ -246,6 +257,15 @@ export interface FileSystemAdapter {
    * discovery or strict Skill runtime reads must implement this capability.
    */
   readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /**
+   * Read the complete file only when it is no larger than `byteLimit`.
+   *
+   * Implementations must enforce the limit while reading and reject when the
+   * source has even one additional byte. They must not implement this by
+   * materializing the whole object or by retaining a `byteLimit + 1` prefix.
+   * Oversized sources reject with `RangeError`; other I/O failures propagate.
+   */
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
   /** Write raw bytes when binary-safe output is required. */
   writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
@@ -294,6 +314,11 @@ export interface FileSystemAdapter {
 export type BoundedFileSystemAdapter =
   & FileSystemAdapter
   & Required<Pick<FileSystemAdapter, "readFileBytesBounded">>;
+
+/** A filesystem adapter that can return only complete, size-admitted files. */
+export type ExactBoundedFileSystemAdapter =
+  & FileSystemAdapter
+  & Required<Pick<FileSystemAdapter, "readFileBytesWithinLimit">>;
 
 export interface ResolveFileOptions {
   allowPagesPrefix?: boolean;

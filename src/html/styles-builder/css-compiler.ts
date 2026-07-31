@@ -26,6 +26,8 @@ import {
   tryGetProjectCSSFromDistributedCache,
   tryGetProjectCSSFromLocalFallback,
 } from "./project-css-cache.ts";
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
+import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 
 // Re-export provider-neutral compiler and cache helpers.
 export { extractCandidates, extractCandidatesFromFiles, hashCSS } from "./candidate-extractor.ts";
@@ -168,27 +170,33 @@ export async function getProjectCSS(
   options?: CSSGenerationOptions,
   dependencies: CSSGenerationDependencies = {},
 ): Promise<{ css: string; hash: string; fromCache: boolean }> {
+  const admittedCandidates = new Set(normalizeCSSCandidates(candidates));
   const shouldMinify = options?.minify === true;
   const generationSession = await resolveGenerationSession(
     shouldMinify,
     dependencies.generationSession,
   );
   const resolvedStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
-  const context = createProjectCSSRequestContext(projectSlug, resolvedStylesheet, candidates, {
-    cssPipelineIdentity: generationSession.cacheIdentity,
-    minify: options?.minify,
-    environment: options?.environment,
-    buildMode: options?.buildMode,
-  });
+  const context = createProjectCSSRequestContext(
+    projectSlug,
+    resolvedStylesheet,
+    admittedCandidates,
+    {
+      cssPipelineIdentity: generationSession.cacheIdentity,
+      minify: options?.minify,
+      environment: options?.environment,
+      buildMode: options?.buildMode,
+    },
+  );
 
-  const localHit = await tryGetProjectCSSFromLocalFallback(context, candidates);
+  const localHit = await tryGetProjectCSSFromLocalFallback(context, admittedCandidates);
   if (localHit) return localHit;
 
   if (!isProjectCSSInitialized()) {
     await initializeProjectCSSCache();
   }
 
-  const distributedHit = await tryGetProjectCSSFromDistributedCache(context, candidates);
+  const distributedHit = await tryGetProjectCSSFromDistributedCache(context, admittedCandidates);
   if (distributedHit) return distributedHit;
 
   const inFlight = inFlightProjectCSS.get(context.cacheKey);
@@ -202,7 +210,7 @@ export async function getProjectCSS(
 
   const generationPromise = (async () => {
     // Generate fresh CSS
-    const result = await generateCSS(context.stylesheet, candidates, {
+    const result = await generateCSS(context.stylesheet, admittedCandidates, {
       ...options,
       projectSlug,
     }, { generationSession });
@@ -211,14 +219,14 @@ export async function getProjectCSS(
     await storeProjectCSS(
       context,
       { css: result.css, hash, candidatesHash: context.candidatesHash },
-      candidates,
+      admittedCandidates,
     );
 
     logger.debug("Project CSS generated", {
       projectSlug: context.projectSlug,
       hash,
       cssLength: result.css.length,
-      candidateCount: candidates.size,
+      candidateCount: admittedCandidates.size,
     });
 
     return { css: result.css, hash, fromCache: false };
@@ -316,16 +324,16 @@ export async function generateCSS(
   options?: CSSGenerationOptions,
   dependencies: CSSGenerationDependencies = {},
 ): Promise<CSSGenerationResult> {
+  const candidateArray = normalizeCSSCandidates(candidates).sort();
   const generationSession = await resolveGenerationSession(
     options?.minify === true,
     dependencies.generationSession,
   );
-  const candidateArray = [...new Set(candidates)].sort();
-
   return await withSpan(
     SpanNames.HTML_GENERATE_CSS,
     async () => {
       const css = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
+      assertCSSOutputContent(css, "Merged stylesheet input");
 
       const comp = await getCompiler(
         css,
@@ -334,6 +342,7 @@ export async function generateCSS(
         generationSession.compilationSession,
       );
       let output = comp.build(candidateArray);
+      assertCSSOutputContent(output, "CSS compiler output");
 
       if (options?.minify) {
         output = await minifyCSS(
@@ -341,6 +350,7 @@ export async function generateCSS(
           generationSession.optimizationSession,
         );
       }
+      assertCSSOutputContent(output, "Generated CSS output");
 
       logger.debug("Generated CSS", {
         candidateCount: candidateArray.length,

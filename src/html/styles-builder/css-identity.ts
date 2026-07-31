@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isStyleProfileHash } from "#veryfront/utils/css-artifact-identity.ts";
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
 
 const CANDIDATE_IDENTITY_SCHEMA = "veryfront.css-candidates.v1";
 
@@ -21,7 +22,7 @@ export function hashCSS(css: string): string {
  * Sorting makes Set insertion order irrelevant; JSON preserves string boundaries.
  */
 export function hashCandidates(candidates: Set<string>): string {
-  const canonicalCandidates = [...candidates].sort();
+  const canonicalCandidates = normalizeCSSCandidates(candidates).sort();
   return hashString(JSON.stringify([CANDIDATE_IDENTITY_SCHEMA, canonicalCandidates]));
 }
 

@@ -395,8 +395,16 @@ chunks and return either EOF or exactly the requested prefix. Hosted wrappers
 expose the method only when their underlying adapter implements the same
 contract. The Veryfront API, GitHub, and Cloudflare KV adapters intentionally
 omit it because their current upstream APIs return whole objects; advertising a
-post-read slice as a bounded read would be misleading. Consumers must retain a
-compatible, post-validated path for third-party adapters that omit the method.
+post-read slice as a bounded read would be misleading.
+
+`FileSystemAdapter.maxWholeFileReadBytes` is a separate fixed-ceiling
+capability. It may be advertised only with `readFileBytes()` and only when the
+backing store or transport rejects a larger whole response before returning it.
+The Veryfront adapter advertises its 64 MiB success-response transport ceiling,
+and Cloudflare advertises KV's 25 MiB value ceiling. GitHub does not currently
+advertise either safe-read capability. A consumer may choose the whole-file
+path only when the advertised ceiling fits its own global materialization
+budget; a smaller call-specific limit still requires a genuine bounded read.
 
 `FileSystemAdapter.readFileBytes(path)` and
 `FileSystemAdapter.writeFileBytes(path, content)` are the binary-safe whole-file

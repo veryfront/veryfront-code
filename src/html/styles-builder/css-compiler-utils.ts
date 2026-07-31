@@ -1,5 +1,8 @@
 /** Pure helper utilities for CSS compiler cache parsing and error classification. */
 
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
+import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
+
 interface ParsedCSSCacheEntry {
   css: string;
   candidates: string[];
@@ -44,15 +47,18 @@ export function buildCSSCacheEntry(
   inputs: { candidates: string[] | Set<string>; stylesheet: string } | undefined,
   defaultStylesheet: string,
 ): ParsedCSSCacheEntry {
+  const stylesheet = resolveStylesheet(inputs?.stylesheet, defaultStylesheet);
+  assertCSSOutputContent(css, "Cached CSS output");
+  assertCSSOutputContent(stylesheet, "Cached CSS regeneration stylesheet");
   return {
     css,
     candidates: inputs ? normalizeCandidates(inputs.candidates) : [],
-    stylesheet: resolveStylesheet(inputs?.stylesheet, defaultStylesheet),
+    stylesheet,
   };
 }
 
 function normalizeCandidates(candidates: string[] | Set<string>): string[] {
-  return Array.isArray(candidates) ? candidates : [...candidates];
+  return normalizeCSSCandidates(candidates);
 }
 
 export function parseCSSCacheEntry(raw: string, defaultStylesheet: string): ParsedCSSCacheEntry {
@@ -60,11 +66,7 @@ export function parseCSSCacheEntry(raw: string, defaultStylesheet: string): Pars
   if (parsed) return parsed;
 
   // Legacy format: plain CSS string (no inputs available)
-  return {
-    css: raw,
-    candidates: [],
-    stylesheet: defaultStylesheet,
-  };
+  return buildCSSCacheEntry(raw, undefined, defaultStylesheet);
 }
 
 function tryParseStructuredCSSCacheEntry(
@@ -73,41 +75,49 @@ function tryParseStructuredCSSCacheEntry(
 ): ParsedCSSCacheEntry | undefined {
   if (!raw.startsWith("{")) return undefined;
 
+  let parsed: RawCSSCacheEntry;
   try {
-    const parsed = JSON.parse(raw) as RawCSSCacheEntry;
-    if (typeof parsed.css !== "string") return undefined;
-
-    return {
-      css: parsed.css,
-      candidates: isStringArray(parsed.candidates) ? parsed.candidates : [],
-      stylesheet: typeof parsed.stylesheet === "string" ? parsed.stylesheet : defaultStylesheet,
-    };
+    parsed = JSON.parse(raw) as RawCSSCacheEntry;
   } catch (_) {
     /* expected: malformed JSON in CSS cache entry */
     return undefined;
   }
+  if (typeof parsed.css !== "string") return undefined;
+
+  return buildCSSCacheEntry(
+    parsed.css,
+    {
+      candidates: isStringArray(parsed.candidates) ? parsed.candidates : [],
+      stylesheet: typeof parsed.stylesheet === "string"
+        ? parsed.stylesheet
+        : defaultStylesheet,
+    },
+    defaultStylesheet,
+  );
 }
 
 export function parseProjectCSSCacheEntry(raw: string): ParsedProjectCSSCacheEntry | undefined {
+  let parsed: RawProjectCSSCacheEntry;
   try {
-    const parsed = JSON.parse(raw) as RawProjectCSSCacheEntry;
-    if (
-      typeof parsed.css !== "string" ||
-      typeof parsed.hash !== "string" ||
-      typeof parsed.candidatesHash !== "string"
-    ) {
-      return undefined;
-    }
-
-    return {
-      css: parsed.css,
-      hash: parsed.hash,
-      candidatesHash: parsed.candidatesHash,
-    };
+    parsed = JSON.parse(raw) as RawProjectCSSCacheEntry;
   } catch (_) {
     /* expected: malformed JSON in project CSS cache entry */
     return undefined;
   }
+  if (
+    typeof parsed.css !== "string" ||
+    typeof parsed.hash !== "string" ||
+    typeof parsed.candidatesHash !== "string"
+  ) {
+    return undefined;
+  }
+  assertCSSOutputContent(parsed.css, "Cached project CSS output");
+
+  return {
+    css: parsed.css,
+    hash: parsed.hash,
+    candidatesHash: parsed.candidatesHash,
+  };
 }
 
 function isStringArray(value: unknown): value is string[] {

@@ -681,6 +681,231 @@ describe("SecureFs", () => {
     }
   });
 
+  it("preserves bounded reads through canonical path validation", async () => {
+    let receivedPath: string | undefined;
+    let receivedLimit: number | undefined;
+    const fileSystem = createMockFileSystem({
+      readFileBytesBounded(path, byteLimit) {
+        receivedPath = path;
+        receivedLimit = byteLimit;
+        return Promise.resolve(new Uint8Array([1, 2, 3]));
+      },
+    });
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+      context: "internal",
+    });
+
+    assertEquals(typeof secureFs.readFileBytesBounded, "function");
+    assertEquals([...await secureFs.readFileBytesBounded!("assets/app.bin", 3)], [1, 2, 3]);
+    assertEquals(receivedPath, "/project/assets/app.bin");
+    assertEquals(receivedLimit, 3);
+  });
+
+  it("rejects traversal before invoking a bounded reader", async () => {
+    let reads = 0;
+    const fileSystem = createMockFileSystem({
+      readFileBytesBounded() {
+        reads++;
+        return Promise.resolve(new Uint8Array());
+      },
+    });
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+      context: "internal",
+    });
+
+    await assertRejects(
+      () => secureFs.readFileBytesBounded!("../secret.bin", 1),
+      VeryfrontError,
+      "Path validation failed",
+    );
+    assertEquals(reads, 0);
+  });
+
+  it("does not advertise bounded reads when the adapter lacks the capability", () => {
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: createMockAdapter(),
+      context: "internal",
+    });
+
+    assertEquals(secureFs.readFileBytesBounded, undefined);
+  });
+
+  it("captures exact bounded reads and validates their canonical path", async () => {
+    let originalCalls = 0;
+    let replacementCalls = 0;
+    let received: { path: string; byteLimit: number } | undefined;
+    const fileSystem = createMockFileSystem({
+      readFileBytesWithinLimit(path, byteLimit) {
+        originalCalls++;
+        received = { path, byteLimit };
+        return Promise.resolve(new Uint8Array([1, 2, 3]));
+      },
+    });
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+      context: "internal",
+    });
+    fileSystem.readFileBytesWithinLimit = () => {
+      replacementCalls++;
+      return Promise.resolve(new Uint8Array([9]));
+    };
+
+    assertEquals(
+      [...await secureFs.readFileBytesWithinLimit!("assets/app.bin", 3)],
+      [1, 2, 3],
+    );
+    assertEquals(received, { path: "/project/assets/app.bin", byteLimit: 3 });
+    assertEquals(originalCalls, 1);
+    assertEquals(replacementCalls, 0);
+  });
+
+  it("rejects traversal and invalid limits before invoking an exact bounded reader", async () => {
+    let reads = 0;
+    const fileSystem = createMockFileSystem({
+      readFileBytesWithinLimit() {
+        reads++;
+        return Promise.resolve(new Uint8Array());
+      },
+    });
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+      context: "internal",
+    });
+
+    await assertRejects(
+      () => secureFs.readFileBytesWithinLimit!("../secret.bin", 1),
+      VeryfrontError,
+      "Path validation failed",
+    );
+    await assertRejects(
+      () => secureFs.readFileBytesWithinLimit!("assets/app.bin", 0),
+      RangeError,
+      "positive safe integer",
+    );
+    assertEquals(reads, 0);
+  });
+
+  it("rejects accessor and Proxy filesystem capabilities without invoking hooks", () => {
+    let getterCalls = 0;
+    const accessor = createMockFileSystem();
+    Object.defineProperty(accessor, "readFileBytesWithinLimit", {
+      get() {
+        getterCalls++;
+        return () => Promise.resolve(new Uint8Array());
+      },
+    });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/project",
+          adapter: { fs: accessor } as RuntimeAdapter,
+          context: "internal",
+        }),
+      VeryfrontError,
+      "must be a data-property method",
+    );
+    assertEquals(getterCalls, 0);
+
+    let applyTraps = 0;
+    const callableProxy = createMockFileSystem({
+      readFileBytesWithinLimit: new Proxy(
+        () => Promise.resolve(new Uint8Array()),
+        {
+          apply() {
+            applyTraps++;
+            throw new Error("must not run");
+          },
+        },
+      ),
+    });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/project",
+          adapter: { fs: callableProxy } as RuntimeAdapter,
+          context: "internal",
+        }),
+      VeryfrontError,
+      "non-Proxy function",
+    );
+    assertEquals(applyTraps, 0);
+
+    let proxyTraps = 0;
+    const proxied = new Proxy(createMockFileSystem(), {
+      getOwnPropertyDescriptor() {
+        proxyTraps++;
+        throw new Error("must not run");
+      },
+    });
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/project",
+          adapter: { fs: proxied } as RuntimeAdapter,
+          context: "internal",
+        }),
+      VeryfrontError,
+      "Proxy",
+    );
+    assertEquals(proxyTraps, 0);
+  });
+
+  it("does not advertise exact bounded reads when the adapter lacks the capability", () => {
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: createMockAdapter(),
+      context: "internal",
+    });
+
+    assertEquals(secureFs.readFileBytesWithinLimit, undefined);
+  });
+
+  it("preserves a validated fixed whole-file read ceiling", () => {
+    const fileSystem = createMockFileSystem({
+      readFileBytes: () => Promise.resolve(new Uint8Array()),
+      maxWholeFileReadBytes: 4096,
+    });
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+      context: "internal",
+    });
+
+    assertEquals(secureFs.maxWholeFileReadBytes, 4096);
+  });
+
+  it("rejects accessor-backed whole-file ceiling metadata without invoking it", () => {
+    let getterCalls = 0;
+    const fileSystem = createMockFileSystem({
+      readFileBytes: () => Promise.resolve(new Uint8Array()),
+    });
+    Object.defineProperty(fileSystem, "maxWholeFileReadBytes", {
+      get() {
+        getterCalls++;
+        return 4096;
+      },
+    });
+
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/project",
+          adapter: { fs: fileSystem } as RuntimeAdapter,
+          context: "internal",
+        }),
+      VeryfrontError,
+      "must be a data property",
+    );
+    assertEquals(getterCalls, 0);
+  });
+
   it("preserves adapter lifecycle methods with their original receiver", async () => {
     let initialized = false;
     let shutDown = false;

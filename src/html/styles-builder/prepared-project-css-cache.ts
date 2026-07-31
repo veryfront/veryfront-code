@@ -1,6 +1,7 @@
 import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { assertCSSPipelineIdentity, assertStyleProfileHash, serverLogger } from "#veryfront/utils";
+import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 import { assertCSSContentIdentity, hashCSS, hashString, isCSSContentHash } from "./css-identity.ts";
 
 const logger = serverLogger.component("prepared-project-css-cache");
@@ -51,6 +52,7 @@ registerCache("prepared-project-css-cache", () => ({
 }));
 
 function setLocalEntry(key: string, entry: PreparedProjectCSSCacheEntry): void {
+  assertCSSOutputContent(entry.css, "Cached prepared CSS output");
   localPreparedProjectCSS.set(key, {
     ...entry,
     expiresAt: Date.now() + PREPARED_PROJECT_CSS_LOCAL_TTL_MS,
@@ -69,17 +71,19 @@ function setLocalEntry(key: string, entry: PreparedProjectCSSCacheEntry): void {
 function parsePreparedProjectCSSCacheEntry(
   raw: string,
 ): PreparedProjectCSSCacheEntry | null {
+  let parsed: Partial<PreparedProjectCSSCacheEntry>;
   try {
-    const parsed = JSON.parse(raw) as Partial<PreparedProjectCSSCacheEntry>;
-    if (
-      typeof parsed.css !== "string" ||
-      !isCSSContentHash(parsed.hash) ||
-      hashCSS(parsed.css) !== parsed.hash
-    ) return null;
-    return { css: parsed.css, hash: parsed.hash };
+    parsed = JSON.parse(raw) as Partial<PreparedProjectCSSCacheEntry>;
   } catch {
     return null;
   }
+  if (
+    typeof parsed.css !== "string" ||
+    !isCSSContentHash(parsed.hash)
+  ) return null;
+  assertCSSOutputContent(parsed.css, "Cached prepared CSS output");
+  if (hashCSS(parsed.css) !== parsed.hash) return null;
+  return { css: parsed.css, hash: parsed.hash };
 }
 
 export async function initializePreparedProjectCSSCache(): Promise<boolean> {
@@ -117,6 +121,7 @@ export function createPreparedProjectCSSContext(
   if (typeof stylesheet !== "string") {
     throw new TypeError("Prepared CSS request context requires a resolved stylesheet");
   }
+  assertCSSOutputContent(stylesheet, "Prepared CSS stylesheet");
 
   const stylesheetHash = hashString(stylesheet);
   const projectVersionHash = hashString(projectVersion);
@@ -149,6 +154,7 @@ export async function tryGetPreparedProjectCSS(
 ): Promise<{ css: string; hash: string; fromCache: true } | undefined> {
   const local = localPreparedProjectCSS.get(context.cacheKey);
   if (local && local.expiresAt > Date.now()) {
+    assertCSSOutputContent(local.css, "Cached prepared CSS output");
     return { css: local.css, hash: local.hash, fromCache: true };
   }
 
@@ -162,15 +168,9 @@ export async function tryGetPreparedProjectCSS(
 
   if (!preparedProjectCSSBackend) return undefined;
 
+  let raw: string | null;
   try {
-    const raw = await preparedProjectCSSBackend.get(context.cacheKey);
-    if (!raw) return undefined;
-
-    const entry = parsePreparedProjectCSSCacheEntry(raw);
-    if (!entry) return undefined;
-
-    setLocalEntry(context.cacheKey, entry);
-    return { css: entry.css, hash: entry.hash, fromCache: true };
+    raw = await preparedProjectCSSBackend.get(context.cacheKey);
   } catch (error) {
     logger.debug("Failed to read prepared project CSS", {
       cacheKey: context.cacheKey,
@@ -178,12 +178,20 @@ export async function tryGetPreparedProjectCSS(
     });
     return undefined;
   }
+  if (!raw) return undefined;
+
+  const entry = parsePreparedProjectCSSCacheEntry(raw);
+  if (!entry) return undefined;
+
+  setLocalEntry(context.cacheKey, entry);
+  return { css: entry.css, hash: entry.hash, fromCache: true };
 }
 
 export async function storePreparedProjectCSS(
   context: PreparedProjectCSSRequestContext,
   entry: PreparedProjectCSSCacheEntry,
 ): Promise<void> {
+  assertCSSOutputContent(entry.css, "Cached prepared CSS output");
   assertCSSContentIdentity(entry.css, entry.hash);
 
   if (!preparedProjectCSSInitialized) {

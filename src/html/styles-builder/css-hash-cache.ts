@@ -18,6 +18,8 @@ import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { assertCSSContentIdentity, hashCSS, isCSSContentHash } from "./css-identity.ts";
 import { buildCSSCacheEntry, parseCSSCacheEntry, resolveStylesheet } from "./css-compiler-utils.ts";
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
+import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 
 const logger = serverLogger.component("css-cache");
 
@@ -149,6 +151,8 @@ function getCssCache(): Promise<CacheBackend> {
 }
 
 function storeInLocalCache(hash: string, entry: CSSCacheEntry): void {
+  assertCSSOutputContent(entry.css, "Cached CSS output");
+  assertCSSOutputContent(entry.stylesheet, "Cached CSS regeneration stylesheet");
   storeInBoundedLocalCache(localCssCache, LOCAL_CACHE_MAX_SIZE, hash, entry);
 }
 
@@ -185,6 +189,7 @@ function getCssInputsCache(): Promise<CacheBackend> {
 }
 
 function storeInLocalCssInputsCache(hash: string, entry: CSSInputsCacheEntry): void {
+  assertCSSOutputContent(entry.stylesheet, "Cached CSS regeneration stylesheet");
   storeInBoundedLocalCache(localCssInputsCache, LOCAL_CSS_INPUTS_CACHE_MAX, hash, entry);
 }
 
@@ -197,19 +202,23 @@ function isCSSCacheEntryForHash(entry: CSSCacheEntry, hash: string): boolean {
 }
 
 function parseCSSInputsCacheEntry(raw: string): CSSInputsCacheEntry | undefined {
+  let parsed: Partial<CSSInputsCacheEntry>;
   try {
-    const parsed = JSON.parse(raw) as Partial<CSSInputsCacheEntry>;
-    if (
-      !Array.isArray(parsed.candidates) ||
-      !parsed.candidates.every((candidate) => typeof candidate === "string") ||
-      typeof parsed.stylesheet !== "string"
-    ) {
-      return undefined;
-    }
-    return { candidates: [...parsed.candidates], stylesheet: parsed.stylesheet };
+    parsed = JSON.parse(raw) as Partial<CSSInputsCacheEntry>;
   } catch {
     return undefined;
   }
+  if (
+    !Array.isArray(parsed.candidates) ||
+    typeof parsed.stylesheet !== "string"
+  ) {
+    return undefined;
+  }
+  assertCSSOutputContent(parsed.stylesheet, "Cached CSS regeneration stylesheet");
+  return {
+    candidates: normalizeCSSCandidates(parsed.candidates),
+    stylesheet: parsed.stylesheet,
+  };
 }
 
 // ============================================================================
@@ -226,9 +235,9 @@ export async function cacheCSSAsync(
   hash?: string,
   inputs?: { candidates: string[] | Set<string>; stylesheet: string },
 ): Promise<string> {
-  const resolvedHash = hashCSS(css);
-  if (hash !== undefined) assertCSSContentIdentity(css, hash);
   const entry: CSSCacheEntry = buildCSSCacheEntry(css, inputs, LEGACY_EMPTY_STYLESHEET);
+  const resolvedHash = hashCSS(entry.css);
+  if (hash !== undefined) assertCSSContentIdentity(entry.css, hash);
 
   storeInLocalCache(resolvedHash, entry);
 
@@ -253,6 +262,7 @@ export function getCSSByHash(hash: string): string | undefined {
   if (!isCSSContentHash(hash)) return undefined;
   const entry = localCssCache.get(hash);
   if (entry) {
+    assertCSSOutputContent(entry.css, "Cached CSS output");
     if (!isCSSCacheEntryForHash(entry, hash)) {
       localCssCache.delete(hash);
       return undefined;
@@ -271,6 +281,7 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
     async () => {
       const local = localCssCache.get(hash);
       if (local) {
+        assertCSSOutputContent(local.css, "Cached CSS output");
         if (!isCSSCacheEntryForHash(local, hash)) {
           localCssCache.delete(hash);
           return undefined;
@@ -279,24 +290,25 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
         return local.css;
       }
 
+      let raw: string | null;
       try {
         const cache = await getCssCache();
-        const raw = await cache.get(getVersionedCacheKey(hash));
-        if (!raw) return undefined;
-
-        const entry = parseCSSCacheEntry(raw, LEGACY_EMPTY_STYLESHEET);
-        if (!isCSSCacheEntryForHash(entry, hash)) {
-          logger.warn("Rejected CSS cache entry with mismatched content identity", { hash });
-          return undefined;
-        }
-
-        storeInLocalCache(hash, entry);
-        logger.debug("CSS cache hit from distributed cache", { hash });
-        return entry.css;
+        raw = await cache.get(getVersionedCacheKey(hash));
       } catch (error) {
         logger.debug("Failed to read from distributed CSS cache", { hash, error });
         return undefined;
       }
+      if (!raw) return undefined;
+
+      const entry = parseCSSCacheEntry(raw, LEGACY_EMPTY_STYLESHEET);
+      if (!isCSSCacheEntryForHash(entry, hash)) {
+        logger.warn("Rejected CSS cache entry with mismatched content identity", { hash });
+        return undefined;
+      }
+
+      storeInLocalCache(hash, entry);
+      logger.debug("CSS cache hit from distributed cache", { hash });
+      return entry.css;
     },
     { "css.hash": hash },
   );
@@ -320,9 +332,10 @@ export async function cacheCSSInputsAsync(
   }
 
   const entry: CSSInputsCacheEntry = {
-    candidates: Array.isArray(inputs.candidates) ? inputs.candidates : [...inputs.candidates],
+    candidates: normalizeCSSCandidates(inputs.candidates),
     stylesheet: resolveStylesheet(inputs.stylesheet, LEGACY_EMPTY_STYLESHEET),
   };
+  assertCSSOutputContent(entry.stylesheet, "Cached CSS regeneration stylesheet");
 
   storeInLocalCssInputsCache(hash, entry);
 
@@ -350,6 +363,8 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
 
   const local = localCssCache.get(hash);
   if (local && local.candidates.length > 0) {
+    assertCSSOutputContent(local.css, "Cached CSS output");
+    assertCSSOutputContent(local.stylesheet, "Cached CSS regeneration stylesheet");
     if (!isCSSCacheEntryForHash(local, hash)) {
       localCssCache.delete(hash);
       return undefined;
@@ -358,20 +373,20 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
     return local;
   }
 
+  let raw: string | null;
   try {
     const cache = await getCssCache();
-    const raw = await cache.get(getVersionedCacheKey(hash));
-    if (!raw) return undefined;
-
-    const entry = parseCSSCacheEntry(raw, LEGACY_EMPTY_STYLESHEET);
-    if (!isCSSCacheEntryForHash(entry, hash)) return undefined;
-    storeInLocalCache(hash, entry);
-    return entry;
+    raw = await cache.get(getVersionedCacheKey(hash));
   } catch (error) {
     logger.debug("Failed to read CSS cache entry", { hash, error });
+    return undefined;
   }
+  if (!raw) return undefined;
 
-  return undefined;
+  const entry = parseCSSCacheEntry(raw, LEGACY_EMPTY_STYLESHEET);
+  if (!isCSSCacheEntryForHash(entry, hash)) return undefined;
+  storeInLocalCache(hash, entry);
+  return entry;
 }
 
 /**
@@ -381,22 +396,26 @@ async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | u
   if (!isCSSContentHash(hash)) return undefined;
 
   const local = localCssInputsCache.get(hash);
-  if (local) return local;
+  if (local) {
+    assertCSSOutputContent(local.stylesheet, "Cached CSS regeneration stylesheet");
+    return local;
+  }
 
+  let raw: string | null;
   try {
     const cache = await getCssInputsCache();
-    const raw = await cache.get(getVersionedCacheKey(hash));
-    if (!raw) return undefined;
-
-    const entry = parseCSSInputsCacheEntry(raw);
-    if (!entry) return undefined;
-    storeInLocalCssInputsCache(hash, entry);
-    logger.debug("CSS inputs cache hit from distributed cache", { hash });
-    return entry;
+    raw = await cache.get(getVersionedCacheKey(hash));
   } catch (error) {
     logger.debug("Failed to read CSS inputs from distributed cache", { hash, error });
     return undefined;
   }
+  if (!raw) return undefined;
+
+  const entry = parseCSSInputsCacheEntry(raw);
+  if (!entry) return undefined;
+  storeInLocalCssInputsCache(hash, entry);
+  logger.debug("CSS inputs cache hit from distributed cache", { hash });
+  return entry;
 }
 
 function toCSSInputsEntry(cacheEntry: CSSCacheEntry | undefined): CSSInputsCacheEntry | undefined {
@@ -432,12 +451,21 @@ export async function persistRegeneratedCSSEntry(
   hash: string,
   entry: CSSCacheEntry,
 ): Promise<void> {
-  assertCSSContentIdentity(entry.css, hash);
-  storeInLocalCache(hash, entry);
+  const admittedEntry = buildCSSCacheEntry(
+    entry.css,
+    { candidates: entry.candidates, stylesheet: entry.stylesheet },
+    LEGACY_EMPTY_STYLESHEET,
+  );
+  assertCSSContentIdentity(admittedEntry.css, hash);
+  storeInLocalCache(hash, admittedEntry);
 
   try {
     const cache = await getCssCache();
-    await cache.set(getVersionedCacheKey(hash), JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
+    await cache.set(
+      getVersionedCacheKey(hash),
+      JSON.stringify(admittedEntry),
+      CSS_CACHE_TTL_SECONDS,
+    );
   } catch (error) {
     logger.error("CSS cache write failed", {
       hash: hash.slice(-20),

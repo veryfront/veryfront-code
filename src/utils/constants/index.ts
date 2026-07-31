@@ -135,6 +135,7 @@ export {
   isTruthyEnvValue,
 } from "./env.ts";
 export { HASH_SEED_DJB2, HASH_SEED_FNV1A } from "./hash.ts";
+export { STATIC_ASSET_MAX_BYTES } from "./static-assets.ts";
 export {
   HMR_CLIENT_RELOAD_DELAY_MS,
   HMR_CLOSE_MESSAGE_TOO_LARGE,

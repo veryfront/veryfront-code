@@ -10,8 +10,11 @@ import {
   runWithCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { join } from "#veryfront/compat/path/index.ts";
+import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
+import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 import { getRequestTokenProvenance } from "../../context/request-context.ts";
 import {
   createCSSAssetPathPattern,
@@ -36,14 +39,38 @@ async function getBuiltCSSFallback(
   ctx: HandlerContext,
 ): Promise<string | undefined> {
   const builtCSSPath = join(ctx.projectDir, "dist", "_vf", "css", `${cssHash}.css`);
+
+  let fileInfo: Awaited<ReturnType<typeof ctx.adapter.fs.stat>>;
   try {
-    const exists = await ctx.adapter.fs.exists(builtCSSPath);
-    if (!exists) return undefined;
-    const css = await ctx.adapter.fs.readFile(builtCSSPath);
-    return hashCSS(css) === cssHash ? css : undefined;
-  } catch {
-    return undefined;
+    fileInfo = await ctx.adapter.fs.stat(builtCSSPath);
+  } catch (error) {
+    if (isNotFoundError(error)) return undefined;
+    throw error;
   }
+
+  if (!fileInfo.isFile) return undefined;
+  if (
+    !Number.isSafeInteger(fileInfo.size) ||
+    fileInfo.size < 0 ||
+    fileInfo.size > MAX_CSS_OUTPUT_FILE_BYTES
+  ) {
+    throw new TypeError(
+      `Built CSS output exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} bytes: ${builtCSSPath}`,
+    );
+  }
+
+  let css: string;
+  try {
+    css = await ctx.adapter.fs.readFile(builtCSSPath);
+  } catch (error) {
+    // A file can disappear between stat and read. That remains an ordinary
+    // cache miss; permission, transport, and integrity failures must surface.
+    if (isNotFoundError(error)) return undefined;
+    throw error;
+  }
+
+  assertCSSOutputContent(css, "Built CSS output");
+  return hashCSS(css) === cssHash ? css : undefined;
 }
 
 export class CSSHandler extends BaseHandler {
@@ -118,6 +145,10 @@ export class CSSHandler extends BaseHandler {
 
       return this.respond(response);
     }
+
+    // getCSSWithJITFallback returns both cache hits and regenerated output, so
+    // this single admission check protects every in-memory response source.
+    assertCSSOutputContent(resolvedCSS, "Cached or regenerated CSS output");
 
     const body = method === "HEAD" ? null : resolvedCSS;
 

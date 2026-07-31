@@ -13,6 +13,7 @@ import { generateId, parsePositiveDurationWithLabel } from "../types.ts";
 import { CONFIG_INVALID, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { runWithWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 import { validatePositiveSafeInteger } from "../dsl/validation.ts";
+import { TimedWaitRecoveryService } from "../runtime/timed-wait-recovery.ts";
 
 const logger = baseLogger.component("workflow-worker");
 
@@ -112,6 +113,7 @@ export class WorkflowWorker {
   private pendingClaimRequeues = new Set<string>();
   private claimRequeuePromises = new Map<string, Promise<void>>();
   private stats: WorkerStats;
+  private timedWaitRecovery: TimedWaitRecoveryService;
 
   constructor(config: WorkflowWorkerConfig) {
     // Validate backend supports worker features
@@ -157,6 +159,10 @@ export class WorkflowWorker {
       resumeCount: 0,
       errorCount: 0,
     };
+    this.timedWaitRecovery = new TimedWaitRecoveryService(
+      config.backend,
+      `${workerId}:timed-waits`,
+    );
   }
 
   /**
@@ -370,6 +376,27 @@ export class WorkflowWorker {
     this.stats.lastPollAt = new Date();
 
     try {
+      const initialSlots = this.config.concurrency - this.activeResumes.size;
+      const recovered = await this.timedWaitRecovery.recover({
+        now: Date.now(),
+        maxAwakened: Math.max(0, initialSlots),
+        nextWorkerId: this.config.workerId,
+      });
+      for (const { error, runId } of recovered.errors) {
+        this.recordError(error);
+        logger.error(
+          runId
+            ? `Failed to reconcile timed wait for workflow run ${runId}:`
+            : "Failed to reconcile timed workflow waits:",
+          error,
+        );
+      }
+      if (this.status !== "running") return;
+      for (const run of recovered.awakenedRuns) {
+        if (this.status !== "running") return;
+        this.resumeInBackground(run);
+      }
+
       // Find stalled runs
       const stalledRuns = await this.config.backend.findStalledRuns!(
         this.config.stalledThreshold,
@@ -377,9 +404,7 @@ export class WorkflowWorker {
 
       if (this.status !== "running") return;
 
-      if (stalledRuns.length === 0) {
-        return;
-      }
+      if (stalledRuns.length === 0) return;
 
       if (this.config.debug) {
         logger.info(`Found ${stalledRuns.length} stalled runs`);

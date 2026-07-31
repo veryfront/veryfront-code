@@ -9,7 +9,7 @@ import type {
 import { createFileWatcher, createWatcherIterator, setupNodeFsWatcher } from "./shared-watcher.ts";
 import { makeNodeTempDir } from "./temp-dir.ts";
 import { isNotFoundError } from "../../../compat/fs.ts";
-import { readBoundedFilePrefix } from "../../bounded-file-read.ts";
+import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 
 export interface NodeFileSystemLogger {
@@ -47,6 +47,25 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
   async readFileBytesBounded(path: string, byteLimit: number): Promise<Uint8Array> {
     const fs = await import("node:fs/promises");
     return await readBoundedFilePrefix(async () => {
+      const handle = await fs.open(path, "r");
+      return {
+        close: () => handle.close(),
+        async read(buffer: Uint8Array) {
+          const { bytesRead } = await handle.read(
+            buffer,
+            0,
+            buffer.byteLength,
+            null,
+          );
+          return bytesRead === 0 ? null : bytesRead;
+        },
+      };
+    }, byteLimit);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const fs = await import("node:fs/promises");
+    return await readFileWithinLimit(async () => {
       const handle = await fs.open(path, "r");
       return {
         close: () => handle.close(),

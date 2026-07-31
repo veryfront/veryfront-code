@@ -1,5 +1,11 @@
 import { ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
-import { updateRunIfStatus, type WorkflowBackend } from "../backends/types.ts";
+import {
+  hasTimedWaitRecoverySupport,
+  type TimedWaitClaim,
+  updateRunIfStatus,
+  type WorkflowBackend,
+  type WorkflowRunUpdate,
+} from "../backends/types.ts";
 import {
   type DurableTimedWaitKind,
   INTERNAL_DELAY_EVENT_NAME,
@@ -146,36 +152,14 @@ function registrationsMatch(
     left.startedAtMs === right.startedAtMs && left.deadline === right.deadline;
 }
 
-/**
- * Reconcile one exact persisted wait deadline through an owner-fenced CAS.
- * Delay expiry wakes the run; ordinary event expiry fails it durably.
- */
-export async function reconcileTimedWorkflowWait(
+async function persistTimedWaitResolution(
   backend: WorkflowBackend,
+  run: WorkflowRun,
   registration: TimedWorkflowWaitRegistration,
-  options: ReconcileTimedWorkflowWaitOptions = {},
+  options: ReconcileTimedWorkflowWaitOptions,
+  update: (patch: WorkflowRunUpdate) => Promise<boolean>,
 ): Promise<TimedWorkflowWaitReconciliationOutcome> {
-  const run = await backend.getRun(registration.runId);
-  if (
-    !run || run.status !== "waiting" || run.workerId !== registration.workerId
-  ) {
-    return { status: "unchanged", run: run ?? undefined, registration };
-  }
-
-  const state = Object.hasOwn(run.nodeStates, registration.nodeId)
-    ? run.nodeStates[registration.nodeId]
-    : undefined;
-  if (!state) return { status: "unchanged", run, registration };
-  const current = getTimedWorkflowWait(run, registration.nodeId, state);
-  if (!current || !registrationsMatch(current, registration)) {
-    return { status: "unchanged", run, registration };
-  }
-
   const now = options.now ?? Date.now();
-  if (now < registration.deadline) {
-    return { status: "not-due", run, registration };
-  }
-
   const completedAt = new Date(now);
   const nodeStates = structuredClone(run.nodeStates);
   if (registration.waitKind === "delay") {
@@ -185,27 +169,19 @@ export async function reconcileTimedWorkflowWait(
       error: undefined,
       completedAt,
     };
-    const awakened = await updateRunIfStatus(
-      backend,
-      run.id,
-      ["waiting"],
-      {
-        status: "pending",
-        currentNodes: [registration.nodeId],
-        nodeStates,
-        ...(options.nextWorkerId === undefined ? {} : { workerId: options.nextWorkerId }),
-      },
-      registration.workerId,
-    );
+    const patch: WorkflowRunUpdate = {
+      status: "pending",
+      currentNodes: [registration.nodeId],
+      nodeStates,
+      ...(options.nextWorkerId === undefined ? {} : { workerId: options.nextWorkerId }),
+    };
+    const awakened = await update(patch);
     if (!awakened) {
       return { status: "unchanged", run: await backend.getRun(run.id) ?? undefined, registration };
     }
     const awakenedRun: WorkflowRun = {
       ...run,
-      status: "pending",
-      currentNodes: [registration.nodeId],
-      nodeStates,
-      ...(options.nextWorkerId === undefined ? {} : { workerId: options.nextWorkerId }),
+      ...patch,
     };
     return {
       status: "awakened",
@@ -226,29 +202,20 @@ export async function reconcileTimedWorkflowWait(
     error: error.message,
     completedAt,
   };
-  const failed = await updateRunIfStatus(
-    backend,
-    run.id,
-    ["waiting"],
-    {
-      status: "failed",
-      currentNodes: [],
-      nodeStates,
-      error: { message: error.message, stack: error.stack },
-      completedAt,
-    },
-    registration.workerId,
-  );
-  if (!failed) {
-    return { status: "unchanged", run: await backend.getRun(run.id) ?? undefined, registration };
-  }
-  const failedRun: WorkflowRun = {
-    ...run,
+  const patch: WorkflowRunUpdate = {
     status: "failed",
     currentNodes: [],
     nodeStates,
     error: { message: error.message, stack: error.stack },
     completedAt,
+  };
+  const failed = await update(patch);
+  if (!failed) {
+    return { status: "unchanged", run: await backend.getRun(run.id) ?? undefined, registration };
+  }
+  const failedRun: WorkflowRun = {
+    ...run,
+    ...patch,
   };
   return {
     status: "failed",
@@ -256,6 +223,90 @@ export async function reconcileTimedWorkflowWait(
     error,
     registration,
   };
+}
+
+function validateCurrentTimedWait(
+  run: WorkflowRun | null,
+  registration: TimedWorkflowWaitRegistration,
+): run is WorkflowRun {
+  if (!run || run.status !== "waiting" || run.workerId !== registration.workerId) return false;
+  const state = Object.hasOwn(run.nodeStates, registration.nodeId)
+    ? run.nodeStates[registration.nodeId]
+    : undefined;
+  if (!state) return false;
+  const current = getTimedWorkflowWait(run, registration.nodeId, state);
+  return !!current && registrationsMatch(current, registration);
+}
+
+/**
+ * Reconcile one exact persisted wait deadline through an owner-fenced CAS.
+ * Delay expiry wakes the run; ordinary event expiry fails it durably.
+ */
+export async function reconcileTimedWorkflowWait(
+  backend: WorkflowBackend,
+  registration: TimedWorkflowWaitRegistration,
+  options: ReconcileTimedWorkflowWaitOptions = {},
+): Promise<TimedWorkflowWaitReconciliationOutcome> {
+  const run = await backend.getRun(registration.runId);
+  if (!validateCurrentTimedWait(run, registration)) {
+    return { status: "unchanged", run: run ?? undefined, registration };
+  }
+  const now = options.now ?? Date.now();
+  if (now < registration.deadline) return { status: "not-due", run, registration };
+  return await persistTimedWaitResolution(
+    backend,
+    run,
+    registration,
+    { ...options, now },
+    (patch) =>
+      updateRunIfStatus(
+        backend,
+        run.id,
+        ["waiting"],
+        patch,
+        registration.workerId,
+      ),
+  );
+}
+
+/** Reconcile a backend-leased deadline through its exact live fencing token. */
+export async function reconcileClaimedTimedWorkflowWait(
+  backend: WorkflowBackend,
+  claim: TimedWaitClaim,
+  options: ReconcileTimedWorkflowWaitOptions = {},
+): Promise<TimedWorkflowWaitReconciliationOutcome | null> {
+  if (!hasTimedWaitRecoverySupport(backend)) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Workflow backend does not support indexed timed-wait recovery",
+    });
+  }
+  const registration = getTimedWorkflowWaits(claim.run).find((candidate) =>
+    candidate.nodeId === claim.nodeId && candidate.deadline === claim.deadline &&
+    candidate.waitKind === claim.waitKind
+  );
+  if (!registration || registration.workerId === undefined) return null;
+  const now = options.now ?? Date.now();
+  if (now < registration.deadline) {
+    return { status: "not-due", run: claim.run, registration };
+  }
+  if (!validateCurrentTimedWait(claim.run, registration)) {
+    return { status: "unchanged", run: claim.run, registration };
+  }
+  return await persistTimedWaitResolution(
+    backend,
+    claim.run,
+    registration,
+    { ...options, now },
+    (patch) =>
+      backend.updateRunIfTimedWaitClaim(
+        claim.run.id,
+        claim.nodeId,
+        claim.claimId,
+        claim.deadline,
+        registration.workerId!,
+        patch,
+      ),
+  );
 }
 
 /** Reconcile the earliest due timed wait in one waiting run. */

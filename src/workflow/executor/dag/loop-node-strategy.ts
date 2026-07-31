@@ -3,15 +3,21 @@ import type {
   LoopNodeConfig,
   NodeState,
   WorkflowContext,
+  WorkflowGraphIdentity,
   WorkflowNode,
 } from "../../types.ts";
 import { parseDuration, parsePositiveDurationWithLabel } from "../../types.ts";
 import type { ContextPatch, DAGInternalExecutionResult, NodeExecutionResult } from "./types.ts";
 import { sleep } from "#veryfront/utils";
-import { TIMEOUT_ERROR } from "#veryfront/errors";
-import type { NodeStrategyRuntime } from "./node-strategy-types.ts";
+import { ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import type {
+  CheckpointResumeSnapshot,
+  CheckpointResumeTransform,
+  NodeStrategyRuntime,
+} from "./node-strategy-types.ts";
 import { captureWorkflowSourceIntegrationPolicy } from "../../source-integration-policy.ts";
 import { captureWorkflowNodes } from "../workflow-definition-snapshot.ts";
+import { captureCanonicalWorkflowGraphIdentity } from "./graph-identity.ts";
 import {
   applyContextPatch,
   applyRecordPatch,
@@ -33,6 +39,7 @@ import {
   SUBWORKFLOW_INPUT_KIND,
   type WorkflowContextProjection,
   type WorkflowProjectionPath,
+  workflowRuntimeValuesEqual,
 } from "../../runtime-state.ts";
 
 interface ExecuteLoopNodeStrategyInput {
@@ -45,6 +52,10 @@ interface ExecuteLoopNodeStrategyInput {
   runtime: NodeStrategyRuntime;
   abortSignal?: AbortSignal;
   retryExecution?: LoopRetryExecutionState;
+  checkpointResumeTransform?: CheckpointResumeTransform;
+  transactionContext: WorkflowContext;
+  transactionProjection: WorkflowContextProjection;
+  activeAttempt: number;
 }
 
 interface PersistedLoopState {
@@ -56,6 +67,10 @@ interface PersistedLoopState {
   iterationBaseContext?: WorkflowContext;
   iterationBaseProjection?: WorkflowContextProjection;
   previousResultsProjection?: WorkflowProjectionPath[];
+  iterationContext?: WorkflowContext;
+  iterationContextProjection?: WorkflowContextProjection;
+  stepsGraphIdentity?: WorkflowGraphIdentity;
+  admissionContextPatch?: ContextPatch;
 }
 
 /** In-memory admission snapshot reused by an immediate composite retry. */
@@ -70,6 +85,16 @@ export interface LoopNodeStrategyResult extends NodeExecutionResult {
 type ProjectionMarkedLoopNodeState = NodeState & {
   readonly [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]?: WorkflowProjectionPath[];
 };
+
+function chainCheckpointResumeTransform(
+  upstream: CheckpointResumeTransform | undefined,
+  wrap: CheckpointResumeTransform,
+): CheckpointResumeTransform {
+  return (snapshot) => {
+    const parentSnapshot = wrap(snapshot);
+    return upstream ? upstream(parentSnapshot) : parentSnapshot;
+  };
+}
 
 function remapContextPatchProjection(
   patch: ContextPatch,
@@ -92,12 +117,24 @@ type ActiveIterationResult =
     steps: WorkflowNode[];
     stepsEvaluationContext: WorkflowContext;
     stepsEvaluationProjection: WorkflowContextProjection;
+    stepsGraphIdentity: WorkflowGraphIdentity;
   };
 
 export async function executeLoopNodeStrategy(
   input: ExecuteLoopNodeStrategyInput,
 ): Promise<LoopNodeStrategyResult> {
-  const { node, config, context, contextProjection, inputKind, nodeStates, runtime } = input;
+  const {
+    node,
+    config,
+    context,
+    contextProjection,
+    inputKind,
+    nodeStates,
+    runtime,
+    transactionContext,
+    transactionProjection,
+    activeAttempt,
+  } = input;
   runtime.abortSignal?.throwIfAborted();
   const startTime = Date.now();
   const iterationTimeout = config.iterationTimeout === undefined
@@ -123,6 +160,16 @@ export async function executeLoopNodeStrategy(
       context,
       `${node.id}_loop_state`,
     ) as PersistedLoopState | undefined);
+  const admissionContextPatch = cloneExecutionState(
+    existingLoopState?.admissionContextPatch ??
+      createContextPatch(
+        transactionContext,
+        context,
+        transactionProjection,
+        contextProjection,
+      ),
+    `Loop "${node.id}" admission context patch`,
+  );
 
   // Child node states for the in-flight (resumed) iteration, so its already
   // completed steps are not re-executed on resume (H9).
@@ -133,6 +180,9 @@ export async function executeLoopNodeStrategy(
   let resumeIterationBaseProjection: WorkflowContextProjection | undefined;
   let resumeAdmittedSteps: WorkflowNode[] | undefined;
   let resumeIteration: number | undefined;
+  let resumeIterationContext: WorkflowContext | undefined;
+  let resumeIterationContextProjection: WorkflowContextProjection | undefined;
+  let resumeStepsGraphIdentity: WorkflowGraphIdentity | undefined;
 
   if (existingLoopState) {
     iteration = existingLoopState.iteration;
@@ -188,6 +238,24 @@ export async function executeLoopNodeStrategy(
       : undefined;
     resumeIteration = existingLoopState.iteration;
     resumeAdmittedSteps = input.retryExecution?.admittedSteps;
+    resumeIterationContext = existingLoopState.iterationContext
+      ? cloneExecutionState(
+        existingLoopState.iterationContext,
+        `Loop "${node.id}" persisted iteration context`,
+      )
+      : undefined;
+    resumeIterationContextProjection = existingLoopState.iterationContextProjection
+      ? cloneExecutionState(
+        existingLoopState.iterationContextProjection,
+        `Loop "${node.id}" persisted iteration context projection`,
+      )
+      : undefined;
+    resumeStepsGraphIdentity = existingLoopState.stepsGraphIdentity
+      ? cloneExecutionState(
+        existingLoopState.stepsGraphIdentity,
+        `Loop "${node.id}" persisted steps graph identity`,
+      )
+      : undefined;
   }
 
   while (iteration < config.maxIterations) {
@@ -200,10 +268,15 @@ export async function executeLoopNodeStrategy(
       isLastAllowedIteration: iteration === config.maxIterations - 1,
     };
 
-    const currentIterationContext = cloneExecutionState(
-      context,
-      `Loop "${node.id}" iteration ${iteration} context`,
-    );
+    const currentIterationContext = resumeIteration === iteration && resumeIterationContext
+      ? cloneExecutionState(
+        resumeIterationContext,
+        `Loop "${node.id}" iteration ${iteration} resumed context`,
+      )
+      : cloneExecutionState(
+        context,
+        `Loop "${node.id}" iteration ${iteration} context`,
+      );
     const iterationBaseContext = resumeIteration === iteration && resumeIterationBaseContext
       ? cloneExecutionState(
         resumeIterationBaseContext,
@@ -226,10 +299,15 @@ export async function executeLoopNodeStrategy(
       currentIterationContext,
       `Loop "${node.id}" iteration ${iteration} context`,
     );
-    const iterationProjection = cloneExecutionState(
-      contextProjection,
-      `Loop "${node.id}" iteration ${iteration} projection`,
-    );
+    const iterationProjection = resumeIteration === iteration && resumeIterationContextProjection
+      ? cloneExecutionState(
+        resumeIterationContextProjection,
+        `Loop "${node.id}" iteration ${iteration} resumed projection`,
+      )
+      : cloneExecutionState(
+        contextProjection,
+        `Loop "${node.id}" iteration ${iteration} projection`,
+      );
     const isResumingInFlightIteration = resumeIteration === iteration &&
       resumeIterationNodeStates !== undefined;
 
@@ -308,6 +386,25 @@ export async function executeLoopNodeStrategy(
             { allowEmpty: true, emptyElementName: "step" },
           );
         iterationSignal.throwIfAborted();
+        const stepsGraphIdentity = captureCanonicalWorkflowGraphIdentity(steps);
+        if (
+          isResumingInFlightIteration && resumeStepsGraphIdentity !== undefined &&
+          !workflowRuntimeValuesEqual(resumeStepsGraphIdentity, stepsGraphIdentity)
+        ) {
+          throw ORCHESTRATION_ERROR.create({
+            detail:
+              `Cannot resume loop "${node.id}" iteration ${iteration} because its admitted graph changed`,
+          });
+        }
+        if (
+          isResumingInFlightIteration && resumeStepsGraphIdentity === undefined &&
+          typeof config.steps === "function"
+        ) {
+          throw ORCHESTRATION_ERROR.create({
+            detail:
+              `Cannot safely resume legacy dynamic loop "${node.id}" without an admitted graph identity`,
+          });
+        }
 
         // On resume, rehydrate the in-flight iteration's child node states so
         // its already-completed steps are skipped instead of re-executed (H9).
@@ -324,6 +421,210 @@ export async function executeLoopNodeStrategy(
         resumeIterationBaseContext = undefined;
         resumeIterationBaseProjection = undefined;
         resumeAdmittedSteps = undefined;
+        resumeIterationContext = undefined;
+        resumeIterationContextProjection = undefined;
+        resumeStepsGraphIdentity = undefined;
+
+        const loopCheckpointResumeTransform = chainCheckpointResumeTransform(
+          input.checkpointResumeTransform,
+          (childSnapshot): CheckpointResumeSnapshot => {
+            const privateIterationContext = cloneExecutionState(
+              childSnapshot.context,
+              `Loop "${node.id}" checkpoint iteration context`,
+            );
+            Reflect.deleteProperty(privateIterationContext, "_loop");
+            const persistedLoopState: PersistedLoopState = {
+              iteration,
+              previousResults: cloneExecutionState(
+                previousResults,
+                `Loop "${node.id}" checkpoint previous results`,
+              ),
+              previousResultsProjection: cloneExecutionState(
+                previousResultsProjection,
+                `Loop "${node.id}" checkpoint previous result projection`,
+              ),
+              iterationNodeStates: cloneExecutionState(
+                childSnapshot.nodeStates,
+                `Loop "${node.id}" checkpoint iteration node states`,
+              ),
+              stepsEvaluationContext: cloneExecutionState(
+                stepsEvaluationContext,
+                `Loop "${node.id}" checkpoint steps evaluation context`,
+              ),
+              stepsEvaluationProjection: cloneExecutionState(
+                stepsEvaluationProjection,
+                `Loop "${node.id}" checkpoint steps evaluation projection`,
+              ),
+              iterationBaseContext: cloneExecutionState(
+                iterationBaseContext,
+                `Loop "${node.id}" checkpoint iteration base context`,
+              ),
+              iterationBaseProjection: cloneExecutionState(
+                iterationBaseProjection,
+                `Loop "${node.id}" checkpoint iteration base projection`,
+              ),
+              iterationContext: privateIterationContext,
+              iterationContextProjection: cloneExecutionState(
+                childSnapshot.workflowProjection.context,
+                `Loop "${node.id}" checkpoint iteration projection`,
+              ),
+              stepsGraphIdentity: cloneExecutionState(
+                stepsGraphIdentity,
+                `Loop "${node.id}" checkpoint steps graph identity`,
+              ),
+              admissionContextPatch: cloneExecutionState(
+                admissionContextPatch,
+                `Loop "${node.id}" checkpoint admission context patch`,
+              ),
+            };
+            const parentContext = cloneExecutionState(
+              transactionContext,
+              `Loop "${node.id}" checkpoint transaction context`,
+            );
+            setOwnRecordValue(parentContext, `${node.id}_loop_state`, persistedLoopState);
+            const parentProjection: WorkflowContextProjection = cloneExecutionState(
+              transactionProjection,
+              `Loop "${node.id}" checkpoint transaction projection`,
+            );
+            setOwnRecordValue<WorkflowProjectionPath[]>(
+              parentProjection,
+              `${node.id}_loop_state`,
+              [{
+                kind: INTERNAL_RUNTIME_PROJECTION_KIND,
+                path: [],
+              }],
+            );
+            const parentNodeStates = cloneExecutionState(
+              nodeStates,
+              `Loop "${node.id}" checkpoint parent node states`,
+            );
+            applyRecordPatch(
+              parentNodeStates,
+              createRecordPatch({}, childSnapshot.nodeStates),
+            );
+            const parentState: ProjectionMarkedLoopNodeState = {
+              nodeId: node.id,
+              status: "running",
+              output: { iteration, waiting: true, previousResults },
+              attempt: activeAttempt,
+              startedAt: getOwnRecordValue(nodeStates, node.id)?.startedAt ??
+                new Date(startTime),
+              ...(previousResultsProjection.length > 0
+                ? {
+                  [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]: previousResultsProjection,
+                }
+                : {}),
+            };
+            setOwnRecordValue(parentNodeStates, node.id, parentState);
+            return {
+              ownerNodeId: node.id,
+              context: parentContext,
+              nodeStates: parentNodeStates,
+              workflowProjection: {
+                context: parentProjection,
+                ...(inputKind ? { inputKind } : {}),
+              },
+            };
+          },
+        );
+        const admissionLoopState: PersistedLoopState = {
+          iteration,
+          previousResults: cloneExecutionState(
+            previousResults,
+            `Loop "${node.id}" admission previous results`,
+          ),
+          previousResultsProjection: cloneExecutionState(
+            previousResultsProjection,
+            `Loop "${node.id}" admission previous result projection`,
+          ),
+          iterationNodeStates: cloneExecutionState(
+            iterationNodeStates,
+            `Loop "${node.id}" admission iteration node states`,
+          ),
+          stepsEvaluationContext: cloneExecutionState(
+            stepsEvaluationContext,
+            `Loop "${node.id}" admission steps evaluation context`,
+          ),
+          stepsEvaluationProjection: cloneExecutionState(
+            stepsEvaluationProjection,
+            `Loop "${node.id}" admission steps evaluation projection`,
+          ),
+          iterationBaseContext: cloneExecutionState(
+            iterationBaseContext,
+            `Loop "${node.id}" admission iteration base context`,
+          ),
+          iterationBaseProjection: cloneExecutionState(
+            iterationBaseProjection,
+            `Loop "${node.id}" admission iteration base projection`,
+          ),
+          iterationContext: cloneExecutionState(
+            iterationContext,
+            `Loop "${node.id}" admission iteration context`,
+          ),
+          iterationContextProjection: cloneExecutionState(
+            iterationProjection,
+            `Loop "${node.id}" admission iteration projection`,
+          ),
+          stepsGraphIdentity: cloneExecutionState(
+            stepsGraphIdentity,
+            `Loop "${node.id}" admission steps graph identity`,
+          ),
+          admissionContextPatch: cloneExecutionState(
+            admissionContextPatch,
+            `Loop "${node.id}" admission context patch`,
+          ),
+        };
+        const admissionParentContext = cloneExecutionState(
+          transactionContext,
+          `Loop "${node.id}" admission parent context`,
+        );
+        setOwnRecordValue(
+          admissionParentContext,
+          `${node.id}_loop_state`,
+          admissionLoopState,
+        );
+        const admissionParentProjection: WorkflowContextProjection = cloneExecutionState(
+          transactionProjection,
+          `Loop "${node.id}" admission parent projection`,
+        );
+        setOwnRecordValue<WorkflowProjectionPath[]>(
+          admissionParentProjection,
+          `${node.id}_loop_state`,
+          [{ kind: INTERNAL_RUNTIME_PROJECTION_KIND, path: [] }],
+        );
+        const admissionParentNodeStates = cloneExecutionState(
+          nodeStates,
+          `Loop "${node.id}" admission parent node states`,
+        );
+        applyRecordPatch(
+          admissionParentNodeStates,
+          createRecordPatch({}, iterationNodeStates),
+        );
+        setOwnRecordValue(
+          admissionParentNodeStates,
+          node.id,
+          {
+            nodeId: node.id,
+            status: "running",
+            output: { iteration, waiting: true, previousResults },
+            attempt: activeAttempt,
+            startedAt: new Date(startTime),
+            ...(previousResultsProjection.length > 0
+              ? { [INTERNAL_WORKFLOW_OUTPUT_PROJECTION_FIELD]: previousResultsProjection }
+              : {}),
+          } satisfies ProjectionMarkedLoopNodeState,
+        );
+        await runtime.persistCheckpoint?.(
+          node.id,
+          admissionParentContext,
+          {
+            context: admissionParentProjection,
+            ...(inputKind ? { inputKind } : {}),
+          },
+          admissionParentNodeStates,
+          input.checkpointResumeTransform,
+        );
+        iterationSignal.throwIfAborted();
 
         const childResult = await runtime.executeChildGraph(
           steps,
@@ -344,7 +645,10 @@ export async function executeLoopNodeStrategy(
             createdAt: new Date(),
             sourceIntegrationPolicy: captureWorkflowSourceIntegrationPolicy(),
           },
-          { abortSignal: iterationSignal },
+          {
+            abortSignal: iterationSignal,
+            checkpointResumeTransform: loopCheckpointResumeTransform,
+          },
         );
         iterationSignal.throwIfAborted();
 
@@ -362,6 +666,7 @@ export async function executeLoopNodeStrategy(
           steps,
           stepsEvaluationContext,
           stepsEvaluationProjection,
+          stepsGraphIdentity,
         };
       },
       {
@@ -398,7 +703,7 @@ export async function executeLoopNodeStrategy(
         nodeId: node.id,
         status: "running",
         output: { iteration, waiting: true, previousResults },
-        attempt: 1,
+        attempt: activeAttempt,
         startedAt: new Date(startTime),
         ...(previousResultsProjection.length > 0
           ? {
@@ -410,6 +715,7 @@ export async function executeLoopNodeStrategy(
       return {
         state,
         contextPatch: mergeContextPatches(
+          admissionContextPatch,
           iterationContextPatch,
           createSetContextPatch({
             [`${node.id}_loop_state`]: {
@@ -427,6 +733,8 @@ export async function executeLoopNodeStrategy(
               iterationBaseContext,
               iterationBaseProjection,
               previousResultsProjection,
+              stepsGraphIdentity: activeIteration.stepsGraphIdentity,
+              admissionContextPatch,
             },
           }, {
             [`${node.id}_loop_state`]: [{
@@ -471,6 +779,8 @@ export async function executeLoopNodeStrategy(
           `Loop "${node.id}" retry base projection`,
         ),
         admittedSteps: activeIteration.steps,
+        stepsGraphIdentity: activeIteration.stepsGraphIdentity,
+        admissionContextPatch,
       };
       lastError = result.error;
       lastFailureCause = getExecutionFailure(result);
@@ -536,7 +846,7 @@ export async function executeLoopNodeStrategy(
     status: exitReason === "error" ? "failed" : "completed",
     output,
     error: lastError,
-    attempt: 1,
+    attempt: activeAttempt,
     startedAt: new Date(startTime),
     completedAt: new Date(),
     ...(previousResultsProjection.length > 0
@@ -557,7 +867,7 @@ export async function executeLoopNodeStrategy(
 
   return retainExecutionFailure({
     state,
-    contextPatch: completionPatch,
+    contextPatch: mergeContextPatches(admissionContextPatch, completionPatch),
     waiting: false,
     ...(retryExecution ? { retryExecution } : {}),
   }, lastFailureCause);

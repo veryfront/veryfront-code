@@ -23,6 +23,8 @@ import {
   captureApprovalDecisionTiming,
   capturePendingApprovalMetadataUpdate,
   type PendingApprovalMetadataUpdate,
+  type TimedWaitClaim,
+  type TimedWaitClaimRequest,
   type WorkflowBackend,
   type WorkflowRunCursorFilter,
   type WorkflowRunUpdate,
@@ -41,6 +43,7 @@ import {
   resolveRunListPage,
   resolveWorkflowRunCursorPage,
 } from "./run-filter.ts";
+import { getTimedWorkflowWaits } from "../runtime/timed-wait-reconciliation.ts";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -54,6 +57,78 @@ interface MemoryBackendConfig extends BackendConfig {
 
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
+const MAX_TIMED_WAIT_CLAIM_BATCH_SIZE = 100;
+const MAX_LAZY_TIMED_WAIT_HEAP_OVERHEAD = 1_024;
+
+interface TimedWaitHeapEntry {
+  readonly rowId: string;
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly deadline: number;
+  readonly generation: number;
+}
+
+interface MemoryTimedWaitClaim {
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly claimId: string;
+  readonly deadline: number;
+  readonly expiresAt: number;
+  readonly fence: number;
+  readonly waitKind: "delay" | "event";
+}
+
+interface MemoryTimedWaitDeadline {
+  readonly runId: string;
+  readonly nodeId: string;
+  readonly deadline: number;
+  readonly generation: number;
+  readonly waitKind: "delay" | "event";
+}
+
+function compareTimedWaitHeapEntries(
+  left: TimedWaitHeapEntry,
+  right: TimedWaitHeapEntry,
+): number {
+  return left.deadline - right.deadline ||
+    (left.runId < right.runId ? -1 : left.runId > right.runId ? 1 : 0) ||
+    (left.nodeId < right.nodeId ? -1 : left.nodeId > right.nodeId ? 1 : 0) ||
+    left.generation - right.generation;
+}
+
+function pushTimedWaitHeap(heap: TimedWaitHeapEntry[], entry: TimedWaitHeapEntry): void {
+  heap.push(entry);
+  let index = heap.length - 1;
+  while (index > 0) {
+    const parent = Math.floor((index - 1) / 2);
+    if (compareTimedWaitHeapEntries(heap[parent]!, entry) <= 0) break;
+    heap[index] = heap[parent]!;
+    index = parent;
+  }
+  heap[index] = entry;
+}
+
+function popTimedWaitHeap(heap: TimedWaitHeapEntry[]): TimedWaitHeapEntry | undefined {
+  const first = heap[0];
+  const last = heap.pop();
+  if (!first || !last || heap.length === 0) return first;
+
+  let index = 0;
+  while (true) {
+    const left = (index * 2) + 1;
+    if (left >= heap.length) break;
+    const right = left + 1;
+    const child = right < heap.length &&
+        compareTimedWaitHeapEntries(heap[right]!, heap[left]!) < 0
+      ? right
+      : left;
+    if (compareTimedWaitHeapEntries(heap[child]!, last) >= 0) break;
+    heap[index] = heap[child]!;
+    index = child;
+  }
+  heap[index] = last;
+  return first;
+}
 
 /** Implement memory backend. */
 export class MemoryBackend implements WorkflowBackend {
@@ -63,6 +138,16 @@ export class MemoryBackend implements WorkflowBackend {
   private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
+  private timedWaitDeadlines = new Map<string, MemoryTimedWaitDeadline>();
+  private timedWaitRowsByRun = new Map<string, Set<string>>();
+  private timedWaitDeadlineHeaps: Record<"delay" | "event", TimedWaitHeapEntry[]> = {
+    delay: [],
+    event: [],
+  };
+  private timedWaitClaims = new Map<string, MemoryTimedWaitClaim>();
+  private timedWaitClaimExpiryHeap: TimedWaitHeapEntry[] = [];
+  private timedWaitGeneration = 0;
+  private timedWaitFence = 0;
   private config: MemoryBackendConfig;
 
   constructor(config: MemoryBackendConfig = {}) {
@@ -91,10 +176,10 @@ export class MemoryBackend implements WorkflowBackend {
         WORKFLOW_RUN_CONFLICT.create({ detail: `Workflow run already exists: ${run.id}` }),
       );
     }
-    this.runs.set(
-      run.id,
-      structuredClone({ ...run, pendingApprovals: [], sourceIntegrationPolicy }),
-    );
+    const snapshot = structuredClone({ ...run, pendingApprovals: [], sourceIntegrationPolicy });
+    const timedWaitDeadlines = this.getTimedWaitDeadlines(snapshot);
+    this.runs.set(run.id, snapshot);
+    this.replaceTimedWaitDeadlinesForRun(run.id, timedWaitDeadlines);
     return Promise.resolve();
   }
 
@@ -215,12 +300,23 @@ export class MemoryBackend implements WorkflowBackend {
     logger.debug(`Updating run: ${runId}`, patch);
 
     const clonedPatch = structuredClone(patch);
-    this.runs.set(runId, {
+    const updatedRun = {
       ...run,
       ...clonedPatch,
       nodeStates: clonedPatch.nodeStates ?? run.nodeStates,
       context: clonedPatch.context ?? run.context,
-    });
+    };
+    const refreshTimedWaitIndex = patch.status !== undefined ||
+      patch.nodeStates !== undefined || patch.workerId !== undefined;
+    const timedWaitDeadlines = refreshTimedWaitIndex
+      ? this.getTimedWaitDeadlines(updatedRun)
+      : undefined;
+
+    this.runs.set(runId, updatedRun);
+    if (refreshTimedWaitIndex) {
+      this.invalidateTimedWaitClaimsForRun(runId);
+      this.replaceTimedWaitDeadlinesForRun(runId, timedWaitDeadlines ?? []);
+    }
 
     if (patch.status && patch.status !== "running") {
       this.stalledClaims.delete(runId);
@@ -232,6 +328,8 @@ export class MemoryBackend implements WorkflowBackend {
     this.checkpoints.delete(runId);
     this.approvals.delete(runId);
     this.stalledClaims.delete(runId);
+    this.invalidateTimedWaitClaimsForRun(runId);
+    this.replaceTimedWaitDeadlinesForRun(runId, []);
     return Promise.resolve();
   }
 
@@ -297,6 +395,339 @@ export class MemoryBackend implements WorkflowBackend {
       )
       : [];
     return structuredClone({ ...run, pendingApprovals });
+  }
+
+  async claimDueTimedWaits(request: TimedWaitClaimRequest): Promise<TimedWaitClaim[]> {
+    this.assertTimedWaitClaimRequest(request);
+    this.recoverExpiredTimedWaitClaims(Date.now());
+
+    const claims: TimedWaitClaim[] = [];
+    let inspected = 0;
+    const inspectionLimit = request.limit + MAX_LAZY_TIMED_WAIT_HEAP_OVERHEAD;
+    while (claims.length < request.limit && inspected < inspectionLimit) {
+      const deadlineHeap = this.timedWaitDeadlineHeaps[request.waitKind];
+      const candidate = deadlineHeap[0];
+      if (!candidate || candidate.deadline > request.now) break;
+      popTimedWaitHeap(deadlineHeap);
+      inspected++;
+
+      const indexed = this.timedWaitDeadlines.get(candidate.rowId);
+      if (
+        !indexed || indexed.deadline !== candidate.deadline ||
+        indexed.generation !== candidate.generation || indexed.waitKind !== request.waitKind
+      ) continue;
+
+      const run = this.runs.get(candidate.runId);
+      const currentDeadline = run ? this.getTimedWaitDeadline(run, candidate.nodeId) : undefined;
+      if (
+        !run || currentDeadline?.deadline !== candidate.deadline ||
+        currentDeadline?.waitKind !== request.waitKind
+      ) {
+        this.replaceTimedWaitDeadlineRow(
+          candidate.runId,
+          candidate.nodeId,
+          currentDeadline,
+        );
+        continue;
+      }
+
+      this.removeTimedWaitDeadlineRow(candidate.rowId);
+      const fence = ++this.timedWaitFence;
+      const claimId = `${request.ownerId}:${fence}`;
+      const expiresAt = Date.now() + request.leaseDuration;
+      const claim: MemoryTimedWaitClaim = {
+        runId: candidate.runId,
+        nodeId: candidate.nodeId,
+        claimId,
+        deadline: candidate.deadline,
+        expiresAt,
+        fence,
+        waitKind: request.waitKind,
+      };
+      this.timedWaitClaims.set(candidate.rowId, claim);
+      pushTimedWaitHeap(this.timedWaitClaimExpiryHeap, {
+        rowId: candidate.rowId,
+        runId: candidate.runId,
+        nodeId: candidate.nodeId,
+        deadline: expiresAt,
+        generation: fence,
+      });
+      this.compactTimedWaitClaimExpiryHeap();
+      claims.push({
+        run: this.snapshotRun(run),
+        nodeId: candidate.nodeId,
+        deadline: candidate.deadline,
+        claimId,
+        leaseExpiresAt: new Date(expiresAt),
+        waitKind: request.waitKind,
+      });
+    }
+    return claims;
+  }
+
+  updateRunIfTimedWaitClaim(
+    runId: string,
+    nodeId: string,
+    claimId: string,
+    expectedDeadline: number,
+    expectedWorkerId: string,
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean> {
+    try {
+      assertWorkflowLockId(claimId);
+      assertWorkflowWorkerId(expectedWorkerId);
+      this.assertTimedWaitNodeId(nodeId);
+      assertWorkflowRunUpdate(patch);
+      if (!Number.isSafeInteger(expectedDeadline)) {
+        throw INVALID_ARGUMENT.create({ detail: "Timed-wait deadline must be a safe integer" });
+      }
+      if (patch.status !== "pending" && patch.status !== "failed") {
+        throw INVALID_ARGUMENT.create({
+          detail: "Timed-wait claim updates must resolve the run to pending or failed",
+        });
+      }
+    } catch (error) {
+      return Promise.reject(error);
+    }
+
+    const rowId = this.timedWaitRowId(runId, nodeId);
+    const claim = this.timedWaitClaims.get(rowId);
+    if (
+      !claim || claim.claimId !== claimId || claim.deadline !== expectedDeadline ||
+      claim.expiresAt <= Date.now()
+    ) {
+      if (claim?.claimId === claimId && claim.expiresAt <= Date.now()) {
+        this.timedWaitClaims.delete(rowId);
+        this.reindexCurrentTimedWait(runId, nodeId);
+        this.compactTimedWaitClaimExpiryHeap();
+      }
+      return Promise.resolve(false);
+    }
+    const run = this.runs.get(runId);
+    const registration = run ? this.getTimedWaitDeadline(run, nodeId) : undefined;
+    if (
+      !run || run.status !== "waiting" || run.workerId !== expectedWorkerId ||
+      registration?.deadline !== expectedDeadline || registration.waitKind !== claim.waitKind
+    ) return Promise.resolve(false);
+
+    try {
+      this.applyRunUpdate(runId, run, patch);
+      return Promise.resolve(true);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  releaseTimedWaitClaim(runId: string, nodeId: string, claimId: string): Promise<boolean> {
+    try {
+      assertWorkflowLockId(claimId);
+      this.assertTimedWaitNodeId(nodeId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const rowId = this.timedWaitRowId(runId, nodeId);
+    const claim = this.timedWaitClaims.get(rowId);
+    if (!claim || claim.claimId !== claimId) return Promise.resolve(false);
+    this.timedWaitClaims.delete(rowId);
+    this.reindexCurrentTimedWait(runId, nodeId);
+    this.compactTimedWaitClaimExpiryHeap();
+    return Promise.resolve(true);
+  }
+
+  private assertTimedWaitClaimRequest(request: TimedWaitClaimRequest): void {
+    assertWorkflowWorkerId(request.ownerId);
+    if (!Number.isSafeInteger(request.now)) {
+      throw INVALID_ARGUMENT.create({ detail: "Timed-wait claim time must be a safe integer" });
+    }
+    if (
+      !Number.isSafeInteger(request.limit) || request.limit <= 0 ||
+      request.limit > MAX_TIMED_WAIT_CLAIM_BATCH_SIZE
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `Timed-wait claim limit must be an integer from 1 to ${MAX_TIMED_WAIT_CLAIM_BATCH_SIZE}`,
+      });
+    }
+    if (
+      !Number.isSafeInteger(request.leaseDuration) || request.leaseDuration <= 0 ||
+      !Number.isSafeInteger(Date.now() + request.leaseDuration)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Timed-wait claim lease duration must be a positive safe integer",
+      });
+    }
+    if (request.waitKind !== "delay" && request.waitKind !== "event") {
+      throw INVALID_ARGUMENT.create({ detail: "Timed-wait claim kind must be delay or event" });
+    }
+  }
+
+  private getTimedWaitDeadlines(run: WorkflowRun): Array<{
+    nodeId: string;
+    deadline: number;
+    waitKind: "delay" | "event";
+  }> {
+    if (run.status !== "waiting") return [];
+    return getTimedWorkflowWaits(run).map((wait) => {
+      if (!Number.isSafeInteger(wait.deadline)) {
+        throw INVALID_ARGUMENT.create({
+          detail:
+            `Timed-wait deadline is not safely representable for run ${run.id}, node ${wait.nodeId}`,
+        });
+      }
+      return { nodeId: wait.nodeId, deadline: wait.deadline, waitKind: wait.waitKind };
+    });
+  }
+
+  private getTimedWaitDeadline(
+    run: WorkflowRun,
+    nodeId: string,
+  ): { deadline: number; waitKind: "delay" | "event" } | undefined {
+    const registration = this.getTimedWaitDeadlines(run).find((wait) => wait.nodeId === nodeId);
+    return registration && {
+      deadline: registration.deadline,
+      waitKind: registration.waitKind,
+    };
+  }
+
+  private timedWaitRowId(runId: string, nodeId: string): string {
+    return JSON.stringify([runId, nodeId]);
+  }
+
+  private assertTimedWaitNodeId(nodeId: unknown): asserts nodeId is string {
+    if (typeof nodeId !== "string" || nodeId.length === 0) {
+      throw INVALID_ARGUMENT.create({ detail: "Timed-wait node id must be a non-empty string" });
+    }
+  }
+
+  private replaceTimedWaitDeadlinesForRun(
+    runId: string,
+    registrations: Array<{
+      nodeId: string;
+      deadline: number;
+      waitKind: "delay" | "event";
+    }>,
+  ): void {
+    for (const rowId of [...(this.timedWaitRowsByRun.get(runId) ?? [])]) {
+      this.removeTimedWaitDeadlineRow(rowId);
+    }
+    for (const registration of registrations) {
+      this.replaceTimedWaitDeadlineRow(runId, registration.nodeId, registration);
+    }
+    this.compactTimedWaitDeadlineHeaps();
+  }
+
+  private replaceTimedWaitDeadlineRow(
+    runId: string,
+    nodeId: string,
+    registration: { deadline: number; waitKind: "delay" | "event" } | undefined,
+  ): void {
+    const rowId = this.timedWaitRowId(runId, nodeId);
+    this.removeTimedWaitDeadlineRow(rowId);
+    if (!registration) return;
+    const generation = ++this.timedWaitGeneration;
+    const indexed: MemoryTimedWaitDeadline = {
+      runId,
+      nodeId,
+      deadline: registration.deadline,
+      generation,
+      waitKind: registration.waitKind,
+    };
+    this.timedWaitDeadlines.set(rowId, indexed);
+    const rows = this.timedWaitRowsByRun.get(runId) ?? new Set<string>();
+    rows.add(rowId);
+    this.timedWaitRowsByRun.set(runId, rows);
+    pushTimedWaitHeap(this.timedWaitDeadlineHeaps[registration.waitKind], {
+      rowId,
+      runId,
+      nodeId,
+      deadline: registration.deadline,
+      generation,
+    });
+  }
+
+  private removeTimedWaitDeadlineRow(rowId: string): void {
+    const existing = this.timedWaitDeadlines.get(rowId);
+    if (!existing) return;
+    this.timedWaitDeadlines.delete(rowId);
+    const rows = this.timedWaitRowsByRun.get(existing.runId);
+    rows?.delete(rowId);
+    if (rows?.size === 0) this.timedWaitRowsByRun.delete(existing.runId);
+  }
+
+  private compactTimedWaitDeadlineHeaps(): void {
+    for (const waitKind of ["delay", "event"] as const) {
+      const liveCount = [...this.timedWaitDeadlines.values()].filter((entry) =>
+        entry.waitKind === waitKind
+      ).length;
+      if (
+        this.timedWaitDeadlineHeaps[waitKind].length >
+          (liveCount * 2) + MAX_LAZY_TIMED_WAIT_HEAP_OVERHEAD
+      ) {
+        this.timedWaitDeadlineHeaps[waitKind] = [];
+        for (const [indexedRunId, indexed] of this.timedWaitDeadlines) {
+          if (indexed.waitKind !== waitKind) continue;
+          pushTimedWaitHeap(this.timedWaitDeadlineHeaps[waitKind], {
+            rowId: indexedRunId,
+            runId: indexed.runId,
+            nodeId: indexed.nodeId,
+            deadline: indexed.deadline,
+            generation: indexed.generation,
+          });
+        }
+      }
+    }
+  }
+
+  private invalidateTimedWaitClaimsForRun(runId: string): void {
+    for (const [rowId, claim] of this.timedWaitClaims) {
+      if (claim.runId === runId) this.timedWaitClaims.delete(rowId);
+    }
+    this.compactTimedWaitClaimExpiryHeap();
+  }
+
+  private compactTimedWaitClaimExpiryHeap(): void {
+    if (
+      this.timedWaitClaimExpiryHeap.length <=
+        (this.timedWaitClaims.size * 2) + MAX_LAZY_TIMED_WAIT_HEAP_OVERHEAD
+    ) return;
+
+    this.timedWaitClaimExpiryHeap = [];
+    for (const [rowId, claim] of this.timedWaitClaims) {
+      pushTimedWaitHeap(this.timedWaitClaimExpiryHeap, {
+        rowId,
+        runId: claim.runId,
+        nodeId: claim.nodeId,
+        deadline: claim.expiresAt,
+        generation: claim.fence,
+      });
+    }
+  }
+
+  private reindexCurrentTimedWait(runId: string, nodeId: string): void {
+    const run = this.runs.get(runId);
+    this.replaceTimedWaitDeadlineRow(
+      runId,
+      nodeId,
+      run ? this.getTimedWaitDeadline(run, nodeId) : undefined,
+    );
+    this.compactTimedWaitDeadlineHeaps();
+  }
+
+  private recoverExpiredTimedWaitClaims(now: number): void {
+    while (true) {
+      const candidate = this.timedWaitClaimExpiryHeap[0];
+      if (!candidate || candidate.deadline > now) break;
+      popTimedWaitHeap(this.timedWaitClaimExpiryHeap);
+      const claim = this.timedWaitClaims.get(candidate.rowId);
+      if (
+        !claim || claim.fence !== candidate.generation || claim.expiresAt !== candidate.deadline
+      ) {
+        continue;
+      }
+      this.timedWaitClaims.delete(candidate.rowId);
+      this.reindexCurrentTimedWait(candidate.runId, candidate.nodeId);
+    }
+    this.compactTimedWaitClaimExpiryHeap();
   }
 
   async countRuns(filter: RunFilter): Promise<number> {
@@ -797,6 +1228,13 @@ export class MemoryBackend implements WorkflowBackend {
     this.queue = [];
     this.locks.clear();
     this.stalledClaims.clear();
+    this.timedWaitDeadlines.clear();
+    this.timedWaitRowsByRun.clear();
+    this.timedWaitDeadlineHeaps = { delay: [], event: [] };
+    this.timedWaitClaims.clear();
+    this.timedWaitClaimExpiryHeap = [];
+    this.timedWaitGeneration = 0;
+    this.timedWaitFence = 0;
     return Promise.resolve();
   }
 }

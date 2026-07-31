@@ -1,3 +1,5 @@
+import { MAX_CSS_FILES } from "./css.ts";
+
 /** Default value for build concurrency. */
 export const DEFAULT_BUILD_CONCURRENCY = 4;
 
@@ -13,7 +15,7 @@ export const IMAGE_OPTIMIZATION = {
 
 /** Shared CSS optimization resource bounds. */
 export const CSS_OPTIMIZATION = {
-  MAX_FILES: 10_000,
+  MAX_FILES: MAX_CSS_FILES,
   MAX_BROWSER_QUERIES: 64,
   MAX_BROWSER_QUERY_CHARACTERS: 512,
   MAX_PURGE_PATTERNS: 128,

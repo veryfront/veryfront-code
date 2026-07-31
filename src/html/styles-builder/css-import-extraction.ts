@@ -20,6 +20,9 @@
  */
 
 import { isWithinDirectory, normalizePath } from "#veryfront/utils/path-utils.ts";
+import { MAX_CSS_FILES, MAX_CSS_TOTAL_BYTES } from "#veryfront/utils/constants/css.ts";
+import { assertCSSFileContent } from "#veryfront/utils/css-content-admission.ts";
+import { assertBoundedPathString } from "#veryfront/utils/project-relative-path.ts";
 
 /** Module extensions whose sources can carry CSS imports. */
 export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
@@ -32,13 +35,22 @@ export const CSS_IMPORTING_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", "
  */
 const CSS_IMPORT_RE = /import[^'";]*['"]([^'"]+\.css)['"]/g;
 
-/** Extract the raw specifiers of all static CSS imports in a source file. */
-export function extractCssImportSpecifiers(source: string): string[] {
+function extractAdmittedCssImportSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
   for (const match of source.matchAll(CSS_IMPORT_RE)) {
-    if (match[1]) specifiers.push(match[1]);
+    if (!match[1]) continue;
+    if (specifiers.length >= MAX_CSS_FILES) {
+      throw new TypeError(`CSS source cannot import more than ${MAX_CSS_FILES} files`);
+    }
+    specifiers.push(assertBoundedPathString(match[1], "CSS import specifier"));
   }
   return specifiers;
+}
+
+/** Extract the raw specifiers of all static CSS imports in a source file. */
+export function extractCssImportSpecifiers(source: string): string[] {
+  assertCSSFileContent(source, "CSS import source");
+  return extractAdmittedCssImportSpecifiers(source);
 }
 
 /** Resolve `.`/`..` segments; returns null if the path escapes its root. */
@@ -68,18 +80,23 @@ export function resolveCssImportPath(
   importerPath: string,
   projectDir: string,
 ): string | null {
-  const normalizedImporter = normalizePath(importerPath);
-  const normalizedProjectDir = normalizePath(projectDir);
+  const admittedSpecifier = assertBoundedPathString(specifier, "CSS import specifier");
+  const normalizedImporter = normalizePath(
+    assertBoundedPathString(importerPath, "CSS import source path"),
+  );
+  const normalizedProjectDir = normalizePath(
+    assertBoundedPathString(projectDir, "CSS import project directory"),
+  );
 
   let candidate: string;
-  if (specifier.startsWith("./") || specifier.startsWith("../")) {
+  if (admittedSpecifier.startsWith("./") || admittedSpecifier.startsWith("../")) {
     const dirEnd = normalizedImporter.lastIndexOf("/");
     if (dirEnd <= 0) return null;
-    candidate = `${normalizedImporter.slice(0, dirEnd)}/${specifier}`;
-  } else if (specifier.startsWith("@/")) {
-    candidate = `${normalizedProjectDir}/${specifier.slice(2)}`;
-  } else if (specifier.startsWith("/")) {
-    candidate = `${normalizedProjectDir}/${specifier.replace(/^\/+/, "")}`;
+    candidate = `${normalizedImporter.slice(0, dirEnd)}/${admittedSpecifier}`;
+  } else if (admittedSpecifier.startsWith("@/")) {
+    candidate = `${normalizedProjectDir}/${admittedSpecifier.slice(2)}`;
+  } else if (admittedSpecifier.startsWith("/")) {
+    candidate = `${normalizedProjectDir}/${admittedSpecifier.replace(/^\/+/, "")}`;
   } else {
     return null;
   }
@@ -98,15 +115,35 @@ export function collectCssImportPaths(
   files: Iterable<{ path: string; content: string }>,
   projectDir: string,
 ): string[] {
+  const admittedProjectDir = assertBoundedPathString(
+    projectDir,
+    "CSS import project directory",
+  );
   const cssImports = new Set<string>();
+  let sourceFileCount = 0;
+  let sourceBytes = 0;
 
   for (const file of files) {
+    sourceFileCount++;
+    if (sourceFileCount > MAX_CSS_FILES) {
+      throw new TypeError(`CSS import extraction exceeds ${MAX_CSS_FILES} source files`);
+    }
+    const importerPath = assertBoundedPathString(file.path, "CSS import source path");
+    const contentBytes = assertCSSFileContent(file.content, `CSS import source ${importerPath}`);
+    if (contentBytes > MAX_CSS_TOTAL_BYTES - sourceBytes) {
+      throw new TypeError(`CSS import sources exceed ${MAX_CSS_TOTAL_BYTES} total bytes`);
+    }
+    sourceBytes += contentBytes;
     // Cheap pre-filter before running the regex against large files.
     if (!file.content.includes(".css")) continue;
 
-    for (const specifier of extractCssImportSpecifiers(file.content)) {
-      const resolved = resolveCssImportPath(specifier, file.path, projectDir);
-      if (resolved) cssImports.add(resolved);
+    for (const specifier of extractAdmittedCssImportSpecifiers(file.content)) {
+      const resolved = resolveCssImportPath(specifier, importerPath, admittedProjectDir);
+      if (!resolved || cssImports.has(resolved)) continue;
+      if (cssImports.size >= MAX_CSS_FILES) {
+        throw new TypeError(`CSS imports exceed ${MAX_CSS_FILES} files`);
+      }
+      cssImports.add(resolved);
     }
   }
 

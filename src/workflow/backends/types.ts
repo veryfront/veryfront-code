@@ -358,6 +358,29 @@ export interface WorkflowBackend {
   /** Attempt to claim a stalled run for this worker (atomic compare-and-swap) */
   claimStalledRun?(runId: string, workerId: string, stalledThreshold: number): Promise<boolean>;
 
+  /**
+   * Atomically lease the earliest due timed-wait rows from a deadline index.
+   * Implementations must return rows in `(deadline ASC, run id ASC, node id ASC)` order,
+   * never return more than `request.limit`, and fence a stale claimant after
+   * its lease expires or a replacement claim is issued.
+   */
+  claimDueTimedWaits?(request: TimedWaitClaimRequest): Promise<TimedWaitClaim[]>;
+  /**
+   * Apply a timed-wait resolution only while the exact live claim, deadline,
+   * waiting status, and durable worker owner still match. A successful update
+   * consumes the claim and its deadline-index row atomically.
+   */
+  updateRunIfTimedWaitClaim?(
+    runId: string,
+    nodeId: string,
+    claimId: string,
+    expectedDeadline: number,
+    expectedWorkerId: string,
+    patch: WorkflowRunUpdate,
+  ): Promise<boolean>;
+  /** Release only an exactly owned claim and restore its still-current row. */
+  releaseTimedWaitClaim?(runId: string, nodeId: string, claimId: string): Promise<boolean>;
+
   publishEvent?(
     eventName: string,
     payload: unknown,
@@ -383,6 +406,30 @@ export interface WorkflowRunCursorFilter {
   readonly status: WorkflowStatus;
   readonly limit: number;
   readonly cursor?: WorkflowRunCursor;
+}
+
+/** Bounded request for backend-atomic timed-wait deadline claims. */
+export interface TimedWaitClaimRequest {
+  /** Stable identity of the recovery service instance acquiring the lease. */
+  readonly ownerId: string;
+  /** Canonical deadline comparison captured once by the workflow host. */
+  readonly now: number;
+  /** Maximum number of claims returned by this operation. */
+  readonly limit: number;
+  /** Duration of each claim lease in milliseconds. */
+  readonly leaseDuration: number;
+  /** Claim one independently bounded deadline class. */
+  readonly waitKind: "delay" | "event";
+}
+
+/** One deadline row leased under an opaque, monotonically fenced claim. */
+export interface TimedWaitClaim {
+  readonly run: WorkflowRun;
+  readonly nodeId: string;
+  readonly deadline: number;
+  readonly claimId: string;
+  readonly leaseExpiresAt: Date;
+  readonly waitKind: "delay" | "event";
 }
 
 /** Apply a run update through the backend's atomic status/ownership compare-and-set. */
@@ -502,7 +549,6 @@ type WithWorkerSupport =
       | "updateRunIfStatusAndWorker"
       | "saveCheckpointIfStatusAndWorker"
       | "savePendingApprovalIfStatusAndWorker"
-      | "listRunsAfterCursor"
     >
   >;
 
@@ -516,6 +562,23 @@ export function hasWorkerSupport(backend: WorkflowBackend): backend is WithWorke
     typeof backend.updateRunIfStatusAndWorker === "function" &&
     typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
     typeof backend.savePendingApprovalIfStatusAndWorker === "function"
-    && typeof backend.listRunsAfterCursor === "function"
   );
+}
+
+type WithTimedWaitRecoverySupport =
+  & WorkflowBackend
+  & Required<
+    Pick<
+      WorkflowBackend,
+      "claimDueTimedWaits" | "updateRunIfTimedWaitClaim" | "releaseTimedWaitClaim"
+    >
+  >;
+
+/** Check whether the backend provides atomic indexed timed-wait recovery. */
+export function hasTimedWaitRecoverySupport(
+  backend: WorkflowBackend,
+): backend is WithTimedWaitRecoverySupport {
+  return typeof backend.claimDueTimedWaits === "function" &&
+    typeof backend.updateRunIfTimedWaitClaim === "function" &&
+    typeof backend.releaseTimedWaitClaim === "function";
 }

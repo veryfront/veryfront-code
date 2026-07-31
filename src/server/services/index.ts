@@ -27,5 +27,15 @@ export type {
 } from "./rsc/index.ts";
 
 // Static file services
-export { StaticFileService } from "./static/index.ts";
-export type { StaticFileOptions, StaticFileResult } from "./static/index.ts";
+export {
+  DEFAULT_STATIC_ASSET_MAX_BYTES,
+  StaticAssetUnavailableError,
+  StaticFileService,
+} from "./static/index.ts";
+export type {
+  StaticAssetUnavailableReason,
+  StaticFileMetadataResult,
+  StaticFileOptions,
+  StaticFileResult,
+  StaticFileServiceOptions,
+} from "./static/index.ts";

@@ -938,6 +938,37 @@ describe("server/runtime-handler/index", () => {
     assertEquals(controlPlaneFetches, 0);
   });
 
+  it("applies project isolation to lightweight module and stylesheet work", async () => {
+    const handler = createProxyModeHandler();
+    const checkedPaths: string[] = [];
+    injectIsolationDepsForTests({
+      checkRequest: () => {
+        checkedPaths.push("checked");
+        return { allowed: false, reason: "max_concurrent" };
+      },
+      startRequest: () => {
+        throw new Error("rejected work must not start isolation tracking");
+      },
+      completeRequest: () => {},
+    });
+
+    for (
+      const pathname of [
+        "/_vf_modules/react.js",
+        "/_veryfront/modules/client.js",
+        "/_lib_modules/lodash.js",
+        "/_vf/css/styles.css",
+        "/_vf_styles/styles.css",
+      ]
+    ) {
+      const response = await handler(new Request(`http://localhost${pathname}`));
+      assertEquals(response.status, 503, pathname);
+      assertEquals((await response.json()).reason, "max_concurrent", pathname);
+    }
+
+    assertEquals(checkedPaths.length, 5);
+  });
+
   it("keeps an adapter-consumed hosted source authoritative for lightweight requests", async () => {
     const contexts: ProxyRunWithContextOptions[] = [];
     const adapter = createProxySecurityAdapter(

@@ -10,6 +10,7 @@
 
 import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
 import { assertCSSPipelineIdentity, serverLogger as logger } from "#veryfront/utils";
+import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import {
   assertCSSContentIdentity,
@@ -135,6 +136,7 @@ export function createProjectCSSRequestContext(
   if (typeof stylesheet !== "string") {
     throw new TypeError("Project CSS request context requires a resolved stylesheet");
   }
+  assertCSSOutputContent(stylesheet, "Project CSS stylesheet");
   const stylesheetHash = hashString(stylesheet);
   const candidatesHash = hashCandidates(candidates);
   const environment = profile.environment ?? "preview";
@@ -164,6 +166,7 @@ export function createProjectCSSRequestContext(
 // ============================================================================
 
 function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): void {
+  assertCSSOutputContent(entry.css, "Cached project CSS output");
   projectCSSLocalFallback.set(key, { ...entry, expiresAt: Date.now() + PROJECT_CSS_LOCAL_TTL_MS });
   if (projectCSSLocalFallback.size > PROJECT_CSS_LOCAL_FALLBACK_MAX) {
     pruneProjectCSSLocalFallback();
@@ -213,6 +216,7 @@ export async function tryGetProjectCSSFromLocalFallback(
   }
 
   if (localState !== "hit" || !localCached) return undefined;
+  assertCSSOutputContent(localCached.css, "Cached project CSS output");
   if (!isValidProjectCSSCacheEntry(localCached)) {
     projectCSSLocalFallback.delete(context.cacheKey);
     return undefined;
@@ -233,42 +237,9 @@ export async function tryGetProjectCSSFromDistributedCache(
 ): Promise<{ css: string; hash: string; fromCache: true } | undefined> {
   if (!projectCSSBackend) return undefined;
 
+  let raw: string | null;
   try {
-    const raw = await projectCSSBackend.get(context.cacheKey);
-    if (!raw) return undefined;
-
-    const entry = parseProjectCSSCacheEntry(raw);
-    if (!entry) {
-      cssCacheLog.debug("Project CSS cache entry was malformed", {
-        cacheKey: context.cacheKey,
-      });
-      return undefined;
-    }
-
-    if (!isValidProjectCSSCacheEntry(entry)) {
-      cssCacheLog.warn("Rejected project CSS cache entry with mismatched identity", {
-        cacheKey: context.cacheKey,
-      });
-      return undefined;
-    }
-
-    if (entry.candidatesHash !== context.candidatesHash) {
-      cssCacheLog.debug("Project CSS cache miss (candidates changed)", {
-        projectSlug: context.projectSlug,
-        cachedCandidatesHash: entry.candidatesHash,
-        currentCandidatesHash: context.candidatesHash,
-      });
-      return undefined;
-    }
-
-    cssCacheLog.debug("Project CSS cache hit (distributed)", {
-      projectSlug: context.projectSlug,
-      hash: entry.hash,
-    });
-
-    setProjectCSSLocalFallback(context.cacheKey, entry);
-    await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
-    return { css: entry.css, hash: entry.hash, fromCache: true };
+    raw = await projectCSSBackend.get(context.cacheKey);
   } catch (error) {
     cssCacheLog.debug("Failed to read from project CSS cache", {
       cacheKey: context.cacheKey,
@@ -276,6 +247,40 @@ export async function tryGetProjectCSSFromDistributedCache(
     });
     return undefined;
   }
+  if (!raw) return undefined;
+
+  const entry = parseProjectCSSCacheEntry(raw);
+  if (!entry) {
+    cssCacheLog.debug("Project CSS cache entry was malformed", {
+      cacheKey: context.cacheKey,
+    });
+    return undefined;
+  }
+
+  if (!isValidProjectCSSCacheEntry(entry)) {
+    cssCacheLog.warn("Rejected project CSS cache entry with mismatched identity", {
+      cacheKey: context.cacheKey,
+    });
+    return undefined;
+  }
+
+  if (entry.candidatesHash !== context.candidatesHash) {
+    cssCacheLog.debug("Project CSS cache miss (candidates changed)", {
+      projectSlug: context.projectSlug,
+      cachedCandidatesHash: entry.candidatesHash,
+      currentCandidatesHash: context.candidatesHash,
+    });
+    return undefined;
+  }
+
+  cssCacheLog.debug("Project CSS cache hit (distributed)", {
+    projectSlug: context.projectSlug,
+    hash: entry.hash,
+  });
+
+  setProjectCSSLocalFallback(context.cacheKey, entry);
+  await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
+  return { css: entry.css, hash: entry.hash, fromCache: true };
 }
 
 // ============================================================================
@@ -287,6 +292,7 @@ export async function storeProjectCSS(
   entry: ProjectCSSCacheEntry,
   candidates: Set<string>,
 ): Promise<void> {
+  assertCSSOutputContent(entry.css, "Cached project CSS output");
   assertCSSContentIdentity(entry.css, entry.hash);
   if (entry.candidatesHash !== context.candidatesHash) {
     throw new TypeError("Project CSS candidate identity does not match the request context");

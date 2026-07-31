@@ -2522,20 +2522,25 @@ describe("DAGExecutor", () => {
       assertEquals(cpManager.saved.length, 0);
     });
 
-    it("stores all five composite descendants under the canonical root run", async () => {
+    it("stores composite admissions and descendants under the canonical root run", async () => {
       const { checkpointManager, run } = await executeNestedCheckpointGraph();
 
       assertEquals(checkpointManager.saved, [
+        { runId: run.id, nodeId: "checkpoint-parallel" },
         { runId: run.id, nodeId: "checkpoint-parallel/checkpoint-child" },
+        { runId: run.id, nodeId: "checkpoint-branch" },
         { runId: run.id, nodeId: "checkpoint-branch/then/checkpoint-child" },
+        { runId: run.id, nodeId: "checkpoint-map" },
         { runId: run.id, nodeId: "checkpoint-map_0" },
+        { runId: run.id, nodeId: "checkpoint-loop" },
         { runId: run.id, nodeId: "checkpoint-loop/checkpoint-child" },
+        { runId: run.id, nodeId: "checkpoint-sub-workflow" },
         { runId: run.id, nodeId: "checkpoint-sub-workflow/checkpoint-child" },
       ]);
-      assertEquals((await checkpointManager.getAll(run.id)).length, 5);
+      assertEquals((await checkpointManager.getAll(run.id)).length, 10);
     });
 
-    it("resumes a composite from its root-owned descendant checkpoint", async () => {
+    it("synthesizes a root resume snapshot for a descendant checkpoint", async () => {
       const backend = new MemoryBackend();
       const checkpointManager = new RecordingCheckpointManager({ backend });
       const run = createTestRun({
@@ -2596,22 +2601,13 @@ describe("DAGExecutor", () => {
       assertEquals(firstResult.waiting, true);
       const resumeInfo = await checkpointManager.prepareResume(run.id, nodes);
       assertExists(resumeInfo);
-      assertEquals(resumeInfo.workflowProjection, run._workflowProjection);
-
-      const resumedResult = await executor.execute(
-        nodes,
-        {
-          ...run,
-          context: resumeInfo.context,
-          nodeStates: resumeInfo.nodeStates,
-          _workflowProjection: resumeInfo.workflowProjection,
-        },
-        resumeInfo.startFromNode,
-        undefined,
-        ownership,
-      );
-
-      assertEquals(resumedResult.waiting, true);
+      assertEquals(resumeInfo.checkpoint._resumeEnvelope?.ownerNodeId, "resume-parallel");
+      assertEquals(resumeInfo.context.owned, {
+        input: { secret: true },
+        value: "keep",
+      });
+      assertEquals(resumeInfo.context["resume-parallel/first"], undefined);
+      assertEquals(resumeInfo.nodeStates["resume-parallel"]?.status, "running");
       assertEquals(firstExecutions, 1);
     });
 

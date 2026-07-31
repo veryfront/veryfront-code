@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearCSSCache,
@@ -96,6 +96,32 @@ describe("styles-builder/css-compiler", () => {
     it("should extract CSS variable utilities", () => {
       const candidates = extractCandidates('class="bg-[var(--color)]"');
       assertEquals(candidates.includes("bg-[var(--color)]"), true);
+    });
+
+    it("rejects more than 100,000 distinct candidates without materializing every match", () => {
+      const content = Array.from({ length: 100_001 }, (_, index) => `vf-${index}`).join(" ");
+
+      assertThrows(
+        () => extractCandidates(content),
+        TypeError,
+        "100000 candidates",
+      );
+    });
+
+    it("rejects candidate tokens longer than 1,024 characters", () => {
+      assertThrows(
+        () => extractCandidates(`vf-${"x".repeat(1_022)}`),
+        TypeError,
+        "1024 characters",
+      );
+    });
+
+    it("rejects candidate source input above 16 MiB", () => {
+      assertThrows(
+        () => extractCandidates("x".repeat(16 * 1024 * 1024 + 1)),
+        TypeError,
+        "16777216 bytes",
+      );
     });
   });
 

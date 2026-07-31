@@ -1,14 +1,22 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   __injectDepsForTests,
+  DEFAULT_STATIC_ASSET_MAX_BYTES,
+  StaticAssetUnavailableError,
   type StaticFileOptions,
   StaticFileService,
 } from "./static-file.service.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/deno.ts";
+import { STATIC_ASSET_MAX_BYTES } from "#veryfront/utils/constants/static-assets.ts";
 
 function makeOptions(overrides: Partial<StaticFileOptions> = {}): StaticFileOptions {
   return {
@@ -42,6 +50,11 @@ function createMockFsRepo(
       const data = files.get(toMockAbsolutePath(path));
       if (!data) throw new Error("not found");
       return data;
+    },
+    readFileBytesBounded: async (path: string, byteLimit: number) => {
+      const data = files.get(toMockAbsolutePath(path));
+      if (!data) throw new Error("not found");
+      return data.subarray(0, byteLimit);
     },
     stat: async (path: string) => {
       if (files.has(toMockAbsolutePath(path))) {
@@ -82,6 +95,12 @@ function createManifestFsRepo(
         throw createFsError("not found", "ENOENT");
       }
       return new TextEncoder().encode(content);
+    },
+    readFileBytesBounded: async (path: string, byteLimit: number) => {
+      if (toMockAbsolutePath(path) !== assetPath) {
+        throw createFsError("not found", "ENOENT");
+      }
+      return new TextEncoder().encode(content).subarray(0, byteLimit);
     },
     stat: async (path: string) => {
       const absolutePath = toMockAbsolutePath(path);
@@ -415,6 +434,8 @@ describe("server/services/static/static-file.service", () => {
           });
         },
         readFileBytes: async (path: string) => new TextEncoder().encode(toMockAbsolutePath(path)),
+        readFileBytesBounded: async (path: string, byteLimit: number) =>
+          new TextEncoder().encode(toMockAbsolutePath(path)).subarray(0, byteLimit),
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (
@@ -478,6 +499,8 @@ describe("server/services/static/static-file.service", () => {
           });
         },
         readFileBytes: async (path: string) => new TextEncoder().encode(toMockAbsolutePath(path)),
+        readFileBytesBounded: async (path: string, byteLimit: number) =>
+          new TextEncoder().encode(toMockAbsolutePath(path)).subarray(0, byteLimit),
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (
@@ -891,15 +914,22 @@ describe("server/services/static/static-file.service", () => {
       declaredSize: number | null | undefined,
       overrides: {
         readFileBytes?: () => Promise<Uint8Array>;
-        readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
+        readFileBytesBounded?:
+          | ((path: string, byteLimit: number) => Promise<Uint8Array>)
+          | null;
+        maxWholeFileReadBytes?: number;
       } = {},
     ): FileSystemRepository {
       return {
         readFile: () => Promise.resolve(""),
         readFileBytes: overrides.readFileBytes ?? (() => Promise.resolve(data)),
-        ...(overrides.readFileBytesBounded
-          ? { readFileBytesBounded: overrides.readFileBytesBounded }
-          : {}),
+        ...(overrides.readFileBytesBounded === null ? {} : {
+          readFileBytesBounded: overrides.readFileBytesBounded ??
+            (() => Promise.resolve(data)),
+        }),
+        ...(overrides.maxWholeFileReadBytes === undefined
+          ? {}
+          : { maxWholeFileReadBytes: overrides.maxWholeFileReadBytes }),
         stat: (path: string) => {
           if (toMockAbsolutePath(path) !== "/project/public/asset.bin") {
             return Promise.reject(createFsError("not found", "ENOENT"));
@@ -913,6 +943,24 @@ describe("server/services/static/static-file.service", () => {
         },
       } as unknown as FileSystemRepository;
     }
+
+    it("uses the build-wide static asset ceiling as its default", () => {
+      assertEquals(DEFAULT_STATIC_ASSET_MAX_BYTES, STATIC_ASSET_MAX_BYTES);
+      assertEquals(DEFAULT_STATIC_ASSET_MAX_BYTES, 64 * 1024 * 1024);
+    });
+
+    it("does not allow a service override above the build-wide ceiling", async () => {
+      await assertRejects(
+        () =>
+          Promise.resolve(
+            new StaticFileService(undefined, {
+              maxAssetBytes: STATIC_ASSET_MAX_BYTES + 1,
+            }),
+          ),
+        RangeError,
+        `must not exceed ${STATIC_ASSET_MAX_BYTES}`,
+      );
+    });
 
     it("serves an asset exactly at the configured byte boundary", async () => {
       const data = new Uint8Array([1, 2, 3, 4]);
@@ -941,7 +989,7 @@ describe("server/services/static/static-file.service", () => {
             "/asset.bin",
             makeOptions({ isLocalProject: true }),
           ),
-        RangeError,
+        StaticAssetUnavailableError,
         "Static asset byte limit of 4 was exceeded",
       );
       assertEquals(reads, 0);
@@ -956,7 +1004,7 @@ describe("server/services/static/static-file.service", () => {
             "/asset.bin",
             makeOptions({ isLocalProject: true }),
           ),
-        RangeError,
+        StaticAssetUnavailableError,
         "Static asset byte limit of 4 was exceeded",
       );
     });
@@ -981,11 +1029,232 @@ describe("server/services/static/static-file.service", () => {
             "/asset.bin",
             makeOptions({ isLocalProject: true }),
           ),
-        RangeError,
+        StaticAssetUnavailableError,
         "Static asset byte limit of 4 was exceeded",
       );
       assertEquals(requestedLimit, 5);
       assertEquals(wholeReads, 0);
+    });
+
+    it("fails closed instead of falling back to a whole-file read", async () => {
+      let wholeReads = 0;
+      const repo = {
+        readFile: () => Promise.resolve(""),
+        readFileBytes: () => {
+          wholeReads++;
+          return Promise.resolve(new Uint8Array([1, 2, 3, 4]));
+        },
+        stat: (path: string) => {
+          if (toMockAbsolutePath(path) !== "/project/public/asset.bin") {
+            return Promise.reject(createFsError("not found", "ENOENT"));
+          }
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            mtime: new Date(1),
+            size: 4,
+          });
+        },
+      } as unknown as FileSystemRepository;
+
+      await assertRejects(
+        () =>
+          new StaticFileService(repo, { maxAssetBytes: 4 }).resolveFile(
+            "/asset.bin",
+            makeOptions({ isLocalProject: true }),
+          ),
+        Error,
+        "bounded reads or an admitted fixed-ceiling whole-file reader",
+      );
+      assertEquals(wholeReads, 0);
+    });
+
+    it("uses a whole-file reader only under an admitted fixed upstream ceiling", async () => {
+      const data = new Uint8Array([1, 2, 3, 4]);
+      let wholeReads = 0;
+      const repo = createAssetRepository(data, data.byteLength, {
+        readFileBytesBounded: null,
+        maxWholeFileReadBytes: data.byteLength,
+        readFileBytes: () => {
+          wholeReads++;
+          return Promise.resolve(data);
+        },
+      });
+
+      const result = await new StaticFileService(repo, { maxAssetBytes: 4 }).resolveFile(
+        "/asset.bin",
+        makeOptions({ isLocalProject: true }),
+      );
+
+      assertEquals(result?.data, data);
+      assertEquals(wholeReads, 1);
+    });
+
+    it("fails closed when a fixed whole-read ceiling exceeds the configured limit", async () => {
+      let wholeReads = 0;
+      const repo = createAssetRepository(new Uint8Array([1, 2, 3, 4]), 4, {
+        readFileBytesBounded: null,
+        maxWholeFileReadBytes: 5,
+        readFileBytes: () => {
+          wholeReads++;
+          return Promise.resolve(new Uint8Array([1, 2, 3, 4]));
+        },
+      });
+
+      await assertRejects(
+        () =>
+          new StaticFileService(repo, { maxAssetBytes: 4 }).resolveFile(
+            "/asset.bin",
+            makeOptions({ isLocalProject: true }),
+          ),
+        StaticAssetUnavailableError,
+        "fixed-ceiling whole-file reader",
+      );
+      assertEquals(wholeReads, 0);
+    });
+
+    it("rejects a declared size above the fixed whole-read ceiling before reading", async () => {
+      let wholeReads = 0;
+      const repo = createAssetRepository(new Uint8Array(4), 4, {
+        readFileBytesBounded: null,
+        maxWholeFileReadBytes: 3,
+        readFileBytes: () => {
+          wholeReads++;
+          return Promise.resolve(new Uint8Array(4));
+        },
+      });
+
+      await assertRejects(
+        () =>
+          new StaticFileService(repo, { maxAssetBytes: 4 }).resolveFile(
+            "/asset.bin",
+            makeOptions({ isLocalProject: true }),
+          ),
+        StaticAssetUnavailableError,
+        "fixed whole-file read ceiling of 3",
+      );
+      assertEquals(wholeReads, 0);
+    });
+
+    it("rejects a whole reader that violates its advertised ceiling", async () => {
+      const repo = createAssetRepository(new Uint8Array(4), 3, {
+        readFileBytesBounded: null,
+        maxWholeFileReadBytes: 3,
+      });
+
+      await assertRejects(
+        () =>
+          new StaticFileService(repo, { maxAssetBytes: 4 }).resolveFile(
+            "/asset.bin",
+            makeOptions({ isLocalProject: true }),
+          ),
+        StaticAssetUnavailableError,
+        "exceeded its advertised ceiling",
+      );
+    });
+
+    it("snapshots injected repository read capabilities at construction", async () => {
+      const data = new Uint8Array([1, 2, 3, 4]);
+      let originalReads = 0;
+      let replacementReads = 0;
+      const repo = createAssetRepository(data, 4, {
+        readFileBytesBounded: null,
+        maxWholeFileReadBytes: 4,
+        readFileBytes: () => {
+          originalReads++;
+          return Promise.resolve(data);
+        },
+      }) as FileSystemRepository & { maxWholeFileReadBytes: number };
+      const service = new StaticFileService(repo, { maxAssetBytes: 4 });
+      repo.readFileBytes = () => {
+        replacementReads++;
+        return Promise.resolve(new Uint8Array());
+      };
+      repo.maxWholeFileReadBytes = 1;
+
+      const result = await service.resolveFile(
+        "/asset.bin",
+        makeOptions({ isLocalProject: true }),
+      );
+
+      assertEquals(result?.data, data);
+      assertEquals(originalReads, 1);
+      assertEquals(replacementReads, 0);
+    });
+
+    it("rejects accessor-backed repository capabilities without invoking them", () => {
+      for (const key of ["readFileBytesBounded", "maxWholeFileReadBytes"] as const) {
+        let getterCalls = 0;
+        const repo = {
+          readFile: () => Promise.resolve(""),
+          readFileBytes: () => Promise.resolve(new Uint8Array()),
+          stat: () =>
+            Promise.resolve({
+              isFile: true,
+              isDirectory: false,
+              mtime: new Date(1),
+              size: 0,
+            }),
+        } as unknown as FileSystemRepository;
+        Object.defineProperty(repo, key, {
+          get() {
+            getterCalls++;
+            return key === "maxWholeFileReadBytes" ? 4 : () => Promise.resolve(new Uint8Array());
+          },
+        });
+
+        assertThrows(
+          () => new StaticFileService(repo),
+          TypeError,
+          "data",
+        );
+        assertEquals(getterCalls, 0);
+      }
+    });
+
+    it("rejects proxy repositories without invoking capability traps", () => {
+      let descriptorTraps = 0;
+      const target = createAssetRepository(new Uint8Array(), 0);
+      const repo = new Proxy(target, {
+        getOwnPropertyDescriptor() {
+          descriptorTraps++;
+          throw new Error("descriptor trap");
+        },
+      });
+
+      assertThrows(
+        () => new StaticFileService(repo),
+        TypeError,
+        "proxies are not supported",
+      );
+      assertEquals(descriptorTraps, 0);
+    });
+
+    it("resolves HEAD metadata without reading asset content", async () => {
+      let wholeReads = 0;
+      let boundedReads = 0;
+      const repo = createAssetRepository(new Uint8Array([1, 2, 3, 4]), 4, {
+        readFileBytes: () => {
+          wholeReads++;
+          return Promise.reject(new Error("HEAD must not read whole content"));
+        },
+        readFileBytesBounded: () => {
+          boundedReads++;
+          return Promise.reject(new Error("HEAD must not read bounded content"));
+        },
+      });
+
+      const result = await new StaticFileService(repo, { maxAssetBytes: 4 })
+        .resolveFileMetadata(
+          "/asset.bin",
+          makeOptions({ isLocalProject: true }),
+        );
+
+      assertExists(result);
+      assertEquals(result.size, 4);
+      assertEquals(result.source, "public");
+      assertEquals(wholeReads, 0);
+      assertEquals(boundedReads, 0);
     });
 
     it("rejects unsafe declared asset sizes without reading bytes", async () => {
@@ -1004,7 +1273,7 @@ describe("server/services/static/static-file.service", () => {
               "/asset.bin",
               makeOptions({ isLocalProject: true }),
             ),
-          RangeError,
+          StaticAssetUnavailableError,
           "Static asset size must be a non-negative safe integer",
         );
         assertEquals(reads, 0);
@@ -1185,6 +1454,12 @@ describe("server/services/static/static-file.service", () => {
           }
           return fileData;
         },
+        readFileBytesBounded: async (path: string, byteLimit: number) => {
+          if (toMockAbsolutePath(path) === "/project/dist/app.js") {
+            throw createFsError("temporary read failure", "EIO");
+          }
+          return fileData.subarray(0, byteLimit);
+        },
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (
@@ -1215,6 +1490,9 @@ describe("server/services/static/static-file.service", () => {
       const repo = {
         readFile: async () => "",
         readFileBytes: async () => {
+          throw createFsError("temporary read failure", "EIO");
+        },
+        readFileBytesBounded: async () => {
           throw createFsError("temporary read failure", "EIO");
         },
         stat: async (path: string) => {

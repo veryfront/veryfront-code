@@ -3,7 +3,11 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
 import type { FileSystemRepository } from "#veryfront/repositories/types.ts";
-import { StaticFileService } from "../../services/static/static-file.service.ts";
+import {
+  StaticAssetUnavailableError,
+  type StaticAssetUnavailableReason,
+  StaticFileService,
+} from "../../services/static/static-file.service.ts";
 import { StaticHandler } from "./static.handler.ts";
 
 type StaticHandlerTestAccess = {
@@ -189,6 +193,7 @@ describe("server/handlers/request/static.handler", () => {
         Promise.resolve({
           path: "/tmp/test-project/public/asset.js",
           data,
+          size: data.byteLength,
           etag: '"asset-etag"',
           contentType: "application/javascript; charset=utf-8",
           cacheStrategy: "medium",
@@ -207,7 +212,7 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals(sliceCalls, 0);
   });
 
-  it("keeps HEAD asset reads within the configured byte admission bound", async () => {
+  it("serves HEAD from metadata without reading asset content", async () => {
     const data = new Uint8Array([1, 2, 3, 4]);
     let boundedLimit = 0;
     let wholeReads = 0;
@@ -245,8 +250,145 @@ describe("server/handlers/request/static.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals((await result.response.arrayBuffer()).byteLength, 0);
-    assertEquals(boundedLimit, data.byteLength + 1);
+    assertEquals(result.response.headers.get("content-length"), String(data.byteLength));
+    assertEquals(boundedLimit, 0);
     assertEquals(wholeReads, 0);
+  });
+
+  it("omits HEAD content-length when the provider has no declared size", async () => {
+    const handler = new StaticHandler();
+    let bodyReads = 0;
+    (handler as any).staticService = {
+      resolveFile: () => {
+        bodyReads++;
+        return Promise.reject(new Error("HEAD must not resolve a body"));
+      },
+      resolveFileMetadata: () =>
+        Promise.resolve({
+          path: "/tmp/test-project/public/asset.bin",
+          size: null,
+          contentType: "application/octet-stream",
+          cacheStrategy: "medium",
+          source: "public",
+        }),
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/asset.bin", { method: "HEAD" }),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(result.response.headers.get("content-length"), null);
+    assertEquals((await result.response.arrayBuffer()).byteLength, 0);
+    assertEquals(bodyReads, 0);
+  });
+
+  it("omits raw HTML size and ETag on metadata-only HEAD", async () => {
+    const handler = new StaticHandler();
+    let bodyReads = 0;
+    (handler as any).staticService = {
+      resolveFile: () => {
+        bodyReads++;
+        return Promise.reject(new Error("HEAD must not generate transformed HTML"));
+      },
+      resolveFileMetadata: () =>
+        Promise.resolve({
+          path: "/tmp/test-project/dist/index.html",
+          size: 42,
+          contentType: "text/html; charset=utf-8",
+          cacheStrategy: "no-cache",
+          source: "dist",
+        }),
+      isAssetRequest: () => true,
+    };
+
+    const result = await handler.handle(
+      new Request("http://localhost/index.html", { method: "HEAD" }),
+      makeCtx(),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(result.response.headers.get("content-length"), null);
+    assertEquals(result.response.headers.get("etag"), null);
+    assertEquals((await result.response.arrayBuffer()).byteLength, 0);
+    assertEquals(bodyReads, 0);
+  });
+
+  it("maps unavailable bounded static reads to a sanitized 503", async () => {
+    let wholeReads = 0;
+    const repo = {
+      readFile: () => Promise.resolve(""),
+      readFileBytes: () => {
+        wholeReads++;
+        return Promise.resolve(new Uint8Array([1, 2, 3, 4]));
+      },
+      stat: (path: string) => {
+        if (path === "public/asset.bin") {
+          return Promise.resolve({
+            isFile: true,
+            isDirectory: false,
+            mtime: new Date(1),
+            size: 4,
+          });
+        }
+        return Promise.reject(Object.assign(new Error("not found"), { code: "ENOENT" }));
+      },
+    } as unknown as FileSystemRepository;
+    const handler = new StaticHandler();
+    (handler as unknown as StaticHandlerConcreteServiceAccess).staticService =
+      new StaticFileService(repo, { maxAssetBytes: 4 });
+
+    const result = await handler.handle(
+      new Request("http://localhost/asset.bin"),
+      makeCtx({ isLocalProject: true }),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 503);
+    assertEquals(await result.response.text(), "Static asset unavailable");
+    assertEquals(result.response.headers.get("cache-control"), "no-store");
+    assertEquals(wholeReads, 0);
+  });
+
+  it("maps every typed admission reason to sanitized 503 semantics", async () => {
+    const reasons: StaticAssetUnavailableReason[] = [
+      "read-capability-unavailable",
+      "byte-limit",
+      "invalid-metadata",
+      "invalid-reader-result",
+    ];
+
+    for (const reason of reasons) {
+      for (const method of ["GET", "HEAD"] as const) {
+        const handler = new StaticHandler();
+        const reject = () =>
+          Promise.reject(
+            new StaticAssetUnavailableError(reason, `sensitive detail for ${reason}`),
+          );
+        (handler as any).staticService = {
+          resolveFile: reject,
+          resolveFileMetadata: reject,
+          isAssetRequest: () => true,
+        };
+
+        const result = await handler.handle(
+          new Request("http://localhost/asset.bin", { method }),
+          makeCtx(),
+        );
+
+        assertExists(result.response);
+        assertEquals(result.response.status, 503, `${method} ${reason}`);
+        assertEquals(result.response.headers.get("cache-control"), "no-store");
+        assertEquals(
+          await result.response.text(),
+          method === "HEAD" ? "" : "Static asset unavailable",
+        );
+      }
+    }
   });
 
   it("serves generated hydration runtime under /_veryfront", async () => {

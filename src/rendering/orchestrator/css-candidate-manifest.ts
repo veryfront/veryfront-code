@@ -1,4 +1,5 @@
-import { extractCandidates } from "#veryfront/html/styles-builder/css-compiler.ts";
+import { extractCandidatesWithByteLength } from "#veryfront/html/styles-builder/candidate-tokenizer.ts";
+import { isAbsolute, resolve } from "#veryfront/compat/path/index.ts";
 import {
   filterFilesForStyleScope,
   type StyleScopeProfile,
@@ -6,6 +7,16 @@ import {
 import { getRouteModulePaths } from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { assertStyleProfileHash, rendererLogger } from "#veryfront/utils";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
+import {
+  MAX_CSS_FILES,
+  MAX_CSS_SELECTOR_TOKENS,
+  MAX_CSS_TOTAL_BYTES,
+} from "#veryfront/utils/constants/css.ts";
+import {
+  assertBoundedPathString,
+  resolveCanonicalProjectRelativePath,
+  toCanonicalProjectRelativePath,
+} from "#veryfront/utils/project-relative-path.ts";
 
 interface SourceFileLike {
   path: string;
@@ -87,12 +98,23 @@ function normalizePath(path: string): string {
 }
 
 function toRelativeProjectPath(path: string, projectDir: string): string {
-  const normalized = normalizePath(path);
-  const normalizedProjectDir = normalizePath(projectDir).replace(/\/+$/, "");
-  if (normalized.startsWith(normalizedProjectDir)) {
-    return normalized.slice(normalizedProjectDir.length).replace(/^\/+/, "");
+  const admittedPath = assertBoundedPathString(path, "CSS candidate path");
+  return toCanonicalProjectRelativePath(
+    projectDir,
+    normalizePath(admittedPath),
+    "CSS candidate path",
+  );
+}
+
+function resolveCandidateProjectRoot(projectDir: string): string {
+  const admittedProjectDir = assertBoundedPathString(
+    projectDir,
+    "CSS candidate project directory",
+  );
+  if (!isAbsolute(admittedProjectDir)) {
+    throw new TypeError("CSS candidate project directory must be absolute");
   }
-  return normalized.replace(/^\/+/, "");
+  return resolve(admittedProjectDir);
 }
 
 function buildManifestCacheKey(
@@ -121,7 +143,14 @@ function shouldRebuildManifest(
 }
 
 function buildSourceCandidatePaths(modulePath: string): string[] {
-  const normalized = normalizePath(modulePath).replace(/^\/+/, "").replace(/^_vf_modules\//, "");
+  const admittedModulePath = assertBoundedPathString(
+    modulePath,
+    "CSS route module path",
+  );
+  const normalized = normalizePath(admittedModulePath).replace(/^\/+/, "").replace(
+    /^_vf_modules\//,
+    "",
+  );
   if (!normalized.endsWith(".js")) return [normalized];
   const withoutJs = normalized.slice(0, -3);
   return [
@@ -140,22 +169,68 @@ function buildCandidateManifest(
 ): CandidateManifest {
   const fileCandidates = new Map<string, Set<string>>();
   const allCandidates = new Set<string>();
+  let sourceBytes = 0;
+  let retainedCandidateEntries = 0;
 
   for (const file of files) {
+    const path = assertBoundedPathString(file.path, "CSS candidate source path");
     if (!file.content) continue;
-    if (!SOURCE_EXTENSIONS.some((ext) => file.path.endsWith(ext))) continue;
+    if (!SOURCE_EXTENSIONS.some((ext) => path.endsWith(ext))) continue;
 
-    const candidates = new Set(extractCandidates(file.content));
-    const relativePath = toRelativeProjectPath(file.path, projectDir);
-    const absolutePath = normalizePath(file.path);
+    const extracted = extractCandidatesWithByteLength(
+      file.content,
+      `CSS candidate source ${path}`,
+    );
+    if (extracted.sourceBytes > MAX_CSS_TOTAL_BYTES - sourceBytes) {
+      throw new TypeError(`CSS candidate sources exceed ${MAX_CSS_TOTAL_BYTES} total bytes`);
+    }
+    sourceBytes += extracted.sourceBytes;
+
+    const candidates = new Set(extracted.candidates);
+    if (candidates.size > MAX_CSS_SELECTOR_TOKENS - retainedCandidateEntries) {
+      throw new TypeError(
+        `CSS candidate manifest cannot retain more than ${MAX_CSS_SELECTOR_TOKENS} candidates`,
+      );
+    }
+    retainedCandidateEntries += candidates.size;
+    const relativePath = toRelativeProjectPath(path, projectDir);
+    const absolutePath = normalizePath(
+      resolveCanonicalProjectRelativePath(
+        projectDir,
+        relativePath,
+        "CSS candidate source path",
+      ),
+    );
 
     fileCandidates.set(relativePath, candidates);
     fileCandidates.set(absolutePath, candidates);
 
-    for (const cls of candidates) allCandidates.add(cls);
+    for (const cls of candidates) {
+      if (!allCandidates.has(cls) && allCandidates.size >= MAX_CSS_SELECTOR_TOKENS) {
+        throw new TypeError(
+          `CSS candidate manifest cannot retain more than ${MAX_CSS_SELECTOR_TOKENS} candidates`,
+        );
+      }
+      allCandidates.add(cls);
+    }
   }
 
   return { projectScope, fileCandidates, allCandidates, builtAt: Date.now() };
+}
+
+function assertCandidateSourcePaths(
+  files: SourceFileLike[],
+  projectDir: string,
+): void {
+  if (!Array.isArray(files) || files.length > MAX_CSS_FILES) {
+    throw new TypeError(`CSS candidate manifest cannot exceed ${MAX_CSS_FILES} source files`);
+  }
+  for (const file of files) {
+    if (typeof file !== "object" || file === null || Array.isArray(file)) {
+      throw new TypeError("CSS candidate manifest source entries must be objects");
+    }
+    toRelativeProjectPath(file.path, projectDir);
+  }
 }
 
 function deleteRouteEntriesForManifest(manifestKey: string): void {
@@ -200,17 +275,20 @@ function getOrBuildManifest(
     "projectScope" | "projectVersion" | "projectDir" | "files" | "developmentMode" | "styleProfile"
   >,
 ): CandidateManifest {
+  const projectDir = resolveCandidateProjectRoot(options.projectDir);
   const manifestKey = buildManifestCacheKey(
     options.projectScope,
     options.projectVersion,
     options.styleProfile?.hash,
   );
   const existingManifest = manifestCache.get(manifestKey);
+  // Admit paths before style-scope filtering performs normalization.
+  assertCandidateSourcePaths(options.files, projectDir);
   const scopedFiles = options.styleProfile
-    ? filterFilesForStyleScope(options.files, options.styleProfile, options.projectDir)
+    ? filterFilesForStyleScope(options.files, options.styleProfile, projectDir)
     : options.files;
   const manifest = shouldRebuildManifest(existingManifest, options.developmentMode)
-    ? buildCandidateManifest(options.projectScope, scopedFiles, options.projectDir)
+    ? buildCandidateManifest(options.projectScope, scopedFiles, projectDir)
     : existingManifest!;
 
   if (manifest !== existingManifest) {
@@ -241,6 +319,15 @@ function addCandidatesForPath(
  * Resolve route-scoped CSS candidates from a precomputed per-project manifest.
  */
 export function getRouteCandidates(options: RouteCandidateOptions): Set<string> {
+  const projectDir = resolveCandidateProjectRoot(options.projectDir);
+  if (!Array.isArray(options.routeFilePaths) || options.routeFilePaths.length > MAX_CSS_FILES) {
+    throw new TypeError(`CSS route candidates cannot exceed ${MAX_CSS_FILES} file paths`);
+  }
+  const routeFilePaths = options.routeFilePaths.map((path) => {
+    assertBoundedPathString(path, "CSS route file path");
+    toRelativeProjectPath(path, projectDir);
+    return path;
+  });
   const manifestKey = buildManifestCacheKey(
     options.projectScope,
     options.projectVersion,
@@ -256,13 +343,13 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
 
   const routeCandidates = new Set<string>();
 
-  for (const path of options.routeFilePaths) {
-    addCandidatesForPath(routeCandidates, manifest, path, options.projectDir);
+  for (const path of routeFilePaths) {
+    addCandidatesForPath(routeCandidates, manifest, path, projectDir);
   }
 
   for (const modulePath of getRouteModulePaths(options.projectScope, options.routeKey)) {
     for (const sourcePath of buildSourceCandidatePaths(modulePath)) {
-      addCandidatesForPath(routeCandidates, manifest, sourcePath, options.projectDir);
+      addCandidatesForPath(routeCandidates, manifest, sourcePath, projectDir);
     }
   }
 

@@ -16,6 +16,7 @@ import type {
   StepBuilderContext,
   WorkflowContext,
   WorkflowDefinition,
+  WorkflowGraphAdmission,
   WorkflowNode,
   WorkflowRun,
   WorkflowStatus,
@@ -56,7 +57,8 @@ import {
   reconcileTimedWorkflowWait,
   type TimedWorkflowWaitRegistration,
 } from "../runtime/timed-wait-reconciliation.ts";
-import { WORKFLOW_RUNTIME_STATE_VERSION } from "../runtime-state.ts";
+import { WORKFLOW_RUNTIME_STATE_VERSION, type WorkflowProjectionState } from "../runtime-state.ts";
+import { captureCanonicalWorkflowGraphIdentity } from "./dag/graph-identity.ts";
 
 const logger = baseLogger.component("workflow-executor");
 
@@ -678,8 +680,8 @@ export class WorkflowExecutor {
     if (!workflow) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
+    this.assertWorkflowRunVersion(run, workflow);
 
-    const nodes = this.resolveNodes(workflow, run.context);
     // A waiting run already contains the authoritative event/approval handoff
     // in its persisted context and node states. Restoring an older checkpoint
     // here can erase that decision immediately before execution resumes.
@@ -688,7 +690,14 @@ export class WorkflowExecutor {
     const wakeNodeId = fromCheckpoint === undefined ? getTimedWaitWakeNodeId(run) : null;
     let resumeInfo = run.status === "waiting" && fromCheckpoint === undefined
       ? null
-      : await this.checkpointManager.prepareResume(runId, nodes, fromCheckpoint);
+      : await this.checkpointManager.prepareResume(
+        runId,
+        Array.isArray(workflow.steps)
+          ? this.resolveNodes(workflow, run.context)
+          : (context) => this.resolveNodes(workflow, context),
+        fromCheckpoint,
+        workflow.version ?? null,
+      );
     if (
       wakeNodeId && resumeInfo &&
       !checkpointContainsTimedWaitWake(run, resumeInfo.checkpoint, wakeNodeId)
@@ -731,9 +740,11 @@ export class WorkflowExecutor {
 
     await this.launchExecution(
       runId,
-      resumeInfo?.startFromNode,
+      undefined,
       expectedWorkerId,
       existingLockId,
+      resumeInfo?.nodes,
+      resumeInfo?.graphAdmission,
     );
   }
 
@@ -757,6 +768,8 @@ export class WorkflowExecutor {
     startFromNode?: string,
     expectedWorkerId?: string,
     existingLockId?: string,
+    capturedNodes?: WorkflowNode[],
+    capturedGraphAdmission?: WorkflowGraphAdmission,
   ): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
@@ -769,7 +782,15 @@ export class WorkflowExecutor {
 
     await runWithWorkflowSourceIntegrationPolicy(
       run,
-      () => this.executeRun(run, startFromNode, executionWorkerId, existingLockId),
+      () =>
+        this.executeRun(
+          run,
+          startFromNode,
+          executionWorkerId,
+          existingLockId,
+          capturedNodes,
+          capturedGraphAdmission,
+        ),
     );
   }
 
@@ -778,11 +799,14 @@ export class WorkflowExecutor {
     startFromNode?: string,
     expectedWorkerId?: string,
     existingLockId?: string,
+    capturedNodes?: WorkflowNode[],
+    capturedGraphAdmission?: WorkflowGraphAdmission,
   ): Promise<void> {
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
+    this.assertWorkflowRunVersion(run, workflow);
 
     await executeWorkflowRunControl({
       backend: this.config.backend,
@@ -821,7 +845,13 @@ export class WorkflowExecutor {
       },
       isCurrentExecution: (runId, controller) => this.isCurrentExecution(runId, controller),
       execute: ({ controller, signal, ownership }) => {
-        const nodes = this.resolveNodes(workflow, run.context);
+        const admission = capturedNodes === undefined
+          ? this.resolveNodeAdmission(workflow, run.context, run._workflowProjection)
+          : {
+            nodes: capturedNodes,
+            graphAdmission: capturedGraphAdmission,
+          };
+        const nodes = admission.nodes;
         const runWithTenantContext: WorkflowRun = run._tenant
           ? {
             ...run,
@@ -838,6 +868,7 @@ export class WorkflowExecutor {
                 startFromNode,
                 signal,
                 ownership,
+                admission.graphAdmission,
               ),
             workflow.timeout,
             controller,
@@ -978,16 +1009,64 @@ export class WorkflowExecutor {
    * Resolve workflow nodes from definition
    */
   private resolveNodes(workflow: WorkflowDefinition, context: WorkflowContext): WorkflowNode[] {
-    const nodes = Array.isArray(workflow.steps) ? workflow.steps : workflow.steps(
+    return this.resolveNodeAdmission(workflow, context).nodes;
+  }
+
+  private resolveNodeAdmission(
+    workflow: WorkflowDefinition,
+    context: WorkflowContext,
+    workflowProjection: WorkflowProjectionState = { context: {} },
+  ): { nodes: WorkflowNode[]; graphAdmission: WorkflowGraphAdmission } {
+    const stepsEvaluationContext = captureWorkflowStaticValue(
+      context,
+      `Workflow "${workflow.id}" steps evaluation context`,
+    );
+    const stepsEvaluationProjection = captureWorkflowStaticValue(
+      workflowProjection,
+      `Workflow "${workflow.id}" steps evaluation projection`,
+    );
+    const callbackContext = cloneCapturedWorkflowStaticValue(
+      stepsEvaluationContext,
+      `Workflow "${workflow.id}" steps callback context`,
+    );
+    // Definition evaluation is admission, not execution. Give dynamic builders
+    // an isolated snapshot so ambient mutation cannot rewrite durable run state.
+    const rawNodes = Array.isArray(workflow.steps) ? workflow.steps : workflow.steps(
       {
-        input: context.input,
-        context,
+        input: callbackContext.input,
+        context: callbackContext,
         blobStorage: this.config.blobStorage,
         blob: this.blobResolver,
       } satisfies StepBuilderContext,
     );
-    return captureWorkflowNodes(nodes, `Workflow "${workflow.id}"`, {
+    const nodes = captureWorkflowNodes(rawNodes, `Workflow "${workflow.id}"`, {
       emptyElementName: "step",
+    });
+    return {
+      nodes,
+      graphAdmission: {
+        stepsEvaluationContext: cloneCapturedWorkflowStaticValue(
+          stepsEvaluationContext,
+          `Workflow "${workflow.id}" durable steps evaluation context`,
+        ),
+        stepsEvaluationProjection: cloneCapturedWorkflowStaticValue(
+          stepsEvaluationProjection,
+          `Workflow "${workflow.id}" durable steps evaluation projection`,
+        ),
+        graphIdentity: captureCanonicalWorkflowGraphIdentity(nodes),
+        workflowVersion: workflow.version ?? null,
+      },
+    };
+  }
+
+  private assertWorkflowRunVersion(
+    run: WorkflowRun,
+    workflow: WorkflowDefinition,
+  ): void {
+    if ((run.version ?? null) === (workflow.version ?? null)) return;
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Cannot resume workflow run "${run.id}" because definition version changed from ` +
+        `"${run.version ?? "unversioned"}" to "${workflow.version ?? "unversioned"}"`,
     });
   }
 
@@ -1492,12 +1571,16 @@ export class WorkflowExecutor {
     startFromNode?: string,
     expectedWorkerId?: string,
     existingLockId?: string,
+    capturedNodes?: WorkflowNode[],
+    capturedGraphAdmission?: WorkflowGraphAdmission,
   ): Promise<void> {
     const execution = this.executeOperation(
       runId,
       startFromNode,
       expectedWorkerId,
       existingLockId,
+      capturedNodes,
+      capturedGraphAdmission,
     );
     this.activeExecutions.add(execution);
     execution.then(

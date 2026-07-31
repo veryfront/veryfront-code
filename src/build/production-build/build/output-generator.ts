@@ -19,7 +19,7 @@ import {
   generateProdHydrationModule,
   getProdHydrationModulePath,
 } from "../../../html/hydration-script-builder/prod-scripts.ts";
-import { copyStaticAssets } from "../asset-generation.ts";
+import { copyStaticAssets, validateStaticBuildOutput } from "../asset-generation.ts";
 import {
   generateAppModule,
   generateClientModule,
@@ -182,4 +182,5 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
   await generateManifestAndServiceWorker(options);
   await generateRedirectsFile(adapter, outputDir, dryRun);
   await compressBuildOutputs(outputDir, options.enableCompression, dryRun);
+  if (!dryRun) await validateStaticBuildOutput(adapter, outputDir);
 }

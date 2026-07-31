@@ -1,7 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createPreparedProjectCSSContext } from "./prepared-project-css-cache.ts";
+import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
+import { hashCSS } from "./css-identity.ts";
+import {
+  createPreparedProjectCSSContext,
+  invalidatePreparedProjectCSS,
+  storePreparedProjectCSS,
+  tryGetPreparedProjectCSS,
+} from "./prepared-project-css-cache.ts";
 
 describe("styles-builder/prepared-project-css-cache", () => {
   it("builds versioned full-digest identities isolated by project and content version", () => {
@@ -72,5 +79,28 @@ describe("styles-builder/prepared-project-css-cache", () => {
       TypeError,
       "CSS pipeline identity",
     );
+  });
+
+  it("does not retain oversized prepared CSS when storage is rejected", async () => {
+    const projectSlug = `oversized-prepared-css-${crypto.randomUUID()}`;
+    const context = createPreparedProjectCSSContext(
+      projectSlug,
+      "release:one",
+      "@tailwind utilities;",
+      "a".repeat(64),
+      { cssPipelineIdentity: "test-css-pipeline@oversized" },
+    );
+    const css = "x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1);
+
+    try {
+      await assertRejects(
+        () => storePreparedProjectCSS(context, { css, hash: hashCSS(css) }),
+        TypeError,
+        `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+      );
+      assertEquals(await tryGetPreparedProjectCSS(context), undefined);
+    } finally {
+      invalidatePreparedProjectCSS(projectSlug);
+    }
   });
 });

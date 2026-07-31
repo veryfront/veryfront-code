@@ -29,24 +29,50 @@ import { normalizeChunkPath } from "../../utils/chunk-utils.ts";
 import { computeEtag } from "../../handlers/utils/etag.ts";
 import { getContentType as getContentTypeFromExt } from "../../handlers/utils/content-types.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
-import { DEFAULT_MAX_FILE_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { STATIC_ASSET_MAX_BYTES } from "#veryfront/utils/constants/static-assets.ts";
+
+export type StaticAssetUnavailableReason =
+  | "read-capability-unavailable"
+  | "byte-limit"
+  | "invalid-metadata"
+  | "invalid-reader-result";
+
+/** A static representation cannot be served within the runtime safety contract. */
+export class StaticAssetUnavailableError extends Error {
+  override readonly name = "StaticAssetUnavailableError";
+
+  constructor(
+    readonly reason: StaticAssetUnavailableReason,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Metadata resolved without reading the static response body. */
+export interface StaticFileMetadataResult {
+  /** Absolute path to the file. */
+  path: string;
+  /** Declared byte size, or null when the backing store omits it. */
+  size: number | null;
+  /** Content type based on extension. */
+  contentType: string;
+  /** Cache strategy to use. */
+  cacheStrategy: CacheStrategy;
+  /** Source directory (manifest, dist, public). */
+  source: "manifest" | "dist" | "public";
+}
 
 /**
  * Result of resolving a static file
  */
-export interface StaticFileResult {
-  /** Absolute path to the file */
-  path: string;
+export interface StaticFileResult extends Omit<StaticFileMetadataResult, "size"> {
   /** File content as bytes */
   data: Uint8Array;
+  /** Actual admitted response-body size. */
+  size: number;
   /** ETag for caching */
   etag: string;
-  /** Content type based on extension */
-  contentType: string;
-  /** Cache strategy to use */
-  cacheStrategy: CacheStrategy;
-  /** Source directory (manifest, dist, public) */
-  source: "manifest" | "dist" | "public";
 }
 
 /**
@@ -69,8 +95,8 @@ export interface StaticFileOptions {
   manifestCacheIdentity?: string;
 }
 
-/** Default per-file admission bound shared with framework file consumers. */
-export const DEFAULT_STATIC_ASSET_MAX_BYTES = DEFAULT_MAX_FILE_SIZE_BYTES;
+/** Default per-file admission bound shared by production build and runtime. */
+export const DEFAULT_STATIC_ASSET_MAX_BYTES = STATIC_ASSET_MAX_BYTES;
 
 export interface StaticFileServiceOptions {
   /**
@@ -147,11 +173,122 @@ interface StaticFileCandidate {
  */
 interface FileSystemLike {
   readFile(path: string): Promise<string>;
-  readFileBytes(path: string): Promise<Uint8Array>;
+  readFileBytes?(path: string): Promise<Uint8Array>;
   readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readonly maxWholeFileReadBytes?: number;
   stat(
     path: string,
   ): Promise<{ isFile: boolean; mtime: Date | null; size?: number | null }>;
+}
+
+type StaticFilesystemMethodKey =
+  | "readFile"
+  | "readFileBytes"
+  | "readFileBytesBounded"
+  | "stat";
+
+function snapshotStaticFilesystemMethod(
+  fileSystem: object,
+  key: StaticFilesystemMethodKey,
+  required: boolean,
+): ((...args: unknown[]) => unknown) | undefined {
+  let owner: object | null = fileSystem;
+  const seen = new Set<object>();
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (isProxyWithoutHooks(owner) || seen.has(owner)) {
+      throw new TypeError("Static filesystem capabilities must not use proxies");
+    }
+    seen.add(owner);
+    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) {
+        throw new TypeError(`Static filesystem ${key} must be a data-property method`);
+      }
+      if (descriptor.value === undefined && !required) return undefined;
+      if (
+        typeof descriptor.value !== "function" ||
+        isProxyWithoutHooks(descriptor.value)
+      ) {
+        throw new TypeError(`Static filesystem ${key} must be a non-proxy function`);
+      }
+      return descriptor.value as (...args: unknown[]) => unknown;
+    }
+    owner = Object.getPrototypeOf(owner);
+  }
+  if (owner !== null) throw new TypeError("Static filesystem prototype chain is too deep");
+  if (required) throw new TypeError(`Static filesystem must provide ${key}`);
+  return undefined;
+}
+
+function snapshotStaticWholeReadCeiling(fileSystem: object): number | undefined {
+  let owner: object | null = fileSystem;
+  const seen = new Set<object>();
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (isProxyWithoutHooks(owner) || seen.has(owner)) {
+      throw new TypeError("Static filesystem capability metadata must not use proxies");
+    }
+    seen.add(owner);
+    const descriptor = Object.getOwnPropertyDescriptor(owner, "maxWholeFileReadBytes");
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) {
+        throw new TypeError(
+          "Static filesystem maxWholeFileReadBytes must be a data property",
+        );
+      }
+      if (descriptor.value === undefined) return undefined;
+      if (!Number.isSafeInteger(descriptor.value) || descriptor.value <= 0) {
+        throw new TypeError(
+          "Static filesystem maxWholeFileReadBytes must be a positive safe integer",
+        );
+      }
+      return descriptor.value as number;
+    }
+    owner = Object.getPrototypeOf(owner);
+  }
+  if (owner !== null) throw new TypeError("Static filesystem prototype chain is too deep");
+  return undefined;
+}
+
+function snapshotStaticFilesystem(fileSystem: FileSystemRepository): FileSystemLike {
+  if (isProxyWithoutHooks(fileSystem)) {
+    throw new TypeError("Static filesystem repository proxies are not supported");
+  }
+  const readFile = snapshotStaticFilesystemMethod(fileSystem, "readFile", true)!;
+  const readFileBytes = snapshotStaticFilesystemMethod(fileSystem, "readFileBytes", false);
+  const readFileBytesBounded = snapshotStaticFilesystemMethod(
+    fileSystem,
+    "readFileBytesBounded",
+    false,
+  );
+  const stat = snapshotStaticFilesystemMethod(fileSystem, "stat", true)!;
+  const maxWholeFileReadBytes = snapshotStaticWholeReadCeiling(fileSystem);
+  if (maxWholeFileReadBytes !== undefined && readFileBytes === undefined) {
+    throw new TypeError(
+      "Static filesystem maxWholeFileReadBytes requires readFileBytes",
+    );
+  }
+
+  const snapshot: FileSystemLike = {
+    readFile: (path) => Reflect.apply(readFile, fileSystem, [path]) as Promise<string>,
+    stat: (path) => Reflect.apply(stat, fileSystem, [path]) as ReturnType<FileSystemLike["stat"]>,
+  };
+  if (readFileBytes !== undefined) {
+    snapshot.readFileBytes = (path) =>
+      Reflect.apply(readFileBytes, fileSystem, [path]) as Promise<Uint8Array>;
+  }
+  if (readFileBytesBounded !== undefined) {
+    snapshot.readFileBytesBounded = (path, byteLimit) =>
+      Reflect.apply(readFileBytesBounded, fileSystem, [path, byteLimit]) as Promise<Uint8Array>;
+  }
+  if (maxWholeFileReadBytes !== undefined) {
+    Object.defineProperty(snapshot, "maxWholeFileReadBytes", {
+      value: maxWholeFileReadBytes,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  return Object.freeze(snapshot);
 }
 
 /**
@@ -385,39 +522,50 @@ function isSameManifestGeneration(
 }
 
 function normalizeAssetByteLimit(options: StaticFileServiceOptions): number {
-  const value = options.maxAssetBytes ?? DEFAULT_STATIC_ASSET_MAX_BYTES;
-  if (
-    !Number.isSafeInteger(value) || value <= 0 ||
-    value >= Number.MAX_SAFE_INTEGER
-  ) {
+  const snapshot = snapshotOwnDataRecord(options, "StaticFileService options", 1);
+  const value = snapshot.get("maxAssetBytes") ?? DEFAULT_STATIC_ASSET_MAX_BYTES;
+  if (!Number.isSafeInteger(value) || (value as number) <= 0) {
     throw new RangeError(
-      "StaticFileService maxAssetBytes must be a positive safe integer below Number.MAX_SAFE_INTEGER",
+      "StaticFileService maxAssetBytes must be a positive safe integer",
     );
   }
-  return value;
+  if ((value as number) > STATIC_ASSET_MAX_BYTES) {
+    throw new RangeError(
+      `StaticFileService maxAssetBytes must not exceed ${STATIC_ASSET_MAX_BYTES}`,
+    );
+  }
+  return value as number;
 }
 
-function admitStaticAssetStat(stat: unknown, maxAssetBytes: number): boolean {
+function admitStaticAssetStat(
+  stat: unknown,
+  maxAssetBytes: number,
+): { isFile: boolean; size: number | null } {
   const snapshot = snapshotOwnDataRecord(stat, "Static asset stat", 16);
-  if (snapshot.get("isFile") !== true) return false;
+  if (snapshot.get("isFile") !== true) return { isFile: false, size: null };
 
   const size = snapshot.get("size");
-  if (size === undefined || size === null) return true;
+  if (size === undefined || size === null) return { isFile: true, size: null };
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) {
-    throw new RangeError("Static asset size must be a non-negative safe integer");
+    throw new StaticAssetUnavailableError(
+      "invalid-metadata",
+      "Static asset size must be a non-negative safe integer",
+    );
   }
   if (size > maxAssetBytes) {
-    throw new RangeError(
+    throw new StaticAssetUnavailableError(
+      "byte-limit",
       `Static asset byte limit of ${maxAssetBytes} was exceeded`,
     );
   }
-  return true;
+  return { isFile: true, size };
 }
 
 export class StaticFileService {
   private static cacheEpoch = 0;
 
   private readonly fsRepo?: FileSystemRepository;
+  private readonly fsRepoSnapshot?: FileSystemLike;
   private readonly maxAssetBytes: number;
   private manifestCacheEpoch = StaticFileService.cacheEpoch;
   private manifestCachesByOwner = new WeakMap<object, ManifestOwnerCache>();
@@ -427,6 +575,7 @@ export class StaticFileService {
     options: StaticFileServiceOptions = {},
   ) {
     this.fsRepo = fsRepo;
+    this.fsRepoSnapshot = fsRepo === undefined ? undefined : snapshotStaticFilesystem(fsRepo);
     this.maxAssetBytes = normalizeAssetByteLimit(options);
   }
 
@@ -480,7 +629,7 @@ export class StaticFileService {
   }
 
   private getFileSystem(options: StaticFileOptions): FileSystemLike {
-    if (this.fsRepo) return this.fsRepo;
+    if (this.fsRepoSnapshot) return this.fsRepoSnapshot;
 
     return createSecureFs({
       baseDir: options.projectDir,
@@ -500,6 +649,28 @@ export class StaticFileService {
 
     for (const candidate of candidates) {
       const result = await this.tryResolveCandidate(
+        candidate,
+        requestPath,
+        options,
+        fs,
+      );
+      if (result) return result;
+    }
+
+    return null;
+  }
+
+  /** Resolve representation metadata without reading the response body. */
+  async resolveFileMetadata(
+    requestPath: string,
+    options: StaticFileOptions,
+  ): Promise<StaticFileMetadataResult | null> {
+    const fs = this.getFileSystem(options);
+    const normalizedPath = requestPath === "/" ? "/index.html" : requestPath;
+    const candidates = await this.buildCandidates(normalizedPath, options, fs);
+
+    for (const candidate of candidates) {
+      const result = await this.tryResolveCandidateMetadata(
         candidate,
         requestPath,
         options,
@@ -564,26 +735,94 @@ export class StaticFileService {
     fs: FileSystemLike,
   ): Promise<StaticFileResult | null> {
     try {
-      const info = await fs.stat(candidate.fsPath);
-      if (!admitStaticAssetStat(info, this.maxAssetBytes)) return null;
+      const metadata = await this.tryResolveCandidateMetadata(
+        candidate,
+        requestPath,
+        options,
+        fs,
+      );
+      if (!metadata) return null;
 
-      const data = typeof fs.readFileBytesBounded === "function"
-        ? await fs.readFileBytesBounded(candidate.fsPath, this.maxAssetBytes + 1)
-        : await fs.readFileBytes(candidate.fsPath);
+      const boundedReader = fs.readFileBytesBounded;
+      let wholeReadCeiling: number | null = null;
+      let data: Uint8Array;
+      if (typeof boundedReader === "function") {
+        data = await boundedReader.call(
+          fs,
+          candidate.fsPath,
+          this.maxAssetBytes + 1,
+        );
+      } else {
+        const wholeReader = fs.readFileBytes;
+        const advertisedCeiling = fs.maxWholeFileReadBytes;
+        if (
+          typeof wholeReader !== "function" ||
+          !Number.isSafeInteger(advertisedCeiling) ||
+          (advertisedCeiling as number) <= 0 ||
+          (advertisedCeiling as number) > this.maxAssetBytes
+        ) {
+          throw new StaticAssetUnavailableError(
+            "read-capability-unavailable",
+            "Static asset serving requires bounded reads or an admitted fixed-ceiling whole-file reader",
+          );
+        }
+        wholeReadCeiling = advertisedCeiling as number;
+        if (metadata.size !== null && metadata.size > wholeReadCeiling) {
+          throw new StaticAssetUnavailableError(
+            "byte-limit",
+            `Static asset exceeds the fixed whole-file read ceiling of ${wholeReadCeiling}`,
+          );
+        }
+        data = await wholeReader.call(fs, candidate.fsPath);
+      }
       if (!isUint8ArrayWithoutHooks(data)) {
-        throw new TypeError("Static asset reader must return a Uint8Array");
+        throw new StaticAssetUnavailableError(
+          "invalid-reader-result",
+          "Static asset bounded reader must return a Uint8Array",
+        );
       }
       if (data.byteLength > this.maxAssetBytes) {
-        throw new RangeError(
+        throw new StaticAssetUnavailableError(
+          "byte-limit",
           `Static asset byte limit of ${this.maxAssetBytes} was exceeded`,
+        );
+      }
+      if (wholeReadCeiling !== null && data.byteLength > wholeReadCeiling) {
+        throw new StaticAssetUnavailableError(
+          "invalid-reader-result",
+          "Static asset whole-file reader exceeded its advertised ceiling",
         );
       }
       const etag = computeEtag(data);
 
       return {
-        path: candidate.path,
+        ...metadata,
         data,
+        size: data.byteLength,
         etag,
+      };
+    } catch (error) {
+      if (isNotFoundError(error)) return null;
+      throw error;
+    }
+  }
+
+  private async tryResolveCandidateMetadata(
+    candidate: StaticFileCandidate,
+    requestPath: string,
+    options: StaticFileOptions,
+    fs: FileSystemLike,
+  ): Promise<StaticFileMetadataResult | null> {
+    try {
+      const admission = admitStaticAssetStat(
+        await fs.stat(candidate.fsPath),
+        this.maxAssetBytes,
+      );
+      if (!admission.isFile) return null;
+
+      return {
+        path: candidate.path,
+        size: admission.size,
         contentType: getContentTypeFromExt(getExtension(candidate.path)),
         cacheStrategy: this.determineCacheStrategy(candidate, requestPath, options),
         source: candidate.source,

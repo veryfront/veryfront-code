@@ -118,7 +118,7 @@ import {
 import {
   HTTP_GATEWAY_TIMEOUT,
   isHMRWebSocketUpgrade,
-  isLightweightPath,
+  isIsolationExemptPath,
   isMonitoringPath,
 } from "./request-utils.ts";
 import { withRequestTimeout } from "./timeout-manager.ts";
@@ -467,7 +467,11 @@ export function createVeryfrontHandler(
     generationLease: RuntimeGenerationLease,
   ): Promise<Response> => {
     const url = new URL(req.url);
-    const lifecycle = startRequestLifecycle(req, url.pathname, isLightweightPath(url.pathname));
+    const lifecycle = startRequestLifecycle(
+      req,
+      url.pathname,
+      isIsolationExemptPath(url.pathname),
+    );
 
     // Fast path for monitoring endpoints
     if (isMonitoringPath(url.pathname)) {

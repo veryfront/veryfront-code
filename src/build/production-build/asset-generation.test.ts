@@ -1,10 +1,16 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { copyStaticAssets, discoverStaticAssets, loadClientStyles } from "./asset-generation.ts";
+import {
+  copyStaticAssets,
+  discoverStaticAssets,
+  loadClientStyles,
+  validateStaticBuildOutput,
+} from "./asset-generation.ts";
 import type { AssetStats } from "./asset-generation.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { STATIC_ASSET_MAX_BYTES } from "#veryfront/utils/constants/static-assets.ts";
 
 describe("build/production-build/asset-generation", () => {
   describe("loadClientStyles", () => {
@@ -109,6 +115,25 @@ describe("build/production-build/asset-generation", () => {
         );
       }
     });
+
+    it("accepts the shared byte boundary and rejects one byte above it", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/large.bin", new Uint8Array([1]));
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      let declaredSize = STATIC_ASSET_MAX_BYTES;
+      adapter.fs.stat = async (path) => {
+        const info = await stat(path);
+        return path === "/project/public/large.bin" ? { ...info, size: declaredSize } : info;
+      };
+
+      assertEquals((await discoverStaticAssets(adapter, "/project"))[0]?.size, declaredSize);
+      declaredSize++;
+      await assertRejects(
+        () => discoverStaticAssets(adapter, "/project"),
+        Error,
+        `exceeds the ${STATIC_ASSET_MAX_BYTES}-byte static output limit`,
+      );
+    });
   });
 
   describe("copyStaticAssets", () => {
@@ -194,9 +219,94 @@ describe("build/production-build/asset-generation", () => {
       await assertRejects(
         () => copyStaticAssets(adapter, "/project", "/output"),
         Error,
-        "does not support binary-safe public asset copying",
+        "does not support bounded or fixed-ceiling",
       );
 
+      assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
+    it("rejects an oversized public asset before reading its bytes", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/large.bin", new Uint8Array([1]));
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      adapter.fs.stat = async (path) => {
+        const info = await stat(path);
+        return path === "/project/public/large.bin"
+          ? { ...info, size: STATIC_ASSET_MAX_BYTES + 1 }
+          : info;
+      };
+      let reads = 0;
+      const readFileBytes = adapter.fs.readFileBytes!.bind(adapter.fs);
+      adapter.fs.readFileBytes = (path) => {
+        reads++;
+        return readFileBytes(path);
+      };
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "static output limit",
+      );
+      assertEquals(reads, 0);
+      assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
+    it("uses bounded reads when a public asset grows after its final stat", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/growing.bin", new Uint8Array([1]));
+      let boundedReads = 0;
+      let wholeReads = 0;
+      adapter.fs.readFileBytesBounded = (_path, byteLimit) => {
+        boundedReads++;
+        assertEquals(byteLimit, 2);
+        return Promise.resolve(new Uint8Array([1, 2]));
+      };
+      adapter.fs.readFileBytes = () => {
+        wholeReads++;
+        throw new Error("unbounded whole reader must not run");
+      };
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "changed size while being read",
+      );
+      assertEquals(boundedReads, 1);
+      assertEquals(wholeReads, 0);
+      assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
+    it("permits whole reads only under a fixed ceiling within the shared limit", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1, 2, 3]));
+      adapter.fs.readFileBytesBounded = undefined;
+      Object.defineProperty(adapter.fs, "maxWholeFileReadBytes", { value: 3 });
+
+      const stats = await copyStaticAssets(adapter, "/project", "/output");
+
+      assertEquals(stats.assets, 1);
+      assertEquals([...(adapter.fs.byteFiles.get("/output/asset.bin") ?? [])], [1, 2, 3]);
+    });
+
+    it("rejects an oversized advertised whole-read ceiling before reading", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1]));
+      adapter.fs.readFileBytesBounded = undefined;
+      Object.defineProperty(adapter.fs, "maxWholeFileReadBytes", {
+        value: STATIC_ASSET_MAX_BYTES + 1,
+      });
+      let wholeReads = 0;
+      adapter.fs.readFileBytes = () => {
+        wholeReads++;
+        return Promise.resolve(new Uint8Array([1]));
+      };
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "does not support bounded or fixed-ceiling",
+      );
+      assertEquals(wholeReads, 0);
       assertEquals(adapter.fs.directories.has("/output"), false);
     });
 
@@ -238,6 +348,35 @@ describe("build/production-build/asset-generation", () => {
       assertEquals(adapter.fs.byteFiles.has("/output/a.bin"), false);
       assertEquals(adapter.fs.byteFiles.has("/output/b.bin"), false);
       assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+  });
+
+  describe("validateStaticBuildOutput", () => {
+    it("enforces the shared runtime limit without reading artifact bodies", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/output/_veryfront/app.js", new Uint8Array([1]));
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      let declaredSize = STATIC_ASSET_MAX_BYTES;
+      adapter.fs.stat = async (path) => {
+        const info = await stat(path);
+        return path === "/output/_veryfront/app.js" ? { ...info, size: declaredSize } : info;
+      };
+      let reads = 0;
+      adapter.fs.readFileBytes = () => {
+        reads++;
+        return Promise.resolve(new Uint8Array());
+      };
+
+      await validateStaticBuildOutput(adapter, "/output");
+      assertEquals(reads, 0);
+
+      declaredSize++;
+      await assertRejects(
+        () => validateStaticBuildOutput(adapter, "/output"),
+        Error,
+        `exceeds the ${STATIC_ASSET_MAX_BYTES}-byte static asset limit`,
+      );
+      assertEquals(reads, 0);
     });
   });
 });

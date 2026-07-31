@@ -10,6 +10,10 @@
 import { getTimeoutFromEnv } from "#veryfront/middleware/builtin/timeout.ts";
 import { isWebSocketUpgrade } from "#veryfront/platform/compat/http/websocket.ts";
 import { HTTP_GATEWAY_TIMEOUT } from "#veryfront/utils/constants/http.ts";
+import {
+  isVersionedProdHydrationModulePath,
+  PROD_HYDRATION_MODULE_PATH,
+} from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 function hostnameFromHostValue(host: string): string {
   if (host.startsWith("[")) {
@@ -79,7 +83,10 @@ export function isMonitoringPath(pathname: string): boolean {
   return MONITORING_PATHS.has(pathname);
 }
 
-/** Lightweight paths that should skip concurrency limiting (modules, static assets) */
+/**
+ * Paths that can skip render-specific context work and use terse request
+ * logging. This classification does not exempt work from project isolation.
+ */
 export const LIGHTWEIGHT_PATH_PREFIXES = [
   "/_vf_modules/",
   "/_vf_styles/",
@@ -91,9 +98,19 @@ export const LIGHTWEIGHT_PATH_PREFIXES = [
   "/_lib_modules/",
 ];
 
-/** Check if path is a lightweight request that should skip concurrency limiting */
+/** Check if a path can use lightweight context and logging behavior. */
 export function isLightweightPath(pathname: string): boolean {
   return LIGHTWEIGHT_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+/**
+ * Fixed, framework-owned assets whose response work is bounded at startup.
+ * Dynamic module transforms and CSS scans deliberately do not qualify.
+ */
+export function isIsolationExemptPath(pathname: string): boolean {
+  return pathname === PROD_HYDRATION_MODULE_PATH ||
+    isVersionedProdHydrationModulePath(pathname) ||
+    pathname === "/_veryfront/preview-hmr.js";
 }
 
 /** Check if path is the WebSocket endpoint (long-lived, handled by HMR handler) */

@@ -21,6 +21,7 @@ import {
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { createMockAdapter as createPlatformMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
   clearCSSCache,
   getCSSByHash,
@@ -49,6 +50,23 @@ const RELEASE_CSS_HASH = "f".repeat(64);
 const REACT_CDN_URL = "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3";
 const PIN_KEY_A = "on:z7bg3qnfgtcb";
 const PIN_KEY_B = "on:3w5e11264sgsf";
+
+function createBoundedCSSReader(
+  readContent: (path: string) => string | Promise<string>,
+): {
+  readFile(path: string): Promise<string>;
+  readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+} {
+  const encodingAdapter = createPlatformMockAdapter();
+  const resolveContent = (path: string): Promise<string> => Promise.resolve(readContent(path));
+  return {
+    readFile: resolveContent,
+    async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+      encodingAdapter.fs.files.set(path, await resolveContent(path));
+      return await encodingAdapter.fs.readFileBytesWithinLimit!(path, byteLimit);
+    },
+  };
+}
 
 function extractBridgeConfig(html: string): Record<string, unknown> {
   const match = html.match(/window\.__VF_BRIDGE_CONFIG__=(\{.*?\});<\/script>/);
@@ -1805,13 +1823,15 @@ describe("HTMLGenerator helpers", () => {
       let importsReady = false;
       const streamHtml =
         '<!DOCTYPE html><html><head><title>Imported CSS</title></head><body><div class="hero-banner">Hero</div></body></html>';
-      const mockAdapter = createMockAdapter(async (path: string) => {
+      const readContent = async (path: string) => {
         if (path === "/project/globals.css") return '@import "tailwindcss";';
         if (path === "/project/components/hero.css") {
           return ".hero-banner { color: var(--hero-color); }";
         }
         return "";
-      });
+      };
+      const mockAdapter = createMockAdapter(readContent);
+      Object.assign(mockAdapter.fs, createBoundedCSSReader(readContent));
       const generator = new HTMLGenerator({
         projectDir: "/project",
         adapter: mockAdapter as any,
@@ -1857,14 +1877,14 @@ describe("HTMLGenerator helpers", () => {
     it("deduplicates only exact configured stylesheet path", async () => {
       const readPaths: string[] = [];
       const merged = await mergeImportedCSS({
-        fs: {
-          readFile: async (path: string) => {
+        fs: createBoundedCSSReader(
+          async (path: string) => {
             readPaths.push(path);
             if (path === "/project/styles/globals.css") return ".feature { color: red; }";
             if (path === "/project/globals.css") return ".duplicate { color: blue; }";
             return "";
           },
-        },
+        ),
         logger: { debug: () => {} },
         projectDir: "/project",
         globalCSS: "/* global */",
@@ -1880,13 +1900,13 @@ describe("HTMLGenerator helpers", () => {
 
     it("orders imported css deterministically and rewrites module selectors", async () => {
       const merged = await mergeImportedCSS({
-        fs: {
-          readFile: async (path: string) => {
+        fs: createBoundedCSSReader(
+          async (path: string) => {
             if (path === "/project/b.css") return ".b { color: blue; }";
             if (path === "/project/a.module.css") return ".root { color: red; }";
             return "";
           },
-        },
+        ),
         logger: { debug: () => {} },
         projectDir: "/project",
         globalCSS: "/* global */",
@@ -1906,10 +1926,9 @@ describe("HTMLGenerator helpers", () => {
       async function mergeAt(projectDir: string): Promise<string | undefined> {
         const modulePath = `${projectDir}/components/card.module.css`;
         return await mergeImportedCSS({
-          fs: {
-            readFile: (path: string) =>
-              Promise.resolve(path === modulePath ? ".root { color: red; }" : ""),
-          },
+          fs: createBoundedCSSReader(
+            (path: string) => Promise.resolve(path === modulePath ? ".root { color: red; }" : ""),
+          ),
           logger: { debug: () => {} },
           projectDir,
           globalCSS: undefined,
@@ -1932,7 +1951,7 @@ describe("HTMLGenerator helpers", () => {
       await assertRejects(
         () =>
           mergeImportedCSS({
-            fs: { readFile: () => Promise.reject(failure) },
+            fs: createBoundedCSSReader(() => Promise.reject(failure)),
             logger: { debug: () => {} },
             projectDir: "/project",
             globalCSS: "/* global */",
@@ -1942,6 +1961,302 @@ describe("HTMLGenerator helpers", () => {
         Error,
         "imported stylesheet unavailable",
       );
+    });
+
+    it("admits imported CSS at the 16 MiB UTF-8 file boundary", async () => {
+      const boundaryContent = "é".repeat(8 * 1024 * 1024);
+
+      const merged = await mergeImportedCSS({
+        fs: createBoundedCSSReader(() => boundaryContent),
+        logger: { debug: () => {} },
+        projectDir: "/project",
+        globalCSS: undefined,
+        cssImports: ["/project/styles.css"],
+        stylesheetPath: "globals.css",
+      });
+
+      assertEquals(merged, boundaryContent);
+    });
+
+    it("rejects imported CSS whose actual UTF-8 content exceeds 16 MiB", async () => {
+      const oversizedContent = "é".repeat(8 * 1024 * 1024 + 1);
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: createBoundedCSSReader(() => oversizedContent),
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: ["/project/styles.css"],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "16777216 bytes",
+      );
+    });
+
+    it("admits merged CSS at the 32 MiB output boundary including separators", async () => {
+      const first = "a".repeat(16 * 1024 * 1024);
+      const second = "b".repeat(16 * 1024 * 1024 - 1);
+      const content = new Map([
+        ["/project/first.css", first],
+        ["/project/second.css", second],
+      ]);
+
+      const merged = await mergeImportedCSS({
+        fs: createBoundedCSSReader((path) => content.get(path) ?? ""),
+        logger: { debug: () => {} },
+        projectDir: "/project",
+        globalCSS: undefined,
+        cssImports: ["/project/first.css", "/project/second.css"],
+        stylesheetPath: "globals.css",
+      });
+
+      assertEquals(new TextEncoder().encode(merged).byteLength, 32 * 1024 * 1024);
+    });
+
+    it("rejects a 36 MiB merge even though each input and the source aggregate are allowed", async () => {
+      const fileContent = "x".repeat(12 * 1024 * 1024);
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: createBoundedCSSReader(() => fileContent),
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: [
+              "/project/styles-1.css",
+              "/project/styles-2.css",
+              "/project/styles-3.css",
+            ],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "33554432 total bytes",
+      );
+    });
+
+    it("counts merge separators against the 32 MiB output limit", async () => {
+      const fileContent = "x".repeat(16 * 1024 * 1024);
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: createBoundedCSSReader(() => fileContent),
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: ["/project/first.css", "/project/second.css"],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "33554432 total bytes",
+      );
+    });
+
+    it("rejects more than 10,000 imported CSS paths before reading", async () => {
+      let reads = 0;
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: {
+              readFile: () => {
+                reads++;
+                return Promise.resolve("");
+              },
+            },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: Array.from(
+              { length: 10_001 },
+              (_, index) => `/project/styles-${index}.css`,
+            ),
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "10000 files",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("rejects accessor-backed CSS import arrays without invoking accessors", async () => {
+      let accessorCalls = 0;
+      const cssImports = ["/project/styles.css"];
+      Object.defineProperty(cssImports, "0", {
+        enumerable: true,
+        get() {
+          accessorCalls++;
+          return "/project/styles.css";
+        },
+      });
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: { readFile: () => Promise.resolve("") },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports,
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "dense data-property array",
+      );
+      assertEquals(accessorCalls, 0);
+    });
+
+    it("rejects imported CSS paths outside the project before reading", async () => {
+      let reads = 0;
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: {
+              readFile: () => {
+                reads++;
+                return Promise.resolve(".secret {}");
+              },
+            },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: ["/outside/secret.css"],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "within the project",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("rejects overlong imported CSS paths before reading", async () => {
+      let reads = 0;
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: {
+              readFile: () => {
+                reads++;
+                return Promise.resolve("");
+              },
+            },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: [`/${"a".repeat(4_096)}.css`],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "4096 characters",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("uses a bounded byte read when imported CSS grows before reading", async () => {
+      let unboundedReads = 0;
+      let requestedLimit = 0;
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: {
+              readFile: () => {
+                unboundedReads++;
+                throw new Error("unbounded text read must not be invoked");
+              },
+              readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+                requestedLimit = byteLimit;
+                return Promise.reject(
+                  new RangeError(`File exceeds byte limit of ${byteLimit} bytes`),
+                );
+              },
+            },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: ["/project/styles.css"],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "16777216 bytes",
+      );
+      assertEquals(requestedLimit, 16 * 1024 * 1024);
+      assertEquals(unboundedReads, 0);
+    });
+
+    it("fails closed before an unbounded imported-CSS read", async () => {
+      let unboundedReads = 0;
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: {
+              readFile: () => {
+                unboundedReads++;
+                return Promise.resolve(".unsafe-fallback{}");
+              },
+            },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports: ["/project/styles.css"],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "bounded byte reader",
+      );
+      assertEquals(unboundedReads, 0);
+    });
+
+    it("rejects a relative imported-CSS project directory before resolving paths", async () => {
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: { readFile: () => Promise.resolve("") },
+            logger: { debug: () => {} },
+            projectDir: "relative/project",
+            globalCSS: undefined,
+            cssImports: ["styles.css"],
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "must be absolute",
+      );
+    });
+
+    it("rejects proxied CSS import arrays without invoking proxy traps", async () => {
+      let trapCalls = 0;
+      const cssImports = new Proxy(["/project/styles.css"], {
+        getOwnPropertyDescriptor(target, property) {
+          trapCalls++;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+        ownKeys(target) {
+          trapCalls++;
+          return Reflect.ownKeys(target);
+        },
+      });
+
+      await assertRejects(
+        () =>
+          mergeImportedCSS({
+            fs: { readFile: () => Promise.resolve("") },
+            logger: { debug: () => {} },
+            projectDir: "/project",
+            globalCSS: undefined,
+            cssImports,
+            stylesheetPath: "globals.css",
+          }),
+        TypeError,
+        "must not be a Proxy",
+      );
+      assertEquals(trapCalls, 0);
     });
   });
 });

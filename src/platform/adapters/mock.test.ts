@@ -156,6 +156,51 @@ describe("MockAdapter", () => {
     });
   });
 
+  describe("fs.readFileBytesWithinLimit", () => {
+    it("returns complete text and binary files only when they fit", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/text.txt", "A€B");
+      adapter.fs.byteFiles.set("/bytes.bin", new Uint8Array([0, 255, 1]));
+      const readFileBytesWithinLimit = adapter.fs.readFileBytesWithinLimit;
+      assertExists(readFileBytesWithinLimit);
+
+      assertEquals(
+        [...await readFileBytesWithinLimit("/text.txt", 5)],
+        [65, 226, 130, 172, 66],
+      );
+      assertEquals(
+        [...await readFileBytesWithinLimit("/bytes.bin", 3)],
+        [0, 255, 1],
+      );
+      await assertRejects(
+        () => readFileBytesWithinLimit("/text.txt", 4),
+        RangeError,
+        "exceeds byte limit of 4 bytes",
+      );
+      await assertRejects(
+        () => readFileBytesWithinLimit("/bytes.bin", 2),
+        RangeError,
+        "exceeds byte limit of 2 bytes",
+      );
+    });
+
+    it("preserves missing-file and invalid-limit failures", async () => {
+      const readFileBytesWithinLimit = createMockAdapter().fs.readFileBytesWithinLimit;
+      assertExists(readFileBytesWithinLimit);
+
+      await assertRejects(
+        () => readFileBytesWithinLimit("/missing.txt", 4),
+        Error,
+        "File not found: /missing.txt",
+      );
+      await assertRejects(
+        () => readFileBytesWithinLimit("/missing.txt", 0),
+        RangeError,
+        "positive safe integer",
+      );
+    });
+  });
+
   describe("fs.writeFile", () => {
     it("should write file", async () => {
       const adapter = createMockAdapter();

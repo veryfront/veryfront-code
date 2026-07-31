@@ -300,6 +300,7 @@ async function assertWritableFilePath(kv: KVNamespace, path: string): Promise<vo
 
 export class CloudflareFileSystemAdapter implements FileSystemAdapter {
   readonly symlinkSemantics = "none" as const;
+  readonly maxWholeFileReadBytes = CLOUDFLARE_KV_MAX_VALUE_BYTES;
 
   constructor(private readonly kvNamespace?: KVNamespace) {}
 

@@ -11,6 +11,7 @@ import {
   startRequestTracking,
 } from "./request-lifecycle.ts";
 import { requestTracker } from "./request-tracker.ts";
+import { isIsolationExemptPath } from "./request-utils.ts";
 
 describe("server/runtime-handler/request-lifecycle", () => {
   afterEach(() => {
@@ -36,18 +37,39 @@ describe("server/runtime-handler/request-lifecycle", () => {
       ctx.stopTotal(); // should not throw
     });
 
-    it("should set shouldCheckIsolation to true for non-lightweight requests", () => {
+    it("should set shouldCheckIsolation to true for non-exempt requests", () => {
       const req = new Request("http://localhost/test");
       const ctx = startRequestLifecycle(req, "/test", false);
       assertEquals(ctx.shouldCheckIsolation, true);
       ctx.stopTotal();
     });
 
-    it("should set shouldCheckIsolation to false for lightweight requests", () => {
+    it("should set shouldCheckIsolation to false for fixed generated assets", () => {
       const req = new Request("http://localhost/test");
       const ctx = startRequestLifecycle(req, "/test", true);
       assertEquals(ctx.shouldCheckIsolation, false);
       ctx.stopTotal();
+    });
+
+    it("checks isolation for lightweight module and stylesheet endpoints", () => {
+      for (
+        const pathname of [
+          "/_vf_modules/react.js",
+          "/_veryfront/modules/client.js",
+          "/_lib_modules/lodash.js",
+          "/_vf/css/styles.css",
+          "/_vf_styles/styles.css",
+        ]
+      ) {
+        const req = new Request(`http://localhost${pathname}`);
+        const ctx = startRequestLifecycle(
+          req,
+          pathname,
+          isIsolationExemptPath(pathname),
+        );
+        assertEquals(ctx.shouldCheckIsolation, true, pathname);
+        ctx.stopTotal();
+      }
     });
 
     it("should use x-request-id header when available", () => {

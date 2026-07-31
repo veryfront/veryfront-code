@@ -274,6 +274,8 @@ describe("CloudflareFileSystemAdapter realPath", () => {
 
     assertEquals([...await fs.readFileBytes("assets/pixel.bin")], [...bytes]);
     assertEquals((await fs.stat("assets/pixel.bin")).size, bytes.byteLength);
+    assertEquals(fs.maxWholeFileReadBytes, 25 * 1024 * 1024);
+    assertEquals("readFileBytesBounded" in fs, false);
   });
 
   it("does not silently succeed on mutating operations without a KV binding", async () => {

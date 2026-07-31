@@ -466,6 +466,7 @@ export function toPublicWorkflowRun(run: WorkflowRun): WorkflowRun {
       checkpointContextProjection,
     );
     Reflect.deleteProperty(checkpoint, INTERNAL_WORKFLOW_PROJECTION_STATE_FIELD);
+    Reflect.deleteProperty(checkpoint, "_resumeEnvelope");
     if (
       authoritativeInputNodeIds.has(checkpoint.nodeId) ||
       checkpointInputKind === SUBWORKFLOW_INPUT_KIND

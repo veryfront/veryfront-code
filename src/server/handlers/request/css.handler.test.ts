@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { CSSHandler } from "./css.handler.ts";
 import type { HandlerContext } from "../types.ts";
@@ -33,7 +33,18 @@ function createMockAdapter(files: Record<string, string> = {}): RuntimeAdapter {
       readDir: () => Promise.resolve([]),
       mkdir: () => Promise.resolve(),
       remove: () => Promise.resolve(),
-      stat: () => Promise.resolve({ isFile: false, isDirectory: false, size: 0, mtime: null }),
+      stat: (path: string) => {
+        const content = files[path];
+        if (content === undefined) {
+          return Promise.reject(Object.assign(new Error("Not found"), { code: "ENOENT" }));
+        }
+        return Promise.resolve({
+          isFile: true,
+          isDirectory: false,
+          size: new TextEncoder().encode(content).byteLength,
+          mtime: null,
+        });
+      },
     },
     env: {
       get: () => undefined,
@@ -134,5 +145,71 @@ describe("server/handlers/request/css", () => {
     );
 
     assertEquals(result.response?.status, 404);
+  });
+
+  it("serves built CSS at the 32 MiB UTF-8 response boundary", async () => {
+    const css = "x".repeat(32 * 1024 * 1024);
+    const cssHash = hashCSS(css);
+
+    const result = await new CSSHandler().handle(
+      new Request(`http://localhost/_vf/css/${cssHash}.css`),
+      makeCtx({ [`/project/dist/_vf/css/${cssHash}.css`]: css }),
+    );
+
+    assertEquals(result.response?.status, 200);
+    assertEquals((await result.response!.text()).length, css.length);
+  });
+
+  it("rejects built CSS above the 32 MiB UTF-8 response limit", async () => {
+    const css = "x".repeat(32 * 1024 * 1024 + 1);
+    const cssHash = hashCSS(css);
+
+    await assertRejects(
+      () =>
+        new CSSHandler().handle(
+          new Request(`http://localhost/_vf/css/${cssHash}.css`),
+          makeCtx({ [`/project/dist/_vf/css/${cssHash}.css`]: css }),
+        ),
+      TypeError,
+      "33554432 bytes",
+    );
+  });
+
+  it("rejects oversized cached or regenerated CSS before serving it", async () => {
+    const css = "x".repeat(32 * 1024 * 1024 + 1);
+    const cssHash = await cacheCSSAsync(css);
+
+    await assertRejects(
+      () =>
+        new CSSHandler().handle(
+          new Request(`http://localhost/_vf/css/${cssHash}.css`),
+          makeCtx(),
+        ),
+      TypeError,
+      "33554432 bytes",
+    );
+  });
+
+  it("propagates operational built-CSS reads instead of returning absence", async () => {
+    const css = ".expected{color:green}";
+    const cssHash = hashCSS(css);
+    const ctx = makeCtx({ [`/project/dist/_vf/css/${cssHash}.css`]: css });
+    const readFile = ctx.adapter.fs.readFile.bind(ctx.adapter.fs);
+    ctx.adapter.fs.readFile = (path: string) =>
+      path.endsWith(`${cssHash}.css`)
+        ? Promise.reject(
+          Object.assign(new Error("built CSS permission denied"), { code: "EACCES" }),
+        )
+        : readFile(path);
+
+    await assertRejects(
+      () =>
+        new CSSHandler().handle(
+          new Request(`http://localhost/_vf/css/${cssHash}.css`),
+          ctx,
+        ),
+      Error,
+      "built CSS permission denied",
+    );
   });
 });

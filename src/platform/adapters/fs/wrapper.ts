@@ -15,6 +15,7 @@ import type {
 } from "./veryfront/types.ts";
 import type { RequestTokenProvenance } from "./veryfront/request-context.ts";
 import { getVeryfrontFSAdapterKind } from "./veryfront/adapter-kind.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   getUnderlyingAdapter(): FSAdapter;
@@ -48,6 +49,10 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     },
   ): Promise<T>;
   readFileBytes(path: string): Promise<Uint8Array>;
+  readonly readFileBytesWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
   readOptionalTextFile(path: string): Promise<string>;
   readdir(path: string): Promise<DirectoryEntry[]>;
   shutdown(): Promise<void>;
@@ -127,10 +132,90 @@ function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter
   return "setRequestToken" in adapter || "runWithContext" in adapter;
 }
 
+function snapshotMaxWholeFileReadBytes(adapter: FSAdapter): number | undefined {
+  if (isProxyWithoutHooks(adapter)) return undefined;
+  let owner: object | null = adapter;
+  const seen = new Set<object>();
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (isProxyWithoutHooks(owner) || seen.has(owner)) return undefined;
+    seen.add(owner);
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(owner, "maxWholeFileReadBytes");
+    } catch {
+      return undefined;
+    }
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor) || descriptor.value === undefined) return undefined;
+      return Number.isSafeInteger(descriptor.value) && descriptor.value > 0
+        ? descriptor.value as number
+        : undefined;
+    }
+    try {
+      owner = Object.getPrototypeOf(owner);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+type ExactReadMethod = (
+  path: string,
+  byteLimit: number,
+) => Promise<Uint8Array>;
+
+function snapshotExactReadMethod(adapter: FSAdapter): ExactReadMethod | undefined {
+  let owner: object | null = adapter;
+  const seen = new Set<object>();
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    // A proxied prototype makes capability discovery unverifiable. Omit the
+    // optional capability without consulting any trap.
+    if (isProxyWithoutHooks(owner) || seen.has(owner)) return undefined;
+    seen.add(owner);
+
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(owner, "readFileBytesWithinLimit");
+    } catch {
+      return undefined;
+    }
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) {
+        throw new TypeError(
+          "FSAdapter readFileBytesWithinLimit must be a data-property method",
+        );
+      }
+      if (descriptor.value === undefined) return undefined;
+      if (
+        typeof descriptor.value !== "function" ||
+        isProxyWithoutHooks(descriptor.value)
+      ) {
+        throw new TypeError(
+          "FSAdapter readFileBytesWithinLimit must be a non-Proxy function",
+        );
+      }
+      return descriptor.value as ExactReadMethod;
+    }
+
+    try {
+      owner = Object.getPrototypeOf(owner);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
 export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _fsAdapter: FSAdapter;
   readonly symlinkSemantics: "none" | undefined;
+  readonly maxWholeFileReadBytes?: number;
   readonly readFileBytesBounded?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  readonly readFileBytesWithinLimit?: (
     path: string,
     byteLimit: number,
   ) => Promise<Uint8Array>;
@@ -144,6 +229,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   readonly getStyleArtifactAccess?: () => Promise<StyleArtifactAccess>;
 
   constructor(fsAdapter: FSAdapter) {
+    if (isProxyWithoutHooks(fsAdapter)) {
+      throw new TypeError("FSAdapterWrapper cannot safely wrap a Proxy filesystem adapter");
+    }
     this._fsAdapter = fsAdapter;
     const symlinkSemantics = Object.getOwnPropertyDescriptor(
       fsAdapter,
@@ -154,9 +242,21 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
         symlinkSemantics.value === "none"
       ? "none"
       : undefined;
+    const maxWholeFileReadBytes = snapshotMaxWholeFileReadBytes(fsAdapter);
+    if (
+      maxWholeFileReadBytes !== undefined &&
+      typeof fsAdapter.readFileBytes === "function"
+    ) {
+      this.maxWholeFileReadBytes = maxWholeFileReadBytes;
+    }
     if (typeof fsAdapter.readFileBytesBounded === "function") {
       this.readFileBytesBounded = (path: string, byteLimit: number) =>
         fsAdapter.readFileBytesBounded!.call(fsAdapter, path, byteLimit);
+    }
+    const readFileBytesWithinLimit = snapshotExactReadMethod(fsAdapter);
+    if (readFileBytesWithinLimit !== undefined) {
+      this.readFileBytesWithinLimit = (path: string, byteLimit: number) =>
+        Reflect.apply(readFileBytesWithinLimit, fsAdapter, [path, byteLimit]);
     }
     if (typeof fsAdapter.writeFileBytes === "function") {
       this.writeFileBytes = (path: string, content: Uint8Array) =>

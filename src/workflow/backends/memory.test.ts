@@ -6,6 +6,7 @@ import type { Checkpoint, PendingApproval, WorkflowQueueItem, WorkflowRun } from
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { registerWorkflowBackendPersistenceContract } from "./conformance.test-utils.ts";
 import { hasLockSupport, hasWorkerSupport, updateRunIfStatus } from "./types.ts";
+import { FakeTime } from "#std/testing/time";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const UNEXPIRED_DECISION_TIMING = {
@@ -42,6 +43,33 @@ describe("MemoryBackend", () => {
       context: { runId: "run-1", workflowId: "test", input: {} },
       nodeStates: {},
     };
+  }
+
+  function createTimedWaitRun(
+    id: string,
+    deadline: number,
+    overrides: Partial<WorkflowRun> = {},
+  ): WorkflowRun {
+    return createTestRun(id, {
+      status: "waiting",
+      workerId: `run-execution:${id}`,
+      currentNodes: ["pause"],
+      nodeStates: {
+        pause: {
+          nodeId: "pause",
+          status: "running",
+          input: {
+            type: "event",
+            eventName: "__delay__",
+            timeout: 1_000,
+            _waitKind: "delay",
+          },
+          attempt: 1,
+          startedAt: new Date(deadline - 1_000),
+        },
+      },
+      ...overrides,
+    });
   }
 
   beforeEach((): void => {
@@ -638,6 +666,381 @@ describe("MemoryBackend", () => {
       const run = await backend.getRun("run-claim");
       assertEquals(run?.workerId, "worker-a");
       assertExists(run?.heartbeatAt);
+    });
+  });
+
+  describe("Timed Wait Recovery", () => {
+    it("indexes every active wait in one run instead of only the earliest node", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("run-multi-deadline", now - 20);
+      run.nodeStates.eventTimeout = {
+        nodeId: "eventTimeout",
+        status: "running",
+        input: {
+          type: "event",
+          eventName: "never-arrives",
+          timeout: 1_000,
+          _waitKind: "event",
+        },
+        attempt: 1,
+        startedAt: new Date(now - 1_010),
+      };
+      await backend.createRun(run);
+
+      const events = await backend.claimDueTimedWaits({
+        ownerId: "recovery-events",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "event",
+      });
+
+      assertEquals(events.map((claim) => claim.nodeId), ["eventTimeout"]);
+    });
+
+    it("claims same-deadline same-kind sibling waits by stable node identity", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("run-sibling-deadlines", now - 1);
+      run.nodeStates = {
+        eventA: {
+          nodeId: "eventA",
+          status: "running",
+          input: {
+            type: "event",
+            eventName: "event-a",
+            timeout: 1_000,
+            _waitKind: "event",
+          },
+          attempt: 1,
+          startedAt: new Date(now - 1_001),
+        },
+        eventB: {
+          nodeId: "eventB",
+          status: "running",
+          input: {
+            type: "event",
+            eventName: "event-b",
+            timeout: 1_000,
+            _waitKind: "event",
+          },
+          attempt: 1,
+          startedAt: new Date(now - 1_001),
+        },
+      };
+      await backend.createRun(run);
+
+      const claims = await backend.claimDueTimedWaits({
+        ownerId: "recovery-siblings",
+        now,
+        limit: 2,
+        leaseDuration: 5_000,
+        waitKind: "event",
+      });
+
+      assertEquals(claims.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+      assertEquals(new Set(claims.map((claim) => claim.claimId)).size, 2);
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          claims[0]!.nodeId,
+          claims[0]!.claimId,
+          claims[0]!.deadline,
+          run.workerId!,
+          { status: "failed", error: { message: "event timed out" } },
+        ),
+        true,
+      );
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          claims[1]!.nodeId,
+          claims[1]!.claimId,
+          claims[1]!.deadline,
+          run.workerId!,
+          { status: "failed", error: { message: "stale sibling" } },
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.releaseTimedWaitClaim(
+          run.id,
+          claims[1]!.nodeId,
+          claims[1]!.claimId,
+        ),
+        false,
+      );
+    });
+
+    it("releases, expires, and refreshes every active sibling wait independently", async () => {
+      const time = new FakeTime();
+      try {
+        const now = Date.now();
+        const run = createTimedWaitRun("run-sibling-lifecycle", now - 1);
+        run.currentNodes = ["eventB", "eventA"];
+        run.nodeStates = {
+          eventB: {
+            nodeId: "eventB",
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "event-b",
+              timeout: 1_000,
+              _waitKind: "event",
+            },
+            attempt: 1,
+            startedAt: new Date(now - 1_001),
+          },
+          eventA: {
+            nodeId: "eventA",
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "event-a",
+              timeout: 1_000,
+              _waitKind: "event",
+            },
+            attempt: 1,
+            startedAt: new Date(now - 1_001),
+          },
+        };
+        await backend.createRun(run);
+
+        const initial = await backend.claimDueTimedWaits({
+          ownerId: "recovery-sibling-initial",
+          now,
+          limit: 2,
+          leaseDuration: 10,
+          waitKind: "event",
+        });
+        assertEquals(initial.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+        assertEquals(
+          await backend.releaseTimedWaitClaim(
+            run.id,
+            initial[0]!.nodeId,
+            initial[0]!.claimId,
+          ),
+          true,
+        );
+        const released = await backend.claimDueTimedWaits({
+          ownerId: "recovery-sibling-released",
+          now,
+          limit: 1,
+          leaseDuration: 10,
+          waitKind: "event",
+        });
+        assertEquals(released.map((claim) => claim.nodeId), ["eventA"]);
+
+        await time.tickAsync(11);
+        const expired = await backend.claimDueTimedWaits({
+          ownerId: "recovery-sibling-expired",
+          now: Date.now(),
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        });
+        assertEquals(expired.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+
+        const refreshedDeadline = Date.now() + 60_000;
+        const refreshedStates = structuredClone(run.nodeStates);
+        refreshedStates.eventA!.startedAt = new Date(refreshedDeadline - 1_000);
+        refreshedStates.eventB!.startedAt = new Date(refreshedDeadline - 1_000);
+        await backend.updateRun(run.id, { nodeStates: refreshedStates });
+        assertEquals(
+          await backend.claimDueTimedWaits({
+            ownerId: "recovery-sibling-too-early",
+            now: Date.now(),
+            limit: 2,
+            leaseDuration: 5_000,
+            waitKind: "event",
+          }),
+          [],
+        );
+        assertEquals(
+          (await backend.claimDueTimedWaits({
+            ownerId: "recovery-sibling-refreshed",
+            now: refreshedDeadline,
+            limit: 2,
+            leaseDuration: 5_000,
+            waitKind: "event",
+          })).map((claim) => claim.nodeId),
+          ["eventA", "eventB"],
+        );
+      } finally {
+        time.restore();
+      }
+    });
+
+    it("claims a bounded fair deadline page without returning the same run twice", async () => {
+      const now = Date.now();
+      await backend.createRun(createTimedWaitRun("run-deadline-c", now - 10));
+      await backend.createRun(createTimedWaitRun("run-deadline-a", now - 20));
+      await backend.createRun(createTimedWaitRun("run-deadline-b", now - 20));
+
+      const first = await backend.claimDueTimedWaits({
+        ownerId: "recovery-a",
+        now,
+        limit: 2,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      });
+      const second = await backend.claimDueTimedWaits({
+        ownerId: "recovery-b",
+        now,
+        limit: 2,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      });
+
+      assertEquals(first.map((claim) => claim.run.id), ["run-deadline-a", "run-deadline-b"]);
+      assertEquals(second.map((claim) => claim.run.id), ["run-deadline-c"]);
+      assertEquals(new Set([...first, ...second].map((claim) => claim.claimId)).size, 3);
+    });
+
+    it("fences an expired claimant after a replacement acquires the same deadline", async () => {
+      const time = new FakeTime();
+      try {
+        const now = Date.now();
+        const run = createTimedWaitRun("run-deadline-fence", now - 1);
+        await backend.createRun(run);
+        const stale = (await backend.claimDueTimedWaits({
+          ownerId: "recovery-stale",
+          now,
+          limit: 1,
+          leaseDuration: 10,
+          waitKind: "delay",
+        }))[0];
+        assertExists(stale);
+
+        await time.tickAsync(11);
+        const current = (await backend.claimDueTimedWaits({
+          ownerId: "recovery-current",
+          now: Date.now(),
+          limit: 1,
+          leaseDuration: 10,
+          waitKind: "delay",
+        }))[0];
+        assertExists(current);
+        assertEquals(current.claimId === stale.claimId, false);
+
+        assertEquals(
+          await backend.updateRunIfTimedWaitClaim(
+            run.id,
+            stale.nodeId,
+            stale.claimId,
+            stale.deadline,
+            run.workerId!,
+            { status: "pending" },
+          ),
+          false,
+        );
+        assertEquals(
+          await backend.updateRunIfTimedWaitClaim(
+            run.id,
+            current.nodeId,
+            current.claimId,
+            current.deadline,
+            run.workerId!,
+            { status: "pending" },
+          ),
+          true,
+        );
+        assertEquals((await backend.getRun(run.id))?.status, "pending");
+      } finally {
+        time.restore();
+      }
+    });
+
+    it("requeues only an exactly owned claim and invalidates claims when wait state changes", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("run-deadline-refresh", now - 1);
+      await backend.createRun(run);
+      const first = (await backend.claimDueTimedWaits({
+        ownerId: "recovery-first",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(first);
+
+      assertEquals(
+        await backend.releaseTimedWaitClaim(run.id, first.nodeId, "not-the-token"),
+        false,
+      );
+      assertEquals(
+        await backend.releaseTimedWaitClaim(run.id, first.nodeId, first.claimId),
+        true,
+      );
+      const second = (await backend.claimDueTimedWaits({
+        ownerId: "recovery-second",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(second);
+
+      const nextDeadline = now + 60_000;
+      await backend.updateRun(run.id, {
+        nodeStates: createTimedWaitRun(run.id, nextDeadline).nodeStates,
+      });
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          second.nodeId,
+          second.claimId,
+          second.deadline,
+          run.workerId!,
+          { status: "pending" },
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "recovery-early",
+          now,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }),
+        [],
+      );
+      assertEquals(
+        (await backend.claimDueTimedWaits({
+          ownerId: "recovery-on-time",
+          now: nextDeadline,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }))[0]?.run.id,
+        run.id,
+      );
+    });
+
+    it("bounds stale timed-wait lease heap entries under repeated release churn", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("run-claim-heap-churn", now - 1);
+      await backend.createRun(run);
+
+      for (let index = 0; index < 2_100; index++) {
+        const claim = (await backend.claimDueTimedWaits({
+          ownerId: "recovery-heap-churn",
+          now,
+          limit: 1,
+          leaseDuration: 86_400_000,
+          waitKind: "delay",
+        }))[0];
+        assertExists(claim);
+        assertEquals(
+          await backend.releaseTimedWaitClaim(run.id, claim.nodeId, claim.claimId),
+          true,
+        );
+      }
+
+      const claimExpiryHeap = (backend as unknown as {
+        timedWaitClaimExpiryHeap: unknown[];
+      }).timedWaitClaimExpiryHeap;
+      assertEquals(claimExpiryHeap.length <= 1_024, true);
     });
   });
 

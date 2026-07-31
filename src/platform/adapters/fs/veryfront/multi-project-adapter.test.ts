@@ -16,6 +16,7 @@ import {
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { registerRequestContextFinalizer } from "./request-context.ts";
 import type { StyleArtifactAccess, StyleArtifactRegistry } from "./types.ts";
+import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 
 function createStyleArtifactAccess(projectSlug: string): StyleArtifactAccess {
   const registry: Readonly<StyleArtifactRegistry> = Object.freeze({
@@ -94,6 +95,20 @@ describe("MultiProjectFSAdapter", () => {
 
     it("should have readFile method", () => {
       withAdapter((adapter) => assertMethod(adapter, "readFile"));
+    });
+
+    it("should have readFileBytes method", () => {
+      withAdapter((adapter) => assertMethod(adapter, "readFileBytes"));
+    });
+
+    it("advertises only the fixed whole-response ceiling", () => {
+      withAdapter((adapter) => {
+        assertEquals(
+          adapter.maxWholeFileReadBytes,
+          DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
+        );
+        assertEquals("readFileBytesBounded" in adapter, false);
+      });
     });
 
     it("should have readTextFile method", () => {
@@ -435,6 +450,120 @@ describe("MultiProjectFSAdapter", () => {
           assertEquals(content, "optional stylesheet");
           assertEquals(optionalPath, "app/globals.css");
           assertEquals(normalReadCalled, false);
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("delegates whole byte reads to the active fixed-ceiling adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        let receivedPath: string | undefined;
+        (adapter as any).manager = {
+          getAdapter: () =>
+            Promise.resolve({
+              readFileBytes(path: string) {
+                receivedPath = path;
+                return Promise.resolve(new Uint8Array([1, 2, 3]));
+              },
+            }),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const bytes = await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            () => adapter.readFileBytes("public/app.bin"),
+            "project-id-a",
+            { branch: "main" },
+          );
+
+          assertEquals([...bytes], [1, 2, 3]);
+          assertEquals(receivedPath, "public/app.bin");
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("propagates source-file adapter acquisition failures", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const backendError = new Error("source adapter unavailable");
+        (adapter as any).manager = {
+          getAdapter: () => Promise.reject(backendError),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const error = await assertRejects(() =>
+            adapter.runWithContext(
+              "project-a",
+              "test-token",
+              () => adapter.getAllSourceFiles(),
+              "project-id-a",
+              { branch: "main" },
+            )
+          );
+          assertEquals(error, backendError);
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("propagates source-file listing failures from the active adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        const backendError = new Error("source listing failed");
+        (adapter as any).manager = {
+          getAdapter: () =>
+            Promise.resolve({
+              getAllSourceFiles: () => Promise.reject(backendError),
+            }),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const error = await assertRejects(() =>
+            adapter.runWithContext(
+              "project-a",
+              "test-token",
+              () => adapter.getAllSourceFiles(),
+              "project-id-a",
+              { branch: "main" },
+            )
+          );
+          assertEquals(error, backendError);
+        } finally {
+          (adapter as any).manager = originalManager;
+        }
+      });
+    });
+
+    it("treats an absent source-file capability as an empty source", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const originalManager = (adapter as any).manager;
+        (adapter as any).manager = {
+          getAdapter: () => Promise.resolve({}),
+          getStats: () => ({ adapters: 0, stats: [] }),
+          dispose: () => {},
+        };
+
+        try {
+          const files = await adapter.runWithContext(
+            "project-a",
+            "test-token",
+            () => adapter.getAllSourceFiles(),
+            "project-id-a",
+            { branch: "main" },
+          );
+          assertEquals(files, []);
         } finally {
           (adapter as any).manager = originalManager;
         }

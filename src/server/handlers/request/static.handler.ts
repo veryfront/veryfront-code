@@ -15,16 +15,28 @@ import { hasMatchingEtag } from "../utils/etag.ts";
 import {
   HTTP_NOT_FOUND,
   HTTP_OK,
+  HTTP_UNAVAILABLE,
   PRIORITY_MEDIUM_STATIC,
 } from "#veryfront/utils/constants/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { StaticFileService } from "../../services/static/index.ts";
+import {
+  StaticAssetUnavailableError,
+  type StaticFileMetadataResult,
+  type StaticFileResult,
+  StaticFileService,
+} from "../../services/static/index.ts";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { computeEtag } from "../utils/etag.ts";
 import { isVersionedProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 function isHtmlResponse(contentType: string): boolean {
   return /\btext\/html\b/i.test(contentType);
+}
+
+function isStaticFileResult(
+  result: StaticFileMetadataResult | StaticFileResult,
+): result is StaticFileResult {
+  return "data" in result;
 }
 
 function toStaticResponseBody(data: Uint8Array): BodyInit {
@@ -142,66 +154,105 @@ export class StaticHandler extends BaseHandler {
           manifestCacheIdentity,
         };
 
-        const result = await this.staticService.resolveFile(pathname, resolveOptions);
+        try {
+          const result = isHead
+            ? await this.staticService.resolveFileMetadata(pathname, resolveOptions)
+            : await this.staticService.resolveFile(pathname, resolveOptions);
 
-        if (!result) {
-          if (
-            pathname === "/favicon.ico" &&
-            await this.staticService.resolveFile("/favicon.svg", resolveOptions)
-          ) {
+          if (!result) {
+            const fallbackFavicon = pathname === "/favicon.ico"
+              ? isHead
+                ? await this.staticService.resolveFileMetadata("/favicon.svg", resolveOptions)
+                : await this.staticService.resolveFile("/favicon.svg", resolveOptions)
+              : null;
+            if (fallbackFavicon) {
+              return builder
+                .withSecurity(ctx.securityConfig ?? undefined, req)
+                .withCache("no-cache")
+                .withHeaders({ location: new URL("/favicon.svg", req.url).toString() })
+                .withStatus(307)
+                .build();
+            }
+
+            if (isDynamicBuildFallbackPath(pathname)) return null;
+            if (!this.staticService.isAssetRequest(pathname)) return null;
+
             return builder
               .withSecurity(ctx.securityConfig ?? undefined, req)
               .withCache("no-cache")
-              .withHeaders({ location: new URL("/favicon.svg", req.url).toString() })
-              .withStatus(307)
-              .build();
+              .withContentType(
+                "text/plain; charset=utf-8",
+                isHead ? null : "Not Found",
+                HTTP_NOT_FOUND,
+              );
           }
 
-          if (isDynamicBuildFallbackPath(pathname)) return null;
-          if (!this.staticService.isAssetRequest(pathname)) return null;
+          if (!isStaticFileResult(result)) {
+            const response = builder
+              .withSecurity(ctx.securityConfig ?? undefined, req)
+              .withCache(result.cacheStrategy);
+            // HTML GET responses receive a request-specific nonce transform,
+            // so raw filesystem size is not representation metadata for HEAD.
+            if (result.size !== null && !isHtmlResponse(result.contentType)) {
+              response.withHeaders({ "content-length": String(result.size) });
+            }
+            return response.withContentType(result.contentType, null, HTTP_OK);
+          }
 
+          const responseData = isHtmlResponse(result.contentType)
+            ? new TextEncoder().encode(
+              addNonceToHtmlTags(new TextDecoder().decode(result.data), builder.nonce),
+            )
+            : result.data;
+          const etag = computeEtag(responseData);
+
+          if (hasMatchingEtag(req, etag)) {
+            return builder
+              .withSecurity(ctx.securityConfig ?? undefined, req)
+              .notModified(etag);
+          }
+
+          const response = builder
+            .withSecurity(ctx.securityConfig ?? undefined, req)
+            .withCache(result.cacheStrategy)
+            .withETag(etag)
+            .withContentType(
+              result.contentType,
+              toStaticResponseBody(responseData),
+              HTTP_OK,
+            );
+
+          this.logDebug(
+            `Served static file: ${result.path}`,
+            {
+              contentType: result.contentType,
+              cacheStrategy: result.cacheStrategy,
+              size: result.size,
+              source: result.source,
+            },
+            ctx,
+          );
+
+          return response;
+        } catch (error) {
+          if (!(error instanceof StaticAssetUnavailableError)) throw error;
+          // These are known representation-admission failures, not oversized
+          // request payloads (413) or unexpected handler faults (500). Treat
+          // them uniformly as a temporarily unavailable server capability.
+          this.logWarn("Static asset rejected by runtime admission", {
+            pathname,
+            reason: error.reason,
+          });
           return builder
             .withSecurity(ctx.securityConfig ?? undefined, req)
             .withCache("no-cache")
+            .withHeaders({ "cache-control": "no-store" })
             .withContentType(
               "text/plain; charset=utf-8",
-              isHead ? null : "Not Found",
-              HTTP_NOT_FOUND,
+              isHead ? null : "Static asset unavailable",
+              HTTP_UNAVAILABLE,
             );
         }
-
-        const responseData = isHtmlResponse(result.contentType)
-          ? new TextEncoder().encode(
-            addNonceToHtmlTags(new TextDecoder().decode(result.data), builder.nonce),
-          )
-          : result.data;
-        const etag = computeEtag(responseData);
-
-        if (hasMatchingEtag(req, etag)) {
-          return builder
-            .withSecurity(ctx.securityConfig ?? undefined, req)
-            .notModified(etag);
-        }
-
-        const body: BodyInit | null = isHead ? null : toStaticResponseBody(responseData);
-        const response = builder
-          .withSecurity(ctx.securityConfig ?? undefined, req)
-          .withCache(result.cacheStrategy)
-          .withETag(etag)
-          .withContentType(result.contentType, body, HTTP_OK);
-
-        this.logDebug(
-          `Served static file: ${result.path}`,
-          {
-            contentType: result.contentType,
-            cacheStrategy: result.cacheStrategy,
-            size: result.data.byteLength,
-            source: result.source,
-          },
-          ctx,
-        );
-
-        return response;
       },
       { "static.pathname": pathname, "static.projectSlug": ctx.projectSlug || "unknown" },
     );

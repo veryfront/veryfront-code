@@ -12,6 +12,8 @@ export type {
   ApprovalExpiryCondition,
   BackendConfig,
   PendingApprovalMetadataUpdate,
+  TimedWaitClaim,
+  TimedWaitClaimRequest,
   WorkflowBackend,
   WorkflowRunCursor,
   WorkflowRunCursorFilter,
@@ -25,6 +27,7 @@ export {
   resolveWorkflowRunCursorPage,
 } from "#veryfront/workflow/backends/run-filter.ts";
 export { requireWorkflowSourceIntegrationPolicy } from "#veryfront/workflow/source-integration-policy.ts";
+export { getTimedWorkflowWaits } from "#veryfront/workflow/runtime/timed-wait-reconciliation.ts";
 export type {
   ApprovalDecision,
   Checkpoint,

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 import {
   buildCSSCacheEntry,
   evaluateProjectCSSLocalCacheState,
@@ -68,6 +69,20 @@ describe("styles-builder/css-compiler-utils", () => {
       assertEquals(entry.css, raw);
       assertEquals(entry.candidates, []);
       assertEquals(entry.stylesheet, "default");
+    });
+
+    it("rejects oversized structured CSS during cache parsing", () => {
+      const raw = JSON.stringify({
+        css: "x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1),
+        candidates: [],
+        stylesheet: "",
+      });
+
+      assertThrows(
+        () => parseCSSCacheEntry(raw, "default"),
+        TypeError,
+        `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+      );
     });
   });
 

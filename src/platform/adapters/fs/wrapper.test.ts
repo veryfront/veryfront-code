@@ -471,6 +471,129 @@ describe("FSAdapterWrapper", () => {
     });
   });
 
+  describe("readFileBytesWithinLimit", () => {
+    it("captures and forwards the exact-read capability atomically", async () => {
+      let originalCalls = 0;
+      let replacementCalls = 0;
+      const fsAdapter = createMockFSAdapter({
+        readFileBytesWithinLimit(path, byteLimit) {
+          originalCalls++;
+          assertEquals({ path, byteLimit }, { path: "/bounded.bin", byteLimit: 4 });
+          return Promise.resolve(new Uint8Array([1, 2, 3]));
+        },
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+      fsAdapter.readFileBytesWithinLimit = () => {
+        replacementCalls++;
+        return Promise.resolve(new Uint8Array([9]));
+      };
+
+      assertEquals(
+        [...await wrapper.readFileBytesWithinLimit!("/bounded.bin", 4)],
+        [1, 2, 3],
+      );
+      assertEquals(originalCalls, 1);
+      assertEquals(replacementCalls, 0);
+    });
+
+    it("rejects accessor and Proxy capabilities without invoking their hooks", () => {
+      let getterCalls = 0;
+      const accessor = createMockFSAdapter();
+      Object.defineProperty(accessor, "readFileBytesWithinLimit", {
+        get() {
+          getterCalls++;
+          return () => Promise.resolve(new Uint8Array());
+        },
+      });
+      assertThrows(
+        () => new FSAdapterWrapper(accessor),
+        TypeError,
+        "must be a data-property method",
+      );
+      assertEquals(getterCalls, 0);
+
+      let applyTraps = 0;
+      const callableProxy = createMockFSAdapter({
+        readFileBytesWithinLimit: new Proxy(
+          () => Promise.resolve(new Uint8Array()),
+          {
+            apply() {
+              applyTraps++;
+              throw new Error("must not run");
+            },
+          },
+        ),
+      });
+      assertThrows(
+        () => new FSAdapterWrapper(callableProxy),
+        TypeError,
+        "non-Proxy function",
+      );
+      assertEquals(applyTraps, 0);
+
+      let proxyTraps = 0;
+      const proxied = new Proxy(createMockFSAdapter(), {
+        getOwnPropertyDescriptor() {
+          proxyTraps++;
+          throw new Error("must not run");
+        },
+      });
+      assertThrows(
+        () => new FSAdapterWrapper(proxied),
+        TypeError,
+        "Proxy",
+      );
+      assertEquals(proxyTraps, 0);
+    });
+
+    it("does not advertise exact reads when the underlying adapter omits them", () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter());
+
+      assertEquals(wrapper.readFileBytesWithinLimit, undefined);
+    });
+  });
+
+  describe("maxWholeFileReadBytes", () => {
+    it("preserves a fixed whole-read ceiling only with binary whole reads", () => {
+      const capable = new FSAdapterWrapper(createMockFSAdapter({
+        readFileBytes: () => Promise.resolve(new Uint8Array()),
+        maxWholeFileReadBytes: 1024,
+      }));
+      const textOnly = new FSAdapterWrapper(createMockFSAdapter({
+        maxWholeFileReadBytes: 1024,
+      }));
+
+      assertEquals(capable.maxWholeFileReadBytes, 1024);
+      assertEquals(textOnly.maxWholeFileReadBytes, undefined);
+    });
+
+    it("does not invoke or leak hostile ceiling metadata traps", () => {
+      let getterCalls = 0;
+      const accessor = createMockFSAdapter({
+        readFileBytes: () => Promise.resolve(new Uint8Array()),
+      });
+      Object.defineProperty(accessor, "maxWholeFileReadBytes", {
+        get() {
+          getterCalls++;
+          return 1024;
+        },
+      });
+      assertEquals(new FSAdapterWrapper(accessor).maxWholeFileReadBytes, undefined);
+      assertEquals(getterCalls, 0);
+
+      const hostilePrototype = new Proxy({}, {
+        getOwnPropertyDescriptor() {
+          throw new Error("descriptor trap");
+        },
+      });
+      const trapped = Object.setPrototypeOf(
+        createMockFSAdapter({ readFileBytes: () => Promise.resolve(new Uint8Array()) }),
+        hostilePrototype,
+      );
+      assertEquals(new FSAdapterWrapper(trapped).maxWholeFileReadBytes, undefined);
+    });
+  });
+
   describe("writeFile", () => {
     it("should write file when writeFile is supported", async () => {
       let written: { path: string; content: string } | null = null;

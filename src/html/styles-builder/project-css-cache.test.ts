@@ -4,6 +4,7 @@ import type { CSSProcessor } from "#veryfront/extensions/css/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 import {
   createTestCSSOptimizationEngine,
   withTestCSSOptimizationEngine,
@@ -13,10 +14,15 @@ import {
   clearCSSCache,
   getCSSByHash,
   getProjectCSS,
+  hashCSS,
   invalidateCompiler,
   invalidateProjectCSS,
 } from "./css-compiler.ts";
-import { createProjectCSSRequestContext } from "./project-css-cache.ts";
+import {
+  createProjectCSSRequestContext,
+  storeProjectCSS,
+  tryGetProjectCSSFromLocalFallback,
+} from "./project-css-cache.ts";
 
 // Simple stylesheet without plugins — avoids loading @tailwindcss/typography from esm.sh in tests
 const TEST_STYLESHEET = `@import "tailwindcss";`;
@@ -80,6 +86,42 @@ describe("styles-builder/project-css-cache", () => {
       TypeError,
       "CSS pipeline identity",
     );
+  });
+
+  it("does not retain oversized project CSS when storage is rejected", async () => {
+    const projectSlug = `oversized-project-css-${crypto.randomUUID()}`;
+    const candidates = new Set(["oversized"]);
+    const context = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "test-css-pipeline@oversized" },
+    );
+    const css = "x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1);
+
+    try {
+      await assertRejects(
+        () =>
+          storeProjectCSS(
+            context,
+            {
+              css,
+              hash: hashCSS(css),
+              candidatesHash: context.candidatesHash,
+            },
+            candidates,
+          ),
+        TypeError,
+        `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+      );
+      assertEquals(
+        await tryGetProjectCSSFromLocalFallback(context, candidates),
+        undefined,
+      );
+    } finally {
+      clearCSSCache();
+      invalidateProjectCSS(projectSlug);
+    }
   });
 
   it("populates hash-level cache on fresh generation so other pods can serve CSS", async () => {

@@ -45,6 +45,7 @@ import {
 import { isNotFoundLikeError } from "./read-operations-helpers.ts";
 import { getCurrentRequestContext } from "./request-context.ts";
 import { VERYFRONT_FS_ADAPTER_KIND } from "./adapter-kind.ts";
+import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -173,6 +174,7 @@ function buildManifestFetcher(
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
+  readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   readonly symlinkSemantics = "none" as const;
   readonly [VERYFRONT_FS_ADAPTER_KIND] = "single-project" as const;
   private client: VeryfrontApiClient;

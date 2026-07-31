@@ -41,6 +41,7 @@ const OPTIONAL_WORKFLOW_BACKEND_CAPABILITY_GROUPS = [
     "savePendingApprovalIfStatusAndWorker",
   ],
   ["findStalledRuns", "claimStalledRun"],
+  ["claimDueTimedWaits", "updateRunIfTimedWaitClaim", "releaseTimedWaitClaim"],
   ["publishEvent", "subscribeEvents"],
 ] as const satisfies readonly (readonly (keyof WorkflowBackend)[])[];
 
@@ -64,6 +65,9 @@ const OPTIONAL_WORKFLOW_BACKEND_METHODS = [
   "isLocked",
   "findStalledRuns",
   "claimStalledRun",
+  "claimDueTimedWaits",
+  "updateRunIfTimedWaitClaim",
+  "releaseTimedWaitClaim",
   "publishEvent",
   "subscribeEvents",
   "initialize",

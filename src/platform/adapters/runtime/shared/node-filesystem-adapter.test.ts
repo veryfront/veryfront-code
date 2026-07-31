@@ -60,6 +60,20 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       const largePrefix = await adapter.readFileBytesBounded(largeFile, 65_537);
       assertEquals(largePrefix.byteLength, 65_537);
       assertEquals(largePrefix[65_536], largeBytes[65_536]);
+      assertEquals(
+        [...await adapter.readFileBytesWithinLimit(file, 5)],
+        [104, 101, 108, 108, 111],
+      );
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit(file, 4),
+        RangeError,
+        "exceeds byte limit of 4 bytes",
+      );
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit(file, 0),
+        RangeError,
+        "positive safe integer",
+      );
       assertEquals((await adapter.stat(link)).isSymlink, false);
       assertEquals((await adapter.lstat(link)).isSymlink, true);
       assertEquals(await adapter.realPath(link), await Deno.realPath(file));

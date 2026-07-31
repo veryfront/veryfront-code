@@ -29,6 +29,7 @@ import type {
   ResolveStyleArtifactInput,
 } from "../../veryfront-api-client/index.ts";
 import { createStyleArtifactTuple } from "../../veryfront-api-client/index.ts";
+import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 
 describe("VeryfrontFSAdapter", () => {
   afterEach(() => {
@@ -127,6 +128,14 @@ describe("VeryfrontFSAdapter", () => {
       "ensureSourceSnapshotFresh",
       "getSourceSnapshotVersion",
     ] as const;
+
+    it("advertises the fixed upstream whole-response ceiling", () => {
+      assertEquals(
+        createAdapter().maxWholeFileReadBytes,
+        DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
+      );
+      assertEquals("readFileBytesBounded" in createAdapter(), false);
+    });
 
     for (const method of methods) {
       it(`should have ${method} method`, () => {

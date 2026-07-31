@@ -11,7 +11,7 @@ import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { createFileWatcher } from "../shared/watcher-queue.ts";
 import { resolve, sep } from "../../../compat/path/index.ts";
 import { validateTempDirectoryPrefix } from "../../../compat/temp-directory-prefix.ts";
-import { readBoundedFilePrefix } from "../../bounded-file-read.ts";
+import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 
 function assertDenoRuntime(method: string): void {
@@ -99,6 +99,17 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
   async readFileBytesBounded(path: string, byteLimit: number): Promise<Uint8Array> {
     assertDenoRuntime("readFileBytesBounded");
     return await readBoundedFilePrefix(async () => {
+      const file = await Deno.open(path, { read: true });
+      return {
+        close: () => file.close(),
+        read: (buffer: Uint8Array) => file.read(buffer),
+      };
+    }, byteLimit);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    assertDenoRuntime("readFileBytesWithinLimit");
+    return await readFileWithinLimit(async () => {
       const file = await Deno.open(path, { read: true });
       return {
         close: () => file.close(),

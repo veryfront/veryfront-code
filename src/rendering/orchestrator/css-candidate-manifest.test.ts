@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
+import {
+  clearProjectManifests,
+  recordSSRModules,
+} from "#veryfront/modules/manifest/route-module-manifest.ts";
 import {
   getCandidateManifestCacheStats,
   getProjectCandidates,
@@ -141,6 +145,82 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
       assertEquals(result.size > 0, true);
     });
 
+    it("rejects prefix-collision route paths outside the project", () => {
+      invalidateProjectCandidateManifests();
+
+      assertThrows(
+        () =>
+          getRouteCandidates({
+            projectScope: "prefix-collision",
+            projectVersion: "v1",
+            projectDir: "/project",
+            routeKey: "index",
+            routeFilePaths: [
+              "/project/pages/index.tsx",
+              "/project2/app.tsx",
+            ],
+            files: [
+              {
+                path: "/project/pages/index.tsx",
+                content: '<div className="legitimate-route" />',
+              },
+              {
+                path: "/project/2/app.tsx",
+                content: '<div className="prefix-alias" />',
+              },
+            ],
+            developmentMode: false,
+          }),
+        TypeError,
+        "within the project",
+      );
+    });
+
+    it("rejects overlong route file paths before normalization", () => {
+      invalidateProjectCandidateManifests();
+
+      assertThrows(
+        () =>
+          getRouteCandidates({
+            projectScope: "overlong-route-path",
+            projectVersion: "v1",
+            projectDir: "/project",
+            routeKey: "index",
+            routeFilePaths: [`/project/${"x".repeat(4_096)}.tsx`],
+            files: [],
+            developmentMode: false,
+          }),
+        TypeError,
+        "4096 characters",
+      );
+    });
+
+    it("rejects overlong recorded route-module paths before normalization", () => {
+      invalidateProjectCandidateManifests();
+      const projectScope = "overlong-route-module";
+      const routeKey = "index";
+      recordSSRModules(projectScope, routeKey, [`${"x".repeat(4_096)}.js`]);
+
+      try {
+        assertThrows(
+          () =>
+            getRouteCandidates({
+              projectScope,
+              projectVersion: "v1",
+              projectDir: "/project",
+              routeKey,
+              routeFilePaths: [],
+              files: [],
+              developmentMode: false,
+            }),
+          TypeError,
+          "4096 characters",
+        );
+      } finally {
+        clearProjectManifests(projectScope);
+      }
+    });
+
     it("should skip files without content", () => {
       invalidateProjectCandidateManifests();
       const result = getRouteCandidates({
@@ -261,6 +341,49 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
   });
 
   describe("getProjectCandidates", () => {
+    it("rejects a relative project directory before path normalization", () => {
+      invalidateProjectCandidateManifests();
+
+      assertThrows(
+        () =>
+          getProjectCandidates({
+            projectScope: "relative-project-dir",
+            projectVersion: "v1",
+            projectDir: "relative/project",
+            files: [{
+              path: "pages/index.tsx",
+              content: '<div className="relative" />',
+            }],
+            developmentMode: false,
+          }),
+        TypeError,
+        "must be absolute",
+      );
+    });
+
+    it("does not cache a manifest whose aggregate candidate set exceeds 100,000", () => {
+      invalidateProjectCandidateManifests();
+      const first = Array.from({ length: 100_000 }, (_, index) => `first-${index}`).join(" ");
+
+      assertThrows(
+        () =>
+          getProjectCandidates({
+            projectScope: "project-candidate-overflow",
+            projectVersion: "v1",
+            projectDir: "/project",
+            files: [
+              { path: "/project/pages/first.tsx", content: first },
+              { path: "/project/pages/second.tsx", content: "one-more-candidate" },
+            ],
+            developmentMode: false,
+          }),
+        TypeError,
+        "100000 candidates",
+      );
+
+      assertEquals(getCandidateManifestCacheStats().manifests.entries, 0);
+    });
+
     it("should return all extracted candidates for a project manifest", () => {
       invalidateProjectCandidateManifests();
       const result = getProjectCandidates({

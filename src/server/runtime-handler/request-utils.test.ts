@@ -5,6 +5,7 @@ import {
   HTTP_GATEWAY_TIMEOUT,
   isHMRWebSocketUpgrade,
   isInternalHost,
+  isIsolationExemptPath,
   isLightweightPath,
   isMonitoringPath,
   isWebSocketPath,
@@ -131,6 +132,37 @@ describe("request-utils", () => {
       assertEquals(isLightweightPath("/"), false);
       assertEquals(isLightweightPath("/about"), false);
       assertEquals(isLightweightPath("/api/users"), false);
+    });
+  });
+
+  describe("isIsolationExemptPath", () => {
+    it("exempts only fixed framework-generated assets", () => {
+      assertEquals(isIsolationExemptPath("/_veryfront/hydration-runtime.js"), true);
+      assertEquals(isIsolationExemptPath(getProdHydrationModulePath()), true);
+      assertEquals(isIsolationExemptPath("/_veryfront/preview-hmr.js"), true);
+    });
+
+    it("keeps module and stylesheet work behind project isolation", () => {
+      for (
+        const path of [
+          "/_vf_modules/react.js",
+          "/_veryfront/modules/client.js",
+          "/_lib_modules/lodash.js",
+          "/_vf/css/styles.css",
+          "/_vf_styles/styles.css",
+          "/_veryfront/studio-bridge.js",
+        ]
+      ) {
+        assertEquals(isLightweightPath(path), true, path);
+        assertEquals(isIsolationExemptPath(path), false, path);
+      }
+    });
+
+    it("does not admit hydration lookalikes", () => {
+      assertEquals(
+        isIsolationExemptPath("/_veryfront/hydration-runtime.attacker.js"),
+        false,
+      );
     });
   });
 

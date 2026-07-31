@@ -45,7 +45,7 @@ interface RequestLifecycleContext {
 export function startRequestLifecycle(
   req: Request,
   _pathname: string,
-  isLightweight: boolean,
+  isIsolationExempt: boolean,
 ): RequestLifecycleContext {
   const incomingId = req.headers.get("x-request-id");
   const perfEnabled = isPerfEnabled();
@@ -55,7 +55,7 @@ export function startRequestLifecycle(
   const stopTotal = startTimer("total");
 
   const requestId = generateRequestId(incomingId);
-  const shouldCheckIsolation = !isLightweight;
+  const shouldCheckIsolation = !isIsolationExempt;
 
   return {
     requestId,

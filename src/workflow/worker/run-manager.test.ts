@@ -8,6 +8,7 @@ import {
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import type {
+  WorkflowBackend,
   WorkflowRunCursorFilter,
   WorkflowRunUpdate,
 } from "../backends/types.ts";
@@ -305,6 +306,32 @@ function createExpiredTimedWaitRun(
 
 function pollOnce(manager: WorkflowRunManager): Promise<void> {
   return (manager as unknown as { poll(): Promise<void> }).poll();
+}
+
+function withoutIndexedTimedWaitRecovery(backend: MemoryBackend): WorkflowBackend {
+  return new Proxy(backend, {
+    get(target, property, receiver) {
+      if (
+        property === "listRunsAfterCursor" || property === "claimDueTimedWaits" ||
+        property === "updateRunIfTimedWaitClaim" || property === "releaseTimedWaitClaim"
+      ) return undefined;
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+function withoutAtomicTimedWaitRecovery(backend: MemoryBackend): WorkflowBackend {
+  return new Proxy(backend, {
+    get(target, property, receiver) {
+      if (
+        property === "claimDueTimedWaits" || property === "updateRunIfTimedWaitClaim" ||
+        property === "releaseTimedWaitClaim"
+      ) return undefined;
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
 }
 
 class VirtualPagedRecoveryBackend extends MemoryBackend {
@@ -844,6 +871,81 @@ describe("workflow/worker/run-manager", () => {
     assertEquals((await backend.getRun(run.id))?.status, "running");
   });
 
+  it("admits the earliest awakened deadline before newer ordinary pending work", async () => {
+    const backend = new MemoryBackend();
+    const executor = new FakeRunExecutor();
+    const manager = track(
+      new WorkflowRunManager({
+        backend,
+        executor,
+        pollInterval: NO_POLL,
+        maxConcurrentExecutions: 1,
+      }),
+    );
+    const now = Date.now();
+    const later = createExpiredTimedWaitRun("run-awaken-later", "delay");
+    later.createdAt = new Date(now - 60_000);
+    later.nodeStates.pause!.startedAt = new Date(now - 20);
+    const earlier = createExpiredTimedWaitRun("run-awaken-earlier", "delay");
+    earlier.createdAt = new Date(now);
+    earlier.nodeStates.pause!.startedAt = new Date(now - 40);
+    const ordinary = createPendingRun("run-newest-ordinary-pending");
+    ordinary.createdAt = new Date(now + 1);
+    await backend.createRun(later);
+    await backend.createRun(earlier);
+    await backend.createRun(ordinary);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    assertEquals(executor.created.map((entry) => entry.run.id), [earlier.id]);
+    assertEquals((await backend.getRun(later.id))?.status, "waiting");
+    assertEquals((await backend.getRun(ordinary.id))?.status, "pending");
+  });
+
+  it("does not let an awakened run duplicate starve another pending admission slot", async () => {
+    const backend = new MemoryBackend();
+    const executor = new FakeRunExecutor();
+    const manager = track(
+      new WorkflowRunManager({
+        backend,
+        executor,
+        pollInterval: NO_POLL,
+        maxConcurrentExecutions: 2,
+      }),
+    );
+    const now = Date.now();
+    const awakened = createExpiredTimedWaitRun("run-awakened-duplicate", "delay");
+    awakened.createdAt = new Date(now + 1);
+    const ordinary = createPendingRun("run-pending-after-awakened");
+    ordinary.createdAt = new Date(now);
+    await backend.createRun(awakened);
+    await backend.createRun(ordinary);
+    await manager.start();
+
+    await pollOnce(manager);
+
+    assertEquals(executor.created.map((entry) => entry.run.id), [awakened.id, ordinary.id]);
+  });
+
+  it("does not require new timed-wait query methods from an existing worker backend", async () => {
+    const memory = new MemoryBackend();
+    const executor = new FakeRunExecutor();
+    const manager = track(
+      new WorkflowRunManager({
+        backend: withoutIndexedTimedWaitRecovery(memory),
+        executor,
+        pollInterval: NO_POLL,
+      }),
+    );
+    await memory.createRun(createPendingRun("run-legacy-worker-backend"));
+    await manager.start();
+
+    await pollOnce(manager);
+
+    assertEquals(executor.created.map((entry) => entry.run.id), ["run-legacy-worker-backend"]);
+  });
+
   it("durably fails an expired event wait without starting an execution", async () => {
     const executor = new FakeRunExecutor();
     const { backend, manager } = makeManager(executor);
@@ -861,11 +963,95 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(failed?.error?.message, 'Wait node "pause" timed out after 5ms');
   });
 
+  it("fails a due sibling event even when an earlier delay has no execution capacity", async () => {
+    const backend = new MemoryBackend();
+    const executor = new FakeRunExecutor();
+    const manager = track(
+      new WorkflowRunManager({
+        backend,
+        executor,
+        pollInterval: NO_POLL,
+        maxConcurrentExecutions: 1,
+      }),
+    );
+    await backend.createRun(createPendingRun("run-capacity-holder"));
+    await manager.start();
+    await pollOnce(manager);
+    assertEquals(executor.created.length, 1);
+
+    const now = Date.now();
+    const run = createExpiredTimedWaitRun("run-multi-wait-zero-capacity", "delay");
+    run.nodeStates.pause!.startedAt = new Date(now - 20);
+    run.nodeStates.eventTimeout = {
+      nodeId: "eventTimeout",
+      status: "running",
+      input: {
+        type: "event",
+        eventName: "never-arrives",
+        timeout: 5,
+        _waitKind: "event",
+      },
+      attempt: 1,
+      startedAt: new Date(now - 10),
+    };
+    await backend.createRun(run);
+
+    await pollOnce(manager);
+
+    assertEquals((await backend.getRun(run.id))?.status, "failed");
+    assertEquals((await backend.getRun(run.id))?.nodeStates.eventTimeout?.status, "failed");
+    assertEquals(executor.created.length, 1);
+  });
+
+  it("prioritizes a due sibling event on the legacy cursor path at zero capacity", async () => {
+    const memory = new MemoryBackend();
+    const executor = new FakeRunExecutor();
+    const manager = track(
+      new WorkflowRunManager({
+        backend: withoutAtomicTimedWaitRecovery(memory),
+        executor,
+        pollInterval: NO_POLL,
+        maxConcurrentExecutions: 1,
+      }),
+    );
+    await memory.createRun(createPendingRun("run-legacy-capacity-holder"));
+    await manager.start();
+    await pollOnce(manager);
+    assertEquals(executor.created.length, 1);
+
+    const now = Date.now();
+    const run = createExpiredTimedWaitRun("run-legacy-multi-wait-zero-capacity", "delay");
+    run.nodeStates.pause!.startedAt = new Date(now - 20);
+    run.nodeStates.eventTimeout = {
+      nodeId: "eventTimeout",
+      status: "running",
+      input: {
+        type: "event",
+        eventName: "never-arrives",
+        timeout: 5,
+        _waitKind: "event",
+      },
+      attempt: 1,
+      startedAt: new Date(now - 10),
+    };
+    await memory.createRun(run);
+
+    await pollOnce(manager);
+
+    assertEquals((await memory.getRun(run.id))?.status, "failed");
+    assertEquals((await memory.getRun(run.id))?.nodeStates.eventTimeout?.status, "failed");
+    assertEquals(executor.created.length, 1);
+  });
+
   it("advances a bounded recovery cursor past stable non-due waiting pages", async () => {
     const backend = new VirtualPagedRecoveryBackend();
     const executor = new FakeRunExecutor();
     const manager = track(
-      new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL }),
+      new WorkflowRunManager({
+        backend: withoutAtomicTimedWaitRecovery(backend),
+        executor,
+        pollInterval: NO_POLL,
+      }),
     );
     const target = {
       ...createExpiredTimedWaitRun("run-after-full-wait-page", "delay"),
@@ -889,7 +1075,11 @@ describe("workflow/worker/run-manager", () => {
     const backend = new MalformedPagedRecoveryBackend();
     const executor = new FakeRunExecutor();
     const manager = track(
-      new WorkflowRunManager({ backend, executor, pollInterval: NO_POLL }),
+      new WorkflowRunManager({
+        backend: withoutAtomicTimedWaitRecovery(backend),
+        executor,
+        pollInterval: NO_POLL,
+      }),
     );
     await manager.start();
 

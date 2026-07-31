@@ -50,6 +50,11 @@ import { mergeImportedCSS } from "#veryfront/rendering/orchestrator/html-importe
 import { profilePhase } from "#veryfront/observability";
 import { COMPILATION_ERROR } from "#veryfront/errors";
 import { isVeryfrontErrorInstance } from "#veryfront/errors/types.ts";
+import {
+  assertCSSFileContent,
+  assertCSSOutputContent,
+} from "#veryfront/utils/css-content-admission.ts";
+import { collectProjectStyleSourceFiles } from "./styles-source-file-collector.ts";
 
 const logger = serverLogger.component("styles-css-handler");
 
@@ -100,14 +105,19 @@ export class StylesCSSHandler extends BaseHandler {
         const projectVersion = this.resolveStyleProjectVersion(artifactPlan, ctx);
         let rawCss = await profilePhase("css.load_stylesheet", () => this.loadStylesheet(ctx)) ??
           cssPipeline.compilationSession.defaultStylesheet;
+        assertCSSFileContent(rawCss, "Project stylesheet");
         // Production SSR merges CSS imported by modules (`import "./styles.css"`
         // in a layout) into the page stylesheet during module loading. This
         // route has no module-loading pass, so discover those imports from the
         // project sources and merge them here. Runs before the prepared-CSS
         // context is created so cache keys reflect the merged stylesheet.
+        const sourceFiles = await profilePhase(
+          "css.collect_source_files",
+          () => collectProjectStyleSourceFiles(ctx),
+        );
         const cssImports = await profilePhase(
           "css.scan_css_imports",
-          () => extractProjectCssImports(ctx),
+          () => extractProjectCssImports(ctx, sourceFiles),
         );
         if (cssImports.length > 0) {
           const merged = await profilePhase(
@@ -124,6 +134,7 @@ export class StylesCSSHandler extends BaseHandler {
           );
           if (merged) rawCss = merged;
         }
+        assertCSSOutputContent(rawCss, "Merged project stylesheet");
         const preparedContext = this.createPreparedCSSContext(
           projectScope,
           projectVersion,
@@ -138,6 +149,7 @@ export class StylesCSSHandler extends BaseHandler {
             () => tryGetPreparedProjectCSS(preparedContext),
           );
           if (prepared) {
+            assertCSSOutputContent(prepared.css, "Prepared CSS output");
             logger.debug("Prepared CSS cache hit", {
               projectScope,
               projectVersion: preparedContext.projectVersion,
@@ -178,7 +190,7 @@ export class StylesCSSHandler extends BaseHandler {
             extractProjectCandidates(ctx, {
               projectVersion,
               developmentMode: artifactPlan.kind === "branch",
-            }),
+            }, sourceFiles),
         );
         let result: GeneratedStylesResult;
         try {
@@ -198,6 +210,7 @@ export class StylesCSSHandler extends BaseHandler {
             cause: error,
           });
         }
+        assertCSSOutputContent(result.css, "Generated CSS output");
 
         if (!result.css && candidates.size > 0) {
           logger.warn("CSS is empty despite having candidates", {
@@ -593,6 +606,7 @@ export class StylesCSSHandler extends BaseHandler {
         status: 502,
       });
     }
+    assertCSSOutputContent(css, "Remote prepared CSS output");
 
     if (preparedContext) {
       await storePreparedProjectCSS(preparedContext, {

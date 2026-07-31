@@ -175,6 +175,9 @@ class MockRedisAdapter implements RedisAdapter {
   smembersCalls = 0;
   snapshotEvalCalls = 0;
   cursorSnapshotEvalCalls = 0;
+  timedWaitMigrationRows = 0;
+  timedWaitFence = 0;
+  redisNow = Date.now();
   beforeMissingRunCleanup?: () => void | Promise<void>;
   beforeRunSnapshotRead?: () => void | Promise<void>;
   beforeCursorRunSnapshotRead?: (cursorMember: string) => void | Promise<void>;
@@ -189,6 +192,59 @@ class MockRedisAdapter implements RedisAdapter {
     return set;
   }
 
+  private timedWaitEntries(runKey: string): Array<{
+    nodeId: string;
+    deadline: number;
+    waitKind: "delay" | "event";
+  }> {
+    const encoded = this.hashes.get(runKey)?.get("timedWaitIndex");
+    return encoded ? JSON.parse(encoded) : [];
+  }
+
+  private removeTimedWaitRows(
+    runId: string,
+    delayIndex: string,
+    eventIndex: string,
+    leaseIndex: string,
+    metadataKey: string,
+    claimPrefix: string,
+  ): void {
+    const encodedRows = this.hashes.get(metadataKey)?.get(runId);
+    const rows: string[] = encodedRows ? JSON.parse(encodedRows) : [];
+    for (const rowId of rows) {
+      this.sortedSets.get(delayIndex)?.delete(rowId);
+      this.sortedSets.get(eventIndex)?.delete(rowId);
+      this.sortedSets.get(leaseIndex)?.delete(rowId);
+      this.store.delete(claimPrefix + rowId);
+      this.expiries.delete(claimPrefix + rowId);
+    }
+    this.hashes.get(metadataKey)?.delete(runId);
+  }
+
+  private publishTimedWaitRows(
+    runKey: string,
+    runId: string,
+    delayIndex: string,
+    eventIndex: string,
+    metadataKey: string,
+  ): void {
+    const rowIds: string[] = [];
+    for (const entry of this.timedWaitEntries(runKey)) {
+      const rowId = JSON.stringify([runId, entry.nodeId]);
+      this.sortedSet(entry.waitKind === "delay" ? delayIndex : eventIndex).set(
+        rowId,
+        entry.deadline,
+      );
+      rowIds.push(rowId);
+    }
+    let metadata = this.hashes.get(metadataKey);
+    if (!metadata) {
+      metadata = new Map();
+      this.hashes.set(metadataKey, metadata);
+    }
+    metadata.set(runId, JSON.stringify(rowIds));
+  }
+
   private removeIndexedRun(
     runId: string,
     keys: string[],
@@ -196,6 +252,14 @@ class MockRedisAdapter implements RedisAdapter {
   ): void {
     const workflowId = this.hashes.get(keys[1]!)?.get(runId);
     const status = this.hashes.get(keys[2]!)?.get(runId);
+    this.removeTimedWaitRows(
+      runId,
+      keys[4]!,
+      keys[5]!,
+      keys[6]!,
+      keys[7]!,
+      args[9]!,
+    );
     for (const prefix of args.slice(0, 5)) {
       const ownedKey = prefix + runId;
       this.store.delete(ownedKey);
@@ -317,6 +381,8 @@ class MockRedisAdapter implements RedisAdapter {
       if (this.hashes.delete(key)) count++;
       if (this.lists.delete(key)) count++;
       if (this.sets.delete(key)) count++;
+      if (this.sortedSets.delete(key)) count++;
+      this.expiries.delete(key);
     }
     return Promise.resolve(count);
   }
@@ -387,7 +453,17 @@ class MockRedisAdapter implements RedisAdapter {
       workflowMetadata?.delete(runId);
       statusMetadata?.delete(runId);
       this.sortedSets.get(keys[7]!)?.delete(runId);
-      for (const staleKey of keys.slice(8)) {
+      const fieldCount = Number(args[8]);
+      const timedClaimPrefix = args[9 + (fieldCount * 2)]!;
+      this.removeTimedWaitRows(
+        runId,
+        keys[12]!,
+        keys[13]!,
+        keys[14]!,
+        keys[15]!,
+        timedClaimPrefix,
+      );
+      for (const staleKey of keys.slice(8, 12)) {
         this.store.delete(staleKey);
         this.hashes.delete(staleKey);
         this.lists.delete(staleKey);
@@ -396,7 +472,6 @@ class MockRedisAdapter implements RedisAdapter {
         this.expiries.delete(staleKey);
       }
 
-      const fieldCount = Number(args[8]);
       const hash = new Map<string, string>();
       for (let i = 0; i < fieldCount; i++) {
         const offset = 9 + (i * 2);
@@ -418,6 +493,9 @@ class MockRedisAdapter implements RedisAdapter {
         this.hashes.set(keys[6]!, nextStatusMetadata);
       }
       nextStatusMetadata.set(runId, status);
+      if (status === "waiting") {
+        this.publishTimedWaitRows(key, runId, keys[12]!, keys[13]!, keys[15]!);
+      }
       if (ttl > 0) {
         this.expiries.set(key, ttl);
         this.sortedSet(keys[7]!).set(runId, Date.now() + (ttl * 1000));
@@ -439,6 +517,14 @@ class MockRedisAdapter implements RedisAdapter {
       const statusMetadata = this.hashes.get(keys[7]!);
       const workflowId = workflowMetadata?.get(runId);
       const status = statusMetadata?.get(runId);
+      this.removeTimedWaitRows(
+        runId,
+        keys[9]!,
+        keys[10]!,
+        keys[11]!,
+        keys[12]!,
+        args[4]!,
+      );
       for (const ownedKey of keys.slice(1, 5)) {
         this.store.delete(ownedKey);
         this.hashes.delete(ownedKey);
@@ -469,6 +555,14 @@ class MockRedisAdapter implements RedisAdapter {
       const workflowId = this.hashes.get(key)?.get("workflowId") ??
         workflowMetadata?.get(runId);
       const status = this.hashes.get(key)?.get("status") ?? statusMetadata?.get(runId);
+      this.removeTimedWaitRows(
+        runId,
+        keys[9]!,
+        keys[10]!,
+        keys[11]!,
+        keys[12]!,
+        args[4]!,
+      );
       for (const ownedKey of keys.slice(0, 5)) {
         this.store.delete(ownedKey);
         this.hashes.delete(ownedKey);
@@ -496,8 +590,8 @@ class MockRedisAdapter implements RedisAdapter {
 
     if (script.includes("cursor-page-workflow-runs-exact")) {
       this.cursorSnapshotEvalCalls++;
-      const cursorScore = args[9]!;
-      const cursorMember = args[10]!;
+      const cursorScore = args[10]!;
+      const cursorMember = args[11]!;
       const snapshotHook = this.beforeRunSnapshotRead;
       this.beforeRunSnapshotRead = undefined;
       await snapshotHook?.();
@@ -505,7 +599,7 @@ class MockRedisAdapter implements RedisAdapter {
       const [processed, hasMore] = this.cleanupRetention(keys, args);
       if (hasMore) return [0, processed, "retention-backlog"];
 
-      const rows = this.orderedIndexRows(keys[4]!, "-inf", "+inf");
+      const rows = this.orderedIndexRows(keys[8]!, "-inf", "+inf");
       let start = 0;
       if (cursorMember !== "") {
         const cursorScoreNumber = Number(cursorScore);
@@ -526,7 +620,7 @@ class MockRedisAdapter implements RedisAdapter {
           start = cursorIndex + 1;
         }
       }
-      const page = rows.slice(start, start + Number(args[11]));
+      const page = rows.slice(start, start + Number(args[12]));
       const snapshots: unknown[] = [];
       for (const [runId] of page) {
         const hash = this.hashes.get(args[0]! + runId);
@@ -549,13 +643,13 @@ class MockRedisAdapter implements RedisAdapter {
       await hook?.();
       const [processed, hasMore] = this.cleanupRetention(keys, args);
       if (hasMore) return [0, processed, "retention-backlog"];
-      const maxScore = args[9]!;
-      const minScore = args[10]!;
-      const offset = Number(args[11]);
-      const limit = Number(args[12]);
-      const selectedCount = Number(args[13]);
+      const maxScore = args[10]!;
+      const minScore = args[11]!;
+      const offset = Number(args[12]);
+      const limit = Number(args[13]);
+      const selectedCount = Number(args[14]);
       const byId = new Map<string, number>();
-      for (const indexKey of keys.slice(4, 4 + selectedCount)) {
+      for (const indexKey of keys.slice(8, 8 + selectedCount)) {
         for (const [runId, score] of this.orderedIndexRows(indexKey, minScore, maxScore)) {
           byId.set(runId, score);
         }
@@ -581,11 +675,11 @@ class MockRedisAdapter implements RedisAdapter {
     if (script.includes("count-workflow-runs-exact")) {
       const [processed, hasMore] = this.cleanupRetention(keys, args);
       if (hasMore) return [0, processed, "retention-backlog"];
-      const maxScore = args[9]!;
-      const minScore = args[10]!;
-      const selectedCount = Number(args[11]);
+      const maxScore = args[10]!;
+      const minScore = args[11]!;
+      const selectedCount = Number(args[12]);
       let count = 0;
-      for (const indexKey of keys.slice(4, 4 + selectedCount)) {
+      for (const indexKey of keys.slice(8, 8 + selectedCount)) {
         count += this.orderedIndexRows(indexKey, minScore, maxScore).length;
       }
       return [1, processed, count];
@@ -755,6 +849,249 @@ class MockRedisAdapter implements RedisAdapter {
       return Promise.resolve(0);
     }
 
+    if (script.includes("migrate-timed-wait-index-page")) {
+      const limit = Number(args[0]);
+      const runPrefix = args[1]!;
+      const cursor = this.hashes.get(keys[1]!);
+      const cursorMember = cursor?.get("member") ?? "";
+      const cursorScore = Number(cursor?.get("score") ?? "");
+      const rows = this.orderedIndexRows(keys[0]!, "-inf", "+inf");
+      let start = 0;
+      if (cursorMember) {
+        const exact = rows.findIndex(([member, score]) =>
+          member === cursorMember && score === cursorScore
+        );
+        if (exact >= 0) {
+          start = exact + 1;
+        } else {
+          const insertion = rows.findIndex(([member, score]) =>
+            score < cursorScore ||
+            (score === cursorScore && compareRunIdsDescending(member, cursorMember) > 0)
+          );
+          start = insertion < 0 ? rows.length : insertion;
+        }
+      }
+      const page = rows.slice(start, start + limit);
+      const snapshots: string[][] = [];
+      for (const [runId] of page) {
+        const hash = this.hashes.get(runPrefix + runId);
+        if (hash && !hash.has("timedWaitIndex")) {
+          snapshots.push([...hash.entries()].flat());
+        }
+      }
+      this.timedWaitMigrationRows += snapshots.length;
+      if (page.length === limit) {
+        const last = page.at(-1)!;
+        this.hashes.set(
+          keys[1]!,
+          new Map([
+            ["member", last[0]],
+            ["score", String(last[1])],
+          ]),
+        );
+      } else {
+        this.hashes.delete(keys[1]!);
+      }
+      return snapshots;
+    }
+
+    if (script.includes("backfill-timed-wait-index-page")) {
+      const runPrefix = args[0]!;
+      const claimPrefix = args[1]!;
+      const count = Number(args[2]);
+      let applied = 0;
+      for (let index = 0; index < count; index++) {
+        const offset = 3 + (index * 3);
+        const runId = args[offset]!;
+        const observedNodeStates = args[offset + 1]!;
+        const encodedIndex = args[offset + 2]!;
+        const runKey = runPrefix + runId;
+        const hash = this.hashes.get(runKey);
+        if (
+          hash?.get("status") === "waiting" && !hash.has("timedWaitIndex") &&
+          hash.get("nodeStates") === observedNodeStates
+        ) {
+          hash.set("timedWaitIndex", encodedIndex);
+          this.removeTimedWaitRows(
+            runId,
+            keys[0]!,
+            keys[1]!,
+            keys[3]!,
+            keys[2]!,
+            claimPrefix,
+          );
+          this.publishTimedWaitRows(runKey, runId, keys[0]!, keys[1]!, keys[2]!);
+          applied++;
+        }
+      }
+      return applied;
+    }
+
+    if (script.includes("claim-due-timed-waits")) {
+      const now = Number(args[0]);
+      const limit = Number(args[1]);
+      const leaseDuration = Number(args[2]);
+      const ownerId = args[3]!;
+      const runPrefix = args[4]!;
+      const claimPrefix = args[5]!;
+      const waitKind = args[6]! as "delay" | "event";
+      const selectedIndex = waitKind === "delay" ? keys[0]! : keys[1]!;
+      const leaseNow = this.redisNow;
+
+      const expired = [...(this.sortedSets.get(keys[2]!)?.entries() ?? [])]
+        .filter(([, expiresAt]) => expiresAt <= leaseNow)
+        .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
+        .slice(0, limit);
+      for (const [rowId] of expired) {
+        const claimKey = claimPrefix + rowId;
+        const claimExpiry = this.expiries.get(claimKey);
+        if (claimExpiry !== undefined && claimExpiry <= leaseNow) {
+          this.store.delete(claimKey);
+          this.expiries.delete(claimKey);
+        }
+        if (!this.store.has(claimKey)) {
+          this.sortedSets.get(keys[2]!)?.delete(rowId);
+          const [runId, nodeId] = JSON.parse(rowId) as [string, string];
+          const runKey = runPrefix + runId;
+          const hash = this.hashes.get(runKey);
+          const entry = this.timedWaitEntries(runKey).find((candidate) =>
+            candidate.nodeId === nodeId
+          );
+          if (hash?.get("status") === "waiting" && entry) {
+            this.sortedSet(entry.waitKind === "delay" ? keys[0]! : keys[1]!).set(
+              rowId,
+              entry.deadline,
+            );
+          }
+        }
+      }
+
+      const candidates = [...(this.sortedSets.get(selectedIndex)?.entries() ?? [])]
+        .filter(([, deadline]) => deadline <= now)
+        .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
+        .slice(0, limit);
+      const claims: unknown[] = [];
+      for (const [rowId, indexedDeadline] of candidates) {
+        const [runId, nodeId] = JSON.parse(rowId) as [string, string];
+        const runKey = runPrefix + runId;
+        const hash = this.hashes.get(runKey);
+        const entry = this.timedWaitEntries(runKey).find((candidate) =>
+          candidate.nodeId === nodeId
+        );
+        if (
+          hash?.get("status") !== "waiting" || !entry || entry.waitKind !== waitKind ||
+          entry.deadline !== indexedDeadline
+        ) {
+          this.sortedSets.get(selectedIndex)?.delete(rowId);
+          if (hash?.get("status") === "waiting" && entry) {
+            this.sortedSet(entry.waitKind === "delay" ? keys[0]! : keys[1]!).set(
+              rowId,
+              entry.deadline,
+            );
+          }
+          continue;
+        }
+        const claimKey = claimPrefix + rowId;
+        const claimExpiry = this.expiries.get(claimKey);
+        if (claimExpiry !== undefined && claimExpiry <= leaseNow) {
+          this.store.delete(claimKey);
+          this.expiries.delete(claimKey);
+        }
+        if (this.store.has(claimKey)) continue;
+        const claimId = `${ownerId}:${++this.timedWaitFence}`;
+        const expiresAt = leaseNow + leaseDuration;
+        this.store.set(claimKey, claimId);
+        this.expiries.set(claimKey, expiresAt);
+        this.sortedSets.get(selectedIndex)?.delete(rowId);
+        this.sortedSet(keys[2]!).set(rowId, expiresAt);
+        claims.push([
+          rowId,
+          String(entry.deadline),
+          claimId,
+          String(expiresAt),
+          [...hash.entries()].flat(),
+        ]);
+      }
+      return claims;
+    }
+
+    if (script.includes("release-timed-wait-claim")) {
+      const claimId = args[0]!;
+      const rowId = args[1]!;
+      const nodeId = args[2]!;
+      if (this.store.get(keys[3]!) !== claimId) return 0;
+      this.store.delete(keys[3]!);
+      this.expiries.delete(keys[3]!);
+      this.sortedSets.get(keys[2]!)?.delete(rowId);
+      const hash = this.hashes.get(keys[4]!);
+      if (hash?.get("status") === "waiting") {
+        const entry = this.timedWaitEntries(keys[4]!).find((candidate) =>
+          candidate.nodeId === nodeId
+        );
+        if (entry) {
+          this.sortedSet(entry.waitKind === "delay" ? keys[0]! : keys[1]!).set(
+            rowId,
+            entry.deadline,
+          );
+        }
+      }
+      return 1;
+    }
+
+    if (script.includes("conditional-timed-wait-resolution")) {
+      const claimId = args[0]!;
+      const nodeId = args[2]!;
+      const expectedDeadline = Number(args[3]);
+      const expectedWorkerId = args[4]!;
+      const nextStatus = args[5]!;
+      const statusPrefix = args[6]!;
+      const workflowStatusPrefix = args[7]!;
+      const runId = args[8]!;
+      const fieldCount = Number(args[9]);
+      const fieldStart = 10;
+      const claimPrefix = args[fieldStart + (fieldCount * 2)]!;
+      const hash = this.hashes.get(keys[0]!);
+      const exact = this.timedWaitEntries(keys[0]!).some((entry) =>
+        entry.nodeId === nodeId && entry.deadline === expectedDeadline
+      );
+      if (
+        this.store.get(keys[1]!) !== claimId || hash?.get("status") !== "waiting" ||
+        hash.get("workerId") !== expectedWorkerId || !exact
+      ) {
+        return 0;
+      }
+      const workflowId = hash.get("workflowId");
+      const createdAtMs = Number(hash.get("createdAtMs"));
+      if (!workflowId || !Number.isFinite(createdAtMs)) return -1;
+      this.removeTimedWaitRows(
+        runId,
+        keys[3]!,
+        keys[4]!,
+        keys[2]!,
+        keys[6]!,
+        claimPrefix,
+      );
+      hash.set("status", nextStatus);
+      this.sortedSets.get(statusPrefix + "waiting")?.delete(runId);
+      this.sortedSets.get(workflowStatusPrefix + workflowId + ":waiting")?.delete(runId);
+      this.sortedSet(statusPrefix + nextStatus).set(runId, createdAtMs);
+      this.sortedSet(workflowStatusPrefix + workflowId + ":" + nextStatus).set(
+        runId,
+        createdAtMs,
+      );
+      let statusMetadata = this.hashes.get(keys[5]!);
+      if (!statusMetadata) {
+        statusMetadata = new Map();
+        this.hashes.set(keys[5]!, statusMetadata);
+      }
+      statusMetadata.set(runId, nextStatus);
+      for (let index = 0; index < fieldCount; index++) {
+        const offset = fieldStart + (index * 2);
+        hash.set(args[offset]!, args[offset + 1]!);
+      }
+      return 1;
+    }
+
     if (script.includes("conditional-run-update")) {
       const expectedCount = Number(args[0]);
       const expectedStatuses = args.slice(1, expectedCount + 1);
@@ -764,6 +1101,10 @@ class MockRedisAdapter implements RedisAdapter {
       const runId = args[expectedCount + 4]!;
       const expectedWorkerId = args[expectedCount + 5]!;
       const expectedLockId = args[expectedCount + 6]!;
+      const invalidateTimedWait = args[expectedCount + 7] === "1";
+      const fieldCount = Number(args[expectedCount + 8]);
+      const fieldStart = expectedCount + 9;
+      const timedClaimPrefix = args[fieldStart + (fieldCount * 2)]!;
       const hash = this.hashes.get(key);
       const oldStatus = hash?.get("status");
       if (!hash || !oldStatus || !expectedStatuses.includes(oldStatus)) {
@@ -774,6 +1115,17 @@ class MockRedisAdapter implements RedisAdapter {
       }
       if (expectedLockId && this.store.get(keys[3]!) !== expectedLockId) {
         return Promise.resolve(0);
+      }
+
+      if (invalidateTimedWait) {
+        this.removeTimedWaitRows(
+          runId,
+          keys[4]!,
+          keys[5]!,
+          keys[6]!,
+          keys[7]!,
+          timedClaimPrefix,
+        );
       }
 
       if (nextStatus && oldStatus !== nextStatus) {
@@ -796,8 +1148,12 @@ class MockRedisAdapter implements RedisAdapter {
         statusMetadata.set(runId, nextStatus);
       }
 
-      for (let i = expectedCount + 7; i < args.length; i += 2) {
-        hash.set(args[i]!, args[i + 1]!);
+      for (let index = 0; index < fieldCount; index++) {
+        const offset = fieldStart + (index * 2);
+        hash.set(args[offset]!, args[offset + 1]!);
+      }
+      if (invalidateTimedWait && hash.get("status") === "waiting") {
+        this.publishTimedWaitRows(key, runId, keys[4]!, keys[5]!, keys[7]!);
       }
       if (nextStatus && nextStatus !== "running") {
         this.store.delete(keys[1]!);
@@ -987,6 +1343,62 @@ function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): Workfl
     sourceIntegrationPolicy: overrides.sourceIntegrationPolicy ??
       UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
   };
+}
+
+function createTimedWaitRun(
+  id: string,
+  deadline: number,
+  waitKind: "delay" | "event" = "delay",
+  overrides: Partial<WorkflowRun> = {},
+): WorkflowRun {
+  return createTestRun(id, {
+    status: "waiting",
+    workerId: `run-execution:${id}`,
+    currentNodes: ["pause"],
+    nodeStates: {
+      pause: {
+        nodeId: "pause",
+        status: "running",
+        input: {
+          type: "event",
+          eventName: waitKind === "delay" ? "__delay__" : "never-arrives",
+          timeout: 1_000,
+          _waitKind: waitKind,
+        },
+        attempt: 1,
+        startedAt: new Date(deadline - 1_000),
+      },
+    },
+    ...overrides,
+  });
+}
+
+function createSiblingTimedWaitRun(
+  id: string,
+  deadline: number,
+  waitKind: "delay" | "event" = "event",
+): WorkflowRun {
+  const eventName = waitKind === "delay" ? "__delay__" : "never-arrives";
+  const startedAt = new Date(deadline - 1_000);
+  return createTimedWaitRun(id, deadline, waitKind, {
+    currentNodes: ["eventB", "eventA"],
+    nodeStates: {
+      eventB: {
+        nodeId: "eventB",
+        status: "running",
+        input: { type: "event", eventName, timeout: 1_000, _waitKind: waitKind },
+        attempt: 1,
+        startedAt,
+      },
+      eventA: {
+        nodeId: "eventA",
+        status: "running",
+        input: { type: "event", eventName, timeout: 1_000, _waitKind: waitKind },
+        attempt: 1,
+        startedAt,
+      },
+    },
+  });
 }
 
 describe("RedisBackend", () => {
@@ -2725,11 +3137,18 @@ describe("RedisBackend", () => {
         prefix: "ttl:",
         runTtl: 3600,
       });
-      const run = createTestRun("run-expired-owned", {
+      const run = createTimedWaitRun("run-expired-owned", Date.now() - 1, "delay", {
         workflowId: "workflow-expired-owned",
-        status: "waiting",
       });
       await ttlBackend.createRun(run);
+      const timedWaitClaim = (await ttlBackend.claimDueTimedWaits({
+        ownerId: "ttl-expired-owner",
+        now: Date.now(),
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(timedWaitClaim);
       await ttlBackend.saveCheckpoint(run.id, {
         id: "checkpoint-expired",
         nodeId: "step-expired",
@@ -2761,6 +3180,23 @@ describe("RedisBackend", () => {
       );
       assertEquals(
         mockRedis.sortedSets.get("ttl:schema-v2:index:retention")?.has(run.id) ?? false,
+        false,
+      );
+      const rowId = JSON.stringify([run.id, timedWaitClaim.nodeId]);
+      assertEquals(
+        mockRedis.hashes.get("ttl:schema-v2:index:run-timed-wait-rows")?.has(run.id) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get("ttl:schema-v2:index:timed-wait:delay")?.has(rowId) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.sortedSets.get("ttl:schema-v2:index:timed-wait-claims")?.has(rowId) ?? false,
+        false,
+      );
+      assertEquals(
+        mockRedis.store.has(`ttl:schema-v2:timed-wait-claim:${rowId}`),
         false,
       );
     });
@@ -3014,6 +3450,312 @@ describe("RedisBackend", () => {
       assertEquals(await backend.countRuns({ status: ["pending", "running"] }), 3);
       assertEquals(await backend.countRuns({ createdAfter: new Date("2026-01-01") }), 0);
       assertEquals(await backend.countRuns({ createdBefore: new Date("2024-01-01") }), 0);
+    });
+  });
+
+  describe("timed-wait deadline recovery", () => {
+    it("atomically claims bounded deadline-ordered pages without duplicate delivery", async () => {
+      const now = Date.now();
+      await backend.createRun(createTimedWaitRun("redis-deadline-c", now - 10));
+      await backend.createRun(createTimedWaitRun("redis-deadline-a", now - 20));
+      await backend.createRun(createTimedWaitRun("redis-deadline-b", now - 20));
+
+      const [first, second] = await Promise.all([
+        backend.claimDueTimedWaits({
+          ownerId: "redis-recovery-a",
+          now,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }),
+        backend.claimDueTimedWaits({
+          ownerId: "redis-recovery-b",
+          now,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }),
+      ]);
+
+      const claimed = [...first, ...second];
+      assertEquals(claimed.map((claim) => claim.run.id).sort(), [
+        "redis-deadline-a",
+        "redis-deadline-b",
+        "redis-deadline-c",
+      ]);
+      assertEquals(new Set(claimed.map((claim) => claim.run.id)).size, 3);
+      assertEquals(
+        first.map((claim) => claim.deadline),
+        [...first].map((claim) => claim.deadline).sort(),
+      );
+    });
+
+    it("claims same-deadline siblings by node identity and fences the losing transition", async () => {
+      const now = Date.now();
+      const run = createSiblingTimedWaitRun("redis-sibling-deadlines", now - 1);
+      await backend.createRun(run);
+
+      const claims = await backend.claimDueTimedWaits({
+        ownerId: "redis-sibling-owner",
+        now,
+        limit: 2,
+        leaseDuration: 5_000,
+        waitKind: "event",
+      });
+
+      assertEquals(claims.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+      assertEquals(new Set(claims.map((claim) => claim.claimId)).size, 2);
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          claims[0]!.nodeId,
+          claims[0]!.claimId,
+          claims[0]!.deadline,
+          run.workerId!,
+          { status: "failed", error: { message: "event timed out" } },
+        ),
+        true,
+      );
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          claims[1]!.nodeId,
+          claims[1]!.claimId,
+          claims[1]!.deadline,
+          run.workerId!,
+          { status: "failed", error: { message: "stale sibling" } },
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.releaseTimedWaitClaim(
+          run.id,
+          claims[1]!.nodeId,
+          claims[1]!.claimId,
+        ),
+        false,
+      );
+      assertEquals((await backend.getRun(run.id))?.status, "failed");
+    });
+
+    it("releases, expires, and refreshes every active sibling wait independently", async () => {
+      const now = Date.now();
+      const run = createSiblingTimedWaitRun("redis-sibling-lifecycle", now - 1);
+      await backend.createRun(run);
+      const initial = await backend.claimDueTimedWaits({
+        ownerId: "redis-sibling-initial",
+        now,
+        limit: 2,
+        leaseDuration: 10,
+        waitKind: "event",
+      });
+      assertEquals(initial.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+
+      assertEquals(
+        await backend.releaseTimedWaitClaim(
+          run.id,
+          initial[0]!.nodeId,
+          initial[0]!.claimId,
+        ),
+        true,
+      );
+      const released = await backend.claimDueTimedWaits({
+        ownerId: "redis-sibling-released",
+        now,
+        limit: 1,
+        leaseDuration: 10,
+        waitKind: "event",
+      });
+      assertEquals(released.map((claim) => claim.nodeId), ["eventA"]);
+
+      for (const claim of [initial[1]!, released[0]!]) {
+        const rowId = JSON.stringify([run.id, claim.nodeId]);
+        const claimKey = `test:schema-v2:timed-wait-claim:${rowId}`;
+        mockRedis.store.delete(claimKey);
+        mockRedis.expiries.delete(claimKey);
+        mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.set(rowId, 0);
+      }
+      const expired = await backend.claimDueTimedWaits({
+        ownerId: "redis-sibling-expired",
+        now: now + 11,
+        limit: 2,
+        leaseDuration: 5_000,
+        waitKind: "event",
+      });
+      assertEquals(expired.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+
+      const refreshedDeadline = now + 60_000;
+      await backend.updateRun(run.id, {
+        nodeStates: createSiblingTimedWaitRun(run.id, refreshedDeadline).nodeStates,
+      });
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-sibling-too-early",
+          now,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        }),
+        [],
+      );
+      assertEquals(
+        (await backend.claimDueTimedWaits({
+          ownerId: "redis-sibling-refreshed",
+          now: refreshedDeadline,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        })).map((claim) => claim.nodeId),
+        ["eventA", "eventB"],
+      );
+    });
+
+    it("uses the Redis clock for leases when the deadline clock is ahead or behind", async () => {
+      const redisNow = Date.now();
+      mockRedis.redisNow = redisNow;
+      const hostAhead = redisNow + 60_000;
+      const aheadRun = createTimedWaitRun("redis-host-clock-ahead", hostAhead - 1);
+      await backend.createRun(aheadRun);
+      const ahead = (await backend.claimDueTimedWaits({
+        ownerId: "redis-clock-ahead",
+        now: hostAhead,
+        limit: 1,
+        leaseDuration: 10,
+        waitKind: "delay",
+      }))[0];
+      assertExists(ahead);
+      assertEquals(ahead.leaseExpiresAt.getTime(), redisNow + 10);
+
+      mockRedis.redisNow = redisNow + 11;
+      const reclaimed = (await backend.claimDueTimedWaits({
+        ownerId: "redis-clock-ahead-reclaimed",
+        now: hostAhead,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(reclaimed);
+      assertEquals(reclaimed.claimId === ahead.claimId, false);
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          reclaimed.run.id,
+          reclaimed.nodeId,
+          reclaimed.claimId,
+          reclaimed.deadline,
+          aheadRun.workerId!,
+          { status: "pending" },
+        ),
+        true,
+      );
+
+      const hostBehind = redisNow - 60_000;
+      mockRedis.redisNow = redisNow + 120_000;
+      const behindRun = createTimedWaitRun("redis-host-clock-behind", hostBehind - 1);
+      await backend.createRun(behindRun);
+      const behind = (await backend.claimDueTimedWaits({
+        ownerId: "redis-clock-behind",
+        now: hostBehind,
+        limit: 1,
+        leaseDuration: 20,
+        waitKind: "delay",
+      }))[0];
+      assertExists(behind);
+      assertEquals(behind.leaseExpiresAt.getTime(), mockRedis.redisNow + 20);
+    });
+
+    it("rejects a stale lease token after the deadline is reclaimed", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-deadline-fence", now - 1);
+      await backend.createRun(run);
+      const stale = (await backend.claimDueTimedWaits({
+        ownerId: "redis-recovery-stale",
+        now,
+        limit: 1,
+        leaseDuration: 10,
+        waitKind: "delay",
+      }))[0];
+      assertExists(stale);
+      const claimRowId = JSON.stringify([run.id, stale.nodeId]);
+      const claimKey = `test:schema-v2:timed-wait-claim:${claimRowId}`;
+      mockRedis.store.delete(claimKey);
+      mockRedis.expiries.delete(claimKey);
+      mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.set(claimRowId, 0);
+
+      const current = (await backend.claimDueTimedWaits({
+        ownerId: "redis-recovery-current",
+        now: now + 11,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(current);
+      assertEquals(current.claimId === stale.claimId, false);
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          stale.nodeId,
+          stale.claimId,
+          stale.deadline,
+          run.workerId!,
+          { status: "pending" },
+        ),
+        false,
+      );
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          current.nodeId,
+          current.claimId,
+          current.deadline,
+          run.workerId!,
+          { status: "pending" },
+        ),
+        true,
+      );
+    });
+
+    it("incrementally migrates legacy waiting rows without hydrating the full set", async () => {
+      const now = Date.now();
+      const runIds: string[] = [];
+      for (let index = 0; index < 101; index++) {
+        const runId = `legacy-deadline-${String(index).padStart(3, "0")}`;
+        runIds.push(runId);
+        await backend.createRun(createTimedWaitRun(runId, now - 1, "delay", {
+          createdAt: new Date(index),
+        }));
+        mockRedis.hashes.get(`test:schema-v2:run:${runId}`)?.delete("timedWaitIndex");
+        mockRedis.hashes.get("test:schema-v2:index:run-timed-wait-rows")?.delete(runId);
+        mockRedis.sortedSets.get("test:schema-v2:index:timed-wait:delay")?.delete(
+          JSON.stringify([runId, "pause"]),
+        );
+      }
+
+      const first = await backend.claimDueTimedWaits({
+        ownerId: "redis-migration-first",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      });
+      assertEquals(mockRedis.timedWaitMigrationRows <= 100, true);
+      if (first[0]) {
+        await backend.releaseTimedWaitClaim(
+          first[0].run.id,
+          first[0].nodeId,
+          first[0].claimId,
+        );
+      }
+
+      const second = await backend.claimDueTimedWaits({
+        ownerId: "redis-migration-second",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      });
+      assertEquals(second.length, 1);
+      assertEquals(runIds.includes(second[0]!.run.id), true);
+      assertEquals(mockRedis.timedWaitMigrationRows <= 200, true);
     });
   });
 });

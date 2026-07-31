@@ -10,6 +10,7 @@ import { CLIENT_STYLES } from "./templates.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { hasControlCharacters } from "../utils/string-validation.ts";
+import { STATIC_ASSET_MAX_BYTES } from "#veryfront/utils/constants/static-assets.ts";
 
 const logger = serverLogger.component("build");
 const MAX_STATIC_ASSET_PATH_LENGTH = 4_096;
@@ -142,6 +143,126 @@ function assertExpectedInfo(
       detail: `Public asset has an invalid size: ${relativePath}`,
     });
   }
+  if (kind === "file" && info.size > STATIC_ASSET_MAX_BYTES) {
+    throw BUILD_FAILED.create({
+      detail:
+        `Public asset exceeds the ${STATIC_ASSET_MAX_BYTES}-byte static output limit: ${relativePath}`,
+    });
+  }
+}
+
+function assertSafeBuildOutputPath(relativePath: string): void {
+  if (
+    relativePath.length === 0 ||
+    relativePath.length > MAX_STATIC_ASSET_PATH_LENGTH ||
+    relativePath.startsWith("/") ||
+    relativePath.includes("\\") ||
+    hasControlCharacters(relativePath) ||
+    relativePath.split("/").some((segment) => segment === "" || segment === "." || segment === "..")
+  ) {
+    throw BUILD_FAILED.create({ detail: `Invalid build output path: ${relativePath}` });
+  }
+}
+
+function assertExpectedBuildOutputInfo(
+  info: FileInfo,
+  kind: "file" | "directory",
+  relativePath: string,
+): void {
+  if (info.isSymlink) {
+    throw BUILD_FAILED.create({
+      detail: `Symbolic links are not supported in build output: ${relativePath}`,
+    });
+  }
+  const matchesKind = kind === "file"
+    ? info.isFile && !info.isDirectory
+    : info.isDirectory && !info.isFile;
+  if (!matchesKind) {
+    throw BUILD_FAILED.create({
+      detail: `Build output changed type while being validated: ${relativePath}`,
+    });
+  }
+  if (!Number.isSafeInteger(info.size) || info.size < 0) {
+    throw BUILD_FAILED.create({ detail: `Build output has an invalid size: ${relativePath}` });
+  }
+  if (kind === "file" && info.size > STATIC_ASSET_MAX_BYTES) {
+    throw BUILD_FAILED.create({
+      detail:
+        `Build output exceeds the ${STATIC_ASSET_MAX_BYTES}-byte static asset limit: ${relativePath}`,
+    });
+  }
+}
+
+/** Validate every final build artifact against the runtime static-file ceiling. */
+export async function validateStaticBuildOutput(
+  adapter: RuntimeAdapter,
+  outputDir: string,
+): Promise<void> {
+  const outputInfo = await statPathIfPresent(adapter, outputDir);
+  if (outputInfo === null) {
+    throw BUILD_FAILED.create({ detail: `Build output directory does not exist: ${outputDir}` });
+  }
+  if (outputInfo.isSymlink || !outputInfo.isDirectory || outputInfo.isFile) {
+    throw BUILD_FAILED.create({
+      detail: `Build output path is not a safe directory: ${outputDir}`,
+    });
+  }
+
+  let visitedEntries = 0;
+  const scan = async (
+    directoryPath: string,
+    relativeDirectory: string,
+    depth: number,
+  ): Promise<void> => {
+    if (depth > MAX_STATIC_ASSET_DEPTH) {
+      throw BUILD_FAILED.create({
+        detail: `Build output tree exceeds ${MAX_STATIC_ASSET_DEPTH} directory levels`,
+      });
+    }
+
+    const entries: DirEntry[] = [];
+    const portableNames = new Set<string>();
+    for await (const entry of adapter.fs.readDir(directoryPath)) {
+      visitedEntries++;
+      if (visitedEntries > MAX_STATIC_ASSET_ENTRIES) {
+        throw BUILD_FAILED.create({
+          detail: `Build output tree exceeds ${MAX_STATIC_ASSET_ENTRIES} entries`,
+        });
+      }
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      assertSafeBuildOutputPath(relativePath);
+      if (
+        typeof entry.name !== "string" ||
+        entry.name.length === 0 ||
+        entry.name.includes("/") ||
+        entry.name.includes("\\") ||
+        entry.isSymlink !== false ||
+        entry.isFile === entry.isDirectory
+      ) {
+        throw BUILD_FAILED.create({ detail: `Unsupported build output entry: ${relativePath}` });
+      }
+      const portableName = portableNameKey(entry.name);
+      if (portableNames.has(portableName)) {
+        throw BUILD_FAILED.create({
+          detail: `Build output contains a portable path collision: ${relativePath}`,
+        });
+      }
+      portableNames.add(portableName);
+      entries.push(entry);
+    }
+    entries.sort(compareNames);
+
+    for (const entry of entries) {
+      const relativePath = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
+      const path = join(directoryPath, entry.name);
+      const kind = entry.isDirectory ? "directory" : "file";
+      const info = await statPath(adapter, path);
+      assertExpectedBuildOutputInfo(info, kind, relativePath);
+      if (kind === "directory") await scan(path, relativePath, depth + 1);
+    }
+  };
+
+  await scan(outputDir, "", 0);
 }
 
 export async function discoverStaticAssets(
@@ -249,10 +370,29 @@ export async function copyStaticAssets(
   }
 
   const readFileBytes = adapter.fs.readFileBytes?.bind(adapter.fs);
+  const readFileBytesBounded = adapter.fs.readFileBytesBounded?.bind(adapter.fs);
+  const maxWholeFileReadBytes = adapter.fs.maxWholeFileReadBytes;
   const writeFileBytes = adapter.fs.writeFileBytes?.bind(adapter.fs);
-  if (fileEntries.length > 0 && (!readFileBytes || !writeFileBytes)) {
+  const hasAdmittedWholeReader = readFileBytes !== undefined &&
+    Number.isSafeInteger(maxWholeFileReadBytes) &&
+    (maxWholeFileReadBytes as number) > 0 &&
+    (maxWholeFileReadBytes as number) <= STATIC_ASSET_MAX_BYTES;
+  if (
+    fileEntries.length > 0 &&
+    (!writeFileBytes || (!readFileBytesBounded && !hasAdmittedWholeReader))
+  ) {
     throw BUILD_FAILED.create({
-      detail: "The selected runtime adapter does not support binary-safe public asset copying",
+      detail:
+        "The selected runtime adapter does not support bounded or fixed-ceiling binary-safe public asset copying",
+    });
+  }
+  if (
+    !readFileBytesBounded &&
+    hasAdmittedWholeReader &&
+    fileEntries.some((entry) => entry.size > (maxWholeFileReadBytes as number))
+  ) {
+    throw BUILD_FAILED.create({
+      detail: "A public asset exceeds the adapter's fixed whole-file read ceiling",
     });
   }
 
@@ -309,7 +449,9 @@ export async function copyStaticAssets(
           detail: `Public asset changed size while being copied: ${entry.relativePath}`,
         });
       }
-      const content = await readFileBytes!(entry.sourcePath);
+      const content = readFileBytesBounded
+        ? await readFileBytesBounded(entry.sourcePath, entry.size + 1)
+        : await readFileBytes!(entry.sourcePath);
       if (content.byteLength !== entry.size) {
         throw BUILD_FAILED.create({
           detail: `Public asset changed size while being read: ${entry.relativePath}`,

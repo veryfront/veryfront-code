@@ -26,8 +26,18 @@ import {
   workflow,
 } from "../dsl/index.ts";
 import { ApprovalManager } from "../runtime/approval-manager.ts";
-import type { WorkflowContext, WorkflowDefinition, WorkflowRun } from "../types.ts";
+import type {
+  Checkpoint,
+  WorkflowContext,
+  WorkflowDefinition,
+  WorkflowNode,
+  WorkflowRun,
+} from "../types.ts";
+import { SUBWORKFLOW_INPUT_KIND, WORKFLOW_RUNTIME_STATE_VERSION } from "../runtime-state.ts";
 import { reserveWorkflowStart, WorkflowExecutor } from "./workflow-executor.ts";
+import { DAGExecutor } from "./dag/index.ts";
+import { CheckpointManager } from "./checkpoint-manager.ts";
+import { StepExecutor } from "./step-executor.ts";
 import { getPrimaryAbortReason, isAbortCleanupError } from "./abortable-operation.ts";
 import { FakeTime } from "#std/testing/time";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils";
@@ -696,6 +706,837 @@ describe("workflow/executor/workflow-executor", () => {
     assertEquals(await backend.getLatestCheckpoint(run.id), null);
   });
 
+  it("fails closed on a legacy descendant checkpoint without a root envelope", async () => {
+    const backend = new MemoryBackend();
+    let childExecutions = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register({
+      id: "descendant-checkpoint-root-recovery",
+      version: "1",
+      steps: [{
+        id: "nested",
+        config: {
+          type: "subWorkflow",
+          workflow: {
+            id: "descendant-checkpoint-child",
+            steps: [{
+              id: "child",
+              config: {
+                type: "step",
+                tool: createTool("descendant-checkpoint-child", () => {
+                  childExecutions++;
+                  return "done";
+                }),
+              },
+            }],
+          },
+        },
+      }],
+    });
+    const run: WorkflowRun = {
+      ...createRun("descendant-checkpoint-root-recovery"),
+      version: "1",
+      status: "pending",
+      input: { root: true },
+      context: { input: { root: true }, keep: "OUTER" },
+      _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+      _workflowProjection: { context: {} },
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "nested-child-checkpoint",
+      nodeId: "nested/child",
+      timestamp: new Date(),
+      context: { input: { secret: "SUB" }, "nested/child": "done" },
+      nodeStates: {
+        "nested/child": {
+          nodeId: "nested/child",
+          status: "completed",
+          output: "done",
+          attempt: 1,
+          completedAt: new Date(),
+        },
+      },
+      _workflowProjection: {
+        context: {},
+        inputKind: SUBWORKFLOW_INPUT_KIND,
+      },
+    });
+
+    await assertRejects(
+      () => executor.resume(run.id),
+      Error,
+      "legacy descendant checkpoint",
+    );
+
+    assertEquals(childExecutions, 0);
+    assertEquals((await backend.getRun(run.id))?.status, "pending");
+  });
+
+  it("resumes a sub-workflow descendant envelope without replaying its completed child", async () => {
+    const backend = new MemoryBackend();
+    let childExecutions = 0;
+    const definition: WorkflowDefinition = {
+      id: "descendant-envelope-root-recovery",
+      steps: [{
+        id: "nested",
+        config: {
+          type: "subWorkflow",
+          workflow: {
+            id: "descendant-envelope-child",
+            steps: [{
+              id: "child",
+              config: {
+                type: "step",
+                checkpoint: true,
+                tool: createTool("descendant-envelope-child", () => {
+                  childExecutions++;
+                  return "already-done";
+                }),
+              },
+            }],
+          },
+        },
+      }],
+    };
+    const run: WorkflowRun = {
+      ...createRun(definition.id),
+      status: "pending",
+      input: { root: true },
+      context: { input: { root: true }, keep: "OUTER" },
+      _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+      _workflowProjection: { context: {} },
+    };
+    await backend.createRun(run);
+    const dag = new DAGExecutor({
+      stepExecutor: new StepExecutor(),
+      checkpointManager: new CheckpointManager({ backend }),
+    });
+    const seeded = await dag.execute(definition.steps as WorkflowNode[], run);
+    assertEquals(seeded.completed, true);
+    assertEquals(childExecutions, 1);
+    assertExists((await backend.getLatestCheckpoint(run.id))?._resumeEnvelope);
+
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(definition);
+    await executor.resume(run.id);
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals(childExecutions, 1);
+    assertEquals(completed?.context.input, { root: true });
+    assertEquals(completed?.context.keep, "OUTER");
+    assertEquals(Object.hasOwn(completed?.context ?? {}, "nested/child"), false);
+    assertEquals(completed?._workflowProjection?.inputKind, undefined);
+  });
+
+  it("restores a checkpoint on the final root node without replaying its side effect", async () => {
+    const backend = new MemoryBackend();
+    let executions = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register({
+      id: "final-root-checkpoint-recovery",
+      version: "1",
+      steps: [{
+        id: "final",
+        config: {
+          type: "step",
+          checkpoint: true,
+          tool: createTool("final-root-checkpoint", () => {
+            executions++;
+            return "replayed";
+          }),
+        },
+      }],
+    });
+    const run = {
+      ...createRun("final-root-checkpoint-recovery"),
+      version: "1",
+      status: "pending" as const,
+      _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+      _workflowProjection: { context: {} },
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "final-root-checkpoint",
+      nodeId: "final",
+      timestamp: new Date(),
+      context: { input: {}, final: "already-done" },
+      nodeStates: {
+        final: {
+          nodeId: "final",
+          status: "completed",
+          output: "already-done",
+          attempt: 1,
+          completedAt: new Date(),
+        },
+      },
+      _workflowProjection: { context: {} },
+    });
+
+    await executor.resume(run.id);
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(executions, 0);
+    assertEquals(completed?.status, "completed");
+    assertEquals(completed?.context.final, "already-done");
+    assertEquals(completed?.output, { final: "already-done" });
+  });
+
+  it("resumes checkpoint work through dependency readiness instead of declaration order", async () => {
+    const backend = new MemoryBackend();
+    const order: string[] = [];
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register({
+      id: "checkpoint-dependency-readiness",
+      version: "1",
+      steps: [
+        {
+          id: "A",
+          dependsOn: [],
+          config: { type: "step", tool: createTool("A", () => "replayed-A") },
+        },
+        {
+          id: "C",
+          dependsOn: ["B"],
+          config: {
+            type: "step",
+            tool: createTool("C", () => {
+              order.push("C");
+              return "C-done";
+            }),
+          },
+        },
+        {
+          id: "B",
+          dependsOn: ["A"],
+          config: {
+            type: "step",
+            tool: createTool("B", () => {
+              order.push("B");
+              return "B-done";
+            }),
+          },
+        },
+      ],
+    });
+    const run = {
+      ...createRun("checkpoint-dependency-readiness"),
+      version: "1",
+      status: "pending" as const,
+      _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+      _workflowProjection: { context: {} },
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "checkpoint-after-A",
+      nodeId: "A",
+      timestamp: new Date(),
+      context: { input: {}, A: "already-done" },
+      nodeStates: {
+        A: {
+          nodeId: "A",
+          status: "completed",
+          output: "already-done",
+          attempt: 1,
+          completedAt: new Date(),
+        },
+      },
+      _workflowProjection: { context: {} },
+    });
+
+    await executor.resume(run.id);
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals(order, ["B", "C"]);
+    assertEquals(completed?.context, {
+      input: {},
+      A: "already-done",
+      B: "B-done",
+      C: "C-done",
+    });
+  });
+
+  it("re-evaluates a dynamic root graph from its original admission snapshot", async () => {
+    const backend = new MemoryBackend();
+    let builderCalls = 0;
+    let aRuns = 0;
+    let bRuns = 0;
+    let cRuns = 0;
+    const definition: WorkflowDefinition = {
+      id: "dynamic-root-admission-recovery",
+      steps: ({ context }) => {
+        builderCalls++;
+        return [
+          {
+            id: "A",
+            config: {
+              type: "step",
+              checkpoint: true,
+              input: (stepContext) => {
+                stepContext.flag = true;
+                return {};
+              },
+              tool: createTool("dynamic-root-A", () => {
+                aRuns++;
+                return "A";
+              }),
+            },
+          },
+          context.flag
+            ? {
+              id: "C",
+              config: {
+                type: "step",
+                tool: createTool("dynamic-root-C", () => {
+                  cRuns++;
+                  return "C";
+                }),
+              },
+            }
+            : {
+              id: "B",
+              config: {
+                type: "step",
+                tool: createTool("dynamic-root-B", () => {
+                  bRuns++;
+                  return "B";
+                }),
+              },
+            },
+        ];
+      },
+    };
+    const run: WorkflowRun = {
+      ...createRun(definition.id),
+      context: { input: {}, flag: false },
+      _workflowProjection: { context: {} },
+    };
+    await backend.createRun(run);
+    const admittedNodes =
+      (definition.steps as Exclude<WorkflowDefinition["steps"], WorkflowNode[]>)(
+        { input: run.input, context: run.context },
+      );
+    const dag = new DAGExecutor({
+      stepExecutor: new StepExecutor(),
+      checkpointManager: new CheckpointManager({ backend }),
+    });
+    await dag.execute(admittedNodes, run);
+    const checkpoint = await backend.getLatestCheckpoint(run.id);
+    assertExists(checkpoint);
+    assertEquals(checkpoint.context.flag, true);
+    assertEquals(checkpoint._resumeEnvelope?.graphAdmission.stepsEvaluationContext.flag, false);
+
+    aRuns = 0;
+    bRuns = 0;
+    cRuns = 0;
+    builderCalls = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(definition);
+    await executor.resume(run.id);
+
+    const completed = await backend.getRun(run.id);
+    assertEquals(completed?.status, "completed");
+    assertEquals(builderCalls, 1);
+    assertEquals(aRuns, 0);
+    assertEquals(bRuns, 1);
+    assertEquals(cRuns, 0);
+    assertEquals(completed?.context.flag, true);
+    assertEquals(completed?.context.B, "B");
+    assertEquals(completed?.context.C, undefined);
+  });
+
+  it("isolates mutations made by a dynamic root steps builder", async () => {
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register({
+      id: "isolated-root-builder",
+      steps: ({ context }) => {
+        context.builderLeak = "discard-me";
+        return [{
+          id: "work",
+          config: {
+            type: "step",
+            tool: createTool("isolated-root-builder-work", () => "done"),
+          },
+        }];
+      },
+    });
+
+    const handle = await executor.start("isolated-root-builder", {});
+    await handle.settled();
+    const completed = await backend.getRun(handle.runId);
+    assertEquals(completed?.status, "completed");
+    assertEquals(Object.hasOwn(completed?.context ?? {}, "builderLeak"), false);
+  });
+
+  it("fails closed before resuming a run under a different workflow version", async () => {
+    const backend = new MemoryBackend();
+    let executions = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register({
+      id: "version-drift-recovery",
+      version: "2",
+      steps: [{
+        id: "work",
+        config: {
+          type: "step",
+          tool: createTool("version-drift-work", () => ++executions),
+        },
+      }],
+    });
+    const run = { ...createRun("version-drift-recovery"), version: "1" };
+    await backend.createRun(run);
+
+    await assertRejects(
+      () => executor.resume(run.id),
+      Error,
+      "definition version changed",
+    );
+    assertEquals(executions, 0);
+    assertEquals((await backend.getRun(run.id))?.status, "pending");
+  });
+
+  it("rejects a legacy dynamic checkpoint without invoking its builder", async () => {
+    const backend = new MemoryBackend();
+    let builderCalls = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register({
+      id: "legacy-dynamic-checkpoint",
+      steps: () => {
+        builderCalls++;
+        return [{ id: "work", config: { type: "step", tool: "tool" } }];
+      },
+    });
+    const run = createRun("legacy-dynamic-checkpoint");
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "legacy-dynamic",
+      nodeId: "work",
+      timestamp: new Date(),
+      context: { input: {}, work: "already-done" },
+      nodeStates: {
+        work: { nodeId: "work", status: "completed", attempt: 1, output: "already-done" },
+      },
+    });
+
+    await assertRejects(
+      () => executor.resume(run.id),
+      Error,
+      "legacy checkpoint has no graph identity",
+    );
+    assertEquals(builderCalls, 0);
+  });
+
+  it("checkpoints a fully settled concurrent batch so no sibling replays", async () => {
+    const backend = new MemoryBackend();
+    let aRuns = 0;
+    let bRuns = 0;
+    const definition: WorkflowDefinition = {
+      id: "settled-batch-checkpoint",
+      steps: [
+        {
+          id: "A",
+          dependsOn: [],
+          config: {
+            type: "step",
+            checkpoint: true,
+            tool: createTool("settled-batch-A", () => ++aRuns),
+          },
+        },
+        {
+          id: "B",
+          dependsOn: [],
+          config: {
+            type: "step",
+            tool: createTool("settled-batch-B", () => ++bRuns),
+          },
+        },
+      ],
+    };
+    const run = createRun(definition.id);
+    await backend.createRun(run);
+    const dag = new DAGExecutor({
+      stepExecutor: new StepExecutor(),
+      checkpointManager: new CheckpointManager({ backend }),
+    });
+    await dag.execute(definition.steps as WorkflowNode[], run);
+    const checkpoint = await backend.getLatestCheckpoint(run.id);
+    assertExists(checkpoint);
+    assertEquals(checkpoint.nodeStates.A?.status, "completed");
+    assertEquals(checkpoint.nodeStates.B?.status, "completed");
+    assertEquals(checkpoint.context.B, 1);
+
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(definition);
+    await executor.resume(run.id);
+    assertEquals(aRuns, 1);
+    assertEquals(bRuns, 1);
+    assertEquals((await backend.getRun(run.id))?.status, "completed");
+  });
+
+  it("resumes every composite descendant checkpoint without replaying its child", async () => {
+    const cases: Array<{
+      name: string;
+      composite: (child: WorkflowNode) => WorkflowNode;
+    }> = [
+      {
+        name: "parallel",
+        composite: (child) => ({
+          id: "owner",
+          config: { type: "parallel", nodes: [child], checkpoint: false },
+        }),
+      },
+      {
+        name: "branch",
+        composite: (child) => ({
+          id: "owner",
+          config: { type: "branch", condition: () => true, then: [child], checkpoint: false },
+        }),
+      },
+      {
+        name: "map",
+        composite: (child) => ({
+          id: "owner",
+          config: { type: "map", items: [1], processor: child, checkpoint: false },
+        }),
+      },
+      {
+        name: "loop",
+        composite: (child) => ({
+          id: "owner",
+          config: {
+            type: "loop",
+            while: (_context, state) => state.iteration === 0,
+            steps: [child],
+            maxIterations: 1,
+            checkpoint: false,
+          },
+        }),
+      },
+      {
+        name: "sub-workflow",
+        composite: (child) => ({
+          id: "owner",
+          config: {
+            type: "subWorkflow",
+            workflow: { id: "child-workflow", steps: [child] },
+            checkpoint: false,
+          },
+        }),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const backend = new MemoryBackend();
+      let childRuns = 0;
+      const definition: WorkflowDefinition = {
+        id: `composite-envelope-${testCase.name}`,
+        steps: [testCase.composite({
+          id: "child",
+          config: {
+            type: "step",
+            checkpoint: true,
+            tool: createTool(`composite-${testCase.name}-child`, () => ++childRuns),
+          },
+        })],
+      };
+      const run = createRun(definition.id);
+      await backend.createRun(run);
+      const dag = new DAGExecutor({
+        stepExecutor: new StepExecutor(),
+        checkpointManager: new CheckpointManager({ backend }),
+      });
+      await dag.execute(definition.steps as WorkflowNode[], run);
+      assertEquals(childRuns, 1, testCase.name);
+      assertExists((await backend.getLatestCheckpoint(run.id))?._resumeEnvelope);
+
+      const executor = new WorkflowExecutor({ backend, enableLocking: false });
+      executor.register(definition);
+      await executor.resume(run.id);
+      assertEquals(childRuns, 1, testCase.name);
+      assertEquals((await backend.getRun(run.id))?.status, "completed", testCase.name);
+    }
+  });
+
+  it("continues a composite from its durable active retry attempt", async () => {
+    const backend = new MemoryBackend();
+    let gateRuns = 0;
+    let terminalRuns = 0;
+    const definition: WorkflowDefinition = {
+      id: "durable-composite-attempt",
+      steps: [{
+        id: "owner",
+        config: {
+          type: "branch",
+          condition: () => true,
+          retry: {
+            maxAttempts: 2,
+            backoff: "fixed",
+            initialDelay: 0,
+            maxDelay: 0,
+            retryIf: () => true,
+          },
+          then: [
+            {
+              id: "gate",
+              config: {
+                type: "step",
+                tool: createTool("durable-attempt-gate", () => {
+                  gateRuns++;
+                  if (gateRuns === 1) throw new Error("first attempt");
+                  return "open";
+                }),
+              },
+            },
+            {
+              id: "checkpoint",
+              config: {
+                type: "step",
+                checkpoint: true,
+                tool: createTool("durable-attempt-checkpoint", () => "saved"),
+              },
+            },
+            {
+              id: "terminal",
+              config: {
+                type: "step",
+                tool: createTool("durable-attempt-terminal", () => {
+                  terminalRuns++;
+                  throw new Error("still failing");
+                }),
+              },
+            },
+          ],
+        },
+      }],
+    };
+    const run = createRun(definition.id);
+    await backend.createRun(run);
+    const dag = new DAGExecutor({
+      stepExecutor: new StepExecutor(),
+      checkpointManager: new CheckpointManager({ backend }),
+    });
+    await dag.execute(definition.steps as WorkflowNode[], run);
+    const checkpoint = await backend.getLatestCheckpoint(run.id);
+    assertExists(checkpoint);
+    assertEquals(checkpoint._resumeEnvelope?.nodeStates.owner?.attempt, 2);
+
+    terminalRuns = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(definition);
+    await executor.resume(run.id);
+    assertEquals(terminalRuns, 1);
+    assertEquals((await backend.getRun(run.id))?.status, "failed");
+  });
+
+  it("fails closed when a dynamic sub-workflow child graph changes after checkpoint", async () => {
+    const backend = new MemoryBackend();
+    let variant: "A" | "B" = "A";
+    let aRuns = 0;
+    let bRuns = 0;
+    const definition: WorkflowDefinition = {
+      id: "dynamic-sub-workflow-drift",
+      steps: [{
+        id: "owner",
+        config: {
+          type: "subWorkflow",
+          workflow: {
+            id: "dynamic-child",
+            steps: () => [{
+              id: variant,
+              config: {
+                type: "step",
+                checkpoint: true,
+                tool: createTool(`dynamic-sub-${variant}`, () => {
+                  if (variant === "A") aRuns++;
+                  else bRuns++;
+                  return variant;
+                }),
+              },
+            }],
+          },
+        },
+      }],
+    };
+    const run = createRun(definition.id);
+    await backend.createRun(run);
+    const dag = new DAGExecutor({
+      stepExecutor: new StepExecutor(),
+      checkpointManager: new CheckpointManager({ backend }),
+    });
+    await dag.execute(definition.steps as WorkflowNode[], run);
+    assertEquals(aRuns, 1);
+
+    variant = "B";
+    aRuns = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(definition);
+    await executor.resume(run.id);
+    assertEquals(aRuns, 0);
+    assertEquals(bRuns, 0);
+    assertEquals((await backend.getRun(run.id))?.status, "failed");
+    assertEquals(
+      (await backend.getRun(run.id))?.error?.message.includes("admitted graph changed"),
+      true,
+    );
+  });
+
+  it("fails closed when a dynamic loop child graph changes after checkpoint", async () => {
+    const backend = new MemoryBackend();
+    let variant: "A" | "B" = "A";
+    let aRuns = 0;
+    let bRuns = 0;
+    const definition: WorkflowDefinition = {
+      id: "dynamic-loop-drift",
+      steps: [{
+        id: "owner",
+        config: {
+          type: "loop",
+          while: (_context, state) => state.iteration === 0,
+          steps: () => [{
+            id: variant,
+            config: {
+              type: "step",
+              checkpoint: true,
+              tool: createTool(`dynamic-loop-${variant}`, () => {
+                if (variant === "A") aRuns++;
+                else bRuns++;
+                return variant;
+              }),
+            },
+          }],
+          maxIterations: 1,
+        },
+      }],
+    };
+    const run = createRun(definition.id);
+    await backend.createRun(run);
+    const dag = new DAGExecutor({
+      stepExecutor: new StepExecutor(),
+      checkpointManager: new CheckpointManager({ backend }),
+    });
+    await dag.execute(definition.steps as WorkflowNode[], run);
+    assertEquals(aRuns, 1);
+
+    variant = "B";
+    aRuns = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(definition);
+    await executor.resume(run.id);
+    assertEquals(aRuns, 0);
+    assertEquals(bRuns, 0);
+    assertEquals((await backend.getRun(run.id))?.status, "failed");
+    assertEquals(
+      (await backend.getRun(run.id))?.error?.message.includes("admitted graph changed"),
+      true,
+    );
+  });
+
+  it("does not leak sub-workflow admission or partial child state after crash and final failure", async () => {
+    const backend = new MemoryBackend();
+    let failingRuns = 0;
+    const definition: WorkflowDefinition = {
+      id: "sub-workflow-transaction-failure",
+      steps: [{
+        id: "owner",
+        config: {
+          type: "subWorkflow",
+          input: (context: WorkflowContext) => {
+            context.inputAdmissionLeak = "private";
+            return { child: true };
+          },
+          workflow: {
+            id: "transaction-child",
+            steps: ({ context }) => {
+              context.stepsAdmissionLeak = "private";
+              return [
+                {
+                  id: "prepare",
+                  config: {
+                    type: "step",
+                    checkpoint: true,
+                    tool: createTool("transaction-prepare", () => "prepared"),
+                  },
+                },
+                {
+                  id: "fail",
+                  config: {
+                    type: "step",
+                    tool: createTool("transaction-fail", () => {
+                      failingRuns++;
+                      throw new Error("final child failure");
+                    }),
+                  },
+                },
+              ];
+            },
+          },
+        },
+      }],
+    };
+    const run: WorkflowRun = {
+      ...createRun(definition.id),
+      context: { input: {}, keep: "outer" },
+    };
+    await backend.createRun(run);
+    const dag = new DAGExecutor({
+      stepExecutor: new StepExecutor(),
+      checkpointManager: new CheckpointManager({ backend }),
+    });
+    await dag.execute(definition.steps as WorkflowNode[], run);
+    assertExists(await backend.getLatestCheckpoint(run.id));
+
+    failingRuns = 0;
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    executor.register(definition);
+    await executor.resume(run.id);
+    const failed = await backend.getRun(run.id);
+    assertEquals(failingRuns, 1);
+    assertEquals(failed?.status, "failed");
+    assertEquals(failed?.context.keep, "outer");
+    assertEquals(Object.hasOwn(failed?.context ?? {}, "inputAdmissionLeak"), false);
+    assertEquals(Object.hasOwn(failed?.context ?? {}, "stepsAdmissionLeak"), false);
+    assertEquals(Object.hasOwn(failed?.context ?? {}, "owner/prepare"), false);
+  });
+
+  it("rejects accessor-bearing checkpoint data before invoking a resolver", async () => {
+    let resolverCalls = 0;
+    let getterCalls = 0;
+    const malicious = {
+      id: "malicious",
+      nodeId: "work",
+      timestamp: new Date(),
+      context: { input: {} },
+      nodeStates: {},
+    } as Checkpoint;
+    Object.defineProperty(malicious, "_resumeEnvelope", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return undefined;
+      },
+    });
+    class MaliciousCheckpointBackend extends MemoryBackend {
+      override getLatestCheckpoint(): Promise<Checkpoint | null> {
+        return Promise.resolve(malicious);
+      }
+    }
+    const manager = new CheckpointManager({ backend: new MaliciousCheckpointBackend() });
+    await assertRejects(
+      () =>
+        manager.prepareResume("run", () => {
+          resolverCalls++;
+          return [];
+        }),
+      Error,
+      "must be an own data property",
+    );
+    assertEquals(getterCalls, 0);
+    assertEquals(resolverCalls, 0);
+  });
+
   it("releases a waiting run lock before its async callback settles", async () => {
     using time = new FakeTime();
     const backend = new MemoryBackend();
@@ -1209,31 +2050,33 @@ describe("workflow/executor/workflow-executor", () => {
     let writerExecutions = 0;
     const finishInputs: unknown[] = [];
     const executor = new WorkflowExecutor({ backend });
-    executor.register(workflow({
-      id: "map-partial-context",
-      steps: [map("items", {
-        items: ["one"],
-        processor: parallel("processor", [
-          step("writer", {
-            tool: createTool("map-context-writer", () => {
-              writerExecutions++;
-              return { wrote: true };
-            }),
-          }),
-          dependsOn(delay("pause", 5), "writer"),
-          dependsOn(
-            step("finish", {
-              input: (context) => ({ writer: context["items_0/writer"] }),
-              tool: createTool("map-context-finish", (input) => {
-                finishInputs.push(input);
-                return input;
+    executor.register(
+      workflow({
+        id: "map-partial-context",
+        steps: [map("items", {
+          items: ["one"],
+          processor: parallel("processor", [
+            step("writer", {
+              tool: createTool("map-context-writer", () => {
+                writerExecutions++;
+                return { wrote: true };
               }),
             }),
-            "pause",
-          ),
-        ]),
-      })],
-    }).definition);
+            dependsOn(delay("pause", 5), "writer"),
+            dependsOn(
+              step("finish", {
+                input: (context) => ({ writer: context["items_0/writer"] }),
+                tool: createTool("map-context-finish", (input) => {
+                  finishInputs.push(input);
+                  return input;
+                }),
+              }),
+              "pause",
+            ),
+          ]),
+        })],
+      }).definition,
+    );
 
     const handle = await executor.start("map-partial-context", {});
     await handle.settled();
@@ -1341,7 +2184,8 @@ describe("workflow/executor/workflow-executor", () => {
       );
       assertEquals((await handle.status()).nodeStates["nested/inner-finish"]?.input, undefined);
       assertEquals(
-        ((await handle.result() as Record<string, unknown>).nested as Record<string, unknown>).input,
+        ((await handle.result() as Record<string, unknown>).nested as Record<string, unknown>)
+          .input,
         undefined,
       );
     } finally {
@@ -1435,13 +2279,15 @@ describe("workflow/executor/workflow-executor", () => {
       },
       payload: "keep-payload",
     };
-    executor.register(workflow({
-      id: "custom-sub-workflow-outer",
-      steps: [subWorkflow("nested", {
-        workflow: inner,
-        output: () => customOutput,
-      })],
-    }).definition);
+    executor.register(
+      workflow({
+        id: "custom-sub-workflow-outer",
+        steps: [subWorkflow("nested", {
+          workflow: inner,
+          output: () => customOutput,
+        })],
+      }).definition,
+    );
 
     const handle = await executor.start("custom-sub-workflow-outer", {});
     await handle.settled();
@@ -1458,26 +2304,28 @@ describe("workflow/executor/workflow-executor", () => {
       id: "completed-before-failure-inner",
       steps: [step("done", { tool: createTool("inner-done", () => ({ done: true })) })],
     }).definition;
-    executor.register(workflow({
-      id: "completed-before-failure-outer",
-      steps: [
-        subWorkflow("nested", {
-          workflow: inner,
-          input: (context: WorkflowContext) => context.env,
-        }),
-        dependsOn(
-          step("fail", {
-            tool: createTool("outer-fail", () => {
-              throw new Error("outer failure");
-            }),
+    executor.register(
+      workflow({
+        id: "completed-before-failure-outer",
+        steps: [
+          subWorkflow("nested", {
+            workflow: inner,
+            input: (context: WorkflowContext) => context.env,
           }),
-          "nested",
-        ),
-      ],
-      onError: (_error, context) => {
-        observedContext = context;
-      },
-    }).definition);
+          dependsOn(
+            step("fail", {
+              tool: createTool("outer-fail", () => {
+                throw new Error("outer failure");
+              }),
+            }),
+            "nested",
+          ),
+        ],
+        onError: (_error, context) => {
+          observedContext = context;
+        },
+      }).definition,
+    );
 
     const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
     try {
@@ -1510,13 +2358,15 @@ describe("workflow/executor/workflow-executor", () => {
       id: "mapped-sub-workflow-inner",
       steps: [step("inner", { tool: createTool("mapped-inner", () => ({ done: true })) })],
     }).definition;
-    executor.register(workflow({
-      id: "mapped-sub-workflow-outer",
-      steps: [map("mapped", {
-        items: (context) => [context.env],
-        processor: inner,
-      })],
-    }).definition);
+    executor.register(
+      workflow({
+        id: "mapped-sub-workflow-outer",
+        steps: [map("mapped", {
+          items: (context) => [context.env],
+          processor: inner,
+        })],
+      }).definition,
+    );
 
     const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
     try {
@@ -1551,7 +2401,8 @@ describe("workflow/executor/workflow-executor", () => {
         undefined,
       );
       assertEquals(
-        (((await handle.result()) as Record<string, unknown>).mapped as WorkflowContext[])[0]?.input,
+        (((await handle.result()) as Record<string, unknown>).mapped as WorkflowContext[])[0]
+          ?.input,
         undefined,
       );
     } finally {
@@ -1970,13 +2821,15 @@ describe("workflow/executor/workflow-executor", () => {
         completionOutput = run.output;
       },
     });
-    executor.register(workflow({
-      id: "framework-shaped-transformed-output",
-      outputSchema: defineSchema((v) =>
-        v.object({ finish: v.unknown() }).transform(() => transformed)
-      )(),
-      steps: [step("finish", { tool: createTool("transform-finish", () => "done") })],
-    }).definition);
+    executor.register(
+      workflow({
+        id: "framework-shaped-transformed-output",
+        outputSchema: defineSchema((v) =>
+          v.object({ finish: v.unknown() }).transform(() => transformed)
+        )(),
+        steps: [step("finish", { tool: createTool("transform-finish", () => "done") })],
+      }).definition,
+    );
 
     const handle = await executor.start("framework-shaped-transformed-output", {});
     await handle.settled();

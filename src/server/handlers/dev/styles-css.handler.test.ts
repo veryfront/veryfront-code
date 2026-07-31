@@ -33,8 +33,8 @@ import {
 } from "#veryfront/html/styles-builder/css-compiler.ts";
 import { invalidatePreparedProjectCSS } from "#veryfront/html/styles-builder/prepared-project-css-cache.ts";
 import { invalidateProjectCandidateManifests } from "#veryfront/rendering/orchestrator/css-candidate-manifest.ts";
-import type { CSSOptimizationEngine } from "#veryfront/extensions/css/index.ts";
-import { CSSOptimizationEngineName } from "#veryfront/extensions/css/index.ts";
+import type { CSSOptimizationEngine, CSSProcessor } from "#veryfront/extensions/css/index.ts";
+import { CSSOptimizationEngineName, CSSProcessorName } from "#veryfront/extensions/css/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import { StylesCSSHandler } from "./styles-css.handler.ts";
@@ -120,15 +120,20 @@ function createHandlerAdapter(
   artifactRegistry?: StyleArtifactRegistry,
 ): MockRuntimeAdapter & {
   setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
+  getSourceFileCallCount: () => number;
 } {
   const adapter = createMockAdapter();
   adapter.fs.files.set("/project/globals.css", TEST_STYLESHEET);
   let currentFiles = files;
+  let sourceFileCallCount = 0;
   const underlyingAdapter: {
     getAllSourceFiles: () => Promise<Array<{ path: string; content?: string }>>;
     getContentContext: () => ResolvedContentContext | null;
   } = {
-    getAllSourceFiles: async () => currentFiles,
+    getAllSourceFiles: async () => {
+      sourceFileCallCount++;
+      return currentFiles;
+    },
     getContentContext: () => contentContext,
   };
 
@@ -148,6 +153,7 @@ function createHandlerAdapter(
     setFiles: (nextFiles) => {
       currentFiles = nextFiles;
     },
+    getSourceFileCallCount: () => sourceFileCallCount,
     fs: {
       ...adapter.fs,
       getUnderlyingAdapter: () => underlyingAdapter,
@@ -161,6 +167,7 @@ function createHandlerAdapter(
     },
   } as MockRuntimeAdapter & {
     setFiles: (nextFiles: Array<{ path: string; content?: string }>) => void;
+    getSourceFileCallCount: () => number;
   };
 }
 
@@ -1657,6 +1664,159 @@ describe("server/handlers/dev/styles-css.handler", () => {
       }
     } finally {
       fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("uses one admitted source snapshot for CSS imports and candidates", async () => {
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/app/page.tsx",
+        content: 'import "./page.css"; export default () => <div className="snapshot" />;',
+      }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    adapter.fs.files.set("/project/app/page.css", ".snapshot { color: green; }");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await new StylesCSSHandler().handle(
+        new Request("http://localhost/_vf_styles/styles.css"),
+        makeCtx(adapter),
+      );
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(adapter.getSourceFileCallCount(), 1);
+    } finally {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("rejects an oversized configured stylesheet before scanning project sources", async () => {
+    const adapter = createHandlerAdapter(
+      [{ path: "/project/app/page.tsx", content: "export default null;" }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    adapter.fs.files.set("/project/globals.css", "x".repeat(16 * 1024 * 1024 + 1));
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await new StylesCSSHandler().handle(
+        new Request("http://localhost/_vf_styles/styles.css"),
+        makeCtx(adapter),
+      );
+
+      assertEquals(result.response!.status, 500);
+      assertEquals(adapter.getSourceFileCallCount(), 0);
+    } finally {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("passes a merged stylesheet above 16 MiB and within 32 MiB to the compiler", async () => {
+    const previousProcessor = tryResolve<CSSProcessor>(CSSProcessorName);
+    let compiledStylesheetLength = 0;
+    unregister(CSSProcessorName);
+    register(
+      CSSProcessorName,
+      {
+        cacheIdentity: "test-css-processor@merged-output-boundary",
+        defaultStylesheet: "",
+        compile: (stylesheet: string) => {
+          compiledStylesheetLength = stylesheet.length;
+          return Promise.resolve({ build: () => ".compiled{display:block}" });
+        },
+      } satisfies CSSProcessor,
+    );
+
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/app/page.tsx",
+        content: 'import "./page.css"; export default null;',
+      }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    adapter.fs.files.set("/project/globals.css", "a".repeat(8 * 1024 * 1024));
+    adapter.fs.files.set("/project/app/page.css", "b".repeat(8 * 1024 * 1024));
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await new StylesCSSHandler().handle(
+        new Request("http://localhost/_vf_styles/styles.css"),
+        makeCtx(adapter),
+      );
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(compiledStylesheetLength, 16 * 1024 * 1024 + 1);
+    } finally {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      unregister(CSSProcessorName);
+      if (previousProcessor !== undefined) register(CSSProcessorName, previousProcessor);
+    }
+  });
+
+  it("does not serve ready prepared CSS above the 32 MiB response limit", async () => {
+    const oversizedCSS = "x".repeat(32 * 1024 * 1024 + 1);
+    const oversizedHash = await cacheCSSAsync(oversizedCSS);
+    const registry: StyleArtifactRegistry = {
+      resolveStyleArtifact: (input) => Promise.resolve(readyStyleArtifact(input, oversizedHash)),
+      ensureStyleArtifactBuild: () => {
+        throw new Error("ready artifact must not enqueue a build");
+      },
+      upsertStyleArtifact: () => {
+        throw new Error("ready artifact must not be registered again");
+      },
+    };
+    const adapter = createHandlerAdapter(
+      [{ path: "/project/app/page.tsx", content: "export default null;" }],
+      { sourceType: "release", projectSlug: PROJECT_SLUG, releaseId: "release-oversized" },
+      registry,
+    );
+
+    try {
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await new StylesCSSHandler().handle(
+        new Request("http://localhost/_vf_styles/styles.css"),
+        makeCtx(adapter),
+      );
+
+      assertEquals(result.response!.status, 500);
+    } finally {
       clearCSSCache();
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);

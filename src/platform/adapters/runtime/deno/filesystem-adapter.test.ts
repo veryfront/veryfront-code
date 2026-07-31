@@ -44,6 +44,20 @@ if (isDeno) {
           RangeError,
           "positive safe integer",
         );
+        assertEquals(
+          [...await adapter.readFileBytesWithinLimit(path, 5)],
+          [104, 101, 108, 108, 111],
+        );
+        await assertRejects(
+          () => adapter.readFileBytesWithinLimit(path, 4),
+          RangeError,
+          "exceeds byte limit of 4 bytes",
+        );
+        await assertRejects(
+          () => adapter.readFileBytesWithinLimit(path, 0),
+          RangeError,
+          "positive safe integer",
+        );
       } finally {
         await Deno.remove(root, { recursive: true });
       }

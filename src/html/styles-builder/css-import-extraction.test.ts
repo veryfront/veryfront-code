@@ -1,5 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import {
   collectCssImportPaths,
   extractCssImportSpecifiers,
@@ -77,6 +78,30 @@ describe("html/styles-builder/css-import-extraction", () => {
         null,
       );
     });
+
+    it("rejects overlong specifier, importer, and project paths before normalization", () => {
+      for (
+        const args of [
+          [`./${"a".repeat(MAX_PATH_LENGTH_CHARS)}.css`, "/project/app/page.tsx", "/project"],
+          ["./styles.css", `/project/${"a".repeat(MAX_PATH_LENGTH_CHARS)}`, "/project"],
+          ["./styles.css", "/project/app/page.tsx", `/${"p".repeat(MAX_PATH_LENGTH_CHARS)}`],
+        ] as const
+      ) {
+        assertThrows(
+          () => resolveCssImportPath(args[0], args[1], args[2]),
+          TypeError,
+          `${MAX_PATH_LENGTH_CHARS} characters`,
+        );
+      }
+    });
+
+    it("rejects control characters in CSS import paths", () => {
+      assertThrows(
+        () => resolveCssImportPath("./bad\n.css", "/project/app/page.tsx", "/project"),
+        TypeError,
+        "without control characters",
+      );
+    });
   });
 
   describe("collectCssImportPaths", () => {
@@ -91,6 +116,45 @@ describe("html/styles-builder/css-import-extraction", () => {
         "/project/app/b.css",
         "/project/app/styles.css",
       ]);
+    });
+
+    it("admits exactly 10,000 unique imported stylesheets", () => {
+      const content = Array.from(
+        { length: 10_000 },
+        (_, index) => `import "./styles-${index}.css";`,
+      ).join("\n");
+
+      assertEquals(
+        collectCssImportPaths([{ path: "/project/app/page.tsx", content }], "/project").length,
+        10_000,
+      );
+    });
+
+    it("rejects more than 10,000 unique imported stylesheets", () => {
+      const content = Array.from(
+        { length: 10_001 },
+        (_, index) => `import "./styles-${index}.css";`,
+      ).join("\n");
+
+      assertThrows(
+        () => collectCssImportPaths([{ path: "/project/app/page.tsx", content }], "/project"),
+        TypeError,
+        "10000 files",
+      );
+    });
+
+    it("rejects more than 10,000 source entries even when none imports CSS", () => {
+      function* files() {
+        for (let index = 0; index <= 10_000; index++) {
+          yield { path: `/project/app/source-${index}.ts`, content: "export {};" };
+        }
+      }
+
+      assertThrows(
+        () => collectCssImportPaths(files(), "/project"),
+        TypeError,
+        "10000 source files",
+      );
     });
   });
 });

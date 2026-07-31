@@ -70,6 +70,71 @@ export interface Checkpoint {
   nodeStates: Record<string, NodeState>;
   /** @internal Framework-only public projection ownership sidecar. */
   _workflowProjection?: WorkflowProjectionState;
+  /** @internal Validated root snapshot for resuming a descendant checkpoint. */
+  _resumeEnvelope?: CheckpointResumeEnvelope;
+}
+
+/** @internal Serializable identity of one admitted workflow graph node. */
+export interface WorkflowGraphIdentityNode {
+  readonly id: string;
+  readonly type: WorkflowNodeConfig["type"];
+  readonly dependsOn: readonly string[] | null;
+  readonly composite: WorkflowGraphCompositeIdentity | null;
+}
+
+/** @internal Serializable identity of statically visible composite descendants. */
+export type WorkflowGraphCompositeIdentity =
+  | {
+    readonly kind: "parallel";
+    readonly strategy: ParallelStrategy | null;
+    readonly nodes: readonly WorkflowGraphIdentityNode[];
+  }
+  | {
+    readonly kind: "branch";
+    readonly then: readonly WorkflowGraphIdentityNode[];
+    readonly else: readonly WorkflowGraphIdentityNode[] | null;
+  }
+  | {
+    readonly kind: "loop";
+    readonly dynamic: boolean;
+    readonly nodes: readonly WorkflowGraphIdentityNode[] | null;
+  }
+  | {
+    readonly kind: "map";
+    readonly processorKind: "node" | "workflow";
+    readonly processorId: string;
+    readonly processorVersion: string | null;
+    readonly dynamic: boolean;
+    readonly nodes: readonly WorkflowGraphIdentityNode[] | null;
+  }
+  | {
+    readonly kind: "subWorkflow";
+    readonly workflowId: string;
+    readonly workflowVersion: string | null;
+    readonly dynamic: boolean;
+    readonly nodes: readonly WorkflowGraphIdentityNode[] | null;
+  };
+
+export type WorkflowGraphIdentity = readonly WorkflowGraphIdentityNode[];
+
+/** @internal Durable root graph admission captured before any admitted node runs. */
+export interface WorkflowGraphAdmission {
+  readonly stepsEvaluationContext: WorkflowContext;
+  readonly stepsEvaluationProjection: WorkflowProjectionState;
+  readonly graphIdentity: WorkflowGraphIdentity;
+  readonly workflowVersion: string | null;
+}
+
+/** @internal Durable root snapshot synthesized by the owning composite stack. */
+export interface CheckpointResumeEnvelope {
+  readonly schemaVersion: 2;
+  /** Root composite/node that owns this resumable transaction. */
+  readonly ownerNodeId: string;
+  readonly context: WorkflowContext;
+  readonly nodeStates: Record<string, NodeState>;
+  readonly workflowProjection: WorkflowProjectionState;
+  /** Original root graph-admission snapshot; never derived from post-node context. */
+  readonly graphAdmission: WorkflowGraphAdmission;
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   runWithRequestContext,
 } from "./request-context.ts";
 import { getVeryfrontFSAdapterKind, VERYFRONT_FS_ADAPTER_KIND } from "./adapter-kind.ts";
+import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
 export {
   clearRequestScopedFileCache,
   getCurrentRequestContext,
@@ -51,6 +52,7 @@ function formatDurationSince(startTime: number): string {
 
 export class MultiProjectFSAdapter implements FSAdapter {
   readonly symlinkSemantics = "none" as const;
+  readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   readonly [VERYFRONT_FS_ADAPTER_KIND] = "multi-project" as const;
   private manager: ProxyFSAdapterManager;
   private defaultAdapter?: VeryfrontFSAdapter;
@@ -227,6 +229,11 @@ export class MultiProjectFSAdapter implements FSAdapter {
     return adapter.readFile(path);
   }
 
+  async readFileBytes(path: string): Promise<Uint8Array> {
+    const adapter = await this.getAdapter();
+    return adapter.readFileBytes(path);
+  }
+
   async readTextFile(path: string): Promise<string> {
     const adapter = await this.getAdapter();
     return adapter.readTextFile(path);
@@ -372,24 +379,16 @@ export class MultiProjectFSAdapter implements FSAdapter {
   }
 
   async getAllSourceFiles(): Promise<Array<{ path: string; content?: string }>> {
-    try {
-      const adapter = await this.getAdapter();
-      const files = (await adapter.getAllSourceFiles?.()) ?? [];
-
-      if (files.length === 0) {
-        logger.debug("getAllSourceFiles returned empty", {
-          hasAdapter: !!adapter,
-          hasMethod: typeof adapter.getAllSourceFiles === "function",
-        });
-      }
-
-      return files;
-    } catch (error) {
-      logger.warn("getAllSourceFiles failed", {
-        error: error instanceof Error ? error.message : String(error),
-      });
+    const adapter = await this.getAdapter();
+    const getAllSourceFiles = adapter.getAllSourceFiles;
+    if (typeof getAllSourceFiles !== "function") {
+      logger.debug("getAllSourceFiles capability is absent");
       return [];
     }
+
+    const files = await getAllSourceFiles.call(adapter);
+    if (files.length === 0) logger.debug("getAllSourceFiles returned empty");
+    return files;
   }
 }
 

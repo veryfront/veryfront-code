@@ -252,6 +252,25 @@ export function createMockAdapter(): MockRuntimeAdapter {
         }
         throw fileNotFoundError(path);
       },
+      readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+        const boundedLimit = requireBoundedFileReadLimit(byteLimit);
+        const normalizedPath = normalizeMockPath(path);
+        const bytes = byteFiles.get(normalizedPath);
+        if (bytes != null) {
+          if (bytes.byteLength > boundedLimit) {
+            throw new RangeError(`File exceeds byte limit of ${boundedLimit} bytes`);
+          }
+          return bytes.slice();
+        }
+        const content = files.get(normalizedPath);
+        if (content != null) {
+          if (getMockUtf8ByteLength(content) > boundedLimit) {
+            throw new RangeError(`File exceeds byte limit of ${boundedLimit} bytes`);
+          }
+          return encodeMockUtf8Prefix(content, boundedLimit);
+        }
+        throw fileNotFoundError(path);
+      },
       writeFile: (path: string, content: string) => {
         const normalizedPath = normalizeMockPath(path);
         files.set(normalizedPath, content);

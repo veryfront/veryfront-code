@@ -2,9 +2,16 @@ import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { CSSOptimizationEngine } from "#veryfront/extensions/css/index.ts";
-import { CSSOptimizationEngineName } from "#veryfront/extensions/css/index.ts";
+import type {
+  CSSOptimizationEngine,
+  CSSProcessor,
+} from "#veryfront/extensions/css/index.ts";
+import {
+  CSSOptimizationEngineName,
+  CSSProcessorName,
+} from "#veryfront/extensions/css/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 import { createTestCSSOptimizationEngine } from "../../../tests/_helpers/css-optimization-engine.ts";
 import {
   cacheCSSAsync,
@@ -20,6 +27,21 @@ import {
 import { persistRegeneratedCSSEntry } from "./css-hash-cache.ts";
 
 const MOCK_TAILWIND_BASE_CSS = "@layer theme, base, components, utilities;";
+
+async function withCSSProcessor<T>(
+  processor: CSSProcessor,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = tryResolve<CSSProcessor>(CSSProcessorName);
+  unregister(CSSProcessorName);
+  register(CSSProcessorName, processor);
+  try {
+    return await run();
+  } finally {
+    unregister(CSSProcessorName);
+    if (previous !== undefined) register(CSSProcessorName, previous);
+  }
+}
 
 function mockTailwindFetch(): () => void {
   const originalFetch = globalThis.fetch;
@@ -103,6 +125,35 @@ describe("styles-builder/css-compiler regressions", () => {
   });
 
   describe("regenerateCSSByHash", () => {
+    it("rejects oversized emitted CSS before retaining it in the hash cache", async () => {
+      const css = "x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1);
+      const hash = hashCSS(css);
+
+      await assertRejects(
+        () => cacheCSSAsync(css),
+        TypeError,
+        `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+      );
+      assertEquals(getCSSByHash(hash), undefined);
+    });
+
+    it("rejects oversized regenerated CSS before retaining it in the hash cache", async () => {
+      const css = "x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1);
+      const hash = hashCSS(css);
+
+      await assertRejects(
+        () =>
+          persistRegeneratedCSSEntry(hash, {
+            css,
+            candidates: ["oversized"],
+            stylesheet: "@tailwind utilities;",
+          }),
+        TypeError,
+        `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+      );
+      assertEquals(getCSSByHash(hash), undefined);
+    });
+
     it("rejects a caller-supplied hash that is not the CSS content identity", async () => {
       await assertRejects(
         () => cacheCSSAsync(".trusted{color:green}", "a".repeat(64)),
@@ -220,6 +271,72 @@ describe("styles-builder/css-compiler regressions", () => {
       } finally {
         restoreFetch();
       }
+    });
+  });
+
+  describe("generateCSS content admission", () => {
+    it("rejects a merged stylesheet above 32 MiB before invoking the processor", async () => {
+      let compileCalled = false;
+      const processor: CSSProcessor = {
+        cacheIdentity: "test-css-processor@oversized-input",
+        defaultStylesheet: "",
+        compile: () => {
+          compileCalled = true;
+          return Promise.resolve({ build: () => ".unexpected{}" });
+        },
+      };
+
+      await withCSSProcessor(processor, async () => {
+        await assertRejects(
+          () => generateCSS("x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1), []),
+          TypeError,
+          `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+        );
+      });
+      assertEquals(compileCalled, false);
+    });
+
+    it("rejects oversized processor output before returning it", async () => {
+      const processor: CSSProcessor = {
+        cacheIdentity: "test-css-processor@oversized-output",
+        defaultStylesheet: "",
+        compile: () =>
+          Promise.resolve({
+            build: () => "x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1),
+          }),
+      };
+
+      await withCSSProcessor(processor, async () => {
+        await assertRejects(
+          () => generateCSS("", []),
+          TypeError,
+          `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+        );
+      });
+    });
+
+    it("rejects oversized minifier output before returning it", async () => {
+      unregister(CSSOptimizationEngineName);
+      register(
+        CSSOptimizationEngineName,
+        createTestCSSOptimizationEngine(
+          () => ({ css: "x".repeat(MAX_CSS_OUTPUT_FILE_BYTES + 1) }),
+          "test-css-optimization-engine@oversized-output",
+        ),
+      );
+      const processor: CSSProcessor = {
+        cacheIdentity: "test-css-processor@minifier-output",
+        defaultStylesheet: "",
+        compile: () => Promise.resolve({ build: () => ".input{}" }),
+      };
+
+      await withCSSProcessor(processor, async () => {
+        await assertRejects(
+          () => generateCSS("", [], { minify: true }),
+          TypeError,
+          `${MAX_CSS_OUTPUT_FILE_BYTES} bytes`,
+        );
+      });
     });
   });
 

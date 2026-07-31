@@ -62,6 +62,30 @@ operator credentials are configured, shares concurrent calls, and admits at
 most one new operation per 60 seconds. Other methods return `405` with
 `Allow: POST`.
 
+## Static representation admission
+
+Production build output and runtime static serving share a 64 MiB per-file
+ceiling. The completed output tree is validated after optional compression, and
+public assets are rejected before copying when their declared size exceeds that
+ceiling. A `StaticFileService` option may lower the runtime limit but cannot
+raise it.
+
+GET reads use either a genuine prefix reader (native Deno, Node, and Bun) or a
+whole-file reader whose backing transport advertises and enforces a fixed
+ceiling no larger than the configured runtime limit. The Veryfront transport
+ceiling is 64 MiB and Cloudflare KV's provider ceiling is 25 MiB. Adapters with
+neither capability, including the current GitHub adapter, fail closed with a
+sanitized `503` and `Cache-Control: no-store`; the server does not fall back to
+an unbounded whole-file read. `413` is not used because this admission applies
+to a server response representation, not the request payload. Unexpected
+filesystem failures continue through the normal server error boundary.
+
+HEAD resolves only filesystem metadata and never reads the asset body. It emits
+`Content-Length` for a non-HTML file when the provider supplies a valid size.
+HTML omits both `Content-Length` and `ETag`, because GET injects a request nonce
+and the raw filesystem size and hash would not describe the transformed
+representation.
+
 The returned handler is callable and also exposes:
 
 ```ts

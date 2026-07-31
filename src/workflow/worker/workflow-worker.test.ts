@@ -26,6 +26,33 @@ function createRun(sourceIntegrationPolicy = UNRESTRICTED_SOURCE_INTEGRATION_POL
   };
 }
 
+function createExpiredTimedWaitRun(
+  id: string,
+  waitKind: "delay" | "event" = "delay",
+): WorkflowRun {
+  return {
+    ...createRun(),
+    id,
+    status: "waiting",
+    workerId: `run-execution:${id}:previous`,
+    currentNodes: ["pause"],
+    nodeStates: {
+      pause: {
+        nodeId: "pause",
+        status: "running",
+        input: {
+          type: "event",
+          eventName: waitKind === "delay" ? "__delay__" : "never-arrives",
+          timeout: 5,
+          _waitKind: waitKind,
+        },
+        attempt: 1,
+        startedAt: new Date(Date.now() - 10),
+      },
+    },
+  };
+}
+
 function resumeInBackground(worker: WorkflowWorker, run: WorkflowRun): void {
   (worker as unknown as { resumeInBackground(run: WorkflowRun): void })
     .resumeInBackground(run);
@@ -132,6 +159,94 @@ describe("workflow/worker/workflow-worker", () => {
       assertEquals((await backend.getRun(run.id))?.workerId, "worker-real-memory");
       assertEquals(worker.getStats().pollCount, 1);
       assertEquals(worker.getStats().resumeCount, 1);
+    } finally {
+      await worker.stop();
+    }
+  });
+
+  it("recovers an expired durable delay after a fresh worker starts", async () => {
+    const backend = new MemoryBackend();
+    const run = createExpiredTimedWaitRun("run-worker-expired-delay");
+    await backend.createRun(run);
+    const resumed: Array<{ runId: string; workerId?: string }> = [];
+    const worker = new WorkflowWorker({
+      backend,
+      workerId: "worker-timed-wait-restart",
+      pollInterval: NO_SCHEDULED_POLL,
+      resumeFn: (runId, workerId) => {
+        resumed.push({ runId, workerId });
+        return Promise.resolve();
+      },
+    });
+
+    worker.start();
+    try {
+      await pollOnce(worker);
+      await Promise.resolve();
+
+      assertEquals(resumed, [{
+        runId: run.id,
+        workerId: "worker-timed-wait-restart",
+      }]);
+      assertEquals((await backend.getRun(run.id))?.status, "pending");
+      assertEquals((await backend.getRun(run.id))?.workerId, "worker-timed-wait-restart");
+    } finally {
+      await worker.stop();
+    }
+  });
+
+  it("lets only one worker resume the same expired durable delay", async () => {
+    const backend = new MemoryBackend();
+    const run = createExpiredTimedWaitRun("run-worker-timed-wait-race");
+    await backend.createRun(run);
+    const resumed: string[] = [];
+    const workers = ["worker-timed-wait-a", "worker-timed-wait-b"].map((workerId) =>
+      new WorkflowWorker({
+        backend,
+        workerId,
+        pollInterval: NO_SCHEDULED_POLL,
+        resumeFn: () => {
+          resumed.push(workerId);
+          return Promise.resolve();
+        },
+      })
+    );
+    for (const worker of workers) worker.start();
+    try {
+      await Promise.all(workers.map((worker) => pollOnce(worker)));
+      await Promise.resolve();
+
+      assertEquals(resumed.length, 1);
+      assertEquals((await backend.getRun(run.id))?.workerId, resumed[0]);
+    } finally {
+      await Promise.all(workers.map((worker) => worker.stop()));
+    }
+  });
+
+  it("durably fails an expired event wait without invoking resume", async () => {
+    const backend = new MemoryBackend();
+    const run = createExpiredTimedWaitRun("run-worker-expired-event", "event");
+    await backend.createRun(run);
+    let resumeCalls = 0;
+    const worker = new WorkflowWorker({
+      backend,
+      workerId: "worker-event-timeout",
+      pollInterval: NO_SCHEDULED_POLL,
+      resumeFn: () => {
+        resumeCalls++;
+        return Promise.resolve();
+      },
+    });
+    worker.start();
+    try {
+      await pollOnce(worker);
+
+      assertEquals(resumeCalls, 0);
+      assertEquals((await backend.getRun(run.id))?.status, "failed");
+      assertEquals(
+        (await backend.getRun(run.id))?.error?.message,
+        'Wait node "pause" timed out after 5ms',
+      );
     } finally {
       await worker.stop();
     }

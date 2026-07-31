@@ -17,6 +17,37 @@ export interface BoundedFileReadHandle extends BoundedFileReader {
 // bounded by the caller's limit.
 const BOUNDED_FILE_READ_CHUNK_BYTES = 64 * 1024;
 
+async function readAndCloseHandle<T>(
+  openHandle: () => Promise<BoundedFileReadHandle>,
+  read: (handle: BoundedFileReadHandle) => Promise<T>,
+): Promise<T> {
+  const handle = await openHandle();
+  let result: T | undefined;
+  let primaryFailure: unknown;
+  let primaryFailed = false;
+  try {
+    result = await read(handle);
+  } catch (error) {
+    primaryFailed = true;
+    primaryFailure = error;
+  }
+
+  try {
+    await handle.close();
+  } catch (cleanupFailure) {
+    if (primaryFailed) {
+      throw new AggregateError(
+        [primaryFailure, cleanupFailure],
+        "Filesystem read and handle cleanup both failed",
+      );
+    }
+    throw cleanupFailure;
+  }
+
+  if (primaryFailed) throw primaryFailure;
+  return result as T;
+}
+
 export function requireBoundedFileReadLimit(byteLimit: unknown): number {
   if (!Number.isSafeInteger(byteLimit) || (byteLimit as number) <= 0) {
     throw new RangeError("Filesystem byteLimit must be a positive safe integer");
@@ -36,12 +67,28 @@ export async function readBoundedFilePrefix(
   byteLimit: number,
 ): Promise<Uint8Array> {
   const boundedLimit = requireBoundedFileReadLimit(byteLimit);
-  const handle = await openHandle();
-  try {
-    return await readBoundedFileHandlePrefix(handle, boundedLimit);
-  } finally {
-    await handle.close();
-  }
+  return await readAndCloseHandle(
+    openHandle,
+    (handle) => readBoundedFileHandlePrefix(handle, boundedLimit),
+  );
+}
+
+/**
+ * Read the complete file only when it fits within `byteLimit`.
+ *
+ * Unlike a prefix read, reaching the limit triggers one additional EOF probe.
+ * The probe reuses the final byte of the accepted buffer, so the helper never
+ * retains more than `byteLimit` bytes from the source.
+ */
+export async function readFileWithinLimit(
+  openHandle: () => Promise<BoundedFileReadHandle>,
+  byteLimit: number,
+): Promise<Uint8Array> {
+  const boundedLimit = requireBoundedFileReadLimit(byteLimit);
+  return await readAndCloseHandle(
+    openHandle,
+    (handle) => readFileHandleWithinLimit(handle, boundedLimit),
+  );
 }
 
 /** Read a bounded prefix while leaving ownership of the open handle to the caller. */
@@ -92,4 +139,33 @@ export async function readBoundedFileHandlePrefix(
     offset += chunk.byteLength;
   }
   return bytes;
+}
+
+/** Read a complete bounded file while leaving ownership of the handle to the caller. */
+export async function readFileHandleWithinLimit(
+  reader: BoundedFileReader,
+  byteLimit: number,
+): Promise<Uint8Array> {
+  const boundedLimit = requireBoundedFileReadLimit(byteLimit);
+  const bytes = await readBoundedFileHandlePrefix(reader, boundedLimit);
+  if (bytes.byteLength < boundedLimit) return bytes;
+
+  // Reuse the final accepted byte as the EOF probe instead of allocating or
+  // retaining a maximum-plus-one buffer. Restore it when the file ends exactly
+  // at the limit; on overflow the result is discarded.
+  const finalIndex = boundedLimit - 1;
+  const acceptedFinalByte = bytes[finalIndex]!;
+  const probe = bytes.subarray(finalIndex, boundedLimit);
+  const bytesRead = await reader.read(probe);
+  if (bytesRead === null || bytesRead === 0) {
+    bytes[finalIndex] = acceptedFinalByte;
+    return bytes;
+  }
+  if (!Number.isSafeInteger(bytesRead) || bytesRead < 0 || bytesRead > probe.byteLength) {
+    throw new TypeError("Filesystem read returned an invalid byte count");
+  }
+
+  throw new RangeError(
+    `File exceeds byte limit of ${boundedLimit} ${boundedLimit === 1 ? "byte" : "bytes"}`,
+  );
 }

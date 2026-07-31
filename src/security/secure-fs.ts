@@ -15,6 +15,7 @@ import {
 } from "./path-validation.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { INVALID_ARGUMENT, NOT_SUPPORTED, SECURITY_VIOLATION } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 export const SECURITY_CONTEXTS = [
   "user-input",
@@ -259,6 +260,7 @@ type FilesystemMethodKey =
   | "readFile"
   | "readFileBytes"
   | "readFileBytesBounded"
+  | "readFileBytesWithinLimit"
   | "writeFile"
   | "stat"
   | "lstat"
@@ -277,6 +279,9 @@ function snapshotFilesystemMethod(
   let owner: object | null = fileSystem;
   const seen = new Set<object>();
   for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (isProxyWithoutHooks(owner)) {
+      invalidSecureFsOption(`SecureFs filesystem ${key} capability cannot be a Proxy`);
+    }
     if (seen.has(owner)) {
       invalidSecureFsOption("SecureFs filesystem contains an invalid prototype chain");
     }
@@ -293,8 +298,11 @@ function snapshotFilesystemMethod(
         invalidSecureFsOption(`SecureFs filesystem ${key} must be a data-property method`);
       }
       if (descriptor.value === undefined) return undefined;
-      if (typeof descriptor.value !== "function") {
-        invalidSecureFsOption(`SecureFs filesystem ${key} must be a function`);
+      if (
+        typeof descriptor.value !== "function" ||
+        isProxyWithoutHooks(descriptor.value)
+      ) {
+        invalidSecureFsOption(`SecureFs filesystem ${key} must be a non-Proxy function`);
       }
       return descriptor.value as FilesystemMethod;
     }
@@ -312,11 +320,65 @@ function snapshotFilesystemMethod(
   return undefined;
 }
 
+function snapshotFilesystemWholeReadCeiling(fileSystem: object): number | undefined {
+  let owner: object | null = fileSystem;
+  const seen = new Set<object>();
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (isProxyWithoutHooks(owner)) {
+      invalidSecureFsOption("SecureFs filesystem metadata cannot be a Proxy");
+    }
+    if (seen.has(owner)) {
+      invalidSecureFsOption("SecureFs filesystem contains an invalid prototype chain");
+    }
+    seen.add(owner);
+
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(owner, "maxWholeFileReadBytes");
+    } catch {
+      invalidSecureFsOption(
+        "SecureFs filesystem whole-file read ceiling could not be inspected safely",
+      );
+    }
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) {
+        invalidSecureFsOption(
+          "SecureFs filesystem maxWholeFileReadBytes must be a data property",
+        );
+      }
+      if (descriptor.value === undefined) return undefined;
+      if (!Number.isSafeInteger(descriptor.value) || descriptor.value <= 0) {
+        invalidSecureFsOption(
+          "SecureFs filesystem maxWholeFileReadBytes must be a positive safe integer",
+        );
+      }
+      return descriptor.value as number;
+    }
+
+    try {
+      owner = Object.getPrototypeOf(owner);
+    } catch {
+      invalidSecureFsOption(
+        "SecureFs filesystem whole-file read ceiling could not be inspected safely",
+      );
+    }
+  }
+
+  if (owner !== null) {
+    invalidSecureFsOption("SecureFs filesystem prototype chain is too deep");
+  }
+  return undefined;
+}
+
 function requireFilesystemMethod(
   fileSystem: RuntimeAdapter["fs"],
   key: Exclude<
     FilesystemMethodKey,
-    "readFileBytes" | "readFileBytesBounded" | "lstat" | "realPath"
+    | "readFileBytes"
+    | "readFileBytesBounded"
+    | "readFileBytesWithinLimit"
+    | "lstat"
+    | "realPath"
   >,
 ): FilesystemMethod {
   const method = snapshotFilesystemMethod(fileSystem, key);
@@ -327,9 +389,16 @@ function requireFilesystemMethod(
 }
 
 function snapshotFilesystem(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["fs"] {
+  if (isProxyWithoutHooks(fileSystem)) {
+    invalidSecureFsOption("SecureFs filesystem cannot be a Proxy");
+  }
   const readFile = requireFilesystemMethod(fileSystem, "readFile");
   const readFileBytes = snapshotFilesystemMethod(fileSystem, "readFileBytes");
   const readFileBytesBounded = snapshotFilesystemMethod(fileSystem, "readFileBytesBounded");
+  const readFileBytesWithinLimit = snapshotFilesystemMethod(
+    fileSystem,
+    "readFileBytesWithinLimit",
+  );
   const writeFile = requireFilesystemMethod(fileSystem, "writeFile");
   const stat = requireFilesystemMethod(fileSystem, "stat");
   const lstat = snapshotFilesystemMethod(fileSystem, "lstat");
@@ -340,6 +409,7 @@ function snapshotFilesystem(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["f
   const readDir = requireFilesystemMethod(fileSystem, "readDir");
   const makeTempDir = requireFilesystemMethod(fileSystem, "makeTempDir");
   const watch = requireFilesystemMethod(fileSystem, "watch");
+  const maxWholeFileReadBytes = snapshotFilesystemWholeReadCeiling(fileSystem);
 
   let semantics: PropertyDescriptor | undefined;
   try {
@@ -363,6 +433,19 @@ function snapshotFilesystem(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["f
     makeTempDir: (prefix) => Reflect.apply(makeTempDir, fileSystem, [prefix]) as Promise<string>,
     watch: (paths, options) => Reflect.apply(watch, fileSystem, [paths, options]) as FileWatcher,
   };
+  if (maxWholeFileReadBytes !== undefined) {
+    if (readFileBytes === undefined) {
+      invalidSecureFsOption(
+        "SecureFs filesystem maxWholeFileReadBytes requires readFileBytes",
+      );
+    }
+    Object.defineProperty(snapshot, "maxWholeFileReadBytes", {
+      value: maxWholeFileReadBytes,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
   if (readFileBytes !== undefined) {
     snapshot.readFileBytes = (path) =>
       Reflect.apply(readFileBytes, fileSystem, [path]) as Promise<Uint8Array>;
@@ -370,6 +453,13 @@ function snapshotFilesystem(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["f
   if (readFileBytesBounded !== undefined) {
     snapshot.readFileBytesBounded = (path, byteLimit) =>
       Reflect.apply(readFileBytesBounded, fileSystem, [path, byteLimit]) as Promise<Uint8Array>;
+  }
+  if (readFileBytesWithinLimit !== undefined) {
+    snapshot.readFileBytesWithinLimit = (path, byteLimit) =>
+      Reflect.apply(readFileBytesWithinLimit, fileSystem, [
+        path,
+        byteLimit,
+      ]) as Promise<Uint8Array>;
   }
   if (lstat !== undefined) {
     snapshot.lstat = (path) => Reflect.apply(lstat, fileSystem, [path]) as Promise<FileInfo>;
@@ -560,6 +650,11 @@ export class SecureFs {
     path: string,
     byteLimit: number,
   ) => Promise<Uint8Array>;
+  readonly readFileBytesWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  readonly maxWholeFileReadBytes?: number;
 
   constructor(config: SecureFsConfig) {
     const snapshot = snapshotOwnOptions(
@@ -579,6 +674,9 @@ export class SecureFs {
     ) {
       invalidSecureFsOption("SecureFs requires a runtime adapter with a filesystem");
     }
+    if (isProxyWithoutHooks(adapter)) {
+      invalidSecureFsOption("SecureFs runtime adapter cannot be a Proxy");
+    }
     let fsDescriptor: PropertyDescriptor | undefined;
     try {
       fsDescriptor = Object.getOwnPropertyDescriptor(adapter, "fs");
@@ -596,6 +694,9 @@ export class SecureFs {
       );
     }
     this.fileSystem = snapshotFilesystem(fsDescriptor.value as RuntimeAdapter["fs"]);
+    if (this.fileSystem.maxWholeFileReadBytes !== undefined) {
+      this.maxWholeFileReadBytes = this.fileSystem.maxWholeFileReadBytes;
+    }
 
     const context = requireSecurityContext(
       snapshot.context === undefined ? "internal" : snapshot.context,
@@ -642,6 +743,23 @@ export class SecureFs {
         );
         const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
         return await boundedReader.call(this.fileSystem, canonicalPath, byteLimit);
+      };
+    }
+
+    const exactReader = this.fileSystem.readFileBytesWithinLimit;
+    if (exactReader) {
+      this.readFileBytesWithinLimit = async (path: string, byteLimit: number) => {
+        if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+          throw new RangeError(
+            "SecureFs exact bounded read limit must be a positive safe integer",
+          );
+        }
+        const validation = await this.validatePathForOperation(
+          path,
+          "readFileBytesWithinLimit",
+        );
+        const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+        return await exactReader.call(this.fileSystem, canonicalPath, byteLimit);
       };
     }
   }

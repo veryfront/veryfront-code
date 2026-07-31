@@ -8,7 +8,13 @@
 
 import type { StyleScopeProfile } from "./style-scope-profile.ts";
 import { shouldIncludeStylePath } from "./style-scope-profile.ts";
-import { extractCandidates } from "./candidate-tokenizer.ts";
+import { extractCandidatesWithByteLength } from "./candidate-tokenizer.ts";
+import {
+  MAX_CSS_FILES,
+  MAX_CSS_SELECTOR_TOKENS,
+  MAX_CSS_TOTAL_BYTES,
+} from "#veryfront/utils/constants/css.ts";
+import { assertBoundedPathString } from "#veryfront/utils/project-relative-path.ts";
 
 export { extractCandidates } from "./candidate-tokenizer.ts";
 export { hashCandidates, hashCSS, hashString } from "./css-identity.ts";
@@ -20,20 +26,39 @@ export function extractCandidatesFromFiles(
     styleProfile?: StyleScopeProfile;
   } = {},
 ): Set<string> {
+  if (!Array.isArray(files) || files.length > MAX_CSS_FILES) {
+    throw new TypeError(`CSS candidate extraction cannot exceed ${MAX_CSS_FILES} source files`);
+  }
   const candidates = new Set<string>();
   const sourceExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx"];
+  let sourceBytes = 0;
 
   for (const file of files) {
+    const path = assertBoundedPathString(file.path, "CSS candidate source path");
     if (!file.content) continue;
     if (
       options.styleProfile &&
-      !shouldIncludeStylePath(options.styleProfile, file.path, options.projectDir)
+      !shouldIncludeStylePath(options.styleProfile, path, options.projectDir)
     ) {
       continue;
     }
-    if (!sourceExtensions.some((ext) => file.path.endsWith(ext))) continue;
+    if (!sourceExtensions.some((ext) => path.endsWith(ext))) continue;
 
-    for (const candidate of extractCandidates(file.content)) {
+    const extracted = extractCandidatesWithByteLength(
+      file.content,
+      `CSS candidate source ${path}`,
+    );
+    if (extracted.sourceBytes > MAX_CSS_TOTAL_BYTES - sourceBytes) {
+      throw new TypeError(`CSS candidate sources exceed ${MAX_CSS_TOTAL_BYTES} total bytes`);
+    }
+    sourceBytes += extracted.sourceBytes;
+
+    for (const candidate of extracted.candidates) {
+      if (!candidates.has(candidate) && candidates.size >= MAX_CSS_SELECTOR_TOKENS) {
+        throw new TypeError(
+          `CSS candidate extraction cannot exceed ${MAX_CSS_SELECTOR_TOKENS} candidates`,
+        );
+      }
       candidates.add(candidate);
     }
   }
