@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
 import { tool } from "../../src/tool/factory.ts";
+import { agent } from "../../src/agent/index.ts";
 import { type AgentConfig, type Message } from "../../src/agent/types.ts";
 import type { ModelRuntime } from "../../src/provider/types.ts";
 
@@ -33,6 +34,110 @@ function createMockStreamingModel(
  * Registers a mock model in the model registry, invokes `runtime.stream()`,
  * and verifies SSE events are emitted correctly.
  */
+it("deferred respond searches, exposes on the next step, and executes once", async () => {
+  const observedTools: string[][] = [];
+  let modelStep = 0;
+  let executionCount = 0;
+  const model: ModelRuntime = {
+    provider: "mock",
+    modelId: "mock/deferred-respond",
+    async doGenerate() {
+      return { content: [{ type: "text", text: "unused" }] };
+    },
+    async doStream(options) {
+      const tools = (options as { tools?: Array<{ name: string }> }).tools ?? [];
+      observedTools.push(tools.map(({ name }) => name).sort());
+      modelStep += 1;
+      if (modelStep === 1) {
+        return {
+          stream: ReadableStream.from([
+            {
+              type: "tool-call",
+              toolCallId: "search-1",
+              toolName: "tool_search",
+              input: { query: "release marker" },
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      if (modelStep === 2) {
+        return {
+          stream: ReadableStream.from([
+            {
+              type: "tool-call",
+              toolCallId: "marker-1",
+              toolName: "read_release_marker",
+              input: {},
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      return {
+        stream: ReadableStream.from([
+          { type: "text-delta", text: "marker-1" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const assistant = agent({
+    id: "deferred-respond",
+    model: "mock/deferred-respond",
+    system: "Use tools when needed.",
+    tools: {
+      form_input: tool({
+        id: "form_input",
+        description: "Collect input",
+        inputSchema: { type: "object", properties: {} },
+        execute: () => ({}),
+      }),
+      load_skill: tool({
+        id: "load_skill",
+        description: "Load a skill",
+        inputSchema: { type: "object", properties: {} },
+        execute: () => ({}),
+      }),
+      read_release_marker: tool({
+        id: "read_release_marker",
+        description: "Read the release marker",
+        inputSchema: { type: "object", properties: {} },
+        execute: () => {
+          executionCount += 1;
+          return { marker: "marker-1" };
+        },
+      }),
+    },
+    maxSteps: 4,
+    resolveModelTransport: () => ({ model }),
+  });
+
+  const response = await assistant.respond(
+    new Request("https://example.test/agent", {
+      method: "POST",
+      body: JSON.stringify({
+        messages: [{
+          id: "user-1",
+          role: "user",
+          parts: [{ type: "text", text: "Read the release marker" }],
+        }],
+      }),
+    }),
+  );
+  const body = await response.text();
+
+  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[1], [
+    "form_input",
+    "load_skill",
+    "read_release_marker",
+    "tool_search",
+  ]);
+  assertEquals(executionCount, 1);
+  assert(body.includes("marker-1"), "respond should stream the final marker");
+});
+
 describe("AgentRuntime streaming", () => {
   it("should stream text content via the model registry", async () => {
     const originalLogLevel = getEnv("LOG_LEVEL");
