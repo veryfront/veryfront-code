@@ -353,7 +353,7 @@ describe("hydration-script-builder/runtime/router", () => {
 
     await harness.runtime.navigateSPA("/target");
 
-    assertEquals(harness.window.location.href, "/target");
+    assertEquals(harness.window.location.href, "https://veryfront.test/target");
     assertEquals(harness.renderedRouterParams(), null);
   });
 
@@ -373,7 +373,7 @@ describe("hydration-script-builder/runtime/router", () => {
 
     await harness.runtime.navigateSPA("/target");
 
-    assertEquals(harness.window.location.href, "/target");
+    assertEquals(harness.window.location.href, "https://veryfront.test/target");
     assertEquals(harness.renderedRouterParams(), null);
   });
 
@@ -708,6 +708,59 @@ describe("hydration-script-builder/runtime/router", () => {
     });
   });
 
+  // Every path that leaves the SPA resolves and scheme-checks its target first.
+  // Assigning a javascript: URL to location.href would execute it.
+  describe("unsafe document navigation", () => {
+    it("reloads instead of following an unsafe target when navigation fails", async () => {
+      const harness = createRouterHarness({
+        // 404 rather than a rejection: a rejection retries through sleep(),
+        // and the harness stubs setTimeout so the retry would never resolve.
+        fetchImpl: (url) =>
+          Promise.resolve({
+            ok: false,
+            status: 404,
+            url,
+            headers: { get: () => null },
+            json: () => Promise.resolve({}),
+          } as RuntimeResponse),
+      });
+      harness.window.__veryfrontHydrationComplete?.();
+
+      await harness.runtime.navigateSPA("javascript:alert(1)");
+
+      assertEquals(harness.reloads(), 1);
+      assertEquals(harness.window.location.href.includes("javascript:"), false);
+    });
+
+    // The build-version-mismatch path (handlePageDataVersionMismatch) routes
+    // through the same navigateDocument helper, but it deliberately returns a
+    // never-resolving promise so the SPA stalls while the document navigates
+    // away. Any test that reaches it leaves a pending promise, so that branch
+    // is covered by resolveDocumentNavigationUrl's own tests plus the shared
+    // call site rather than by an integration test that fights the sanitizer.
+
+    it("still follows a safe target on the same failure path", async () => {
+      const harness = createRouterHarness({
+        // 404 rather than a rejection: a rejection retries through sleep(),
+        // and the harness stubs setTimeout so the retry would never resolve.
+        fetchImpl: (url) =>
+          Promise.resolve({
+            ok: false,
+            status: 404,
+            url,
+            headers: { get: () => null },
+            json: () => Promise.resolve({}),
+          } as RuntimeResponse),
+      });
+      harness.window.__veryfrontHydrationComplete?.();
+
+      await harness.runtime.navigateSPA("/still-safe");
+
+      assertEquals(harness.window.location.href, "https://veryfront.test/still-safe");
+      assertEquals(harness.reloads(), 0);
+    });
+  });
+
   describe("server-layout routes", () => {
     it("falls back to a document navigation when the route needs the server layout", async () => {
       const harness = createRouterHarness();
@@ -716,7 +769,7 @@ describe("hydration-script-builder/runtime/router", () => {
 
       await harness.runtime.navigateSPA("/server-only");
 
-      assertEquals(harness.window.location.href, "/server-only");
+      assertEquals(harness.window.location.href, "https://veryfront.test/server-only");
     });
   });
 });

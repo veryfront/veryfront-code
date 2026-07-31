@@ -72,6 +72,29 @@ export function isAbortError(error: unknown): boolean {
   return (error as { name?: string })?.name === "AbortError";
 }
 
+/**
+ * Resolves a target the runtime is about to hand to a document navigation,
+ * returning null when it is not safe to follow.
+ *
+ * Assigning a `javascript:` or `data:` URL to `location.href` EXECUTES it, so
+ * every path that leaves the SPA has to resolve and check the scheme first —
+ * not just the getServerData redirect path, which is where this check first
+ * appeared. Returning the resolved absolute URL means callers navigate to
+ * exactly the string that was vetted.
+ */
+export function resolveDocumentNavigationUrl(
+  target: string,
+  origin: string,
+): string | null {
+  try {
+    const url = new URL(target, origin);
+    if (url.protocol === "http:" || url.protocol === "https:") return url.href;
+  } catch (_) {
+    /* unparseable target — do not navigate */
+  }
+  return null;
+}
+
 /** The CSP nonce the document was served with, so injected styles inherit it. */
 export function getDocumentNonce(document: RuntimeDocument): string | undefined {
   const element = document.querySelector("script[nonce], style[nonce], link[nonce]");

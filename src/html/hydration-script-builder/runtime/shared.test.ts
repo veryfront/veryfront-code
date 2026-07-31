@@ -8,6 +8,7 @@ import {
   isAbortError,
   moduleServerUrl,
   normalizeRouteParams,
+  resolveDocumentNavigationUrl,
 } from "./shared.ts";
 
 function stubWindow(
@@ -109,6 +110,47 @@ describe("hydration-script-builder/runtime/shared", () => {
         moduleServerUrl(stubWindow({ origin: "https://veryfront.test" })),
         "https://veryfront.test/_vf_modules",
       );
+    });
+  });
+
+  describe("resolveDocumentNavigationUrl", () => {
+    const origin = "https://veryfront.test";
+
+    it("resolves a relative path against the origin", () => {
+      assertEquals(
+        resolveDocumentNavigationUrl("/docs/intro", origin),
+        "https://veryfront.test/docs/intro",
+      );
+    });
+
+    it("allows http and https targets", () => {
+      assertEquals(
+        resolveDocumentNavigationUrl("https://example.test/x", origin),
+        "https://example.test/x",
+      );
+      assertEquals(
+        resolveDocumentNavigationUrl("http://example.test/x", origin),
+        "http://example.test/x",
+      );
+    });
+
+    it("refuses schemes that execute when assigned to location.href", () => {
+      assertEquals(resolveDocumentNavigationUrl("javascript:alert(1)", origin), null);
+      assertEquals(
+        resolveDocumentNavigationUrl("data:text/html,<script>alert(1)</script>", origin),
+        null,
+      );
+      assertEquals(resolveDocumentNavigationUrl("vbscript:msgbox(1)", origin), null);
+    });
+
+    it("refuses other non-navigable schemes", () => {
+      assertEquals(resolveDocumentNavigationUrl("file:///etc/passwd", origin), null);
+      assertEquals(resolveDocumentNavigationUrl("blob:https://x/y", origin), null);
+    });
+
+    it("returns null for an unparseable target", () => {
+      assertEquals(resolveDocumentNavigationUrl("", "not a url"), null);
+      assertEquals(resolveDocumentNavigationUrl("http://[", origin), null);
     });
   });
 

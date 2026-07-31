@@ -13,7 +13,12 @@ import type {
   RuntimeResponse,
 } from "./env.ts";
 import type { RuntimeLogging } from "./shared.ts";
-import { getDocumentNonce, isAbortError, normalizeRouteParams } from "./shared.ts";
+import {
+  getDocumentNonce,
+  isAbortError,
+  normalizeRouteParams,
+  resolveDocumentNavigationUrl,
+} from "./shared.ts";
 import type { RouteTimingRecorder } from "./route-timing.ts";
 import { routeTimingNow } from "./route-timing.ts";
 import type { ComponentLoader } from "./component-loader.ts";
@@ -118,6 +123,22 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
 
   function pageDataCacheIdentity(path: string): string {
     return buildPageDataCacheIdentity(path, documentPinKey);
+  }
+
+  /**
+   * Leaves the SPA for `target`. When the target is not a safe document
+   * navigation, reloads the current route instead — the user still escapes the
+   * broken SPA state, without the runtime executing a URL it could not vet.
+   */
+  function navigateDocument(target: string): void {
+    const safeUrl = resolveDocumentNavigationUrl(target, window.location.origin);
+    if (safeUrl) {
+      window.location.href = safeUrl;
+      return;
+    }
+
+    logError("Refusing an unsafe document navigation:", target);
+    window.location.reload();
   }
 
   // ============================================
@@ -392,7 +413,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
   ): PageDataPayload {
     if (data.buildVersion && checkVersionMismatch(data.buildVersion)) {
       log("Version mismatch detected, performing full page reload to:", path);
-      window.location.href = path;
+      navigateDocument(path);
       return new Promise<PageDataPayload>(() => {}) as unknown as PageDataPayload;
     }
 
@@ -524,20 +545,19 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
       // getServerData redirect(): the page-data endpoint encodes it as a 200
       // { redirect: { destination } } payload. Follow it with a document
       // navigation to the target (the same net effect as the full-page 302),
-      // instead of trying to render a page that does not exist here.
-      // Only follow http(s)/relative destinations: assigning a javascript:/data:
-      // URL to location.href would EXECUTE it (the server also filters these, so
-      // this is defense in depth). Fall through to the normal error path otherwise.
+      // instead of trying to render a page that does not exist here. An unsafe
+      // or unparseable destination falls through to the normal error path
+      // rather than reloading, which is what it did before the scheme check
+      // moved into resolveDocumentNavigationUrl.
       if (pageData && pageData.redirect && typeof pageData.redirect.destination === "string") {
-        try {
-          const redirectTarget = new URL(pageData.redirect.destination, window.location.origin);
-          if (redirectTarget.protocol === "http:" || redirectTarget.protocol === "https:") {
-            log("SPA navigation redirect -> " + redirectTarget.href);
-            window.location.href = redirectTarget.href;
-            return;
-          }
-        } catch (_) {
-          /* invalid destination — do not follow */
+        const redirectUrl = resolveDocumentNavigationUrl(
+          pageData.redirect.destination,
+          window.location.origin,
+        );
+        if (redirectUrl) {
+          log("SPA navigation redirect -> " + redirectUrl);
+          window.location.href = redirectUrl;
+          return;
         }
       }
 
@@ -597,7 +617,7 @@ export function createRouterRuntime(deps: RouterRuntimeDeps): RouterRuntime {
         logError("Page not found:", href);
       }
 
-      window.location.href = href;
+      navigateDocument(href);
     } finally {
       isNavigating = false;
       currentAbortController = null;
