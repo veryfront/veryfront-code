@@ -65,9 +65,6 @@ export {
 // Executor
 export { getSkillScriptExecutor } from "./executor.ts";
 
-// Prompt
-export { buildSkillManifestPrompt } from "./prompt-augmentation.ts";
-
 // Allowed-Tools
 export {
   filterToolsForSkill,

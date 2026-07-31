@@ -11,6 +11,18 @@ import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 /** Maximum value for runtime skill prompt entries. */
 export const MAX_RUNTIME_SKILL_PROMPT_ENTRIES = 30;
 
+/**
+ * Call signatures for the skill tools. Emitted only for callers that opt in:
+ * hosted runs learn the signatures from the tool schemas, while agents built
+ * by the `agent()` factory have carried them in the prompt since the factory
+ * rendered its own skill manifest.
+ */
+const SKILL_TOOL_USAGE = `Skill tools (call these as tools, never write them as text):
+
+- load_skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts
+- load_skill_reference: Call with { skillId, reference } only after load_skill lists reference files for that skill
+- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill`;
+
 function getScopedDelegateToolNames(availableToolNames?: readonly string[]): string[] {
   return (availableToolNames ?? [])
     .filter((toolName) => toolName.startsWith("agent_"))
@@ -68,7 +80,10 @@ function formatRuntimeSkillLabel(skill: RuntimeSkillDefinition): string {
 /** Builds runtime available skills prompt block. */
 export function buildRuntimeAvailableSkillsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
-  options: { availableToolNames?: readonly string[] } = {},
+  options: {
+    availableToolNames?: readonly string[];
+    includeSkillToolUsage?: boolean;
+  } = {},
 ): string {
   const displaySkills = skills.slice(0, MAX_RUNTIME_SKILL_PROMPT_ENTRIES);
   const skillsList = displaySkills
@@ -86,6 +101,7 @@ export function buildRuntimeAvailableSkillsPromptBlock(
     : "";
   const delegationGuidance = buildRuntimeSkillDelegationGuidance(options.availableToolNames);
   const delegationSentence = delegationGuidance ? ` ${delegationGuidance}` : "";
+  const toolUsage = options.includeSkillToolUsage ? `\n\n${SKILL_TOOL_USAGE}` : "";
 
   return createRuntimePromptBlock({
     name: "available_skills",
@@ -94,6 +110,6 @@ export function buildRuntimeAvailableSkillsPromptBlock(
 
 Do NOT attempt tools that are absent from the current run just because they appear in loaded skill instructions.
 
-${skillsList}${truncationNote}`,
+${skillsList}${truncationNote}${toolUsage}`,
   });
 }
