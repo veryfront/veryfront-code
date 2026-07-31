@@ -20,10 +20,11 @@
  * 2. An uncached `<environment_context>` message, when environment facts are
  *    supplied.
  *
- * Blocks whose tag already appears in the instructions are dropped. Callers
- * compose in layers — the factory renders a prompt that a project-runtime run
- * later re-composes — and dropping already-present tags keeps that idempotent
- * instead of emitting the same project reference twice.
+ * Every block — including the skills block — is dropped when the instructions
+ * already carry that tag as a complete element. Callers compose in layers: the
+ * factory renders a prompt that a project-runtime run later re-composes, and
+ * dropping already-present elements keeps that idempotent instead of emitting
+ * the same project reference or skill catalog twice.
  *
  * @module
  */
@@ -37,6 +38,7 @@ import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
 
 const ENVIRONMENT_CONTEXT_BLOCK_NAME = "environment_context";
+const AVAILABLE_SKILLS_BLOCK_NAME = "available_skills";
 
 /** Project the call runs against, rendered as the `<project_context>` block. */
 export type AgentCallProjectContext = {
@@ -163,7 +165,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     staticParts.push(instructions.after);
   }
 
-  if (input.skills?.length) {
+  if (input.skills?.length && !hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)) {
     staticParts.push(
       buildRuntimeAvailableSkillsPromptBlock(input.skills, {
         ...(input.availableToolNames === undefined
