@@ -58,12 +58,15 @@ describe("hydration-script-builder/runtime/shared", () => {
       );
     });
 
+    // The declared parameter type rules these out, but hydration data is
+    // server-written JSON, so the runtime behaviour still has to hold.
     it("skips undefined values", () => {
-      assertEquals(normalizeRouteParams({ id: "42", draft: undefined }), { id: "42" });
+      const withHole = { id: "42", draft: undefined } as unknown as Record<string, string>;
+      assertEquals(normalizeRouteParams(withHole), { id: "42" });
     });
 
     it("returns an empty object for missing params", () => {
-      assertEquals(normalizeRouteParams(null), {});
+      assertEquals(normalizeRouteParams(null as unknown as undefined), {});
       assertEquals(normalizeRouteParams(undefined), {});
     });
   });

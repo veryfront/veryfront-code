@@ -79,23 +79,16 @@ export function getDocumentNonce(document: RuntimeDocument): string | undefined 
 }
 
 /**
- * Catch-all segments arrive as arrays and are joined so no path info is lost,
- * matching the server's flattenRouteParams and the RSC hydration normalizer.
+ * Catch-all segments arrive as arrays and are joined so no path info is lost.
  *
- * TODO(convergence): the same join exists server-side in
- * rendering/rsc/hydration-router.ts, routing/api/context-builder.ts and
- * client/spa/ClientApp.tsx. They differ in how they treat `undefined` and
- * non-array values, so they are not collapsed here.
+ * This is the server's own flattener, not a client copy of it: the client and
+ * the SSR render must agree on the joined form exactly (issue #2742), and the
+ * module is a dependency-free leaf so it bundles into the client runtime.
+ *
+ * TODO(convergence): rendering/rsc/hydration-router.ts and
+ * client/spa/ClientApp.tsx still carry their own `normalizeParams`, which write
+ * `undefined` values through instead of skipping them. Collapsing those onto
+ * flattenRouteParams is a behaviour change for undefined params, so it is left
+ * out of this refactor.
  */
-export function normalizeRouteParams(
-  raw: Record<string, string | string[] | undefined> | undefined | null,
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!raw) return out;
-  for (const key in raw) {
-    const value = raw[key];
-    if (value === undefined) continue;
-    out[key] = Array.isArray(value) ? value.join("/") : value;
-  }
-  return out;
-}
+export { flattenRouteParams as normalizeRouteParams } from "#veryfront/routing/flatten-route-params.ts";
