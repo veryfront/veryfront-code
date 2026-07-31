@@ -36,60 +36,27 @@ import {
   AgentPickerManage,
 } from "./agent-picker-actions.tsx";
 
+import type {
+  AgentOption,
+  AgentPickerContentProps,
+  AgentPickerItemProps,
+  AgentPickerProps,
+  AgentPickerSearchProps,
+  AgentPickerSection,
+  AgentPickerTriggerProps,
+} from "./agent-picker.types.ts";
+
 export type { AgentPickerActionProps, AgentPickerContextValue };
 export { useAgentPicker };
-
-/** A selectable agent entry. */
-export interface AgentOption {
-  /** Stable identifier — used as the selection value. */
-  id: string;
-  /** Display name (also the search keyword). */
-  name: string;
-  /** Avatar image URL (matches `AgentMetadata.avatarUrl`); initials shown when absent/null. */
-  avatarUrl?: string | null;
-  /** @deprecated Use `avatarUrl`. */
-  avatarSrc?: string;
-  /** Dims the row and blocks selection. */
-  disabled?: boolean;
-}
-
-/** A labelled group of agents (e.g. "Connected Agents"). */
-export interface AgentPickerSection {
-  /** Omit to render an unlabelled group. */
-  label?: string;
-  agents: AgentOption[];
-}
-
-/** Props accepted by `<AgentPicker>`. */
-export interface AgentPickerProps {
-  /** Agents shown in the default (top) group. */
-  agents: AgentOption[];
-  /** Selected agent id. */
-  value?: string;
-  /** Called with the chosen agent id. */
-  onValueChange?: (id: string) => void;
-  /** Extra labelled groups rendered below the default group. */
-  sections?: AgentPickerSection[];
-  /** Shows a "Manage Agents" row at the bottom when provided. */
-  onManage?: () => void;
-  /** Shows a "Create Agent" row at the bottom when provided. */
-  onCreate?: () => void;
-  /** Notified whenever the popover opens or closes. */
-  onOpenChange?: (open: boolean) => void;
-  /** Render the trigger as an input-style field instead of a pill. */
-  inputStyle?: boolean;
-  /** Mark the input-style trigger invalid. */
-  invalid?: boolean;
-  /** Show skeleton rows while agents are being fetched. */
-  isLoading?: boolean;
-  /** Additional class names for the trigger. */
-  className?: string;
-  /**
-   * Compose your own menu from `AgentPicker.Trigger` / `Content` / `List` /
-   * `Item`. When omitted, the default data-driven preset is rendered.
-   */
-  children?: React.ReactNode;
-}
+export type {
+  AgentOption,
+  AgentPickerContentProps,
+  AgentPickerItemProps,
+  AgentPickerProps,
+  AgentPickerSearchProps,
+  AgentPickerSection,
+  AgentPickerTriggerProps,
+} from "./agent-picker.types.ts";
 
 /** Search box appears once the combined agent count crosses this. */
 const SEARCH_THRESHOLD = 5;
@@ -159,20 +126,6 @@ function AgentPickerLoadingRows(): React.ReactElement {
 // and `Command` context flows from `Content` down to `List` / `Item`.
 // ---------------------------------------------------------------------------
 
-/** Props for `AgentPicker.Trigger` — the pill/input combobox button. */
-export interface AgentPickerTriggerProps {
-  /** Render as an input-style field instead of a pill. */
-  inputStyle?: boolean;
-  /** Mark the input-style trigger invalid. */
-  invalid?: boolean;
-  /** Override the trailing chevron glyph. */
-  icon?: React.ReactNode;
-  /** Override the trigger contents; defaults to the selected agent's row. */
-  children?: React.ReactNode;
-  className?: string;
-  ref?: React.Ref<HTMLButtonElement>;
-}
-
 /** The pill (or input-style) combobox trigger. Toggles the popover. */
 function AgentPickerTrigger(
   { inputStyle = false, invalid = false, icon, children, className, ref }: AgentPickerTriggerProps,
@@ -224,14 +177,6 @@ function AgentPickerTrigger(
 }
 AgentPickerTrigger.displayName = "AgentPicker.Trigger";
 
-/** Props for `AgentPicker.Search` — the addressable search input leaf. */
-export interface AgentPickerSearchProps {
-  /** Search input placeholder. */
-  placeholder?: string;
-  className?: string;
-  ref?: React.Ref<HTMLInputElement>;
-}
-
 /**
  * The search input row. An addressable leaf so a consumer composing
  * `AgentPicker.Content` can place / restyle / omit it. Reads the filter query
@@ -245,11 +190,6 @@ function AgentPickerSearch(
   return <CommandInput placeholder={placeholder} className={className} ref={ref} />;
 }
 AgentPickerSearch.displayName = "AgentPicker.Search";
-
-/** Props for `AgentPicker.Content` — the popover surface + `Command` shell. */
-export interface AgentPickerContentProps extends React.HTMLAttributes<HTMLDivElement> {
-  ref?: React.Ref<HTMLDivElement>;
-}
 
 /** The popover surface wrapping a `Command` (search + list region). */
 function AgentPickerContent(
@@ -283,18 +223,6 @@ function AgentPickerList(
   );
 }
 AgentPickerList.displayName = "AgentPicker.List";
-
-/** Props for `AgentPicker.Item` — a single selectable agent row. */
-export interface AgentPickerItemProps {
-  /** The agent this row represents. Its `id` is the selection value. */
-  agent: AgentOption;
-  /** Force selected styling; defaults to matching the context `value`. */
-  selected?: boolean;
-  /** Override the selection-check glyph. */
-  icon?: React.ReactNode;
-  className?: string;
-  ref?: React.Ref<HTMLDivElement>;
-}
 
 /** A single agent row (Avatar + name + selection check). */
 function AgentPickerItem(
