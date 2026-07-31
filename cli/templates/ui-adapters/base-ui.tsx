@@ -15,8 +15,8 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Base UI
  * for just some parts and leave the rest zero-dependency. This template maps ALL
- * 10/10 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
- * `toast` / `disclosure` / `toggleGroup` / `toolbar`. Nine wrap real Base UI primitives; `combobox` is a contract-faithful,
+ * 11/11 parts: `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
+ * `toast` / `disclosure` / `toggleGroup` / `toolbar` / `tabs`. Ten wrap real Base UI primitives; `combobox` is a contract-faithful,
  * React-only hand-roll — Base UI's `Autocomplete` is data-driven (owns its own
  * `items` + filtering) and does NOT invert onto our `register`/`matches`/
  * `activeId` option registry, so that one slot owns query + filter + active-
@@ -44,6 +44,7 @@ import { Toast as BaseToast } from "@base-ui/react/toast";
 import { Collapsible as BaseCollapsible } from "@base-ui/react/collapsible";
 import { Toggle as BaseToggle, ToggleGroup as BaseToggleGroup } from "@base-ui/react/toggle-group";
 import { Toolbar as BaseToolbar } from "@base-ui/react/toolbar";
+import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { useTokenScope } from "veryfront/ui";
 import type {
   ComboboxParts,
@@ -55,6 +56,7 @@ import type {
   PopoverParts,
   SelectParts,
   SelectState,
+  TabsParts,
   ToastFn,
   ToastOptions,
   ToastParts,
@@ -973,9 +975,65 @@ export const baseUiToolbar: ToolbarParts = {
       : <BaseToolbar.Button {...rest}>{children}</BaseToolbar.Button>,
 };
 
+// ---------------------------------------------------------------------------
+// Tabs (single-select tablist — PANEL-LESS: the consumer renders content by value)
+// ---------------------------------------------------------------------------
+// Base UI's Tabs owns the selected value (`Tabs.Root value onValueChange` +
+// `Tabs.List` + `Tabs.Tab value`) and renders the `role="tablist"`/`role="tab"`
+// nodes with `aria-selected` + selection-on-click. Our skin is PANEL-LESS (the
+// consumer renders content keyed by the active value), so we map only Root+List +
+// Tab — NO `Tabs.Panel`. Two normalizations the contract forces:
+//   (1) drop Base UI's 2nd `onValueChange(value, eventDetails)` arg → single-arg.
+//   (2) Base UI's Tab emits `data-selected`, but the skin styles off
+//       `data-state="active"|"inactive"`. So we mirror the selected value into a
+//       context and each Tab sets `data-state` explicitly from whether its own
+//       `value` matches. `role="tab"` + `aria-selected` stay native to Base UI's Tab.
+// The Root's `ref`/`className` (+ any `...rest`) land on `Tabs.List` — the
+// `role="tablist"` node — matching the builtin.
+const TabsValueContext = React.createContext<string | null>(null);
+
+export const baseUiTabs: TabsParts = {
+  Root: ({ value, onValueChange, children, ...rest }) => (
+    <TabsValueContext.Provider value={value}>
+      <BaseTabs.Root
+        value={value}
+        // (1) drop the 2nd `eventDetails` arg.
+        onValueChange={(next: string) => onValueChange(next)}
+      >
+        <BaseTabs.List {...rest}>{children}</BaseTabs.List>
+      </BaseTabs.Root>
+    </TabsValueContext.Provider>
+  ),
+  Tab: ({ value, asChild, className, children, ...rest }) => {
+    const selected = React.useContext(TabsValueContext);
+    const isActive = selected === value;
+    // (2) mirror selection into `data-state`; the skin styles off it.
+    return asChild
+      ? (
+        <BaseTabs.Tab
+          value={value}
+          render={children as React.ReactElement}
+          data-state={isActive ? "active" : "inactive"}
+          className={className}
+          {...rest}
+        />
+      )
+      : (
+        <BaseTabs.Tab
+          value={value}
+          data-state={isActive ? "active" : "inactive"}
+          className={className}
+          {...rest}
+        >
+          {children}
+        </BaseTabs.Tab>
+      );
+  },
+};
+
 /**
- * Partial adapter map — Base UI covers ALL 10/10 parts: popover + dialog + menu +
- * tooltip + select + combobox + toast + disclosure + toggleGroup + toolbar.
+ * Partial adapter map — Base UI covers ALL 11/11 parts: popover + dialog + menu +
+ * tooltip + select + combobox + toast + disclosure + toggleGroup + toolbar + tabs.
  * `combobox` is a contract-faithful, React-only hand-roll (Base UI's data-driven
  * `Autocomplete` doesn't invert onto our `register`/`matches`/`activeId` registry
  * — see the Combobox section); the rest wrap real Base UI primitives. Drop any
@@ -993,4 +1051,5 @@ export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   disclosure: baseUiDisclosure,
   toggleGroup: baseUiToggleGroup,
   toolbar: baseUiToolbar,
+  tabs: baseUiTabs,
 };

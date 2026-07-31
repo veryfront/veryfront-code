@@ -16,9 +16,12 @@
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt React
  * Aria for just some parts and leave the rest zero-dependency. This template is
- * **full coverage — 10/10**: `popover` / `dialog` / `menu` / `tooltip` /
- * `disclosure` / `toggleGroup` / `toolbar` / `select` / `combobox` / `toast`, all
- * mapped onto `react-aria-components`. No slot falls back to the builtin.
+ * **full coverage — 11/11**: `popover` / `dialog` / `menu` / `tooltip` /
+ * `disclosure` / `toggleGroup` / `toolbar` / `select` / `combobox` / `tabs` /
+ * `toast`, all mapped onto `react-aria-components`. No slot falls back to the
+ * builtin. `tabs` maps onto RAC's `Tabs` / `TabList` / `Tab` panel-less (the skin
+ * renders content by value), bridging `selectedKey` + setting `data-state`
+ * explicitly.
  * `toggleGroup` maps onto RAC's `ToggleButtonGroup` / `ToggleButton` (bridging the
  * contract's `type`/string `value` onto RAC's `selectionMode`/`Set` selection).
  * `toolbar` maps onto RAC's inline `Toolbar`, which roves its own focusable
@@ -99,6 +102,11 @@ import {
   Modal,
   Popover,
   Pressable,
+  // `Tabs` / `TabList` / `Tab` are RAC's tablist primitives — verify these names
+  // (and `selectedKey`/`onSelectionChange`) vs your react-aria-components version.
+  Tab,
+  TabList,
+  Tabs,
   Text,
   // `ToggleButtonGroup` / `ToggleButton` are a newer RAC addition — verify these
   // names (and `selectionMode`/`selectedKeys`/`onSelectionChange`) vs your
@@ -133,6 +141,7 @@ import type {
   PopoverParts,
   SelectParts,
   SelectState,
+  TabsParts,
   ToastFn,
   ToastOptions,
   ToastParts,
@@ -892,6 +901,53 @@ export const reactAriaCombobox: ComboboxParts = {
 };
 
 // ---------------------------------------------------------------------------
+// Tabs (single-select tablist — RAC Tabs/TabList/Tab, PANEL-LESS)
+// ---------------------------------------------------------------------------
+// RAC's `Tabs` owns the selected key + roving focus; `TabList` renders the
+// `role="tablist"` and each `Tab` a `role="tab"`. Our skin is PANEL-LESS (the
+// consumer renders content by value), so we map Root→`Tabs`+`TabList` and
+// Tab→`Tab` and DROP RAC's `TabPanel`s entirely. Two mappings the contract
+// forces:
+//   1. `value`→`selectedKey`; `onValueChange`←`onSelectionChange` (RAC emits a
+//      `Key`, so `String()`-narrow it back to the contract's string — already
+//      single-arg, cf. reconciliation (1)). An inline primitive, so there is NO
+//      ScopedPortal here.
+//   2. RAC's `Tab` emits `data-selected` (its own selected-state attribute), NOT
+//      the `data-state="active"|"inactive"` the skin styles off. So we publish
+//      the selected `value` through a context the `Tab` reads to set `data-state`
+//      explicitly. RAC's Tab already emits `role="tab"` + `aria-selected` and
+//      selects on press; we add the `data-state` styling hook.
+const TabsSelectionContext = React.createContext<string | undefined>(undefined);
+
+export const reactAriaTabs: TabsParts = {
+  Root: ({ value, onValueChange, children, ref, ...rest }) => (
+    <TabsSelectionContext.Provider value={value}>
+      {/* verify `selectedKey`/`onSelectionChange` vs your react-aria-components version. */}
+      <Tabs selectedKey={value} onSelectionChange={(key) => onValueChange(String(key))}>
+        <TabList ref={ref} {...rest}>
+          {children}
+        </TabList>
+      </Tabs>
+    </TabsSelectionContext.Provider>
+  ),
+  // `id={value}` keys the tab as the `selectedKey` target. `asChild` has no RAC
+  // analogue here — the `Tab` must itself be the keyed list member — so it is
+  // dropped (not spread onto the DOM). The skin's `className` + rest props flow
+  // straight onto the RAC `Tab`.
+  Tab: ({ value, asChild: _asChild, children, ref, ...rest }) => {
+    const selected = React.useContext(TabsSelectionContext);
+    const isActive = selected === value;
+    return (
+      // RAC emits `role="tab"` + `aria-selected` + selects on press; we add
+      // `data-state` (the skin's styling hook) from our authoritative selection.
+      <Tab ref={ref} id={value as Key} data-state={isActive ? "active" : "inactive"} {...rest}>
+        {children}
+      </Tab>
+    );
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Toast (imperative — RAC's ToastQueue + ToastRegion behind {toast, dismiss})
 // ---------------------------------------------------------------------------
 // See reconciliation (6): RAC's toast IS imperative — a `ToastQueue` you
@@ -1058,16 +1114,18 @@ export const reactAriaToast: ToastParts = {
 };
 
 /**
- * FULL adapter map — React Aria for all 10 primitives: popover + dialog + menu +
- * tooltip + disclosure + toggleGroup + toolbar + select + combobox + toast. No
- * slot falls back to the builtin. `disclosure` maps onto RAC's inline
+ * FULL adapter map — React Aria for all 11 primitives: popover + dialog + menu +
+ * tooltip + disclosure + toggleGroup + toolbar + select + combobox + tabs +
+ * toast. No slot falls back to the builtin. `disclosure` maps onto RAC's inline
  * `Disclosure`/`DisclosurePanel` (no portal); `toggleGroup` bridges the contract's
  * `type`/string `value` onto RAC's `ToggleButtonGroup` `selectionMode`/`Set`
  * selection; `toolbar` maps onto RAC's inline `Toolbar` (it roves its own
  * focusable children); `select` + `combobox` bridge their state locally (RAC's
  * collection primitives don't invert onto the skin-driven registry —
- * reconciliation (5)); `toast` maps straight onto RAC's imperative `ToastQueue`
- * (reconciliation (6)).
+ * reconciliation (5)); `tabs` maps onto RAC's `Tabs`/`TabList`/`Tab` panel-less,
+ * bridging `selectedKey` + setting `data-state` explicitly (RAC's Tab emits
+ * `data-selected`, not the skin's `data-state`); `toast` maps straight onto RAC's
+ * imperative `ToastQueue` (reconciliation (6)).
  */
 export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   name: "react-aria",
@@ -1080,5 +1138,6 @@ export const reactAriaAdapter: Partial<UIAdapter> & { name: string } = {
   toolbar: reactAriaToolbar,
   select: reactAriaSelect,
   combobox: reactAriaCombobox,
+  tabs: reactAriaTabs,
   toast: reactAriaToast,
 };

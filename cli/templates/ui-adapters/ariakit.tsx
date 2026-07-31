@@ -14,11 +14,12 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Ariakit
- * for just some parts and leave the rest zero-dependency. Slot coverage: 8/10 —
+ * for just some parts and leave the rest zero-dependency. Slot coverage: 9/11 —
  * `popover` / `dialog` / `menu` / `tooltip` / `select` / `combobox` /
- * `disclosure` / `toolbar` map to Ariakit; `toast` and `toggleGroup` STAY
- * builtin because Ariakit ships NO toast primitive (no toast store / region /
- * queue) and no dedicated toggle-group primitive. Don't hand-roll them here —
+ * `disclosure` / `toolbar` / `tabs` map to Ariakit; `toast` and `toggleGroup`
+ * STAY builtin because Ariakit ships NO toast primitive (no toast store /
+ * region / queue) and no dedicated toggle-group primitive. Don't hand-roll them
+ * here —
  * the zero-dependency builtins already satisfy `ToastParts` / `ToggleGroupParts`,
  * so leaving those unset lets the provider fall back to them.
  *
@@ -69,6 +70,7 @@ import type {
   PopoverParts,
   SelectParts,
   SelectState,
+  TabsParts,
   ToolbarParts,
   TooltipParts,
   UIAdapter,
@@ -732,12 +734,72 @@ export const ariakitToolbar: ToolbarParts = {
       : <Ariakit.ToolbarItem ref={ref} {...rest}>{children}</Ariakit.ToolbarItem>,
 };
 
+// ---------------------------------------------------------------------------
+// Tabs (single-select tablist — Ariakit's tab store owns the selected value)
+// ---------------------------------------------------------------------------
+// Panel-less: the consumer renders content keyed by the active value, so we map
+// only the tablist + tabs (NO `TabPanel`). Ariakit's `useTabStore` owns the
+// selected tab id; `TabList` renders the `role="tablist"` wrapper and each `Tab`
+// registers with the store it reads from context. We bridge the store's
+// `setSelectedId` onto our single-arg `onValueChange`, and expose the store via
+// context so each Tab can set `data-state="active"|"inactive"` EXPLICITLY from
+// `store.useState("selectedId") === value` — Ariakit's `Tab` emits `role="tab"`
+// + `aria-selected` + `data-active` itself, but NOT the `data-state` our skin
+// styles off of (`data-[state=active]:…`), so we always set it here.
+const TabStoreContext = React.createContext<Ariakit.TabStore | null>(null);
+
+const AriakitTabsRoot: TabsParts["Root"] = ({ value, onValueChange, children, ref, ...rest }) => {
+  // Ariakit's `setSelectedId` receives the id (nullable when nothing is
+  // selected); normalize to "" to match our non-null `onValueChange` contract.
+  const store = Ariakit.useTabStore({
+    selectedId: value,
+    setSelectedId: (id) => onValueChange(id ?? ""),
+  });
+  return (
+    <TabStoreContext.Provider value={store}>
+      <Ariakit.TabProvider store={store}>
+        <Ariakit.TabList ref={ref} store={store} {...rest}>{children}</Ariakit.TabList>
+      </Ariakit.TabProvider>
+    </TabStoreContext.Provider>
+  );
+};
+
+export const ariakitTabs: TabsParts = {
+  Root: AriakitTabsRoot,
+  // `Tab id={value}` self-wires selection through the store from context (selects
+  // on click, sets `role="tab"` + `aria-selected`). We add `data-state` EXPLICITLY
+  // from the store's selected id so the skin's `data-[state=active]:…` classes land.
+  // `asChild` maps to Ariakit's polymorphic `render={children}`. No visual classes —
+  // those arrive via `...rest`.
+  Tab: ({ value, asChild, children, ref, ...rest }) => {
+    const store = React.useContext(TabStoreContext);
+    const selectedId = store?.useState("selectedId");
+    const isActive = selectedId === value;
+    const dataState = isActive ? "active" : "inactive";
+    return asChild
+      ? (
+        <Ariakit.Tab
+          ref={ref}
+          id={value}
+          render={children as React.ReactElement}
+          data-state={dataState}
+          {...rest}
+        />
+      )
+      : (
+        <Ariakit.Tab ref={ref} id={value} data-state={dataState} {...rest}>
+          {children}
+        </Ariakit.Tab>
+      );
+  },
+};
+
 /**
  * Partial adapter map — adopt Ariakit for popover + dialog + menu + tooltip +
- * select + combobox + disclosure + toolbar (8/10). `toast` and `toggleGroup`
- * are intentionally ABSENT: Ariakit ships no toast primitive and no dedicated
- * toggle-group primitive, so both fall back to the zero-dependency builtin.
- * Extend as you vendor more parts.
+ * select + combobox + disclosure + toolbar + tabs (9/11). `toast` and
+ * `toggleGroup` are intentionally ABSENT: Ariakit ships no toast primitive and
+ * no dedicated toggle-group primitive, so both fall back to the zero-dependency
+ * builtin. Extend as you vendor more parts.
  */
 export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   name: "ariakit",
@@ -749,6 +811,7 @@ export const ariakitAdapter: Partial<UIAdapter> & { name: string } = {
   combobox: ariakitCombobox,
   disclosure: ariakitDisclosure,
   toolbar: ariakitToolbar,
+  tabs: ariakitTabs,
   // toast: intentionally omitted — Ariakit has no toast primitive; falls back
   // to builtin toast.
   // toggleGroup: intentionally omitted — Ariakit has no dedicated toggle-group

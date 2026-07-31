@@ -99,7 +99,7 @@ export const UI_COMPONENTS: UiComponent[] = [
   { name: "Drawer", kind: "overlay", interactive: true, status: "shipped" },
   { name: "Command", kind: "overlay", interactive: true, status: "shipped" },
   // structure
-  { name: "Tabs", kind: "structure", interactive: true, status: "shipped" },
+  { name: "Tabs", kind: "structure", interactive: true, adapterKey: "tabs", status: "shipped" },
   {
     name: "Collapsible",
     kind: "structure",
@@ -538,6 +538,7 @@ const ALL_SLOTS = [
   "disclosure",
   "toggleGroup",
   "toolbar",
+  "tabs",
 ] as const;
 type Slot = typeof ALL_SLOTS[number];
 
@@ -573,6 +574,7 @@ const UI_ENGINES: EngineRow[] = [
       "disclosure",
       "toggleGroup",
       "toolbar",
+      "tabs",
     ],
     builtinFallback: ["combobox"], // Radix has no combobox primitive
     status: "shipped",
@@ -587,7 +589,17 @@ const UI_ENGINES: EngineRow[] = [
   {
     name: "Ariakit",
     template: "ariakit.tsx",
-    slots: ["popover", "dialog", "menu", "tooltip", "select", "combobox", "disclosure", "toolbar"],
+    slots: [
+      "popover",
+      "dialog",
+      "menu",
+      "tooltip",
+      "select",
+      "combobox",
+      "disclosure",
+      "toolbar",
+      "tabs",
+    ],
     // Ariakit ships no toast and no dedicated toggle-group primitive.
     builtinFallback: ["toast", "toggleGroup"],
     status: "shipped",

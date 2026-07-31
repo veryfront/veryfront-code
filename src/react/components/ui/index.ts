@@ -404,6 +404,7 @@ export type {
   PopoverParts,
   SelectParts,
   SelectState,
+  TabsParts,
   ToastParts,
   ToastState,
   ToggleGroupParts,
