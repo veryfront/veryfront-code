@@ -3,11 +3,7 @@ import type { AgentConfig } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import {
-  isValidToolExposureCheckpointName,
-  type ToolExposureCheckpoint,
-  type ToolSearchAuthorization,
-} from "./tool-exposure.ts";
+import { isValidToolExposureCheckpointName, type ToolExposureCheckpoint } from "./tool-exposure.ts";
 
 /** Internal schema-loading mode derived from the authored tools selector. */
 export type RuntimeToolLoadingMode = "eager" | "deferred";
@@ -18,7 +14,6 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
   >;
-  __vfToolSearchAuthorization?: ToolSearchAuthorization;
   __vfToolExposureCheckpoint?: ToolExposureCheckpoint;
   __vfPersistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
@@ -95,27 +90,6 @@ export function getRuntimeProviderTools(config: AgentConfig): string[] {
     return [];
   }
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
-}
-
-/** Return trusted host-derived metadata discovery authorization. */
-export function getRuntimeToolSearchAuthorization(
-  config: AgentConfig,
-): ToolSearchAuthorization {
-  const value = (config as RuntimeToolFilterConfig).__vfToolSearchAuthorization;
-  if (
-    value?.canConfigureAgentTools !== true ||
-    !Array.isArray(value.attachableCatalog) ||
-    !value.attachableCatalog.every((entry) =>
-      entry !== null &&
-      typeof entry === "object" &&
-      typeof entry.name === "string" &&
-      typeof entry.description === "string" &&
-      entry.attachVia === "tool_ids"
-    )
-  ) {
-    return { canConfigureAgentTools: false, attachableCatalog: [] };
-  }
-  return value;
 }
 
 /** Return a supported trusted private exposure checkpoint. */

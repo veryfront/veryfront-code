@@ -115,8 +115,6 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
    */
   mcpServers?: readonly NodeVeryfrontCloudAgentServiceMcpServer[];
   forwardedConfigNamespace?: string;
-  /** Service-operator override; never read from an individual chat request. */
-  operationalToolLoadingOverride?: "eager";
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;

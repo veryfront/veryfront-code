@@ -5,7 +5,6 @@ import {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
   getServerResolvedToolExposureCheckpoint,
-  getServerResolvedToolSearchAuthorization,
   resolveHostedRuntimeRequestConfig,
   resolveHostedRuntimeThinkingOverride,
 } from "./runtime-request-config.ts";
@@ -48,79 +47,13 @@ it("server-resolved tool exposure checkpoint parses strictly and fails closed", 
   );
 });
 
-it("server-resolved tool search authorization fails closed", () => {
-  assertEquals(getServerResolvedToolSearchAuthorization(undefined, false), {
-    canConfigureAgentTools: false,
-    attachableCatalog: [],
-  });
-  assertEquals(
-    getServerResolvedToolSearchAuthorization({
-      serverResolvedToolSearchAuthorization: {
-        canConfigureAgentTools: "true",
-        attachableCatalog: [{ name: "list_agents", description: "List agents" }],
-      },
-    }, true),
-    {
-      canConfigureAgentTools: false,
-      attachableCatalog: [],
-    },
-  );
-});
-
-it("server-resolved tool search authorization accepts compact trusted metadata", () => {
-  assertEquals(
-    getServerResolvedToolSearchAuthorization({
-      serverResolvedToolSearchAuthorization: {
-        canConfigureAgentTools: true,
-        attachableCatalog: [{
-          name: "list_agents",
-          description: "List configured agents",
-          attachVia: "tool_ids",
-        }],
-      },
-    }, true),
-    {
-      canConfigureAgentTools: true,
-      attachableCatalog: [{
-        name: "list_agents",
-        description: "List configured agents",
-        attachVia: "tool_ids",
-      }],
-    },
-  );
-  assertEquals(
-    getServerResolvedToolSearchAuthorization({
-      serverResolvedToolSearchAuthorization: {
-        canConfigureAgentTools: true,
-        attachableCatalog: [{
-          name: "list_agents",
-          description: "List configured agents",
-          attachVia: "tool_ids",
-        }],
-      },
-    }, false),
-    {
-      canConfigureAgentTools: false,
-      attachableCatalog: [],
-    },
-  );
-});
-
-it("ordinary hosted request resolution ignores forwarded tool search authorization", () => {
+it("ordinary hosted request resolution ignores forwarded private tool exposure state", () => {
   const result = resolveHostedRuntimeRequestConfig({
     agentConfig: {
       model: "anthropic/claude-opus-4-6",
     },
     request: {
       forwardedProps: {
-        serverResolvedToolSearchAuthorization: {
-          canConfigureAgentTools: true,
-          attachableCatalog: [{
-            name: "list_agents",
-            description: "List configured agents",
-            attachVia: "tool_ids",
-          }],
-        },
         serverResolvedToolExposureCheckpoint: {
           version: 1,
           authorizedCatalogFingerprint: "client-spoof",
@@ -131,10 +64,6 @@ it("ordinary hosted request resolution ignores forwarded tool search authorizati
     resolveModelId: (model) => model,
   });
 
-  assertEquals(
-    (result as unknown as Record<string, unknown>).serverResolvedToolSearchAuthorization,
-    undefined,
-  );
   assertEquals(
     (result as unknown as Record<string, unknown>).serverResolvedToolExposureCheckpoint,
     undefined,

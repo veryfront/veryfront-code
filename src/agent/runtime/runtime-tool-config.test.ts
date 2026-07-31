@@ -9,7 +9,6 @@ import {
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
   getRuntimeToolExposureCheckpoint,
-  getRuntimeToolSearchAuthorization,
   resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 
@@ -58,18 +57,6 @@ describe("agent/runtime-tool-config", () => {
         mode: "eager",
         provenance: "host-operational-override",
       },
-    );
-  });
-
-  it("defaults trusted authoring search authorization closed", () => {
-    assertEquals(
-      getRuntimeToolSearchAuthorization(runtimeConfig({
-        context: {
-          canConfigureAgentTools: true,
-          attachableCatalog: [{ name: "list_agents" }],
-        },
-      })),
-      { canConfigureAgentTools: false, attachableCatalog: [] },
     );
   });
 

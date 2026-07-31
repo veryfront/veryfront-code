@@ -578,6 +578,7 @@ describe("agent runtime refresh hooks", () => {
   it("forces a final response after create_agent succeeds during generate()", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;
+    let executionCount = 0;
     const model: ModelRuntime = {
       provider: "anthropic",
       modelId: "claude-sonnet-4-6",
@@ -605,6 +606,19 @@ describe("agent runtime refresh hooks", () => {
           };
         }
 
+        if (callCount === 2) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "create-agent-generate-guessed-2",
+              toolName: "create_agent",
+              input: '{"id":"guessed-second-agent"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
         return {
           content: [{ type: "text", text: "Created Gmail Assistant." }],
           finishReason: "stop",
@@ -622,11 +636,14 @@ describe("agent runtime refresh hooks", () => {
       id: "create_agent",
       description: "Create a Studio project agent",
       inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
-      execute: async ({ id }) => ({
-        id,
-        name: "Gmail Assistant",
-        source_path: `agents/${id}.ts`,
-      }),
+      execute: async ({ id }) => {
+        executionCount++;
+        return {
+          id,
+          name: "Gmail Assistant",
+          source_path: `agents/${id}.ts`,
+        };
+      },
     });
 
     const assistant = eagerAgent({
@@ -638,22 +655,47 @@ describe("agent runtime refresh hooks", () => {
       resolveModelTransport: async () => ({ model }),
     });
 
-    await assistant.generate({ input: "Create a Gmail agent" });
+    const response = await assistant.generate({ input: "Create a Gmail agent" });
 
-    assertEquals(toolNamesByStep.length, 2);
+    assertEquals(toolNamesByStep.length, 3);
     assertEquals(toolNamesByStep[0]?.includes("create_agent"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
     assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(executionCount, 1);
+    assertEquals(response.toolCalls[1]?.status, "error");
+    assertEquals(
+      response.toolCalls[1]?.error,
+      'Tool "create_agent" is not available in the current model step',
+    );
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;
+    let executionCount = 0;
     const model: ModelRuntime = {
       provider: "anthropic",
       modelId: "claude-sonnet-4-6",
       async doGenerate() {
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "create-agent-guessed-2",
+                toolName: "create_agent",
+                input: '{"id":"guessed-second-agent"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
         return {
           content: [{ type: "text", text: "unused" }],
           finishReason: "stop",
@@ -706,11 +748,14 @@ describe("agent runtime refresh hooks", () => {
       id: "create_agent",
       description: "Create a Studio project agent",
       inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
-      execute: async ({ id }) => ({
-        id,
-        name: "Gmail Assistant",
-        source_path: `agents/${id}.ts`,
-      }),
+      execute: async ({ id }) => {
+        executionCount++;
+        return {
+          id,
+          name: "Gmail Assistant",
+          source_path: `agents/${id}.ts`,
+        };
+      },
     });
 
     const assistant = eagerAgent({
@@ -732,6 +777,7 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
     assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(executionCount, 1);
   });
 
   for (const agentWriteToolName of ["create_agent", "update_agent"] as const) {

@@ -9,7 +9,7 @@ import {
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
-import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "../runtime/tool-exposure.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -55,48 +55,6 @@ export type ResolvedHostedRuntimeRequestConfig = {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-const CLOSED_TOOL_SEARCH_AUTHORIZATION: ToolSearchAuthorization = {
-  canConfigureAgentTools: false,
-  attachableCatalog: [],
-};
-
-/**
- * Read the authorization service result forwarded by the authenticated host.
- *
- * A cryptographically verified exact-run envelope is required even if a caller
- * accidentally preserves the reserved forwarded property.
- */
-export function getServerResolvedToolSearchAuthorization(
-  forwardedProps: Record<string, unknown> | undefined,
-  serverEnvelopeVerified: boolean,
-): ToolSearchAuthorization {
-  if (!serverEnvelopeVerified) return CLOSED_TOOL_SEARCH_AUTHORIZATION;
-  const value = forwardedProps?.serverResolvedToolSearchAuthorization;
-  if (!isRecord(value) || typeof value.canConfigureAgentTools !== "boolean") {
-    return CLOSED_TOOL_SEARCH_AUTHORIZATION;
-  }
-  if (!Array.isArray(value.attachableCatalog)) {
-    return CLOSED_TOOL_SEARCH_AUTHORIZATION;
-  }
-
-  const attachableCatalog = value.attachableCatalog.filter(
-    (entry): entry is ToolSearchAuthorization["attachableCatalog"][number] =>
-      isRecord(entry) &&
-      typeof entry.name === "string" &&
-      entry.name.length > 0 &&
-      typeof entry.description === "string" &&
-      entry.attachVia === "tool_ids",
-  );
-  if (attachableCatalog.length !== value.attachableCatalog.length) {
-    return CLOSED_TOOL_SEARCH_AUTHORIZATION;
-  }
-
-  return {
-    canConfigureAgentTools: value.canConfigureAgentTools,
-    attachableCatalog,
-  };
 }
 
 /** Read the latest checkpoint overwritten by the authenticated server caller. */

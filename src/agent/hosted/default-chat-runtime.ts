@@ -270,7 +270,6 @@ function createRuntimeAgentConfig(input: {
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
-    __vfToolSearchAuthorization: input.options.serverResolvedToolSearchAuthorization,
     __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:

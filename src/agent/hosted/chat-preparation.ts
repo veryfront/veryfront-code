@@ -39,7 +39,7 @@ import {
   ContextCompactionError,
 } from "./context-budget-manager.ts";
 import { findSubmittedFormInputResult } from "./form-input-tool.ts";
-import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "../runtime/tool-exposure.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import { createToolExposureCheckpointEvent } from "../runtime/tool-exposure.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 
@@ -114,8 +114,6 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   runtimeTargetEnvironmentId?: string | null;
   environmentContext?: string;
   rootRunContext?: HostedChatRuntimePreparationRootRunContext;
-  /** Trusted value resolved after hosted service authentication. */
-  serverResolvedToolSearchAuthorization?: ToolSearchAuthorization;
   /** Trusted checkpoint resolved after hosted service authentication. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
   resolveModelId: (modelId: string | undefined) => string | undefined;
@@ -258,8 +256,6 @@ export type HostedChatExecutionPreparationInput<
     >,
   ) => Promise<TRuntimeResult>;
   contextBudget?: HostedChatContextBudgetOptions;
-  /** Trusted value resolved by the authenticated hosted service. */
-  serverResolvedToolSearchAuthorization?: ToolSearchAuthorization;
   /** Trusted checkpoint resolved by the authenticated hosted service. */
   serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
 };
@@ -377,11 +373,6 @@ export async function prepareHostedChatRuntimeCreationOptions<
         : {}),
       allowedProviderTools: runtimeConfig.requestedAllowedProviderTools,
       includeRuntimeEssentialToolsWhenEmpty: runtimeConfig.includeRuntimeEssentialToolsWhenEmpty,
-      ...(input.serverResolvedToolSearchAuthorization
-        ? {
-          serverResolvedToolSearchAuthorization: input.serverResolvedToolSearchAuthorization,
-        }
-        : {}),
       ...(input.serverResolvedToolExposureCheckpoint
         ? { serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint }
         : {}),
@@ -491,7 +482,6 @@ export async function prepareHostedChatExecution<
     resolveModelThinking: input.resolveModelThinking,
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
-    serverResolvedToolSearchAuthorization: input.serverResolvedToolSearchAuthorization,
     serverResolvedToolExposureCheckpoint: input.serverResolvedToolExposureCheckpoint,
   });
   const submittedFormInputResult = findSubmittedFormInputResult(normalized.effectiveMessages);

@@ -262,6 +262,33 @@ describe("agent/agent-service-auth", () => {
     );
   });
 
+  it("temporarily accepts the exact route-only v1 writer credential", async () => {
+    const v1Payload = {
+      ...apiRunEventWriterContract.payload,
+      scopes: undefined,
+      scope: ["projects:read", "runs:write"],
+    };
+    const fixture = await createRs256JwtFixture(v1Payload);
+    const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: v1Payload.serviceAccountId,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    assertEquals(
+      await auth.verifyRunEventAppendToken({
+        token: fixture.token,
+        projectId: v1Payload.projectId,
+        runId: v1Payload.runId,
+      }),
+      true,
+    );
+  });
+
   it("rejects user, generic service, broader, duplicate, or wrongly bound writer claims", async () => {
     const exactWriterClaims = {
       actorType: "service_account",
@@ -298,6 +325,15 @@ describe("agent/agent-service-auth", () => {
       {
         ...exactWriterClaims,
         scopes: ["agent-runs:events:append", 42],
+      },
+      {
+        ...exactWriterClaims,
+        scope: ["projects:read", "runs:write"],
+      },
+      {
+        ...exactWriterClaims,
+        scopes: undefined,
+        scope: ["projects:read", "runs:write", "agent-runs:events:append"],
       },
       {
         ...exactWriterClaims,

@@ -83,37 +83,39 @@ it("deferred respond searches, exposes on the next step, and executes once", asy
       };
     },
   };
-  const assistant = agent({
-    id: "deferred-respond",
-    model: "mock/deferred-respond",
-    system: "Use tools when needed.",
-    tools: {
-      form_input: tool({
-        id: "form_input",
-        description: "Collect input",
-        inputSchema: { type: "object", properties: {} },
-        execute: () => ({}),
-      }),
-      load_skill: tool({
-        id: "load_skill",
-        description: "Load a skill",
-        inputSchema: { type: "object", properties: {} },
-        execute: () => ({}),
-      }),
-      read_release_marker: tool({
-        id: "read_release_marker",
-        description: "Read the release marker",
-        inputSchema: { type: "object", properties: {} },
-        execute: () => {
-          executionCount += 1;
-          return { marker: "marker-1" };
-        },
-      }),
-    },
-    maxSteps: 4,
-    resolveModelTransport: () => ({ model }),
-    __vfToolLoadingMode: "deferred",
-  } as AgentConfig & RuntimeToolFilterConfig);
+  const assistant = agent(
+    {
+      id: "deferred-respond",
+      model: "mock/deferred-respond",
+      system: "Use tools when needed.",
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: { type: "object", properties: {} },
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: { type: "object", properties: {} },
+          execute: () => ({}),
+        }),
+        read_release_marker: tool({
+          id: "read_release_marker",
+          description: "Read the release marker",
+          inputSchema: { type: "object", properties: {} },
+          execute: () => {
+            executionCount += 1;
+            return { marker: "marker-1" };
+          },
+        }),
+      },
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
 
   const response = await assistant.respond(
     new Request("https://example.test/agent", {

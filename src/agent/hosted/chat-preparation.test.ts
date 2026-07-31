@@ -280,14 +280,6 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
         },
       },
     },
-    serverResolvedToolSearchAuthorization: {
-      canConfigureAgentTools: true,
-      attachableCatalog: [{
-        name: "list_agents",
-        description: "List agents",
-        attachVia: "tool_ids",
-      }],
-    },
     serverResolvedToolExposureCheckpoint: {
       version: 1,
       authorizedCatalogFingerprint: "v1-catalog",
@@ -357,14 +349,6 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     persistToolExposureCheckpoint: result.creationOptions.persistToolExposureCheckpoint,
     requireToolExposureCheckpointPersistence: true,
     clientProfile: null,
-    serverResolvedToolSearchAuthorization: {
-      canConfigureAgentTools: true,
-      attachableCatalog: [{
-        name: "list_agents",
-        description: "List agents",
-        attachVia: "tool_ids",
-      }],
-    },
     serverResolvedToolExposureCheckpoint: {
       version: 1,
       authorizedCatalogFingerprint: "v1-catalog",

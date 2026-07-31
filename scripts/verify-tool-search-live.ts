@@ -48,7 +48,6 @@ const BOOTSTRAP_TOOL_NAMES = new Set([
   "tool_search",
 ]);
 const SEARCH_RESULT_KEYS = [
-  "attachableMetadataCount",
   "loadedCount",
   "matches",
   "miss",
@@ -202,7 +201,6 @@ function validateSearchResult(value: unknown): void {
     matches.length !== 1 ||
     result.resultCount !== 1 ||
     result.loadedCount !== 1 ||
-    result.attachableMetadataCount !== 0 ||
     result.miss !== false ||
     typeof result.nextStep !== "string"
   ) {

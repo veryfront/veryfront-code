@@ -7,19 +7,6 @@ export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 const DEFAULT_BOOTSTRAP_TOOL_NAMES = new Set(["form_input", "load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
 
-/** Compact catalog metadata that may be shown to an agent-authoring caller. */
-export type CompactAttachableToolMetadata = {
-  name: string;
-  description: string;
-  attachVia: "tool_ids";
-};
-
-/** Trusted authorization context for metadata-only authoring discovery. */
-export type ToolSearchAuthorization = {
-  canConfigureAgentTools: boolean;
-  attachableCatalog: CompactAttachableToolMetadata[];
-};
-
 /** Run-local mutable exposure state. Create a new state for every child run. */
 export type ToolExposureState = {
   loadedToolNames: Set<string>;
@@ -49,21 +36,13 @@ export type ToolExposureCheckpointEvent = ToolExposureCheckpoint & {
 };
 
 /** Schema-free model-visible search result. */
-export type ToolSearchMatch =
-  | { name: string; description: string; status: "loaded" }
-  | {
-    name: string;
-    description: string;
-    status: "attachable";
-    attachVia: "tool_ids";
-  };
+export type ToolSearchMatch = { name: string; description: string; status: "loaded" };
 
 /** Search output plus bounded observability counters. */
 export type ToolSearchResult = {
   matches: ToolSearchMatch[];
   resultCount: number;
   loadedCount: number;
-  attachableMetadataCount: number;
   miss: boolean;
 };
 
@@ -200,7 +179,6 @@ export function createToolExposurePlan(input: {
   mode: RuntimeToolLoadingMode;
   state: ToolExposureState;
   bootstrapToolNames?: ReadonlySet<string>;
-  hasSearchableMetadata?: boolean;
 }): ToolExposurePlan {
   const authorized = [...input.authorized];
   if (input.mode === "eager") {
@@ -223,7 +201,7 @@ export function createToolExposurePlan(input: {
   const deferred = authorized
     .filter((tool) => !visibleNames.has(tool.name))
     .sort((left, right) => compareAscii(left.name, right.name));
-  if (deferred.length > 0 || input.hasSearchableMetadata === true) {
+  if (deferred.length > 0) {
     visible.push(createToolSearchDefinition());
   }
 
@@ -235,14 +213,12 @@ export function createToolExposurePlan(input: {
   };
 }
 
-/** Search authorized schemas and trusted metadata without returning either schema. */
+/** Search currently authorized executable schemas without returning any schema. */
 export function searchToolExposure(input: {
   query: string;
   authorized: readonly ToolDefinition[];
   state: ToolExposureState;
-  authorization?: ToolSearchAuthorization;
 }): ToolSearchResult {
-  const authorizedNames = new Set(input.authorized.map((tool) => tool.name));
   const ranked: Array<{ rank: number; matchCount: number; match: ToolSearchMatch }> = [];
 
   for (const tool of input.authorized) {
@@ -260,28 +236,6 @@ export function searchToolExposure(input: {
     });
   }
 
-  if (input.authorization?.canConfigureAgentTools === true) {
-    for (const tool of input.authorization.attachableCatalog) {
-      if (authorizedNames.has(tool.name) || tool.attachVia !== "tool_ids") continue;
-      const rank = getMatchRank({
-        query: input.query,
-        name: tool.name,
-        description: tool.description,
-      });
-      if (rank === null) continue;
-      ranked.push({
-        rank,
-        matchCount: 1,
-        match: {
-          name: tool.name,
-          description: tool.description,
-          status: "attachable",
-          attachVia: "tool_ids",
-        },
-      });
-    }
-  }
-
   if (ranked.length === 0) {
     for (const tool of input.authorized) {
       const score = getTermFallbackScore({
@@ -296,27 +250,6 @@ export function searchToolExposure(input: {
         match: { name: tool.name, description: tool.description, status: "loaded" },
       });
     }
-
-    if (input.authorization?.canConfigureAgentTools === true) {
-      for (const tool of input.authorization.attachableCatalog) {
-        if (authorizedNames.has(tool.name) || tool.attachVia !== "tool_ids") continue;
-        const score = getTermFallbackScore({
-          query: input.query,
-          name: tool.name,
-          description: tool.description,
-        });
-        if (!score) continue;
-        ranked.push({
-          ...score,
-          match: {
-            name: tool.name,
-            description: tool.description,
-            status: "attachable",
-            attachVia: "tool_ids",
-          },
-        });
-      }
-    }
   }
 
   const matches = ranked
@@ -327,17 +260,12 @@ export function searchToolExposure(input: {
     .slice(0, TOOL_SEARCH_RESULT_LIMIT)
     .map(({ match }) => match);
 
-  for (const match of matches) {
-    if (match.status === "loaded") input.state.loadedToolNames.add(match.name);
-  }
+  for (const match of matches) input.state.loadedToolNames.add(match.name);
 
-  const loadedCount = matches.filter((match) => match.status === "loaded").length;
-  const attachableMetadataCount = matches.length - loadedCount;
   return {
     matches,
     resultCount: matches.length,
-    loadedCount,
-    attachableMetadataCount,
+    loadedCount: matches.length,
     miss: matches.length === 0,
   };
 }

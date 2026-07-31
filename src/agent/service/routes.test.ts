@@ -6,10 +6,7 @@ import type { HostedServiceAuthenticatedRequest } from "./auth.ts";
 import type { ParsedHostedChatRequest } from "../hosted/chat-request-parser.ts";
 import type { HostedRuntimeSourceIdentity } from "../hosted/runtime-source-binding.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
-import {
-  getServerResolvedToolExposureCheckpoint,
-  getServerResolvedToolSearchAuthorization,
-} from "../hosted/runtime-request-config.ts";
+import { getServerResolvedToolExposureCheckpoint } from "../hosted/runtime-request-config.ts";
 
 const runtimeSource = { type: "release", releaseId: "release-42" } as const;
 
@@ -265,10 +262,6 @@ it("ordinary durable-chat routes strip spoofed server-resolved tool state", asyn
   const { routeSet, preparedRequests } = createRouteSet({
     prepareExecution: (request) => {
       resolved.push({
-        authorization: getServerResolvedToolSearchAuthorization(
-          request.forwardedProps,
-          request.serverEnvelopeVerified === true,
-        ),
         checkpoint: getServerResolvedToolExposureCheckpoint(
           request.forwardedProps,
           request.serverEnvelopeVerified === true,
@@ -291,14 +284,6 @@ it("ordinary durable-chat routes strip spoofed server-resolved tool state", asyn
       },
       forwardedProps: {
         unrelated: "preserved",
-        serverResolvedToolSearchAuthorization: {
-          canConfigureAgentTools: true,
-          attachableCatalog: [{
-            name: "delete_project",
-            description: "Delete a project",
-            attachVia: "tool_ids",
-          }],
-        },
         serverResolvedToolExposureCheckpoint: {
           version: 1,
           authorizedCatalogFingerprint: "spoofed",
@@ -312,13 +297,7 @@ it("ordinary durable-chat routes strip spoofed server-resolved tool state", asyn
   assertEquals(response.status, 202);
   assertEquals(preparedRequests[0]?.forwardedProps, { unrelated: "preserved" });
   assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
-  assertEquals(resolved, [{
-    authorization: {
-      canConfigureAgentTools: false,
-      attachableCatalog: [],
-    },
-    checkpoint: undefined,
-  }]);
+  assertEquals(resolved, [{ checkpoint: undefined }]);
 });
 
 it("a verified writer token does not trust ordinary durable-chat body state", async () => {
@@ -327,10 +306,6 @@ it("a verified writer token does not trust ordinary durable-chat body state", as
     verifyRunEventAppendToken: () => Promise.resolve(true),
     prepareExecution: (request) => {
       resolved.push({
-        authorization: getServerResolvedToolSearchAuthorization(
-          request.forwardedProps,
-          request.serverEnvelopeVerified === true,
-        ),
         checkpoint: getServerResolvedToolExposureCheckpoint(
           request.forwardedProps,
           request.serverEnvelopeVerified === true,
@@ -339,14 +314,6 @@ it("a verified writer token does not trust ordinary durable-chat body state", as
       return Promise.resolve({ executionId: "exec-verified" });
     },
   });
-  const authorization = {
-    canConfigureAgentTools: true,
-    attachableCatalog: [{
-      name: "list_agents",
-      description: "List configured agents",
-      attachVia: "tool_ids",
-    }],
-  };
   const checkpoint = {
     version: 1,
     authorizedCatalogFingerprint: "trusted-catalog",
@@ -367,7 +334,6 @@ it("a verified writer token does not trust ordinary durable-chat body state", as
           messageId: "00000000-0000-4000-8000-000000000002",
         },
         forwardedProps: {
-          serverResolvedToolSearchAuthorization: authorization,
           serverResolvedToolExposureCheckpoint: checkpoint,
         },
       },
@@ -380,10 +346,7 @@ it("a verified writer token does not trust ordinary durable-chat body state", as
   assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
   assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
   assertEquals(preparedRequests[0]?.forwardedProps, undefined);
-  assertEquals(resolved, [{
-    authorization: { canConfigureAgentTools: false, attachableCatalog: [] },
-    checkpoint: undefined,
-  }]);
+  assertEquals(resolved, [{ checkpoint: undefined }]);
 });
 
 it("verified control-plane envelopes accept private state without returning it publicly", async () => {
@@ -392,10 +355,6 @@ it("verified control-plane envelopes accept private state without returning it p
     verifyRunEventAppendToken: () => Promise.resolve(true),
     prepareExecution: (request) => {
       resolved.push({
-        authorization: getServerResolvedToolSearchAuthorization(
-          request.forwardedProps,
-          request.serverEnvelopeVerified === true,
-        ),
         checkpoint: getServerResolvedToolExposureCheckpoint(
           request.forwardedProps,
           request.serverEnvelopeVerified === true,
@@ -404,14 +363,6 @@ it("verified control-plane envelopes accept private state without returning it p
       return Promise.resolve({ executionId: "exec-control-plane" });
     },
   });
-  const authorization = {
-    canConfigureAgentTools: true,
-    attachableCatalog: [{
-      name: "list_agents",
-      description: "List configured agents",
-      attachVia: "tool_ids",
-    }],
-  };
   const checkpoint = {
     version: 1,
     authorizedCatalogFingerprint: "trusted-catalog",
@@ -423,7 +374,6 @@ it("verified control-plane envelopes accept private state without returning it p
       {
         ...createRuntimeAgentInvocationBody(),
         forwardedProps: {
-          serverResolvedToolSearchAuthorization: authorization,
           serverResolvedToolExposureCheckpoint: checkpoint,
         },
       },
@@ -436,7 +386,7 @@ it("verified control-plane envelopes accept private state without returning it p
   assertEquals(response.status, 202);
   assertEquals(preparedRequests[0]?.serverEnvelopeVerified, true);
   assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
-  assertEquals(resolved, [{ authorization, checkpoint }]);
+  assertEquals(resolved, [{ checkpoint }]);
   const publicBody = await response.text();
   assertEquals(publicBody.includes("AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"), false);
   assertEquals(publicBody.includes("trusted-catalog"), false);

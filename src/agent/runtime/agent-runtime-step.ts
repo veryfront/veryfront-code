@@ -5,7 +5,6 @@ import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import {
-  getRuntimeToolSearchAuthorization,
   resolveRuntimeToolLoading,
   SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
 } from "./runtime-tool-config.ts";
@@ -65,6 +64,7 @@ export interface PrepareAgentRuntimeStepInput {
   isLocalModel: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
+  providerToolNames?: readonly string[];
   remoteToolSources: RemoteToolSource[] | undefined;
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   resolveRuntimeState: RuntimeStepStateResolver;
@@ -155,19 +155,18 @@ export async function prepareAgentRuntimeStep(
       toolExposureState.loadedToolNames.add(toolName);
     }
   }
-  const toolSearchAuthorization = getRuntimeToolSearchAuthorization(input.config);
   const toolExposurePlan = createToolExposurePlan({
     authorized: tools,
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
-    hasSearchableMetadata: toolSearchAuthorization.canConfigureAgentTools === true &&
-      toolSearchAuthorization.attachableCatalog.length > 0,
   });
   const systemPrompt = hasRuntimeToolInventory(runtimeState.systemPrompt)
     ? flattenSystemInstructions(
       withRuntimeToolInventory(
         runtimeState.systemPrompt,
-        toolExposurePlan.visible.map((tool) => tool.name),
+        [...toolExposurePlan.visible.map((tool) => tool.name), ...(input.providerToolNames ?? [])]
+          .filter((name, index, names) => names.indexOf(name) === index)
+          .sort(),
       ),
     )
     : runtimeState.systemPrompt;

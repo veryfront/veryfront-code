@@ -32,6 +32,7 @@ import {
   veryfrontCloudAgentServiceInternals,
   veryfrontStudioMcpServer,
 } from "./veryfront-cloud-agent-service.ts";
+import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
@@ -40,6 +41,14 @@ type CaptureRecord = {
   error: unknown;
   context: ApplicationErrorContext;
 };
+
+Deno.test("public agent service options do not expose the internal eager rollback", () => {
+  type HasOperationalToolLoadingOverride = "operationalToolLoadingOverride" extends
+    keyof NodeVeryfrontCloudAgentServiceOptions ? true
+    : false;
+  const hasOperationalToolLoadingOverride: HasOperationalToolLoadingOverride = false;
+  assertEquals(hasOperationalToolLoadingOverride, false);
+});
 
 type TestDenoRuntime = {
   serve: typeof Deno.serve;

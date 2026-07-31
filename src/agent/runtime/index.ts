@@ -90,7 +90,6 @@ import {
   getRuntimeSourceIntegrationPolicy,
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
-  getRuntimeToolSearchAuthorization,
   isRuntimeToolExposureCheckpointPersistenceRequired,
   resolveRuntimeToolLoading,
   type RuntimeToolFilterConfig,
@@ -216,7 +215,6 @@ import {
   type ToolExposureCheckpoint,
   type ToolExposurePlan,
   type ToolExposureState,
-  type ToolSearchAuthorization,
 } from "./tool-exposure.ts";
 
 const logger = serverLogger.component("agent");
@@ -247,7 +245,6 @@ function executeFrameworkToolSearch(input: {
   args: Record<string, unknown>;
   plan: ToolExposurePlan;
   state: ToolExposureState;
-  authorization: ToolSearchAuthorization;
 }): {
   result: ReturnType<typeof searchToolExposure> & { nextStep: string };
   checkpoint: ReturnType<typeof createToolExposureCheckpoint>;
@@ -260,7 +257,6 @@ function executeFrameworkToolSearch(input: {
     query,
     authorized: input.plan.authorized,
     state: input.state,
-    authorization: input.authorization,
   });
   return {
     result: {
@@ -371,6 +367,16 @@ function getResponseFinishReason(response: AgentResponse): string | undefined {
 
 function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
   return toolName === "create_agent" || toolName === "update_agent";
+}
+
+function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
+  const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
+  return {
+    ...plan,
+    authorized: plan.authorized.filter(keep),
+    visible: plan.visible.filter(keep),
+    deferred: plan.deferred.filter(keep),
+  };
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -1068,9 +1074,6 @@ export class AgentRuntime {
       const providerTools = sourceIntegrationPolicy
         ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
         : configuredProviderTools;
-      const toolSearchAuthorization = hasToolReplacements
-        ? { canConfigureAgentTools: false, attachableCatalog: [] }
-        : getRuntimeToolSearchAuthorization(this.config);
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
       let agentWriteFinalResponseToolGuardEnabled = false;
@@ -1097,6 +1100,7 @@ export class AgentRuntime {
           isLocalModel: isLocal,
           messages: currentMessages,
           mode: "generate",
+          providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
           remoteToolSources,
           sourceIntegrationPolicy,
           resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1112,11 +1116,10 @@ export class AgentRuntime {
         currentSystemPrompt = preparedStep.systemPrompt;
         currentRuntimeContext = preparedStep.runtimeContext;
         const toolContext = preparedStep.toolContext;
-        const tools = agentWriteFinalResponseToolGuardEnabled
-          ? preparedStep.tools.filter((tool) =>
-            !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
-          )
-          : preparedStep.tools;
+        const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+          ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+          : preparedStep.toolExposurePlan;
+        const tools = effectiveToolExposurePlan.visible;
         setSpanAttributes(loopSpan, {
           "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
           "tool.loading.provenance": toolLoadingResolution.provenance,
@@ -1295,7 +1298,7 @@ export class AgentRuntime {
 
             const executionAuthority = resolveToolExecutionAuthority({
               toolName: tc.toolName,
-              plan: preparedStep.toolExposurePlan,
+              plan: effectiveToolExposurePlan,
             });
             if (
               !hasToolReplacements &&
@@ -1322,15 +1325,14 @@ export class AgentRuntime {
             }
             if (
               generatedToolResult === undefined &&
-              isFrameworkToolSearch(tc.toolName, preparedStep.toolExposurePlan)
+              isFrameworkToolSearch(tc.toolName, effectiveToolExposurePlan)
             ) {
               let checkpoint: ToolExposureCheckpoint;
               try {
                 const search = executeFrameworkToolSearch({
                   args: toolCall.args,
-                  plan: preparedStep.toolExposurePlan,
+                  plan: effectiveToolExposurePlan,
                   state: toolExposureState,
-                  authorization: toolSearchAuthorization,
                 });
                 toolCall.status = "completed";
                 toolCall.result = search.result;
@@ -1338,7 +1340,6 @@ export class AgentRuntime {
                   "tool.status": "completed",
                   "tool.search.result_count": search.result.resultCount,
                   "tool.search.loaded_count": search.result.loadedCount,
-                  "tool.search.attachable_metadata_count": search.result.attachableMetadataCount,
                   "tool.search.miss": search.result.miss,
                 });
                 const toolResultMessage = createToolResultMessage(
@@ -1667,7 +1668,6 @@ export class AgentRuntime {
     const providerTools = sourceIntegrationPolicy
       ? applySourceIntegrationPolicy(configuredProviderTools, sourceIntegrationPolicy)
       : configuredProviderTools;
-    const toolSearchAuthorization = getRuntimeToolSearchAuthorization(this.config);
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
     let agentWriteFinalResponseToolGuardEnabled = false;
@@ -1692,6 +1692,7 @@ export class AgentRuntime {
         isLocalModel: isLocalStreaming,
         messages: currentMessages,
         mode: "stream",
+        providerToolNames: agentWriteFinalResponseToolGuardEnabled ? [] : providerTools,
         remoteToolSources,
         sourceIntegrationPolicy,
         resolveRuntimeState: this.resolveRuntimeState.bind(this),
@@ -1705,11 +1706,10 @@ export class AgentRuntime {
       currentSystemPrompt = preparedStep.systemPrompt;
       currentRuntimeContext = preparedStep.runtimeContext;
       const toolContext = preparedStep.toolContext;
-      const tools = agentWriteFinalResponseToolGuardEnabled
-        ? preparedStep.tools.filter((tool) =>
-          !shouldHideProjectToolAfterAgentWriteSuccess(tool.name)
-        )
-        : preparedStep.tools;
+      const effectiveToolExposurePlan = agentWriteFinalResponseToolGuardEnabled
+        ? applyAgentWriteFinalResponseGuard(preparedStep.toolExposurePlan)
+        : preparedStep.toolExposurePlan;
+      const tools = effectiveToolExposurePlan.visible;
       setOtelActiveSpanAttributes({
         "tool.loading.mode": resolveRuntimeToolLoading(runtimeStepConfig).mode,
         "tool.loading.provenance": toolLoadingResolution.provenance,
@@ -2014,15 +2014,14 @@ export class AgentRuntime {
           continue;
         }
 
-        if (isFrameworkToolSearch(tc.name, preparedStep.toolExposurePlan)) {
+        if (isFrameworkToolSearch(tc.name, effectiveToolExposurePlan)) {
           let checkpoint: ToolExposureCheckpoint;
           try {
             callbacks?.onToolCall?.(toolCall);
             const search = executeFrameworkToolSearch({
               args: toolCall.args,
-              plan: preparedStep.toolExposurePlan,
+              plan: effectiveToolExposurePlan,
               state: toolExposureState,
-              authorization: toolSearchAuthorization,
             });
             toolCall.status = "completed";
             toolCall.result = search.result;
@@ -2030,7 +2029,6 @@ export class AgentRuntime {
             setOtelActiveSpanAttributes({
               "tool.search.result_count": search.result.resultCount,
               "tool.search.loaded_count": search.result.loadedCount,
-              "tool.search.attachable_metadata_count": search.result.attachableMetadataCount,
               "tool.search.miss": search.result.miss,
             });
             sendSSE(controller, encoder, {
@@ -2064,7 +2062,7 @@ export class AgentRuntime {
 
         const executionAuthority = resolveToolExecutionAuthority({
           toolName: tc.name,
-          plan: preparedStep.toolExposurePlan,
+          plan: effectiveToolExposurePlan,
         });
         if (executionAuthority === undefined) {
           await this.recordToolError(

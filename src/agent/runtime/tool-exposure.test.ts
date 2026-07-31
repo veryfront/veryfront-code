@@ -185,7 +185,6 @@ it("tool search returns a complete miss result for a blank normalized query", ()
       matches: [],
       resultCount: 0,
       loadedCount: 0,
-      attachableMetadataCount: 0,
       miss: true,
     },
   );
@@ -229,39 +228,15 @@ it("authorized search matches load for the next step", () => {
   );
 });
 
-it("attachable metadata requires trusted permission and never loads", () => {
-  const attachableCatalog = [{
-    name: "list_agents",
-    description: "List configured agents",
-    attachVia: "tool_ids" as const,
-  }];
-  const deniedState = createToolExposureState();
+it("tool search never returns tools outside the currently authorized executable catalog", () => {
   assertEquals(
     searchToolExposure({
       query: "list agents",
       authorized: catalog,
-      state: deniedState,
-      authorization: { canConfigureAgentTools: false, attachableCatalog },
+      state: createToolExposureState(),
     }).matches,
     [],
   );
-
-  const allowedState = createToolExposureState();
-  assertEquals(
-    searchToolExposure({
-      query: "list agents",
-      authorized: catalog,
-      state: allowedState,
-      authorization: { canConfigureAgentTools: true, attachableCatalog },
-    }).matches,
-    [{
-      name: "list_agents",
-      description: "List configured agents",
-      status: "attachable",
-      attachVia: "tool_ids",
-    }],
-  );
-  assertEquals([...allowedState.loadedToolNames], []);
 });
 
 it("tool exposure checkpoints are private, sorted, and restore only currently authorized tools", () => {

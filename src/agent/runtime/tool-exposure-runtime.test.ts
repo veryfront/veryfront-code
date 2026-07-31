@@ -473,118 +473,6 @@ it("deferred stream rejects a guessed tool that was not exposed", async () => {
   assertEquals(step, 2);
 });
 
-it("deferred stream returns attachable metadata without granting execution authority", async () => {
-  const observedTools: string[][] = [];
-  const observedPrompts: string[] = [];
-  let modelStep = 0;
-  let executionCount = 0;
-  const model: ModelRuntime = {
-    provider: "hosted",
-    modelId: "hosted/deferred-attachable-metadata",
-    async doGenerate() {
-      return { content: [{ type: "text", text: "unused" }] };
-    },
-    async doStream(options: unknown) {
-      observedTools.push(toolNames(options));
-      observedPrompts.push(JSON.stringify((options as { prompt?: unknown }).prompt));
-      modelStep++;
-      if (modelStep === 1) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-call",
-              toolCallId: "search-attachable",
-              toolName: "tool_search",
-              input: { query: "release marker" },
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ]),
-        };
-      }
-      if (modelStep === 2) {
-        return {
-          stream: createRuntimeStream([
-            {
-              type: "tool-input-start",
-              id: "call-attachable",
-              toolName: "read_release_marker",
-            },
-            { type: "tool-input-delta", id: "call-attachable", delta: "{}" },
-            {
-              type: "tool-call",
-              toolCallId: "call-attachable",
-              toolName: "read_release_marker",
-              input: {},
-            },
-            { type: "finish", finishReason: "tool-calls" },
-          ]),
-        };
-      }
-      return {
-        stream: createRuntimeStream([
-          { type: "text-delta", text: "blocked" },
-          { type: "finish", finishReason: "stop" },
-        ]),
-      };
-    },
-  };
-  const config = {
-    id: "deferred-attachable-metadata",
-    model: "hosted/deferred-attachable-metadata",
-    system: "Metadata is not execution authority.",
-    tools: {
-      form_input: tool({
-        id: "form_input",
-        description: "Collect input",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({}),
-      }),
-      load_skill: tool({
-        id: "load_skill",
-        description: "Load a skill",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => ({}),
-      }),
-      read_release_marker: tool({
-        id: "read_release_marker",
-        description: "Read the release marker",
-        inputSchema: defineSchema((v) => v.object({}))(),
-        execute: () => {
-          executionCount++;
-          return { marker: "must-not-run" };
-        },
-      }),
-    },
-    __vfToolSearchAuthorization: {
-      canConfigureAgentTools: true,
-      attachableCatalog: [{
-        name: "read_release_marker",
-        description: "Read the release marker",
-        attachVia: "tool_ids",
-      }],
-    },
-    maxSteps: 3,
-    resolveModelTransport: () => ({ model }),
-    __vfToolLoadingMode: "deferred",
-  } as AgentConfig & RuntimeToolFilterConfig;
-
-  const body = await (await agent(config).stream({
-    messages: restrictedSkillMessages("Read the release marker"),
-  }))
-    .toDataStreamResponse().text();
-
-  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
-  assertEquals(observedTools[1], ["form_input", "load_skill", "tool_search"]);
-  assertEquals(body.includes('"status":"attachable"'), true);
-  assertEquals(body.includes('"attachVia":"tool_ids"'), true);
-  assertEquals(
-    observedPrompts[2]?.includes("ignored unavailable tool call(s): read_release_marker"),
-    true,
-  );
-  assertEquals(body.includes('"toolName":"read_release_marker"'), false);
-  assertEquals(executionCount, 0);
-});
-
 it("respond defers a tools true catalog and completes search-load-execute", async () => {
   const observedTools: string[][] = [];
   let step = 0;
@@ -1554,6 +1442,7 @@ it(
         ]
       ) {
         const observedTools: string[][] = [];
+        const observedSystems: string[] = [];
         const model: ModelRuntime = {
           provider: configuredModel.startsWith("veryfront-cloud/")
             ? "veryfront-cloud"
@@ -1561,6 +1450,7 @@ it(
           modelId: configuredModel.split("/").at(-1) ?? configuredModel,
           async doGenerate(options: unknown) {
             observedTools.push(toolNames(options));
+            observedSystems.push(systemPrompt(options));
             return {
               content: [{ type: "text", text: "done" }],
               finishReason: "stop",
@@ -1568,6 +1458,7 @@ it(
           },
           async doStream(options: unknown) {
             observedTools.push(toolNames(options));
+            observedSystems.push(systemPrompt(options));
             return {
               stream: createRuntimeStream([
                 { type: "text-delta", text: "done" },
@@ -1579,7 +1470,9 @@ it(
         const assistant = agent({
           id: `fallback-provider-tools-${configuredModel.replaceAll("/", "-")}`,
           model: configuredModel,
-          system: "Use configured tools.",
+          system: flattenSystemInstructions(
+            withRuntimeToolInventory("Use configured tools.", ["tool_search", "web_search"]),
+          ),
           skills: false,
           tools: true,
           providerTools: ["web_search"],
@@ -1607,6 +1500,11 @@ it(
           ["form_input", "tool_search", "web_search"],
           ["form_input", "tool_search", "web_search"],
         ]);
+        assertEquals(observedSystems.length, 3);
+        for (const system of observedSystems) {
+          assertEquals(system.includes("- web_search"), true);
+          assertEquals(system.includes("- get_release"), false);
+        }
       }
     } finally {
       toolRegistry.delete("get_release");

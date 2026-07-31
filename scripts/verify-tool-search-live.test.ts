@@ -68,7 +68,6 @@ function validSearchResult(): Record<string, unknown> {
     }],
     resultCount: 1,
     loadedCount: 1,
-    attachableMetadataCount: 0,
     miss: false,
     nextStep: "Continue to the next model step.",
   };

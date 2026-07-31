@@ -65,6 +65,34 @@ describe("agent/runtime-step", () => {
     );
   });
 
+  it("keeps provider-native tools in prompt inventory but outside tool_search authorization", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [toolDefinition("create_release")],
+      isLocalModel: false,
+      messages: [],
+      mode: "generate",
+      providerToolNames: ["web_search"],
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({
+        systemPrompt:
+          'Base\n\nCurrent run tool inventory:\n\n- tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nWhen tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.',
+      }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.systemPrompt.includes("- web_search"), true);
+    assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["create_release"]);
+  });
+
   it("does not let runtime context shadow the trusted abort signal", async () => {
     const trustedAbort = new AbortController();
     const shadowAbort = new AbortController();

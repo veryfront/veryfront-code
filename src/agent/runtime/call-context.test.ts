@@ -143,8 +143,9 @@ describe("agent/runtime/call-context", () => {
       assertStringIncludes(content, "<available_skills>");
       assertStringIncludes(
         content,
-        "- Deploy Skill (`deploy`): Deployment guidance (tools: create_file; model: openai/gpt-5.4; thinking: 512; max-steps: 4)",
+        "- Deploy Skill (`deploy`): Deployment guidance (model: openai/gpt-5.4; thinking: 512; max-steps: 4)",
       );
+      assertEquals(content.includes("create_file"), false);
       assertStringIncludes(content, "- review: Review guidance");
       assertStringIncludes(
         content,

@@ -95,7 +95,8 @@ Research the question and cite every claim.
 - Omit `skills` or use `skills: true` to advertise every skill visible to the
   agent. Use `skills: []` to advertise none. `load_skill` remains available in
   either case.
-- `tools: true` - every tool visible to the agent.
+- `tools: true` - every currently scoped tool is authorized, while non-bootstrap
+  schemas are deferred behind `tool_search` until the agent searches for them.
 - `skills: [..]` / `tools: [..]` - each entry resolves as the agent's own
   short name first, then as a global id. A colocated short name that shadows a
   global id is reported at discovery so the reference stays unambiguous.

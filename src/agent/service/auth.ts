@@ -104,14 +104,24 @@ type AuthJwtExtensionModule = {
 };
 
 const RUN_EVENT_WRITER_TOKEN_USE = "run_event_writer";
-const RUN_EVENT_WRITER_SCOPES = ["agent-runs:events:append"] as const;
+const RUN_EVENT_WRITER_V1_SCOPES = ["projects:read", "runs:write"] as const;
+const RUN_EVENT_WRITER_V2_SCOPES = ["agent-runs:events:append"] as const;
 
-function hasExactRunEventWriterScopes(scopes: unknown): boolean {
+function hasExactScopes(scopes: unknown, expected: readonly string[]): boolean {
   return Array.isArray(scopes) &&
-    scopes.length === RUN_EVENT_WRITER_SCOPES.length &&
+    scopes.length === expected.length &&
     scopes.every((value): value is string => typeof value === "string") &&
     new Set(scopes).size === scopes.length &&
-    RUN_EVENT_WRITER_SCOPES.every((requiredScope) => scopes.includes(requiredScope));
+    expected.every((requiredScope) => scopes.includes(requiredScope));
+}
+
+function hasExactRunEventWriterScopes(payload: TokenPayload): boolean {
+  const claims = payload as TokenPayload & { scope?: unknown; scopes?: unknown };
+  const isLegacy = claims.scopes === undefined &&
+    hasExactScopes(claims.scope, RUN_EVENT_WRITER_V1_SCOPES);
+  const isCurrent = claims.scope === undefined &&
+    hasExactScopes(claims.scopes, RUN_EVENT_WRITER_V2_SCOPES);
+  return isLegacy || isCurrent;
 }
 
 /** Options accepted by hosted service auth. */
@@ -432,7 +442,7 @@ export function createHostedServiceAuth(
           payload.serviceAccountId === config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID &&
           payload.projectId === input.projectId &&
           payload.runId === input.runId &&
-          hasExactRunEventWriterScopes(payload.scopes);
+          hasExactRunEventWriterScopes(payload);
       } catch (error) {
         options.logger?.debug?.("Run-event append token verification failed", {
           error: error instanceof Error ? error.message : String(error),
