@@ -3,7 +3,11 @@ import type { AgentConfig, ToolLoading } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import type { ToolExposureCheckpoint, ToolSearchAuthorization } from "./tool-exposure.ts";
+import {
+  isValidToolExposureCheckpointName,
+  type ToolExposureCheckpoint,
+  type ToolSearchAuthorization,
+} from "./tool-exposure.ts";
 import { resolveToolLoading } from "./agent-definition.ts";
 
 export const SOURCE_INTEGRATION_POLICY_CONTEXT_KEY = "__vfSourceIntegrationPolicy";
@@ -17,6 +21,7 @@ export type RuntimeToolFilterConfig = AgentConfig & {
   __vfPersistToolExposureCheckpoint?: (
     checkpoint: ToolExposureCheckpoint,
   ) => void | Promise<void>;
+  __vfToolExposureCheckpointPersistenceRequired?: boolean;
   __vfOperationalToolLoadingOverride?: ToolLoading;
 } & RuntimeRemoteToolConfig;
 
@@ -112,11 +117,18 @@ export function getRuntimeToolExposureCheckpoint(
     value?.version !== 1 ||
     typeof value.authorizedCatalogFingerprint !== "string" ||
     !Array.isArray(value.loadedToolNames) ||
-    !value.loadedToolNames.every((name) => typeof name === "string")
+    !value.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {
     return undefined;
   }
   return value;
+}
+
+/** Return whether the trusted host requires checkpoint durability before continuation. */
+export function isRuntimeToolExposureCheckpointPersistenceRequired(
+  config: AgentConfig,
+): boolean {
+  return (config as RuntimeToolFilterConfig).__vfToolExposureCheckpointPersistenceRequired === true;
 }
 
 /** Return the trusted private checkpoint persistence hook. */

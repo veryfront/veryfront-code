@@ -91,6 +91,7 @@ import {
   getRuntimeToolExposureCheckpoint,
   getRuntimeToolExposureCheckpointPersister,
   getRuntimeToolSearchAuthorization,
+  isRuntimeToolExposureCheckpointPersistenceRequired,
   resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 import {
@@ -270,6 +271,20 @@ function executeFrameworkToolSearch(input: {
     },
     checkpoint: createToolExposureCheckpoint(input.plan.authorized, input.state),
   };
+}
+
+async function persistToolExposureCheckpointBeforeContinuation(input: {
+  checkpoint: ToolExposureCheckpoint;
+  persist: ((checkpoint: ToolExposureCheckpoint) => void | Promise<void>) | undefined;
+  required: boolean;
+}): Promise<void> {
+  if (!input.persist) {
+    if (input.required) {
+      throw new Error("Tool exposure checkpoint persistence is required before continuation");
+    }
+    return;
+  }
+  await input.persist(input.checkpoint);
 }
 
 function isToolVisibleForStep(toolName: string, plan: ToolExposurePlan): boolean {
@@ -1019,6 +1034,9 @@ export class AgentRuntime {
       const persistToolExposureCheckpoint = hasToolReplacements
         ? undefined
         : getRuntimeToolExposureCheckpointPersister(this.config);
+      const requireToolExposureCheckpointPersistence = hasToolReplacements
+        ? false
+        : isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
       const runtimeToolsConfig = hasToolReplacements ? toolReplacements : this.config.tools;
       const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
       const runConfig: AgentConfig = {
@@ -1347,7 +1365,11 @@ export class AgentRuntime {
                 toolCalls.push(toolCall);
                 return;
               }
-              await persistToolExposureCheckpoint?.(checkpoint);
+              await persistToolExposureCheckpointBeforeContinuation({
+                checkpoint,
+                persist: persistToolExposureCheckpoint,
+                required: requireToolExposureCheckpointPersistence,
+              });
               toolCalls.push(toolCall);
               return;
             }
@@ -1633,6 +1655,8 @@ export class AgentRuntime {
     const initialToolExposureCheckpoint = getRuntimeToolExposureCheckpoint(this.config);
     const toolExposureState = createToolExposureState();
     const persistToolExposureCheckpoint = getRuntimeToolExposureCheckpointPersister(this.config);
+    const requireToolExposureCheckpointPersistence =
+      isRuntimeToolExposureCheckpointPersistenceRequired(this.config);
     const toolLoadingResolution = resolveRuntimeToolLoading(this.config);
     const runtimeStepConfig: AgentConfig = {
       ...this.config,
@@ -2033,7 +2057,11 @@ export class AgentRuntime {
             );
             continue;
           }
-          await persistToolExposureCheckpoint?.(checkpoint);
+          await persistToolExposureCheckpointBeforeContinuation({
+            checkpoint,
+            persist: persistToolExposureCheckpoint,
+            required: requireToolExposureCheckpointPersistence,
+          });
           continue;
         }
 

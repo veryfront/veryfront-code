@@ -76,6 +76,11 @@ function compareAscii(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
+/** Return whether a persisted name is a non-empty tool identifier without whitespace. */
+export function isValidToolExposureCheckpointName(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && !/\s/.test(value);
+}
+
 function collectSchemaDescriptions(value: unknown, output: string[]): void {
   if (Array.isArray(value)) {
     for (const entry of value) collectSchemaDescriptions(entry, output);
@@ -316,7 +321,7 @@ export function restoreToolExposureState(
     checkpoint?.version !== 1 ||
     typeof checkpoint.authorizedCatalogFingerprint !== "string" ||
     !Array.isArray(checkpoint.loadedToolNames) ||
-    !checkpoint.loadedToolNames.every((name): name is string => typeof name === "string")
+    !checkpoint.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {
     return createToolExposureState();
   }

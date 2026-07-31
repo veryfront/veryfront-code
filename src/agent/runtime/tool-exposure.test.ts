@@ -248,6 +248,72 @@ it("tool exposure checkpoints are private, sorted, and restore only currently au
   );
 });
 
+it("tool exposure checkpoints canonicalize authorized loaded names", () => {
+  const authorized = [
+    definition("get_release", "get_release tool"),
+    definition("list_projects", "list_projects tool"),
+  ];
+  const state = createToolExposureState([
+    "list_projects",
+    "get_release",
+    "list_projects",
+    "not_authorized",
+  ]);
+
+  assertEquals(createToolExposureCheckpoint(authorized, state), {
+    version: 1,
+    authorizedCatalogFingerprint: "v1-dec31e38",
+    loadedToolNames: ["get_release", "list_projects"],
+  });
+});
+
+it("tool exposure checkpoint restoration fails closed and reauthorizes names", () => {
+  const authorized = [
+    definition("still_authorized", "Still authorized"),
+    definition("other_authorized", "Other authorized"),
+  ];
+  const restore = (checkpoint: {
+    version: number;
+    authorizedCatalogFingerprint?: unknown;
+    loadedToolNames?: unknown;
+  }) => [...restoreToolExposureState(checkpoint, authorized).loadedToolNames];
+
+  assertEquals(
+    restore({
+      version: 2,
+      authorizedCatalogFingerprint: "v1-old",
+      loadedToolNames: ["still_authorized"],
+    }),
+    [],
+  );
+  assertEquals(
+    restore({
+      version: 1,
+      authorizedCatalogFingerprint: "v1-old",
+      loadedToolNames: ["still_authorized", "bad name"],
+    }),
+    [],
+  );
+  assertEquals(
+    restore({
+      version: 1,
+      authorizedCatalogFingerprint: "v1-old",
+      loadedToolNames: ["revoked", "unknown"],
+    }),
+    [],
+  );
+
+  // Fingerprint is diagnostic. Name-level reauthorization is authoritative.
+  assertEquals(
+    restore({
+      version: 1,
+      authorizedCatalogFingerprint: "v1-old",
+      loadedToolNames: ["still_authorized", "revoked"],
+    }),
+    ["still_authorized"],
+  );
+});
+
 it("new and child runs start with fresh tool exposure state", () => {
   const parent = createToolExposureState(["get_release"]);
   const child = createToolExposureState();
