@@ -7,7 +7,7 @@ import type { ImportMapConfig } from "./types.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
 import { mergeImportMaps } from "./merger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 
 function normalizeImportMapForRuntime(importMap: ImportMapConfig): ImportMapConfig {
   const normalizeValue = (value: string): string => {

@@ -15,7 +15,6 @@ import {
   _primeDependenciesCache,
   clearReactVersionCache,
   createDependencyPinningSource,
-  DEFAULT_REACT_VERSION,
   type DependencyPinningSource,
   ensureProjectDependenciesLoaded,
   getDependencyPinningCacheKey,
@@ -31,6 +30,7 @@ import {
   resolveRequestedDependencyPinningSnapshot,
   stripSemverRange,
 } from "./package-registry.ts";
+import { DEFAULT_REACT_VERSION } from "./react-cdn.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,

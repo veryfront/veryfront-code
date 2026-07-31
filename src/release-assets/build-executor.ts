@@ -41,10 +41,10 @@ import {
   createDependencyPinningSource,
   type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
-  getReactUrls,
   resolveDependencyPinningSnapshot,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { ensureDefaultBundlerContracts } from "../extensions/bundler/defaults.ts";
 import { register, tryResolve } from "../extensions/contracts.ts";
