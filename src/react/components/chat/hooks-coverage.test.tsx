@@ -101,7 +101,7 @@ function expectFailFast(hook: () => unknown): void {
 
 describe("veryfront/chat hooks — behaviour coverage", () => {
   it("useClipboard returns { copied:false, copy }", () => {
-    exercise(() => useClipboard(), (r) => {
+    exercise(() => useClipboard(""), (r) => {
       assert(r.copied === false, "starts not-copied");
       assert(typeof r.copy === "function", "exposes copy()");
     });

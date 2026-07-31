@@ -82,7 +82,7 @@ function mount(element: React.ReactElement): {
 function Fixture(
   { Wrap, ...selectProps }:
     & { Wrap: React.FC<{ children: React.ReactNode }> }
-    & React.ComponentProps<typeof Select>,
+    & Omit<React.ComponentProps<typeof Select>, "children">,
 ): React.ReactElement {
   return (
     <Wrap>
@@ -134,7 +134,7 @@ function runSelectConformance(
         assert(listbox.className.includes("vf-test-listbox"), "consumer class merged");
         const options = scope.querySelectorAll('[role="option"]');
         assertEquals(options.length, 2, "renders both options");
-        click(options[1]); // Banana
+        click(options[1]!); // Banana
         assertEquals(changed, "b", "onValueChange fired with the chosen value");
         assertEquals(scope.querySelector('[role="listbox"]'), null, "closed on select");
         assert(

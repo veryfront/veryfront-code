@@ -152,8 +152,8 @@ describe("NavigationMenu behaviour", () => {
       assertEquals(host.querySelectorAll("nav ul > li").length, 3, "renders all three items");
 
       const [products, resources] = triggers(host);
-      assertEquals(products.textContent?.includes("Products"), true, "first trigger labelled");
-      assertEquals(resources.textContent?.includes("Resources"), true, "second trigger labelled");
+      assertEquals(products!.textContent?.includes("Products"), true, "first trigger labelled");
+      assertEquals(resources!.textContent?.includes("Resources"), true, "second trigger labelled");
       // Triggers start collapsed; no panel is open.
       for (const trigger of triggers(host)) {
         assertEquals(trigger.getAttribute("aria-expanded"), "false", "triggers start collapsed");

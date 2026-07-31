@@ -117,9 +117,9 @@ describe("Toolbar behaviour", () => {
 
       const items = Array.from(bar.querySelectorAll<HTMLElement>("[data-toolbar-item]"));
       assertEquals(items.length, 3, "three ToolbarButtons participate (separator excluded)");
-      assertEquals(items[0].tabIndex, 0, "first item is the single tab stop");
-      assertEquals(items[1].tabIndex, -1, "second item is not tabbable");
-      assertEquals(items[2].tabIndex, -1, "third item is not tabbable");
+      assertEquals(items[0]!.tabIndex, 0, "first item is the single tab stop");
+      assertEquals(items[1]!.tabIndex, -1, "second item is not tabbable");
+      assertEquals(items[2]!.tabIndex, -1, "third item is not tabbable");
     } finally {
       unmount();
     }

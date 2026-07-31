@@ -146,7 +146,7 @@ describe("Pagination behaviour", () => {
     try {
       const current = host.querySelectorAll('a[aria-current="page"]');
       assertEquals(current.length, 1, "exactly one active link");
-      assertEquals(current[0].textContent, "2", "page 2 is the active link");
+      assertEquals(current[0]!.textContent, "2", "page 2 is the active link");
     } finally {
       unmount();
     }
