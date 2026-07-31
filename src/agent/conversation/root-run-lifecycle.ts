@@ -66,6 +66,8 @@ export interface HostedConversationRootRunState {
 export interface HostedConversationRootRunContext {
   durableRootRun: HostedConversationRootRunState | null;
   durableRunMirror: ConversationRunChunkMirror | null;
+  /** Mirror authorized for private checkpoint events, when a service token was verified. */
+  privateDurableRunMirror: ConversationRunChunkMirror | null;
   effectiveParentRunId?: string;
   effectiveParentMessageId?: string;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
@@ -74,6 +76,8 @@ export interface HostedConversationRootRunContext {
 /** Input payload for prepare hosted conversation root run context. */
 export interface PrepareHostedConversationRootRunContextInput {
   authToken: string;
+  /** Exact-run service credential used only for durable event appends. */
+  runEventAppendToken?: string;
   apiUrl: string;
   conversationId?: string;
   projectId?: string | null;
@@ -120,6 +124,7 @@ export async function prepareHostedConversationRootRunContext(
   options: { abortSignal: AbortSignal },
 ): Promise<HostedConversationRootRunContext> {
   let durableRunMirror: ConversationRunChunkMirror | null = null;
+  const runEventAppendToken = input.runEventAppendToken;
   const startConversationRootRun = createConversationRootRunStartAdapter({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
@@ -160,7 +165,7 @@ export async function prepareHostedConversationRootRunContext(
       },
       createMirror: (run) => {
         durableRunMirror = createHostedConversationRunChunkMirror({
-          authToken: input.authToken,
+          authToken: runEventAppendToken ?? input.authToken,
           apiUrl: input.apiUrl,
           conversationId: run.conversationId,
           runId: run.runId,
@@ -180,6 +185,7 @@ export async function prepareHostedConversationRootRunContext(
   return {
     durableRootRun: toHostedConversationRootRunState(rootRunLifecycle.run),
     durableRunMirror,
+    privateDurableRunMirror: runEventAppendToken ? durableRunMirror : null,
     effectiveParentRunId: rootRunLifecycle.effectiveParentRunId,
     effectiveParentMessageId: rootRunLifecycle.effectiveParentMessageId,
     publishParentRunEvents: rootRunLifecycle.publishParentRunEvents

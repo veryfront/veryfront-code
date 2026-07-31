@@ -2,10 +2,10 @@ import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import { Singleflight } from "#veryfront/utils/singleflight.ts";
 import { cacheModuleToLocal } from "#veryfront/transforms/esm/http-cache.ts";
 import {
-  getReactUrls,
   normalizeReactVersion,
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { rendererLogger } from "#veryfront/utils";
 

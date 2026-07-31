@@ -1,5 +1,6 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { ensureBuiltinSchemaValidator } from "../../extensions/builtin-extensions.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
@@ -71,6 +72,14 @@ function createRequest(): ParsedHostedChatRequest {
   };
 }
 
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    deleteEnv(key);
+    return;
+  }
+  setEnv(key, value);
+}
+
 describe("agent/veryfront-cloud-hosted-chat-execution-preparation", () => {
   it("prepares hosted chat execution with Veryfront Cloud model defaults", async () => {
     ensureBuiltinSchemaValidator();
@@ -116,6 +125,42 @@ describe("agent/veryfront-cloud-hosted-chat-execution-preparation", () => {
     ]);
     assertEquals(result.rootRunContext.durableRootRun, null);
     assertEquals(result.runtime.modelId, "veryfront-cloud/openai/gpt-5.2");
+  });
+
+  it("preserves an explicit provider model when direct credentials are available", async () => {
+    ensureBuiltinSchemaValidator();
+    const previousAnthropicApiKey = getEnv("ANTHROPIC_API_KEY");
+    let runtimeOptions:
+      | HostedChatRuntimeCreationOptions<TestAgentConfig, RuntimeAgentThinkingConfig>
+      | undefined;
+
+    try {
+      setEnv("ANTHROPIC_API_KEY", "anthropic-test");
+      await prepareVeryfrontCloudHostedChatExecution({
+        request: createRequest(),
+        agentConfig: {
+          id: "agent-1",
+          model: "anthropic/claude-sonnet-4-6",
+        },
+        apiUrl: "https://api.example.com",
+        abortSignal: new AbortController().signal,
+        fetchSteering: () => Promise.resolve({ instructions: "", skills: [] }),
+        buildInstructions: () => [],
+        createRuntime: (options) => {
+          runtimeOptions = options;
+          return Promise.resolve({
+            runtimeKind: "framework",
+            agent: createRuntimeAgent(),
+            modelId: options.model ?? "default-model",
+            cleanup: () => Promise.resolve(),
+          });
+        },
+      });
+    } finally {
+      restoreEnv("ANTHROPIC_API_KEY", previousAnthropicApiKey);
+    }
+
+    assertEquals(runtimeOptions?.model, "anthropic/claude-sonnet-4-6");
   });
 
   it("builds default root-run persistence diagnostics and preserves overrides", () => {

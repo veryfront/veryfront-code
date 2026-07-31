@@ -16,7 +16,7 @@ import {
 import { registerTool } from "#veryfront/mcp";
 import { assertLocalToolId, toolRegistry } from "#veryfront/tool/registry.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
-import { buildSkillManifestPrompt } from "#veryfront/skill/prompt-augmentation.ts";
+import type { Skill } from "#veryfront/skill/types.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
@@ -39,6 +39,9 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-schema-validator.ts";
 import { buildAgentDelegateTools } from "./runtime/agent-delegation.ts";
 import { normalizeAgentDelegateIds } from "./runtime/agent-delegation-names.ts";
+import { buildAgentCallContext } from "./runtime/call-context.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
+import { flattenSystemInstructions } from "./runtime/tool-inventory.ts";
 
 const STREAMING_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",
@@ -85,6 +88,22 @@ const SKILL_TOOL_REGISTRATIONS = [
 
 function isExplicitNoneSkillSelector(skills: AgentConfig["skills"]): boolean {
   return skills === false || (Array.isArray(skills) && skills.length === 0);
+}
+
+/**
+ * Projects a registered skill onto the runtime skill shape the shared skills
+ * renderer consumes. Instructions stay empty: the call context advertises
+ * skills, and `load_skill` delivers their bodies.
+ */
+function toRuntimeSkillDefinition(skill: Skill): RuntimeSkillDefinition {
+  return {
+    id: skill.id,
+    name: skill.metadata.name,
+    ...(skill.metadata.displayName ? { displayName: skill.metadata.displayName } : {}),
+    description: skill.metadata.description,
+    instructions: "",
+    allowedTools: skill.metadata.allowedTools ?? [],
+  };
 }
 
 function withAllowedSkillIdsContext(
@@ -200,21 +219,40 @@ export function agent(config: AgentConfig): Agent {
     };
   }
 
-  // System prompt augmentation with skill manifest.
-  // Re-resolve registry-backed entries at invocation time so HMR changes are picked up.
+  // Call context assembled at invocation time so registry-backed skills pick up
+  // HMR changes and host-supplied project/environment facts stay current.
   const originalSystem = config.system;
+  const configuredToolNames = mergedToolsConfig === true
+    ? [
+      "form_input",
+      ...(shouldExposeSkillTools ? ["load_skill"] : []),
+      "tool_search",
+      ...(config.providerTools ?? []),
+    ].sort()
+    : mergedToolsConfig === undefined
+    ? undefined
+    : Object.entries(mergedToolsConfig)
+      .filter(([, entry]) => entry !== false)
+      .map(([name]) => name)
+      .sort();
 
   const augmentedSystem = async () => {
     // Owner-aware: omitted selectors advertise every skill visible to this
     // agent (unowned project skills plus its own). Explicit lists, including
     // an empty list, retain their authored catalog selection.
     const snapshot = resolveSkillSnapshot();
-    const currentSkills = new Map(snapshot.definitions.map((skill) => [skill.id, skill]));
     const basePrompt =
       (typeof originalSystem === "function" ? await originalSystem() : originalSystem) ??
         "You are a helpful assistant.";
-    if (!currentSkills.size) return basePrompt;
-    return `${basePrompt}\n\n${buildSkillManifestPrompt(currentSkills)}`;
+
+    return flattenSystemInstructions(buildAgentCallContext({
+      instructions: basePrompt,
+      skills: snapshot.definitions.map(toRuntimeSkillDefinition),
+      includeSkillToolUsage: true,
+      ...(configuredToolNames === undefined ? {} : { availableToolNames: configuredToolNames }),
+      ...(config.projectContext ? { projectContext: config.projectContext } : {}),
+      ...(config.environmentContext ? { environmentContext: config.environmentContext } : {}),
+    }));
   };
 
   const resolvedMiddleware = resolveSecurityMiddleware(config);

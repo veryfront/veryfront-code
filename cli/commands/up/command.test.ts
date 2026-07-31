@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   _resetEnvironmentConfig,
   createTestEnvironmentConfig,
@@ -12,6 +13,14 @@ import { normalizeProjectSlug } from "#cli/shared/slug";
 import { capitalizeSeparatedWords } from "veryfront/utils/case-utils";
 import { resetInteractiveMode, setNonInteractive } from "../../shared/interactive.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
+import { stripAnsi } from "../../ui/ansi.ts";
+import type {
+  DeployPlan,
+  DeployProject,
+  DeployProjectOutcome,
+  DeployProjectRequest,
+} from "../../shared/deployment/deploy-project.ts";
+import type { DeployResult } from "../../shared/deployment/result.ts";
 
 function createArgs(flags: Record<string, unknown> = {}): ParsedArgs {
   return { _: ["up"], ...flags };
@@ -54,6 +63,114 @@ async function captureExit(run: () => Promise<void>): Promise<number> {
     // deno-lint-ignore no-explicit-any
     (Deno as any).exit = originalExit;
   }
+}
+
+async function captureLog<T>(run: () => Promise<T>): Promise<{ result: T; output: string[] }> {
+  const output: string[] = [];
+  const originalLog = console.log;
+  console.log = (...args: unknown[]) => {
+    output.push(args.map(String).join(" "));
+  };
+  try {
+    return { result: await run(), output };
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+/** Deploy Execution recorded, never executed: what did `up` ask deploy to do? */
+function recordingDeployProject(
+  outcome: DeployProjectOutcome,
+): { deployProject: DeployProject; requests: DeployProjectRequest[] } {
+  const requests: DeployProjectRequest[] = [];
+  return {
+    requests,
+    deployProject: {
+      execute(request) {
+        requests.push(request);
+        return Promise.resolve(outcome);
+      },
+    },
+  };
+}
+
+/**
+ * A verified deployment whose URL shares no pattern with the preview hostname
+ * `up` used to rebuild locally, so tests can tell the two apart.
+ */
+const VERIFIED_RESULT: DeployResult = {
+  projectId: "project-verified",
+  projectSlug: "verified-slug",
+  release: { id: "release-1", name: "main", version: "2026.07.31-1" },
+  environment: "preview",
+  environmentId: "environment-1",
+  deploymentId: "deployment-1",
+  url: "https://verified.example.test/dashboard",
+  protected: false,
+  routingConvergence: null,
+  commitSha: "a".repeat(40),
+  sourceDigest: "sha256:verified",
+  controlPlane: "https://control.example.test/api",
+  branch: "main",
+};
+
+const VERIFIED_OUTCOME: DeployProjectOutcome = { kind: "deployed", result: VERIFIED_RESULT };
+
+function dryRunOutcome(overrides: Partial<DeployPlan> = {}): DeployProjectOutcome {
+  return {
+    kind: "dry-run",
+    plan: {
+      branch: "main",
+      projectId: "project-verified",
+      projectSlug: "verified-slug",
+      environment: "preview",
+      environmentId: "environment-1",
+      controlPlane: "https://control.example.test/api",
+      plannedActions: ["push-source", "create-release", "deploy"],
+      ...overrides,
+    },
+  };
+}
+
+function identityResponse(): Response {
+  return Response.json({ id: "user-1", email: "dev@example.com" });
+}
+
+/**
+ * Fetch stub for the cases whose only legitimate call is the auth check.
+ *
+ * Everything else rejects: with Deploy Execution injected, up should reach the
+ * network for nothing but `GET /me`, and a stub that answers anything would
+ * hide the day up starts calling the control plane again.
+ */
+function authCheckOnlyFetch(): typeof fetch {
+  return ((input: string | URL | Request, init?: RequestInit) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/me") {
+      return Promise.resolve(identityResponse());
+    }
+    throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+  }) as typeof fetch;
+}
+
+async function createLinkedProjectDir(): Promise<string> {
+  const projectDir = await Deno.makeTempDir();
+  await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
+  await Deno.writeTextFile(
+    join(projectDir, "veryfront.json"),
+    `${JSON.stringify({ projectSlug: "linked-up" }, null, 2)}\n`,
+  );
+  return projectDir;
+}
+
+function authenticatedEnv(homeDir: string) {
+  return createTestEnvironmentConfig({
+    apiBaseUrl: "https://auth.example.test",
+    apiToken: "session-token",
+    homeDir,
+    xdgConfigHome: homeDir,
+  });
 }
 
 describe("Up Command", () => {
@@ -111,20 +228,19 @@ describe("Up Command", () => {
 
   describe("upCommand", () => {
     it("exits nonzero after an unauthenticated JSON result", async () => {
-      const originalConsoleLog = console.log;
       const tempDir = await Deno.makeTempDir();
-      const output: string[] = [];
 
       try {
         setJsonMode(true);
-        console.log = (message?: unknown) => output.push(String(message));
         const env = createTestEnvironmentConfig({
           apiToken: undefined,
           homeDir: tempDir,
           xdgConfigHome: tempDir,
         });
 
-        const exitCode = await captureExit(() => upCommand({ projectDir: tempDir }, env));
+        const { result: exitCode, output } = await captureLog(() =>
+          captureExit(() => upCommand({ projectDir: tempDir }, env))
+        );
 
         assertEquals(exitCode, 1);
         assertEquals(output.length, 1);
@@ -139,35 +255,28 @@ describe("Up Command", () => {
           },
         });
       } finally {
-        console.log = originalConsoleLog;
         setJsonMode(false);
         await Deno.remove(tempDir, { recursive: true });
       }
     });
 
     it("exits nonzero after an empty-folder JSON result", async () => {
-      const originalFetch = globalThis.fetch;
-      const originalConsoleLog = console.log;
       const tempDir = await Deno.makeTempDir();
-      const output: string[] = [];
+      const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
 
       try {
         setJsonMode(true);
-        console.log = (message?: unknown) => output.push(String(message));
-        globalThis.fetch = (() =>
-          Promise.resolve(
-            Response.json({ id: "user-1", email: "dev@example.com" }),
-          )) as typeof fetch;
-        const env = createTestEnvironmentConfig({
-          apiBaseUrl: "https://auth.example.test",
-          apiToken: "session-token",
-          homeDir: tempDir,
-          xdgConfigHome: tempDir,
-        });
+        const env = authenticatedEnv(tempDir);
 
-        const exitCode = await captureExit(() => upCommand({ projectDir: tempDir }, env));
+        const { result: exitCode, output } = await captureLog(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () => captureExit(() => upCommand({ projectDir: tempDir }, env, { deployProject })),
+          )
+        );
 
         assertEquals(exitCode, 1);
+        assertEquals(requests, []);
         assertEquals(output.length, 1);
         assertEquals(JSON.parse(output[0]!), {
           type: "result",
@@ -180,210 +289,195 @@ describe("Up Command", () => {
           },
         });
       } finally {
-        globalThis.fetch = originalFetch;
-        console.log = originalConsoleLog;
         setJsonMode(false);
         await Deno.remove(tempDir, { recursive: true });
       }
     });
 
-    it("uses VERYFRONT_API_BASE_URL when creating a project", async () => {
-      const originalFetch = globalThis.fetch;
+    it("asks Deploy Execution for one verified preview of main", async () => {
+      const projectDir = await createLinkedProjectDir();
+      const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
+
+      try {
+        setNonInteractive(true);
+        const { output } = await captureLog(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
+          )
+        );
+
+        assertEquals(requests, [{
+          projectDir,
+          branch: "main",
+          environment: "preview",
+          mode: "apply",
+          source: { kind: "ensure-pushed" },
+        }]);
+
+        const lines = output.map(stripAnsi);
+        assertEquals(lines.includes("  Preview: https://verified.example.test/dashboard"), true);
+        assertEquals(
+          lines.includes("  Studio:  https://veryfront.com/projects/verified-slug?branch=main"),
+          true,
+        );
+        assertEquals(lines.includes("  Deploy:  veryfront deploy"), true);
+        assertEquals(lines.includes("  ✓ verified-slug is ready"), true);
+        // The printed preview URL is the deployment that was verified, never a
+        // hostname rebuilt from the local slug.
+        assertEquals(lines.some((line) => line.includes("preview.veryfront.com")), false);
+      } finally {
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("reports the verified deployment URL as the single JSON result", async () => {
+      const projectDir = await createLinkedProjectDir();
+      const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
+
+      try {
+        setJsonMode(true);
+        setNonInteractive(true);
+        const { output } = await captureLog(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
+          )
+        );
+
+        assertEquals(requests.length, 1);
+        assertEquals(output.length, 1);
+        assertEquals(JSON.parse(output[0]!), {
+          type: "result",
+          success: true,
+          data: {
+            projectSlug: "verified-slug",
+            dryRun: false,
+            studioUrl: "https://veryfront.com/projects/verified-slug?branch=main",
+            previewUrl: VERIFIED_RESULT.url,
+            nextCommand: "veryfront deploy",
+          },
+        });
+      } finally {
+        setJsonMode(false);
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("owns one JSON result for a dry run planned by Deploy Execution", async () => {
+      const projectDir = await createLinkedProjectDir();
+      const { deployProject, requests } = recordingDeployProject(dryRunOutcome());
+
+      try {
+        setJsonMode(true);
+        setNonInteractive(true);
+        const { output } = await captureLog(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () =>
+              upCommand({ projectDir, dryRun: true }, authenticatedEnv(projectDir), {
+                deployProject,
+              }),
+          )
+        );
+
+        assertEquals(requests[0]?.mode, "dry-run");
+        assertEquals(output.length, 1);
+        assertEquals(JSON.parse(output[0]!), {
+          type: "result",
+          success: true,
+          data: {
+            projectSlug: "linked-up",
+            dryRun: true,
+            plannedActions: ["push-source", "deploy-preview"],
+          },
+        });
+      } finally {
+        setJsonMode(false);
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("reports a planned project creation from the dry-run plan", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const expectedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() ?? "");
+      const { deployProject } = recordingDeployProject(
+        dryRunOutcome({
+          projectId: null,
+          environmentId: null,
+          plannedActions: ["create-project", "push-source", "create-release", "deploy"],
+        }),
+      );
+
+      try {
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
+        setJsonMode(true);
+        setNonInteractive(true);
+        const { output } = await captureLog(() =>
+          withMockFetch(
+            authCheckOnlyFetch(),
+            () =>
+              upCommand({ projectDir, dryRun: true }, authenticatedEnv(projectDir), {
+                deployProject,
+              }),
+          )
+        );
+
+        assertEquals(output.length, 1);
+        assertEquals(JSON.parse(output[0]!), {
+          type: "result",
+          success: true,
+          data: {
+            projectSlug: expectedSlug,
+            dryRun: true,
+            plannedActions: ["create-project", "push-source", "deploy-preview"],
+          },
+        });
+      } finally {
+        setJsonMode(false);
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("creates the project against VERYFRONT_API_BASE_URL before deploying", async () => {
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
       const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
-      const tempDir = await Deno.makeTempDir();
-      const expectedSlug = normalizeProjectSlug(tempDir.split(/[/\\]/).pop() ?? "");
+      const projectDir = await Deno.makeTempDir();
+      const expectedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() ?? "");
       const requestedUrls: string[] = [];
       let projectCreateBody: unknown;
-      const uploadedFiles = new Map<string, string>();
-      let deploymentCreated = false;
-      const output: string[] = [];
-      const originalConsoleLog = console.log;
+      const { deployProject, requests } = recordingDeployProject(VERIFIED_OUTCOME);
 
       try {
-        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
-        await Deno.writeTextFile(join(tempDir, "package.json"), "{}");
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
         Deno.env.set("VERYFRONT_API_TOKEN", "env-token");
         Deno.env.set("VERYFRONT_API_BASE_URL", "https://api.from-env.test");
         Deno.env.delete("VERYFRONT_API_URL");
         _resetEnvironmentConfig();
-
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-          const request = input instanceof Request ? input : new Request(input, init);
-          const url = request.url;
-          const method = request.method;
-          requestedUrls.push(url);
-
-          if (url.endsWith("/me")) {
-            return Promise.resolve(
-              new Response(JSON.stringify({ id: "user-1", email: "dev@example.com" }), {
-                status: 200,
-                headers: { "content-type": "application/json" },
-              }),
-            );
-          }
-
-          if (url.endsWith("/projects") && method === "POST") {
-            projectCreateBody = await request.clone().json();
-            return Promise.resolve(
-              new Response(JSON.stringify({ id: "project-1", slug: expectedSlug }), {
-                status: 200,
-                headers: { "content-type": "application/json" },
-              }),
-            );
-          }
-
-          if (
-            url.endsWith(`/projects/${expectedSlug}`) &&
-            method === "GET"
-          ) {
-            return Promise.resolve(
-              Response.json({ id: "project-1", slug: expectedSlug }),
-            );
-          }
-
-          if (
-            url.includes(`/projects/${expectedSlug}/files/`) &&
-            method === "PUT"
-          ) {
-            const path = decodeURIComponent(new URL(url).pathname.split("/files/")[1] ?? "");
-            const body = await request.clone().json() as { content: string };
-            uploadedFiles.set(path, body.content);
-            return Promise.resolve(Response.json({}));
-          }
-
-          if (url.endsWith("/branches") && method === "POST") {
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ id: "branch-1", name: "main", projectId: "project-1" }),
-                {
-                  status: 200,
-                  headers: { "content-type": "application/json" },
-                },
-              ),
-            );
-          }
-
-          if (url.includes("/environments")) {
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({
-                  data: [{
-                    id: "env-1",
-                    name: "preview",
-                    protected: false,
-                    project_id: "project-1",
-                    deployment: deploymentCreated
-                      ? {
-                        id: "deployment-1",
-                        release: { id: "release-1", name: "Preview" },
-                      }
-                      : null,
-                  }],
-                  page_info: {},
-                }),
-                {
-                  status: 200,
-                  headers: { "content-type": "application/json" },
-                },
-              ),
-            );
-          }
-
-          if (url.endsWith("/releases") && method === "POST") {
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({
-                  id: "release-1",
-                  name: "Preview",
-                  version: "v1",
-                  export_status: "complete",
-                  build_status: "complete",
-                  deploy_status: "pending",
-                }),
-                {
-                  status: 200,
-                  headers: { "content-type": "application/json" },
-                },
-              ),
-            );
-          }
-
-          if (url.endsWith("/deployments") && method === "POST") {
-            deploymentCreated = true;
-            return Promise.resolve(
-              new Response(
-                JSON.stringify({ id: "deployment-1", release: "release-1", environment: "env-1" }),
-                {
-                  status: 200,
-                  headers: { "content-type": "application/json" },
-                },
-              ),
-            );
-          }
-
-          if (url.endsWith("/releases/release-1") && method === "GET") {
-            return Promise.resolve(
-              Response.json({
-                id: "release-1",
-                name: "Preview",
-                version: "v1",
-                project_id: "project-1",
-                export_status: "complete",
-                build_status: "complete",
-                deploy_status: "pending",
-              }),
-            );
-          }
-
-          if (new URL(url).pathname.endsWith("/releases/release-1/versions")) {
-            return Promise.resolve(
-              Response.json({
-                data: [...uploadedFiles].map(([path, content]) => ({
-                  path,
-                  data: JSON.stringify({ body: content, path }),
-                })),
-                page_info: {},
-              }),
-            );
-          }
-
-          if (url.endsWith("/releases/release-1/asset-manifest")) {
-            return Promise.resolve(
-              Response.json({
-                state: "ready",
-                manifest: {
-                  modules: {},
-                  css: [],
-                  routes: {},
-                  dependencies: {},
-                  fallback: { mode: "jit", gaps: [] },
-                },
-              }),
-            );
-          }
-
-          if (url.endsWith("/deployments/deployment-1")) {
-            return Promise.resolve(
-              Response.json({
-                id: "deployment-1",
-                release_id: "release-1",
-                environment_id: "env-1",
-              }),
-            );
-          }
-
-          return Promise.resolve(
-            new Response(JSON.stringify({ data: [], page_info: {} }), {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            }),
-          );
-        }) as typeof fetch;
-
         setNonInteractive(true);
-        await upCommand({ projectDir: tempDir, force: false, dryRun: false });
+
+        await captureLog(() =>
+          withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            requestedUrls.push(request.url);
+
+            if (url.pathname === "/me") return identityResponse();
+            if (request.method === "POST" && url.pathname === "/projects") {
+              projectCreateBody = await request.clone().json();
+              return Response.json({ id: "project-1", slug: expectedSlug });
+            }
+            throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+          }, () =>
+            upCommand({ projectDir, force: false, dryRun: false }, undefined, {
+              deployProject,
+            }))
+        );
 
         assertEquals(
           requestedUrls.some((url) => url.startsWith("https://api.from-env.test/projects")),
@@ -393,106 +487,49 @@ describe("Up Command", () => {
           requestedUrls.some((url) => url.startsWith("https://api.veryfront.com/projects")),
           false,
         );
-        const expectedName = capitalizeSeparatedWords(expectedSlug, "-", " ");
-        assertEquals(projectCreateBody, { slug: expectedSlug, name: expectedName });
-        const humanOutput = output.join("\n");
-        assertEquals(humanOutput.includes("Studio:"), true);
-        assertEquals(humanOutput.includes("Preview:"), true);
-        assertEquals(humanOutput.includes("Deploy:"), true);
+        assertEquals(projectCreateBody, {
+          slug: expectedSlug,
+          name: capitalizeSeparatedWords(expectedSlug, "-", " "),
+        });
+        assertEquals(requests.length, 1);
+
+        assertEquals(
+          JSON.parse(await Deno.readTextFile(join(projectDir, ".veryfront", "project.json"))),
+          {
+            version: 1,
+            controlPlane: "https://api.from-env.test",
+            projectId: "project-1",
+            projectSlug: expectedSlug,
+          },
+        );
+        assertEquals(await exists(join(projectDir, "veryfront.json")), false);
       } finally {
-        console.log = originalConsoleLog;
-        globalThis.fetch = originalFetch;
         restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
         restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
         restoreEnv("VERYFRONT_API_URL", originalApiUrl);
         resetInteractiveMode();
         _resetEnvironmentConfig();
-        await Deno.remove(tempDir, { recursive: true });
+        await Deno.remove(projectDir, { recursive: true });
       }
     });
 
-    it("owns one JSON result while nested dry-run commands stay quiet", async () => {
-      const originalFetch = globalThis.fetch;
-      const originalConsoleLog = console.log;
+    it("deploys a pulled local project link without creating a project", async () => {
       const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
       const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
       const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
       const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
-      const tempDir = await Deno.makeTempDir();
-      const output: string[] = [];
+      const projectDir = await Deno.makeTempDir();
+      const projectPosts: string[] = [];
+      const { deployProject, requests } = recordingDeployProject({
+        kind: "deployed",
+        result: { ...VERIFIED_RESULT, projectSlug: "pulled-up" },
+      });
 
       try {
-        await Deno.writeTextFile(join(tempDir, "package.json"), "{}");
+        await Deno.mkdir(join(projectDir, ".veryfront"), { recursive: true });
+        await Deno.writeTextFile(join(projectDir, "package.json"), "{}");
         await Deno.writeTextFile(
-          join(tempDir, "veryfront.json"),
-          `${JSON.stringify({ projectSlug: "json-up" }, null, 2)}\n`,
-        );
-        Deno.env.set("VERYFRONT_API_TOKEN", "env-token");
-        Deno.env.set("VERYFRONT_API_URL", "https://api.from-env.test");
-        Deno.env.delete("VERYFRONT_API_BASE_URL");
-        Deno.env.delete("VERYFRONT_PROJECT_SLUG");
-        _resetEnvironmentConfig();
-        setJsonMode(true);
-        console.log = (message?: unknown) => output.push(String(message));
-
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-          const request = input instanceof Request ? input : new Request(input, init);
-          const url = new URL(request.url);
-
-          if (request.method === "GET" && url.pathname === "/me") {
-            return Response.json({ id: "user-1", email: "dev@example.com" });
-          }
-          if (request.method === "GET" && url.pathname === "/projects/json-up/files") {
-            return Response.json({ data: [], page_info: {} });
-          }
-
-          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        }) as typeof fetch;
-
-        await upCommand({ projectDir: tempDir, dryRun: true });
-
-        assertEquals(output.length, 1);
-        assertEquals(JSON.parse(output[0]!), {
-          type: "result",
-          success: true,
-          data: {
-            projectSlug: "json-up",
-            dryRun: true,
-            plannedActions: ["push-source", "deploy-preview"],
-          },
-        });
-      } finally {
-        console.log = originalConsoleLog;
-        setJsonMode(false);
-        globalThis.fetch = originalFetch;
-        restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
-        restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
-        restoreEnv("VERYFRONT_API_URL", originalApiUrl);
-        restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
-        _resetEnvironmentConfig();
-        await Deno.remove(tempDir, { recursive: true });
-      }
-    });
-
-    it("uses a pulled local project link without creating veryfront.json", async () => {
-      const originalFetch = globalThis.fetch;
-      const originalConsoleLog = console.log;
-      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
-      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
-      const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
-      const originalProjectSlug = Deno.env.get("VERYFRONT_PROJECT_SLUG");
-      const tempDir = await Deno.makeTempDir();
-      const output: string[] = [];
-      const requested: Array<{ method: string; pathname: string }> = [];
-      const uploadedFiles = new Map<string, string>();
-      let projectPostCount = 0;
-      let deploymentCreated = false;
-
-      try {
-        await Deno.mkdir(join(tempDir, ".veryfront"), { recursive: true });
-        await Deno.writeTextFile(join(tempDir, "package.json"), "{}");
-        await Deno.writeTextFile(
-          join(tempDir, ".veryfront", "project.json"),
+          join(projectDir, ".veryfront", "project.json"),
           `${
             JSON.stringify(
               {
@@ -511,190 +548,79 @@ describe("Up Command", () => {
         Deno.env.delete("VERYFRONT_API_BASE_URL");
         Deno.env.delete("VERYFRONT_PROJECT_SLUG");
         _resetEnvironmentConfig();
-        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
-
-        globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-          const request = input instanceof Request ? input : new Request(input, init);
-          const url = new URL(request.url);
-          requested.push({ method: request.method, pathname: url.pathname });
-
-          if (request.method === "GET" && url.pathname === "/me") {
-            return Response.json({ id: "user-1", email: "dev@example.com" });
-          }
-
-          if (request.method === "POST" && url.pathname === "/projects") {
-            projectPostCount++;
-            return Response.json({ id: "unexpected-project", slug: "unexpected" });
-          }
-
-          if (request.method === "GET" && url.pathname === "/projects/project-linked") {
-            return Response.json({ id: "project-linked", slug: "pulled-up" });
-          }
-
-          if (request.method === "GET" && url.pathname === "/projects/project-linked/files") {
-            return Response.json({ data: [], page_info: {} });
-          }
-
-          if (
-            request.method === "PUT" &&
-            url.pathname.startsWith("/projects/project-linked/files/")
-          ) {
-            const path = decodeURIComponent(url.pathname.split("/files/")[1] ?? "");
-            const body = await request.clone().json() as { content: string };
-            uploadedFiles.set(path, body.content);
-            return Response.json({});
-          }
-
-          if (request.method === "POST" && url.pathname === "/projects/project-linked/branches") {
-            return Response.json({ id: "branch-1", name: "main", projectId: "project-linked" });
-          }
-
-          if (
-            request.method === "GET" && url.pathname === "/projects/project-linked/environments"
-          ) {
-            return Response.json({
-              data: [{
-                id: "env-1",
-                name: "preview",
-                protected: false,
-                project_id: "project-linked",
-                deployment: deploymentCreated
-                  ? { id: "deployment-1", release: { id: "release-1", name: "Preview" } }
-                  : null,
-              }],
-              page_info: {},
-            });
-          }
-
-          if (request.method === "POST" && url.pathname === "/projects/project-linked/releases") {
-            return Response.json({
-              id: "release-1",
-              name: "Preview",
-              version: "v1",
-              export_status: "complete",
-              build_status: "complete",
-              deploy_status: "pending",
-            });
-          }
-
-          if (
-            request.method === "POST" && url.pathname === "/projects/project-linked/deployments"
-          ) {
-            deploymentCreated = true;
-            return Response.json({
-              id: "deployment-1",
-              release: "release-1",
-              environment: "env-1",
-            });
-          }
-
-          if (
-            request.method === "GET" &&
-            [
-              "/projects/project-linked/releases/release-1",
-              "/projects/pulled-up/releases/release-1",
-            ]
-              .includes(url.pathname)
-          ) {
-            return Response.json({
-              id: "release-1",
-              name: "Preview",
-              version: "v1",
-              project_id: "project-linked",
-              export_status: "complete",
-              build_status: "complete",
-              deploy_status: "pending",
-            });
-          }
-
-          if (
-            request.method === "GET" &&
-            [
-              "/projects/project-linked/releases/release-1/versions",
-              "/projects/pulled-up/releases/release-1/versions",
-            ].includes(url.pathname)
-          ) {
-            return Response.json({
-              data: [...uploadedFiles].map(([path, content]) => ({
-                path,
-                data: JSON.stringify({ body: content, path }),
-              })),
-              page_info: {},
-            });
-          }
-
-          if (
-            request.method === "GET" &&
-            [
-              "/projects/project-linked/releases/release-1/asset-manifest",
-              "/projects/pulled-up/releases/release-1/asset-manifest",
-            ].includes(url.pathname)
-          ) {
-            return Response.json({
-              state: "ready",
-              manifest: {
-                modules: {},
-                css: [],
-                routes: {},
-                dependencies: {},
-                fallback: { mode: "jit", gaps: [] },
-              },
-            });
-          }
-
-          if (
-            request.method === "GET" &&
-            [
-              "/projects/project-linked/deployments/deployment-1",
-              "/projects/pulled-up/deployments/deployment-1",
-            ].includes(url.pathname)
-          ) {
-            return Response.json({
-              id: "deployment-1",
-              release_id: "release-1",
-              environment_id: "env-1",
-            });
-          }
-
-          throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
-        }) as typeof fetch;
-
         setNonInteractive(true);
-        await upCommand({ projectDir: tempDir, force: false, dryRun: false });
 
-        assertEquals(projectPostCount, 0);
-        assertEquals(
-          requested.some((request) =>
-            request.method === "GET" && request.pathname === "/projects/project-linked/files"
-          ),
-          true,
-        );
-        assertEquals(
-          requested.some((request) =>
-            request.method === "POST" && request.pathname === "/projects/project-linked/deployments"
-          ),
-          true,
+        const { output } = await captureLog(() =>
+          withMockFetch((input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            const url = new URL(request.url);
+            if (request.method === "POST" && url.pathname === "/projects") {
+              projectPosts.push(request.url);
+              return Promise.resolve(Response.json({ id: "unexpected", slug: "unexpected" }));
+            }
+            if (url.pathname === "/me") return Promise.resolve(identityResponse());
+            throw new Error(`Unexpected request: ${request.method} ${url.pathname}`);
+          }, () =>
+            upCommand({ projectDir, force: false, dryRun: false }, undefined, {
+              deployProject,
+            }))
         );
 
-        let veryfrontJsonExists = true;
-        try {
-          await Deno.stat(join(tempDir, "veryfront.json"));
-        } catch {
-          veryfrontJsonExists = false;
-        }
-        assertEquals(veryfrontJsonExists, false);
-        assertEquals(output.join("\n").includes("pulled-up"), true);
+        assertEquals(projectPosts, []);
+        assertEquals(requests.length, 1);
+        assertEquals(requests[0]?.source, { kind: "ensure-pushed" });
+        assertEquals(await exists(join(projectDir, "veryfront.json")), false);
+        assertEquals(output.map(stripAnsi).includes("  ✓ pulled-up is ready"), true);
       } finally {
-        console.log = originalConsoleLog;
-        globalThis.fetch = originalFetch;
         restoreEnv("VERYFRONT_API_TOKEN", originalApiToken);
         restoreEnv("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
         restoreEnv("VERYFRONT_API_URL", originalApiUrl);
         restoreEnv("VERYFRONT_PROJECT_SLUG", originalProjectSlug);
         resetInteractiveMode();
         _resetEnvironmentConfig();
-        await Deno.remove(tempDir, { recursive: true });
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("reports a failed deployment as a preview deployment failure", async () => {
+      const projectDir = await createLinkedProjectDir();
+      const deployProject: DeployProject = {
+        execute() {
+          return Promise.reject(new Error("environment URL did not become ready"));
+        },
+      };
+
+      try {
+        setNonInteractive(true);
+        let message = "";
+        await captureLog(async () => {
+          try {
+            await withMockFetch(
+              authCheckOnlyFetch(),
+              () => upCommand({ projectDir }, authenticatedEnv(projectDir), { deployProject }),
+            );
+          } catch (error) {
+            message = error instanceof Error ? error.message : String(error);
+          }
+        });
+
+        assertEquals(
+          message,
+          "Preview deployment failed: environment URL did not become ready",
+        );
+      } finally {
+        resetInteractiveMode();
+        await Deno.remove(projectDir, { recursive: true });
       }
     });
   });
 });
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await Deno.stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}

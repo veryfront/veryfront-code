@@ -49,7 +49,7 @@ export async function runDurableRunCanaryCli(
 ): Promise<number> {
   const log = input.log ?? console.log;
   const cwd = input.cwd ?? getProcessCwd();
-  const { apiUrl, authToken, projectId, requestTimeoutMs, keepSuccessfulEvidence } =
+  const { apiUrl, authToken, projectId, model, requestTimeoutMs, keepSuccessfulEvidence } =
     resolveDurableRunCanaryEnvironment(input.env);
   const reportPath = input.env.DURABLE_CANARY_REPORT_PATH ??
     createTimestampedReportPath({ cwd, directory: "durable-run-staging-canaries" });
@@ -72,6 +72,7 @@ export async function runDurableRunCanaryCli(
     authToken,
     agentId: input.agentId,
     projectId,
+    model,
     requestTimeoutMs,
     keepSuccessfulEvidence,
   });
@@ -82,6 +83,7 @@ export async function runDurableRunCanaryCli(
 
   log(`Durable run canaries -> ${apiUrl}`);
   log(`Project scope -> ${projectId}`);
+  log(`Model -> ${model ?? "runtime default"}`);
 
   const results: DurableRunCanaryResult[] = [];
   for (const testCase of testCases) {
@@ -104,6 +106,7 @@ export async function runDurableRunCanaryCli(
         generatedAt: new Date().toISOString(),
         apiUrl,
         projectId,
+        model: model ?? null,
         results,
         summary,
       },

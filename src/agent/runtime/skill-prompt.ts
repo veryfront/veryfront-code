@@ -11,6 +11,41 @@ import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 /** Maximum value for runtime skill prompt entries. */
 export const MAX_RUNTIME_SKILL_PROMPT_ENTRIES = 30;
 
+/**
+ * Call signatures for the skill tools. Emitted only for callers that opt in:
+ * hosted runs learn the signatures from the tool schemas, while agents built
+ * by the `agent()` factory have carried them in the prompt since the factory
+ * rendered its own skill manifest.
+ */
+const SKILL_TOOL_USAGE = new Map([
+  [
+    "load_skill",
+    "Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
+  ],
+  [
+    "load_skill_reference",
+    "Call with { skillId, reference } only after load_skill lists reference files for that skill",
+  ],
+  [
+    "execute_skill_script",
+    "Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill",
+  ],
+]);
+
+function buildSkillToolUsage(availableToolNames?: readonly string[]): string {
+  const availableToolNameSet = availableToolNames === undefined
+    ? undefined
+    : new Set(availableToolNames);
+  const entries = [...SKILL_TOOL_USAGE].filter(([toolName]) =>
+    availableToolNameSet?.has(toolName) ?? true
+  );
+  return entries.length === 0
+    ? ""
+    : `Skill tools (call these as tools, never write them as text):\n\n${
+      entries.map(([toolName, usage]) => `- ${toolName}: ${usage}`).join("\n")
+    }`;
+}
+
 function getScopedDelegateToolNames(availableToolNames?: readonly string[]): string[] {
   return (availableToolNames ?? [])
     .filter((toolName) => toolName.startsWith("agent_"))
@@ -36,9 +71,17 @@ function buildRuntimeSkillDelegationGuidance(availableToolNames?: readonly strin
 }
 
 /** Formats runtime skill metadata. */
-export function formatRuntimeSkillMetadata(skill: RuntimeSkillDefinition): string {
+export function formatRuntimeSkillMetadata(
+  skill: RuntimeSkillDefinition,
+  availableToolNames?: readonly string[],
+): string {
   const details: string[] = [];
-  const allowedTools = skill.allowedTools ?? [];
+  const availableToolNameSet = availableToolNames === undefined
+    ? undefined
+    : new Set(availableToolNames);
+  const allowedTools = (skill.allowedTools ?? []).filter((toolName) =>
+    availableToolNameSet?.has(toolName) ?? true
+  );
 
   if (allowedTools.length > 0) {
     details.push(`tools: ${allowedTools.join(", ")}`);
@@ -68,13 +111,16 @@ function formatRuntimeSkillLabel(skill: RuntimeSkillDefinition): string {
 /** Builds runtime available skills prompt block. */
 export function buildRuntimeAvailableSkillsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
-  options: { availableToolNames?: readonly string[] } = {},
+  options: {
+    availableToolNames?: readonly string[];
+    includeSkillToolUsage?: boolean;
+  } = {},
 ): string {
   const displaySkills = skills.slice(0, MAX_RUNTIME_SKILL_PROMPT_ENTRIES);
   const skillsList = displaySkills
     .map((skill) =>
       `- ${formatRuntimeSkillLabel(skill)}: ${skill.description}${
-        formatRuntimeSkillMetadata(skill)
+        formatRuntimeSkillMetadata(skill, options.availableToolNames)
       }`
     )
     .join("\n");
@@ -86,6 +132,10 @@ export function buildRuntimeAvailableSkillsPromptBlock(
     : "";
   const delegationGuidance = buildRuntimeSkillDelegationGuidance(options.availableToolNames);
   const delegationSentence = delegationGuidance ? ` ${delegationGuidance}` : "";
+  const skillToolUsage = options.includeSkillToolUsage
+    ? buildSkillToolUsage(options.availableToolNames)
+    : "";
+  const toolUsage = skillToolUsage ? `\n\n${skillToolUsage}` : "";
 
   return createRuntimePromptBlock({
     name: "available_skills",
@@ -94,6 +144,6 @@ export function buildRuntimeAvailableSkillsPromptBlock(
 
 Do NOT attempt tools that are absent from the current run just because they appear in loaded skill instructions.
 
-${skillsList}${truncationNote}`,
+${skillsList}${truncationNote}${toolUsage}`,
   });
 }

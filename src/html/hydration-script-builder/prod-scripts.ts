@@ -1,9 +1,4 @@
-import {
-  getLoaderScript,
-  getNavigationStoreCompatibilityScript,
-  getRendererScript,
-  getRouterScript,
-} from "./templates/index.ts";
+import { HYDRATION_RUNTIME_BUNDLE } from "./hydration-runtime.generated.ts";
 import { buildNonceAttribute } from "../html-escape.ts";
 import { fnv1aHash } from "#veryfront/utils/hash-utils.ts";
 
@@ -13,18 +8,14 @@ export const PROD_HYDRATION_MODULE_VERSIONED_PATH_PATTERN =
 
 let cachedProdHydrationModulePath: string | null = null;
 
+/**
+ * The hydration runtime the browser loads, bundled from the typed modules in
+ * `runtime/` by `scripts/build/prebundle-hydration-runtime.ts`. React and the
+ * veryfront react runtime stay bare imports so the document's import map
+ * resolves them.
+ */
 export function generateProdHydrationModule(): string {
-  return [
-    `import * as React from 'react';`,
-    `import { createRoot } from 'react-dom/client';`,
-    `import { RouterProvider, useRouter as useRouterFromModule } from 'veryfront/router';`,
-    `import * as RouterRuntime from 'veryfront/router';`,
-    `import { PageContextProvider } from 'veryfront/context';`,
-    getNavigationStoreCompatibilityScript().trim(),
-    getRouterScript().trim(),
-    getLoaderScript().trim(),
-    getRendererScript().trim(),
-  ].join("\n\n");
+  return HYDRATION_RUNTIME_BUNDLE;
 }
 
 export function getProdHydrationModulePath(): string {

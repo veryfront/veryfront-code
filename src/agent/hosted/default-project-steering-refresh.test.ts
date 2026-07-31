@@ -16,6 +16,7 @@ function createAgent(): RuntimeAgentMarkdownDefinition {
     name: "Agent",
     description: "Agent description",
     instructions: "Base instructions",
+    tools: true,
   };
 }
 
@@ -54,6 +55,7 @@ function createRefreshInput(
       remoteToolNames: [],
       providerToolNames: [],
       availableToolNames: [],
+      toolLoadingMode: "deferred",
       compatibleRemoteToolNames: [],
       systemInstructions: "",
     },
@@ -146,7 +148,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       { projectId: "project-1", authToken: "auth-token", branchId: "branch-1" },
       { projectId: "project-1", authToken: "auth-token", branchId: "branch-1" },
     ]);
-    assertEquals(input.taskContext.availableToolNames, ["load_skill", "sleep"]);
+    assertEquals(input.taskContext.availableToolNames, ["load_skill", "tool_search"]);
     assertEquals(
       system.includes("Fresh instructions:build:Editor context"),
       true,
@@ -188,6 +190,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
         remoteToolNames: ["confluence__search_content"],
         providerToolNames: [],
         availableToolNames: ["confluence__search_content", "sleep"],
+        toolLoadingMode: "deferred",
         compatibleRemoteToolNames: ["confluence__search_content"],
         systemInstructions: "",
       },
@@ -195,11 +198,8 @@ describe("agent/default-hosted-project-steering-refresh", () => {
 
     const system = await refresh(input);
 
-    assertEquals(input.taskContext.availableToolNames, [
-      "confluence__search_content",
-      "sleep",
-    ]);
-    assertStringIncludes(system, "- confluence__search_content");
+    assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(system.includes("confluence__search_content"), false);
     assertEquals(system.includes("gmail__list_emails"), false);
     assertEquals(input.toolAssembly.compatibleRemoteToolNames, [
       "confluence__search_content",
@@ -278,7 +278,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     });
   });
 
-  it("keeps provider-native tools in refreshed runtime inventory", async () => {
+  it("keeps deferred provider-native tools out of refreshed model inventory", async () => {
     const refresh = createDefaultHostedProjectSteeringRefresh({
       fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
       fetchSkills: () => Promise.resolve([]),
@@ -300,6 +300,7 @@ describe("agent/default-hosted-project-steering-refresh", () => {
         remoteToolNames: [],
         providerToolNames: ["web_fetch", "web_search"],
         availableToolNames: [],
+        toolLoadingMode: "deferred",
         compatibleRemoteToolNames: [],
         systemInstructions: "",
       },
@@ -307,9 +308,9 @@ describe("agent/default-hosted-project-steering-refresh", () => {
 
     const system = await refresh(input);
 
-    assertEquals(input.taskContext.availableToolNames, ["sleep", "web_fetch", "web_search"]);
-    assertStringIncludes(system, "- web_fetch");
-    assertStringIncludes(system, "- web_search");
+    assertEquals(input.taskContext.availableToolNames, ["tool_search"]);
+    assertEquals(system.includes("web_fetch"), false);
+    assertEquals(system.includes("web_search"), false);
   });
 
   it("falls back to initial steering when refresh lookups fail", async () => {

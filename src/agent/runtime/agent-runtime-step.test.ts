@@ -5,6 +5,7 @@ import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#ve
 import type { AgentConfig, Message } from "../types.ts";
 import type { AgentRuntimeStepState } from "./agent-runtime-step.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
+import { createToolExposureState } from "./tool-exposure.ts";
 
 function toolDefinition(name: string): ToolDefinition {
   return {
@@ -23,6 +24,75 @@ function remoteToolSource(id: string): RemoteToolSource {
 }
 
 describe("agent/runtime-step", () => {
+  it("exposes only bootstrap and loaded schemas in deferred mode", async () => {
+    const state = createToolExposureState(["get_release"]);
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("create_release"),
+        toolDefinition("form_input"),
+        toolDefinition("get_release"),
+        toolDefinition("load_skill"),
+      ],
+      isLocalModel: false,
+      messages: [],
+      mode: "generate",
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({ systemPrompt: "Base" }),
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      toolExposureState: state,
+    });
+
+    assertEquals(
+      prepared.tools.map((tool) => tool.name),
+      ["form_input", "get_release", "load_skill", "tool_search"],
+    );
+    assertEquals(
+      prepared.toolExposurePlan.deferred.map((tool) => tool.name),
+      ["create_release"],
+    );
+  });
+
+  it("keeps provider-native tools in prompt inventory but outside tool_search authorization", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      getAvailableTools: async () => [toolDefinition("create_release")],
+      isLocalModel: false,
+      messages: [],
+      mode: "generate",
+      providerToolNames: ["web_search"],
+      remoteToolSources: undefined,
+      resolveRuntimeState: async () => ({
+        systemPrompt:
+          'Base\n\nCurrent run tool inventory:\n\n- tool_search\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.\nWhen tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.',
+      }),
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+    });
+
+    assertEquals(prepared.systemPrompt.includes("- web_search"), true);
+    assertEquals(prepared.toolExposurePlan.authorized.map((tool) => tool.name), ["create_release"]);
+  });
+
   it("does not let runtime context shadow the trusted abort signal", async () => {
     const trustedAbort = new AbortController();
     const shadowAbort = new AbortController();
@@ -31,7 +101,7 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base" } as AgentConfig,
+      config: { model: "auto", system: "Base", __vfToolLoadingMode: "eager" } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
       isLocalModel: true,
@@ -57,7 +127,12 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async (_toolsConfig, options) => {
         assertEquals(options?.remoteToolContext?.allowedSkillIds, ["selected"]);
@@ -92,6 +167,7 @@ describe("agent/runtime-step", () => {
       model: "auto",
       system: "Base system",
       tools: true,
+      __vfToolLoadingMode: "eager",
     } as AgentConfig;
     const capturedContexts: ToolExecutionContext[] = [];
     const remoteSource = remoteToolSource("remote_source");
@@ -166,7 +242,12 @@ describe("agent/runtime-step", () => {
         scripts: ["scripts/run.sh"],
       },
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
       messages: [],
@@ -194,7 +275,13 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true, skills: [] } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: [],
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async (_toolsConfig, options) => {
         assertEquals(options?.includeSkillTools, false);
@@ -225,7 +312,12 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "system", tools: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "system",
+        tools: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
       isLocalModel: false,
@@ -250,7 +342,7 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolContext.__vfSourceIntegrationPolicy, sourceIntegrationPolicy);
   });
 
-  it("skips tool loading for local models", async () => {
+  it("uses the canonical deferred exposure contract for local models", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -272,7 +364,7 @@ describe("agent/runtime-step", () => {
       resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
     });
 
-    assertEquals(prepared.tools, []);
+    assertEquals(prepared.tools.map((tool) => tool.name), []);
     assertEquals(prepared.toolContext, {});
   });
 
@@ -294,7 +386,13 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
       messages,
@@ -327,7 +425,13 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
       messages: [],
@@ -383,7 +487,13 @@ describe("agent/runtime-step", () => {
       activeSkillPolicy: undefined,
       activeSkillToolAvailability: undefined,
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
       messages,
@@ -419,7 +529,13 @@ describe("agent/runtime-step", () => {
         scripts: [],
       },
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
       messages: [],
@@ -454,7 +570,13 @@ describe("agent/runtime-step", () => {
         scripts: [],
       },
       allowedRemoteToolNames: undefined,
-      config: { model: "auto", system: "Base", tools: true, skills: true } as AgentConfig,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       isLocalModel: false,
       messages: [],

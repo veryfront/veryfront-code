@@ -4,7 +4,23 @@ import { filterToolsForSkill, type SkillToolAvailability } from "#veryfront/skil
 import type { ToolConfigEntry } from "./tool-helpers.ts";
 import { filterToolsAfterSubmittedFormInput } from "./skill-policy-enforcement.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import { SOURCE_INTEGRATION_POLICY_CONTEXT_KEY } from "./runtime-tool-config.ts";
+import {
+  resolveRuntimeToolLoading,
+  SOURCE_INTEGRATION_POLICY_CONTEXT_KEY,
+} from "./runtime-tool-config.ts";
+import {
+  createToolExposurePlan,
+  createToolExposureState,
+  restoreToolExposureState,
+  type ToolExposureCheckpoint,
+  type ToolExposurePlan,
+  type ToolExposureState,
+} from "./tool-exposure.ts";
+import {
+  flattenSystemInstructions,
+  hasRuntimeToolInventory,
+  withRuntimeToolInventory,
+} from "./tool-inventory.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -48,6 +64,7 @@ export interface PrepareAgentRuntimeStepInput {
   isLocalModel: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
+  providerToolNames?: readonly string[];
   remoteToolSources: RemoteToolSource[] | undefined;
   sourceIntegrationPolicy?: SourceIntegrationPolicyManifest;
   resolveRuntimeState: RuntimeStepStateResolver;
@@ -56,6 +73,8 @@ export interface PrepareAgentRuntimeStepInput {
   systemPrompt: string;
   toolContextBase: ToolExecutionContext | undefined;
   strictConfiguredToolsOnly?: boolean;
+  toolExposureState?: ToolExposureState;
+  toolExposureCheckpoint?: ToolExposureCheckpoint;
 }
 
 export interface PreparedAgentRuntimeStep {
@@ -63,6 +82,7 @@ export interface PreparedAgentRuntimeStep {
   systemPrompt: string;
   toolContext: ToolExecutionContext;
   tools: ToolDefinition[];
+  toolExposurePlan: ToolExposurePlan;
 }
 
 function shouldIncludeSkillTools(config: AgentConfig): boolean {
@@ -127,13 +147,37 @@ export async function prepareAgentRuntimeStep(
     );
   }
   tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
+  const toolExposureState = input.toolExposureState ?? createToolExposureState();
+  if (input.toolExposureCheckpoint) {
+    const restoredState = restoreToolExposureState(input.toolExposureCheckpoint, tools);
+    toolExposureState.loadedToolNames.clear();
+    for (const toolName of restoredState.loadedToolNames) {
+      toolExposureState.loadedToolNames.add(toolName);
+    }
+  }
+  const toolExposurePlan = createToolExposurePlan({
+    authorized: tools,
+    mode: resolveRuntimeToolLoading(input.config).mode,
+    state: toolExposureState,
+  });
+  const systemPrompt = hasRuntimeToolInventory(runtimeState.systemPrompt)
+    ? flattenSystemInstructions(
+      withRuntimeToolInventory(
+        runtimeState.systemPrompt,
+        [...toolExposurePlan.visible.map((tool) => tool.name), ...(input.providerToolNames ?? [])]
+          .filter((name, index, names) => names.indexOf(name) === index)
+          .sort(),
+      ),
+    )
+    : runtimeState.systemPrompt;
 
   return {
     runtimeContext: trustedAllowedSkillIds === undefined
       ? runtimeState.context
       : { ...runtimeState.context, allowedSkillIds: [...trustedAllowedSkillIds] },
-    systemPrompt: runtimeState.systemPrompt,
+    systemPrompt,
     toolContext,
-    tools,
+    tools: toolExposurePlan.visible,
+    toolExposurePlan,
   };
 }

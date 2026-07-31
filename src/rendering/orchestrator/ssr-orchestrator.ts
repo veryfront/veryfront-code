@@ -17,26 +17,9 @@ import {
   endRenderSession,
   hasRenderSession,
 } from "#veryfront/transforms/mdx/esm-module-loader/module-fetcher/index.ts";
-
-import { isDataControlResult } from "#veryfront/data/helpers.ts";
+import { isSSRControlOutcome } from "../ssr-outcome.ts";
 
 const logger = rendererLogger.component("ssr-orchestrator");
-
-/** True when the thrown value is (or wraps) a notFound()/redirect() control result. */
-function isThrownControlResult(error: unknown): boolean {
-  const seen = new Set<unknown>();
-  const stack: unknown[] = [error];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || typeof current !== "object" || seen.has(current)) continue;
-    if (isDataControlResult(current)) return true;
-    seen.add(current);
-    stack.push((current as { cause?: unknown }).cause);
-    const aggregated = (current as { errors?: unknown }).errors;
-    if (Array.isArray(aggregated)) stack.push(...aggregated);
-  }
-  return false;
-}
 
 export interface SSROrchestratorConfig {
   mode: "development" | "production";
@@ -169,7 +152,7 @@ export class SSROrchestrator {
     } catch (renderError) {
       // A thrown notFound()/redirect() control result is NOT a render error —
       // let it propagate to the SSR error handler (→ 404 / redirect).
-      if (isThrownControlResult(renderError)) throw renderError;
+      if (isSSRControlOutcome(renderError)) throw renderError;
 
       // The page threw during SSR (React error boundaries don't catch SSR render
       // throws). Render the segment's app-router error.tsx instead, if present;

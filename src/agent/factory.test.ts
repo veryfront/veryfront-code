@@ -114,7 +114,7 @@ describe("agent factory", () => {
       : effectiveSystem ?? "";
     assertStringIncludes(
       prompt,
-      "**support-triage**: Triage incoming support requests",
+      "- support-triage: Triage incoming support requests",
     );
     assertEquals(prompt.includes("researcher--cite"), false);
 
@@ -128,7 +128,7 @@ describe("agent factory", () => {
     const explicitlyEmptyPrompt = typeof explicitlyEmptySystem === "function"
       ? await explicitlyEmptySystem()
       : explicitlyEmptySystem ?? "";
-    assertEquals(explicitlyEmptyPrompt.includes("## Available Skills"), false);
+    assertEquals(explicitlyEmptyPrompt.includes("<available_skills>"), false);
   });
 
   it("uses the same selector snapshot for prompt disclosure and direct skill tools", async () => {
@@ -157,7 +157,7 @@ describe("agent factory", () => {
     const noneSystem = getEffectiveAgentSystem(none);
     assertEquals(
       (typeof noneSystem === "function" ? await noneSystem() : noneSystem ?? "").includes(
-        "Available Skills",
+        "available_skills",
       ),
       false,
     );
@@ -172,8 +172,8 @@ describe("agent factory", () => {
       ? await allowlistedSystem()
       : allowlistedSystem ?? "";
 
-    assertStringIncludes(prompt, "**writer--draft**: Draft copy");
-    assertStringIncludes(prompt, "**global-plan**: Plan the work");
+    assertStringIncludes(prompt, "- writer--draft: Draft copy");
+    assertStringIncludes(prompt, "- global-plan: Plan the work");
     assertEquals(prompt.includes("global-review"), false);
 
     if (!allowlisted.config.tools || allowlisted.config.tools === true) {
@@ -405,7 +405,35 @@ description: Excluded skill
 
     assertEquals(prompt.startsWith("You are a helpful assistant."), true);
     assertEquals(prompt.includes("undefined"), false);
-    assertStringIncludes(prompt, "## Available Skills");
+    assertStringIncludes(prompt, "<available_skills>");
+  });
+
+  it("does not disclose deferred tool names through direct skill metadata", async () => {
+    registerSkill("release-manager", {
+      id: "release-manager",
+      metadata: {
+        name: "release-manager",
+        description: "Manage releases",
+        allowedTools: ["create_release"],
+      },
+      rootPath: "/test/skills/release-manager",
+    });
+
+    const assistant = agent({
+      id: "deferred-skill-metadata",
+      tools: true,
+      skills: ["release-manager"],
+    } as AgentConfig);
+    const effectiveSystem = getEffectiveAgentSystem(assistant);
+    const prompt = typeof effectiveSystem === "function"
+      ? await effectiveSystem()
+      : effectiveSystem ?? "";
+
+    assertStringIncludes(prompt, "release-manager");
+    assertEquals(prompt.includes("create_release"), false);
+    assertEquals(prompt.includes("load_skill_reference"), false);
+    assertEquals(prompt.includes("execute_skill_script"), false);
+    assertStringIncludes(prompt, "- load_skill: Call with");
   });
 
   it("rejects inline local tools in the reserved integration namespace", () => {

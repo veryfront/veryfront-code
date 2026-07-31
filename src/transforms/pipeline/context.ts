@@ -1,5 +1,5 @@
 import { computeShortContentHash } from "../esm/transform-utils.ts";
-import { DEFAULT_REACT_VERSION } from "../esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION } from "../esm/react-cdn.ts";
 import type {
   TransformContext,
   TransformOptions,

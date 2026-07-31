@@ -158,6 +158,7 @@ export {
   type HostedChatRuntimeToolAssemblyContext,
   type HostedChatRuntimeToolAssemblyResult,
   type HostedChatRuntimeToolAssemblyResult as AgentServiceChatRuntimeToolAssemblyResult,
+  type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./hosted/chat-runtime-tool-assembly.ts";
@@ -247,6 +248,13 @@ export {
   resolveRuntimeAgentDefinitionsDirInputSchema,
   resolveRuntimeAgentMarkdownDefinitionFilePath,
 } from "./runtime/agent-definition-files.ts";
+export {
+  type AgentCallProjectContext,
+  buildAgentCallContext,
+  type BuildAgentCallContextInput,
+  buildProjectContextPromptBlock,
+  buildProjectInstructionsPromptBlock,
+} from "./runtime/call-context.ts";
 export {
   createRuntimeAgentSystemMessages,
   type CreateRuntimeAgentSystemMessagesInput,

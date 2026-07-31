@@ -63,6 +63,7 @@ import {
   resolveMcpServers,
   setFilteredTraceAttributes,
 } from "./cloud-agent-child-tools.ts";
+import { getServerResolvedToolExposureCheckpoint } from "./runtime-request-config.ts";
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
@@ -148,6 +149,7 @@ export function createAgentRuntime(
 
   return createDefaultHostedChatRuntime({
     options,
+    hostToolPolicy: context.options.hostToolPolicy,
     sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
     config: {
       apiUrl: config.VERYFRONT_API_URL,
@@ -318,6 +320,11 @@ export async function prepareChatExecutionWithinProjectRuntime(
     finalMessages,
   } = await prepareVeryfrontCloudHostedChatExecution({
     request: req,
+    hostToolPolicy: context.options.hostToolPolicy,
+    serverResolvedToolExposureCheckpoint: getServerResolvedToolExposureCheckpoint(
+      req.forwardedProps,
+      req.serverEnvelopeVerified === true,
+    ),
     agentConfig,
     apiUrl: config.VERYFRONT_API_URL,
     abortSignal: abortController.signal,

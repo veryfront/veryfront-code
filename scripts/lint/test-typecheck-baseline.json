@@ -24,7 +24,6 @@
   "src/agent/middleware/cost-tracking/tracker.test.ts",
   "src/agent/runtime/load-tools-tool.test.ts",
   "src/agent/runtime/search-tools-tool.test.ts",
-  "src/agent/service/auth.test.ts",
   "src/build/bundler/code-splitter/manifest-builder.test.ts",
   "src/build/production-build/build/build-cleanup.test.ts",
   "src/build/production-build/manifest.test.ts",

@@ -22,9 +22,9 @@ const SCAN_ROOTS = [
 
 // Lower this when you remove sanitizer opt-outs. Never raise it without a very
 // good reason — a new opt-out means a leak is being suppressed rather than fixed.
-// 408 after restoring resource and operation sanitizers for the VirtualModuleSystem
-// smoke suite.
-export const SANITIZER_OPT_OUT_BASELINE = 408;
+// 406 after restoring both sanitizers for the up command integration suite, which
+// leaked nothing and never needed them.
+export const SANITIZER_OPT_OUT_BASELINE = 406;
 
 const OPT_OUT_PATTERN = /sanitize(?:Resources|Ops|Exit)\s*:\s*false/g;
 

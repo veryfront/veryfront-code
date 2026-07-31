@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { GitHubFSAdapter } from "./adapter.ts";
 import { createGitHubConfig } from "./types.ts";
 
@@ -171,8 +172,14 @@ describe("GitHubFSAdapter", () => {
       assertEquals(content, "hello world");
     });
 
-    it("should throw on nonexistent file", async () => {
-      await assertRejects(() => adapter.stat("nonexistent.ts"), Error, "not found");
+    it("should throw a recognized not-found error for a nonexistent file", async () => {
+      const error = await assertRejects(
+        () => adapter.stat("nonexistent.ts"),
+        Error,
+        "not found",
+      );
+
+      assertEquals(isNotFoundError(error), true);
     });
   });
 

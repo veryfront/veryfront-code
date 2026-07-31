@@ -16,6 +16,7 @@ import {
 } from "../runtime/skill-metadata.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
+import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
 import {
   assertResolvedSkillSelector,
@@ -274,7 +275,17 @@ export function createDefaultHostedProjectSteeringRefresh(
       model: input.taskContext.model,
       requiredToolNames: input.toolAssembly.localToolNames,
     });
-    input.taskContext.availableToolNames = toolNames;
+    const bootstrapToolNames = toolNames.filter((toolName) =>
+      toolName === "form_input" || toolName === "load_skill"
+    );
+    const hasDeferredTools = toolNames.length > bootstrapToolNames.length;
+    const modelVisibleToolNames = input.toolAssembly.toolLoadingMode === "deferred"
+      ? [
+        ...bootstrapToolNames,
+        ...(hasDeferredTools ? [TOOL_SEARCH_TOOL_NAME] : []),
+      ].sort()
+      : toolNames;
+    input.taskContext.availableToolNames = modelVisibleToolNames;
 
     const refreshedInstructions = options.buildInstructions({
       agentConfig: input.liveProjectSteering.agent,
@@ -283,9 +294,11 @@ export function createDefaultHostedProjectSteeringRefresh(
       environmentContext: input.liveProjectSteering.environmentContext,
       instructions: projectInstructions,
       skills: skillSelectorSnapshot.definitions,
-      availableToolNames: toolNames,
+      availableToolNames: modelVisibleToolNames,
     });
 
-    return flattenSystemInstructions(withRuntimeToolInventory(refreshedInstructions, toolNames));
+    return flattenSystemInstructions(
+      withRuntimeToolInventory(refreshedInstructions, modelVisibleToolNames),
+    );
   };
 }

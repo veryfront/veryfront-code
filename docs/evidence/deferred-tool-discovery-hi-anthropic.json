@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "kind": "deferred-tool-discovery-hi",
+  "prompt": "hi",
+  "agentId": "veryfront-agent",
+  "agentConfiguration": "prd-all-scoped-example",
+  "catalogProfile": "deterministic-64-tool-verifier-fixture",
+  "provider": "anthropic",
+  "model": "anthropic/claude-opus-4-6",
+  "measuredAt": "2026-07-31T21:29:04.642Z",
+  "provenance": "direct-provider-framework-fallback",
+  "usageSource": "paired-response.usage.promptTokens",
+  "baselineInputTokens": 5276,
+  "effectiveInputTokens": 648,
+  "reductionPercent": 87.718,
+  "baselineModelSteps": 1,
+  "baselineExposedToolCount": 64,
+  "modelSteps": 1,
+  "toolCalls": 0,
+  "authorizedToolCount": 64,
+  "initiallyExposedTools": [
+    "tool_search"
+  ],
+  "thresholds": {
+    "maximumEffectiveInputTokens": 10000,
+    "minimumReductionPercent": 60
+  },
+  "passed": true
+}

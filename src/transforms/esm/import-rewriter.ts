@@ -1,5 +1,5 @@
 import { parseImports, replaceSpecifiers, rewriteImports } from "./lexer.ts";
-import { getReactImportMap } from "./package-registry.ts";
+import { getReactImportMap } from "./react-cdn.ts";
 import {
   DEFAULT_REACT_VERSION as REACT_DEFAULT_VERSION,
   TAILWIND_VERSION,
