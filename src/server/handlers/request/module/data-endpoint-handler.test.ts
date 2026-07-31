@@ -264,7 +264,9 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
         ),
         makeCtx(projectDir),
       );
-      const payload = await response.json();
+      // The conflict body is the one the client recovery matches on; see
+      // src/server/handlers/utils/dependency-snapshot-protocol.ts.
+      const payload = await response.text();
 
       assertEquals(response.status, 409);
       assertEquals(response.headers.get("cache-control"), "no-store");
@@ -274,10 +276,7 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
         ),
         true,
       );
-      assertEquals(payload, {
-        error: "Unknown dependency snapshot",
-        status: 409,
-      });
+      assertEquals(payload, "Unknown dependency snapshot");
       assertEquals(renderCalls, 0);
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);

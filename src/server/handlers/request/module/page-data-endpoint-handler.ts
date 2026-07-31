@@ -19,12 +19,17 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
-  resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import {
+  readSnapshotHeader,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+  stripSnapshotHeader,
+  withSnapshotResponseHeaders,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 
 const PAGE_DATA_TIMEOUT_MS = 25_000;
-const DEPENDENCY_PINNING_REQUEST_HEADER = "x-veryfront-dependency-pins";
 const PAGE_DATA_CACHE_TTL_MS = readPositiveIntegerEnv("VERYFRONT_PAGE_DATA_CACHE_TTL_MS", 60_000);
 const PAGE_DATA_CACHE_STALE_MS = readPositiveIntegerEnv(
   "VERYFRONT_PAGE_DATA_CACHE_STALE_MS",
@@ -139,37 +144,26 @@ export function handlePageDataEndpoint(
     async () => {
       let dependencySnapshot: DependencyPinningSnapshot | undefined;
       const respondPageData = (response: Response): HandlerResult =>
-        respond(withDependencySnapshotResponseHeaders(response, dependencySnapshot));
+        respond(withSnapshotResponseHeaders(response, dependencySnapshot?.cacheKey));
       try {
         const slug = pathname
           .replace("/_veryfront/page-data/", "")
           .replace(/\.json$/, "") || "";
 
-        const requestedPinKey = req.headers.get(DEPENDENCY_PINNING_REQUEST_HEADER);
-        if (requestedPinKey !== null && !requestedPinKey.startsWith("on:")) {
-          return respondPageData(
-            unknownDependencySnapshotResponse(req, ctx, createResponseBuilder),
-          );
-        }
-
+        const requested = readSnapshotHeader(req.headers);
         const dependencySource = createHandlerDependencyPinningSource(ctx);
-        const resolvedDependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
-          dependencySource,
-          requestedPinKey,
-        );
-        if (
-          !resolvedDependencySnapshot ||
-          (requestedPinKey === null && resolvedDependencySnapshot.cacheKey !== "off")
-        ) {
+        const resolution = await resolveSnapshotForRequest(dependencySource, requested);
+        if (resolution.kind === "conflict") {
           return respondPageData(
-            unknownDependencySnapshotResponse(req, ctx, createResponseBuilder),
+            snapshotConflictResponse(createResponseBuilder(ctx), req, ctx.securityConfig),
           );
         }
+        const resolvedDependencySnapshot = resolution.snapshot;
         dependencySnapshot = resolvedDependencySnapshot;
 
         const url = new URL(req.url);
-        const applicationRequest = requestedPinKey === null ? req : new Request(req, {
-          headers: withoutHeader(req.headers, DEPENDENCY_PINNING_REQUEST_HEADER),
+        const applicationRequest = requested.kind === "absent" ? req : new Request(req, {
+          headers: stripSnapshotHeader(req.headers),
         });
         const renderer = await getRendererForProject(ctx);
         const isSpeculativePrefetch = req.headers.get("x-veryfront-prefetch") === "1";
@@ -314,51 +308,6 @@ export function handlePageDataEndpoint(
       "module.pageData.projectSlug": ctx.projectSlug || "unknown",
     },
   );
-}
-
-function withoutHeader(headers: Headers, name: string): Headers {
-  const sanitized = new Headers(headers);
-  sanitized.delete(name);
-  return sanitized;
-}
-
-function withDependencySnapshotResponseHeaders(
-  response: Response,
-  snapshot?: DependencyPinningSnapshot,
-): Response {
-  const headers = new Headers(response.headers);
-  const vary = headers.get("vary");
-  const varyValues = (vary ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (
-    !varyValues.some((value) => value.toLowerCase() === DEPENDENCY_PINNING_REQUEST_HEADER)
-  ) {
-    varyValues.push(DEPENDENCY_PINNING_REQUEST_HEADER);
-  }
-  headers.set("vary", varyValues.join(", "));
-  if (snapshot?.cacheKey.startsWith("on:")) {
-    headers.set(DEPENDENCY_PINNING_REQUEST_HEADER, snapshot.cacheKey);
-  }
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
-function unknownDependencySnapshotResponse(
-  req: Request,
-  ctx: HandlerContext,
-  createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
-): Response {
-  return createResponseBuilder(ctx)
-    .withCORS(req, ctx.securityConfig?.cors)
-    .withSecurity(ctx.securityConfig ?? undefined, req)
-    .withCache("no-store")
-    .json({ error: "Unknown dependency snapshot", status: 409 }, 409);
 }
 
 async function resolveCachedPageData(

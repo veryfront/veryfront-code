@@ -8,7 +8,7 @@ import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constant
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
-  getDependencyPinningSnapshotSync,
+  resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 
@@ -143,7 +143,7 @@ describe(
             isLocalProject: false,
             mode: "production",
           });
-          const rememberedA = getDependencyPinningSnapshotSync(
+          const rememberedA = await resolveRequestedDependencyPinningSnapshot(
             projectDir,
             snapshotA.cacheKey,
           );

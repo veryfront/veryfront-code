@@ -16,7 +16,6 @@ import type {
 } from "../../types.ts";
 import { PRIORITY_LOW } from "#veryfront/utils/constants/index.ts";
 import { generateNonce } from "#veryfront/security/http/response/security-handler.ts";
-import type { ResponseBuilder } from "#veryfront/security/http/response/builder.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { shouldUseNoCacheHeadersFromHandler } from "../../../context/enriched-context.ts";
@@ -33,14 +32,17 @@ import {
 import { ErrorPages } from "../../../utils/error-html.ts";
 import { isSSRBuildFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
-import {
-  type DependencyPinningSnapshot,
-  resolveRequestedDependencyPinningSnapshot,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { type DependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import {
+  applySnapshotResponseHeaders,
+  readSnapshotHeader,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+  stripSnapshotHeader,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 
 const logger = serverLogger.component("ssr");
-const DEPENDENCY_PINNING_RESPONSE_HEADER = "x-veryfront-dependency-pins";
 
 /**
  * Determine if request should serve production (released) content.
@@ -203,23 +205,22 @@ export class SSRHandler extends BaseHandler {
     return withSpan(
       "ssr.handleWithContext",
       async () => {
-        const requestedPinKey = req.headers.get(DEPENDENCY_PINNING_RESPONSE_HEADER);
         const dependencySource = createHandlerDependencyPinningSource(ctx);
-        const dependencySnapshot = requestedPinKey !== null &&
-            !requestedPinKey.startsWith("on:")
-          ? undefined
-          : await resolveRequestedDependencyPinningSnapshot(
-            dependencySource,
-            requestedPinKey,
-          );
-        if (!dependencySnapshot) {
+        // The document request is where the client learns the current snapshot
+        // key, so an unpinned request adopts it instead of conflicting.
+        const resolution = await resolveSnapshotForRequest(
+          dependencySource,
+          readSnapshotHeader(req.headers),
+          { unpinnedRequest: "adopt" },
+        );
+        if (resolution.kind === "conflict") {
           endRequest(requestId);
           return this.handleDependencySnapshotConflict(req, ctx);
         }
+        const dependencySnapshot = resolution.snapshot;
 
         const applicationUrl = new URL(url);
-        const applicationHeaders = new Headers(req.headers);
-        applicationHeaders.delete(DEPENDENCY_PINNING_RESPONSE_HEADER);
+        const applicationHeaders = stripSnapshotHeader(req.headers);
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
           headers: applicationHeaders,
@@ -415,13 +416,13 @@ export class SSRHandler extends BaseHandler {
     req: Request,
     ctx: HandlerContext,
   ): HandlerResult {
-    const response = this.createResponseBuilder(ctx, generateNonce())
-      .withCORS(req, ctx.securityConfig?.cors)
-      .withSecurity(ctx.securityConfig ?? undefined, req)
-      .withCache("no-store");
-    withDependencyPinningVary(response);
-    const conflict = response.text("Unknown dependency snapshot", 409);
-    return this.respond(conflict);
+    return this.respond(
+      snapshotConflictResponse(
+        this.createResponseBuilder(ctx, generateNonce()),
+        req,
+        ctx.securityConfig,
+      ),
+    );
   }
 
   private createSnapshotResponseBuilder(
@@ -430,25 +431,7 @@ export class SSRHandler extends BaseHandler {
     dependencyPinningCacheKey?: string,
   ) {
     const builder = this.createResponseBuilder(ctx, nonce);
-    withDependencyPinningVary(builder);
-    if (dependencyPinningCacheKey?.startsWith("on:")) {
-      builder.withHeaders({
-        [DEPENDENCY_PINNING_RESPONSE_HEADER]: dependencyPinningCacheKey,
-      });
-    }
+    applySnapshotResponseHeaders(builder.headers, dependencyPinningCacheKey);
     return builder;
   }
-}
-
-function withDependencyPinningVary(
-  builder: ResponseBuilder,
-): void {
-  const existing = builder.headers.get("vary");
-  const values = existing?.split(",").map((value) => value.trim().toLowerCase()) ?? [];
-  if (values.includes(DEPENDENCY_PINNING_RESPONSE_HEADER)) return;
-  builder.withHeaders({
-    vary: existing
-      ? `${existing}, ${DEPENDENCY_PINNING_RESPONSE_HEADER}`
-      : DEPENDENCY_PINNING_RESPONSE_HEADER,
-  });
 }

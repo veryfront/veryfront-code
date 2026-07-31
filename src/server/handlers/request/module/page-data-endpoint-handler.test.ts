@@ -388,6 +388,9 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
         );
         assertEquals(response.status, 409);
         assertEquals(response.headers.get("cache-control"), "no-store");
+        // The body the client recovery matches on; see
+        // src/server/handlers/utils/dependency-snapshot-protocol.ts.
+        assertEquals(await response.text(), "Unknown dependency snapshot");
         assertEquals(
           response.headers.get("vary")?.toLowerCase().includes(
             "x-veryfront-dependency-pins",
