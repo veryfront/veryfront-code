@@ -3,12 +3,20 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { notFound, redirect } from "#veryfront/data/helpers.ts";
 import {
   API_CLIENT_ERROR,
+  BUILD_FAILED,
   FILE_NOT_FOUND,
+  MODULE_NOT_FOUND,
   RENDER_ERROR,
   SERVICE_OVERLOADED,
 } from "#veryfront/errors";
 import type { SSRFailureOutcome } from "./ssr-outcome.ts";
-import { findSSRControlOutcome, isSSRControlOutcome, resolveSSRFailure } from "./ssr-outcome.ts";
+import {
+  findSSRControlOutcome,
+  isSSRBuildFailure,
+  isSSRControlOutcome,
+  resolveSSRControlOutcome,
+  resolveSSRFailure,
+} from "./ssr-outcome.ts";
 
 function assertSSRFailureOutcome(
   actual: SSRFailureOutcome,
@@ -104,6 +112,86 @@ describe("ssr-outcome.ts", () => {
     it("returns true only when the graph contains a branded control result", () => {
       assertEquals(isSSRControlOutcome(new Error("wrapped", { cause: notFound() })), true);
       assertEquals(isSSRControlOutcome({ notFound: true }), false);
+    });
+  });
+
+  describe("resolveSSRControlOutcome", () => {
+    it("recognises the routing brands the render pipeline raises", () => {
+      assertEquals(
+        resolveSSRControlOutcome(FILE_NOT_FOUND.create({ detail: "Page not found: x" })),
+        { kind: "not-found" },
+      );
+      assertEquals(
+        resolveSSRControlOutcome(
+          RENDER_ERROR.create({
+            detail: "Redirect to /login",
+            context: { redirect: { destination: "/login", permanent: true } },
+          }),
+        ),
+        { kind: "redirect", location: "/login", permanent: true },
+      );
+      assertEquals(resolveSSRControlOutcome(notFound()), { kind: "not-found" });
+      assertEquals(
+        resolveSSRControlOutcome(new Error("wrapped", { cause: redirect("/login") })),
+        { kind: "redirect", location: "/login", permanent: false },
+      );
+    });
+
+    it("reads no routing decision out of message text or plain shape", () => {
+      assertEquals(resolveSSRControlOutcome(new Error("Page not found")), null);
+      assertEquals(resolveSSRControlOutcome(new Error("upstream said 404")), null);
+      assertEquals(resolveSSRControlOutcome(new Error("no page matched")), null);
+      assertEquals(resolveSSRControlOutcome({ notFound: true }), null);
+      assertEquals(
+        resolveSSRControlOutcome({ redirect: { destination: "/login" } }),
+        null,
+      );
+    });
+
+    it("returns null for a render-error carrying no redirect", () => {
+      assertEquals(
+        resolveSSRControlOutcome(RENDER_ERROR.create({ detail: "boom" })),
+        null,
+      );
+    });
+  });
+
+  describe("isSSRBuildFailure", () => {
+    it("is true for compile and module-resolution categories", () => {
+      assertEquals(isSSRBuildFailure(BUILD_FAILED.create({ detail: "compile failed" })), true);
+      assertEquals(
+        isSSRBuildFailure(MODULE_NOT_FOUND.create({ detail: "missing import" })),
+        true,
+      );
+    });
+
+    it("is true for a render-error flagged at the point of load failure", () => {
+      assertEquals(
+        isSSRBuildFailure(
+          RENDER_ERROR.create({
+            detail: "Critical page module(s) failed to load",
+            context: { buildFailure: true },
+          }),
+        ),
+        true,
+      );
+    });
+
+    it("is false for a module that ran and threw, and for plain errors", () => {
+      // Failing to load is not evidence on its own: a module that compiled and
+      // threw at module scope also fails to load, and the project's own error
+      // page should present that.
+      assertEquals(
+        isSSRBuildFailure(
+          RENDER_ERROR.create({
+            detail: "Critical page module(s) failed to load",
+            context: { buildFailure: false },
+          }),
+        ),
+        false,
+      );
+      assertEquals(isSSRBuildFailure(new Error("intentional test error")), false);
+      assertEquals(isSSRBuildFailure(undefined), false);
     });
   });
 

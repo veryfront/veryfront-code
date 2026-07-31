@@ -8,6 +8,7 @@ import {
   resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 
 const DEPENDENCY_PINNING_HEADER = "x-veryfront-dependency-pins";
 
@@ -104,10 +105,7 @@ export function handleDataEndpoint(
         );
       } catch (e) {
         const errorMessage = getErrorMessage(e);
-        const lower = errorMessage.toLowerCase();
-        const isNotFound = lower.includes("not found") ||
-          lower.includes("404") ||
-          (e instanceof Error && e.message.toLowerCase().includes("no page"));
+        const isNotFound = resolveSSRControlOutcome(e)?.kind === "not-found";
         const status = isNotFound ? 404 : 500;
 
         serverLogger.error("[data-endpoint] Failed to resolve data", {

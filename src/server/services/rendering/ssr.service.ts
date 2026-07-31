@@ -7,6 +7,7 @@ import {
 import { getHeapStats } from "#veryfront/utils/memory/index.ts";
 import { serverLogger, timeAsync } from "#veryfront/utils";
 import { computeSSRETag } from "../../handlers/request/ssr/etag-handler.ts";
+import type { SSRFailureOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 import { findSSRControlOutcome, resolveSSRFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { getColorSchemeFromRequest } from "#veryfront/security/http/client-hints.ts";
 import {
@@ -64,16 +65,14 @@ export interface SSRRenderResult {
   isStreaming: boolean;
   etag?: string;
   cacheStrategy: "no-cache" | "short";
-  error?: Error;
-  errorType?:
-    | "not-found"
-    | "undeployed"
-    | "redirect"
-    | "server-error"
-    | "runtime"
-    | "app-router-error-boundary";
-  showDevOverlay?: boolean;
-  redirectLocation?: string;
+  /**
+   * How the render ended, when it did not end in a page.
+   *
+   * Absent on success. Carried whole rather than flattened into status-plus-
+   * flags so callers discriminate on `kind` instead of reconstructing the
+   * decision the SSR Outcome module already made.
+   */
+  failure?: SSRFailureOutcome;
   slug: string;
   /** Dependency snapshot identity rendered into this document. */
   dependencyPinningCacheKey?: string;
@@ -110,17 +109,14 @@ export interface MemoryStatus {
  * `render-error` paths, so a change to redirect handling lands in one place.
  */
 function buildRedirectResult(
-  redirect: { destination: string; permanent?: boolean },
-  errorObj: Error,
+  redirect: Extract<SSRFailureOutcome, { kind: "redirect" }>,
   slug: string,
 ): SSRRenderResult {
   return {
     status: redirect.permanent ? 301 : HTTP_REDIRECT_FOUND,
     isStreaming: false,
     cacheStrategy: "no-cache",
-    error: errorObj,
-    errorType: "redirect",
-    redirectLocation: redirect.destination,
+    failure: redirect,
     slug,
   };
 }
@@ -135,7 +131,7 @@ function buildNotFoundResult(slug: string): SSRRenderResult {
     html: ErrorPages.notFound(slug || "/"),
     isStreaming: false,
     cacheStrategy: "no-cache",
-    errorType: "not-found",
+    failure: { kind: "not-found" },
     slug,
   };
 }
@@ -322,7 +318,6 @@ export class SSRService implements SSRServiceLike {
     request: Request,
     nonce?: string,
   ): SSRRenderResult {
-    const errorObj = error instanceof Error ? error : new Error(String(error));
     const outcome = resolveSSRFailure(error, { isLocalProject: Boolean(ctx.isLocalProject) });
 
     switch (outcome.kind) {
@@ -336,7 +331,7 @@ export class SSRService implements SSRServiceLike {
           html: outcome.html,
           isStreaming: false,
           cacheStrategy: "no-cache",
-          errorType: "app-router-error-boundary",
+          failure: outcome,
           slug,
         };
       case "redirect":
@@ -346,11 +341,7 @@ export class SSRService implements SSRServiceLike {
           permanent: outcome.permanent,
           projectSlug: ctx.projectSlug,
         });
-        return buildRedirectResult(
-          { destination: outcome.location, permanent: outcome.permanent },
-          errorObj,
-          slug,
-        );
+        return buildRedirectResult(outcome, slug);
       case "not-found":
         logger.debug("SSR notFound", { slug });
         return buildNotFoundResult(slug);
@@ -364,7 +355,7 @@ export class SSRService implements SSRServiceLike {
           html: ErrorPages.undeployed(),
           isStreaming: false,
           cacheStrategy: "no-cache",
-          errorType: "undeployed",
+          failure: outcome,
           slug,
         };
       case "overloaded":
@@ -373,8 +364,7 @@ export class SSRService implements SSRServiceLike {
           html: ErrorPages.memoryPressure(),
           isStreaming: false,
           cacheStrategy: "no-cache",
-          error: outcome.error,
-          errorType: "server-error",
+          failure: outcome,
           slug,
         };
       case "runtime":
@@ -414,9 +404,7 @@ export class SSRService implements SSRServiceLike {
             ),
             isStreaming: false,
             cacheStrategy: "no-cache",
-            error: outcome.error,
-            errorType: "runtime",
-            showDevOverlay: true,
+            failure: outcome,
             slug,
           };
         }
@@ -438,8 +426,7 @@ export class SSRService implements SSRServiceLike {
           html: ErrorPages.serverError(),
           isStreaming: false,
           cacheStrategy: "no-cache",
-          error: outcome.error,
-          errorType: "server-error",
+          failure: outcome,
           slug,
         };
     }

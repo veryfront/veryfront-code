@@ -18,6 +18,8 @@ import {
 } from "./page-data-endpoint-handler.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
+import { FILE_NOT_FOUND, RENDER_ERROR } from "#veryfront/errors";
+import { notFound, redirect } from "#veryfront/data/helpers.ts";
 import {
   clearReactVersionCache,
   getDependencyPinningSnapshot,
@@ -439,15 +441,16 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
   });
 
   it("encodes a getServerData redirect() as a 200 payload instead of a 500", async () => {
-    // A redirect() from getServerData reaches the page-data endpoint as a thrown
-    // VeryfrontError carrying context.redirect. It must be encoded as a 200
-    // { redirect } payload so the SPA client can follow it — not misclassified as
-    // an internal error (500), which aborts client-side navigation.
+    // A redirect() from getServerData reaches the page-data endpoint as the
+    // render-error the data pipeline raises for it, carrying context.redirect.
+    // It must be encoded as a 200 { redirect } payload so the SPA client can
+    // follow it — not misclassified as an internal error (500), which aborts
+    // client-side navigation.
     setRendererInitializer(
       createInitializer(() =>
         Promise.reject(
-          Object.assign(new Error("Redirect to /target"), {
-            slug: "render-error",
+          RENDER_ERROR.create({
+            detail: "Redirect to /target",
             context: { redirect: { destination: "/target", permanent: false } },
           }),
         )
@@ -474,8 +477,8 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       setRendererInitializer(
         createInitializer(() =>
           Promise.reject(
-            Object.assign(new Error(`Redirect to ${destination}`), {
-              slug: "render-error",
+            RENDER_ERROR.create({
+              detail: `Redirect to ${destination}`,
               context: { redirect: { destination, permanent: false } },
             }),
           )
@@ -502,8 +505,8 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       setRendererInitializer(
         createInitializer(() =>
           Promise.reject(
-            Object.assign(new Error(`Redirect to ${destination}`), {
-              slug: "render-error",
+            RENDER_ERROR.create({
+              detail: `Redirect to ${destination}`,
               context: { redirect: { destination, permanent: false } },
             }),
           )
@@ -958,6 +961,65 @@ describe("server/handlers/request/module/page-data-endpoint-handler", () => {
       releaseId: "rel-page-data",
       branch: null,
       environmentName: "production",
+    });
+  });
+
+  describe("404-vs-500 classification", () => {
+    async function statusForRejection(error: unknown): Promise<number> {
+      setRendererInitializer(createInitializer(() => Promise.reject(error)));
+      const res = await callPageDataEndpoint(
+        new Request("http://localhost/_veryfront/page-data/missing.json"),
+        makeCtx(),
+      );
+      await res.body?.cancel();
+      __clearPageDataEndpointCacheForTests();
+      return res.status;
+    }
+
+    it("answers 404 for the file-not-found the page resolver raises", async () => {
+      assertEquals(
+        await statusForRejection(
+          FILE_NOT_FOUND.create({ detail: "Page not found: missing" }),
+        ),
+        404,
+      );
+    });
+
+    it("answers 404 for a notFound() thrown from a loader, however wrapped", async () => {
+      assertEquals(await statusForRejection(notFound()), 404);
+      assertEquals(
+        await statusForRejection(new Error("wrapped", { cause: notFound() })),
+        404,
+      );
+    });
+
+    it("answers 500 for an unbranded error whose message merely says not found", async () => {
+      // Message text is not an interface. An error that reads "not found"
+      // without carrying a routing brand is a failure, and serving it as a 404
+      // would hide the failure behind the project's 404 page.
+      assertEquals(await statusForRejection(new Error("Page not found")), 500);
+      assertEquals(await statusForRejection(new Error("upstream said 404")), 500);
+      assertEquals(await statusForRejection(new Error("no page matched")), 500);
+    });
+
+    it("answers 500 for a generic failure", async () => {
+      assertEquals(await statusForRejection(new Error("render blew up")), 500);
+    });
+  });
+
+  it("encodes a redirect() thrown from a loader as a 200 payload", async () => {
+    setRendererInitializer(
+      createInitializer(() => Promise.reject(redirect("/target", true))),
+    );
+
+    const res = await callPageDataEndpoint(
+      new Request("http://localhost/_veryfront/page-data/redirecting.json"),
+      makeCtx(),
+    );
+
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), {
+      redirect: { destination: "/target", permanent: true },
     });
   });
 });

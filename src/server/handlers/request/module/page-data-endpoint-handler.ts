@@ -14,6 +14,7 @@ import {
   sanitizeQueryParamsForCacheKey,
 } from "#veryfront/cache/keys.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   type DependencyPinningSnapshot,
@@ -256,17 +257,19 @@ export function handlePageDataEndpoint(
           );
         }
 
-        // A redirect() from getServerData surfaces here as a thrown
-        // VeryfrontError carrying context.redirect. The full-page render path
-        // converts this into a 302; the SPA page-data endpoint must encode it as
-        // a 200 payload so the client router can follow the redirect instead of
-        // treating it as an internal error (which 500s and aborts navigation).
-        const redirect = extractRedirectFromError(e);
-        if (redirect) {
+        // The full-page render path turns a control outcome into a 302 or a 404
+        // page. The SPA page-data endpoint has to encode the same decision as a
+        // payload the client router can act on, rather than as an internal
+        // error (which 500s and aborts navigation).
+        const control = resolveSSRControlOutcome(e);
+
+        // A destination the client refuses to follow is not a redirect the
+        // endpoint can encode, so it falls through to normal error handling.
+        if (control?.kind === "redirect" && isFollowableRedirect(control.location)) {
           return respondPageData(
             ResponseBuilder.json(
               {
-                redirect,
+                redirect: { destination: control.location, permanent: control.permanent },
                 ...(dependencySnapshot?.cacheKey.startsWith("on:")
                   ? { dependencyPinningCacheKey: dependencySnapshot.cacheKey }
                   : {}),
@@ -282,10 +285,7 @@ export function handlePageDataEndpoint(
         }
 
         const errorMessage = getErrorMessage(e);
-        const lower = errorMessage.toLowerCase();
-        const isNotFound = lower.includes("not found") ||
-          lower.includes("404") ||
-          (e instanceof Error && e.message.toLowerCase().includes("no page"));
+        const isNotFound = control?.kind === "not-found";
         const status = isNotFound ? 404 : 500;
 
         // Log the full error server-side but return a generic message
@@ -497,24 +497,6 @@ function isFollowableRedirect(destination: string): boolean {
     }
   }
   return /^https?:\/\//i.test(destination);
-}
-
-/**
- * A redirect() from getServerData is thrown up the pipeline as a VeryfrontError
- * whose `context.redirect` holds the destination (mirrors extractRedirectLocation
- * in the SSR service). Returns null for any other error, or for a redirect whose
- * destination is not safe to hand to the client to follow.
- */
-function extractRedirectFromError(
-  error: unknown,
-): { destination: string; permanent: boolean } | null {
-  const context = (error as {
-    context?: { redirect?: { destination?: unknown; permanent?: unknown } };
-  })?.context;
-  const redirect = context?.redirect;
-  if (!redirect || typeof redirect.destination !== "string") return null;
-  if (!isFollowableRedirect(redirect.destination)) return null;
-  return { destination: redirect.destination, permanent: redirect.permanent === true };
 }
 
 function buildPageDataCacheKey(
