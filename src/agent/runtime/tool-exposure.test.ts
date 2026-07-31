@@ -5,6 +5,7 @@ import {
   createToolExposureCheckpoint,
   createToolExposurePlan,
   createToolExposureState,
+  createToolSearchDefinition,
   restoreToolExposureState,
   searchToolExposure,
   TOOL_SEARCH_TOOL_NAME,
@@ -125,6 +126,34 @@ it("tool search normalizes ASCII case and underscores as spaces", () => {
       state: createToolExposureState(),
     }).matches.map((match) => match.name),
     ["get_release"],
+  );
+});
+
+it("tool search falls back to deterministic whitespace terms after a phrase miss", () => {
+  const fileCatalog = [
+    definition("create_file", "Create a project file"),
+    definition("update_file", "Update a project file"),
+    definition("sandbox_write_file", "Write only inside the sandbox filesystem"),
+  ];
+
+  assertEquals(
+    searchToolExposure({
+      query: "create_file update_file project file",
+      authorized: fileCatalog,
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["create_file", "update_file", "sandbox_write_file"],
+  );
+});
+
+it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
+  const search = createToolSearchDefinition();
+
+  assert(search.description.includes("before declaring a requested tool unavailable"));
+  assertEquals(
+    (search.parameters as { properties?: { query?: { description?: string } } }).properties?.query
+      ?.description,
+    "One exact tool name when known, or one short capability phrase. Do not combine alternatives.",
   );
 });
 

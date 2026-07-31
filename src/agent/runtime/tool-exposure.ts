@@ -120,6 +120,24 @@ function getMatchRank(input: {
     : null;
 }
 
+function getTermFallbackScore(input: {
+  query: string;
+  name: string;
+  description: string;
+  parameters?: unknown;
+}): { rank: number; matchCount: number } | null {
+  const terms = [
+    ...new Set(input.query.trim().split(/\s+/).map(normalizeSearchText).filter(Boolean)),
+  ];
+  if (terms.length < 2) return null;
+
+  const ranks = terms.flatMap((term) => {
+    const rank = getMatchRank({ ...input, query: term });
+    return rank === null ? [] : [rank];
+  });
+  return ranks.length > 0 ? { rank: Math.min(...ranks), matchCount: ranks.length } : null;
+}
+
 function stableCatalogValue(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableCatalogValue).join(",")}]`;
@@ -160,7 +178,7 @@ export function createToolSearchDefinition(): ToolDefinition {
   return {
     name: TOOL_SEARCH_TOOL_NAME,
     description:
-      "Search authorized tools by capability. Matching authorized tools become available on the next model step.",
+      "Search authorized tools by exact name or capability before declaring a requested tool unavailable. Matching authorized tools become available on the next model step.",
     parameters: {
       type: "object",
       additionalProperties: false,
@@ -168,7 +186,8 @@ export function createToolSearchDefinition(): ToolDefinition {
       properties: {
         query: {
           type: "string",
-          description: "Short capability description or exact tool name.",
+          description:
+            "One exact tool name when known, or one short capability phrase. Do not combine alternatives.",
         },
       },
     },
@@ -224,7 +243,7 @@ export function searchToolExposure(input: {
   authorization?: ToolSearchAuthorization;
 }): ToolSearchResult {
   const authorizedNames = new Set(input.authorized.map((tool) => tool.name));
-  const ranked: Array<{ rank: number; match: ToolSearchMatch }> = [];
+  const ranked: Array<{ rank: number; matchCount: number; match: ToolSearchMatch }> = [];
 
   for (const tool of input.authorized) {
     const rank = getMatchRank({
@@ -236,6 +255,7 @@ export function searchToolExposure(input: {
     if (rank === null) continue;
     ranked.push({
       rank,
+      matchCount: 1,
       match: { name: tool.name, description: tool.description, status: "loaded" },
     });
   }
@@ -251,6 +271,7 @@ export function searchToolExposure(input: {
       if (rank === null) continue;
       ranked.push({
         rank,
+        matchCount: 1,
         match: {
           name: tool.name,
           description: tool.description,
@@ -261,9 +282,47 @@ export function searchToolExposure(input: {
     }
   }
 
+  if (ranked.length === 0) {
+    for (const tool of input.authorized) {
+      const score = getTermFallbackScore({
+        query: input.query,
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      });
+      if (!score) continue;
+      ranked.push({
+        ...score,
+        match: { name: tool.name, description: tool.description, status: "loaded" },
+      });
+    }
+
+    if (input.authorization?.canConfigureAgentTools === true) {
+      for (const tool of input.authorization.attachableCatalog) {
+        if (authorizedNames.has(tool.name) || tool.attachVia !== "tool_ids") continue;
+        const score = getTermFallbackScore({
+          query: input.query,
+          name: tool.name,
+          description: tool.description,
+        });
+        if (!score) continue;
+        ranked.push({
+          ...score,
+          match: {
+            name: tool.name,
+            description: tool.description,
+            status: "attachable",
+            attachVia: "tool_ids",
+          },
+        });
+      }
+    }
+  }
+
   const matches = ranked
     .sort((left, right) =>
-      left.rank - right.rank || compareAscii(left.match.name, right.match.name)
+      left.rank - right.rank || right.matchCount - left.matchCount ||
+      compareAscii(left.match.name, right.match.name)
     )
     .slice(0, TOOL_SEARCH_RESULT_LIMIT)
     .map(({ match }) => match);

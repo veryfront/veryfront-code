@@ -6,7 +6,7 @@ const RUNTIME_TOOL_INVENTORY_FOOTER =
 If the list is "- none", say plainly that no tools are available.
 Do NOT infer tool availability from examples, skills, or the base prompt.`;
 const RUNTIME_TOOL_SEARCH_GUIDANCE =
-  "When tool_search is listed, additional authorized tools may be deferred. If the task requires a tool that is not listed, call tool_search before saying it is unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.";
+  "When tool_search is listed, additional authorized tools may be deferred. You MUST call tool_search before declaring a requested or required tool unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.";
 
 function getRuntimeToolInventoryFooter(toolNames: readonly string[]): string {
   return toolNames.includes("tool_search")
