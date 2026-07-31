@@ -63,6 +63,24 @@ Do NOT infer tool availability from examples, skills, or the base prompt.`,
     ]);
   });
 
+  it("explains how deferred tools become available when tool_search is visible", () => {
+    assertEquals(withRuntimeToolInventory("Base system", ["form_input", "tool_search"]), [
+      { role: "system", content: "Base system" },
+      {
+        role: "system",
+        content: `Current run tool inventory:
+
+- form_input
+- tool_search
+
+Only treat the tools listed above as actually available in this run.
+If the list is "- none", say plainly that no tools are available.
+Do NOT infer tool availability from examples, skills, or the base prompt.
+When tool_search is listed, additional authorized tools may be deferred. If the task requires a tool that is not listed, call tool_search before saying it is unavailable. Query with one exact tool name when known, or one short capability phrase; do not combine alternatives in one query. A loaded match becomes callable on the next model step.`,
+      },
+    ]);
+  });
+
   it("flattens non-empty system text with blank-line separation", () => {
     assertEquals(
       flattenSystemInstructions([
