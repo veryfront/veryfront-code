@@ -1,9 +1,12 @@
 /**
  * Accordion — stacked, togglable sections. `type="single"` keeps at most one
  * section open (optionally `collapsible` back to none); `type="multiple"` lets
- * any number stay open. Self-contained (context + `aria-expanded` buttons, no
- * floating engine). Each header's open state is exposed as `data-state="open" |
- * "closed"`; skinned with the veryfront theme tokens.
+ * any number stay open. The Accordion owns the single/multiple/collapsible
+ * coordination; each item's collapse MECHANICS come from the active adapter's
+ * `disclosure` slot (`useAdapter().disclosure`), controlled by that coordination
+ * — so an engine swap drives every item's collapse. Each header's open state is
+ * exposed as `data-state="open" | "closed"`; skinned with the veryfront theme
+ * tokens.
  *
  * @example Single, collapsible
  * ```tsx
@@ -21,25 +24,13 @@
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { Slot } from "./slot.tsx";
+import { useAdapter } from "./adapter/context.tsx";
 
 interface AccordionContextValue {
   value: string[];
   toggle: (itemValue: string) => void;
 }
 const AccordionContext = React.createContext<AccordionContextValue | null>(null);
-
-interface AccordionItemContextValue {
-  value: string;
-  open: boolean;
-}
-const AccordionItemContext = React.createContext<AccordionItemContextValue | null>(null);
-
-function useItem(part: string): AccordionItemContextValue {
-  const ctx = React.useContext(AccordionItemContext);
-  if (!ctx) throw new Error(`<${part}> must be used within <AccordionItem>`);
-  return ctx;
-}
 
 function toArray(value: string | string[] | undefined): string[] {
   if (value == null) return [];
@@ -118,23 +109,28 @@ export interface AccordionItemProps extends React.HTMLAttributes<HTMLDivElement>
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** A single togglable section. */
-export function AccordionItem({
-  value,
-  className,
-  children,
-  ref,
-  ...props
-}: AccordionItemProps): React.ReactElement {
+/**
+ * A single togglable section. Its open/collapse MECHANICS come from the active
+ * adapter's `disclosure` slot (controlled by the Accordion's single/multiple
+ * coordination) — so an engine swap drives every item's collapse while the
+ * Accordion keeps owning which sections may be open.
+ */
+export function AccordionItem(
+  { value, className, children, ...props }: AccordionItemProps,
+): React.ReactElement {
+  const { disclosure } = useAdapter();
   const root = React.useContext(AccordionContext);
   const open = root?.value.includes(value) ?? false;
-  const itemCtx = React.useMemo(() => ({ value, open }), [value, open]);
   return (
-    <AccordionItemContext.Provider value={itemCtx}>
-      <div ref={ref} data-state={open ? "open" : "closed"} className={className} {...props}>
-        {children}
-      </div>
-    </AccordionItemContext.Provider>
+    <disclosure.Root
+      open={open}
+      onOpenChange={() => root?.toggle(value)}
+      data-value={value}
+      className={className}
+      {...props}
+    >
+      {children}
+    </disclosure.Root>
   );
 }
 
@@ -146,28 +142,13 @@ export interface AccordionTriggerProps extends React.ButtonHTMLAttributes<HTMLBu
   ref?: React.Ref<HTMLButtonElement>;
 }
 
-/** The clickable header that toggles its section. */
-export function AccordionTrigger({
-  asChild = false,
-  className,
-  onClick,
-  children,
-  ref,
-  ...props
-}: AccordionTriggerProps): React.ReactElement {
-  const root = React.useContext(AccordionContext);
-  const item = useItem("AccordionTrigger");
-  const Comp = asChild ? Slot : "button";
+/** The clickable header that toggles its section (via the disclosure slot). */
+export function AccordionTrigger(
+  { className, children, ...props }: AccordionTriggerProps,
+): React.ReactElement {
+  const { disclosure } = useAdapter();
   return (
-    <Comp
-      ref={ref}
-      type={asChild ? undefined : "button"}
-      aria-expanded={item.open}
-      data-state={item.open ? "open" : "closed"}
-      onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
-        onClick?.(event);
-        if (!event.defaultPrevented) root?.toggle(item.value);
-      }}
+    <disclosure.Trigger
       className={cn(
         "flex w-full items-center justify-between gap-2 py-3 text-left text-base font-medium",
         "text-[var(--foreground)] transition-colors hover:text-[var(--foreground)]",
@@ -178,7 +159,7 @@ export function AccordionTrigger({
       {...props}
     >
       {children}
-    </Comp>
+    </disclosure.Trigger>
   );
 }
 
@@ -188,24 +169,18 @@ export interface AccordionContentProps extends React.HTMLAttributes<HTMLDivEleme
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** The section body — rendered only while its section is open. */
-export function AccordionContent({
-  className,
-  children,
-  ref,
-  ...props
-}: AccordionContentProps): React.ReactElement | null {
-  const item = useItem("AccordionContent");
-  if (!item.open) return null;
+/** The section body — rendered only while its section is open (via the slot). */
+export function AccordionContent(
+  { className, children, ...props }: AccordionContentProps,
+): React.ReactElement | null {
+  const { disclosure } = useAdapter();
   return (
-    <div
-      ref={ref}
+    <disclosure.Content
       role="region"
-      data-state="open"
       className={cn("pb-3 text-base text-[var(--muted-foreground)]", className)}
       {...props}
     >
       {children}
-    </div>
+    </disclosure.Content>
   );
 }

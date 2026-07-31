@@ -122,7 +122,13 @@ export const UI_COMPONENTS: UiComponent[] = [
     status: "shipped",
   },
   { name: "Slider", kind: "form", interactive: true, status: "shipped" },
-  { name: "Accordion", kind: "structure", interactive: true, status: "shipped" },
+  {
+    name: "Accordion",
+    kind: "structure",
+    interactive: true,
+    adapterKey: "disclosure",
+    status: "shipped",
+  },
   {
     name: "Combobox",
     kind: "overlay",
