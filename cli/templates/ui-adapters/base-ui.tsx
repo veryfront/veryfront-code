@@ -14,7 +14,9 @@
  * ```
  *
  * The provider merges a PARTIAL map over the builtin, so you can adopt Base UI
- * for just `popover` + `dialog` and leave the rest zero-dependency.
+ * for just some parts and leave the rest zero-dependency. This template covers
+ * `popover` / `dialog` / `menu` / `tooltip`; `select` / `combobox` / `toast`
+ * stay builtin.
  *
  * Three normalizations the contract forces (the fault lines from RFC 0001 §13.2):
  *   1. Drop Base UI's 2nd `onOpenChange(open, eventDetails)` arg — our contract
@@ -30,8 +32,17 @@
 import * as React from "react";
 import { Popover as BasePopover } from "@base-ui/react/popover";
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
+import { Menu as BaseMenu } from "@base-ui/react/menu";
+import { Tooltip as BaseTooltip } from "@base-ui/react/tooltip";
 import { useTokenScope } from "veryfront/ui";
-import type { DialogParts, ModalState, PopoverParts, UIAdapter } from "veryfront/ui";
+import type {
+  DialogParts,
+  MenuParts,
+  ModalState,
+  PopoverParts,
+  TooltipParts,
+  UIAdapter,
+} from "veryfront/ui";
 
 /** Render a portalled surface inside the veryfront token scope. */
 function ScopedPortal(
@@ -140,12 +151,107 @@ export const baseUiDialog: DialogParts = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Menu (parts archetype — Base UI's Menu owns open state)
+// ---------------------------------------------------------------------------
+const MenuStateContext = React.createContext<ModalState | null>(null);
+
+export const baseUiMenu: MenuParts = {
+  Root: ({ open, defaultOpen, onOpenChange, children }) => {
+    // Base UI's Menu owns the real open state; mirror it into a ModalState so a
+    // skin Item can `ctx?.setOpen(false)` to close through the same contract.
+    const [internal, setInternal] = React.useState(defaultOpen ?? false);
+    const isControlled = open !== undefined;
+    const isOpen = isControlled ? open : internal;
+    const setOpen = React.useCallback((next: boolean) => {
+      if (!isControlled) setInternal(next);
+      onOpenChange?.(next);
+    }, [isControlled, onOpenChange]);
+    const state = React.useMemo<ModalState>(() => ({ open: isOpen, setOpen }), [isOpen, setOpen]);
+    return (
+      <MenuStateContext.Provider value={state}>
+        <BaseMenu.Root
+          open={isOpen}
+          defaultOpen={defaultOpen}
+          // (1) drop the 2nd `eventDetails` arg.
+          onOpenChange={(next: boolean) => setOpen(next)}
+        >
+          {children}
+        </BaseMenu.Root>
+      </MenuStateContext.Provider>
+    );
+  },
+  Trigger: ({ asChild, children, ...rest }) =>
+    asChild
+      ? <BaseMenu.Trigger render={children as React.ReactElement} {...rest} />
+      : <BaseMenu.Trigger {...rest}>{children}</BaseMenu.Trigger>,
+  Content: ({ align = "start", className, children, ...rest }) => (
+    <ScopedPortal>
+      {(container) => (
+        // (3) portal into the token scope.
+        <BaseMenu.Portal container={container}>
+          {/* (2) positioning on Positioner, classes + normalized state on Popup. */}
+          <BaseMenu.Positioner align={align} sideOffset={4}>
+            <BaseMenu.Popup
+              className={className}
+              data-vf-state="open"
+              {...rest}
+            >
+              {children}
+            </BaseMenu.Popup>
+          </BaseMenu.Positioner>
+        </BaseMenu.Portal>
+      )}
+    </ScopedPortal>
+  ),
+  // Tolerant: returns the mirrored ModalState from Root so a skin Item can
+  // `ctx?.setOpen(false)`, or null when used outside a menu — never throws.
+  useMenu: () => React.useContext(MenuStateContext),
+};
+
+// ---------------------------------------------------------------------------
+// Tooltip (parts archetype)
+// ---------------------------------------------------------------------------
+export const baseUiTooltip: TooltipParts = {
+  // Base UI groups delay via its Provider; map our `delayDuration` → `delay`.
+  Provider: ({ children, delayDuration }) => (
+    <BaseTooltip.Provider delay={delayDuration}>{children}</BaseTooltip.Provider>
+  ),
+  Root: ({ children }) => <BaseTooltip.Root>{children}</BaseTooltip.Root>,
+  Trigger: ({ asChild, children, ...rest }) =>
+    asChild
+      ? <BaseTooltip.Trigger render={children as React.ReactElement} {...rest} />
+      : <BaseTooltip.Trigger {...rest}>{children}</BaseTooltip.Trigger>,
+  Content: ({ side = "top", sideOffset = 4, className, children, ...rest }) => (
+    <ScopedPortal>
+      {(container) => (
+        // (3) portal into the token scope.
+        <BaseTooltip.Portal container={container}>
+          {/* (2) positioning on Positioner, classes + normalized state on Popup. */}
+          <BaseTooltip.Positioner side={side} sideOffset={sideOffset}>
+            <BaseTooltip.Popup
+              className={className}
+              data-vf-state="open"
+              {...rest}
+            >
+              {children}
+            </BaseTooltip.Popup>
+          </BaseTooltip.Positioner>
+        </BaseTooltip.Portal>
+      )}
+    </ScopedPortal>
+  ),
+};
+
 /**
- * Partial adapter map — adopt Base UI for popover + dialog, keep menu / tooltip
- * / select zero-dependency (builtin). Extend as you vendor more parts.
+ * Partial adapter map — adopt Base UI for popover + dialog + menu + tooltip,
+ * keep select / combobox / toast zero-dependency (builtin). Extend as you
+ * vendor more parts.
  */
 export const baseUiAdapter: Partial<UIAdapter> & { name: string } = {
   name: "base-ui",
   popover: baseUiPopover,
   dialog: baseUiDialog,
+  menu: baseUiMenu,
+  tooltip: baseUiTooltip,
 };

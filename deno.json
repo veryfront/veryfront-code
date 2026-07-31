@@ -69,6 +69,7 @@
     ".deno_cache/",
     "cli/templates/files/",
     "cli/templates/integrations/",
+    "cli/templates/ui-adapters/",
     "extensions/"
   ],
   "exports": {

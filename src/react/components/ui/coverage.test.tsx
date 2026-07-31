@@ -489,39 +489,67 @@ describe("veryfront/ui: leaf composition (one node · ref · {...props})", () =>
 
 // ---------------------------------------------------------------------------
 // ENGINE coverage — the bring-your-own-engine adapters (RFC 0001 / #3090).
-// `builtin` is the shipped zero-dep default. The four named third-party engines
-// are the swappable adapters the contract is designed for; each is RED until an
-// `adapter/<engine>/index.ts` implementing the `UIAdapter` slots lands. The
-// interop SEAM they plug into is proven today (adapter/*.conformance.test.tsx +
-// the veryfront-router-testing chat-adapter-interop testbed on a dependency-free
-// custom engine); these rows track the real packages as planned follow-up.
+// `builtin` is the zero-dep default that lives IN core (adapter/builtin/). The
+// third-party engines are NOT in core — core stays engine-free (CI guard). They
+// ship as REFERENCE TEMPLATES under `cli/templates/ui-adapters/<engine>.tsx`,
+// vendored into a consumer's repo by `veryfront generate adapter <engine>`; the
+// engine package is the consumer's dependency. An engine is "shipped" when its
+// template exists, exports an `<engine>Adapter`, and maps the four overlay
+// archetypes (popover · dialog · menu · tooltip); select/combobox/toast fall back
+// to builtin via the partial merge. The interop SEAM is proven separately
+// (adapter/*.conformance.test.tsx + the chat-adapter-interop testbed).
 // ---------------------------------------------------------------------------
+const ENGINE_TEMPLATES_DIR =
+  new URL("../../../../cli/templates/ui-adapters/", import.meta.url).pathname;
+const OVERLAY_ARCHETYPES = ["popover", "dialog", "menu", "tooltip"] as const;
+
 interface EngineRow {
   name: string;
-  dir: string;
+  /** "" = builtin (core); otherwise the template basename. */
+  template: string;
   status: "shipped" | "planned";
 }
 const UI_ENGINES: EngineRow[] = [
-  { name: "builtin", dir: "builtin", status: "shipped" },
-  { name: "Base UI", dir: "base-ui", status: "planned" },
-  { name: "Radix", dir: "radix", status: "planned" },
-  { name: "React Aria", dir: "react-aria", status: "planned" },
-  { name: "Ariakit", dir: "ariakit", status: "planned" },
+  { name: "builtin", template: "", status: "shipped" },
+  { name: "Base UI", template: "base-ui.tsx", status: "shipped" },
+  { name: "Radix", template: "radix.tsx", status: "shipped" },
+  { name: "React Aria", template: "react-aria.tsx", status: "shipped" },
+  { name: "Ariakit", template: "ariakit.tsx", status: "shipped" },
 ];
 
 describe("veryfront/ui: bring-your-own-engine adapters (swappable engines)", () => {
   for (const e of UI_ENGINES) {
-    it(`${e.name}: ships an adapter/${e.dir}/index.ts implementing the UIAdapter slots`, () => {
-      let exists = false;
+    if (e.template === "") {
+      it(`${e.name}: the zero-dep default engine lives in core (adapter/builtin/)`, () => {
+        let exists = false;
+        try {
+          Deno.statSync(`${UI_DIR_PATH}adapter/builtin/index.ts`);
+          exists = true;
+        } catch { /* builtin is core — should always exist */ }
+        assert(exists, `builtin engine missing at adapter/builtin/index.ts`);
+      });
+      continue;
+    }
+
+    it(`${e.name}: ships a generatable adapter template covering the overlay archetypes`, () => {
+      let src = "";
       try {
-        Deno.statSync(`${UI_DIR_PATH}adapter/${e.dir}/index.ts`);
-        exists = true;
-      } catch { /* missing → planned rows stay RED until the engine lands */ }
+        src = Deno.readTextFileSync(`${ENGINE_TEMPLATES_DIR}${e.template}`);
+      } catch { /* missing → planned rows stay RED until the template lands */ }
       assert(
-        exists,
-        `${e.name} (${e.status}) engine adapter not found at adapter/${e.dir}/index.ts — ` +
-          `implement the UIAdapter slots (Popover/Dialog/Menu/Tooltip/Select/Combobox/Toast) ` +
-          `against its library; the interop seam is already proven, this is the real engine.`,
+        src.length > 0,
+        `${e.name} (${e.status}) has no reference template at cli/templates/ui-adapters/${e.template} ` +
+          `— add it (\`veryfront generate adapter\` vendors it into a consumer repo).`,
+      );
+      const missing = OVERLAY_ARCHETYPES.filter((slot) => !new RegExp(`\\b${slot}:`).test(src));
+      assert(
+        missing.length === 0,
+        `${e.name} template does not map the overlay archetypes: ${missing.join(", ")} ` +
+          `(each floating primitive must resolve through the engine).`,
+      );
+      assert(
+        /Adapter[^=]*=/.test(src) && /Partial<UIAdapter>/.test(src),
+        `${e.name} template must export an \`<engine>Adapter: Partial<UIAdapter>\` map.`,
       );
     });
   }

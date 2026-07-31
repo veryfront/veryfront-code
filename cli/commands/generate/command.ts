@@ -2,6 +2,7 @@ import { getConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
 import { createError, toError } from "veryfront/errors";
 import { generateIntegration } from "./integration-generator.ts";
+import { generateUiAdapter } from "./adapter-generator.ts";
 import { isScaffoldType, scaffoldProjectFile } from "../../scaffold/engine.ts";
 
 async function getPreferredRouter(
@@ -29,6 +30,11 @@ export async function generateCommand(
 
   if (type === "integration") {
     await generateIntegration(projectDir, { name: name || undefined });
+    return;
+  }
+
+  if (type === "adapter") {
+    await generateUiAdapter(projectDir, name);
     return;
   }
 

@@ -19,9 +19,12 @@ export const generateHelp: CommandHelp = {
     "veryfront generate skill code-review",
     "veryfront generate integration             # Interactive wizard",
     "veryfront generate integration twilio      # With name preset",
+    "veryfront generate adapter base-ui         # Vendor a veryfront/ui engine adapter",
+    "veryfront generate adapter radix",
   ],
   notes: [
-    "Types: page, api, layout, component, tool, agent, prompt, workflow, task, resource, skill, integration",
+    "Types: page, api, layout, component, tool, agent, prompt, workflow, task, resource, skill, integration, adapter",
     "Integration type launches interactive wizard if name not provided",
+    "Adapter type vendors a veryfront/ui engine adapter into ./ui-adapters/ (engines: base-ui, radix, react-aria, ariakit)",
   ],
 };

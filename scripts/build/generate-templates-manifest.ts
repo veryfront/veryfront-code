@@ -128,6 +128,18 @@ async function generateManifest(): Promise<TemplateManifest> {
 		manifest.templates[`ai-rules:${entry.name}`] = { files: { [entry.name]: content } };
 	}
 
+	// Process ui-adapter templates (used by `veryfront generate adapter <engine>`)
+	// Each `<engine>.tsx` is a reference engine adapter copied verbatim into the
+	// consumer's `./ui-adapters/`; the engine package is the consumer's dependency
+	// (veryfront/ui core stays engine-free), so these are delivered as text.
+	const uiAdaptersDir = "./cli/templates/ui-adapters";
+	for (const entry of await collectSortedDirectoryEntries(uiAdaptersDir)) {
+		if (!entry.isFile || !entry.name.endsWith(".tsx")) continue;
+		const engine = entry.name.replace(/\.tsx$/, "");
+		const content = await Deno.readTextFile(`${uiAdaptersDir}/${entry.name}`);
+		manifest.templates[`ui-adapter:${engine}`] = { files: { [entry.name]: content } };
+	}
+
 	return manifest;
 }
 

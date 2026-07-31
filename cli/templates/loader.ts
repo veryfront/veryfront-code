@@ -60,7 +60,10 @@ export function getIntegrationTemplate(
 
 export function listTemplates(): string[] {
   return Object.keys(typedManifest.templates).filter(
-    (name) => !name.startsWith("integration:"),
+    (name) =>
+      !name.startsWith("integration:") &&
+      !name.startsWith("ui-adapter:") &&
+      !name.startsWith("ai-rules:"),
   );
 }
 
@@ -68,4 +71,19 @@ export function listIntegrations(): string[] {
   return Object.keys(typedManifest.templates)
     .filter((name) => name.startsWith("integration:"))
     .map((name) => name.replace("integration:", ""));
+}
+
+/** The `<engine>.tsx` reference adapter for `veryfront generate adapter <engine>`. */
+export function getUiAdapterTemplate(engine: string): TemplateFile[] | null {
+  const entry = typedManifest.templates[`ui-adapter:${engine}`];
+  if (!entry) return null;
+
+  return getSortedFiles(entry);
+}
+
+/** Engine names with a shippable `ui-adapters/<engine>.tsx` reference template. */
+export function listUiAdapters(): string[] {
+  return Object.keys(typedManifest.templates)
+    .filter((name) => name.startsWith("ui-adapter:"))
+    .map((name) => name.replace("ui-adapter:", ""));
 }
