@@ -2,16 +2,12 @@ import { muted } from "#cli/ui";
 import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { isInteractive as isCliInteractive } from "../../shared/interactive.ts";
+import { validateProjectName } from "../../shared/project-name.ts";
 import { select, textInput } from "../../utils/terminal-select.ts";
 import { DEFAULT_TEMPLATE, getTemplateSelectOptions } from "./catalog.ts";
 import type { InitRuntime, InitTemplate } from "./types.ts";
 
-/** Reject path separators and traversal so the name stays a single directory. */
-export function validateProjectName(name: string): string | null {
-  if (/[/\\]/.test(name)) return 'Project name cannot contain "/" or "\\"';
-  if (name === "." || name === "..") return 'Project name cannot be "." or ".."';
-  return null;
-}
+export { validateProjectName };
 
 export interface WizardResult {
   projectName: string | null; // null = use current directory

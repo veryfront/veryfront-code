@@ -26,6 +26,33 @@ cadence, and settles exactly one typed Stream Outcome per attempt. Telemetry
 observes execution but never extends a semantic deadline. One agent run may
 contain several provider attempts separated by local tool execution.
 
+## Deploy Execution
+
+The single owner of deploying a project, from source resolution to a
+reachable environment: `cli/shared/deployment/deploy-project.ts`
+(`DeployProject.execute`). One request carries the project directory,
+optional explicit project slug, branch, environment, mode, and source kind
+(ensure-pushed or already-pushed), and settles into one typed outcome, with
+steps reported through an observer. The CLI deploy command and the MCP
+deploy tool are presentation adapters over this module; the control plane
+(HTTP in production, fake in tests) is its one seam. Success means the
+deployment is verified **and** ready; no adapter skips or re-implements
+verification, polling, or readiness waits.
+
+## Project Resolution
+
+The single owner of "which project does this directory target, and does it
+exist on the control plane?": `cli/shared/project-resolution.ts`
+(`resolveOrCreateProject`). One request carries the project directory, the
+resolved config, the reference source, and whether the run may create or only
+plan; it settles into one typed outcome — existing, created, or
+planned-create. Push, deploy, up, demo, and the TUI are presentation adapters
+over this module: they own their wording, spinners, and typed-error phrasing,
+never the decision. There is exactly one persisted link format
+(`.veryfront/project.json`), written only for references a directory owns
+(inferred or local-link) and never on a dry run. The project client
+(control plane over HTTP, CLI API client, fake in tests) is its one seam.
+
 ## Stream Delivery
 
 The separate agent-loop fan-out boundary that will route lifecycle frames to

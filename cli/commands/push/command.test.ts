@@ -130,7 +130,11 @@ async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<
         const url = new URL(request.url);
         requests.push(`${request.method} ${url.pathname}`);
 
-        if (request.method === "GET" && url.pathname === "/projects/missing-project/files") {
+        if (
+          request.method === "GET" &&
+          (url.pathname === "/projects/missing-project" ||
+            url.pathname === "/projects/missing-project/files")
+        ) {
           return Response.json({ error: "not found" }, { status: 404 });
         }
         if (request.method === "POST" && url.pathname === "/projects") {
@@ -153,7 +157,7 @@ async function assertMissingProjectDryRunDoesNotMutate(branch: string): Promise<
         quiet: true,
       });
 
-      assertEquals(requests, ["GET /projects/missing-project/files"]);
+      assertEquals(requests, ["GET /projects/missing-project"]);
       assertEquals(await readPushReceipt(projectDir), null);
     });
   } finally {
@@ -311,6 +315,9 @@ describe("push JSON output", () => {
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
+        if (request.method === "GET" && url.pathname === "/projects/json-project") {
+          return Response.json({ id: "proj_json", slug: "json-project" });
+        }
         if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
           return Response.json({ data: [], page_info: {} });
         }
@@ -363,6 +370,9 @@ describe("push JSON output", () => {
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project") {
+            return Response.json({ id: "proj_json", slug: "json-project" });
+          }
           if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
             return Response.json({ data: [], page_info: {} });
           }
@@ -415,6 +425,9 @@ describe("push JSON output", () => {
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project") {
+            return Response.json({ id: "proj_json", slug: "json-project" });
+          }
           if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
             return Response.json({ data: [], page_info: {} });
           }
@@ -469,6 +482,9 @@ describe("push JSON output", () => {
         globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
           const url = new URL(request.url);
+          if (request.method === "GET" && url.pathname === "/projects/json-project") {
+            return Response.json({ id: "proj_json", slug: "json-project" });
+          }
           if (request.method === "GET" && url.pathname === "/projects/json-project/files") {
             return Response.json({
               data: [
@@ -1191,7 +1207,11 @@ describe("push receipt source snapshot", () => {
       globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
         const url = new URL(request.url);
-        if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
+        if (
+          request.method === "GET" &&
+          (url.pathname === "/projects/my-project" ||
+            url.pathname === "/projects/my-project/files")
+        ) {
           return Response.json({ error: "not found" }, { status: 404 });
         }
         if (request.method === "POST" && url.pathname === "/projects") {
@@ -1300,8 +1320,8 @@ describe("push receipt source snapshot", () => {
       }
 
       assertEquals(requests, [
-        "GET /projects/missing-project-id/files",
-        "GET /projects/missing-project-id/files",
+        "GET /projects/missing-project-id",
+        "GET /projects/missing-project-id",
       ]);
     } finally {
       globalThis.fetch = originalFetch;
@@ -1559,6 +1579,9 @@ describe("push failure ordering", () => {
           const url = new URL(request.url);
           requests.push(`${request.method} ${url.pathname}`);
 
+          if (request.method === "GET" && url.pathname === "/projects/my-project") {
+            return Response.json({ id: "project-old", slug: "my-project" });
+          }
           if (request.method === "GET" && url.pathname === "/projects/my-project/files") {
             return Response.json({
               data: [{

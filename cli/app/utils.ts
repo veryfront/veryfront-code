@@ -17,10 +17,6 @@ export function generateRandomSlug(): string {
   return `${adj}-${noun}`;
 }
 
-export function normalizeSlug(projectName: string): string {
-  return projectName.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-}
-
 export function getLocalProjectsFromState(
   appState: AppState,
 ): Array<{ slug: string; path: string }> {

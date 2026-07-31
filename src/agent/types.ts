@@ -159,6 +159,21 @@ export interface AgentConfig {
   model?: ModelString;
   system: string | (() => string) | (() => Promise<string>);
   /**
+   * Project this agent runs against. Rendered as a `<project_context>` block so
+   * the agent knows the project reference and branch instead of asking for
+   * them. Hosts that already compose a full call context (the hosted chat
+   * runtime, project-runtime agent runs) supply it at that layer instead.
+   */
+  projectContext?: {
+    projectId: string;
+    branchId?: string | null;
+  };
+  /**
+   * Host-supplied environment facts rendered as an `<environment_context>`
+   * block — the same surface the hosted chat runtime fills from Studio.
+   */
+  environmentContext?: string;
+  /**
    * Project tools available to this agent.
    *
    * Omit to expose no project tools. `true` authorizes the current scoped

@@ -6,11 +6,8 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getProjectTmpDir } from "./temp-directory.ts";
 import type { ComponentMap, ComponentSource, LoadComponentOptions } from "./types.ts";
-import {
-  DEFAULT_REACT_VERSION,
-  getReactImportMap,
-  resolveDependencyPinningSnapshot,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 
 type TransformedComponent = { name: string; code: string };
 type ComponentTransformer = typeof transformToESM;

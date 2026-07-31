@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { type DemoOptions, resolveDemoReservedProject } from "./demo.ts";
+import type { DemoOptions } from "./demo.ts";
 import { DEMO_STEPS } from "./steps.ts";
 
 const LOGIN_METHODS = ["google", "github", "microsoft", "token"] as const;
@@ -101,26 +101,5 @@ describe("Demo auto mode configuration", () => {
       projectName: "auto-test-project",
     };
     assertEquals(options.projectName, "auto-test-project");
-  });
-});
-
-describe("demo project registration", () => {
-  it("looks up the canonical project id when slug reservation omits it", async () => {
-    const result = await resolveDemoReservedProject(
-      { slug: "demo-canonical", projectId: "", created: true },
-      "token",
-      {
-        get: <T>(path: string): Promise<T> => {
-          assertEquals(path, "/projects/demo-canonical");
-          return Promise.resolve({ id: "proj_canonical", slug: "demo-canonical" } as T);
-        },
-        post: () => Promise.reject(new Error("unexpected post")),
-        put: () => Promise.reject(new Error("unexpected put")),
-        patch: () => Promise.reject(new Error("unexpected patch")),
-        delete: () => Promise.reject(new Error("unexpected delete")),
-      },
-    );
-
-    assertEquals(result, { id: "proj_canonical", slug: "demo-canonical" });
   });
 });

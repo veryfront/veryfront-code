@@ -20,7 +20,17 @@ import {
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
 } from "#cli/shared/config";
-import { writeProjectLink } from "../../shared/project-link.ts";
+import {
+  canPersistAlternativeSlug,
+  getErrorStatus,
+  projectApiReference,
+  ProjectReferenceNotFoundError,
+  type ProjectResolutionClient,
+  type ProjectResolutionOutcome,
+  resolveOrCreateProject,
+  shouldPersistProjectLink,
+  slugConflictAction,
+} from "#cli/shared/project-resolution";
 import { ProjectSlugConflictError, reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { isVerbose, logInfo, logSuccess } from "#cli/utils";
 import { INVALID_ARGUMENT, PREVIEW_HOSTNAME_TOO_LONG } from "veryfront/errors";
@@ -214,58 +224,13 @@ function sourceChangedError(): Error {
   return new Error("Local source changed during push. Run veryfront push again.");
 }
 
-function canPersistAlternativeSlug(source: ProjectReferenceSource): boolean {
-  return source.kind === "inferred";
-}
-
-function shouldPersistProjectLink(source: ProjectReferenceSource): boolean {
-  return source.kind === "inferred" || source.kind === "local-link";
-}
-
-function projectApiReference(config: ResolvedConfig): string {
-  return config.projectId ?? config.projectSlug;
-}
-
-async function persistProjectLink(
-  projectDir: string,
-  config: ResolvedConfig,
-  project: { id: string; slug: string },
-): Promise<ResolvedConfig> {
-  await writeProjectLink(projectDir, {
-    controlPlane: config.apiUrl,
-    projectId: project.id,
-    projectSlug: project.slug,
-  });
-  return { ...config, projectId: project.id, projectSlug: project.slug };
-}
-
 function projectSlugConflictError(
   error: ProjectSlugConflictError,
   source: ProjectReferenceSource,
 ): Error {
-  let action: string;
-  switch (source.kind) {
-    case "argument":
-      action = "Use a different --project value";
-      break;
-    case "environment":
-      action = "Update or remove VERYFRONT_PROJECT_SLUG";
-      break;
-    case "module-config":
-      action = `Update projectSlug in ${source.name}`;
-      break;
-    case "tenant-environment":
-      action = `Update or remove ${source.name}`;
-      break;
-    case "json-config":
-    case "inferred":
-      action = "Choose a different project slug";
-      break;
-    case "local-link":
-      action = "Relink this project";
-      break;
-  }
-  return new Error(`${error.message} ${action}, then run veryfront push again.`);
+  return new Error(
+    `${error.message} ${slugConflictAction(source)}, then run veryfront push again.`,
+  );
 }
 
 async function sourceFilesForGitTracking(
@@ -425,12 +390,6 @@ export function createBranch(
   return client.post<BranchResponse>(`/projects/${encodeURIComponent(projectSlug)}/branches`, {
     name: branchName,
   });
-}
-
-function getErrorStatus(error: unknown): number | undefined {
-  if (typeof error !== "object" || error === null) return undefined;
-  const status = (error as { status?: unknown }).status;
-  return typeof status === "number" ? status : undefined;
 }
 
 async function getBranchByName(
@@ -667,50 +626,6 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
       let mainFiles: RemoteFile[] = [];
       let projectExists = true;
 
-      const createProject = async (): Promise<void> => {
-        spinner.update("Creating project...");
-        let reserveResult: Awaited<ReturnType<typeof reserveProjectSlug>>;
-        try {
-          reserveResult = await reserveProjectSlug(
-            config.projectSlug,
-            config.apiToken,
-            undefined,
-            config.apiUrl,
-            { allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource) },
-          );
-        } catch (reserveError) {
-          spinner.stop();
-          if (reserveError instanceof ProjectSlugConflictError) {
-            throw projectSlugConflictError(reserveError, projectReferenceSource);
-          }
-          throw reserveError;
-        }
-        let project = reserveResult.projectId
-          ? { id: reserveResult.projectId, slug: reserveResult.slug }
-          : null;
-        const reservedSlugChanged = reserveResult.slug !== config.projectSlug;
-        const configWithReservedSlug = { ...config, projectSlug: reserveResult.slug };
-        if (!project) {
-          project = await getProjectTarget(client, reserveResult.slug);
-        }
-        if (shouldPersistProjectLink(projectReferenceSource)) {
-          config = await persistProjectLink(projectDir, configWithReservedSlug, project);
-          if (
-            reservedSlugChanged &&
-            !quiet && !jsonOutput
-          ) {
-            logInfo(`Project slug: ${reserveResult.slug}`);
-          }
-        } else {
-          config = configWithReservedSlug;
-        }
-        try {
-          mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
-        } catch {
-          mainFiles = [];
-        }
-      };
-
       const planProjectCreation = (): void => {
         projectExists = false;
         if (!quiet && !jsonOutput) {
@@ -718,27 +633,68 @@ export function pushCommand(options: PushOptions = {}): Promise<void> {
         }
       };
 
-      if (projectReferenceSource.kind === "inferred") {
-        if (dryRun) planProjectCreation();
-        else await createProject();
+      const resolutionClient: ProjectResolutionClient = {
+        getProject: (reference) => getProjectTarget(client, reference),
+        reserveSlug: async (slug, options) => {
+          spinner.update("Creating project...");
+          const reserved = await reserveProjectSlug(
+            slug,
+            config.apiToken,
+            undefined,
+            config.apiUrl,
+            options,
+          );
+          return { slug: reserved.slug, projectId: reserved.projectId };
+        },
+      };
+
+      let outcome: ProjectResolutionOutcome;
+      try {
+        outcome = await resolveOrCreateProject({
+          projectDir,
+          config,
+          source: projectReferenceSource,
+          client: resolutionClient,
+          createMissingReference: true,
+          allowAlternativeSlug: canPersistAlternativeSlug(projectReferenceSource),
+          dryRun,
+        });
+      } catch (error) {
+        spinner.stop();
+        if (error instanceof ProjectSlugConflictError) {
+          throw projectSlugConflictError(error, projectReferenceSource);
+        }
+        if (error instanceof ProjectReferenceNotFoundError && error.byId) {
+          throw new Error(
+            `Project "${error.reference}" was not found. Check ${projectReferenceSource.name} or remove it to let Veryfront create a project for this directory.`,
+          );
+        }
+        throw error;
+      }
+
+      if (outcome.kind === "planned-create") {
+        planProjectCreation();
       } else {
-        try {
+        if (outcome.kind === "created") {
+          if (outcome.persisted && outcome.project.slug !== outcome.requestedSlug) {
+            if (!quiet && !jsonOutput) logInfo(`Project slug: ${outcome.project.slug}`);
+          }
+          config = outcome.config;
+          // A just-created project has no files yet; a listing failure here is
+          // not a reason to fail the push.
+          try {
+            mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
+          } catch {
+            mainFiles = [];
+          }
+        } else {
+          // An existing project only adopts the resolved identity when the
+          // reference is one this directory owns, or was already an id.
+          config = outcome.persisted || shouldPersistProjectLink(projectReferenceSource) ||
+              config.projectId
+            ? outcome.config
+            : config;
           mainFiles = await listAllFiles(client, projectApiReference(config), { type: "main" });
-          if (shouldPersistProjectLink(projectReferenceSource) || config.projectId) {
-            const project = await getProjectTarget(client, projectApiReference(config));
-            config = !dryRun && shouldPersistProjectLink(projectReferenceSource)
-              ? await persistProjectLink(projectDir, config, project)
-              : { ...config, projectId: project.id, projectSlug: project.slug };
-          }
-        } catch (error) {
-          if (getErrorStatus(error) !== 404) throw error;
-          if (config.projectId) {
-            throw new Error(
-              `Project "${config.projectId}" was not found. Check ${projectReferenceSource.name} or remove it to let Veryfront create a project for this directory.`,
-            );
-          }
-          if (dryRun) planProjectCreation();
-          else await createProject();
         }
       }
 

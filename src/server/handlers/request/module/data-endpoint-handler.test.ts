@@ -18,6 +18,8 @@ import {
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { handleDataEndpoint } from "./data-endpoint-handler.ts";
+import { FILE_NOT_FOUND } from "#veryfront/errors";
+import { notFound } from "#veryfront/data/helpers.ts";
 
 const DEPENDENCY_PINNING_HEADER = "x-veryfront-dependency-pins";
 
@@ -262,7 +264,9 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
         ),
         makeCtx(projectDir),
       );
-      const payload = await response.json();
+      // The conflict body is the one the client recovery matches on; see
+      // src/server/handlers/utils/dependency-snapshot-protocol.ts.
+      const payload = await response.text();
 
       assertEquals(response.status, 409);
       assertEquals(response.headers.get("cache-control"), "no-store");
@@ -272,10 +276,7 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
         ),
         true,
       );
-      assertEquals(payload, {
-        error: "Unknown dependency snapshot",
-        status: 409,
-      });
+      assertEquals(payload, "Unknown dependency snapshot");
       assertEquals(renderCalls, 0);
     } finally {
       restoreEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag);
@@ -394,5 +395,54 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
       clearReactVersionCache();
       await Deno.remove(projectDir, { recursive: true });
     }
+  });
+
+  describe("404-vs-500 classification", () => {
+    async function statusForRejection(error: unknown): Promise<number> {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-data-classify-" });
+      try {
+        setRendererInitializer(createInitializer(() => Promise.reject(error)));
+        const response = await callDataEndpoint(
+          new Request("http://localhost/_veryfront/data/missing.json"),
+          makeCtx(projectDir),
+        );
+        await response.body?.cancel();
+        return response.status;
+      } finally {
+        await destroyRendererAdapter();
+        setRendererInitializer(undefined);
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    }
+
+    it("answers 404 for the file-not-found the page resolver raises", async () => {
+      assertEquals(
+        await statusForRejection(
+          FILE_NOT_FOUND.create({ detail: "Page not found: missing" }),
+        ),
+        404,
+      );
+    });
+
+    it("answers 404 for a notFound() thrown from a loader, however wrapped", async () => {
+      assertEquals(await statusForRejection(notFound()), 404);
+      assertEquals(
+        await statusForRejection(new Error("wrapped", { cause: notFound() })),
+        404,
+      );
+    });
+
+    it("answers 500 for an unbranded error whose message merely says not found", async () => {
+      // Message text is not an interface. An error that reads "not found"
+      // without carrying a routing brand is a failure, and serving it as a 404
+      // would hide the failure behind the project's 404 page.
+      assertEquals(await statusForRejection(new Error("Page not found")), 500);
+      assertEquals(await statusForRejection(new Error("upstream said 404")), 500);
+      assertEquals(await statusForRejection(new Error("no page matched")), 500);
+    });
+
+    it("answers 500 for a generic failure", async () => {
+      assertEquals(await statusForRejection(new Error("render blew up")), 500);
+    });
   });
 });
