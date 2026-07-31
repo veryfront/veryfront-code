@@ -5,7 +5,7 @@ import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
 import { agent } from "../index.ts";
-import type { AgentConfig } from "../types.ts";
+import type { AgentConfig, Message } from "../types.ts";
 import type { RuntimeToolFilterConfig } from "./runtime-tool-config.ts";
 import type { ToolExposureCheckpoint } from "./tool-exposure.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
@@ -48,6 +48,31 @@ function systemPrompt(options: unknown): string {
     : "";
 }
 
+function restrictedSkillMessages(input: string): Message[] {
+  return [
+    {
+      id: "restricted-skill-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "restricted-skill-call",
+        toolName: "load_skill",
+        result: {
+          skillId: "restricted-runtime-test",
+          allowedTools: ["form_input"],
+          references: [],
+          scripts: [],
+        },
+      }],
+    },
+    {
+      id: "restricted-user-input",
+      role: "user",
+      parts: [{ type: "text", text: input }],
+    },
+  ];
+}
+
 it("deferred generate searches, exposes on the next step, and executes once", async () => {
   const observedTools: string[][] = [];
   let step = 0;
@@ -63,7 +88,7 @@ it("deferred generate searches, exposes on the next step, and executes once", as
             type: "tool-call",
             toolCallId: "search-1",
             toolName: "tool_search",
-            input: JSON.stringify({ query: "get_release" }),
+            input: JSON.stringify({ query: "release marker" }),
           }],
           finishReason: "tool-calls",
           usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
@@ -73,8 +98,8 @@ it("deferred generate searches, exposes on the next step, and executes once", as
         return {
           content: [{
             type: "tool-call",
-            toolCallId: "release-1",
-            toolName: "get_release",
+            toolCallId: "marker-1",
+            toolName: "read_release_marker",
             input: "{}",
           }],
           finishReason: "tool-calls",
@@ -82,7 +107,7 @@ it("deferred generate searches, exposes on the next step, and executes once", as
         };
       }
       return {
-        content: [{ type: "text", text: "Release rel-1" }],
+        content: [{ type: "text", text: "Release marker marker-1" }],
         finishReason: "stop",
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       };
@@ -97,13 +122,25 @@ it("deferred generate searches, exposes on the next step, and executes once", as
     model: "hosted/deferred-tools",
     system: "Use tools when needed.",
     tools: {
-      get_release: tool({
-        id: "get_release",
-        description: "Get the current release",
+      form_input: tool({
+        id: "form_input",
+        description: "Collect input",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      load_skill: tool({
+        id: "load_skill",
+        description: "Load a skill",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      read_release_marker: tool({
+        id: "read_release_marker",
+        description: "Read the release marker",
         inputSchema: defineSchema((v) => v.object({}))(),
         execute: () => {
           executionCount++;
-          return { id: "rel-1" };
+          return { marker: "marker-1" };
         },
       }),
     },
@@ -111,13 +148,17 @@ it("deferred generate searches, exposes on the next step, and executes once", as
     resolveModelTransport: () => ({ model }),
   });
 
-  const response = await assistant.generate({ input: "Find the current release" });
+  const response = await assistant.generate({ input: "Read the release marker" });
 
-  assertEquals(observedTools[0]?.includes("get_release"), false);
-  assertEquals(observedTools[0]?.includes("tool_search"), true);
-  assertEquals(observedTools[1]?.includes("get_release"), true);
+  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[1], [
+    "form_input",
+    "load_skill",
+    "read_release_marker",
+    "tool_search",
+  ]);
   assertEquals(executionCount, 1);
-  assertEquals(response.text, "Release rel-1");
+  assertEquals(response.text, "Release marker marker-1");
 });
 
 it("deferred generate rejects a guessed tool that was not exposed", async () => {
@@ -178,6 +219,100 @@ it("deferred generate rejects a guessed tool that was not exposed", async () => 
   );
 });
 
+it("deferred generate does not load or execute a descriptive unauthorized tool", async () => {
+  const observedTools: string[][] = [];
+  let modelStep = 0;
+  let executionCount = 0;
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/deferred-unauthorized-description",
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      modelStep++;
+      if (modelStep === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "search-unauthorized",
+            toolName: "tool_search",
+            input: JSON.stringify({ query: "release marker" }),
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      if (modelStep === 2) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "call-unauthorized",
+            toolName: "read_release_marker",
+            input: "{}",
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      return {
+        content: [{ type: "text", text: "blocked" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const config = {
+    id: "deferred-unauthorized-description",
+    model: "hosted/deferred-unauthorized-description",
+    system: "Use only authorized tools.",
+    tools: {
+      form_input: tool({
+        id: "form_input",
+        description: "Collect input",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      load_skill: tool({
+        id: "load_skill",
+        description: "Load a skill",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      read_release_marker: tool({
+        id: "read_release_marker",
+        description: "Read the release marker",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => {
+          executionCount++;
+          return { marker: "must-not-run" };
+        },
+      }),
+    },
+    maxSteps: 3,
+    resolveModelTransport: () => ({ model }),
+  } as AgentConfig & RuntimeToolFilterConfig;
+
+  const response = await agent(config).generate({
+    input: restrictedSkillMessages("Read the release marker"),
+  });
+
+  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[1], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(response.toolCalls[0]?.result, {
+    matches: [],
+    resultCount: 0,
+    loadedCount: 0,
+    attachableMetadataCount: 0,
+    miss: true,
+    nextStep: "Continue with the available tools or answer without a tool.",
+  });
+  assertEquals(response.toolCalls[1]?.status, "error");
+  assertEquals(
+    response.toolCalls[1]?.error,
+    'Tool "read_release_marker" is not available in the current model step',
+  );
+  assertEquals(executionCount, 0);
+});
+
 it("deferred stream searches, exposes on the next step, and executes exact arguments once", async () => {
   const observedTools: string[][] = [];
   let step = 0;
@@ -197,7 +332,7 @@ it("deferred stream searches, exposes on the next step, and executes exact argum
               type: "tool-call",
               toolCallId: "search-1",
               toolName: "tool_search",
-              input: { query: "create_release" },
+              input: { query: "release marker" },
             },
             { type: "finish", finishReason: "tool-calls" },
           ]),
@@ -208,9 +343,9 @@ it("deferred stream searches, exposes on the next step, and executes exact argum
           stream: createRuntimeStream([
             {
               type: "tool-call",
-              toolCallId: "release-1",
-              toolName: "create_release",
-              input: { label: "v1.2.3" },
+              toolCallId: "marker-1",
+              toolName: "read_release_marker",
+              input: {},
             },
             { type: "finish", finishReason: "tool-calls" },
           ]),
@@ -218,26 +353,37 @@ it("deferred stream searches, exposes on the next step, and executes exact argum
       }
       return {
         stream: createRuntimeStream([
-          { type: "text-delta", text: "Created v1.2.3" },
+          { type: "text-delta", text: "Release marker marker-1" },
           { type: "finish", finishReason: "stop" },
         ]),
       };
     },
   };
-  const executionInputs: Array<{ label: string }> = [];
+  let executionCount = 0;
   const assistant = agent({
     id: "deferred-stream-runtime-test",
     model: "hosted/deferred-stream-tools",
     system: "Use tools when needed.",
-    skills: false,
     tools: {
-      create_release: tool({
-        id: "create_release",
-        description: "Create a release",
-        inputSchema: defineSchema((v) => v.object({ label: v.string() }))(),
-        execute: (input) => {
-          executionInputs.push(input);
-          return { id: "rel-1" };
+      form_input: tool({
+        id: "form_input",
+        description: "Collect input",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      load_skill: tool({
+        id: "load_skill",
+        description: "Load a skill",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      read_release_marker: tool({
+        id: "read_release_marker",
+        description: "Read the release marker",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => {
+          executionCount++;
+          return { marker: "marker-1" };
         },
       }),
     },
@@ -245,14 +391,18 @@ it("deferred stream searches, exposes on the next step, and executes exact argum
     resolveModelTransport: () => ({ model }),
   });
 
-  const body = await (await assistant.stream({ input: "Create release v1.2.3" }))
+  const body = await (await assistant.stream({ input: "Read the release marker" }))
     .toDataStreamResponse().text();
 
-  assertEquals(observedTools[0]?.includes("create_release"), false);
-  assertEquals(observedTools[0]?.includes("tool_search"), true);
-  assertEquals(observedTools[1]?.includes("create_release"), true);
-  assertEquals(executionInputs, [{ label: "v1.2.3" }]);
-  assertEquals(body.includes("Created v1.2.3"), true);
+  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[1], [
+    "form_input",
+    "load_skill",
+    "read_release_marker",
+    "tool_search",
+  ]);
+  assertEquals(executionCount, 1);
+  assertEquals(body.includes("Release marker marker-1"), true);
 });
 
 it("deferred stream rejects a guessed tool that was not exposed", async () => {
@@ -312,6 +462,117 @@ it("deferred stream rejects a guessed tool that was not exposed", async () => {
 
   assertEquals(executionCount, 0);
   assertEquals(step, 2);
+});
+
+it("deferred stream returns attachable metadata without granting execution authority", async () => {
+  const observedTools: string[][] = [];
+  const observedPrompts: string[] = [];
+  let modelStep = 0;
+  let executionCount = 0;
+  const model: ModelRuntime = {
+    provider: "hosted",
+    modelId: "hosted/deferred-attachable-metadata",
+    async doGenerate() {
+      return { content: [{ type: "text", text: "unused" }] };
+    },
+    async doStream(options: unknown) {
+      observedTools.push(toolNames(options));
+      observedPrompts.push(JSON.stringify((options as { prompt?: unknown }).prompt));
+      modelStep++;
+      if (modelStep === 1) {
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-call",
+              toolCallId: "search-attachable",
+              toolName: "tool_search",
+              input: { query: "release marker" },
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      if (modelStep === 2) {
+        return {
+          stream: createRuntimeStream([
+            {
+              type: "tool-input-start",
+              id: "call-attachable",
+              toolName: "read_release_marker",
+            },
+            { type: "tool-input-delta", id: "call-attachable", delta: "{}" },
+            {
+              type: "tool-call",
+              toolCallId: "call-attachable",
+              toolName: "read_release_marker",
+              input: {},
+            },
+            { type: "finish", finishReason: "tool-calls" },
+          ]),
+        };
+      }
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "blocked" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const config = {
+    id: "deferred-attachable-metadata",
+    model: "hosted/deferred-attachable-metadata",
+    system: "Metadata is not execution authority.",
+    tools: {
+      form_input: tool({
+        id: "form_input",
+        description: "Collect input",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      load_skill: tool({
+        id: "load_skill",
+        description: "Load a skill",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => ({}),
+      }),
+      read_release_marker: tool({
+        id: "read_release_marker",
+        description: "Read the release marker",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => {
+          executionCount++;
+          return { marker: "must-not-run" };
+        },
+      }),
+    },
+    __vfToolSearchAuthorization: {
+      canConfigureAgentTools: true,
+      attachableCatalog: [{
+        name: "read_release_marker",
+        description: "Read the release marker",
+        attachVia: "tool_ids",
+      }],
+    },
+    maxSteps: 3,
+    resolveModelTransport: () => ({ model }),
+  } as AgentConfig & RuntimeToolFilterConfig;
+
+  const body = await (await agent(config).stream({
+    messages: restrictedSkillMessages("Read the release marker"),
+  }))
+    .toDataStreamResponse().text();
+
+  assertEquals(observedTools[0], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(observedTools[1], ["form_input", "load_skill", "tool_search"]);
+  assertEquals(body.includes('"status":"attachable"'), true);
+  assertEquals(body.includes('"attachVia":"tool_ids"'), true);
+  assertEquals(
+    observedPrompts[2]?.includes("ignored unavailable tool call(s): read_release_marker"),
+    true,
+  );
+  assertEquals(body.includes('"toolName":"read_release_marker"'), false);
+  assertEquals(executionCount, 0);
 });
 
 it("respond defaults omitted tool loading to deferred and completes search-load-execute", async () => {
