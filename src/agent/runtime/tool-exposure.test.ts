@@ -267,6 +267,20 @@ it("tool exposure checkpoints canonicalize authorized loaded names", () => {
   });
 });
 
+it("tool exposure checkpoints round-trip every non-empty tool id accepted by the factory", () => {
+  const authorized = [definition("release marker", "Read the release marker")];
+  const checkpoint = createToolExposureCheckpoint(
+    authorized,
+    createToolExposureState(["release marker"]),
+  );
+
+  assertEquals(checkpoint.loadedToolNames, ["release marker"]);
+  assertEquals(
+    [...restoreToolExposureState(checkpoint, authorized).loadedToolNames],
+    ["release marker"],
+  );
+});
+
 it("tool exposure checkpoint restoration fails closed and reauthorizes names", () => {
   const authorized = [
     definition("still_authorized", "Still authorized"),
@@ -290,7 +304,15 @@ it("tool exposure checkpoint restoration fails closed and reauthorizes names", (
     restore({
       version: 1,
       authorizedCatalogFingerprint: "v1-old",
-      loadedToolNames: ["still_authorized", "bad name"],
+      loadedToolNames: ["still_authorized", ""],
+    }),
+    [],
+  );
+  assertEquals(
+    restore({
+      version: 1,
+      authorizedCatalogFingerprint: "v1-old",
+      loadedToolNames: ["still_authorized", 42],
     }),
     [],
   );

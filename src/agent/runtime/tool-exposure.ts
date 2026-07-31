@@ -76,9 +76,9 @@ function compareAscii(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-/** Return whether a persisted name is a non-empty tool identifier without whitespace. */
+/** Return whether a persisted name matches the existing non-empty tool id contract. */
 export function isValidToolExposureCheckpointName(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && !/\s/.test(value);
+  return typeof value === "string" && value.length > 0;
 }
 
 function collectSchemaDescriptions(value: unknown, output: string[]): void {
