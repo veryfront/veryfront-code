@@ -125,10 +125,21 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
 
 Deno.test("hosted first provider call filters skill tools for every tool selector", async () => {
   try {
+    const providerCappedToolNames = Array.from(
+      { length: 129 },
+      (_, index) => `provider_cap_tool_${String(index).padStart(3, "0")}`,
+    );
     const cases: Array<{
       tools: true | string[] | undefined;
       allowedTools: string[];
       hostToolAllow?: string[];
+      localToolNames?: string[];
+      model?: string;
+      sourceIntegrationPolicy?: {
+        schemaVersion: 1;
+        mode: "allowlist";
+        integrations: Record<string, { allowedToolIds: string[] }>;
+      };
       expectedPresent: string[];
       expectedAbsent: string[];
     }> = [
@@ -157,6 +168,25 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
         expectedPresent: ["load_skill"],
         expectedAbsent: ["bash"],
       },
+      {
+        tools: ["confluence__create_page"],
+        allowedTools: ["confluence__create_page"],
+        sourceIntegrationPolicy: {
+          schemaVersion: 1,
+          mode: "allowlist",
+          integrations: { confluence: { allowedToolIds: ["search_content"] } },
+        },
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["confluence__create_page"],
+      },
+      {
+        tools: providerCappedToolNames,
+        allowedTools: ["provider_cap_tool_128"],
+        localToolNames: providerCappedToolNames,
+        model: "openai/gpt-4.1",
+        expectedPresent: ["load_skill"],
+        expectedAbsent: ["provider_cap_tool_128"],
+      },
     ];
 
     for (const testCase of cases) {
@@ -174,7 +204,7 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
           upstreamParentConversationId: undefined,
           upstreamParentRunId: undefined,
           spawnedFromToolCallId: undefined,
-          model: "anthropic/claude-sonnet-4-6",
+          model: testCase.model ?? "anthropic/claude-sonnet-4-6",
           allowDelegation: undefined,
           forwardedProps: undefined,
           runtimeOverrides: undefined,
@@ -209,7 +239,8 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
           : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
       });
       const runtime = await createDefaultHostedChatRuntime({
-        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        sourceIntegrationPolicy: testCase.sourceIntegrationPolicy ??
+          unrestrictedSourceIntegrationPolicy,
         ...(testCase.hostToolAllow === undefined
           ? {}
           : { hostToolPolicy: { allow: testCase.hostToolAllow } }),
@@ -219,19 +250,36 @@ Deno.test("hosted first provider call filters skill tools for every tool selecto
           apiMcpUrl: "https://api.example.com/mcp",
         },
         buildLocalTools: () => ({
+          ...Object.fromEntries(
+            (testCase.localToolNames ?? []).map((toolName) => [
+              toolName,
+              localTool(`Run ${toolName}`),
+            ]),
+          ),
           bash: localTool("Run shell commands"),
           create_release: localTool("Create a release"),
           delete_project: localTool("Delete a project"),
           load_skill: localTool("Load skill"),
         }),
-        createRemoteToolSource: emptyRemoteSource,
+        createRemoteToolSource: testCase.sourceIntegrationPolicy === undefined
+          ? emptyRemoteSource
+          : (config) => ({
+            id: config.id ?? "source",
+            listTools: () =>
+              Promise.resolve([{
+                name: "confluence__create_page",
+                description: "Create a Confluence page",
+                parameters: { type: "object", properties: {} },
+              }]),
+            executeTool: () => Promise.resolve({ ok: true }),
+          }),
         preloadLatestConversationUserText: false,
       });
 
       await withMockFetch(
         async (input: string | URL | Request, init?: RequestInit) => {
           const request = input instanceof Request ? input : new Request(input, init);
-          if (new URL(request.url).pathname.endsWith("/messages")) {
+          if (new URL(request.url).pathname.includes("/ai/gateway/")) {
             capturedProviderBody = await request.clone().json();
           }
           return Response.json({ content: [], stop_reason: "end_turn", usage: {} });

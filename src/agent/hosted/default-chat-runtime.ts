@@ -35,6 +35,7 @@ import {
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -188,9 +189,22 @@ async function buildToolAssembly(
     taskContext: DefaultHostedChatRuntimeTaskContext;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
+  const liveProjectSteering = input.options.liveProjectSteering;
   return prepareHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
+    ...(liveProjectSteering === undefined ? {} : {
+      renderInstructions: (modelVisibleToolNames: readonly string[]) =>
+        buildVeryfrontCloudRuntimeInstructions({
+          agentConfig: liveProjectSteering.agent,
+          projectId: input.taskContext.projectId,
+          branchId: input.taskContext.branchId,
+          environmentContext: liveProjectSteering.environmentContext,
+          instructions: liveProjectSteering.initialProjectInstructions ?? "",
+          skills: liveProjectSteering.initialSkills ?? [],
+          availableToolNames: modelVisibleToolNames,
+        }),
+    }),
     localTools: await input.buildLocalTools(input.taskContext),
     hostToolPolicy: input.hostToolPolicy,
     apiUrl: input.config.apiUrl,

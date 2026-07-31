@@ -88,6 +88,10 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
 > = {
   taskContext: HostedChatRuntimeToolAssemblyContext;
   instructions: string | readonly ChatSystemMessage[];
+  /** Re-render instructions after final source/provider tool visibility is known. */
+  renderInstructions?: (
+    modelVisibleToolNames: readonly string[],
+  ) => string | readonly ChatSystemMessage[];
   localTools: HostToolSet;
   hostToolPolicy?: HostedHostToolPolicy;
   apiUrl: string;
@@ -382,8 +386,10 @@ export async function prepareHostedChatRuntimeToolAssembly<
     : availableToolNames;
 
   input.taskContext.availableToolNames = modelVisibleToolNames;
+  const modelInstructions = input.renderInstructions?.(modelVisibleToolNames) ??
+    input.instructions;
   const systemInstructions = flattenSystemInstructions(
-    withRuntimeToolInventory(input.instructions, modelVisibleToolNames),
+    withRuntimeToolInventory(modelInstructions, modelVisibleToolNames),
   );
 
   if (input.preloadLatestConversationUserText !== false) {
