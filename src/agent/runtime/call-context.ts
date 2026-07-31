@@ -17,13 +17,14 @@
  *    runtime-context marker, `<project_instructions>`, `<project_context>`,
  *    any caller-supplied extra blocks, the instructions after the marker, and
  *    `<available_skills>`.
- * 2. An uncached `<environment_context>` message, when environment facts are
- *    supplied.
+ * 2. An uncached `<environment_context>` message.
  *
- * Blocks whose tag already appears in the instructions are dropped. Callers
- * compose in layers — the factory renders a prompt that a project-runtime run
- * later re-composes — and dropping already-present tags keeps that idempotent
- * instead of emitting the same project reference twice.
+ * Only the instructions are unconditional: each block appears only when the
+ * caller supplied its input and the instructions do not already carry that tag
+ * as a complete element, so message 2 can be absent and message 1 can be the
+ * instructions alone. Callers compose in layers — the factory's output is later
+ * re-composed by a project-runtime run — and skipping already-present elements
+ * keeps that idempotent instead of repeating a project reference or catalog.
  *
  * @module
  */
@@ -37,6 +38,7 @@ import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
 
 const ENVIRONMENT_CONTEXT_BLOCK_NAME = "environment_context";
+const AVAILABLE_SKILLS_BLOCK_NAME = "available_skills";
 
 /** Project the call runs against, rendered as the `<project_context>` block. */
 export type AgentCallProjectContext = {
@@ -163,7 +165,7 @@ export function buildAgentCallContext(input: BuildAgentCallContextInput): ChatSy
     staticParts.push(instructions.after);
   }
 
-  if (input.skills?.length) {
+  if (input.skills?.length && !hasBlock(input.instructions, AVAILABLE_SKILLS_BLOCK_NAME)) {
     staticParts.push(
       buildRuntimeAvailableSkillsPromptBlock(input.skills, {
         ...(input.availableToolNames === undefined

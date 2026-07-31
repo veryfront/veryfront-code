@@ -240,6 +240,30 @@ describe("agent/runtime/call-context", () => {
       assertEquals((messages[0]?.content ?? "").includes("Runtime facts"), false);
     });
 
+    it("skips the skills block when the instructions already carry one", () => {
+      const [message] = buildAgentCallContext({
+        instructions:
+          "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+        skills: createSkills(),
+      });
+
+      assertEquals(
+        message?.content,
+        "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+      );
+      assertEquals((message?.content ?? "").includes("Deployment guidance"), false);
+    });
+
+    it("still emits the skills block when the instructions only name the tag in prose", () => {
+      const [message] = buildAgentCallContext({
+        instructions: "Your catalog arrives in an <available_skills> block.",
+        skills: createSkills(),
+      });
+
+      assertStringIncludes(message?.content ?? "", "- review: Review guidance");
+      assertStringIncludes(message?.content ?? "", "</available_skills>");
+    });
+
     it("keeps untagged extra blocks that cannot be matched by tag", () => {
       const [message] = buildAgentCallContext({
         instructions: "Base",
