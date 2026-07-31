@@ -246,9 +246,12 @@ describe("BareStrategy", () => {
       );
     });
 
-    it("still pins tailwindcss regardless of the flag", () => {
+    it("keeps application CSS packages unversioned when the flag is off", () => {
       const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/tailwindcss?external=react,react-dom&target=es2022",
+      );
     });
 
     it("preserves inline-versioned specifiers unchanged", () => {
@@ -426,9 +429,12 @@ describe("BareStrategy", () => {
       );
     });
 
-    it("still uses tailwindcss pinned version regardless of npm cache", () => {
+    it("does not invent an application CSS version when no snapshot pin exists", () => {
       const result = bareStrategy.rewrite(makeInfo("tailwindcss"), makeCtx({ target: "browser" }));
-      assertEquals(result.specifier?.includes("tailwindcss@"), true);
+      assertEquals(
+        result.specifier,
+        "https://esm.sh/tailwindcss?external=react,react-dom&target=es2022",
+      );
     });
 
     it("SSR target is not affected by the pin flag", () => {

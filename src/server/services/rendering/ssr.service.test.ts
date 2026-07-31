@@ -3,7 +3,7 @@ import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SSRService } from "./ssr.service.ts";
-import type { RendererProvider, SSRRenderOptions } from "./ssr.service.ts";
+import type { RendererProvider, SSRRenderOptions, SSRRenderResult } from "./ssr.service.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import type { RendererAdapter } from "../../shared/renderer-factory.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -118,6 +118,14 @@ function createReactReadyStream(rejection: unknown): ReadableStream<Uint8Array> 
   return Object.assign(stream, {
     allReady: Promise.reject(rejection),
   });
+}
+
+function redirectLocationOf(result: SSRRenderResult): string {
+  const failure = result.failure;
+  if (failure?.kind !== "redirect") {
+    throw new Error(`expected a redirect outcome, got ${failure?.kind ?? "none"}`);
+  }
+  return failure.location;
 }
 
 describe("server/services/rendering/ssr.service", () => {
@@ -483,7 +491,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 404);
-        assertEquals(result.errorType, "not-found");
+        assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
       });
@@ -508,7 +516,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 404);
-        assertEquals(result.errorType, "undeployed");
+        assertEquals(result.failure?.kind, "undeployed");
       });
 
       it("maps render redirects to redirect results", async () => {
@@ -534,8 +542,8 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 302);
-        assertEquals(result.errorType, "redirect");
-        assertEquals(result.redirectLocation, "/login");
+        assertEquals(result.failure?.kind, "redirect");
+        assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
@@ -551,7 +559,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 404);
-        assertEquals(result.errorType, "not-found");
+        assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
@@ -567,8 +575,8 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 302);
-        assertEquals(result.errorType, "redirect");
-        assertEquals(result.redirectLocation, "/login");
+        assertEquals(result.failure?.kind, "redirect");
+        assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.cacheStrategy, "no-cache");
       });
 
@@ -592,7 +600,7 @@ describe("server/services/rendering/ssr.service", () => {
         );
 
         assertEquals(result.status, 404);
-        assertEquals(result.errorType, "not-found");
+        assertEquals(result.failure?.kind, "not-found");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
       });
@@ -617,8 +625,8 @@ describe("server/services/rendering/ssr.service", () => {
         );
 
         assertEquals(result.status, 302);
-        assertEquals(result.errorType, "redirect");
-        assertEquals(result.redirectLocation, "/login");
+        assertEquals(result.failure?.kind, "redirect");
+        assertEquals(redirectLocationOf(result), "/login");
         assertEquals(result.isStreaming, false);
         assertEquals(result.cacheStrategy, "no-cache");
       });
@@ -635,7 +643,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 301);
-        assertEquals(result.redirectLocation, "/moved");
+        assertEquals(redirectLocationOf(result), "/moved");
       });
 
       it("finds a control result wrapped in an error's cause chain", async () => {
@@ -650,7 +658,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 404);
-        assertEquals(result.errorType, "not-found");
+        assertEquals(result.failure?.kind, "not-found");
       });
 
       it("finds a control result wrapped in an AggregateError", async () => {
@@ -665,7 +673,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 302);
-        assertEquals(result.redirectLocation, "/login");
+        assertEquals(redirectLocationOf(result), "/login");
       });
 
       it("treats an unbranded notFound-shaped throw as a server error", async () => {
@@ -683,7 +691,7 @@ describe("server/services/rendering/ssr.service", () => {
 
         const result = await service.renderPage(makeCtx(), makeRenderOptions());
         assertEquals(result.status, 500);
-        assertEquals(result.errorType, "server-error");
+        assertEquals(result.failure?.kind, "server-error");
       });
 
       it("returns server-error for generic errors in production", async () => {
@@ -707,8 +715,7 @@ describe("server/services/rendering/ssr.service", () => {
         try {
           const result = await service.renderPage(makeCtx(), makeRenderOptions());
           assertEquals(result.status, 500);
-          assertEquals(result.errorType, "server-error");
-          assertEquals(result.showDevOverlay, undefined);
+          assertEquals(result.failure?.kind, "server-error");
           assertEquals(typeof result.html, "string");
           assertEquals(captured.length, 1);
           assertEquals((captured[0]?.error as Error).message, "Something broke");
@@ -768,7 +775,7 @@ describe("server/services/rendering/ssr.service", () => {
         try {
           const result = await service.renderPage(makeCtx(), makeRenderOptions());
           assertEquals(result.status, 500);
-          assertEquals(result.errorType, "app-router-error-boundary");
+          assertEquals(result.failure?.kind, "app-router-error-boundary");
           assertEquals(result.html, renderError.errorBoundaryHtml);
           assertEquals(captured.length, 1);
           assertEquals((captured[0]?.error as Error).message, "App router render failed");
@@ -798,10 +805,11 @@ describe("server/services/rendering/ssr.service", () => {
           makeRenderOptions(),
         );
         assertEquals(result.status, 503);
-        assertEquals(result.errorType, "server-error");
+        // Overload used to reach the handler re-encoded as a generic
+        // server-error; the outcome union keeps it distinguishable.
+        assertEquals(result.failure?.kind, "overloaded");
         assertEquals(result.cacheStrategy, "no-cache");
         assertEquals(result.isStreaming, false);
-        assertEquals(result.showDevOverlay, undefined);
         assertEquals(typeof result.html, "string");
         assertEquals(result.html?.includes("503"), true);
         assertEquals(result.html?.includes("Service Temporarily Unavailable"), true);
@@ -820,8 +828,7 @@ describe("server/services/rendering/ssr.service", () => {
         const ctx = makeCtx({ isLocalProject: true });
         const result = await service.renderPage(ctx, makeRenderOptions());
         assertEquals(result.status, 500);
-        assertEquals(result.errorType, "runtime");
-        assertEquals(result.showDevOverlay, true);
+        assertEquals(result.failure?.kind, "runtime");
         assertEquals(result.html?.includes('nonce="test-nonce"'), true);
       });
     });

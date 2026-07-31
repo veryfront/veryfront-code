@@ -7,8 +7,8 @@ import type { ImportMapConfig } from "./types.ts";
 import { getDefaultImportMap } from "./default-import-map.ts";
 import { mergeImportMaps } from "./merger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getReactImportMap } from "#veryfront/transforms/esm/package-registry.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 
 // Import-map loading runs after project code may have executed in the same
 // realm. Capture normalization/parsing primitives and the framework-owned maps

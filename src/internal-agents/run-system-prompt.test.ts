@@ -190,11 +190,45 @@ describe("internal-agents/run-system-prompt", () => {
         toolNames: ["load_skill"],
       });
 
-      assertStringIncludes(prompt, "## Available Skills");
+      assertStringIncludes(prompt, "<available_skills>");
       assertStringIncludes(
         prompt,
-        '- skillId="support-triage"; description="Triage incoming support requests"',
+        '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
       );
+    });
+
+    it("emits the pinned project-runtime system prompt", async () => {
+      const prompt = await composeInternalAgentRunSystemPrompt({
+        agent: createAgent({ model: "openai/gpt-5.4-nano" }),
+        runInput: createRunInput([
+          createStudioContextItem({
+            environmentContext: "<date_time>\nCurrent ISO date: 2026-07-22\n</date_time>",
+            projectId: "project-1",
+            branchId: null,
+          }),
+        ]),
+        projectId: null,
+        toolNames: ["create_file", "update_file"],
+      });
+
+      assertEquals(
+        prompt,
+        'You are Custom Agent.\n\n<project_context>\nproject_reference: "project-1"\nbranch_id: main (no branch_id needed for file operations)\n\nUse the exact project_reference above for project/platform tools unless a tool result explicitly confirms a different active project.\n\nCRITICAL: Do NOT guess or invent project references. If a tool requires project_reference, use the value above.\n</project_context>\n\n<runtime_info>\nmodel: "openai/gpt-5.4-nano"\n</runtime_info>\n\n<environment_context>\n<date_time>\nCurrent ISO date: 2026-07-22\n</date_time>\n</environment_context>\n\nCurrent run tool inventory:\n\n- create_file\n- update_file\n\nOnly treat the tools listed above as actually available in this run.\nIf the list is "- none", say plainly that no tools are available.\nDo NOT infer tool availability from examples, skills, or the base prompt.',
+      );
+    });
+
+    it("does not repeat a project context the base instructions already carry", async () => {
+      const prompt = await composeInternalAgentRunSystemPrompt({
+        agent: createAgent({
+          system:
+            'You are Custom Agent.\n\n<project_context>\nproject_reference: "project-1"\n</project_context>',
+        }),
+        runInput: createRunInput(),
+        projectId: "project-1",
+        toolNames: [],
+      });
+
+      assertEquals(prompt.split("<project_context>").length - 1, 1);
     });
 
     it("omits project and environment blocks when the run has no context", async () => {

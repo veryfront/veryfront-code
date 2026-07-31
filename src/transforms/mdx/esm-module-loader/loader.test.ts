@@ -64,7 +64,11 @@ function findVfModuleImports(code: string): Array<{ original: string; path: stri
 
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(code)) !== null) {
-    const [original, , path] = match;
+    const original = match[0];
+    const path = match[2];
+    if (path === undefined) {
+      throw new Error("Expected the _vf_modules capture group to be present");
+    }
     imports.push({ original, path });
   }
 

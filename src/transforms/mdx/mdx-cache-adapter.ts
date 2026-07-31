@@ -12,7 +12,7 @@ import type { MdxBundle } from "#veryfront/types";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { ensureHttpBundlesExist } from "../esm/http-cache.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/esm/react-cdn.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";

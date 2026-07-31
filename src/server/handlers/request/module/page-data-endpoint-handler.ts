@@ -14,16 +14,22 @@ import {
   sanitizeQueryParamsForCacheKey,
 } from "#veryfront/cache/keys.ts";
 import type { PageDataResponse } from "#veryfront/rendering/orchestrator/types.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import {
   type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
-  resolveRequestedDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
+import {
+  readSnapshotHeader,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+  stripSnapshotHeader,
+  withSnapshotResponseHeaders,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 
 const PAGE_DATA_TIMEOUT_MS = 25_000;
-const DEPENDENCY_PINNING_REQUEST_HEADER = "x-veryfront-dependency-pins";
 const PAGE_DATA_CACHE_TTL_MS = readPositiveIntegerEnv("VERYFRONT_PAGE_DATA_CACHE_TTL_MS", 60_000);
 const PAGE_DATA_CACHE_STALE_MS = readPositiveIntegerEnv(
   "VERYFRONT_PAGE_DATA_CACHE_STALE_MS",
@@ -138,37 +144,26 @@ export function handlePageDataEndpoint(
     async () => {
       let dependencySnapshot: DependencyPinningSnapshot | undefined;
       const respondPageData = (response: Response): HandlerResult =>
-        respond(withDependencySnapshotResponseHeaders(response, dependencySnapshot));
+        respond(withSnapshotResponseHeaders(response, dependencySnapshot?.cacheKey));
       try {
         const slug = pathname
           .replace("/_veryfront/page-data/", "")
           .replace(/\.json$/, "") || "";
 
-        const requestedPinKey = req.headers.get(DEPENDENCY_PINNING_REQUEST_HEADER);
-        if (requestedPinKey !== null && !requestedPinKey.startsWith("on:")) {
-          return respondPageData(
-            unknownDependencySnapshotResponse(req, ctx, createResponseBuilder),
-          );
-        }
-
+        const requested = readSnapshotHeader(req.headers);
         const dependencySource = createHandlerDependencyPinningSource(ctx);
-        const resolvedDependencySnapshot = await resolveRequestedDependencyPinningSnapshot(
-          dependencySource,
-          requestedPinKey,
-        );
-        if (
-          !resolvedDependencySnapshot ||
-          (requestedPinKey === null && resolvedDependencySnapshot.cacheKey !== "off")
-        ) {
+        const resolution = await resolveSnapshotForRequest(dependencySource, requested);
+        if (resolution.kind === "conflict") {
           return respondPageData(
-            unknownDependencySnapshotResponse(req, ctx, createResponseBuilder),
+            snapshotConflictResponse(createResponseBuilder(ctx), req, ctx.securityConfig),
           );
         }
+        const resolvedDependencySnapshot = resolution.snapshot;
         dependencySnapshot = resolvedDependencySnapshot;
 
         const url = new URL(req.url);
-        const applicationRequest = requestedPinKey === null ? req : new Request(req, {
-          headers: withoutHeader(req.headers, DEPENDENCY_PINNING_REQUEST_HEADER),
+        const applicationRequest = requested.kind === "absent" ? req : new Request(req, {
+          headers: stripSnapshotHeader(req.headers),
         });
         const renderer = await getRendererForProject(ctx);
         const isSpeculativePrefetch = req.headers.get("x-veryfront-prefetch") === "1";
@@ -256,17 +251,19 @@ export function handlePageDataEndpoint(
           );
         }
 
-        // A redirect() from getServerData surfaces here as a thrown
-        // VeryfrontError carrying context.redirect. The full-page render path
-        // converts this into a 302; the SPA page-data endpoint must encode it as
-        // a 200 payload so the client router can follow the redirect instead of
-        // treating it as an internal error (which 500s and aborts navigation).
-        const redirect = extractRedirectFromError(e);
-        if (redirect) {
+        // The full-page render path turns a control outcome into a 302 or a 404
+        // page. The SPA page-data endpoint has to encode the same decision as a
+        // payload the client router can act on, rather than as an internal
+        // error (which 500s and aborts navigation).
+        const control = resolveSSRControlOutcome(e);
+
+        // A destination the client refuses to follow is not a redirect the
+        // endpoint can encode, so it falls through to normal error handling.
+        if (control?.kind === "redirect" && isFollowableRedirect(control.location)) {
           return respondPageData(
             ResponseBuilder.json(
               {
-                redirect,
+                redirect: { destination: control.location, permanent: control.permanent },
                 ...(dependencySnapshot?.cacheKey.startsWith("on:")
                   ? { dependencyPinningCacheKey: dependencySnapshot.cacheKey }
                   : {}),
@@ -282,10 +279,7 @@ export function handlePageDataEndpoint(
         }
 
         const errorMessage = getErrorMessage(e);
-        const lower = errorMessage.toLowerCase();
-        const isNotFound = lower.includes("not found") ||
-          lower.includes("404") ||
-          (e instanceof Error && e.message.toLowerCase().includes("no page"));
+        const isNotFound = control?.kind === "not-found";
         const status = isNotFound ? 404 : 500;
 
         // Log the full error server-side but return a generic message
@@ -314,51 +308,6 @@ export function handlePageDataEndpoint(
       "module.pageData.projectSlug": ctx.projectSlug || "unknown",
     },
   );
-}
-
-function withoutHeader(headers: Headers, name: string): Headers {
-  const sanitized = new Headers(headers);
-  sanitized.delete(name);
-  return sanitized;
-}
-
-function withDependencySnapshotResponseHeaders(
-  response: Response,
-  snapshot?: DependencyPinningSnapshot,
-): Response {
-  const headers = new Headers(response.headers);
-  const vary = headers.get("vary");
-  const varyValues = (vary ?? "")
-    .split(",")
-    .map((value) => value.trim())
-    .filter(Boolean);
-  if (
-    !varyValues.some((value) => value.toLowerCase() === DEPENDENCY_PINNING_REQUEST_HEADER)
-  ) {
-    varyValues.push(DEPENDENCY_PINNING_REQUEST_HEADER);
-  }
-  headers.set("vary", varyValues.join(", "));
-  if (snapshot?.cacheKey.startsWith("on:")) {
-    headers.set(DEPENDENCY_PINNING_REQUEST_HEADER, snapshot.cacheKey);
-  }
-
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
-function unknownDependencySnapshotResponse(
-  req: Request,
-  ctx: HandlerContext,
-  createResponseBuilder: (ctx: HandlerContext) => ResponseBuilder,
-): Response {
-  return createResponseBuilder(ctx)
-    .withCORS(req, ctx.securityConfig?.cors)
-    .withSecurity(ctx.securityConfig ?? undefined, req)
-    .withCache("no-store")
-    .json({ error: "Unknown dependency snapshot", status: 409 }, 409);
 }
 
 async function resolveCachedPageData(
@@ -497,24 +446,6 @@ function isFollowableRedirect(destination: string): boolean {
     }
   }
   return /^https?:\/\//i.test(destination);
-}
-
-/**
- * A redirect() from getServerData is thrown up the pipeline as a VeryfrontError
- * whose `context.redirect` holds the destination (mirrors extractRedirectLocation
- * in the SSR service). Returns null for any other error, or for a redirect whose
- * destination is not safe to hand to the client to follow.
- */
-function extractRedirectFromError(
-  error: unknown,
-): { destination: string; permanent: boolean } | null {
-  const context = (error as {
-    context?: { redirect?: { destination?: unknown; permanent?: unknown } };
-  })?.context;
-  const redirect = context?.redirect;
-  if (!redirect || typeof redirect.destination !== "string") return null;
-  if (!isFollowableRedirect(redirect.destination)) return null;
-  return { destination: redirect.destination, permanent: redirect.permanent === true };
 }
 
 function buildPageDataCacheKey(

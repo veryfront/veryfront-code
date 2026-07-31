@@ -2,8 +2,7 @@ import { extract } from "#std/front-matter/yaml.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
-import { createRuntimePromptBlock } from "./prompt-block.ts";
-import { buildStrictRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
+import { buildAgentCallContext } from "./call-context.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 import { normalizeAgentDelegateIds } from "./agent-delegation-names.ts";
 import { CONFIG_INVALID } from "#veryfront/errors";
@@ -68,8 +67,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
   })
 );
 
-/** Default value for runtime agent context marker. */
-export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
+export { DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER } from "./call-context.ts";
 
 /** Schema for runtime agent markdown definition.
  * @deprecated Use getRuntimeAgentMarkdownDefinitionSchema()
@@ -236,70 +234,28 @@ export function parseRuntimeAgentMarkdownDefinition(
   });
 }
 
-function splitRuntimeAgentInstructions(input: {
-  instructions: string;
-  runtimeContextMarker: string;
-}): { before: string; after: string | null } {
-  const markerIndex = input.instructions.indexOf(input.runtimeContextMarker);
-
-  if (markerIndex < 0) {
-    return { before: input.instructions, after: null };
-  }
-
-  return {
-    before: input.instructions.slice(0, markerIndex).trim(),
-    after: input.instructions.slice(markerIndex + input.runtimeContextMarker.length).trim() || null,
-  };
-}
-
-/** Create runtime agent system messages. */
+/**
+ * Create runtime agent system messages.
+ *
+ * Assembly is delegated to {@link buildAgentCallContext}, which deduplicates:
+ * a runtime block whose leading tag already appears as a complete element in
+ * the agent's instructions is dropped rather than emitted twice.
+ */
 export function createRuntimeAgentSystemMessages(
   input: CreateRuntimeAgentSystemMessagesInput,
 ): ChatSystemMessage[] {
-  const runtimeContextMarker = input.runtimeContextMarker ?? DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER;
-  const splitInstructions = splitRuntimeAgentInstructions({
+  return buildAgentCallContext({
     instructions: input.agent.instructions,
-    runtimeContextMarker,
+    ...(input.runtimeContextMarker === undefined
+      ? {}
+      : { runtimeContextMarker: input.runtimeContextMarker }),
+    ...(input.runtimeBlocks === undefined ? {} : { extraBlocks: input.runtimeBlocks }),
+    ...(input.skills === undefined ? {} : { skills: input.skills }),
+    ...(input.availableToolNames === undefined
+      ? {}
+      : { availableToolNames: input.availableToolNames }),
+    ...(input.environmentContext === undefined
+      ? {}
+      : { environmentContext: input.environmentContext }),
   });
-  const staticParts: string[] = [];
-
-  if (splitInstructions.before) {
-    staticParts.push(splitInstructions.before);
-  }
-
-  staticParts.push(...(input.runtimeBlocks ?? []).filter((block) => block.length > 0));
-
-  if (splitInstructions.after) {
-    staticParts.push(splitInstructions.after);
-  }
-
-  if (input.skills?.length) {
-    staticParts.push(
-      buildStrictRuntimeAvailableSkillsPromptBlock(input.skills, {
-        availableToolNames: input.availableToolNames,
-      }),
-    );
-  }
-
-  const result: ChatSystemMessage[] = [
-    {
-      role: "system",
-      content: staticParts.join("\n\n"),
-      providerOptions: {
-        anthropic: { cacheControl: { type: "ephemeral" } },
-      },
-    },
-  ];
-
-  if (input.environmentContext) {
-    result.push({
-      role: "system",
-      content: createRuntimePromptBlock({
-        name: "environment_context",
-        content: input.environmentContext,
-      }),
-    });
-  }
-
-  return result;
 }

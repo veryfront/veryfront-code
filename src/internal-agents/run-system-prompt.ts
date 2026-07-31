@@ -19,10 +19,8 @@
  */
 
 import type { Agent } from "#veryfront/agent";
-import { buildProjectContextPromptBlock } from "#veryfront/agent/hosted/cloud-runtime-system-messages.ts";
-import { createRuntimeAgentSystemMessages } from "#veryfront/agent/runtime/agent-definition.ts";
+import { buildAgentCallContext } from "#veryfront/agent/runtime/call-context.ts";
 import { getEffectiveAgentSystem } from "#veryfront/agent/runtime/effective-agent-system.ts";
-import { getRuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-markdown-adapter.ts";
 import { createRuntimePromptBlock } from "#veryfront/agent/runtime/prompt-block.ts";
 import {
   flattenSystemInstructions,
@@ -110,17 +108,9 @@ export async function composeInternalAgentRunSystemPrompt(
   const studioContext = getInternalAgentStudioRunContext(input.runInput.context);
   const projectId = input.projectId ?? studioContext.projectId;
 
-  const runtimeBlocks: string[] = [];
-  if (projectId) {
-    runtimeBlocks.push(
-      buildProjectContextPromptBlock({
-        projectId,
-        branchId: input.branchId !== undefined ? input.branchId : studioContext.branchId ?? null,
-      }),
-    );
-  }
+  const extraBlocks: string[] = [];
   if (input.agent.config.model) {
-    runtimeBlocks.push(
+    extraBlocks.push(
       createRuntimePromptBlock({
         name: "runtime_info",
         content: `model: "${input.agent.config.model}"`,
@@ -128,17 +118,17 @@ export async function composeInternalAgentRunSystemPrompt(
     );
   }
 
-  const definition = getRuntimeAgentMarkdownDefinition(input.agent);
-  const messages = createRuntimeAgentSystemMessages({
-    agent: {
-      ...(definition ?? {
-        id: input.agent.id,
-        name: input.agent.config.name ?? input.agent.id,
-        description: input.agent.config.description ?? "",
-      }),
-      instructions: baseInstructions,
-    },
-    runtimeBlocks,
+  const messages = buildAgentCallContext({
+    instructions: baseInstructions,
+    ...(projectId
+      ? {
+        projectContext: {
+          projectId,
+          branchId: input.branchId !== undefined ? input.branchId : studioContext.branchId ?? null,
+        },
+      }
+      : {}),
+    extraBlocks,
     availableToolNames: input.toolNames,
     ...(studioContext.environmentContext
       ? { environmentContext: studioContext.environmentContext }

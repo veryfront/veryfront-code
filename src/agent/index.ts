@@ -248,6 +248,13 @@ export {
   resolveRuntimeAgentMarkdownDefinitionFilePath,
 } from "./runtime/agent-definition-files.ts";
 export {
+  type AgentCallProjectContext,
+  buildAgentCallContext,
+  type BuildAgentCallContextInput,
+  buildProjectContextPromptBlock,
+  buildProjectInstructionsPromptBlock,
+} from "./runtime/call-context.ts";
+export {
   createRuntimeAgentSystemMessages,
   type CreateRuntimeAgentSystemMessagesInput,
   DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,

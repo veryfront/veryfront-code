@@ -1,8 +1,7 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
-import { cliLogger, exitProcess } from "#cli/utils";
+import { cliLogger, exitProcess, isVerbose } from "#cli/utils";
 import { cwd } from "veryfront/platform";
-import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { brand, createNoopSpinner, dim } from "#cli/ui";
 import { ensureAuthenticated } from "../../auth/index.ts";
@@ -12,15 +11,25 @@ import { isTTY, promptUser } from "#cli/utils";
 import { logSuccess, logWarning } from "#cli/utils";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import {
+  createApiClient,
   resolveConfigWithAuthDetails,
   type ResolvedConfig,
-  type VeryfrontConfig,
 } from "#cli/shared/config";
 import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { normalizeProjectSlug } from "#cli/shared/slug";
-import { pushCommand } from "../push/index.ts";
-import { deployCommand } from "../deploy/index.ts";
-import { buildPushUrls } from "../push/command.ts";
+import {
+  inferProjectSlugFromDirectory,
+  resolveOrCreateProject,
+} from "#cli/shared/project-resolution";
+import { getProjectTarget } from "../../shared/deployment-provenance.ts";
+import {
+  createDeployProject,
+  type DeployPlan,
+  type DeployProject,
+  type DeployProjectOutcome,
+} from "../../shared/deployment/deploy-project.ts";
+import { deployProgressText, initialDeployProgressText } from "../../shared/deployment/progress.ts";
+import { buildStudioUrl } from "../studio/command.ts";
 import { isInteractive } from "../../shared/interactive.ts";
 import { createStreamErrorResult, isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 import { AUTHENTICATION_REQUIRED, PROJECT_SOURCE_EMPTY } from "veryfront/errors";
@@ -82,30 +91,36 @@ async function analyzeDirectory(
 
   if (!hasCode) return { type: "empty" };
 
-  let suggestedSlug = normalizeProjectSlug(projectDir.split(/[/\\]/).pop() || "my-app");
-  const packagePath = join(projectDir, "package.json");
-  try {
-    if (await fs.exists(packagePath)) {
-      const pkg = JSON.parse(await fs.readTextFile(packagePath)) as { name?: string };
-      if (pkg.name) suggestedSlug = normalizeProjectSlug(pkg.name);
-    }
-  } catch (error) {
-    cliLogger.debug("Failed to read package.json for project slug:", error);
-  }
-  return { type: "has-code", config: resolved.config, suggestedSlug };
+  return {
+    type: "has-code",
+    config: resolved.config,
+    suggestedSlug: await inferProjectSlugFromDirectory(projectDir),
+  };
 }
 
-async function saveConfig(projectDir: string, config: VeryfrontConfig): Promise<void> {
-  const fs = createFileSystem();
-  await fs.writeTextFile(
-    join(projectDir, "veryfront.json"),
-    `${JSON.stringify(config, null, 2)}\n`,
-  );
+export interface UpDependencies {
+  /** Deploy Execution override for tests; production uses createDeployProject(). */
+  deployProject?: DeployProject;
+}
+
+/**
+ * Actions `up` reports for a dry run, derived from the Deploy Execution plan.
+ *
+ * Release creation and deployment are one user-visible step for `up`, which
+ * only ever targets the preview environment.
+ */
+function plannedUpActions(plan: DeployPlan): string[] {
+  return [
+    ...(plan.plannedActions.includes("create-project") ? ["create-project"] : []),
+    ...(plan.plannedActions.includes("push-source") ? ["push-source"] : []),
+    "deploy-preview",
+  ];
 }
 
 export async function upCommand(
   options: Partial<UpOptions> = {},
   env: EnvironmentConfig = getEnvironmentConfig(),
+  dependencies: UpDependencies = {},
 ): Promise<void> {
   const { projectDir = cwd(), force = false, dryRun = false } = options;
   const jsonOutput = isJsonMode();
@@ -171,37 +186,53 @@ export async function upCommand(
       if (trimmed) slug = normalizeProjectSlug(trimmed);
     }
 
-    if (dryRun) {
-      if (!jsonOutput) cliLogger.info(dim(`Would create project: ${slug}`));
-    } else {
-      const projectSpinner = jsonOutput
-        ? createNoopSpinner()
-        : createSpinner(`Creating project "${slug}"...`);
+    const projectSpinner = dryRun || jsonOutput
+      ? createNoopSpinner()
+      : createSpinner(`Creating project "${slug}"...`);
 
-      try {
-        if (!context.config.apiToken) {
-          projectSpinner.stop();
-          throw new Error("Not authenticated");
-        }
-
-        const reserved = await reserveProjectSlug(
-          slug,
-          context.config.apiToken,
-          env,
-          context.config.apiUrl,
-          { allowAlternativeSlug: false },
-        );
-        slug = reserved.slug;
+    try {
+      if (!dryRun && !context.config.apiToken) {
         projectSpinner.stop();
-
-        await saveConfig(projectDir, { projectSlug: slug });
-
-        if (!jsonOutput) logSuccess(`Created project ${slug}`);
-      } catch (error) {
-        projectSpinner.stop();
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`Project creation failed: ${message}`, { cause: error });
+        throw new Error("Not authenticated");
       }
+
+      const outcome = await resolveOrCreateProject({
+        projectDir,
+        config: { ...context.config, projectSlug: slug },
+        source: { kind: "inferred", name: "project files" },
+        client: {
+          getProject: (reference) =>
+            getProjectTarget(
+              createApiClient({ ...context.config, projectSlug: slug }),
+              reference,
+            ),
+          reserveSlug: async (reserveSlug, options) => {
+            const reserved = await reserveProjectSlug(
+              reserveSlug,
+              context.config.apiToken,
+              env,
+              context.config.apiUrl,
+              options,
+            );
+            return { slug: reserved.slug, projectId: reserved.projectId };
+          },
+        },
+        allowAlternativeSlug: false,
+        dryRun,
+      });
+      projectSpinner.stop();
+
+      if (outcome.kind === "planned-create") {
+        if (!jsonOutput) cliLogger.info(dim(`Would create project: ${outcome.plannedSlug}`));
+        slug = outcome.plannedSlug;
+      } else {
+        slug = outcome.project.slug;
+        if (!jsonOutput) logSuccess(`Created project ${slug}`);
+      }
+    } catch (error) {
+      projectSpinner.stop();
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Project creation failed: ${message}`, { cause: error });
     }
 
     projectSlug = slug;
@@ -209,20 +240,37 @@ export async function upCommand(
 
   if (!jsonOutput) cliLogger.info("");
 
+  // Deploy Execution owns the rest: the bootstrap push, the release, the
+  // deployment, and the readiness probe behind the URL printed below.
+  const verbose = isVerbose();
+  let progressText = initialDeployProgressText(verbose);
+  const deploySpinner = jsonOutput ? createNoopSpinner() : createSpinner(progressText);
+  let outcome: DeployProjectOutcome;
+
   try {
-    await pushCommand({
+    outcome = await (dependencies.deployProject ?? createDeployProject()).execute({
       projectDir,
       branch: "main",
-      force: true,
-      dryRun,
-      quiet: true,
+      environment: "preview",
+      mode: dryRun ? "dry-run" : "apply",
+      source: { kind: "ensure-pushed" },
+    }, {
+      onEvent(event) {
+        if (event.kind !== "step") return;
+        const next = deployProgressText(event, "preview", verbose);
+        if (!next || next === progressText) return;
+        progressText = next;
+        deploySpinner.update(next);
+      },
     });
   } catch (error) {
+    deploySpinner.stop();
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Push failed: ${message}`, { cause: error });
+    throw new Error(`Preview deployment failed: ${message}`, { cause: error });
   }
+  deploySpinner.stop();
 
-  if (dryRun) {
+  if (outcome.kind === "dry-run") {
     if (jsonOutput) {
       streamJsonLine({
         type: "result",
@@ -230,11 +278,7 @@ export async function upCommand(
         data: {
           projectSlug,
           dryRun: true,
-          plannedActions: [
-            ...(context.type === "has-project" ? [] : ["create-project"]),
-            "push-source",
-            "deploy-preview",
-          ],
+          plannedActions: plannedUpActions(outcome.plan),
         },
       });
     } else {
@@ -243,42 +287,28 @@ export async function upCommand(
     return;
   }
 
-  try {
-    await deployCommand({
-      projectDir,
-      branch: "main",
-      env: "preview",
-      force: true,
-      dryRun,
-      quiet: true,
-      skipSourcePush: true,
-      suppressJsonOutput: true,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Preview deployment failed: ${message}`, { cause: error });
-  }
+  const result = outcome.result;
+  const studioUrl = buildStudioUrl(result.projectSlug, { branch: result.branch });
 
-  const urls = buildPushUrls(projectSlug, "main");
   if (jsonOutput) {
     streamJsonLine({
       type: "result",
       success: true,
       data: {
-        projectSlug,
+        projectSlug: result.projectSlug,
         dryRun: false,
-        studioUrl: urls.studio,
-        previewUrl: urls.preview,
+        studioUrl,
+        previewUrl: result.url,
         nextCommand: "veryfront deploy",
       },
     });
     return;
   }
 
-  logSuccess(`${projectSlug} is ready`);
+  logSuccess(`${result.projectSlug} is ready`);
   console.log();
-  console.log(`  Studio:  ${brand(urls.studio)}`);
-  console.log(`  Preview: ${brand(urls.preview)}`);
+  console.log(`  Studio:  ${brand(studioUrl)}`);
+  console.log(`  Preview: ${brand(result.url)}`);
   console.log();
   console.log(`  Deploy:  ${brand("veryfront deploy")}`);
   console.log();

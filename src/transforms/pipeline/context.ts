@@ -1,5 +1,5 @@
-import { DEFAULT_REACT_VERSION } from "../esm/package-registry.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { DEFAULT_REACT_VERSION } from "../esm/react-cdn.ts";
 import type {
   TransformContext,
   TransformOptions,

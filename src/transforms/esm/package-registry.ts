@@ -1,8 +1,7 @@
 /****
- * Central package version and URL registry.
+ * Central package version registry and dependency-pinning snapshot accessors.
  *
- * Re-exports from the unified import-rewriter module.
- * This file is kept for backward compatibility with existing imports.
+ * React CDN URL building lives in ./react-cdn.ts.
  */
 
 import { rendererLogger } from "#veryfront/utils";
@@ -19,15 +18,7 @@ const logger = rendererLogger.component("package-registry");
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import { isExactSemver } from "./npm-registry-client.ts";
-import {
-  buildReactUrl,
-  CSSTYPE_VERSION,
-  DEFAULT_REACT_VERSION,
-  getReactImportMap as getReactImportMapFromRewriter,
-} from "../import-rewriter/url-builder.ts";
-
-// Re-export constants from unified source
-export { CSSTYPE_VERSION, DEFAULT_REACT_VERSION };
+import { DEFAULT_REACT_VERSION } from "../import-rewriter/url-builder.ts";
 
 interface CachedDependencyVersions {
   mtimeMs: number | null;
@@ -275,45 +266,6 @@ export function normalizeReactVersion(version: string | undefined): string {
 }
 
 /**
- * Build esm.sh URL with deps=csstype for React packages.
- */
-export function esmShReact(
-  pkg: string,
-  version: string,
-  path = "",
-  external = false,
-): string {
-  return buildReactUrl(
-    pkg as "react" | "react-dom",
-    version,
-    path || undefined,
-    external,
-  );
-}
-
-/**
- * Get React esm.sh URLs with consistent versioning.
- */
-export function getReactUrls(version?: string): Record<string, string> {
-  const v = version ?? DEFAULT_REACT_VERSION;
-  return {
-    react: buildReactUrl("react", v),
-    "react-dom": buildReactUrl("react-dom", v, undefined, true),
-    "react-dom/client": buildReactUrl("react-dom", v, "/client", true),
-    "react-dom/server": buildReactUrl("react-dom", v, "/server", true),
-    "react/jsx-runtime": buildReactUrl("react", v, "/jsx-runtime", true),
-    "react/jsx-dev-runtime": buildReactUrl("react", v, "/jsx-dev-runtime", true),
-  };
-}
-
-/**
- * Get complete React import map for esm.sh.
- */
-export function getReactImportMap(version?: string): Record<string, string> {
-  return getReactImportMapFromRewriter(version ?? DEFAULT_REACT_VERSION);
-}
-
-/**
  * Strip semver range prefixes (^, ~, >=, >, <=, <, =) from a version string.
  */
 export function stripSemverRange(version: string): string {
@@ -505,7 +457,7 @@ function rememberDependencyPinningSnapshot(
   return snapshot;
 }
 
-export function getDependencyPinningSnapshotSync(
+function getDependencyPinningSnapshotSync(
   source: DependencyPinningSourceInput,
   cacheKey: string,
 ): DependencyPinningSnapshot | undefined {

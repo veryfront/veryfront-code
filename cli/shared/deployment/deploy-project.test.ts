@@ -7,7 +7,6 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
   DEPLOYMENT_ERROR,
   ENVIRONMENT_NOT_FOUND,
@@ -15,101 +14,35 @@ import {
   SOURCE_DIGEST_MISMATCH,
   VeryfrontError,
 } from "veryfront/errors";
-import type { ReleaseAssetManifestResponse } from "veryfront/release-assets";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../deployment-provenance.ts";
-import type {
-  DeployControlPlane,
-  DeployDeployment,
-  DeployEnvironment,
-  DeployProjectRecord,
-  DeployRelease,
-  DeployReleaseFile,
-} from "./control-plane.ts";
+import type { DeployControlPlane } from "./control-plane.ts";
 import {
+  assertProjectOwnership,
   createDeployProject,
   type DeployEvent,
+  type DeployProjectRequest,
   type DeployStepName,
+  resolvePushedSource,
+  verifyDeployment,
+  verifyReleaseSource,
+  waitForEnvironmentReady,
   waitForReleaseAssetManifest,
 } from "./deploy-project.ts";
-
-const CONTROL_PLANE = "https://control.example.test/api";
-const PROJECT_ID = "project-1";
-const PROJECT_SLUG = "my-project";
-const ENVIRONMENT_ID = "environment-1";
-const APP_ROUTE_CONTENT = "export default function Page() { return <main>Hello</main>; }\n";
-
-async function runGit(projectDir: string, ...args: string[]) {
-  const result = await new Deno.Command("git", {
-    args,
-    cwd: projectDir,
-    clearEnv: true,
-    env: Object.fromEntries(
-      Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
-    ),
-    stdout: "null",
-    stderr: "piped",
-  }).output();
-  assertEquals(result.success, true, new TextDecoder().decode(result.stderr));
-}
-
-async function commitProject(projectDir: string) {
-  await runGit(projectDir, "init", "--quiet");
-  await runGit(projectDir, "config", "user.email", "test@veryfront.com");
-  await runGit(projectDir, "config", "user.name", "Veryfront Test");
-  await runGit(projectDir, "add", ".");
-  await runGit(projectDir, "commit", "--quiet", "-m", "initial");
-  const result = await new Deno.Command("git", {
-    args: ["rev-parse", "HEAD"],
-    cwd: projectDir,
-    clearEnv: true,
-    env: Object.fromEntries(
-      Object.entries(Deno.env.toObject()).filter(([key]) => !key.startsWith("GIT_")),
-    ),
-    stdout: "piped",
-  }).output();
-  return new TextDecoder().decode(result.stdout).trim();
-}
-
-function projectConfigText(): string {
-  return JSON.stringify({ projectSlug: PROJECT_SLUG, apiUrl: CONTROL_PLANE }, null, 2) + "\n";
-}
-
-async function createPushedProject(): Promise<{ projectDir: string; commitSha: string }> {
-  const projectDir = await Deno.makeTempDir();
-  await Deno.mkdir(`${projectDir}/app`, { recursive: true });
-  await Deno.writeTextFile(`${projectDir}/veryfront.json`, projectConfigText());
-  await Deno.writeTextFile(`${projectDir}/app/page.tsx`, APP_ROUTE_CONTENT);
-  const commitSha = await commitProject(projectDir);
-  const sourceDigest = await computeSourceDigest([
-    { path: "app/page.tsx", content: APP_ROUTE_CONTENT },
-    { path: "veryfront.json", content: projectConfigText() },
-  ]);
-  await writePushReceipt(projectDir, {
-    controlPlane: CONTROL_PLANE,
-    projectId: PROJECT_ID,
-    projectSlug: PROJECT_SLUG,
-    branch: "main",
-    commitSha,
-    sourceDigest,
-    clean: true,
-  });
-  return { projectDir, commitSha };
-}
-
-async function withFetchStub<T>(
-  handler: (input: string | URL | Request, init?: RequestInit) => Response | Promise<Response>,
-  fn: () => Promise<T>,
-): Promise<T> {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch =
-    ((input: string | URL | Request, init?: RequestInit) =>
-      Promise.resolve(handler(input, init))) as typeof fetch;
-  try {
-    return await fn();
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-}
+import {
+  commitProject,
+  CONTROL_PLANE,
+  createPushedProject,
+  createUnlinkedPushedProject,
+  ENVIRONMENT_ID,
+  InMemoryDeployControlPlane,
+  PROJECT_ID,
+  PROJECT_SLUG,
+  projectConfigText,
+  readyManifest,
+  withDeployEnv,
+  withFetchStub,
+} from "../../../tests/support/deploy-test-support.ts";
 
 async function expectDeployError(
   fn: () => Promise<unknown>,
@@ -122,169 +55,29 @@ async function expectDeployError(
   throw new Error("Expected deployment to reject");
 }
 
-function readyManifest(routes: Record<string, { modules: string[]; css: string[] }> = {
-  "/": { modules: ["app/page.js"], css: [] },
-}): ReleaseAssetManifestResponse {
+async function expectErrorMessage(fn: () => Promise<unknown>): Promise<string | undefined> {
+  try {
+    await fn();
+    return;
+  } catch (e) {
+    return (e as Error).message;
+  }
+}
+
+function helperControlPlane(overrides: Partial<DeployControlPlane>): DeployControlPlane {
   return {
-    state: "ready",
-    manifest_version: 1,
-    manifest: {
-      schemaVersion: 2,
-      projectId: PROJECT_ID,
-      releaseId: "release-1",
-      releaseVersion: 1,
-      manifestVersion: 1,
-      builderVersion: "test",
-      sourceContentHash: "b".repeat(64),
-      createdAt: "2026-07-30T00:00:00.000Z",
-      assetBasePath: "/_vf/assets",
-      modules: {
-        "app/page.js": {
-          contentHash: "a".repeat(64),
-          size: 12,
-          contentType: "text/javascript",
-        },
-      },
-      css: [],
-      routes,
-      dependencyMode: "source",
-      dependencies: {},
-    },
+    controlPlane: CONTROL_PLANE,
+    getProject: () => Promise.resolve({ id: PROJECT_ID, slug: PROJECT_SLUG }),
+    getEnvironment: () => Promise.resolve(null),
+    createRelease: () => Promise.reject(new Error("unexpected createRelease call")),
+    getRelease: () => Promise.reject(new Error("unexpected getRelease call")),
+    listReleaseFiles: async function* () {},
+    getReleaseAssetManifest: () => Promise.resolve(null),
+    createDeployment: () => Promise.reject(new Error("unexpected createDeployment call")),
+    getDeployment: () => Promise.reject(new Error("unexpected getDeployment call")),
+    ...overrides,
   };
 }
-
-async function withDeployEnv<T>(fn: () => Promise<T>): Promise<T> {
-  const keys = [
-    "VERYFRONT_API_TOKEN",
-    "VERYFRONT_API_URL",
-    "VERYFRONT_PROJECT_SLUG",
-    "VERYFRONT_PROJECT_ID",
-  ];
-  const saved = keys.map((key) => Deno.env.get(key));
-  try {
-    Deno.env.set("VERYFRONT_API_TOKEN", "test-token");
-    Deno.env.set("VERYFRONT_API_URL", CONTROL_PLANE);
-    Deno.env.delete("VERYFRONT_PROJECT_SLUG");
-    Deno.env.delete("VERYFRONT_PROJECT_ID");
-    _resetEnvironmentConfig();
-    return await fn();
-  } finally {
-    keys.forEach((key, index) => {
-      const value = saved[index];
-      if (value === undefined) Deno.env.delete(key);
-      else Deno.env.set(key, value);
-    });
-    _resetEnvironmentConfig();
-  }
-}
-
-class InMemoryDeployControlPlane implements DeployControlPlane {
-  readonly controlPlane = CONTROL_PLANE;
-  readonly createdReleases: DeployRelease[] = [];
-  readonly createdDeployments: DeployDeployment[] = [];
-  getProjectError: unknown;
-  environment: DeployEnvironment | null | undefined;
-  releaseVersion: string | null = "2026.07.30-1";
-  releaseProjectId = PROJECT_ID;
-  releaseFiles: DeployReleaseFile[] = [
-    { path: "app/page.tsx", content: APP_ROUTE_CONTENT },
-    { path: "veryfront.json", content: projectConfigText() },
-  ];
-  manifestResponses: unknown[] = [readyManifest()];
-  deploymentRoutingConvergence:
-    | DeployDeployment["routingConvergence"]
-    | undefined = { status: "converged", acknowledged: 1, recipients: 1 };
-  deploymentReadCount = 0;
-
-  private release: DeployRelease | null = null;
-  private deployment: DeployDeployment | null = null;
-
-  async getProject(_reference: string): Promise<DeployProjectRecord> {
-    if (this.getProjectError) throw this.getProjectError;
-    return { id: PROJECT_ID, slug: PROJECT_SLUG };
-  }
-
-  async getEnvironment(_reference: string, name: string): Promise<DeployEnvironment | null> {
-    if (this.environment !== undefined) return this.environment;
-    return {
-      id: ENVIRONMENT_ID,
-      name,
-      protected: false,
-      projectId: PROJECT_ID,
-      deployment: this.deploymentReadCount > 0 && this.deployment && this.release
-        ? {
-          id: this.deployment.id,
-          release: { id: this.release.id, name: this.release.name },
-        }
-        : null,
-      domains: ["https://my-project.production.veryfront.com"],
-    };
-  }
-
-  async createRelease(
-    _reference: string,
-    input: { name?: string; branch: string },
-  ): Promise<DeployRelease> {
-    const release = {
-      id: "release-1",
-      name: input.name ?? input.branch,
-      version: this.releaseVersion,
-      projectId: this.releaseProjectId,
-    };
-    this.release = release;
-    this.createdReleases.push(release);
-    return release;
-  }
-
-  async getRelease(_reference: string, releaseId: string): Promise<DeployRelease> {
-    return this.release ?? {
-      id: releaseId,
-      name: "main",
-      version: this.releaseVersion,
-      projectId: this.releaseProjectId,
-    };
-  }
-
-  async *listReleaseFiles(
-    _reference: string,
-    _releaseId: string,
-  ): AsyncIterable<DeployReleaseFile> {
-    for (const file of this.releaseFiles) yield file;
-  }
-
-  getReleaseAssetManifest() {
-    return Promise.resolve(
-      this.manifestResponses.length > 1
-        ? this.manifestResponses.shift() ?? null
-        : this.manifestResponses[0] ?? null,
-    );
-  }
-
-  async createDeployment(
-    _reference: string,
-    input: { releaseId: string; environmentId: string },
-  ): Promise<DeployDeployment> {
-    const deployment = {
-      id: "deployment-1",
-      releaseId: input.releaseId,
-      environmentId: input.environmentId,
-      routingConvergence: this.deploymentRoutingConvergence,
-    };
-    this.deployment = deployment;
-    this.createdDeployments.push(deployment);
-    return deployment;
-  }
-
-  async getDeployment(_reference: string, deploymentId: string): Promise<DeployDeployment> {
-    this.deploymentReadCount++;
-    return this.deployment ?? {
-      id: deploymentId,
-      releaseId: "release-1",
-      environmentId: ENVIRONMENT_ID,
-    };
-  }
-}
-
 function createDeployment(controlPlane: InMemoryDeployControlPlane) {
   return createDeployProject({
     polling: {
@@ -301,6 +94,7 @@ async function executeApply(
   projectDir: string,
   controlPlane: InMemoryDeployControlPlane,
   observer?: { onEvent(event: DeployEvent): void | Promise<void> },
+  request?: Partial<DeployProjectRequest>,
 ) {
   return await withFetchStub(
     () => new Response("ready"),
@@ -310,11 +104,82 @@ async function executeApply(
         environment: "production",
         mode: "apply",
         source: { kind: "already-pushed" },
+        ...request,
       }, observer),
   );
 }
 
 describe("DeployProject", () => {
+  it("prefers the request projectSlug over configured project references", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const outcome = await executeApply(projectDir, controlPlane, undefined, {
+          projectSlug: "other-project",
+        });
+
+        assertEquals(outcome.kind, "deployed", "request-scoped deploy should complete");
+        assertEquals(
+          controlPlane.projectLookups[0],
+          "other-project",
+          "project lookup should use the request projectSlug, not the configured reference",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("rejects a request projectSlug combined with ensure-pushed source", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      try {
+        const error = await expectDeployError(() =>
+          executeApply(projectDir, controlPlane, undefined, {
+            projectSlug: "other-project",
+            source: { kind: "ensure-pushed" },
+          })
+        );
+
+        assertMatch(
+          (error as Error).message,
+          /already-pushed/,
+          "request-scoped deploys must require an already-pushed source",
+        );
+        assertEquals(controlPlane.createdReleases, [], "no release before the rejection");
+        assertEquals(controlPlane.createdDeployments, [], "no deployment before the rejection");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("deploys a request-scoped project without inferring or persisting a local link", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir, files } = await createUnlinkedPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.releaseFiles = files;
+      try {
+        const outcome = await executeApply(projectDir, controlPlane, undefined, {
+          projectSlug: PROJECT_SLUG,
+        });
+
+        assertEquals(outcome.kind, "deployed", "explicit request slug should bypass inference");
+        const linkExists = await Deno.stat(`${projectDir}/.veryfront/project.json`)
+          .then(() => true, () => false);
+        assertEquals(
+          linkExists,
+          false,
+          "request-scoped deploys must not persist a project link",
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
   it("returns a dry-run plan without release or deployment mutation", async () => {
     await withDeployEnv(async () => {
       const { projectDir } = await createPushedProject();
@@ -672,7 +537,704 @@ describe("DeployProject", () => {
   });
 });
 
-describe("waitForReleaseAssetManifest", () => {
+describe("pushed source provenance", () => {
+  it("accepts dirty metadata when the pushed source digest targets the current commit", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(`${projectDir}/.gitignore`, ".veryfront/\n");
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 1;\n");
+      const commitSha = await commitProject(projectDir);
+      const sourceDigest = await computeSourceDigest([
+        { path: "app.ts", content: "export const value = 1;\n" },
+      ]);
+      await writePushReceipt(projectDir, {
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+        commitSha,
+        sourceDigest,
+        clean: false,
+        pushedAt: "2026-07-10T09:20:00.000Z",
+      });
+      await Deno.writeTextFile(`${projectDir}/app.ts`, "export const value = 2;\n");
+
+      const result = await resolvePushedSource({
+        projectDir,
+        controlPlane: "https://control.example.test/api",
+        projectId: "550e8400-e29b-41d4-a716-446655440000",
+        projectSlug: "my-project",
+        branch: "main",
+      });
+
+      assertEquals(result, { commitSha, sourceDigest });
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+});
+
+describe("environment URL readiness", () => {
+  const hostedTarget = {
+    projectSlug: "my-project",
+    environmentName: "production",
+    url: "https://my-project.production.veryfront.com",
+    protected: false,
+    apiToken: "test-token",
+  };
+
+  it("retries a transient 404 before accepting the environment URL", async () => {
+    const statuses = [404, 200];
+    let requests = 0;
+
+    await withMockFetch(
+      () => Promise.resolve(new Response("ready", { status: statuses[requests++] })),
+      () =>
+        waitForEnvironmentReady(hostedTarget, {
+          pollIntervalMs: 1,
+          timeoutMs: 1_000,
+        }),
+    );
+
+    assertEquals(requests, 2);
+  });
+
+  it("probes the discovered page route instead of requiring the root route", async () => {
+    let requestedUrl = "";
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          route: "/dashboard",
+        }),
+    );
+
+    assertEquals(
+      requestedUrl,
+      "https://my-project.production.veryfront.com/dashboard",
+    );
+  });
+
+  it("does not require a browser URL for projects without page routes", async () => {
+    let requests = 0;
+
+    await withMockFetch(
+      () => {
+        requests++;
+        return Promise.resolve(new Response("not found", { status: 404 }));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          route: null,
+        }),
+    );
+
+    assertEquals(requests, 0);
+  });
+
+  it("authenticates a protected Veryfront environment with the stored token", async () => {
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          protected: true,
+        }),
+    );
+
+    assertEquals(cookie, "authToken=test-token");
+  });
+
+  it("upgrades authenticated Veryfront environment probes to HTTPS", async () => {
+    let requestedUrl = "";
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "http://my-project.production.veryfront.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requestedUrl, "https://my-project.production.veryfront.com/");
+    assertEquals(cookie, "authToken=test-token");
+  });
+
+  it("does not send credentials to a mismatched Veryfront project host", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(
+          request.url === "https://other-project.production.veryfront.com/"
+            ? new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            })
+            : new Response("ready"),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://other-project.production.veryfront.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [
+      {
+        url: "https://other-project.production.veryfront.com/",
+        cookie: null,
+      },
+      {
+        url: "https://my-project.production.veryfront.com/",
+        cookie: "authToken=test-token",
+      },
+    ]);
+  });
+
+  it("authenticates a protected veryfront.org environment directly", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://my-project.production.veryfront.org",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [{
+      url: "https://my-project.production.veryfront.org/",
+      cookie: "authToken=test-token",
+    }]);
+  });
+
+  it("checks a protected custom domain without sending it the token", async () => {
+    const requests: Array<{ url: string; cookie: string | null }> = [];
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requests.push({
+          url: request.url,
+          cookie: request.headers.get("cookie"),
+        });
+        return Promise.resolve(
+          request.url === "https://app.example.com/"
+            ? new Response(null, {
+              status: 302,
+              headers: { location: "https://veryfront.com/sign-in" },
+            })
+            : new Response("ready"),
+        );
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://app.example.com",
+          protected: true,
+        }),
+    );
+
+    assertEquals(requests, [
+      { url: "https://app.example.com/", cookie: null },
+      {
+        url: "https://my-project.production.veryfront.com/",
+        cookie: "authToken=test-token",
+      },
+    ]);
+  });
+
+  it("checks a public custom domain directly without credentials", async () => {
+    let requestedUrl = "";
+    let cookie: string | null = null;
+
+    await withMockFetch(
+      (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestedUrl = request.url;
+        cookie = request.headers.get("cookie");
+        return Promise.resolve(new Response("ready"));
+      },
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://app.example.com",
+        }),
+    );
+
+    assertEquals(requestedUrl, "https://app.example.com/");
+    assertEquals(cookie, null);
+  });
+
+  it("reports malformed environment URLs without polling", async () => {
+    await assertRejects(
+      () =>
+        waitForEnvironmentReady({
+          ...hostedTarget,
+          url: "https://[invalid",
+        }),
+      Error,
+      'Environment URL "https://[invalid" is invalid',
+    );
+  });
+
+  it("does not crash on a malformed redirect location", async () => {
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://[" },
+          }),
+        ),
+      () => waitForEnvironmentReady(hostedTarget),
+    );
+  });
+
+  it("reports an actionable authentication error for sign-in redirects", async () => {
+    await withMockFetch(
+      () =>
+        Promise.resolve(
+          new Response(null, {
+            status: 302,
+            headers: { location: "https://veryfront.com/sign-in" },
+          }),
+        ),
+      () =>
+        assertRejects(
+          () =>
+            waitForEnvironmentReady({
+              ...hostedTarget,
+              protected: true,
+            }),
+          Error,
+          "veryfront login",
+        ),
+    );
+  });
+
+  it("reports the URL and last status when readiness times out", async () => {
+    const error = await withMockFetch(
+      () => Promise.resolve(new Response("not ready", { status: 404 })),
+      () =>
+        expectErrorMessage(
+          () =>
+            waitForEnvironmentReady(hostedTarget, {
+              pollIntervalMs: 1,
+              timeoutMs: 2,
+            }),
+        ),
+    );
+
+    assertEquals(
+      error,
+      "Environment URL https://my-project.production.veryfront.com did not become ready within 1s (last response: HTTP 404). Check the deployment and run deploy again.",
+    );
+  });
+});
+
+describe("project ownership", () => {
+  it("accepts a project-scoped response without redundant ownership metadata", () => {
+    assertProjectOwnership("Environment", { id: "env-1" }, "project-1");
+  });
+
+  it("rejects ownership metadata for another project", async () => {
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          assertProjectOwnership(
+            "Environment",
+            { id: "env-1", projectId: "project-2" },
+            "project-1",
+          )
+        ),
+      Error,
+      "does not belong to resolved project project-1",
+    );
+  });
+});
+
+describe("release source verification", () => {
+  const canonicalRelease = {
+    id: "release-1",
+    name: "github-main-90719c01",
+    version: "0.0.41",
+    projectId: "project-1",
+  };
+  const commitSha = "90719c01c1dded95a6b6df46b0fb17ea37d3ace8";
+
+  it("waits for a well-formed release source digest to match the pushed commit", async () => {
+    const expectedDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit B\n" },
+    ]);
+    let sourceReads = 0;
+    const controlPlane = helperControlPlane({
+      getRelease: () => Promise.resolve(canonicalRelease),
+      listReleaseFiles: async function* () {
+        sourceReads++;
+        yield { path: "app.ts", content: sourceReads === 1 ? "commit A\n" : "commit B\n" };
+      },
+    });
+
+    const result = await verifyReleaseSource(controlPlane, "project-1", {
+      projectId: "project-1",
+      releaseId: "release-1",
+      commitSha,
+      sourceDigest: expectedDigest,
+    }, { attempts: 2, delayMs: 0 });
+
+    assertEquals(result.sourceDigest, expectedDigest, "digest converges on retry");
+    assertEquals(sourceReads, 2, "source read once per attempt");
+  });
+
+  it("fails closed after exhausting well-formed release source digest mismatches", async () => {
+    const expectedDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit A\n" },
+    ]);
+    const staleDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit B\n" },
+    ]);
+    let sourceReads = 0;
+    const controlPlane = helperControlPlane({
+      getRelease: () => Promise.resolve(canonicalRelease),
+      listReleaseFiles: async function* () {
+        sourceReads++;
+        yield { path: "app.ts", content: "commit B\n" };
+      },
+    });
+
+    await assertRejects(
+      () =>
+        verifyReleaseSource(controlPlane, "project-1", {
+          projectId: "project-1",
+          releaseId: "release-1",
+          commitSha,
+          sourceDigest: expectedDigest,
+        }, { attempts: 2, delayMs: 0 }),
+      Error,
+      `expected source digest ${expectedDigest}; last observed ${staleDigest}`,
+    );
+    assertEquals(sourceReads, 2, "stops at configured attempts");
+  });
+
+  it("caps release source verification at the fixed polling budget", async () => {
+    const expectedDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit A\n" },
+    ]);
+    let sourceReads = 0;
+    const controlPlane = helperControlPlane({
+      getRelease: () => Promise.resolve(canonicalRelease),
+      listReleaseFiles: async function* () {
+        sourceReads++;
+        yield { path: "app.ts", content: "commit B\n" };
+      },
+    });
+
+    await assertRejects(
+      () =>
+        verifyReleaseSource(controlPlane, "project-1", {
+          projectId: "project-1",
+          releaseId: "release-1",
+          commitSha,
+          sourceDigest: expectedDigest,
+        }, { attempts: 21, delayMs: 0 }),
+      Error,
+      "does not match pushed commit",
+    );
+    assertEquals(sourceReads, 20, "attempts are capped at the fixed budget");
+  });
+
+  it("does not retry source API failures", async () => {
+    const expectedDigest = await computeSourceDigest([]);
+    let sourceReads = 0;
+    const controlPlane = helperControlPlane({
+      getRelease: () => Promise.resolve(canonicalRelease),
+      // deno-lint-ignore require-yield
+      listReleaseFiles: async function* () {
+        sourceReads++;
+        throw new Error("release source unavailable");
+      },
+    });
+
+    await assertRejects(
+      () =>
+        verifyReleaseSource(controlPlane, "project-1", {
+          projectId: "project-1",
+          releaseId: "release-1",
+          commitSha,
+          sourceDigest: expectedDigest,
+        }, { attempts: 20, delayMs: 0 }),
+      Error,
+      "release source unavailable",
+    );
+    assertEquals(sourceReads, 1, "API failures are not retried");
+  });
+
+  it("rejects invalid release metadata before reading source versions", async () => {
+    const expectedDigest = await computeSourceDigest([]);
+
+    for (
+      const testCase of [
+        {
+          name: "release identity",
+          release: { ...canonicalRelease, id: "other-release" },
+          error: "expected release-1",
+        },
+        {
+          name: "project ownership",
+          release: { ...canonicalRelease, projectId: "other-project" },
+          error: "does not belong to resolved project",
+        },
+        {
+          name: "release name",
+          release: { ...canonicalRelease, name: "other-release-name" },
+          error: "no longer matches the created release name",
+        },
+        {
+          name: "release version",
+          release: { ...canonicalRelease, version: null },
+          error: "has no version",
+        },
+      ]
+    ) {
+      let sourceReads = 0;
+      const controlPlane = helperControlPlane({
+        getRelease: () => Promise.resolve(testCase.release),
+        // deno-lint-ignore require-yield
+        listReleaseFiles: async function* () {
+          sourceReads++;
+        },
+      });
+
+      await assertRejects(
+        () =>
+          verifyReleaseSource(controlPlane, "project-1", {
+            projectId: "project-1",
+            releaseId: "release-1",
+            releaseName: "github-main-90719c01",
+            commitSha,
+            sourceDigest: expectedDigest,
+          }, { attempts: 20, delayMs: 0 }),
+        Error,
+        testCase.error,
+        testCase.name,
+      );
+      assertEquals(sourceReads, 0, testCase.name);
+    }
+  });
+});
+
+describe("deployment verification", () => {
+  const projectId = "550e8400-e29b-41d4-a716-446655440000";
+  const environmentId = "660e8400-e29b-41d4-a716-446655440000";
+  const releaseId = "770e8400-e29b-41d4-a716-446655440000";
+  const deploymentId = "880e8400-e29b-41d4-a716-446655440000";
+  const commitSha = "90719c01c1dded95a6b6df46b0fb17ea37d3ace8";
+  const canonicalRelease = {
+    id: releaseId,
+    name: "github-main-90719c01",
+    version: "0.0.41",
+    projectId,
+  };
+  const canonicalDeployment = { id: deploymentId, releaseId, environmentId };
+
+  function environmentPointingAt(deployment: { id: string; releaseId: string }) {
+    return {
+      id: environmentId,
+      name: "production",
+      protected: true,
+      projectId,
+      deployment: {
+        id: deployment.id,
+        release: { id: deployment.releaseId, name: "github-main-90719c01" },
+      },
+      domains: [],
+    };
+  }
+
+  it("returns evidence only after the environment pointer advances", async () => {
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: "export const value = 1;\n" },
+    ]);
+    let environmentReads = 0;
+    const controlPlane = helperControlPlane({
+      getDeployment: () => Promise.resolve(canonicalDeployment),
+      getRelease: () => Promise.resolve(canonicalRelease),
+      listReleaseFiles: async function* () {
+        yield { path: "app.ts", content: "export const value = 1;\n" };
+      },
+      getEnvironment: () => {
+        environmentReads++;
+        return Promise.resolve(
+          environmentReads === 1
+            ? environmentPointingAt({ id: "old-deployment", releaseId: "old-release" })
+            : environmentPointingAt({ id: deploymentId, releaseId }),
+        );
+      },
+    });
+
+    const result = await verifyDeployment(controlPlane, "my-project", {
+      projectId,
+      projectSlug: "my-project",
+      environmentId,
+      environmentName: "production",
+      releaseId,
+      deploymentId,
+      commitSha,
+      sourceDigest,
+    }, { attempts: 2, delayMs: 0 });
+
+    assertEquals(result, {
+      projectId,
+      projectSlug: "my-project",
+      environmentId,
+      environmentName: "production",
+      releaseId,
+      releaseVersion: "0.0.41",
+      deploymentId,
+      commitSha,
+      sourceDigest,
+    });
+    assertEquals(environmentReads, 2, "verification waits for the pointer to advance");
+  });
+
+  it("fails when production never advances to the created deployment", async () => {
+    const sourceDigest = await computeSourceDigest([]);
+    const controlPlane = helperControlPlane({
+      getDeployment: () => Promise.resolve(canonicalDeployment),
+      getRelease: () => Promise.resolve(canonicalRelease),
+      listReleaseFiles: async function* () {},
+      getEnvironment: () =>
+        Promise.resolve(
+          environmentPointingAt({ id: "old-deployment", releaseId: "old-release" }),
+        ),
+    });
+
+    await assertRejects(
+      () =>
+        verifyDeployment(controlPlane, "my-project", {
+          projectId,
+          projectSlug: "my-project",
+          environmentId,
+          environmentName: "production",
+          releaseId,
+          deploymentId,
+          commitSha,
+          sourceDigest,
+        }, { attempts: 2, delayMs: 0 }),
+      Error,
+      "still points to deployment old-deployment",
+    );
+  });
+
+  it("fails when the release snapshot differs from the pushed commit", async () => {
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit A\n" },
+    ]);
+    const controlPlane = helperControlPlane({
+      getDeployment: () => Promise.resolve(canonicalDeployment),
+      getRelease: () => Promise.resolve(canonicalRelease),
+      listReleaseFiles: async function* () {
+        yield { path: "app.ts", content: "commit B\n" };
+      },
+      getEnvironment: () => Promise.resolve(environmentPointingAt({ id: deploymentId, releaseId })),
+    });
+
+    await assertRejects(
+      () =>
+        verifyDeployment(controlPlane, "my-project", {
+          projectId,
+          projectSlug: "my-project",
+          environmentId,
+          environmentName: "production",
+          releaseId,
+          deploymentId,
+          commitSha,
+          sourceDigest,
+        }, {
+          attempts: 1,
+          delayMs: 0,
+          releaseSource: { attempts: 1, delayMs: 0 },
+        }),
+      Error,
+      "does not match pushed commit",
+    );
+  });
+
+  it("keeps release-source convergence independent from environment convergence", async () => {
+    const sourceDigest = await computeSourceDigest([
+      { path: "app.ts", content: "commit B\n" },
+    ]);
+    let sourceReads = 0;
+    const controlPlane = helperControlPlane({
+      getDeployment: () => Promise.resolve(canonicalDeployment),
+      getRelease: () => Promise.resolve(canonicalRelease),
+      listReleaseFiles: async function* () {
+        sourceReads++;
+        yield { path: "app.ts", content: sourceReads === 1 ? "commit A\n" : "commit B\n" };
+      },
+      getEnvironment: () => Promise.resolve(environmentPointingAt({ id: deploymentId, releaseId })),
+    });
+
+    const result = await verifyDeployment(controlPlane, "my-project", {
+      projectId,
+      projectSlug: "my-project",
+      environmentId,
+      environmentName: "production",
+      releaseId,
+      deploymentId,
+      commitSha,
+      sourceDigest,
+    }, {
+      attempts: 1,
+      delayMs: 0,
+      releaseSource: { attempts: 2, delayMs: 0 },
+    });
+
+    assertEquals(result.sourceDigest, sourceDigest, "source retries independently");
+    assertEquals(sourceReads, 2, "source read retried while environment already converged");
+  });
+});
+
+describe("release asset manifest", () => {
   function controlPlaneReturning(...responses: unknown[]): DeployControlPlane {
     const controlPlane = new InMemoryDeployControlPlane();
     controlPlane.manifestResponses = responses;
@@ -704,7 +1266,7 @@ describe("waitForReleaseAssetManifest", () => {
         waitForReleaseAssetManifest(
           controlPlaneReturning({
             ...current,
-            manifest: { ...current.manifest, schemaVersion: 1 },
+            manifest: { ...current.manifest!, schemaVersion: 1 },
           }),
           PROJECT_SLUG,
           "release-1",
@@ -722,7 +1284,7 @@ describe("waitForReleaseAssetManifest", () => {
         waitForReleaseAssetManifest(
           controlPlaneReturning({
             ...current,
-            manifest: { ...current.manifest, releaseId: "release-other" },
+            manifest: { ...current.manifest!, releaseId: "release-other" },
           }),
           PROJECT_SLUG,
           "release-1",
@@ -812,5 +1374,69 @@ describe("waitForReleaseAssetManifest", () => {
       Error,
       "unsupported state response",
     );
+  });
+
+  it("accepts empty manifests when no page routes are expected", async () => {
+    const base = readyManifest({});
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () =>
+        Promise.resolve({ ...base, manifest: { ...base.manifest!, modules: {} } }),
+    });
+
+    const result = await waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+      expectedRoutes: [],
+      pollIntervalMs: 100,
+      timeoutMs: 100,
+    });
+
+    assertEquals(result.state, "ready", "module-less apps deploy without page routes");
+  });
+});
+
+describe("deployment routing convergence", () => {
+  it("does not warn when routing convergence is fully acknowledged", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.deploymentRoutingConvergence = {
+        status: "converged",
+        acknowledged: 2,
+        recipients: 2,
+      };
+      const warnings: string[] = [];
+      try {
+        const outcome = await executeApply(projectDir, controlPlane, {
+          onEvent(event) {
+            if (event.kind === "warning") warnings.push(event.code);
+          },
+        });
+
+        assertEquals(outcome.kind, "deployed");
+        assertEquals(warnings, [], "acknowledged convergence must not warn");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+  });
+
+  it("keeps compatibility with API versions that omit routing convergence", async () => {
+    await withDeployEnv(async () => {
+      const { projectDir } = await createPushedProject();
+      const controlPlane = new InMemoryDeployControlPlane();
+      controlPlane.deploymentRoutingConvergence = undefined;
+      const warnings: string[] = [];
+      try {
+        const outcome = await executeApply(projectDir, controlPlane, {
+          onEvent(event) {
+            if (event.kind === "warning") warnings.push(event.code);
+          },
+        });
+
+        assertEquals(outcome.kind, "deployed");
+        assertEquals(warnings, [], "missing convergence data must not warn");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 });

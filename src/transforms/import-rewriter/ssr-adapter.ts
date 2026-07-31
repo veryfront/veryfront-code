@@ -1,8 +1,5 @@
-import {
-  DEFAULT_REACT_VERSION,
-  type DependencyPinningSourceInput,
-  getReactImportMap,
-} from "#veryfront/transforms/esm/package-registry.ts";
+import { type DependencyPinningSourceInput } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { hashString } from "#veryfront/cache/hash.ts";

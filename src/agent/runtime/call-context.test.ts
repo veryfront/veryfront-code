@@ -1,0 +1,282 @@
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import { buildAgentCallContext } from "./call-context.ts";
+import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
+
+const MARKER = "<!-- veryfront-runtime-context -->";
+
+function createSkills(): RuntimeSkillDefinition[] {
+  return [
+    {
+      id: "deploy",
+      name: "Deploy",
+      displayName: "Deploy Skill",
+      description: "Deployment guidance",
+      instructions: "Deploy carefully.",
+      allowedTools: ["create_file"],
+      model: "openai/gpt-5.4",
+      thinking: 512,
+      maxSteps: 4,
+    },
+    {
+      id: "review",
+      name: "Review",
+      description: "Review guidance",
+      instructions: "Review carefully.",
+      allowedTools: [],
+    },
+  ];
+}
+
+describe("agent/runtime/call-context", () => {
+  describe("block ordering", () => {
+    it("orders project instructions, project context, and extra blocks before the marker tail", () => {
+      const [message] = buildAgentCallContext({
+        instructions: `Head\n\n${MARKER}\n\nTail`,
+        projectInstructions: "Follow the policy.",
+        projectContext: { projectId: "project-1", branchId: "branch-9" },
+        extraBlocks: ['<runtime_info>\nmodel: "openai/gpt-5.4"\n</runtime_info>'],
+        skills: createSkills(),
+      });
+
+      const content = message?.content ?? "";
+      const order = [
+        "Head",
+        "<project_instructions>",
+        "<project_context>",
+        "<runtime_info>",
+        "Tail",
+        "<available_skills>",
+      ].map((fragment) => content.indexOf(fragment));
+
+      assertEquals(order.some((index) => index < 0), false);
+      assertEquals([...order].sort((a, b) => a - b), order);
+    });
+
+    it("appends blocks after the instructions when the marker is absent", () => {
+      const [message] = buildAgentCallContext({
+        instructions: "Base instructions",
+        extraBlocks: ["Dynamic block"],
+      });
+
+      assertEquals(message?.content, "Base instructions\n\nDynamic block");
+    });
+  });
+
+  describe("block tags", () => {
+    it("renders project instructions with the mandatory-compliance preamble", () => {
+      const [message] = buildAgentCallContext({
+        instructions: "Base",
+        projectInstructions: "Use the project policy.",
+      });
+
+      assertEquals(
+        message?.content,
+        "Base\n\n<project_instructions>\nCRITICAL: You MUST follow these project-specific guidelines:\n\nUse the project policy.\n</project_instructions>",
+      );
+    });
+
+    it("renders an explicit branch id and falls back to main guidance", () => {
+      const [explicit] = buildAgentCallContext({
+        instructions: "Base",
+        projectContext: { projectId: "project-1", branchId: "branch-9" },
+      });
+      const [fallback] = buildAgentCallContext({
+        instructions: "Base",
+        projectContext: { projectId: "project-1" },
+      });
+
+      assertStringIncludes(explicit?.content ?? "", 'branch_id: "branch-9"');
+      assertStringIncludes(
+        fallback?.content ?? "",
+        "branch_id: main (no branch_id needed for file operations)",
+      );
+      assertStringIncludes(fallback?.content ?? "", 'project_reference: "project-1"');
+    });
+
+    it("emits environment context as its own uncached message", () => {
+      const messages = buildAgentCallContext({
+        instructions: "Base",
+        environmentContext: "Runtime facts",
+      });
+
+      assertEquals(messages.length, 2);
+      assertEquals(messages[0]?.providerOptions, {
+        anthropic: { cacheControl: { type: "ephemeral" } },
+      });
+      assertEquals(messages[1], {
+        role: "system",
+        content: "<environment_context>\nRuntime facts\n</environment_context>",
+      });
+    });
+  });
+
+  describe("empty inputs", () => {
+    it("returns instructions alone when nothing else is supplied", () => {
+      const messages = buildAgentCallContext({ instructions: "Base instructions" });
+
+      assertEquals(messages.length, 1);
+      assertEquals(messages[0]?.content, "Base instructions");
+    });
+
+    it("omits the skills block for an empty skill list and drops empty extra blocks", () => {
+      const messages = buildAgentCallContext({
+        instructions: "Base",
+        skills: [],
+        extraBlocks: ["", "Kept"],
+      });
+
+      assertEquals(messages.length, 1);
+      assertEquals(messages[0]?.content, "Base\n\nKept");
+    });
+  });
+
+  describe("skills rendering", () => {
+    it("renders skill metadata and scopes delegation to the available tools", () => {
+      const [message] = buildAgentCallContext({
+        instructions: "Base",
+        skills: createSkills(),
+        availableToolNames: ["agent_reviewer", "load_skill"],
+      });
+
+      const content = message?.content ?? "";
+      assertStringIncludes(content, "<available_skills>");
+      assertStringIncludes(
+        content,
+        '- {"skillId":"deploy","name":"Deploy","displayName":"Deploy Skill","description":"Deployment guidance","allowedTools":["create_file"],"model":"openai/gpt-5.4","thinking":512,"maxSteps":4}',
+      );
+      assertStringIncludes(
+        content,
+        '- {"skillId":"review","name":"Review","description":"Review guidance"}',
+      );
+      assertStringIncludes(
+        content,
+        'When delegating, use only these available scoped delegation tools: "agent_reviewer".',
+      );
+    });
+
+    it("adds the skill tool call signatures only when the caller opts in", () => {
+      const [without] = buildAgentCallContext({ instructions: "Base", skills: createSkills() });
+      const [with_] = buildAgentCallContext({
+        instructions: "Base",
+        skills: createSkills(),
+        includeSkillToolUsage: true,
+      });
+
+      assertEquals((without?.content ?? "").includes("execute_skill_script"), false);
+      assertStringIncludes(with_?.content ?? "", "load_skill_reference: Call with");
+      assertStringIncludes(with_?.content ?? "", "execute_skill_script: Call with");
+    });
+  });
+
+  describe("marker splitting", () => {
+    it("honours a caller-supplied marker", () => {
+      const [message] = buildAgentCallContext({
+        instructions: "Head\n<!--CUT-->\nTail",
+        runtimeContextMarker: "<!--CUT-->",
+        extraBlocks: ["Block"],
+      });
+
+      assertEquals(message?.content, "Head\n\nBlock\n\nTail");
+    });
+
+    it("drops a whitespace-only tail", () => {
+      const [message] = buildAgentCallContext({
+        instructions: `Head\n\n${MARKER}\n\n   `,
+        extraBlocks: ["Block"],
+      });
+
+      assertEquals(message?.content, "Head\n\nBlock");
+    });
+  });
+
+  describe("deduplication", () => {
+    it("skips blocks whose tag the instructions already carry", () => {
+      const messages = buildAgentCallContext({
+        instructions:
+          '<project_context>\nproject_reference: "already-there"\n</project_context>\n\nBase',
+        projectContext: { projectId: "project-1" },
+        environmentContext: "Runtime facts",
+      });
+
+      assertEquals(
+        messages[0]?.content,
+        '<project_context>\nproject_reference: "already-there"\n</project_context>\n\nBase',
+      );
+      assertEquals(
+        messages[1]?.content,
+        "<environment_context>\nRuntime facts\n</environment_context>",
+      );
+    });
+
+    it("still emits the block when the instructions only name the tag in prose", () => {
+      const [message] = buildAgentCallContext({
+        instructions:
+          "Never invent a project reference; read it from the <project_context> block instead.",
+        projectContext: { projectId: "project-1" },
+      });
+
+      assertStringIncludes(message?.content ?? "", 'project_reference: "project-1"');
+      assertEquals((message?.content ?? "").split("<project_context>").length - 1, 2);
+    });
+
+    it("still emits environment context when the instructions only name the tag in prose", () => {
+      const messages = buildAgentCallContext({
+        instructions: "Runtime facts arrive in an <environment_context> block.",
+        environmentContext: "Runtime facts",
+      });
+
+      assertEquals(messages.length, 2);
+      assertEquals(
+        messages[1]?.content,
+        "<environment_context>\nRuntime facts\n</environment_context>",
+      );
+    });
+
+    it("skips environment context the instructions already carry", () => {
+      const messages = buildAgentCallContext({
+        instructions: "Base\n\n<environment_context>\nAlready here\n</environment_context>",
+        environmentContext: "Runtime facts",
+      });
+
+      assertEquals(messages.length, 1);
+      assertEquals((messages[0]?.content ?? "").includes("Runtime facts"), false);
+    });
+
+    it("skips the skills block when the instructions already carry one", () => {
+      const [message] = buildAgentCallContext({
+        instructions:
+          "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+        skills: createSkills(),
+      });
+
+      assertEquals(
+        message?.content,
+        "Base\n\n<available_skills>\n- authored: An authored catalog\n</available_skills>",
+      );
+      assertEquals((message?.content ?? "").includes("Deployment guidance"), false);
+    });
+
+    it("still emits the skills block when the instructions only name the tag in prose", () => {
+      const [message] = buildAgentCallContext({
+        instructions: "Your catalog arrives in an <available_skills> block.",
+        skills: createSkills(),
+      });
+
+      assertStringIncludes(
+        message?.content ?? "",
+        '- {"skillId":"review","name":"Review","description":"Review guidance"}',
+      );
+      assertStringIncludes(message?.content ?? "", "</available_skills>");
+    });
+
+    it("keeps untagged extra blocks that cannot be matched by tag", () => {
+      const [message] = buildAgentCallContext({
+        instructions: "Base",
+        extraBlocks: ["Plain guidance", "Plain guidance"],
+      });
+
+      assertEquals(message?.content, "Base\n\nPlain guidance\n\nPlain guidance");
+    });
+  });
+});

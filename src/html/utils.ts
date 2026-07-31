@@ -14,11 +14,10 @@ import {
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
-  DEFAULT_REACT_VERSION,
   type DependencyPinningSourceInput,
-  esmShReact,
   resolveProjectPackageVersions,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { DEFAULT_REACT_VERSION, esmShReact } from "#veryfront/transforms/esm/react-cdn.ts";
 import {
   appendDependencyPinningKey,
   appendSameOriginDependencyPinningPathKey,

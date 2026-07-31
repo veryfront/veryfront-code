@@ -1,5 +1,5 @@
 import { replaceSpecifiers } from "./lexer.ts";
-import { DEFAULT_REACT_VERSION, getReactImportMap } from "./package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { getLocalReactPaths } from "#veryfront/platform/compat/react-paths.ts";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 

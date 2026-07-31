@@ -7,10 +7,22 @@ import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { computeSourceDigest, writePushReceipt } from "../../shared/deployment-provenance.ts";
 import { setJsonMode } from "../../shared/json-output.ts";
 import { readProjectLink, writeProjectLink } from "../../shared/project-link.ts";
-import { deployCommand, type DeploymentRoutingConvergence } from "./command.ts";
+import { deployCommand } from "./command.ts";
+import { createDeployProject, type DeployProject } from "../../shared/deployment/deploy-project.ts";
+import type { DeploymentRoutingConvergence } from "../../shared/deployment/control-plane.ts";
 import { FakeTime } from "#std/testing/time";
 import { stripAnsi } from "../../ui/ansi.ts";
 import { setVerboseMode } from "../../utils/index.ts";
+
+/**
+ * The real Deploy Execution module with test-bounded polling: these suites
+ * drive deploy end to end over a fetch stub, they never fake the module.
+ */
+function boundedDeployProject(): DeployProject {
+  return createDeployProject({
+    polling: { environmentPollIntervalMs: 1, environmentTimeoutMs: 1_000 },
+  });
+}
 
 const PROJECT_ID = "550e8400-e29b-41d4-a716-446655440000";
 const ENVIRONMENT_ID = "660e8400-e29b-41d4-a716-446655440000";
@@ -346,8 +358,7 @@ it("deploys production from the existing verified push without mutating source",
               dryRun: false,
               force: false,
               quiet: true,
-              environmentPollIntervalMs: 1,
-              environmentTimeoutMs: 1_000,
+              deployProject: boundedDeployProject(),
             }),
         );
       } finally {
@@ -415,8 +426,7 @@ it("defaults omitted deploy branch to main instead of promoting a feature push r
                       dryRun: false,
                       force: false,
                       quiet: true,
-                      environmentPollIntervalMs: 1,
-                      environmentTimeoutMs: 1_000,
+                      deployProject: boundedDeployProject(),
                     }),
                 ),
               Error,
@@ -445,8 +455,7 @@ it("defaults omitted deploy branch to main instead of promoting a feature push r
                     dryRun: false,
                     force: false,
                     quiet: true,
-                    environmentPollIntervalMs: 1,
-                    environmentTimeoutMs: 1_000,
+                    deployProject: boundedDeployProject(),
                   }),
               ),
             Error,
@@ -492,8 +501,7 @@ it("keeps an explicitly selected deploy branch strict", async () => {
               dryRun: false,
               force: false,
               quiet: true,
-              environmentPollIntervalMs: 1,
-              environmentTimeoutMs: 1_000,
+              deployProject: boundedDeployProject(),
             }),
         ),
       Error,
@@ -580,8 +588,7 @@ it("bootstraps exactly one quiet push when no verified push receipt exists", asy
           dryRun: false,
           force: false,
           quiet: true,
-          environmentPollIntervalMs: 1,
-          environmentTimeoutMs: 1_000,
+          deployProject: boundedDeployProject(),
         }),
     );
 
@@ -893,8 +900,7 @@ it("uses canonical production read-back in human and JSON modes", {
         force: false,
         quiet,
         skipSourcePush: true,
-        environmentPollIntervalMs: 1,
-        environmentTimeoutMs: 1_000,
+        deployProject: boundedDeployProject(),
       });
 
     const outputModes = [
@@ -1258,8 +1264,7 @@ it("deploys production from a dirty worktree when the pushed digest matches the 
         force: false,
         quiet: true,
         skipSourcePush: true,
-        environmentPollIntervalMs: 1,
-        environmentTimeoutMs: 1_000,
+        deployProject: boundedDeployProject(),
       }));
 
     assertEquals(

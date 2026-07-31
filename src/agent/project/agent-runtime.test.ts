@@ -137,7 +137,7 @@ Deno.test("project agent runtime keeps factory skill catalogs out of hosted inst
       ? await effectiveSystem()
       : effectiveSystem;
 
-    assertStringIncludes(localPrompt, "## Available Skills");
+    assertStringIncludes(localPrompt, "<available_skills>");
     assertEquals(codeAgent.config.system, "Handle incidents carefully.");
     assertEquals(
       (await createRuntimeAgentDefinitionFromAgent(codeAgent)).instructions,

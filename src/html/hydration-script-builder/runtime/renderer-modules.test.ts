@@ -1,0 +1,312 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ModuleNamespace } from "./env.ts";
+import {
+  isAppRouterPath,
+  isModuleNotFoundError,
+  isRootAppLayoutPath,
+  loadPageModuleWithIndexFallback,
+} from "./renderer.ts";
+import * as RendererRuntime from "./renderer.ts";
+
+describe("hydration-script-builder/runtime/renderer", () => {
+  describe("isModuleNotFoundError", () => {
+    it("treats a failed fetch as module-not-found", () => {
+      assertEquals(
+        isModuleNotFoundError(
+          new TypeError(
+            "Failed to fetch dynamically imported module: http://x/_vf_modules/pages/a.js",
+          ),
+        ),
+        true,
+      );
+      assertEquals(
+        isModuleNotFoundError(new TypeError("error loading dynamically imported module")),
+        true,
+      );
+    });
+
+    it("does not treat a link error as module-not-found", () => {
+      // This is the case that used to be retried at <route>/index.js, replacing
+      // a precise link error with a misleading 404.
+      assertEquals(
+        isModuleNotFoundError(
+          new SyntaxError(
+            "The requested module '/_vf_modules/_veryfront/platform/polyfills/node-noop.js' " +
+              "does not provide an export named 'createHash'",
+          ),
+        ),
+        false,
+      );
+    });
+
+    it("does not treat a module evaluation error as module-not-found", () => {
+      assertEquals(isModuleNotFoundError(new Error("boom during module evaluation")), false);
+      assertEquals(isModuleNotFoundError(new ReferenceError("x is not defined")), false);
+    });
+
+    it("does not treat app errors that merely mention loading as module-not-found", () => {
+      assertEquals(isModuleNotFoundError(new Error("Failed to load user profile")), false);
+      assertEquals(isModuleNotFoundError(new TypeError("Failed to fetch /api/session")), false);
+    });
+
+    it("recognizes the browser wordings for a module that could not be fetched", () => {
+      assertEquals(isModuleNotFoundError(new TypeError("Importing a module script failed.")), true);
+      assertEquals(
+        isModuleNotFoundError(new TypeError("Failed to load module script: unexpected MIME type")),
+        true,
+      );
+    });
+
+    it("handles null and non-Error values", () => {
+      assertEquals(isModuleNotFoundError(null), false);
+      assertEquals(isModuleNotFoundError(undefined), false);
+      assertEquals(isModuleNotFoundError("Failed to fetch dynamically imported module"), true);
+    });
+  });
+
+  describe("loadPageModuleWithIndexFallback", () => {
+    const notFound = (url: string) =>
+      new TypeError("Failed to fetch dynamically imported module: " + url);
+    const linkError = () =>
+      new SyntaxError(
+        "The requested module '/_vf_modules/_veryfront/platform/polyfills/node-noop.js' " +
+          "does not provide an export named 'createHash'",
+      );
+
+    async function captureRejection(promise: Promise<unknown>): Promise<unknown> {
+      try {
+        await promise;
+      } catch (error) {
+        return error;
+      }
+      throw new Error("expected the fallback to reject");
+    }
+
+    it("loads the module from <route>/index.js when <route>.js is missing", async () => {
+      const requested: string[] = [];
+      const pageModule: ModuleNamespace = { default: "docs-index" };
+
+      const loaded = await loadPageModuleWithIndexFallback(
+        "http://modules/pages/docs",
+        "docs",
+        null,
+        (url) => {
+          requested.push(url);
+          if (url.endsWith("/docs.js")) return Promise.reject(notFound(url));
+          return Promise.resolve(pageModule);
+        },
+      );
+
+      assertEquals(loaded, pageModule);
+      assertEquals(requested, [
+        "http://modules/pages/docs.js",
+        "http://modules/pages/docs/index.js",
+      ]);
+    });
+
+    it("retries at /index.js for rejections the classifier does not recognize", async () => {
+      // A proxy that rewrites a module miss into an HTML shell surfaces as a
+      // SyntaxError. Gating the retry on error wording turned that into a blank
+      // page for routes that load fine from <route>/index.js.
+      const requested: string[] = [];
+      const pageModule: ModuleNamespace = { default: "docs-index" };
+
+      const loaded = await loadPageModuleWithIndexFallback(
+        "http://modules/pages/docs",
+        "docs",
+        null,
+        (url) => {
+          requested.push(url);
+          if (url.endsWith("/docs.js")) {
+            return Promise.reject(new SyntaxError("Unexpected token '<'"));
+          }
+          return Promise.resolve(pageModule);
+        },
+      );
+
+      assertEquals(loaded, pageModule);
+      assertEquals(requested.length, 2);
+    });
+
+    it("throws the original error when both the route and its index are missing", async () => {
+      const original = notFound("http://modules/pages/docs.js");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          null,
+          (url) => Promise.reject(url.endsWith("/index.js") ? notFound(url) : original),
+        ),
+      );
+
+      assertEquals(thrown, original);
+    });
+
+    it("throws the link error from <route>.js rather than the retry's 404", async () => {
+      const original = linkError();
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          null,
+          (url) => Promise.reject(url.endsWith("/index.js") ? notFound(url) : original),
+        ),
+      );
+
+      assertEquals(thrown, original);
+    });
+
+    it("throws the retry's link error when <route>.js was merely missing", async () => {
+      const indexLinkError = linkError();
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          null,
+          (url) => Promise.reject(url.endsWith("/index.js") ? indexLinkError : notFound(url)),
+        ),
+      );
+
+      assertEquals(thrown, indexLinkError);
+    });
+
+    it("does not retry when the slug is already an index route", async () => {
+      const requested: string[] = [];
+      const original = notFound("http://modules/pages/index.js");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback("http://modules/pages/index", "index", null, (url) => {
+          requested.push(url);
+          return Promise.reject(original);
+        }),
+      );
+
+      assertEquals(thrown, original);
+      assertEquals(requested, ["http://modules/pages/index.js"]);
+    });
+
+    it("prefers a link error over a stale hydration-data fetch failure", async () => {
+      // Hydration data can carry a pagePath that no longer resolves. That 404
+      // must never outrank an error proving the fallback reached a module.
+      const staleFetchFailure = notFound("http://modules/pages/old-name.js");
+      const indexLinkError = linkError();
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/index",
+          "index",
+          staleFetchFailure,
+          () => Promise.reject(indexLinkError),
+        ),
+      );
+
+      assertEquals(thrown, indexLinkError);
+    });
+
+    it("keeps the hydration-data error when nothing else reached a module", async () => {
+      const original = notFound("http://modules/pages/old-name.js");
+
+      const thrown = await captureRejection(
+        loadPageModuleWithIndexFallback(
+          "http://modules/pages/docs",
+          "docs",
+          original,
+          (url) => Promise.reject(notFound(url)),
+        ),
+      );
+
+      assertEquals(thrown, original);
+    });
+  });
+  describe("isAppRouterPath", () => {
+    it("matches the App Router root and anything under it", () => {
+      assertEquals(isAppRouterPath("app", "app"), true);
+      assertEquals(isAppRouterPath("app/page.tsx", "app"), true);
+      assertEquals(isAppRouterPath("/app/nested/page.tsx", "app"), true);
+    });
+
+    it("does not match a sibling directory that shares the prefix", () => {
+      assertEquals(isAppRouterPath("application/page.tsx", "app"), false);
+      assertEquals(isAppRouterPath("pages/index.tsx", "app"), false);
+    });
+
+    it("honours a custom App Router root", () => {
+      assertEquals(isAppRouterPath("src/app/page.tsx", "src/app"), true);
+      assertEquals(isAppRouterPath("app/page.tsx", "src/app"), false);
+    });
+
+    it("treats a missing path as outside the App Router", () => {
+      assertEquals(isAppRouterPath(undefined, "app"), false);
+    });
+  });
+
+  describe("isRootAppLayoutPath", () => {
+    it("matches the root layout in every source extension", () => {
+      for (const ext of ["tsx", "jsx", "ts", "js"]) {
+        assertEquals(isRootAppLayoutPath(`app/layout.${ext}`, "app"), true);
+      }
+      assertEquals(isRootAppLayoutPath("/app/layout.tsx", "app"), true);
+    });
+
+    it("does not match a nested layout or the page itself", () => {
+      assertEquals(isRootAppLayoutPath("app/blog/layout.tsx", "app"), false);
+      assertEquals(isRootAppLayoutPath("app/page.tsx", "app"), false);
+    });
+  });
+
+  describe("App Router rendering ownership", () => {
+    const isRemoteAppRouterClientPage = (
+      RendererRuntime as unknown as {
+        isRemoteAppRouterClientPage?: (
+          data: Record<string, unknown>,
+          isAppRouterPage: boolean,
+        ) => boolean;
+      }
+    ).isRemoteAppRouterClientPage;
+
+    it("is invariant across absent, full, partial, and unrelated release maps", () => {
+      const releaseMaps = [
+        undefined,
+        {
+          "app/page.tsx": "/_vf/assets/page.js",
+          "app/layout.tsx": "/_vf/assets/layout.js",
+        },
+        { "app/page.tsx": "/_vf/assets/page.js" },
+        { "app/unrelated.tsx": "/_vf/assets/unrelated.js" },
+      ];
+
+      assertEquals(typeof isRemoteAppRouterClientPage, "function");
+      for (const releaseAssetModules of releaseMaps) {
+        assertEquals(
+          isRemoteAppRouterClientPage?.(
+            { clientModuleStrategy: "rsc-module", releaseAssetModules },
+            true,
+          ),
+          true,
+        );
+      }
+    });
+
+    it("keeps Pages Router and filesystem-strategy pages on legacy ownership", () => {
+      assertEquals(
+        isRemoteAppRouterClientPage?.({ clientModuleStrategy: "rsc-module" }, false),
+        false,
+      );
+      assertEquals(
+        isRemoteAppRouterClientPage?.(
+          {
+            clientModuleStrategy: "fs",
+            releaseAssetModules: { "app/page.tsx": "/_vf/assets/page.js" },
+          },
+          true,
+        ),
+        false,
+      );
+    });
+  });
+});

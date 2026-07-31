@@ -88,7 +88,7 @@ describe("server/handlers/request/prod-hydration-module.handler", () => {
     assertExists(response.headers.get("etag"));
 
     const body = await response.text();
-    assertStringIncludes(body, "MODULE_SERVER_URL");
+    assertStringIncludes(body, "/_vf_modules");
     assertStringIncludes(body, "renderPage");
   });
 

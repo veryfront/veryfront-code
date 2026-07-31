@@ -49,10 +49,10 @@ import {
   createDependencyPinningSource,
   type DependencyPinningSnapshot,
   type DependencyPinningSourceInput,
-  getReactUrls,
   resolveDependencyPinningSnapshot,
   resolveProjectReactVersion,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";

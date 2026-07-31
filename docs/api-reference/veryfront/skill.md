@@ -37,8 +37,8 @@ validateSkillFileMetadata(parsed.frontmatter, "review");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `buildSkillManifestPrompt` | Build a bounded, injection-safe skill manifest for an agent system prompt. Catalog IDs and descriptions are JSON-quoted and explicitly labeled as untrusted metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L247) |
-| `buildUnsafeLegacySkillManifestPrompt` | **Deprecated:** This helper does not encode untrusted skill metadata and must not be used in system prompts. Use `buildSkillManifestPrompt`. Reproduce the historical raw Markdown manifest format. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/prompt-augmentation.ts#L131) |
+| `buildSkillManifestPrompt` | Build a bounded, injection-safe skill manifest through the canonical runtime available-skills prompt implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/skill-prompt.ts#L805) |
+| `buildUnsafeLegacySkillManifestPrompt` | **Deprecated:** This helper does not encode untrusted skill metadata and must not be used in system prompts. Use `buildSkillManifestPrompt`. Reproduce the historical raw skill metadata format inside the canonical available-skills block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/skill-prompt.ts#L793) |
 | `createExecuteSkillScriptTool` | Create the execute_skill_script tool. Executes a script from a skill's scripts/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L581) |
 | `createLoadSkillReferenceTool` | Create the load_skill_reference tool. Reads a reference file from a skill's references/, resources/, or assets/ directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L517) |
 | `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L436) |

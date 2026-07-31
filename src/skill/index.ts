@@ -104,7 +104,7 @@ export { snapshotSkillScriptResult } from "./script-result.ts";
 export {
   buildSkillManifestPrompt,
   buildUnsafeLegacySkillManifestPrompt,
-} from "./prompt-augmentation.ts";
+} from "#veryfront/agent/runtime/skill-prompt.ts";
 
 // Allowed-Tools
 export {

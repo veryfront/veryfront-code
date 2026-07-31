@@ -11,7 +11,7 @@ import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { buildEsmShUrl } from "../import-rewriter/url-builder.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
-import { DEFAULT_REACT_VERSION, getReactImportMap } from "./package-registry.ts";
+import { DEFAULT_REACT_VERSION, getReactImportMap } from "./react-cdn.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 
 const logger = rendererLogger.component("http-cache");

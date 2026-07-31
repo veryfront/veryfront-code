@@ -9,12 +9,15 @@ import {
   parseDataEndpointPath,
 } from "#veryfront/modules/server/data-endpoint-path.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
-import {
-  resolveRequestedDependencyPinningSnapshot,
-} from "#veryfront/transforms/esm/package-registry.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
-
-const DEPENDENCY_PINNING_HEADER = "x-veryfront-dependency-pins";
+import {
+  applySnapshotResponseHeaders,
+  readSnapshotHeader,
+  resolveSnapshotForRequest,
+  snapshotConflictResponse,
+  stripSnapshotHeader,
+} from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
 
 export function handleDataEndpoint(
   req: Request,
@@ -38,35 +41,23 @@ export function handleDataEndpoint(
         const rawSlug = parsedPath.slug;
         const encSlug = rawSlug === "index" ? "" : rawSlug;
         const requestUrl = new URL(req.url);
-        const requestedPinKey = req.headers.get(DEPENDENCY_PINNING_HEADER);
         const dependencySource = createHandlerDependencyPinningSource(ctx);
-        const dependencySnapshot = requestedPinKey !== null &&
-            !requestedPinKey.startsWith("on:")
-          ? undefined
-          : await resolveRequestedDependencyPinningSnapshot(
-            dependencySource,
-            requestedPinKey,
-          );
-
-        const isMissingEnabledSnapshot = requestedPinKey === null &&
-          dependencySnapshot?.cacheKey.startsWith("on:");
-        if (!dependencySnapshot || isMissingEnabledSnapshot) {
-          const builder = createResponseBuilder(ctx)
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined, req)
-            .withCache("no-store");
-          withDependencyPinningVary(builder);
+        const resolution = await resolveSnapshotForRequest(
+          dependencySource,
+          readSnapshotHeader(req.headers),
+        );
+        if (resolution.kind === "conflict") {
           return respond(
-            builder.json({ error: "Unknown dependency snapshot", status: 409 }, 409),
+            snapshotConflictResponse(createResponseBuilder(ctx), req, ctx.securityConfig),
           );
         }
+        const dependencySnapshot = resolution.snapshot;
 
         // The transport token must participate in framework caches without
         // leaking into application-visible request/query state.
         const applicationUrl = new URL(requestUrl);
         applicationUrl.pathname = encSlug ? `/${encSlug}` : "/";
-        const applicationHeaders = new Headers(req.headers);
-        applicationHeaders.delete(DEPENDENCY_PINNING_HEADER);
+        const applicationHeaders = stripSnapshotHeader(req.headers);
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
           headers: applicationHeaders,
@@ -96,12 +87,7 @@ export function handleDataEndpoint(
         const etag = computeEtag(body);
 
         const builder = createResponseBuilder(ctx).withCORS(req, ctx.securityConfig?.cors);
-        withDependencyPinningVary(builder);
-        if (dependencySnapshot.cacheKey.startsWith("on:")) {
-          builder.withHeaders({
-            [DEPENDENCY_PINNING_HEADER]: dependencySnapshot.cacheKey,
-          });
-        }
+        applySnapshotResponseHeaders(builder.headers, dependencySnapshot.cacheKey);
 
         if (hasMatchingEtag(req, etag)) {
           return respond(builder.notModified(etag));
@@ -117,10 +103,7 @@ export function handleDataEndpoint(
       } catch (e) {
         const errorMessage = getErrorMessage(e);
         const isInvalidRequest = e instanceof InvalidDataEndpointPathError;
-        const lower = errorMessage.toLowerCase();
-        const isNotFound = lower.includes("not found") ||
-          lower.includes("404") ||
-          (e instanceof Error && e.message.toLowerCase().includes("no page"));
+        const isNotFound = resolveSSRControlOutcome(e)?.kind === "not-found";
         const status = isInvalidRequest ? 400 : isNotFound ? 404 : 500;
 
         const logContext = {
@@ -137,7 +120,7 @@ export function handleDataEndpoint(
         const builder = createResponseBuilder(ctx)
           .withCORS(req, ctx.securityConfig?.cors)
           .withSecurity(ctx.securityConfig ?? undefined, req);
-        withDependencyPinningVary(builder);
+        applySnapshotResponseHeaders(builder.headers);
         return respond(
           builder.json(
             {
@@ -158,13 +141,4 @@ export function handleDataEndpoint(
       "module.data.projectSlug": ctx.projectSlug || "unknown",
     },
   );
-}
-
-function withDependencyPinningVary(builder: ResponseBuilder): void {
-  const existing = builder.headers.get("vary");
-  const values = existing?.split(",").map((value) => value.trim().toLowerCase()) ?? [];
-  if (values.includes(DEPENDENCY_PINNING_HEADER)) return;
-  builder.withHeaders({
-    vary: existing ? `${existing}, ${DEPENDENCY_PINNING_HEADER}` : DEPENDENCY_PINNING_HEADER,
-  });
 }

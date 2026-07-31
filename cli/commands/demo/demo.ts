@@ -38,14 +38,14 @@ import {
   resolveCliApiUrl,
 } from "#cli/shared/constants";
 import { createProject as createSharedProject } from "../../shared/project-creation.ts";
-import { writeProjectLink } from "../../shared/project-link.ts";
 import { randomSuffix } from "#cli/shared/slug";
 import { deployCommand } from "../deploy/index.ts";
 import { pushCommand } from "../push/index.ts";
 import { devCommand } from "../dev/index.ts";
-import { type ApiClient, createApiClient } from "#cli/shared/config";
-import { getProjectTarget, type ProjectTarget } from "../../shared/deployment-provenance.ts";
-import { reserveProjectSlug, type ReserveResult } from "#cli/shared/reserve-slug";
+import { createApiClient, type ResolvedConfig } from "#cli/shared/config";
+import { resolveOrCreateProject } from "#cli/shared/project-resolution";
+import { getProjectTarget } from "../../shared/deployment-provenance.ts";
+import { reserveProjectSlug } from "#cli/shared/reserve-slug";
 import { DEMO_STEPS, type DemoStep } from "./steps.ts";
 
 // ANSI escape codes
@@ -69,22 +69,6 @@ const AUTH_OPTIONS: { id: AuthMethod; label: string }[] = [
   { id: "microsoft", label: "Microsoft" },
   { id: "token", label: "API Token" },
 ];
-
-export async function resolveDemoReservedProject(
-  reserveResult: ReserveResult,
-  token: string,
-  client: ApiClient = createApiClient({
-    apiUrl: resolveCliApiUrl(),
-    apiToken: token,
-    projectSlug: reserveResult.slug,
-  }),
-): Promise<ProjectTarget> {
-  if (reserveResult.projectId) {
-    return { id: reserveResult.projectId, slug: reserveResult.slug };
-  }
-
-  return getProjectTarget(client, reserveResult.slug);
-}
 
 function clearCountdownLine(): void {
   write(`\r  ${" ".repeat(30)}\r`);
@@ -377,14 +361,32 @@ async function executeStepAction(
       console.log(`  ${dim("Registering project...")}`);
 
       try {
-        const reserveResult = await reserveProjectSlug(slug, token);
-        const project = await resolveDemoReservedProject(reserveResult, token);
-        await writeProjectLink(projectDir, {
-          controlPlane: resolveCliApiUrl(),
-          projectId: project.id,
-          projectSlug: project.slug,
+        const demoConfig: ResolvedConfig = {
+          apiUrl: resolveCliApiUrl(),
+          apiToken: token,
+          projectSlug: slug,
+        };
+        const outcome = await resolveOrCreateProject({
+          projectDir,
+          config: demoConfig,
+          source: { kind: "inferred", name: "project files" },
+          client: {
+            getProject: (reference) => getProjectTarget(createApiClient(demoConfig), reference),
+            reserveSlug: async (reserveSlug, options) => {
+              const reserved = await reserveProjectSlug(
+                reserveSlug,
+                token,
+                undefined,
+                undefined,
+                options,
+              );
+              return { slug: reserved.slug, projectId: reserved.projectId };
+            },
+          },
         });
-        actualProjectSlug = project.slug;
+        actualProjectSlug = outcome.kind === "planned-create"
+          ? outcome.plannedSlug
+          : outcome.project.slug;
         console.log("  ✓ Project registered");
 
         console.log(`  ${dim("Pushing code...")}`);

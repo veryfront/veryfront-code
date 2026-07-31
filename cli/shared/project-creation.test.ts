@@ -256,6 +256,32 @@ describe("createProject", () => {
     }
   });
 
+  it("uses the canonical directory-backed integration base files", async () => {
+    const parentDir = await makeTempDir({ prefix: "veryfront-create-integration-base-" });
+    const projectDir = join(parentDir, "github-base");
+
+    try {
+      const result = await createProject({
+        ...baseRequest(parentDir),
+        name: "github-base",
+        integrations: ["github"],
+      });
+
+      assertEquals(result.createdPaths.includes("lib/token-store.ts"), true);
+      assertEquals(result.createdPaths.includes("lib/oauth.ts"), true);
+
+      const [tokenStore, oauth] = await Promise.all([
+        Deno.readTextFile(join(projectDir, "lib/token-store.ts")),
+        Deno.readTextFile(join(projectDir, "lib/oauth.ts")),
+      ]);
+      assertStringIncludes(tokenStore, "createDefaultTokenStore");
+      assertStringIncludes(tokenStore, "getDefaultTokenStore");
+      assertStringIncludes(oauth, "OAuthService");
+    } finally {
+      await remove(parentDir, { recursive: true }).catch(() => {});
+    }
+  });
+
   it("returns feature tips assembled from selected features", async () => {
     const parentDir = await makeTempDir({ prefix: "veryfront-create-tips-" });
 

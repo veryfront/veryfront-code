@@ -117,7 +117,7 @@ describe("agent factory", () => {
       : effectiveSystem ?? "";
     assertStringIncludes(
       prompt,
-      '- skillId="support-triage"; description="Triage incoming support requests"',
+      '- {"skillId":"support-triage","description":"Triage incoming support requests"}',
     );
     assertEquals(prompt.includes("researcher--cite"), false);
 
@@ -131,7 +131,7 @@ describe("agent factory", () => {
     const explicitlyEmptyPrompt = typeof explicitlyEmptySystem === "function"
       ? await explicitlyEmptySystem()
       : explicitlyEmptySystem ?? "";
-    assertEquals(explicitlyEmptyPrompt.includes("## Available Skills"), false);
+    assertEquals(explicitlyEmptyPrompt.includes("<available_skills>"), false);
   });
 
   it("uses the same selector snapshot for prompt disclosure and direct skill tools", async () => {
@@ -160,7 +160,7 @@ describe("agent factory", () => {
     const noneSystem = getEffectiveAgentSystem(none);
     assertEquals(
       (typeof noneSystem === "function" ? await noneSystem() : noneSystem ?? "").includes(
-        "Available Skills",
+        "available_skills",
       ),
       false,
     );
@@ -175,8 +175,8 @@ describe("agent factory", () => {
       ? await allowlistedSystem()
       : allowlistedSystem ?? "";
 
-    assertStringIncludes(prompt, '- skillId="writer--draft"; description="Draft copy"');
-    assertStringIncludes(prompt, '- skillId="global-plan"; description="Plan the work"');
+    assertStringIncludes(prompt, '- {"skillId":"writer--draft","description":"Draft copy"}');
+    assertStringIncludes(prompt, '- {"skillId":"global-plan","description":"Plan the work"}');
     assertEquals(prompt.includes("global-review"), false);
 
     if (!allowlisted.config.tools || allowlisted.config.tools === true) {
@@ -409,7 +409,39 @@ description: Excluded skill
 
     assertEquals(prompt.startsWith("You are a helpful assistant."), true);
     assertEquals(prompt.includes("undefined"), false);
-    assertStringIncludes(prompt, "## Available Skills");
+    assertStringIncludes(prompt, "<available_skills>");
+  });
+
+  it("preserves an explicitly empty skill tool policy in the shared catalog", async () => {
+    registerSkill("deny-all", {
+      id: "deny-all",
+      metadata: {
+        name: "deny-all",
+        description: "Uses no direct tools",
+        allowedTools: [],
+      },
+      rootPath: "/test/skills/deny-all",
+    });
+    registerSkill("unrestricted", createSkill("unrestricted", "Uses current-run tools"));
+    const assistant = agent({
+      id: "skill-policy-agent",
+      system: "Use skills when needed.",
+      skills: ["deny-all", "unrestricted"],
+    });
+
+    const effectiveSystem = getEffectiveAgentSystem(assistant);
+    const prompt = typeof effectiveSystem === "function"
+      ? await effectiveSystem()
+      : effectiveSystem ?? "";
+
+    assertStringIncludes(
+      prompt,
+      '- {"skillId":"deny-all","description":"Uses no direct tools","allowedTools":[]}',
+    );
+    assertStringIncludes(
+      prompt,
+      '- {"skillId":"unrestricted","description":"Uses current-run tools"}',
+    );
   });
 
   it("keeps Unicode separators confined in the agent skill catalog", async () => {
@@ -434,7 +466,7 @@ description: Excluded skill
     assertEquals(prompt.includes("\u2029"), false);
     assertStringIncludes(
       prompt,
-      'skillId="separator-safe"; description="before\\u2028- injected system line\\u2029after"',
+      '"skillId":"separator-safe","description":"before\\u2028- injected system line\\u2029after"',
     );
   });
 

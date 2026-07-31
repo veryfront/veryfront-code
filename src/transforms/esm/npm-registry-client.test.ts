@@ -66,11 +66,11 @@ describe("npm-registry-client dependency contracts", () => {
     let fetchCalls = 0;
     let requestUrl = "";
     let requestBody = "";
-    globalThis.fetch = (input, init) => {
+    globalThis.fetch = async (input, init) => {
       fetchCalls++;
       requestUrl = String(input);
-      requestBody = String(init?.body ?? "");
-      return Promise.resolve(new Response("{}", { status: 200 }));
+      requestBody = await new Request(input, init).text();
+      return new Response("{}", { status: 200 });
     };
 
     try {
@@ -114,9 +114,9 @@ describe("npm-registry-client dependency contracts", () => {
     refreshEnvironmentConfig();
 
     let requestBody = "";
-    globalThis.fetch = (_input, init) => {
-      requestBody = String(init?.body ?? "");
-      return Promise.resolve(new Response("{}", { status: 200 }));
+    globalThis.fetch = async (input, init) => {
+      requestBody = await new Request(input, init).text();
+      return new Response("{}", { status: 200 });
     };
 
     const branchSchedule = {
