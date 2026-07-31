@@ -4,6 +4,8 @@ import { dirname } from "#std/path.ts";
 import { agent, type AgentResponse } from "#veryfront/agent";
 import type { ModelRuntime } from "#veryfront/provider";
 import { dynamicTool } from "#veryfront/tool";
+import { AnthropicProvider } from "../extensions/ext-llm-anthropic/src/index.ts";
+import { OpenAIProvider } from "../extensions/ext-llm-openai/src/index.ts";
 
 export type ToolSearchLiveProof = {
   model: string;
@@ -14,17 +16,45 @@ export type ToolSearchLiveProof = {
   completed: true;
 };
 
-export type ToolSearchLiveArgs = {
+export type ToolSearchLiveArgs = { model: string; output: string };
+export type DirectProviderEnvironment = {
+  ANTHROPIC_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+  VERYFRONT_API_TOKEN?: string;
+};
+
+export type ExtractToolSearchLiveProofInput = {
   model: string;
-  output: string;
+  effectiveProvider: string;
+  response: AgentResponse;
+  requestCatalogs: string[][];
+  targetExecutionCount: number;
 };
 
 type RunToolSearchLiveProofInput = {
   model: string;
   modelRuntime?: ModelRuntime;
+  /** Test-only mutation used to prove the verifier rejects eager loading. */
+  toolLoading?: "deferred" | "eager";
 };
 
-const EXPECTED_TOOL_CALLS = ["tool_search", "read_release_marker"] as const;
+const TARGET_TOOL = "read_release_marker";
+const TARGET_DESCRIPTION = "Read the release marker for this verification run.";
+const EXPECTED_TOOL_CALLS = ["tool_search", TARGET_TOOL] as const;
+const BOOTSTRAP_TOOL_NAMES = new Set([
+  "form_input",
+  "load_skill",
+  "tool_search",
+]);
+const SEARCH_RESULT_KEYS = [
+  "attachableMetadataCount",
+  "loadedCount",
+  "matches",
+  "miss",
+  "nextStep",
+  "resultCount",
+] as const;
+const SEARCH_MATCH_KEYS = ["description", "name", "status"] as const;
 const PROOF_KEYS = [
   "completed",
   "loadingPath",
@@ -33,28 +63,39 @@ const PROOF_KEYS = [
   "targetExecutionCount",
   "toolCalls",
 ] as const;
-const SCHEMA_KEYS = new Set([
-  "$schema",
-  "additionalProperties",
-  "inputSchema",
-  "parameters",
-  "properties",
-  "required",
-  "schema",
-]);
-const CREDENTIAL_PATTERN = /(?:api[_-]?key|authorization|bearer\s+|sk-[A-Za-z0-9_-]{16,})/i;
+const CREDENTIAL_PATTERN =
+  /(?:api[_-]?key|authorization|bearer\s+|sk-[A-Za-z0-9_-]{16,})/i;
 
 function usageError(message: string): Error {
   return new Error(
-    `${message}. Usage: deno run -A scripts/verify-tool-search-live.ts --model <provider/model> --output <path>`,
+    `${message}. Use a direct Anthropic or OpenAI model with --model <provider/model> --output <path>`,
   );
 }
 
-export function parseToolSearchLiveArgs(args: readonly string[]): ToolSearchLiveArgs {
+function parseDirectModel(model: string): {
+  model: string;
+  provider: "anthropic" | "openai";
+  modelId: string;
+} {
+  const normalized = model.trim();
+  const slashIndex = normalized.indexOf("/");
+  const provider = normalized.slice(0, slashIndex).toLowerCase();
+  const modelId = slashIndex < 0 ? "" : normalized.slice(slashIndex + 1).trim();
+  if (
+    (provider !== "anthropic" && provider !== "openai") ||
+    !modelId
+  ) {
+    throw usageError(`Invalid model ${JSON.stringify(normalized || model)}`);
+  }
+  return { model: `${provider}/${modelId}`, provider, modelId };
+}
+
+export function parseToolSearchLiveArgs(
+  args: readonly string[],
+): ToolSearchLiveArgs {
   if (args.length !== 4) {
     throw usageError("Expected exactly --model and --output");
   }
-
   const values = new Map<string, string>();
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
@@ -62,84 +103,232 @@ export function parseToolSearchLiveArgs(args: readonly string[]): ToolSearchLive
     if (flag !== "--model" && flag !== "--output") {
       throw usageError(`Unknown argument ${JSON.stringify(flag)}`);
     }
-    if (!value || value.startsWith("--")) {
-      throw usageError(`Missing value for ${flag}`);
-    }
-    if (values.has(flag)) {
-      throw usageError(`Duplicate argument ${flag}`);
+    if (!value || value.startsWith("--") || values.has(flag)) {
+      throw usageError(`Invalid value for ${flag}`);
     }
     values.set(flag, value);
   }
-
-  const model = values.get("--model");
-  const output = values.get("--output");
-  if (!model || !output) {
+  const rawModel = values.get("--model");
+  const output = values.get("--output")?.trim();
+  if (!rawModel || !output) {
     throw usageError("Both --model and --output are required");
   }
-  if (model.startsWith("veryfront-cloud/")) {
-    throw usageError("Veryfront Cloud models are not allowed");
+  return { model: parseDirectModel(rawModel).model, output };
+}
+
+function directEnvironment(): DirectProviderEnvironment {
+  return {
+    ANTHROPIC_API_KEY: Deno.env.get("ANTHROPIC_API_KEY"),
+    OPENAI_API_KEY: Deno.env.get("OPENAI_API_KEY"),
+  };
+}
+
+export function createDirectModelRuntime(
+  model: string,
+  environment: DirectProviderEnvironment = directEnvironment(),
+): { model: string; provider: "anthropic" | "openai"; runtime: ModelRuntime } {
+  const parsed = parseDirectModel(model);
+  const variable = parsed.provider === "anthropic"
+    ? "ANTHROPIC_API_KEY"
+    : "OPENAI_API_KEY";
+  const credential = environment[variable]?.trim();
+  if (!credential) {
+    throw new Error(`${variable} is required for direct provider verification`);
   }
 
-  return { model, output };
-}
-
-function containsSchema(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(containsSchema);
-  if (!value || typeof value !== "object") return false;
-  return Object.entries(value as Record<string, unknown>).some(([key, entry]) =>
-    SCHEMA_KEYS.has(key) || containsSchema(entry)
-  );
-}
-
-function validateToolCalls(response: AgentResponse, targetExecutionCount: number): void {
-  const toolCallNames = response.toolCalls.map(({ name }) => name);
-  if (
-    toolCallNames.length !== EXPECTED_TOOL_CALLS.length ||
-    toolCallNames.some((name, index) => name !== EXPECTED_TOOL_CALLS[index])
-  ) {
+  const runtime = parsed.provider === "anthropic"
+    ? new AnthropicProvider().createModel(parsed.modelId, {
+      credential,
+      name: "anthropic",
+    })
+    : new OpenAIProvider().createModel(parsed.modelId, {
+      credential,
+      name: "openai",
+      providerName: "openai",
+    });
+  if (runtime.provider !== parsed.provider) {
     throw new Error(
-      `Expected exact fallback tool sequence ${EXPECTED_TOOL_CALLS.join(" -> ")}`,
+      `Unexpected effective provider ${String(runtime.provider)}`,
     );
   }
-  const searchResult = response.toolCalls[0]?.result;
-  if (containsSchema(searchResult)) {
-    throw new Error("The tool_search result contains schema data");
+  return { ...parsed, runtime };
+}
+
+function requestToolCatalog(options: unknown): string[] {
+  const tools = (options as { tools?: unknown }).tools;
+  if (Array.isArray(tools)) {
+    return tools.map((entry) =>
+      String((entry as { name?: unknown }).name ?? "")
+    ).sort();
   }
-  if (response.toolCalls.some(({ status }) => status !== "completed")) {
+  return Object.keys((tools as Record<string, unknown> | undefined) ?? {})
+    .sort();
+}
+
+function observeGenerateCatalogs(
+  runtime: ModelRuntime,
+  requestCatalogs: string[][],
+): ModelRuntime {
+  return {
+    ...runtime,
+    doGenerate(options) {
+      requestCatalogs.push(requestToolCatalog(options));
+      return runtime.doGenerate(options);
+    },
+  };
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const keys = Object.keys(value).sort();
+  return keys.length === expected.length &&
+    keys.every((key, index) => key === expected[index]);
+}
+
+function validateSearchResult(value: unknown): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(
+      "tool_search must return the exact schema-free ToolSearchResult object",
+    );
+  }
+  const result = value as Record<string, unknown>;
+  const matches = result.matches;
+  if (
+    !hasExactKeys(result, SEARCH_RESULT_KEYS) ||
+    !Array.isArray(matches) ||
+    matches.length !== 1 ||
+    result.resultCount !== 1 ||
+    result.loadedCount !== 1 ||
+    result.attachableMetadataCount !== 0 ||
+    result.miss !== false ||
+    typeof result.nextStep !== "string"
+  ) {
+    throw new Error(
+      "tool_search must return the exact schema-free ToolSearchResult shape",
+    );
+  }
+  const match = matches[0];
+  if (
+    !match || typeof match !== "object" || Array.isArray(match) ||
+    !hasExactKeys(match as Record<string, unknown>, SEARCH_MATCH_KEYS) ||
+    (match as Record<string, unknown>).name !== TARGET_TOOL ||
+    (match as Record<string, unknown>).description !== TARGET_DESCRIPTION ||
+    (match as Record<string, unknown>).status !== "loaded"
+  ) {
+    throw new Error(
+      "tool_search must return the expected schema-free ToolSearchResult match",
+    );
+  }
+}
+
+export function extractToolSearchLiveProof(
+  input: ExtractToolSearchLiveProofInput,
+): ToolSearchLiveProof {
+  const parsed = parseDirectModel(input.model);
+  if (input.effectiveProvider !== parsed.provider) {
+    throw new Error(`Unexpected effective provider ${input.effectiveProvider}`);
+  }
+  const firstCatalog = input.requestCatalogs[0] ?? [];
+  if (
+    !firstCatalog.includes("tool_search") ||
+    firstCatalog.includes(TARGET_TOOL) ||
+    firstCatalog.some((name) => !BOOTSTRAP_TOOL_NAMES.has(name))
+  ) {
+    throw new Error(
+      "The first model request did not prove deferred framework fallback",
+    );
+  }
+  const secondCatalog = input.requestCatalogs[1] ?? [];
+  if (
+    !secondCatalog.includes("tool_search") ||
+    !secondCatalog.includes(TARGET_TOOL)
+  ) {
+    throw new Error(
+      "The second model request did not expose the searched target tool",
+    );
+  }
+
+  const names = input.response.toolCalls.map(({ name }) => name);
+  if (
+    names.length !== EXPECTED_TOOL_CALLS.length ||
+    names.some((name, index) => name !== EXPECTED_TOOL_CALLS[index])
+  ) {
+    throw new Error(
+      `Expected exact fallback tool sequence ${
+        EXPECTED_TOOL_CALLS.join(" -> ")
+      }`,
+    );
+  }
+  validateSearchResult(input.response.toolCalls[0]?.result);
+  if (input.response.toolCalls.some(({ status }) => status !== "completed")) {
     throw new Error("Every fallback tool call must complete successfully");
   }
-  if (targetExecutionCount !== 1) {
-    throw new Error(`Expected one read_release_marker execution, received ${targetExecutionCount}`);
+  if (input.targetExecutionCount !== 1) {
+    throw new Error(
+      `Expected one ${TARGET_TOOL} execution, received ${input.targetExecutionCount}`,
+    );
   }
-  if (response.status !== "completed") {
-    throw new Error(`Expected a completed agent response, received ${response.status}`);
+  if (input.response.status !== "completed") {
+    throw new Error(
+      `Expected a completed agent response, received ${input.response.status}`,
+    );
   }
+
+  return {
+    model: parsed.model,
+    loadingPath: "framework-fallback",
+    toolCalls: ["tool_search", TARGET_TOOL],
+    targetExecutionCount: 1,
+    searchResultContainsSchema: false,
+    completed: true,
+  };
 }
 
 export async function runToolSearchLiveProof(
   input: RunToolSearchLiveProofInput,
 ): Promise<ToolSearchLiveProof> {
-  if (input.model.startsWith("veryfront-cloud/")) {
-    throw new Error("Veryfront Cloud models are not allowed");
+  const parsed = parseDirectModel(input.model);
+  const resolved = input.modelRuntime
+    ? {
+      model: parsed.model,
+      provider: parsed.provider,
+      runtime: input.modelRuntime,
+    }
+    : createDirectModelRuntime(parsed.model);
+  if (resolved.runtime.provider !== resolved.provider) {
+    throw new Error(
+      `Unexpected effective provider ${String(resolved.runtime.provider)}`,
+    );
   }
 
   let targetExecutionCount = 0;
-  const modelRuntime = input.modelRuntime;
+  const requestCatalogs: string[][] = [];
+  const observedRuntime = observeGenerateCatalogs(
+    resolved.runtime,
+    requestCatalogs,
+  );
   const verifier = agent({
     id: "tool-search-live-verifier",
-    model: input.model,
+    model: resolved.model,
+    toolLoading: input.toolLoading ?? "deferred",
     system: [
       "Verify framework deferred tool loading.",
       "First call tool_search with the query release marker.",
-      "On the next step call read_release_marker exactly once.",
+      `On the next step call ${TARGET_TOOL} exactly once.`,
       "After the tool result, reply with a short confirmation and do not call more tools.",
     ].join(" "),
     skills: false,
     tools: {
-      read_release_marker: dynamicTool({
-        id: "read_release_marker",
-        description: "Read the release marker for this verification run.",
-        inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      [TARGET_TOOL]: dynamicTool({
+        id: TARGET_TOOL,
+        description: TARGET_DESCRIPTION,
+        inputSchema: {
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        },
         execute: () => {
           targetExecutionCount += 1;
           return { marker: "framework-fallback-verified" };
@@ -147,55 +336,46 @@ export async function runToolSearchLiveProof(
       }),
     },
     maxSteps: 4,
-    ...(modelRuntime ? { resolveModelTransport: () => ({ model: modelRuntime }) } : {}),
+    resolveModelTransport: () => ({ model: observedRuntime }),
   });
 
   const response = await verifier.generate({
     input:
-      "Run the requested verification now. Use tool_search before read_release_marker, execute the marker tool once, then finish.",
+      `Use tool_search before ${TARGET_TOOL}, execute the marker tool once, then finish.`,
   });
-  validateToolCalls(response, targetExecutionCount);
-
-  return {
-    model: input.model,
-    loadingPath: "framework-fallback",
-    toolCalls: ["tool_search", "read_release_marker"],
-    targetExecutionCount: 1,
-    searchResultContainsSchema: false,
-    completed: true,
-  };
+  return extractToolSearchLiveProof({
+    model: resolved.model,
+    effectiveProvider: String(observedRuntime.provider),
+    response,
+    requestCatalogs,
+    targetExecutionCount,
+  });
 }
 
 function validateSanitizedReport(serialized: string): void {
   if (serialized.toLowerCase().includes("native")) {
-    throw new Error("Proof report must not contain native provider search evidence");
+    throw new Error(
+      "Proof report must not contain native provider search evidence",
+    );
   }
   if (CREDENTIAL_PATTERN.test(serialized)) {
     throw new Error("Proof report contains credential-like data");
   }
   const parsed = JSON.parse(serialized) as ToolSearchLiveProof;
-  const keys = Object.keys(parsed).sort();
   if (
-    keys.length !== PROOF_KEYS.length ||
-    keys.some((key, index) => key !== PROOF_KEYS[index])
-  ) {
-    throw new Error("Proof report must use the exact sanitized shape");
-  }
-  if (
-    typeof parsed.model !== "string" ||
+    !hasExactKeys(parsed as unknown as Record<string, unknown>, PROOF_KEYS) ||
+    parseDirectModel(parsed.model).model !== parsed.model ||
     parsed.loadingPath !== "framework-fallback" ||
     !Array.isArray(parsed.toolCalls) ||
     parsed.toolCalls.length !== EXPECTED_TOOL_CALLS.length ||
-    parsed.toolCalls.some((name, index) => name !== EXPECTED_TOOL_CALLS[index]) ||
+    parsed.toolCalls.some((name, index) =>
+      name !== EXPECTED_TOOL_CALLS[index]
+    ) ||
+    parsed.targetExecutionCount !== 1 ||
+    parsed.searchResultContainsSchema !== false ||
     parsed.completed !== true
   ) {
     throw new Error("Proof report must use the exact sanitized shape");
-  }
-  if (parsed.targetExecutionCount !== 1) {
-    throw new Error("Proof report must contain exactly one target execution");
-  }
-  if (parsed.searchResultContainsSchema !== false) {
-    throw new Error("Proof report must not contain a search-result schema");
   }
 }
 
@@ -212,10 +392,16 @@ export async function writeToolSearchLiveProof(
 if (import.meta.main) {
   try {
     const { model, output } = parseToolSearchLiveArgs(Deno.args);
-    const proof = await runToolSearchLiveProof({ model });
-    await writeToolSearchLiveProof(output, proof);
+    await writeToolSearchLiveProof(
+      output,
+      await runToolSearchLiveProof({ model }),
+    );
   } catch (error) {
-    console.error(error instanceof Error ? error.message : "Tool search verification failed");
+    console.error(
+      error instanceof Error
+        ? error.message
+        : "Tool search verification failed",
+    );
     Deno.exit(1);
   }
 }
