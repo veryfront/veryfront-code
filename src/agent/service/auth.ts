@@ -104,6 +104,8 @@ type AuthJwtExtensionModule = {
 };
 
 const RUN_EVENT_WRITER_TOKEN_USE = "run_event_writer";
+// veryfront-issue-inbox#353: remove V1 only after API, Framework, and Agent all
+// emit and accept the V2 `scopes` contract in every deployed environment.
 const RUN_EVENT_WRITER_V1_SCOPES = ["projects:read", "runs:write"] as const;
 const RUN_EVENT_WRITER_V2_SCOPES = ["agent-runs:events:append"] as const;
 

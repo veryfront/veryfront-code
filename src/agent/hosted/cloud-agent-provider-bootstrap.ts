@@ -25,6 +25,7 @@ import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../serv
 import type { RunAgentServiceMainOptions } from "../service/bootstrap.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
+import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
 import {
   type AgentServicePathOption,
   resolveEnvironment,
@@ -57,7 +58,7 @@ export type ResolvedNodeVeryfrontCloudAgentServiceOptions = {
   agentSource?: ProjectAgentRuntimeAgentSource;
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   forwardedConfigNamespace?: string;
-  operationalToolLoadingOverride?: "eager";
+  hostToolPolicy?: HostedHostToolPolicy;
   createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?:

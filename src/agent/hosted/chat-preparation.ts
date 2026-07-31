@@ -40,7 +40,10 @@ import {
 } from "./context-budget-manager.ts";
 import { findSubmittedFormInputResult } from "./form-input-tool.ts";
 import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
-import { createToolExposureCheckpointEvent } from "../runtime/tool-exposure.ts";
+import {
+  createToolExposureCheckpointEvent,
+  TOOL_SEARCH_TOOL_NAME,
+} from "../runtime/tool-exposure.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 
 /** Request payload for normalized hosted chat. */
@@ -330,6 +333,15 @@ export async function prepareHostedChatRuntimeCreationOptions<
     selector: input.agentConfig.skills === false ? [] : input.agentConfig.skills,
   });
   const selectedSkills = skillSelectorSnapshot.definitions;
+  const runtimeConfig = resolveHostedRuntimeRequestConfig({
+    request: input.request,
+    agentConfig: input.agentConfig,
+    resolveModelId: input.resolveModelId,
+    resolveModelThinking: input.resolveModelThinking,
+  });
+  const initialModelVisibleToolNames = runtimeConfig.requestedAllowedTools === undefined
+    ? ["form_input", "load_skill", TOOL_SEARCH_TOOL_NAME]
+    : undefined;
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
@@ -337,12 +349,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
     skills: selectedSkills,
-  });
-  const runtimeConfig = resolveHostedRuntimeRequestConfig({
-    request: input.request,
-    agentConfig: input.agentConfig,
-    resolveModelId: input.resolveModelId,
-    resolveModelThinking: input.resolveModelThinking,
+    ...(initialModelVisibleToolNames === undefined
+      ? {}
+      : { availableToolNames: initialModelVisibleToolNames }),
   });
   return {
     creationOptions: {

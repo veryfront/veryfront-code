@@ -1,6 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
-import { it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
@@ -16,6 +15,8 @@ import {
   createDefaultHostedChatRuntime,
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-chat-runtime.ts";
+import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
@@ -120,6 +121,97 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     inputRequestId: "input-request-1",
   });
   assertEquals(capturedContext.availableToolNames, ["sleep"]);
+});
+
+Deno.test("hosted first provider call keeps deferred skill tools private and load_skill usable", async () => {
+  let capturedProviderBody: unknown;
+
+  try {
+    const prepared = await prepareHostedChatRuntimeCreationOptions({
+      request: {
+        agentId: undefined,
+        userId: "user-1",
+        authToken: "token-1",
+        messages: [],
+        validatedContext: { projectId: "project-1", branchId: null },
+        projectId: "project-1",
+        conversationId: undefined,
+        parentRunId: undefined,
+        upstreamParentConversationId: undefined,
+        upstreamParentRunId: undefined,
+        spawnedFromToolCallId: undefined,
+        model: "anthropic/claude-sonnet-4-6",
+        allowDelegation: undefined,
+        forwardedProps: undefined,
+        runtimeOverrides: undefined,
+        durableRootRun: undefined,
+        persistLatestUserMessageBeforeDurableRun: false,
+      },
+      agentConfig: {
+        id: "agent-1",
+        name: "Agent",
+        description: "Hosted agent",
+        instructions: "Base instructions",
+        tools: true,
+        skills: true,
+      },
+      projectId: "project-1",
+      authToken: "token-1",
+      resolveModelId: (modelId) => modelId,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project instructions",
+          skills: [{
+            id: "deploy",
+            name: "Deploy",
+            description: "Deploy the project",
+            instructions: "Use bash to deploy.",
+            allowedTools: ["bash"],
+          }],
+        }),
+      buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    });
+    const runtime = await createDefaultHostedChatRuntime({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      options: { ...prepared.creationOptions, userId: "user-1" },
+      config: {
+        apiUrl: "https://api.example.com",
+        apiMcpUrl: "https://api.example.com/mcp",
+      },
+      buildLocalTools: () => ({
+        bash: localTool("Run shell commands"),
+        load_skill: localTool("Load skill"),
+      }),
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+    });
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        if (new URL(request.url).pathname.endsWith("/messages")) {
+          capturedProviderBody = await request.clone().json();
+        }
+        return Response.json({ content: [], stop_reason: "end_turn", usage: {} });
+      },
+      async () => {
+        const stream = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of stream.toUIMessageStream()) {
+          // Consume the first provider turn.
+        }
+      },
+    );
+
+    const providerBody = JSON.stringify(capturedProviderBody);
+    assertEquals(providerBody.includes("Deploy the project"), true);
+    assertEquals(providerBody.includes("bash"), false);
+    assertEquals(providerBody.includes("load_skill"), true);
+  } finally {
+    await toolRegistry.clearAll();
+  }
 });
 
 Deno.test("createDefaultHostedChatRuntime forwards hosted project slug to integration discovery", async () => {
@@ -233,43 +325,6 @@ Deno.test("createDefaultHostedChatRuntime keeps per-run host tools out of the gl
   } finally {
     toolRegistry.clearAll();
   }
-});
-
-it("createDefaultHostedChatRuntime applies the host operational loading override", async () => {
-  let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
-
-  await createDefaultHostedChatRuntime({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    operationalToolLoadingOverride: "eager",
-    options: {
-      projectId: "project-1",
-      authToken: "token-1",
-      instructions: "Base instructions",
-      model: "openai/gpt-5.4-nano",
-      agentId: "researcher",
-      allowedTools: ["fetch-paper"],
-    },
-    config: {
-      apiUrl: "https://api.example.com",
-      apiMcpUrl: "https://api.example.com/mcp",
-    },
-    buildLocalTools: (taskContext) => {
-      capturedContext = taskContext;
-      return {
-        "researcher--fetch-paper": {
-          ...localTool("Fetch a paper"),
-          id: "researcher--fetch-paper",
-          ownerAgentId: "researcher",
-          shortName: "fetch-paper",
-        },
-      };
-    },
-    createRemoteToolSource: emptyRemoteSource,
-    preloadLatestConversationUserText: false,
-  });
-
-  assertExists(capturedContext);
-  assertEquals(capturedContext.availableToolNames, ["researcher--fetch-paper"]);
 });
 
 Deno.test("createDefaultHostedChatRuntime awaits per-run tool setup and exposes its cleanup", async () => {

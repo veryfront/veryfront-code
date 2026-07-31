@@ -30,6 +30,7 @@ import type {
 } from "./chat-runtime-contract.ts";
 import {
   type HostedChatRuntimeToolAssemblyResult,
+  type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
@@ -124,8 +125,8 @@ export type DefaultHostedChatRuntimeProjectSwitchInput = {
 /** Options accepted by create default hosted chat runtime. */
 export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
-  /** Host-owned kill switch; never populated from hosted request payloads. */
-  operationalToolLoadingOverride?: "eager";
+  /** Service-owned authorization ceiling applied to Framework host tools. */
+  hostToolPolicy?: HostedHostToolPolicy;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
   buildLocalTools: (
@@ -191,6 +192,7 @@ async function buildToolAssembly(
     taskContext: input.taskContext,
     instructions: input.options.instructions,
     localTools: await input.buildLocalTools(input.taskContext),
+    hostToolPolicy: input.hostToolPolicy,
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
     studioMcpUrl: input.config.studioMcpUrl,
@@ -204,7 +206,6 @@ async function buildToolAssembly(
     createRemoteToolSource: input.createRemoteToolSource,
     traceLocalTools: input.traceLocalTools,
     preloadLatestConversationUserText: input.preloadLatestConversationUserText,
-    operationalToolLoadingOverride: input.operationalToolLoadingOverride,
     sourceIntegrationPolicy: input.sourceIntegrationPolicy,
     prepareRemoteToolInput: ({ toolName, toolInput }) =>
       applyDefaultResearchArtifactPath(toolName, toolInput, input.taskContext),
@@ -239,7 +240,6 @@ function createRuntimeAgentConfig(input: {
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
   modelId: string;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
-  operationalToolLoadingOverride?: "eager";
   refreshSystem?: CreateDefaultHostedChatRuntimeOptions["refreshSystem"];
 }): AgentConfig {
   const liveProjectSteering = input.options.liveProjectSteering;
@@ -274,7 +274,6 @@ function createRuntimeAgentConfig(input: {
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:
       input.options.requireToolExposureCheckpointPersistence === true,
-    __vfOperationalToolLoadingOverride: input.operationalToolLoadingOverride,
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
@@ -379,7 +378,6 @@ export async function createDefaultHostedChatRuntime(
           taskContext,
           toolAssembly,
           modelId,
-          operationalToolLoadingOverride: input.operationalToolLoadingOverride,
           sourceIntegrationPolicy: input.sourceIntegrationPolicy,
           refreshSystem: input.refreshSystem,
         });

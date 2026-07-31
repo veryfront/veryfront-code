@@ -149,6 +149,7 @@ export function createAgentRuntime(
 
   return createDefaultHostedChatRuntime({
     options,
+    hostToolPolicy: context.options.hostToolPolicy,
     sourceIntegrationPolicy: projectRuntime.sourceIntegrationPolicy,
     config: {
       apiUrl: config.VERYFRONT_API_URL,

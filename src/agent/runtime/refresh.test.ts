@@ -15,6 +15,7 @@ import type {
 } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
+import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
   return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
@@ -577,12 +578,14 @@ describe("agent runtime refresh hooks", () => {
 
   it("forces a final response after create_agent succeeds during generate()", async () => {
     const toolNamesByStep: string[][] = [];
+    const systemPromptsByStep: string[] = [];
     let callCount = 0;
     let executionCount = 0;
     const model: ModelRuntime = {
       provider: "anthropic",
       modelId: "claude-sonnet-4-6",
       async doGenerate(options) {
+        systemPromptsByStep.push(extractSystemPrompt(options));
         const rawTools = (options as { tools?: unknown }).tools;
         const toolNames = Array.isArray(rawTools)
           ? rawTools.map((entry) =>
@@ -648,7 +651,12 @@ describe("agent runtime refresh hooks", () => {
 
     const assistant = eagerAgent({
       model: "anthropic/claude-sonnet-4-6",
-      system: "Create agents and summarize successful tool results.",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory(
+          "Create agents and summarize successful tool results.",
+          ["create_agent", "web_fetch", "web_search"],
+        ),
+      ),
       tools: { create_agent: createAgent },
       providerTools: ["web_search", "web_fetch"],
       maxSteps: 3,
@@ -662,12 +670,46 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolNamesByStep[0]?.includes("web_search"), true);
     assertEquals(toolNamesByStep[0]?.includes("web_fetch"), true);
     assertEquals(toolNamesByStep[1], ["load_skill"]);
+    assertEquals(systemPromptsByStep[1]?.includes("- create_agent"), false);
+    assertEquals(systemPromptsByStep[1]?.includes("- load_skill"), true);
     assertEquals(executionCount, 1);
     assertEquals(response.toolCalls[1]?.status, "error");
     assertEquals(
       response.toolCalls[1]?.error,
       'Tool "create_agent" is not available in the current model step',
     );
+  });
+
+  it("omits unsupported provider-native tools from runtime inventory", async () => {
+    let capturedSystem = "";
+    const model: ModelRuntime = {
+      provider: "openai",
+      modelId: "gpt-4o-mini",
+      async doGenerate(options) {
+        capturedSystem = extractSystemPrompt(options);
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+
+    const assistant = eagerAgent({
+      model: "openai/gpt-4o-mini",
+      system: flattenSystemInstructions(
+        withRuntimeToolInventory("Use configured tools.", ["web_search"]),
+      ),
+      providerTools: ["web_search"],
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Search the web" });
+
+    assertEquals(capturedSystem.includes("- web_search"), false);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {

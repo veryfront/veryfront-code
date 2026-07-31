@@ -22,6 +22,7 @@ import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../serv
 import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-sentry.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
+import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
 import { resolveDefaultProcessTarget } from "./cloud-agent-paths.ts";
 import { resolveNodeVeryfrontCloudAgentServiceOptions } from "./cloud-agent-provider-bootstrap.ts";
 import {
@@ -115,6 +116,8 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
    */
   mcpServers?: readonly NodeVeryfrontCloudAgentServiceMcpServer[];
   forwardedConfigNamespace?: string;
+  /** Framework host tools this service deployment authorizes. */
+  hostToolPolicy?: HostedHostToolPolicy;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;

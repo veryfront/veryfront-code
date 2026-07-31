@@ -100,6 +100,11 @@ import {
 } from "#veryfront/integrations/source-policy.ts";
 import { prepareAgentRuntimeStep } from "./agent-runtime-step.ts";
 import { buildStreamedAssistantMessage } from "./streamed-assistant-message.ts";
+import {
+  flattenSystemInstructions,
+  hasRuntimeToolInventory,
+  withRuntimeToolInventory,
+} from "./tool-inventory.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -377,6 +382,18 @@ function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposure
     visible: plan.visible.filter(keep),
     deferred: plan.deferred.filter(keep),
   };
+}
+
+function synchronizeRuntimeToolInventory(
+  systemPrompt: string,
+  runtimeTools: Record<string, unknown> | undefined,
+): string {
+  if (!hasRuntimeToolInventory(systemPrompt)) {
+    return systemPrompt;
+  }
+  return flattenSystemInstructions(
+    withRuntimeToolInventory(systemPrompt, Object.keys(runtimeTools ?? {}).sort()),
+  );
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -1138,6 +1155,7 @@ export class AgentRuntime {
           model: effectiveModel,
           providerTools: stepProviderTools,
         });
+        currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -1724,6 +1742,7 @@ export class AgentRuntime {
         model: effectiveModel,
         providerTools: stepProviderTools,
       });
+      currentSystemPrompt = synchronizeRuntimeToolInventory(currentSystemPrompt, runtimeTools);
       const runtimeToolNames = Object.keys(runtimeTools ?? {}).sort();
 
       const temperature = this.resolveTemperature(

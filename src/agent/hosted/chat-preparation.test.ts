@@ -11,6 +11,7 @@ import {
   prepareHostedChatRuntimeCreationOptions,
   prepareHostedChatRuntimeMessages,
 } from "./chat-preparation.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 
 const userMessage: ChatUiMessage = {
   id: "user-message-1",
@@ -402,6 +403,42 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
     "flush",
     "dispose",
   ]);
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions hides deferred skill tools from the first hosted prompt", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest(),
+    agentConfig: {
+      id: "agent-1",
+      name: "Agent",
+      description: "Hosted agent",
+      instructions: "Base instructions",
+      tools: true,
+      skills: true,
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [{
+          id: "deploy",
+          name: "Deploy",
+          description: "Deploy the project",
+          instructions: "Use bash to deploy.",
+          allowedTools: ["bash"],
+        }],
+      }),
+    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+  });
+
+  const instructions = result.creationOptions.instructions;
+  const system = Array.isArray(instructions)
+    ? instructions.map((message) => message.content).join("\n")
+    : instructions;
+  assertEquals(system.includes("Deploy the project"), true);
+  assertEquals(system.includes("bash"), false);
 });
 
 Deno.test("prepareHostedChatRuntimeCreationOptions uses configured agent tools by default", async () => {
