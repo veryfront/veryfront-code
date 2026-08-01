@@ -29,7 +29,6 @@ const numberIsInteger = Number.isInteger;
 const numberIsSafeInteger = Number.isSafeInteger;
 const ownKeys = Reflect.ownKeys;
 const promiseResolve = Promise.resolve;
-const promiseThen = Promise.prototype.then;
 const PromiseConstructor = Promise;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
@@ -53,9 +52,6 @@ const abortedGetter = getOwnPropertyDescriptor(
   AbortSignal.prototype,
   "aborted",
 )?.get;
-const addEventListener = EventTarget.prototype.addEventListener;
-const removeEventListener = EventTarget.prototype.removeEventListener;
-
 if (!byteLengthGetter || !typedArrayNameGetter || !abortedGetter) {
   throw new TypeError("Required image optimization intrinsics are unavailable");
 }
@@ -300,69 +296,29 @@ function snapshotAbortSignal(value: unknown): AbortSignal {
   return value as AbortSignal;
 }
 
-function cancellationError(): Error {
-  return new Error("Image optimization was cancelled or exceeded its deadline");
+function cancellationError(cause?: unknown): Error {
+  const message = "Image optimization was cancelled or exceeded its deadline";
+  return cause === undefined ? new Error(message) : new Error(message, { cause });
 }
 
 function throwIfAborted(signal: AbortSignal): void {
   if (isAborted(signal)) throw cancellationError();
 }
 
-async function awaitAbortable<T>(
+async function awaitNativeOperation<T>(
   value: unknown,
   signal: AbortSignal,
 ): Promise<T> {
+  const operation = invoke<Promise<T>>(promiseResolve, PromiseConstructor, [value]);
+  let result: T;
+  try {
+    result = await operation;
+  } catch (cause) {
+    if (isAborted(signal)) throw cancellationError(cause);
+    throw cause;
+  }
   throwIfAborted(signal);
-  const operation = invoke<Promise<T>>(promiseResolve, Promise, [value]);
-
-  return await new PromiseConstructor<T>((resolve, reject) => {
-    let settled = false;
-    let listening = false;
-    const cleanup = (): void => {
-      if (!listening) return;
-      listening = false;
-      invoke(removeEventListener, signal, ["abort", onAbort]);
-    };
-    const settle = (callback: () => void): void => {
-      if (settled) return;
-      settled = true;
-      try {
-        cleanup();
-      } catch (cause) {
-        reject(
-          new TypeError("Image optimization signal listener could not be removed", {
-            cause,
-          }),
-        );
-        return;
-      }
-      callback();
-    };
-    const onAbort = (): void => settle(() => reject(cancellationError()));
-
-    try {
-      invoke(addEventListener, signal, ["abort", onAbort, { once: true }]);
-      listening = true;
-    } catch (cause) {
-      settle(() =>
-        reject(
-          new TypeError("Image optimization signal could not be observed", {
-            cause,
-          }),
-        )
-      );
-      return;
-    }
-    if (isAborted(signal)) {
-      onAbort();
-      return;
-    }
-
-    invoke(promiseThen, operation, [
-      (result: T) => settle(() => resolve(result)),
-      (cause: unknown) => settle(() => reject(cause)),
-    ]);
-  });
+  return result;
 }
 
 function snapshotRequest(
@@ -848,7 +804,7 @@ export class BoundSharpImageOptimizationEngine implements ImageOptimizationEngin
     throwIfAborted(snapshot.signal);
     source = this.#runtime.autoOrient(source);
     throwIfAborted(snapshot.signal);
-    const metadata = await awaitAbortable<unknown>(
+    const metadata = await awaitNativeOperation<unknown>(
       this.#runtime.metadata(source),
       snapshot.signal,
     );
@@ -881,7 +837,7 @@ export class BoundSharpImageOptimizationEngine implements ImageOptimizationEngin
           freeze({ width, fit: "inside", withoutEnlargement: true }),
         );
         pipeline = encode(this.#runtime, pipeline, format, snapshot.quality);
-        const output = await awaitAbortable<unknown>(
+        const output = await awaitNativeOperation<unknown>(
           this.#runtime.toBuffer(pipeline, SHARP_OUTPUT_OPTIONS),
           snapshot.signal,
         );
