@@ -39,6 +39,8 @@ import { getErrorMessage } from "#veryfront/errors";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { logger } from "#veryfront/utils";
 
+const DEFAULT_TAILWIND_OUTPUT_DIR = ".veryfront/css";
+
 export interface TailwindBatchOptions {
   enabled?: boolean;
   projectDir: string;
@@ -83,6 +85,17 @@ function configuredStageOutputs(
       stage: "images",
       projectDir: options.images?.projectDir ?? cwd(),
       outputDir: options.images?.outputDir ?? DEFAULT_IMAGE_OPTIONS.outputDir,
+    });
+  }
+  if (
+    options.tailwind !== undefined &&
+    options.tailwind.enabled !== false &&
+    options.tailwind.projectDir
+  ) {
+    outputs.push({
+      stage: "tailwind",
+      projectDir: options.tailwind.projectDir,
+      outputDir: options.tailwind.outputDir ?? DEFAULT_TAILWIND_OUTPUT_DIR,
     });
   }
   if (options.css?.enabled !== false) {
@@ -135,7 +148,11 @@ export async function runAssetPipeline(
 
   const tailwindOptions = options.tailwind;
   if (tailwindOptions && tailwindOptions.enabled !== false) {
-    const { projectDir, sourceDir = "styles", outputDir = ".veryfront/css" } = tailwindOptions;
+    const {
+      projectDir,
+      sourceDir = "styles",
+      outputDir = DEFAULT_TAILWIND_OUTPUT_DIR,
+    } = tailwindOptions;
 
     if (!projectDir) {
       logger.warn("Tailwind CSS processing skipped: projectDir not provided");

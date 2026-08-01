@@ -62,6 +62,72 @@ describe("Asset Pipeline", () => {
       assertEquals(result.images.enabled, false);
       assertEquals(typeof result.css.optimized, "number");
     });
+
+    it("rejects overlapping Tailwind and CSS outputs before either stage writes", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const outputDir = `${projectDir}/.veryfront/css`;
+      try {
+        await assertRejects(
+          () =>
+            runAssetPipeline({
+              images: { enabled: false },
+              tailwind: {
+                enabled: true,
+                projectDir,
+              },
+              css: {
+                enabled: true,
+                projectDir,
+                outputDir: ".veryfront/css",
+              },
+            }),
+          TypeError,
+          "output directories for tailwind and css must not overlap physically",
+        );
+
+        await assertRejects(
+          () => Deno.stat(outputDir),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects Tailwind output aliases of the CSS publication tree", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const physicalOutputDir = `${projectDir}/.veryfront/physical-css`;
+      const aliasOutputDir = `${projectDir}/.veryfront/alias-css`;
+      const sentinelPath = `${physicalOutputDir}/sentinel.txt`;
+      try {
+        await Deno.mkdir(physicalOutputDir, { recursive: true });
+        await Deno.symlink(physicalOutputDir, aliasOutputDir, { type: "dir" });
+        await Deno.writeTextFile(sentinelPath, "preserve me");
+
+        await assertRejects(
+          () =>
+            runAssetPipeline({
+              images: { enabled: false },
+              tailwind: {
+                enabled: true,
+                projectDir,
+                outputDir: ".veryfront/alias-css",
+              },
+              css: {
+                enabled: true,
+                projectDir,
+                outputDir: ".veryfront/physical-css",
+              },
+            }),
+          TypeError,
+          "output directories for tailwind and css must not overlap physically",
+        );
+
+        assertEquals(await Deno.readTextFile(sentinelPath), "preserve me");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 
   describe("checkAssetPipelineDependencies", () => {
