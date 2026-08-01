@@ -6,6 +6,7 @@ import {
   flushApplicationErrors,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
+import { isSentryEnabled } from "#veryfront/observability/sentry.ts";
 import type { LogEntry, LogRecordEmitter } from "#veryfront/utils/logger/index.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/index.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
@@ -68,7 +69,7 @@ export function resolveNodeAgentServiceSentryConfig(
   defaultServiceName = DEFAULT_SERVICE_NAME,
 ): NodeAgentServiceSentryConfig | undefined {
   const dsn = readTrimmedEnv(env, "SENTRY_DSN");
-  if (!dsn) return undefined;
+  if (!dsn || !isSentryEnabled(env.SENTRY_ENABLED, true)) return undefined;
 
   const serviceName = readTrimmedEnv(env, "SENTRY_SERVICE_NAME") ??
     readTrimmedEnv(env, "SENTRY_SERVICE") ??

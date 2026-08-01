@@ -72,6 +72,43 @@ describe("agent/service/node-sentry", () => {
     assertStrictEquals(resolveNodeAgentServiceSentryConfig({}), undefined);
   });
 
+  it("honors explicit Sentry enablement while preserving the legacy DSN behavior when unset", () => {
+    const dsn = "https://public@errors.example.test/42";
+
+    assertEquals(
+      resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "true", SENTRY_DSN: dsn })?.dsn,
+      dsn,
+    );
+    assertStrictEquals(
+      resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "true" }),
+      undefined,
+    );
+    assertStrictEquals(
+      resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "false", SENTRY_DSN: dsn }),
+      undefined,
+    );
+    assertEquals(resolveNodeAgentServiceSentryConfig({ SENTRY_DSN: dsn })?.dsn, dsn);
+  });
+
+  it("does not load the Sentry SDK when explicitly disabled with a valid DSN", async () => {
+    let loadCount = 0;
+    const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+      env: {
+        SENTRY_ENABLED: "false",
+        SENTRY_DSN: "https://public@errors.example.test/42",
+      },
+      loadExtension: () => {
+        loadCount += 1;
+        return Promise.resolve({
+          createNodeSentryApplicationErrorReporter: () => createReporter(),
+        });
+      },
+    });
+
+    assertEquals(lifecycle.enabled, false);
+    assertEquals(loadCount, 0);
+  });
+
   it("converts unexpected Agent error logs into application errors with structured attributes", () => {
     const reporter = createReporter();
     const emitter = createNodeAgentServiceLogApplicationErrorEmitter();
