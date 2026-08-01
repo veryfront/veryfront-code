@@ -13,6 +13,56 @@ import { resolve, sep } from "../../../compat/path/index.ts";
 import { validateTempDirectoryPrefix } from "../../../compat/temp-directory-prefix.ts";
 import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
+import {
+  NodeCompatibleFileSystemAdapter,
+  type NodeFileSystemCapabilityOptions,
+} from "../shared/node-filesystem-adapter.ts";
+
+interface DenoCreateFile {
+  write(content: Uint8Array): Promise<number>;
+  close(): void;
+}
+
+interface DenoCreateRuntime {
+  open(
+    path: string,
+    options: { write: true; createNew: true },
+  ): Promise<DenoCreateFile>;
+}
+
+interface DenoFileSystemCapabilityOptions extends NodeFileSystemCapabilityOptions {
+  /** Test seam for Deno createNew availability and partial write failures. */
+  readonly denoCreateRuntime?: DenoCreateRuntime | null;
+}
+
+function hasOwn(value: object, property: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, property);
+}
+
+function getDenoCreateRuntime(): DenoCreateRuntime | null {
+  const runtime = (globalThis as typeof globalThis & { Deno?: typeof Deno }).Deno;
+  return runtime && typeof runtime.open === "function" ? runtime : null;
+}
+
+async function createDenoFileBytesExclusive(
+  runtime: DenoCreateRuntime,
+  path: string,
+  content: Uint8Array,
+): Promise<void> {
+  const file = await runtime.open(path, { write: true, createNew: true });
+  try {
+    let offset = 0;
+    while (offset < content.byteLength) {
+      const written = await file.write(content.subarray(offset));
+      if (!Number.isSafeInteger(written) || written <= 0 || written > content.byteLength - offset) {
+        throw new Error("Deno createNew write made no forward progress");
+      }
+      offset += written;
+    }
+  } finally {
+    file.close();
+  }
+}
 
 function assertDenoRuntime(method: string): void {
   if (typeof Deno === "undefined") {
@@ -80,7 +130,24 @@ function createClosedWatcher(): FileWatcher {
 }
 
 export class DenoFileSystemAdapter implements FileSystemAdapter {
-  constructor() {
+  constructor(options: DenoFileSystemCapabilityOptions = {}) {
+    const nodeCompatible = new NodeCompatibleFileSystemAdapter(undefined, options);
+    if (Object.hasOwn(nodeCompatible, "readFileSnapshotWithinLimit")) {
+      Object.defineProperty(this, "readFileSnapshotWithinLimit", {
+        value: nodeCompatible.readFileSnapshotWithinLimit,
+        enumerable: true,
+      });
+    }
+    const createRuntime = hasOwn(options, "denoCreateRuntime")
+      ? options.denoCreateRuntime
+      : getDenoCreateRuntime();
+    if (options.exclusiveCreate !== false && createRuntime) {
+      Object.defineProperty(this, "createFileBytesExclusive", {
+        value: (path: string, content: Uint8Array) =>
+          createDenoFileBytesExclusive(createRuntime, path, content),
+        enumerable: true,
+      });
+    }
     if (new.target === DenoFileSystemAdapter) {
       markNativeFileSystemAdapter(this);
     }
@@ -286,4 +353,13 @@ export class DenoFileSystemAdapter implements FileSystemAdapter {
     });
     return watcher;
   }
+}
+
+export interface DenoFileSystemAdapter {
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
+  createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
 }

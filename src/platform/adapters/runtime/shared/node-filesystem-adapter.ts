@@ -11,6 +11,9 @@ import { makeNodeTempDir } from "./temp-dir.ts";
 import { isNotFoundError } from "../../../compat/fs.ts";
 import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
+import { constants as nodeFsConstants } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "../../../compat/path/index.ts";
+import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 
 export interface NodeFileSystemLogger {
   error(message: string, context?: Record<string, unknown>): void;
@@ -22,12 +25,268 @@ const silentLogger: NodeFileSystemLogger = {
   debug: () => {},
 };
 
+interface NodeFileSnapshotStat {
+  readonly dev: bigint;
+  readonly ino: bigint;
+  readonly size: bigint;
+  readonly mtimeNs: bigint;
+  readonly ctimeNs: bigint;
+  isFile(): boolean;
+  isSymbolicLink(): boolean;
+}
+
+interface NodeFileHandle {
+  stat(): Promise<NodeFileSnapshotStat>;
+  read(
+    buffer: Uint8Array,
+    offset: number,
+    length: number,
+    position: number,
+  ): Promise<{ bytesRead: number }>;
+  writeFile(content: Uint8Array): Promise<void>;
+  close(): Promise<void>;
+}
+
+export interface NodeFileSystemOperations {
+  realpath(path: string): Promise<string>;
+  lstat(path: string): Promise<NodeFileSnapshotStat>;
+  open(path: string, flags: number | string): Promise<NodeFileHandle>;
+}
+
+export interface NodeFileSystemCapabilityOptions {
+  /** Test seam for runtime constants. An own undefined value means unavailable. */
+  readonly noFollow?: number;
+  /** Test seam for create-new primitive availability. */
+  readonly exclusiveCreate?: boolean;
+  /** Test seam for deterministic filesystem races and write failures. */
+  readonly operations?: Partial<NodeFileSystemOperations>;
+}
+
+function toSnapshotStat(stats: import("node:fs").BigIntStats): NodeFileSnapshotStat {
+  return {
+    dev: stats.dev,
+    ino: stats.ino,
+    size: stats.size,
+    mtimeNs: stats.mtimeNs,
+    ctimeNs: stats.ctimeNs,
+    isFile: () => stats.isFile(),
+    isSymbolicLink: () => stats.isSymbolicLink(),
+  };
+}
+
+const nodeFileSystemOperations: NodeFileSystemOperations = {
+  async realpath(path) {
+    const fs = await import("node:fs/promises");
+    return await fs.realpath(path);
+  },
+  async lstat(path) {
+    const fs = await import("node:fs/promises");
+    return toSnapshotStat(await fs.lstat(path, { bigint: true }));
+  },
+  async open(path, flags) {
+    const fs = await import("node:fs/promises");
+    const handle = await fs.open(path, flags);
+    return {
+      async stat() {
+        return toSnapshotStat(await handle.stat({ bigint: true }));
+      },
+      read(buffer, offset, length, position) {
+        return handle.read(buffer, offset, length, position);
+      },
+      writeFile(content) {
+        return handle.writeFile(content);
+      },
+      close() {
+        return handle.close();
+      },
+    };
+  },
+};
+
+function hasOwn(value: object, property: PropertyKey): boolean {
+  return Object.prototype.hasOwnProperty.call(value, property);
+}
+
+function isContainedPath(path: string, root: string): boolean {
+  const relation = relative(root, path);
+  return relation === "" ||
+    (relation !== ".." && !relation.startsWith(`..${sep}`) && !isAbsolute(relation));
+}
+
+function requirePositiveSafeInteger(value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError("Snapshot byte limit must be a positive safe integer");
+  }
+}
+
+function sameIdentity(left: NodeFileSnapshotStat, right: NodeFileSnapshotStat): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function sameGeneration(left: NodeFileSnapshotStat, right: NodeFileSnapshotStat): boolean {
+  return sameIdentity(left, right) &&
+    left.size === right.size &&
+    left.mtimeNs === right.mtimeNs &&
+    left.ctimeNs === right.ctimeNs;
+}
+
+function changed(message: string, cause?: unknown): FileSnapshotChangedError {
+  const error = new FileSnapshotChangedError(message);
+  if (cause !== undefined) {
+    Object.defineProperty(error, "cause", { value: cause, configurable: true });
+  }
+  return error;
+}
+
+async function readNodeFileSnapshotWithinLimit(
+  operations: NodeFileSystemOperations,
+  noFollow: number,
+  path: string,
+  containmentRoot: string,
+  byteLimit: number,
+): Promise<Uint8Array> {
+  requirePositiveSafeInteger(byteLimit);
+  const lexicalRoot = resolve(containmentRoot);
+  const candidate = resolve(path);
+  if (!isContainedPath(candidate, lexicalRoot)) {
+    throw new TypeError("Snapshot path must be contained by the requested root");
+  }
+
+  const canonicalRoot = await operations.realpath(lexicalRoot);
+  const pathnameBefore = await operations.lstat(candidate);
+  if (pathnameBefore.isSymbolicLink()) {
+    throw new TypeError("Snapshot path must not be a symbolic link");
+  }
+  if (!pathnameBefore.isFile()) {
+    throw new TypeError("Snapshot path must identify a regular file");
+  }
+
+  const handle = await operations.open(candidate, nodeFsConstants.O_RDONLY | noFollow);
+  try {
+    const handleBefore = await handle.stat();
+    if (!handleBefore.isFile() || !sameGeneration(pathnameBefore, handleBefore)) {
+      throw changed("File identity changed while opening the snapshot");
+    }
+
+    let canonicalTarget: string;
+    let pathnameOpened: NodeFileSnapshotStat;
+    try {
+      [canonicalTarget, pathnameOpened] = await Promise.all([
+        operations.realpath(candidate),
+        operations.lstat(candidate),
+      ]);
+    } catch (cause) {
+      throw changed("File target became uncertain while opening the snapshot", cause);
+    }
+    if (
+      pathnameOpened.isSymbolicLink() ||
+      !pathnameOpened.isFile() ||
+      !sameGeneration(handleBefore, pathnameOpened)
+    ) {
+      throw changed("File identity changed while opening the snapshot");
+    }
+    if (!isContainedPath(canonicalTarget, canonicalRoot)) {
+      throw new TypeError("Snapshot target must be contained by the canonical root");
+    }
+
+    if (handleBefore.size < 0n) {
+      throw changed("File size became uncertain while opening the snapshot");
+    }
+    if (handleBefore.size > BigInt(byteLimit)) {
+      throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+    }
+
+    const size = Number(handleBefore.size);
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(size);
+    } catch (cause) {
+      throw new Error("Unable to allocate the admitted snapshot buffer", { cause });
+    }
+    let offset = 0;
+    while (offset < size) {
+      const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
+      if (!Number.isSafeInteger(bytesRead) || bytesRead <= 0 || bytesRead > size - offset) {
+        throw changed("File size changed while reading the snapshot");
+      }
+      offset += bytesRead;
+    }
+
+    let handleAfter: NodeFileSnapshotStat;
+    let pathnameAfter: NodeFileSnapshotStat;
+    let canonicalTargetAfter: string;
+    try {
+      [handleAfter, pathnameAfter, canonicalTargetAfter] = await Promise.all([
+        handle.stat(),
+        operations.lstat(candidate),
+        operations.realpath(candidate),
+      ]);
+    } catch (cause) {
+      throw changed("File identity became uncertain after reading the snapshot", cause);
+    }
+    if (
+      !pathnameAfter.isFile() ||
+      pathnameAfter.isSymbolicLink() ||
+      !sameGeneration(handleBefore, handleAfter) ||
+      !sameGeneration(handleBefore, pathnameAfter) ||
+      canonicalTargetAfter !== canonicalTarget ||
+      !isContainedPath(canonicalTargetAfter, canonicalRoot)
+    ) {
+      throw changed("File snapshot changed during the read");
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+async function createNodeFileBytesExclusive(
+  operations: NodeFileSystemOperations,
+  path: string,
+  content: Uint8Array,
+): Promise<void> {
+  const handle = await operations.open(path, "wx");
+  try {
+    await handle.writeFile(content);
+  } finally {
+    await handle.close();
+  }
+}
+
 /**
  * Filesystem implementation shared by runtimes that provide Node-compatible
  * `node:fs` APIs (currently Node.js and Bun).
  */
 export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
-  constructor(private readonly logger: NodeFileSystemLogger = silentLogger) {
+  constructor(
+    private readonly logger: NodeFileSystemLogger = silentLogger,
+    options: NodeFileSystemCapabilityOptions = {},
+  ) {
+    const operations = {
+      ...nodeFileSystemOperations,
+      ...options.operations,
+    } as NodeFileSystemOperations;
+    const noFollow = hasOwn(options, "noFollow") ? options.noFollow : nodeFsConstants.O_NOFOLLOW;
+    if (typeof noFollow === "number" && noFollow !== 0) {
+      Object.defineProperty(this, "readFileSnapshotWithinLimit", {
+        value: (path: string, containmentRoot: string, byteLimit: number) =>
+          readNodeFileSnapshotWithinLimit(
+            operations,
+            noFollow,
+            path,
+            containmentRoot,
+            byteLimit,
+          ),
+        enumerable: true,
+      });
+    }
+    if (options.exclusiveCreate !== false) {
+      Object.defineProperty(this, "createFileBytesExclusive", {
+        value: (path: string, content: Uint8Array) =>
+          createNodeFileBytesExclusive(operations, path, content),
+        enumerable: true,
+      });
+    }
     if (new.target === NodeCompatibleFileSystemAdapter) {
       markNativeFileSystemAdapter(this);
     }
@@ -303,4 +562,13 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
     })();
     return watcher;
   }
+}
+
+export interface NodeCompatibleFileSystemAdapter {
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
+  createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
 }

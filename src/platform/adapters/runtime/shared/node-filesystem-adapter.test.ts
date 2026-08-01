@@ -1,11 +1,284 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { NodeCompatibleFileSystemAdapter } from "./node-filesystem-adapter.ts";
 import { setupNodeFsWatcher } from "./shared-watcher.ts";
 
+type AdapterOptions = {
+  noFollow?: number;
+  exclusiveCreate?: boolean;
+  operations?: Record<string, unknown>;
+};
+
+const TestableNodeCompatibleFileSystemAdapter = NodeCompatibleFileSystemAdapter as unknown as new (
+  logger?: undefined,
+  options?: AdapterOptions,
+) => NodeCompatibleFileSystemAdapter;
+
+function requireSnapshotReader(adapter: NodeCompatibleFileSystemAdapter) {
+  assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+  assertExists(adapter.readFileSnapshotWithinLimit);
+  return adapter.readFileSnapshotWithinLimit;
+}
+
+function requireExclusiveCreator(adapter: NodeCompatibleFileSystemAdapter) {
+  assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
+  assertExists(adapter.createFileBytesExclusive);
+  return adapter.createFileBytesExclusive;
+}
+
 describe("NodeCompatibleFileSystemAdapter", () => {
+  it("reads empty and exact-limit snapshots and rejects invalid or oversized inputs", async () => {
+    const root = await Deno.makeTempDir({ prefix: "veryfront-node-snapshot-" });
+    try {
+      const empty = `${root}/empty.bin`;
+      const exact = `${root}/exact.bin`;
+      const oversized = `${root}/oversized.bin`;
+      const directory = `${root}/directory`;
+      const link = `${root}/link.bin`;
+      await Deno.writeFile(empty, new Uint8Array());
+      await Deno.writeFile(exact, new Uint8Array([1, 2, 3]));
+      await Deno.writeFile(oversized, new Uint8Array([1, 2, 3, 4]));
+      await Deno.mkdir(directory);
+      await Deno.symlink(exact, link);
+
+      const readSnapshot = requireSnapshotReader(new NodeCompatibleFileSystemAdapter());
+      assertEquals([...await readSnapshot(empty, root, 1)], []);
+      assertEquals([...await readSnapshot(exact, root, 3)], [1, 2, 3]);
+      await assertRejects(() => readSnapshot(oversized, root, 3), RangeError);
+      for (const limit of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        await assertRejects(() => readSnapshot(exact, root, limit), RangeError);
+      }
+      await assertRejects(() => readSnapshot(directory, root, 3), TypeError);
+      await assertRejects(() => readSnapshot(link, root, 3), TypeError);
+      await assertRejects(() => readSnapshot(`${root}/../outside.bin`, root, 3), TypeError);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("omits snapshot authority when O_NOFOLLOW is absent or zero", () => {
+    for (const noFollow of [undefined, 0]) {
+      const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { noFollow });
+      assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
+      assertEquals(adapter.readFileSnapshotWithinLimit, undefined);
+      assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
+    }
+  });
+
+  it("omits exclusive create independently from available snapshot authority", () => {
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      exclusiveCreate: false,
+    });
+    assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+    assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), false);
+  });
+
+  it("rejects oversize from handle metadata without reading or retaining limit plus one", async () => {
+    let readCalls = 0;
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const operations = {
+      realpath: () => Promise.resolve("/root"),
+      lstat: () => Promise.resolve(stat),
+      open: () =>
+        Promise.resolve({
+          stat: () => Promise.resolve(stat),
+          read: () => {
+            readCalls++;
+            return Promise.resolve({ bytesRead: 0 });
+          },
+          close: () => Promise.resolve(),
+        }),
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations,
+    });
+
+    await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 2),
+      RangeError,
+    );
+    assertEquals(readCalls, 0);
+  });
+
+  it("does not report allocation capacity failure as byte-limit overflow", async () => {
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: BigInt(Number.MAX_SAFE_INTEGER),
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(stat),
+        open: () =>
+          Promise.resolve({
+            stat: () => Promise.resolve(stat),
+            close: () => Promise.resolve(),
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () =>
+        requireSnapshotReader(adapter)(
+          "/root/file.bin",
+          "/root",
+          Number.MAX_SAFE_INTEGER,
+        ),
+      Error,
+    );
+    assertEquals(error instanceof RangeError, false);
+  });
+
+  it("reads only the opened handle and rejects pathname replacement", async () => {
+    const opened = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const replacement = { ...opened, ino: 9n };
+    let lstatCalls = 0;
+    let openCalls = 0;
+    let closed = false;
+    const operations = {
+      realpath: () => Promise.resolve("/root/file.bin"),
+      lstat: () => Promise.resolve(lstatCalls++ === 0 ? opened : replacement),
+      open: () => {
+        openCalls++;
+        return Promise.resolve({
+          stat: () => Promise.resolve(opened),
+          read: (buffer: Uint8Array) => {
+            buffer.set([1, 2, 3]);
+            return Promise.resolve({ bytesRead: 3 });
+          },
+          close: () => {
+            closed = true;
+            return Promise.resolve();
+          },
+        });
+      },
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations,
+    });
+
+    await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      FileSnapshotChangedError,
+    );
+    assertEquals(openCalls, 1);
+    assertEquals(closed, true);
+  });
+
+  it("rejects mutation of the opened file between metadata reads", async () => {
+    const before = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const after = { ...before, mtimeNs: 8n, ctimeNs: 9n };
+    let handleStatCalls = 0;
+    const operations = {
+      realpath: () => Promise.resolve("/root/file.bin"),
+      lstat: () => Promise.resolve(before),
+      open: () =>
+        Promise.resolve({
+          stat: () => Promise.resolve(handleStatCalls++ === 0 ? before : after),
+          read: (buffer: Uint8Array) => {
+            buffer.set([1, 2, 3]);
+            return Promise.resolve({ bytesRead: 3 });
+          },
+          close: () => Promise.resolve(),
+        }),
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations,
+    });
+
+    await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      FileSnapshotChangedError,
+    );
+  });
+
+  it("creates byte files exclusively and never truncates colliding entries", async () => {
+    const root = await Deno.makeTempDir({ prefix: "veryfront-node-exclusive-" });
+    try {
+      const absent = `${root}/created.bin`;
+      const existing = `${root}/existing.bin`;
+      const directory = `${root}/directory`;
+      await Deno.writeFile(existing, new Uint8Array([9, 8, 7]));
+      await Deno.mkdir(directory);
+      const createExclusive = requireExclusiveCreator(new NodeCompatibleFileSystemAdapter());
+
+      await createExclusive(absent, new Uint8Array([0, 255, 1]));
+      assertEquals([...await Deno.readFile(absent)], [0, 255, 1]);
+      await assertRejects(() => createExclusive(existing, new Uint8Array([1])), Error);
+      assertEquals([...await Deno.readFile(existing)], [9, 8, 7]);
+      await assertRejects(() => createExclusive(directory, new Uint8Array([1])), Error);
+      assertEquals((await Deno.stat(directory)).isDirectory, true);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("does not guess ownership by deleting a reserved path after write failure", async () => {
+    let closeCalls = 0;
+    let removeCalls = 0;
+    const failure = new Error("injected write failure");
+    const operations = {
+      open: () =>
+        Promise.resolve({
+          writeFile: () => Promise.reject(failure),
+          close: () => {
+            closeCalls++;
+            return Promise.resolve();
+          },
+        }),
+      remove: () => {
+        removeCalls++;
+        return Promise.resolve();
+      },
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, { operations });
+
+    const error = await assertRejects(
+      () => requireExclusiveCreator(adapter)("/reserved.bin", new Uint8Array([1])),
+      Error,
+    );
+    assertEquals(error, failure);
+    assertEquals(closeCalls, 1);
+    assertEquals(removeCalls, 0);
+  });
+
   it("marks only direct built-in instances as native", () => {
     class DerivedAdapter extends NodeCompatibleFileSystemAdapter {}
 

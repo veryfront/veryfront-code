@@ -14,6 +14,116 @@ import { DenoFileSystemAdapter } from "./filesystem-adapter.ts";
 
 if (isDeno) {
   describe("Deno filesystem adapter", () => {
+    it("constructs exact snapshot and exclusive-create capabilities independently", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-deno-snapshot-factory-" });
+      try {
+        const empty = join(root, "empty.bin");
+        const exact = join(root, "exact.bin");
+        const oversized = join(root, "oversized.bin");
+        const directory = join(root, "directory");
+        const link = join(root, "link.bin");
+        const created = join(root, "created.bin");
+        await Deno.writeFile(empty, new Uint8Array());
+        await Deno.writeFile(exact, new Uint8Array([1, 2, 3]));
+        await Deno.writeFile(oversized, new Uint8Array([1, 2, 3, 4]));
+        await Deno.mkdir(directory);
+        await Deno.symlink(exact, link);
+        const adapter = new DenoFileSystemAdapter();
+
+        assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+        assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
+        assertExists(adapter.readFileSnapshotWithinLimit);
+        assertExists(adapter.createFileBytesExclusive);
+        assertEquals([...await adapter.readFileSnapshotWithinLimit(empty, root, 1)], []);
+        assertEquals([...await adapter.readFileSnapshotWithinLimit(exact, root, 3)], [1, 2, 3]);
+        await assertRejects(
+          () => adapter.readFileSnapshotWithinLimit!(oversized, root, 3),
+          RangeError,
+        );
+        for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+          await assertRejects(
+            () => adapter.readFileSnapshotWithinLimit!(exact, root, limit),
+            RangeError,
+          );
+        }
+        await assertRejects(
+          () => adapter.readFileSnapshotWithinLimit!(directory, root, 3),
+          TypeError,
+        );
+        await assertRejects(
+          () => adapter.readFileSnapshotWithinLimit!(link, root, 3),
+          TypeError,
+        );
+        await adapter.createFileBytesExclusive(created, new Uint8Array([0, 255]));
+        assertEquals([...await Deno.readFile(created)], [0, 255]);
+        await assertRejects(
+          () => adapter.createFileBytesExclusive!(exact, new Uint8Array([9])),
+          Deno.errors.AlreadyExists,
+        );
+        assertEquals([...await Deno.readFile(exact)], [1, 2, 3]);
+        await assertRejects(
+          () => adapter.createFileBytesExclusive!(directory, new Uint8Array([9])),
+          Deno.errors.AlreadyExists,
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
+    it("omits only snapshot authority for absent or zero O_NOFOLLOW", () => {
+      const TestableAdapter = DenoFileSystemAdapter as unknown as new (
+        options: { noFollow?: number },
+      ) => DenoFileSystemAdapter;
+      for (const noFollow of [undefined, 0]) {
+        const adapter = new TestableAdapter({ noFollow });
+        assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
+        assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
+      }
+    });
+
+    it("omits createNew independently when that primitive is unavailable", () => {
+      const TestableAdapter = DenoFileSystemAdapter as unknown as new (
+        options: Record<string, unknown>,
+      ) => DenoFileSystemAdapter;
+      const adapter = new TestableAdapter({ noFollow: 1, denoCreateRuntime: null });
+      assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+      assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), false);
+    });
+
+    it("closes but does not delete a createNew reservation after a partial write failure", async () => {
+      const failure = new Error("injected Deno write failure");
+      let writes = 0;
+      let closes = 0;
+      let removes = 0;
+      const TestableAdapter = DenoFileSystemAdapter as unknown as new (
+        options: Record<string, unknown>,
+      ) => DenoFileSystemAdapter;
+      const adapter = new TestableAdapter({
+        denoCreateRuntime: {
+          open: () =>
+            Promise.resolve({
+              write: () => writes++ === 0 ? Promise.resolve(1) : Promise.reject(failure),
+              close: () => {
+                closes++;
+              },
+            }),
+          remove: () => {
+            removes++;
+            return Promise.resolve();
+          },
+        },
+      });
+
+      const error = await assertRejects(
+        () => adapter.createFileBytesExclusive!("/reserved.bin", new Uint8Array([1, 2])),
+        Error,
+      );
+      assertEquals(error, failure);
+      assertEquals(writes, 2);
+      assertEquals(closes, 1);
+      assertEquals(removes, 0);
+    });
+
     it("marks only direct built-in instances as native", () => {
       class DerivedAdapter extends DenoFileSystemAdapter {}
 

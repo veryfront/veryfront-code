@@ -106,6 +106,10 @@ jobs:
         run: deno install --frozen
       - name: Run Bun config loader smoke
         run: deno task test:bun:config
+      - name: Verify Bun filesystem snapshots and exclusive creates
+        run: >-
+          bun test --preload ./tests/bun/preload.ts
+          src/platform/adapters/runtime/bun/filesystem-adapter.bun.test.ts
 
   coverage-shards:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -328,6 +332,7 @@ jobs:
           --test
           src/platform/compat/process.signal-runtime.test.ts
           tests/node/http-server-node18.test.ts
+          tests/node/filesystem-snapshot-node18.test.ts
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 

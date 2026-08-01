@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { join } from "#veryfront/compat/path";
 import {
   __registerLogRecordEmitter,
   __resetLoggerConfigForTests,
@@ -44,6 +45,60 @@ function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
 }
 
 describe("NodeFileSystemAdapter", () => {
+  it("constructs exact snapshot and exclusive-create capabilities independently", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-node-snapshot-factory-" });
+    try {
+      const empty = join(root, "empty.bin");
+      const exact = join(root, "exact.bin");
+      const oversized = join(root, "oversized.bin");
+      const directory = join(root, "directory");
+      const link = join(root, "link.bin");
+      await Deno.writeFile(empty, new Uint8Array());
+      await Deno.writeFile(exact, new Uint8Array([1, 2, 3]));
+      await Deno.writeFile(oversized, new Uint8Array([1, 2, 3, 4]));
+      await Deno.mkdir(directory);
+      await Deno.symlink(exact, link);
+      const adapter = new NodeFileSystemAdapter();
+
+      assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), true);
+      assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
+      assertExists(adapter.readFileSnapshotWithinLimit);
+      assertEquals([...await adapter.readFileSnapshotWithinLimit(empty, root, 1)], []);
+      assertEquals([...await adapter.readFileSnapshotWithinLimit(exact, root, 3)], [1, 2, 3]);
+      await assertRejects(
+        () => adapter.readFileSnapshotWithinLimit!(oversized, root, 3),
+        RangeError,
+      );
+      for (const limit of [0, Number.MAX_SAFE_INTEGER + 1]) {
+        await assertRejects(
+          () => adapter.readFileSnapshotWithinLimit!(exact, root, limit),
+          RangeError,
+        );
+      }
+      await assertRejects(
+        () => adapter.readFileSnapshotWithinLimit!(directory, root, 3),
+        TypeError,
+      );
+      await assertRejects(
+        () => adapter.readFileSnapshotWithinLimit!(link, root, 3),
+        TypeError,
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("omits only snapshot authority for absent or zero O_NOFOLLOW", () => {
+    const TestableAdapter = NodeFileSystemAdapter as unknown as new (
+      options: { noFollow?: number },
+    ) => NodeFileSystemAdapter;
+    for (const noFollow of [undefined, 0]) {
+      const adapter = new TestableAdapter({ noFollow });
+      assertEquals(Object.hasOwn(adapter, "readFileSnapshotWithinLimit"), false);
+      assertEquals(Object.hasOwn(adapter, "createFileBytesExclusive"), true);
+    }
+  });
+
   it("does not log an expected missing path as an access failure", async () => {
     const adapter = new NodeFileSystemAdapter();
     const tempDir = await adapter.makeTempDir("vf-node-fs-exists-");

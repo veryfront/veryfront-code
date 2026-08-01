@@ -1,4 +1,7 @@
-import { NodeCompatibleFileSystemAdapter } from "../shared/node-filesystem-adapter.ts";
+import {
+  NodeCompatibleFileSystemAdapter,
+  type NodeFileSystemCapabilityOptions,
+} from "../shared/node-filesystem-adapter.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import type { BunNamespace } from "./types.ts";
 import { getBunRuntime } from "./types.ts";
@@ -13,8 +16,11 @@ export type BunFileSystemRuntime = Pick<BunNamespace, "file" | "write">;
  * filesystem APIs through the shared Node-compatible implementation.
  */
 export class BunFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
-  constructor(private readonly runtime: BunFileSystemRuntime | null = getBunRuntime() ?? null) {
-    super(serverLogger);
+  constructor(
+    private readonly runtime: BunFileSystemRuntime | null = getBunRuntime() ?? null,
+    options: NodeFileSystemCapabilityOptions = {},
+  ) {
+    super(serverLogger, options);
     if (new.target === BunFileSystemAdapter) {
       markNativeFileSystemAdapter(this);
     }
