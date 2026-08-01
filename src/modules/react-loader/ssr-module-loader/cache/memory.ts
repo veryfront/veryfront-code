@@ -42,7 +42,9 @@ export const globalCrossProjectCache = new LRUCache<string, ModuleCacheEntry>({
   maxEntries: TEMP_PATH_CACHE_MAX_ENTRIES,
 });
 
-export const globalInProgress = new Map<string, Promise<void>>();
+// Each singleflight completion carries its immutable output so requests that
+// started before an invalidation can finish without republishing stale state.
+export const globalInProgress = new Map<string, Promise<ModuleCacheEntry>>();
 
 export const globalTmpDirs = new LRUCache<string, string>({
   maxEntries: SSR_TMP_DIRS_MAX_ENTRIES,

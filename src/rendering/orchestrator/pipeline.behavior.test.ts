@@ -451,7 +451,7 @@ describe("RenderPipeline behavior", () => {
     const projectId = "project-dev-render-active-transform";
     const moduleKey = `prefix:${projectId}:module`;
     const inProgressKey = `prefix:${projectId}:in-progress`;
-    const leader = Promise.resolve();
+    const leader = Promise.resolve({ tempPath: "/tmp/leader.mjs", contentHash: "leader" });
     globalModuleCache.set(moduleKey, { tempPath: "/tmp/dev-render.mjs", contentHash: "a" });
     globalInProgress.set(inProgressKey, leader);
 
@@ -475,7 +475,7 @@ describe("RenderPipeline behavior", () => {
     const projectId = "project-dev-page-data-active-transform";
     const moduleKey = `prefix:${projectId}:module`;
     const inProgressKey = `prefix:${projectId}:in-progress`;
-    const leader = Promise.resolve();
+    const leader = Promise.resolve({ tempPath: "/tmp/leader.mjs", contentHash: "leader" });
     globalModuleCache.set(moduleKey, { tempPath: "/tmp/dev-page-data.mjs", contentHash: "a" });
     globalInProgress.set(inProgressKey, leader);
 

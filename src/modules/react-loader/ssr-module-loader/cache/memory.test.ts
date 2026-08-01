@@ -256,9 +256,10 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
 
     it("should clear in-progress entries for a specific project", () => {
       resetState();
+      const transformEntry = { tempPath: "/tmp/in-progress.mjs", contentHash: "test" };
 
-      globalInProgress.set("prefix:project-1:mod", Promise.resolve());
-      globalInProgress.set("prefix:project-2:mod", Promise.resolve());
+      globalInProgress.set("prefix:project-1:mod", Promise.resolve(transformEntry));
+      globalInProgress.set("prefix:project-2:mod", Promise.resolve(transformEntry));
 
       clearSSRModuleCacheForProject("project-1");
 
@@ -270,10 +271,11 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
 
     it("should preserve in-progress entries for a specific project when requested", () => {
       resetState();
+      const transformEntry = { tempPath: "/tmp/in-progress.mjs", contentHash: "test" };
 
-      const projectTransform = Promise.resolve();
+      const projectTransform = Promise.resolve(transformEntry);
       globalInProgress.set("prefix:project-1:mod", projectTransform);
-      globalInProgress.set("prefix:project-2:mod", Promise.resolve());
+      globalInProgress.set("prefix:project-2:mod", Promise.resolve(transformEntry));
 
       clearSSRModuleCacheForProject("project-1", { preserveActiveTransforms: true });
 
