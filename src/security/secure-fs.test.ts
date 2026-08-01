@@ -878,6 +878,105 @@ describe("SecureFs", () => {
     assertEquals("readFileSnapshotWithinLimit" in secureFs, false);
   });
 
+  it("quarantines malformed legacy capabilities without vetoing genuine snapshots", async () => {
+    const cases = [
+      { key: "readFileBytes", kind: "accessor" },
+      { key: "readFileBytesBounded", kind: "invalid" },
+      { key: "readFileBytesWithinLimit", kind: "callable-proxy" },
+      { key: "writeFileBytes", kind: "accessor" },
+      { key: "maxWholeFileReadBytes", kind: "invalid" },
+    ] as const;
+
+    for (const testCase of cases) {
+      let getterCalls = 0;
+      let applyTrapCalls = 0;
+      let writeCalls = 0;
+      const fileSystem = createMockFileSystem({
+        readFileBytes: () => Promise.resolve(new Uint8Array([1])),
+        readFileBytesBounded: () => Promise.resolve(new Uint8Array([2])),
+        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array([3])),
+        writeFileBytes: () => {
+          writeCalls++;
+          return Promise.resolve();
+        },
+        maxWholeFileReadBytes: 8,
+        readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array([4])),
+      });
+      if (testCase.kind === "accessor") {
+        Object.defineProperty(fileSystem, testCase.key, {
+          configurable: true,
+          get() {
+            getterCalls++;
+            throw new Error("malformed legacy accessor must not run");
+          },
+        });
+      } else if (testCase.kind === "callable-proxy") {
+        Object.defineProperty(fileSystem, testCase.key, {
+          configurable: true,
+          value: new Proxy(function () {}, {
+            apply() {
+              applyTrapCalls++;
+              throw new Error("malformed legacy callable Proxy must not run");
+            },
+          }),
+        });
+      } else {
+        Object.defineProperty(fileSystem, testCase.key, {
+          configurable: true,
+          value: testCase.key === "maxWholeFileReadBytes" ? -1 : 1,
+        });
+      }
+
+      const secureFs = createSecureFs({
+        baseDir: "/project",
+        adapter: { fs: fileSystem } as RuntimeAdapter,
+        context: "internal",
+      });
+      const capturedFileSystem = (secureFs as unknown as {
+        fileSystem: RuntimeAdapter["fs"];
+      }).fileSystem;
+
+      assertEquals(
+        [...await secureFs.readFileSnapshotWithinLimit!("asset.bin", 1)],
+        [4],
+        testCase.key,
+      );
+      assertEquals({ getterCalls, applyTrapCalls }, { getterCalls: 0, applyTrapCalls: 0 });
+      assertEquals(
+        capturedFileSystem.readFileBytes === undefined,
+        testCase.key === "readFileBytes",
+        testCase.key,
+      );
+      if (capturedFileSystem.readFileBytes !== undefined) {
+        assertEquals([...await secureFs.readFileBytes("asset.bin")], [1]);
+      }
+      if (testCase.key === "readFileBytesBounded") {
+        assertEquals(secureFs.readFileBytesBounded, undefined);
+      } else {
+        assertEquals([...await secureFs.readFileBytesBounded!("asset.bin", 1)], [2]);
+      }
+      if (testCase.key === "readFileBytesWithinLimit") {
+        assertEquals(secureFs.readFileBytesWithinLimit, undefined);
+      } else {
+        assertEquals([...await secureFs.readFileBytesWithinLimit!("asset.bin", 1)], [3]);
+      }
+      if (testCase.key === "writeFileBytes") {
+        assertEquals(capturedFileSystem.writeFileBytes, undefined);
+      } else {
+        await capturedFileSystem.writeFileBytes!("/project/asset.bin", new Uint8Array([5]));
+        assertEquals(writeCalls, 1);
+      }
+      assertEquals(
+        secureFs.maxWholeFileReadBytes,
+        testCase.key === "readFileBytes" || testCase.key === "maxWholeFileReadBytes"
+          ? undefined
+          : 8,
+        testCase.key,
+      );
+      assertEquals({ getterCalls, applyTrapCalls }, { getterCalls: 0, applyTrapCalls: 0 });
+    }
+  });
+
   it("rejects traversal before invoking a bounded reader", async () => {
     let reads = 0;
     const fileSystem = createMockFileSystem({

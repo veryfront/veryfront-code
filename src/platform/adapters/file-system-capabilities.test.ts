@@ -38,6 +38,23 @@ const captureStaticReadCapabilities = (
     captureStaticReadCapabilities?: (value: unknown, label?: string) => StaticReaders;
   }
 ).captureStaticReadCapabilities!;
+const captureLegacyFileSystemCapabilitiesForSnapshot = (
+  capabilityModule as unknown as {
+    captureLegacyFileSystemCapabilitiesForSnapshot?: (
+      value: unknown,
+      label?: string,
+    ) => {
+      readFileBytes?: (path: string) => Promise<Uint8Array>;
+      readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
+      readFileBytesWithinLimit?: (path: string, byteLimit: number) => Promise<Uint8Array>;
+      writeFileBytes?: (path: string, content: Uint8Array) => Promise<void>;
+      wholeFileReader?: {
+        maximumBytes: number;
+        read(path: string): Promise<Uint8Array>;
+      };
+    };
+  }
+).captureLegacyFileSystemCapabilitiesForSnapshot!;
 
 function assertFrozenNullRecord(value: object): void {
   assertEquals(Object.isFrozen(value), true);
@@ -65,6 +82,68 @@ describe("platform/adapters/file-system-capabilities", () => {
     assertFrozenNullRecord(captured);
     assertEquals([...(await captured.read("/root/a", "/root", 2))], [1, 2]);
     assertEquals(unrelatedReads, 0);
+  });
+
+  it("quarantines malformed legacy fields independently for a proven snapshot adapter", async () => {
+    let ceilingGetterCalls = 0;
+    let exactApplyCalls = 0;
+    let writeCalls = 0;
+    const adapter = {
+      readFileBytes: () => Promise.resolve(new Uint8Array([1])),
+      readFileBytesBounded: () => Promise.resolve(new Uint8Array([2])),
+      readFileBytesWithinLimit: new Proxy(function () {}, {
+        apply() {
+          exactApplyCalls++;
+          throw new Error("must not run");
+        },
+      }),
+      writeFileBytes: () => {
+        writeCalls++;
+        return Promise.resolve();
+      },
+    };
+    Object.defineProperty(adapter, "maxWholeFileReadBytes", {
+      get() {
+        ceilingGetterCalls++;
+        throw new Error("must not run");
+      },
+    });
+
+    const captured = captureLegacyFileSystemCapabilitiesForSnapshot(adapter);
+
+    assertFrozenNullRecord(captured);
+    assertEquals([...(await captured.readFileBytes!("/a"))], [1]);
+    assertEquals([...(await captured.readFileBytesBounded!("/a", 1))], [2]);
+    await captured.writeFileBytes!("/a", new Uint8Array([3]));
+    assertEquals(captured.readFileBytesWithinLimit, undefined);
+    assertEquals(captured.wholeFileReader, undefined);
+    assertEquals({ ceilingGetterCalls, exactApplyCalls, writeCalls }, {
+      ceilingGetterCalls: 0,
+      exactApplyCalls: 0,
+      writeCalls: 1,
+    });
+  });
+
+  it("still rejects unsafe capability provenance for a proven snapshot adapter", () => {
+    let trapCalls = 0;
+    const hostilePrototype = new Proxy({}, {
+      getOwnPropertyDescriptor() {
+        trapCalls++;
+        throw new Error("must not run");
+      },
+      getPrototypeOf() {
+        trapCalls++;
+        throw new Error("must not run");
+      },
+    });
+    const adapter = Object.setPrototypeOf({}, hostilePrototype);
+
+    assertThrows(
+      () => captureLegacyFileSystemCapabilitiesForSnapshot(adapter),
+      TypeError,
+      "Proxy",
+    );
+    assertEquals(trapCalls, 0);
   });
 
   it("captures exclusive-create authority without inspecting unrelated reader fields", async () => {

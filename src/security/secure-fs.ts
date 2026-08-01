@@ -19,6 +19,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import {
   type CapturedFileSystemCapabilities,
   captureFileSystemCapabilities,
+  captureLegacyFileSystemCapabilitiesForSnapshot,
   captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bounded-text-reader.ts";
@@ -377,13 +378,18 @@ function requireFilesystemMethod(
   return method;
 }
 
-function snapshotFilesystem(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["fs"] {
+function snapshotFilesystem(
+  fileSystem: RuntimeAdapter["fs"],
+  hasSnapshotAuthority: boolean,
+): RuntimeAdapter["fs"] {
   if (isProxyWithoutHooks(fileSystem)) {
     invalidSecureFsOption("SecureFs filesystem cannot be a Proxy");
   }
   let fileCapabilities: CapturedFileSystemCapabilities;
   try {
-    fileCapabilities = captureFileSystemCapabilities(fileSystem, "SecureFs filesystem");
+    fileCapabilities = hasSnapshotAuthority
+      ? captureLegacyFileSystemCapabilitiesForSnapshot(fileSystem, "SecureFs filesystem")
+      : captureFileSystemCapabilities(fileSystem, "SecureFs filesystem");
   } catch (_) {
     invalidSecureFsOption("SecureFs filesystem binary capabilities are invalid");
   }
@@ -691,7 +697,9 @@ export class SecureFs {
       );
     }
     const suppliedFileSystem = fsDescriptor.value as RuntimeAdapter["fs"];
-    this.fileSystem = snapshotFilesystem(suppliedFileSystem);
+    if (isProxyWithoutHooks(suppliedFileSystem)) {
+      invalidSecureFsOption("SecureFs filesystem cannot be a Proxy");
+    }
     let snapshotReader: ReturnType<typeof captureSnapshotReadCapability>;
     try {
       snapshotReader = captureSnapshotReadCapability(
@@ -701,6 +709,10 @@ export class SecureFs {
     } catch (_) {
       invalidSecureFsOption("SecureFs filesystem snapshot capability is invalid");
     }
+    this.fileSystem = snapshotFilesystem(
+      suppliedFileSystem,
+      snapshotReader !== undefined,
+    );
     if (this.fileSystem.maxWholeFileReadBytes !== undefined) {
       this.maxWholeFileReadBytes = this.fileSystem.maxWholeFileReadBytes;
     }

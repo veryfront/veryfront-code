@@ -19,8 +19,13 @@ import { MultiProjectFSAdapter } from "./veryfront/multi-project-adapter.ts";
 import { VERYFRONT_FS_ADAPTER_KIND } from "./veryfront/adapter-kind.ts";
 import type { ContextualFSAdapter, FSAdapter, StyleArtifactAccess } from "./veryfront/types.ts";
 import { captureBoundedTextReader } from "../bounded-text-reader.ts";
+import type { FileSystemAdapter } from "../base.ts";
 
-function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
+type TestFSAdapter =
+  & FSAdapter
+  & Partial<Pick<FileSystemAdapter, "readFileSnapshotWithinLimit">>;
+
+function createMockFSAdapter(overrides: Partial<TestFSAdapter> = {}): TestFSAdapter {
   return {
     readFile: (path: string) => {
       if (path === "/exists.txt") return Promise.resolve("content");
@@ -750,6 +755,97 @@ describe("FSAdapterWrapper", () => {
         [4],
       );
       assertEquals(getterCalls, 0);
+    });
+
+    it("quarantines malformed legacy capabilities without vetoing genuine snapshots", async () => {
+      const cases = [
+        { key: "readFileBytes", kind: "accessor" },
+        { key: "readFileBytesBounded", kind: "invalid" },
+        { key: "readFileBytesWithinLimit", kind: "callable-proxy" },
+        { key: "writeFileBytes", kind: "accessor" },
+        { key: "maxWholeFileReadBytes", kind: "invalid" },
+      ] as const;
+
+      for (const testCase of cases) {
+        let getterCalls = 0;
+        let applyTrapCalls = 0;
+        let writeCalls = 0;
+        const adapter = createMockFSAdapter({
+          readFile: () => Promise.resolve(new Uint8Array([9])),
+          readFileBytes: () => Promise.resolve(new Uint8Array([1])),
+          readFileBytesBounded: () => Promise.resolve(new Uint8Array([2])),
+          readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array([3])),
+          writeFileBytes: () => {
+            writeCalls++;
+            return Promise.resolve();
+          },
+          maxWholeFileReadBytes: 8,
+          readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array([4])),
+        });
+        if (testCase.kind === "accessor") {
+          Object.defineProperty(adapter, testCase.key, {
+            configurable: true,
+            get() {
+              getterCalls++;
+              throw new Error("malformed legacy accessor must not run");
+            },
+          });
+        } else if (testCase.kind === "callable-proxy") {
+          Object.defineProperty(adapter, testCase.key, {
+            configurable: true,
+            value: new Proxy(function () {}, {
+              apply() {
+                applyTrapCalls++;
+                throw new Error("malformed legacy callable Proxy must not run");
+              },
+            }),
+          });
+        } else {
+          Object.defineProperty(adapter, testCase.key, {
+            configurable: true,
+            value: testCase.key === "maxWholeFileReadBytes" ? -1 : 1,
+          });
+        }
+
+        const wrapper = new FSAdapterWrapper(adapter);
+
+        assertEquals(
+          [...await wrapper.readFileSnapshotWithinLimit!("/project/a", "/project", 1)],
+          [4],
+          testCase.key,
+        );
+        assertEquals({ getterCalls, applyTrapCalls }, { getterCalls: 0, applyTrapCalls: 0 });
+        assertEquals(
+          [...await wrapper.readFileBytes("/project/a")],
+          testCase.key === "readFileBytes" ? [9] : [1],
+          testCase.key,
+        );
+
+        if (testCase.key === "readFileBytesBounded") {
+          assertEquals(wrapper.readFileBytesBounded, undefined);
+        } else {
+          assertEquals([...await wrapper.readFileBytesBounded!("/project/a", 1)], [2]);
+        }
+        if (testCase.key === "readFileBytesWithinLimit") {
+          assertEquals(wrapper.readFileBytesWithinLimit, undefined);
+        } else {
+          assertEquals([...await wrapper.readFileBytesWithinLimit!("/project/a", 1)], [3]);
+        }
+        if (testCase.key === "writeFileBytes") {
+          assertEquals(wrapper.writeFileBytes, undefined);
+        } else {
+          await wrapper.writeFileBytes!("/project/a", new Uint8Array([5]));
+          assertEquals(writeCalls, 1);
+        }
+        assertEquals(
+          wrapper.maxWholeFileReadBytes,
+          testCase.key === "readFileBytes" || testCase.key === "maxWholeFileReadBytes"
+            ? undefined
+            : 8,
+          testCase.key,
+        );
+        assertEquals({ getterCalls, applyTrapCalls }, { getterCalls: 0, applyTrapCalls: 0 });
+      }
     });
   });
 

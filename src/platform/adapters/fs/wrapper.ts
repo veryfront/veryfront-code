@@ -19,6 +19,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import {
   type CapturedFileSystemCapabilities,
   captureFileSystemCapabilities,
+  captureLegacyFileSystemCapabilitiesForSnapshot,
   captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bounded-text-reader.ts";
@@ -291,8 +292,10 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       throw new TypeError("FSAdapterWrapper cannot safely wrap a Proxy filesystem adapter");
     }
     this.#fsAdapter = fsAdapter;
-    this.#fileCapabilities = captureFileSystemCapabilities(fsAdapter, "FSAdapter");
     const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter");
+    this.#fileCapabilities = snapshotReader === undefined
+      ? captureFileSystemCapabilities(fsAdapter, "FSAdapter")
+      : captureLegacyFileSystemCapabilitiesForSnapshot(fsAdapter, "FSAdapter");
     const symlinkSemantics = Object.getOwnPropertyDescriptor(
       fsAdapter,
       "symlinkSemantics",

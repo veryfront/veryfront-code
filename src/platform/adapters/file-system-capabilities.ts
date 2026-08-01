@@ -42,6 +42,7 @@ const arrayBufferResizableGetter = getOwnPropertyDescriptor(
 )?.get;
 const setBytes = NativeUint8Array.prototype.set;
 const ABSENT_CAPABILITY = Symbol("absent filesystem capability");
+const INVALID_CAPABILITY = Symbol("invalid filesystem capability");
 
 const LEGACY_CAPABILITY_KEYS = [
   "readFileBytes",
@@ -151,6 +152,7 @@ function captureDataProperties(
   value: object,
   label: string,
   keys: readonly CapabilityKey[],
+  invalidFieldPolicy: "reject" | "quarantine" = "reject",
 ): Readonly<Record<CapabilityKey, unknown>> {
   const properties = createObject(null) as Record<CapabilityKey, unknown>;
   const resolved = createObject(null) as Record<CapabilityKey, boolean>;
@@ -197,12 +199,16 @@ function captureDataProperties(
       resolved[key] = true;
       remaining--;
       if (!hasOwn(descriptor, "value")) {
-        throw invalidCapability(
-          label,
-          key === "maxWholeFileReadBytes"
-            ? `${key} must be a data property`
-            : `${key} must be a data-property method`,
-        );
+        if (invalidFieldPolicy === "reject") {
+          throw invalidCapability(
+            label,
+            key === "maxWholeFileReadBytes"
+              ? `${key} must be a data property`
+              : `${key} must be a data-property method`,
+          );
+        }
+        properties[key] = INVALID_CAPABILITY;
+        continue;
       }
       properties[key] = descriptor.value;
     }
@@ -475,6 +481,79 @@ export function captureFileSystemCapabilities(
   }
   if (writeFileBytes !== undefined) captured.writeFileBytes = writeFileBytes;
   if (wholeFileReader !== undefined) captured.wholeFileReader = wholeFileReader;
+  return freezeObject(captured) as CapturedFileSystemCapabilities;
+}
+
+function admitQuarantinedMethod<T>(candidate: unknown): T | undefined {
+  if (
+    candidate === ABSENT_CAPABILITY ||
+    candidate === INVALID_CAPABILITY ||
+    candidate === undefined ||
+    typeof candidate !== "function" ||
+    isProxyWithoutHooks(candidate)
+  ) {
+    return undefined;
+  }
+  return candidate as T;
+}
+
+/**
+ * Capture legacy byte capabilities after genuine snapshot authority has been
+ * proven independently. Malformed optional fields are omitted one at a time;
+ * unsafe object or prototype provenance still rejects the adapter.
+ */
+export function captureLegacyFileSystemCapabilitiesForSnapshot(
+  value: unknown,
+  label = "Filesystem",
+): CapturedFileSystemCapabilities {
+  requireCapabilityObject(value, label);
+  const properties = captureDataProperties(
+    value,
+    label,
+    LEGACY_CAPABILITY_KEYS,
+    "quarantine",
+  );
+  const rawReadFileBytes = admitQuarantinedMethod<ByteReader>(properties.readFileBytes);
+  const rawBoundedReader = admitQuarantinedMethod<BoundedByteReader>(
+    properties.readFileBytesBounded,
+  );
+  const rawExactReader = admitQuarantinedMethod<BoundedByteReader>(
+    properties.readFileBytesWithinLimit,
+  );
+  const rawWriter = admitQuarantinedMethod<ByteWriter>(properties.writeFileBytes);
+  const ceilingCandidate = properties.maxWholeFileReadBytes;
+  const maximumBytes = numberIsSafeInteger(ceilingCandidate) &&
+      (ceilingCandidate as number) > 0
+    ? ceilingCandidate as number
+    : undefined;
+
+  const captured = createObject(null) as Record<string, unknown>;
+  if (rawReadFileBytes !== undefined) {
+    const readFileBytes = (path: string) =>
+      apply(rawReadFileBytes, value, [path]) as Promise<Uint8Array>;
+    captured.readFileBytes = readFileBytes;
+    if (maximumBytes !== undefined) {
+      const wholeFileReader = createObject(null) as {
+        maximumBytes: number;
+        read: ByteReader;
+      };
+      wholeFileReader.maximumBytes = maximumBytes;
+      wholeFileReader.read = readFileBytes;
+      captured.wholeFileReader = freezeObject(wholeFileReader);
+    }
+  }
+  if (rawBoundedReader !== undefined) {
+    captured.readFileBytesBounded = (path: string, byteLimit: number) =>
+      apply(rawBoundedReader, value, [path, byteLimit]) as Promise<Uint8Array>;
+  }
+  if (rawExactReader !== undefined) {
+    captured.readFileBytesWithinLimit = (path: string, byteLimit: number) =>
+      apply(rawExactReader, value, [path, byteLimit]) as Promise<Uint8Array>;
+  }
+  if (rawWriter !== undefined) {
+    captured.writeFileBytes = (path: string, content: Uint8Array) =>
+      apply(rawWriter, value, [path, content]) as Promise<void>;
+  }
   return freezeObject(captured) as CapturedFileSystemCapabilities;
 }
 
