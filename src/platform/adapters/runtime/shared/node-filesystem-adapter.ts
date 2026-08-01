@@ -8,7 +8,7 @@ import type {
 } from "../../base.ts";
 import { createFileWatcher, createWatcherIterator, setupNodeFsWatcher } from "./shared-watcher.ts";
 import { makeNodeTempDir } from "./temp-dir.ts";
-import { isNotFoundError } from "../../../compat/fs.ts";
+import { isNotFoundError } from "../../../compat/not-found-error.ts";
 import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
