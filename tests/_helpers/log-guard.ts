@@ -16,8 +16,6 @@ const allowedWarnings: string[] = [
   // Optional OTEL/metrics are best-effort
   "[prod] OpenTelemetry span enrich failed",
   "[prod] metrics.incRequest failed",
-  // Optional guard hooks
-  "[prod] rscActionGuard failed",
   // Optional mock db for demos
   "[prod] mock db import failed",
   // Dev-only route discovery chatter
