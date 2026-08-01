@@ -238,6 +238,114 @@ describe("FSAdapterWrapper", () => {
     });
   });
 
+  describe("bounded and snapshot authority", () => {
+    it("captures snapshot and exact-read methods before adapter mutation", async () => {
+      let snapshotCalls = 0;
+      let replacementCalls = 0;
+      const source = new Uint8Array([1, 2, 3]);
+      const fsAdapter = createMockFSAdapter({
+        readFileSnapshotWithinLimit(path, root, byteLimit) {
+          snapshotCalls++;
+          assertEquals([path, root, byteLimit], ["/project/a", "/project", 3]);
+          return Promise.resolve(source);
+        },
+        readFileBytesWithinLimit: (_path, byteLimit) =>
+          Promise.resolve(new Uint8Array([byteLimit])),
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+      fsAdapter.readFileSnapshotWithinLimit = () => {
+        replacementCalls++;
+        return Promise.resolve(new Uint8Array([9]));
+      };
+      fsAdapter.readFileBytesWithinLimit = () => Promise.resolve(new Uint8Array([9]));
+
+      const snapshot = await wrapper.readFileSnapshotWithinLimit!(
+        "/project/a",
+        "/project",
+        3,
+      );
+      source[0] = 9;
+      assertEquals([...snapshot], [1, 2, 3]);
+      assertEquals([...(await wrapper.readFileBytesWithinLimit!("/project/a", 2))], [2]);
+      assertEquals({ snapshotCalls, replacementCalls }, { snapshotCalls: 1, replacementCalls: 0 });
+    });
+
+    it("quarantines malformed ordinary and exclusive fields without vetoing snapshots", async () => {
+      let exactGetterCalls = 0;
+      let exclusiveGetterCalls = 0;
+      const fsAdapter = createMockFSAdapter({
+        readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array([4])),
+      });
+      Object.defineProperty(fsAdapter, "readFileBytesWithinLimit", {
+        configurable: true,
+        get() {
+          exactGetterCalls++;
+          throw new Error("must not run");
+        },
+      });
+      Object.defineProperty(fsAdapter, "createFileBytesExclusive", {
+        configurable: true,
+        get() {
+          exclusiveGetterCalls++;
+          throw new Error("must not run");
+        },
+      });
+
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+      assertEquals(
+        [...await wrapper.readFileSnapshotWithinLimit!("/project/a", "/project", 1)],
+        [4],
+      );
+      assertEquals(wrapper.readFileBytesWithinLimit, undefined);
+      assertEquals(wrapper.createFileBytesExclusive, undefined);
+      assertEquals({ exactGetterCalls, exclusiveGetterCalls }, {
+        exactGetterCalls: 0,
+        exclusiveGetterCalls: 0,
+      });
+    });
+
+    it("publishes optional capabilities as immutable own data", () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+        readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array()),
+      }));
+
+      for (
+        const key of [
+          "symlinkSemantics",
+          "maxWholeFileReadBytes",
+          "readFileBytesBounded",
+          "readFileBytesWithinLimit",
+          "readFileSnapshotWithinLimit",
+          "createFileBytesExclusive",
+          "refreshSourceSnapshot",
+          "ensureSourceSnapshotFresh",
+          "getSourceSnapshotVersion",
+        ] as const
+      ) {
+        const descriptor = Object.getOwnPropertyDescriptor(wrapper, key);
+        assertEquals(descriptor?.enumerable, true, key);
+        assertEquals(descriptor?.configurable, false, key);
+        assertEquals(descriptor?.writable, false, key);
+        assertEquals(Reflect.deleteProperty(wrapper, key), false, key);
+      }
+      assertEquals(
+        Reflect.set(wrapper, "readFileBytesWithinLimit", () => Promise.resolve(new Uint8Array())),
+        false,
+      );
+    });
+
+    it("rejects malformed snapshot results at the captured boundary", async () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+        readFileSnapshotWithinLimit: () => Promise.resolve({} as Uint8Array),
+      }));
+      await assertRejects(
+        () => wrapper.readFileSnapshotWithinLimit!("/project/a", "/project", 3),
+        TypeError,
+      );
+    });
+  });
+
   describe("readFile", () => {
     it("should read file using readTextFile if available", async () => {
       const fsAdapter = createMockFSAdapter({
@@ -271,7 +379,26 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("readFileBytes", () => {
-    it("should return Uint8Array directly if readFile returns bytes", async () => {
+    it("prefers captured binary authority over a text-oriented read", async () => {
+      let textReads = 0;
+      const source = new Uint8Array([0xff, 0x00]);
+      const fsAdapter = createMockFSAdapter({
+        readFile: () => {
+          textReads++;
+          return Promise.resolve("lossy");
+        },
+        readFileBytes: () => Promise.resolve(source),
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+      fsAdapter.readFileBytes = () => Promise.resolve(new Uint8Array([9]));
+
+      const result = await wrapper.readFileBytes("/any.txt");
+      source[0] = 1;
+      assertEquals([...result], [0xff, 0x00]);
+      assertEquals(textReads, 0);
+    });
+
+    it("copies bytes returned by the generic read fallback", async () => {
       const bytes = new Uint8Array([1, 2, 3]);
       const fsAdapter = createMockFSAdapter({
         readFile: () => Promise.resolve(bytes),
@@ -280,6 +407,7 @@ describe("FSAdapterWrapper", () => {
 
       const result = await wrapper.readFileBytes("/any.txt");
       assertEquals(result, bytes);
+      assertEquals(result === bytes, false);
     });
 
     it("should encode string to Uint8Array if readFile returns string", async () => {

@@ -133,12 +133,30 @@ Each runtime has its own adapter implementing `RuntimeAdapter`:
 
 ```typescript
 interface RuntimeAdapter {
-  runtime: "deno" | "node" | "bun" | "cloudflare";
+  readonly id: "deno" | "node" | "bun" | "cloudflare" | "memory";
   fs: FileSystemAdapter;
-  http: HttpAdapter;
-  process: ProcessAdapter;
+  env: EnvironmentAdapter;
+  server: ServerAdapter;
 }
 ```
+
+### Filesystem byte-read contracts
+
+`FileSystemAdapter` exposes separate optional capabilities for different read guarantees:
+
+| Capability                                                      | Contract                                                                                                                                                                          |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `readFileBytesBounded(path, byteLimit)`                         | Returns a prefix of at most `byteLimit` bytes. A full-length result does not prove that the file ended at the limit.                                                              |
+| `readFileBytesWithinLimit(path, byteLimit)`                     | Returns the complete file only when it fits. It throws `RangeError` when at least one additional byte exists.                                                                     |
+| `readFileSnapshotWithinLimit(path, containmentRoot, byteLimit)` | Returns one verified regular-file generation beneath the canonical root. Native adapters reject terminal symlinks, containment escapes, identity changes, and generation changes. |
+| `readFileBytes(path)` plus `maxWholeFileReadBytes`              | Publishes a fixed upstream whole-object ceiling. The ceiling has no authority when `readFileBytes` is absent.                                                                     |
+| `createFileBytesExclusive(path, content)`                       | Creates a new file and refuses to replace an existing path.                                                                                                                       |
+
+Consumers capture optional capabilities once as own data-property methods. Security and wrapper boundaries quarantine malformed optional publishers; accessors are not invoked. Captured byte results are copied into fixed `ArrayBuffer` storage before they cross the boundary.
+
+Virtual filesystems may publish `symlinkSemantics: "none"` together with a monotonic `getSourceSnapshotVersion()`. Snapshot consumers compare the generation before and after an exact read and throw `FileSnapshotChangedError` when it changes. The error is exported from `veryfront/fs` and `veryfront/platform/adapters`.
+
+The native implementations use runtime or standard-library primitives only. Provider-specific filesystem behavior belongs behind an adapter or extension boundary.
 
 ### Platform Detection
 

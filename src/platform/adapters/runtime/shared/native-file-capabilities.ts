@@ -189,7 +189,12 @@ export async function readNodeFileSnapshotWithinLimit(
     }
 
     const size = Number(handleBefore.size);
-    const bytes = new Uint8Array(size);
+    let bytes: Uint8Array;
+    try {
+      bytes = new Uint8Array(size);
+    } catch (cause) {
+      throw new Error("Unable to allocate the admitted snapshot buffer", { cause });
+    }
     let offset = 0;
     while (offset < size) {
       const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
