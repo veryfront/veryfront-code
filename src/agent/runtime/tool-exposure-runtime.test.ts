@@ -1045,6 +1045,94 @@ it("generate and stream budget restored exposure against an OpenAI request overr
   }
 });
 
+it("deferred search cannot spend provider capacity on an already-visible bootstrap tool", async () => {
+  const remoteTools: ToolDefinition[] = Array.from(
+    { length: 127 },
+    (_, index): ToolDefinition => ({
+      name: `catalog_tool_${String(index).padStart(3, "0")}`,
+      description: "Catalog tool",
+      parameters: { type: "object", properties: {} },
+    }),
+  );
+  const allowedRemoteToolNames = remoteTools.map((tool) => tool.name);
+  const observedTools: string[][] = [];
+  let step = 0;
+  const model: ModelRuntime = {
+    provider: "openai",
+    modelId: "gpt-5.5",
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      step++;
+      if (step === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "search-bootstrap",
+            toolName: "tool_search",
+            input: JSON.stringify({ query: "form_input" }),
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const remoteSource: RemoteToolSource = {
+    id: "veryfront-platform-mcp",
+    listTools: () => Promise.resolve(remoteTools),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+  const assistant = agent(
+    {
+      id: "bootstrap-search-capacity",
+      model: "openai/gpt-5.5",
+      system: "Use tools when needed.",
+      skills: true,
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+      },
+      maxSteps: 2,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+      __vfRemoteToolSources: [remoteSource],
+      __vfAllowedRemoteTools: allowedRemoteToolNames,
+      __vfToolExposureCheckpoint: {
+        version: 1,
+        loadedToolNames: allowedRemoteToolNames.slice(0, 125),
+      },
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  const response = await assistant.generate({ input: "Collect structured input" });
+
+  assertEquals(observedTools.length, 2);
+  for (const names of observedTools) {
+    assertEquals(names.length, 128);
+    assertEquals(names.includes("catalog_tool_000"), true);
+    assertEquals(names.includes("form_input"), true);
+    assertEquals(names.includes("load_skill"), true);
+    assertEquals(names.includes("tool_search"), true);
+  }
+  assertEquals(response.text, "done");
+});
+
 it(
   "framework fallback preserves configured provider tools for generate, stream, and respond",
   async () => {

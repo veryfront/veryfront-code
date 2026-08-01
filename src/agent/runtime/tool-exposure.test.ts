@@ -259,6 +259,60 @@ it("deferred exposure reserves bootstrap and search inside the provider tool bud
   assertEquals(state.loadedToolNames.has("catalog_tool_129"), true);
 });
 
+it("deferred exposure uses the full provider budget once the exact-fit catalog is loaded", () => {
+  const remoteCatalog = Array.from(
+    { length: 126 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    ...remoteCatalog,
+  ];
+  const state = createToolExposureState(remoteCatalog.map((tool) => tool.name));
+
+  const plan = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+
+  assertEquals(plan.visible.length, 128);
+  assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
+  assertEquals(plan.deferred, []);
+  assertEquals(plan.maxLoadedTools, 126);
+  assertEquals(state.loadedToolNames.size, 126);
+});
+
+it("deferred exposure prunes revoked and bootstrap names before budget eviction", () => {
+  const retained = definition("retained_tool", "Retained deferred tool");
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    retained,
+    definition("other_tool", "Other deferred tool"),
+  ];
+  const state = createToolExposureState([
+    retained.name,
+    "revoked_tool",
+    "form_input",
+  ]);
+
+  const plan = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 4,
+  });
+
+  assertEquals([...state.loadedToolNames], [retained.name]);
+  assertEquals(
+    plan.visible.map((tool) => tool.name),
+    ["form_input", "load_skill", retained.name, TOOL_SEARCH_TOOL_NAME],
+  );
+});
+
 it("tool search evicts the oldest loaded schema before activating a new match at capacity", () => {
   const remoteCatalog = Array.from(
     { length: 130 },
@@ -297,12 +351,12 @@ it("tool search never returns tools outside the currently authorized executable 
   );
 });
 
-it("tool exposure checkpoints are private, sorted, and restore only currently authorized tools", () => {
+it("tool exposure checkpoints are private, ordered, and restore only currently authorized tools", () => {
   const authorized = catalog.slice(0, 3);
   const state = createToolExposureState(["get_release", "create_release", "get_release"]);
   const checkpoint = createToolExposureCheckpoint(authorized, state);
   assertEquals(checkpoint.version, 1);
-  assertEquals(checkpoint.loadedToolNames, ["create_release", "get_release"]);
+  assertEquals(checkpoint.loadedToolNames, ["get_release", "create_release"]);
 
   assertEquals(
     [...restoreToolExposureState(checkpoint, authorized).loadedToolNames].sort(),
@@ -316,6 +370,29 @@ it("tool exposure checkpoints are private, sorted, and restore only currently au
     [...restoreToolExposureState({ ...checkpoint, version: 2 }, authorized).loadedToolNames],
     [],
   );
+});
+
+it("tool exposure checkpoints preserve eviction recency across restoration", () => {
+  const authorized = [
+    definition("z_oldest", "Oldest loaded tool"),
+    definition("a_newer", "Newer loaded tool"),
+    definition("m_next", "Next loaded tool"),
+  ];
+  const checkpoint = createToolExposureCheckpoint(
+    authorized,
+    createToolExposureState(["z_oldest", "a_newer"]),
+  );
+  const restored = restoreToolExposureState(checkpoint, authorized);
+
+  searchToolExposure({
+    query: "m_next",
+    authorized,
+    state: restored,
+    maxLoadedTools: 2,
+  });
+
+  assertEquals(checkpoint.loadedToolNames, ["z_oldest", "a_newer"]);
+  assertEquals([...restored.loadedToolNames], ["a_newer", "m_next"]);
 });
 
 it("tool exposure checkpoints canonicalize authorized loaded names", () => {
@@ -332,7 +409,7 @@ it("tool exposure checkpoints canonicalize authorized loaded names", () => {
 
   assertEquals(createToolExposureCheckpoint(authorized, state), {
     version: 1,
-    loadedToolNames: ["get_release", "list_projects"],
+    loadedToolNames: ["list_projects", "get_release"],
   });
 });
 

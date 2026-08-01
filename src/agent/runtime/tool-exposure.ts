@@ -133,6 +133,15 @@ function retainNewestLoadedToolNames(state: ToolExposureState, limit: number | u
   }
 }
 
+function pruneLoadedToolNames(
+  state: ToolExposureState,
+  loadableToolNames: ReadonlySet<string>,
+): void {
+  for (const name of state.loadedToolNames) {
+    if (!loadableToolNames.has(name)) state.loadedToolNames.delete(name);
+  }
+}
+
 /** Create the framework fallback tool definition without exposing catalog schemas. */
 export function createToolSearchDefinition(): ToolDefinition {
   return {
@@ -177,16 +186,21 @@ export function createToolExposurePlan(input: {
 
   const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
   const bootstrapCount = authorized.filter((tool) => bootstrap.has(tool.name)).length;
-  const hasSearchableTools = authorized.some((tool) => !bootstrap.has(tool.name));
-  const maxLoadedTools = input.maxVisibleTools === undefined
+  const loadable = authorized.filter((tool) => !bootstrap.has(tool.name));
+  const loadableNames = new Set(loadable.map((tool) => tool.name));
+  const loadedCapacity = input.maxVisibleTools === undefined
     ? undefined
-    : Math.max(0, input.maxVisibleTools - bootstrapCount - (hasSearchableTools ? 1 : 0));
+    : Math.max(0, input.maxVisibleTools - bootstrapCount);
+  const maxLoadedTools = loadedCapacity === undefined
+    ? undefined
+    : Math.max(0, loadedCapacity - (loadable.length > loadedCapacity ? 1 : 0));
+  pruneLoadedToolNames(input.state, loadableNames);
   retainNewestLoadedToolNames(input.state, maxLoadedTools);
   const visible = authorized
     .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name))
     .sort((left, right) => compareAscii(left.name, right.name));
   const visibleNames = new Set(visible.map((tool) => tool.name));
-  const deferred = authorized
+  const deferred = loadable
     .filter((tool) => !visibleNames.has(tool.name))
     .sort((left, right) => compareAscii(left.name, right.name));
   if (deferred.length > 0) {
@@ -279,8 +293,7 @@ export function createToolExposureCheckpoint(
   return {
     version: 1,
     loadedToolNames: [...state.loadedToolNames]
-      .filter((name) => authorizedNames.has(name))
-      .sort(),
+      .filter((name) => authorizedNames.has(name)),
   };
 }
 

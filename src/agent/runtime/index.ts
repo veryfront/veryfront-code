@@ -260,7 +260,7 @@ function executeFrameworkToolSearch(input: {
   }
   const result = searchToolExposure({
     query,
-    authorized: input.plan.authorized,
+    authorized: input.plan.deferred,
     state: input.state,
     maxLoadedTools: input.plan.maxLoadedTools,
   });
