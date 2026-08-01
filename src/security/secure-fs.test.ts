@@ -231,11 +231,19 @@ describe("SecureFs", () => {
     Reflect.deleteProperty(adapter.fs, "readFileSnapshotWithinLimit");
     const exact = adapter.fs.readFileBytesWithinLimit;
     let mutateDuringRead = false;
+    let sourceGeneration = 1;
+    Object.defineProperty(adapter.fs, "getSourceSnapshotVersion", {
+      configurable: true,
+      value: () => sourceGeneration,
+    });
     Object.defineProperty(adapter.fs, "readFileBytesWithinLimit", {
       configurable: true,
       value: async (path: string, byteLimit: number) => {
         const bytes = await exact(path, byteLimit);
-        if (mutateDuringRead) adapter.fs.files.set(path, "new");
+        if (mutateDuringRead) {
+          adapter.fs.files.set(path, "new");
+          sourceGeneration++;
+        }
         return bytes;
       },
     });
