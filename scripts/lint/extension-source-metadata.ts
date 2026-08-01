@@ -15,6 +15,7 @@ const KNOWN_CONTRACT_CONSTANTS: Record<string, string> = {
   CSSProcessorName: "CSSProcessor",
   LLMProviderRegistryName: "LLMProviderRegistry",
   NodeWebSocketServerProviderName: "NodeWebSocketServerProvider",
+  RedisRuntimeProviderName: "RedisRuntimeProvider",
   SandboxShellToolsProviderName: "SandboxShellToolsProvider",
 };
 
