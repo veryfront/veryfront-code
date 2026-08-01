@@ -128,8 +128,13 @@ describe("orchestrateExtensions()", () => {
       join(packageExtensionDirectory, "package.json"),
       JSON.stringify({
         name: "ext-explicit-package",
+        exports: "./index.js",
         veryfront: { extension: true, activation: "explicit" },
       }),
+    );
+    await Deno.writeTextFile(
+      join(packageExtensionDirectory, "index.js"),
+      "throw new Error('package extension must not be imported');",
     );
 
     let factoryLoaderCalls = 0;
@@ -180,6 +185,7 @@ describe("orchestrateExtensions()", () => {
         discoverPackageExtensions: () =>
           Promise.resolve([{
             packageName: "ext-explicit-package",
+            importTarget: "/fake/node_modules/ext-explicit-package/index.js",
             metadata: {
               isExtension: true,
               activation: "explicit",
@@ -202,7 +208,51 @@ describe("orchestrateExtensions()", () => {
     await loader.teardownAll();
   });
 
+  it("fails closed on injected activation accessors without invoking them", async () => {
+    let activationReads = 0;
+    let factoryLoaderCalls = 0;
+    const metadata = Object.defineProperty(
+      { isExtension: true as const, capabilities: [] },
+      "activation",
+      {
+        enumerable: true,
+        get() {
+          activationReads++;
+          return "auto";
+        },
+      },
+    );
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "ext-accessor",
+            importTarget: "/canonical/ext-accessor.js",
+            metadata,
+          }]),
+      },
+      loadFactory: (path, source) => {
+        factoryLoaderCalls++;
+        return Promise.resolve({
+          extension: stubExt(path),
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    assertEquals(activationReads, 0);
+    assertEquals(factoryLoaderCalls, 0);
+    await loader.teardownAll();
+  });
+
   it("honors source priority: config beats package beats project beats local-file", async () => {
+    const packageLoadPaths: string[] = [];
     const cfg = stubExt("shared", {
       provides: { Shared: { from: "config" } },
     });
@@ -225,6 +275,7 @@ describe("orchestrateExtensions()", () => {
           Promise.resolve([
             {
               packageName: "@scope/pkg",
+              importTarget: "/canonical/scope-pkg.js",
               metadata: {
                 isExtension: true as const,
                 activation: "auto" as const,
@@ -237,6 +288,7 @@ describe("orchestrateExtensions()", () => {
         mergeExtensions,
       },
       loadFactory: (path: string, source: ExtensionSource) => {
+        if (source === "package") packageLoadPaths.push(path);
         const map: Partial<Record<ExtensionSource, Extension>> = {
           "config": cfg,
           "package": pkg,
@@ -259,6 +311,7 @@ describe("orchestrateExtensions()", () => {
       (tryResolve("Shared") as { from: string }).from,
       "config",
     );
+    assertEquals(packageLoadPaths, ["/canonical/scope-pkg.js"]);
     await loader.teardownAll();
   });
 
@@ -326,6 +379,7 @@ describe("orchestrateExtensions()", () => {
           Promise.resolve([
             {
               packageName: "ext-broken-pkg",
+              importTarget: "/canonical/ext-broken-pkg.js",
               metadata: {
                 isExtension: true as const,
                 activation: "auto" as const,

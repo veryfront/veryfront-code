@@ -8,6 +8,12 @@
  */
 
 import { join } from "#veryfront/compat/path";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import {
+  canonicalizeExtensionEntrypoint,
+  selectPackageImportEntrypoint,
+} from "./entrypoint-identity.ts";
+import { type ExtensionManifestSyntax, readExtensionManifest } from "./manifest-reader.ts";
 import type { Capability, PackageContractMetadata, ResolvedExtension } from "./types.ts";
 
 /**
@@ -28,16 +34,21 @@ export interface PackageMetadata {
 /** Controls whether installation alone may activate an extension package. */
 export type ExtensionActivationMode = "auto" | "explicit";
 
+/** A package extension whose manifest is bound to one physical import target. */
+export interface DiscoveredPackageExtension {
+  packageName: string;
+  importTarget: string;
+  metadata: PackageMetadata;
+}
+
 const MISSING_METADATA_PROPERTY = Symbol("missing-extension-metadata-property");
 const INVALID_METADATA_PROPERTY = Symbol("invalid-extension-metadata-property");
 const MAX_EXTENSION_METADATA_ENTRIES = 1_024;
-const MAX_EXTENSION_MANIFEST_BYTES = 256 * 1_024;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const isSafeInteger = Number.isSafeInteger;
-const parseJSON = JSON.parse;
-const manifestTextDecoder = new TextDecoder("utf-8", { fatal: true });
+const stringifyJSON = JSON.stringify;
 
 function readOwnDataProperty(
   value: unknown,
@@ -130,6 +141,22 @@ function readActivationMode(
   return activation === "auto" || activation === "explicit"
     ? activation
     : INVALID_METADATA_PROPERTY;
+}
+
+function quotedPath(path: string): string {
+  return stringifyJSON(path);
+}
+
+/**
+ * Resolve package activation without invoking an accessor supplied through an
+ * injected discovery seam. Missing activation preserves legacy automatic
+ * discovery; any malformed live value fails closed as explicit-only.
+ */
+export function resolvePackageActivation(
+  metadata: PackageMetadata,
+): ExtensionActivationMode {
+  const activation = readActivationMode(metadata as unknown as Record<string, unknown>);
+  return activation === MISSING_METADATA_PROPERTY || activation === "auto" ? "auto" : "explicit";
 }
 
 /**
@@ -233,14 +260,48 @@ async function readDir(path: string): Promise<Deno.DirEntry[]> {
   }
 }
 
-async function fileExists(path: string): Promise<boolean> {
+async function pathEntryExists(path: string): Promise<boolean> {
   try {
-    await Deno.stat(path);
+    await Deno.lstat(path);
     return true;
   } catch (err) {
     if (err instanceof Deno.errors.NotFound) return false;
     throw err;
   }
+}
+
+function projectManifestActivation(
+  manifest: unknown,
+  manifestPath: string,
+): ExtensionActivationMode {
+  if (!manifest || typeof manifest !== "object" || isArray(manifest)) {
+    throw new TypeError(
+      `Project extension manifest ${quotedPath(manifestPath)} must be an object`,
+    );
+  }
+
+  const veryfront = readOwnDataProperty(manifest, "veryfront");
+  if (veryfront === MISSING_METADATA_PROPERTY) return "auto";
+  if (
+    veryfront === INVALID_METADATA_PROPERTY || !veryfront ||
+    typeof veryfront !== "object" || isArray(veryfront)
+  ) {
+    throw new TypeError(
+      `Project extension manifest ${
+        quotedPath(manifestPath)
+      } has invalid veryfront metadata; expected an object`,
+    );
+  }
+
+  const activation = readActivationMode(veryfront as Record<string, unknown>);
+  if (activation === INVALID_METADATA_PROPERTY) {
+    throw new TypeError(
+      `Project extension manifest ${
+        quotedPath(manifestPath)
+      } has an invalid veryfront.activation mode`,
+    );
+  }
+  return activation === MISSING_METADATA_PROPERTY ? "auto" : activation;
 }
 
 /**
@@ -255,81 +316,18 @@ async function resolveProjectExtensionActivation(
   extensionDirectory: string,
 ): Promise<ExtensionActivationMode> {
   let resolvedActivation: ExtensionActivationMode = "auto";
-  for (const manifestName of ["deno.json", "package.json"] as const) {
+  const manifests: ReadonlyArray<readonly [string, ExtensionManifestSyntax]> = [
+    ["deno.json", "json"],
+    ["deno.jsonc", "jsonc"],
+    ["package.json", "json"],
+  ];
+
+  for (const [manifestName, syntax] of manifests) {
     const manifestPath = join(extensionDirectory, manifestName);
-    let metadata: Deno.FileInfo;
-    try {
-      metadata = await Deno.lstat(manifestPath);
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) continue;
-      throw new TypeError(`Project extension manifest "${manifestPath}" could not be inspected`, {
-        cause: error,
-      });
-    }
-    if (metadata.isSymlink || !metadata.isFile) {
-      throw new TypeError(
-        `Project extension manifest "${manifestPath}" must be a regular file`,
-      );
-    }
-    if (
-      !isSafeInteger(metadata.size) || metadata.size < 0 ||
-      metadata.size > MAX_EXTENSION_MANIFEST_BYTES
-    ) {
-      throw new TypeError(
-        `Project extension manifest "${manifestPath}" exceeds the size limit`,
-      );
-    }
+    const readResult = await readExtensionManifest(manifestPath, { syntax });
+    if (readResult.kind === "missing") continue;
+    const activation = projectManifestActivation(readResult.manifest, manifestPath);
 
-    let bytes: Uint8Array;
-    try {
-      bytes = await Deno.readFile(manifestPath);
-    } catch (error) {
-      throw new TypeError(`Project extension manifest "${manifestPath}" could not be read`, {
-        cause: error,
-      });
-    }
-    if (bytes.byteLength > MAX_EXTENSION_MANIFEST_BYTES) {
-      throw new TypeError(
-        `Project extension manifest "${manifestPath}" exceeds the size limit`,
-      );
-    }
-    let source: string;
-    try {
-      source = manifestTextDecoder.decode(bytes);
-    } catch (error) {
-      throw new TypeError(
-        `Project extension manifest "${manifestPath}" is not valid UTF-8`,
-        { cause: error },
-      );
-    }
-
-    let manifest: unknown;
-    try {
-      manifest = parseJSON(source);
-    } catch (error) {
-      throw new TypeError(`Project extension manifest "${manifestPath}" is not valid JSON`, {
-        cause: error,
-      });
-    }
-    if (!manifest || typeof manifest !== "object" || isArray(manifest)) {
-      throw new TypeError(`Project extension manifest "${manifestPath}" must be an object`);
-    }
-    const veryfront = readOwnDataProperty(manifest, "veryfront");
-    if (veryfront === MISSING_METADATA_PROPERTY) continue;
-    if (
-      veryfront === INVALID_METADATA_PROPERTY || !veryfront ||
-      typeof veryfront !== "object" || isArray(veryfront)
-    ) {
-      throw new TypeError(
-        `Project extension manifest "${manifestPath}" has invalid veryfront metadata; expected an object`,
-      );
-    }
-    const activation = readActivationMode(veryfront as Record<string, unknown>);
-    if (activation === INVALID_METADATA_PROPERTY) {
-      throw new TypeError(
-        `Project extension manifest "${manifestPath}" has an invalid veryfront.activation mode`,
-      );
-    }
     // When both Deno and npm manifests exist, the stricter declaration owns
     // activation. A package manifest therefore cannot be bypassed by adding a
     // second manifest that permits automatic discovery.
@@ -344,9 +342,9 @@ async function resolveProjectExtensionActivation(
  */
 export async function discoverPackageExtensions(
   baseDir: string,
-): Promise<Array<{ packageName: string; metadata: PackageMetadata }>> {
+): Promise<DiscoveredPackageExtension[]> {
   const nmDir = join(baseDir, "node_modules");
-  const results: Array<{ packageName: string; metadata: PackageMetadata }> = [];
+  const results: DiscoveredPackageExtension[] = [];
   const entries = await readDir(nmDir);
 
   for (const entry of entries) {
@@ -360,14 +358,18 @@ export async function discoverPackageExtensions(
       for (const scopeEntry of scopeEntries) {
         if (!scopeEntry.isDirectory && !scopeEntry.isSymlink) continue;
         const pkgName = `${entry.name}/${scopeEntry.name}`;
-        const meta = await tryReadPackageMeta(
+        const hit = await tryReadPackageMeta(
           join(scopeDir, scopeEntry.name),
+          pkgName,
         );
-        if (meta) results.push({ packageName: pkgName, metadata: meta });
+        if (hit) results.push(hit);
       }
     } else {
-      const meta = await tryReadPackageMeta(join(nmDir, entry.name));
-      if (meta) results.push({ packageName: entry.name, metadata: meta });
+      const hit = await tryReadPackageMeta(
+        join(nmDir, entry.name),
+        entry.name,
+      );
+      if (hit) results.push(hit);
     }
   }
 
@@ -376,41 +378,39 @@ export async function discoverPackageExtensions(
 
 async function tryReadPackageMeta(
   pkgDir: string,
-): Promise<PackageMetadata | undefined> {
+  packageName: string,
+): Promise<DiscoveredPackageExtension | undefined> {
   const manifestPath = join(pkgDir, "package.json");
-  let metadata: Deno.FileInfo;
+  let readResult;
   try {
-    metadata = await Deno.stat(manifestPath);
-  } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return undefined;
-    throw err;
+    readResult = await readExtensionManifest(manifestPath, { syntax: "json" });
+  } catch (error) {
+    // A package whose manifest cannot be read safely is not eligible for
+    // automatic discovery. Other packages must remain discoverable.
+    if (error instanceof VeryfrontError) return undefined;
+    throw error;
   }
-  if (
-    !metadata.isFile || !isSafeInteger(metadata.size) || metadata.size < 0 ||
-    metadata.size > MAX_EXTENSION_MANIFEST_BYTES
-  ) {
-    return undefined;
-  }
+  if (readResult.kind === "missing") return undefined;
 
-  let bytes: Uint8Array;
-  try {
-    bytes = await Deno.readFile(manifestPath);
-  } catch (err) {
-    if (err instanceof Deno.errors.NotFound) return undefined;
-    throw err;
-  }
-  if (bytes.byteLength > MAX_EXTENSION_MANIFEST_BYTES) {
+  const pkg = readResult.manifest;
+  if (!pkg || typeof pkg !== "object" || isArray(pkg)) {
     return undefined;
   }
+  const metadata = parsePackageMetadata(pkg as Record<string, unknown>);
+  if (!metadata) return undefined;
 
   try {
-    const pkg = parseJSON(manifestTextDecoder.decode(bytes));
-    return pkg && typeof pkg === "object" && !isArray(pkg)
-      ? parsePackageMetadata(pkg as Record<string, unknown>)
-      : undefined;
-  } catch {
-    // Malformed JSON or UTF-8: treat as a non-extension package.
-    return undefined;
+    const selectedEntrypoint = selectPackageImportEntrypoint(packageName, pkg);
+    const importTarget = await canonicalizeExtensionEntrypoint(
+      pkgDir,
+      selectedEntrypoint,
+    );
+    return { packageName, importTarget, metadata };
+  } catch (error) {
+    throw new TypeError(
+      `Extension package ${quotedPath(packageName)} has an unsafe import target`,
+      { cause: error },
+    );
   }
 }
 
@@ -434,15 +434,28 @@ export async function discoverProjectExtensions(
     const extensionDirectory = join(extDir, entry.name);
     const srcIndex = join(extensionDirectory, "src", "index.ts");
     const rootIndex = join(extensionDirectory, "index.ts");
-    const entryPoint = await fileExists(srcIndex)
+    const entryPoint = await pathEntryExists(srcIndex)
       ? srcIndex
-      : await fileExists(rootIndex)
+      : await pathEntryExists(rootIndex)
       ? rootIndex
       : undefined;
     if (!entryPoint) continue;
 
     const activation = await resolveProjectExtensionActivation(extensionDirectory);
-    if (activation === "auto") results.push(entryPoint);
+    if (activation === "explicit") continue;
+
+    try {
+      results.push(
+        await canonicalizeExtensionEntrypoint(extensionDirectory, entryPoint),
+      );
+    } catch (error) {
+      throw new TypeError(
+        `Project extension entrypoint ${
+          quotedPath(entryPoint)
+        } is not a safe regular file within its extension directory`,
+        { cause: error },
+      );
+    }
   }
 
   return results;
@@ -456,6 +469,6 @@ export async function discoverLocalExtensions(
 ): Promise<string[]> {
   const entries = await readDir(baseDir);
   return entries
-    .filter((e) => !e.isDirectory && e.name.endsWith(".extension.ts"))
+    .filter((e) => e.isFile && e.name.endsWith(".extension.ts"))
     .map((e) => join(baseDir, e.name));
 }

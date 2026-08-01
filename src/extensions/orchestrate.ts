@@ -71,8 +71,7 @@ function isDisableDirective(
  */
 function projectExtensionNameFromPath(path: string): string | undefined {
   let current = dirname(path);
-  // Safety limit in case of a malformed path that never reaches a root.
-  for (let i = 0; i < 8; i++) {
+  while (true) {
     const parent = dirname(current);
     if (basename(parent) === "extensions") {
       return basename(current);
@@ -80,7 +79,6 @@ function projectExtensionNameFromPath(path: string): string | undefined {
     if (parent === current) return undefined;
     current = parent;
   }
-  return undefined;
 }
 
 /**
@@ -136,11 +134,13 @@ export async function orchestrateExtensions(
     disc.discoverLocalExtensions(projectDir),
   ]);
 
-  // Package hits carry the package name directly — filter before loading.
-  const enabledPackageNames = packageHits
-    .filter((hit) => hit.metadata.activation === undefined || hit.metadata.activation === "auto")
-    .map((hit) => hit.packageName)
-    .filter((name) => !disabledNames.has(name));
+  // Package hits retain the lexical name for disable directives, but loading
+  // uses the canonical target captured while that package manifest was read.
+  // This prevents an import map from redirecting the authorized package name.
+  const enabledPackageTargets = packageHits
+    .filter((hit) => defaultDiscovery.resolvePackageActivation(hit.metadata) === "auto")
+    .filter((hit) => !disabledNames.has(hit.packageName))
+    .map((hit) => hit.importTarget);
 
   // Project paths have the shape `<projectDir>/extensions/<name>/src/index.ts`
   // (or `<projectDir>/extensions/<name>/index.ts`). `mergeExtensions` is the
@@ -154,7 +154,7 @@ export async function orchestrateExtensions(
   // (`foo.extension.ts`) is not guaranteed to match the extension name
   // declared by the factory. `mergeExtensions` applies the post-hoc filter.
   const packageResolved = await loadAllFactories(
-    enabledPackageNames,
+    enabledPackageTargets,
     "package",
     loadFactory,
   );

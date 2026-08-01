@@ -244,9 +244,14 @@ async function writePkg(
   veryfront?: Record<string, unknown>,
 ): Promise<void> {
   await Deno.mkdir(dir, { recursive: true });
-  const pkg: Record<string, unknown> = { name, version: "1.0.0" };
+  const pkg: Record<string, unknown> = {
+    name,
+    version: "1.0.0",
+    exports: "./index.js",
+  };
   if (veryfront) pkg.veryfront = veryfront;
   await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(pkg));
+  await Deno.writeTextFile(join(dir, "index.js"), "export default {};");
 }
 
 describe("discoverPackageExtensions()", () => {
@@ -273,6 +278,10 @@ describe("discoverPackageExtensions()", () => {
     assertEquals(found.length, 1);
     assertEquals(found[0]?.packageName, "ext-a");
     assertEquals(found[0]?.metadata.capabilities[0]?.type, "bundler");
+    assertEquals(
+      found[0]?.importTarget,
+      await Deno.realPath(join(tmp, "node_modules", "ext-a", "index.js")),
+    );
   });
 
   it("returns package hits in stable lexical order", async () => {
@@ -336,6 +345,51 @@ describe("discoverPackageExtensions()", () => {
     const found = await discoverPackageExtensions(tmp);
     assertEquals(found.length, 1);
     assertEquals(found[0]?.packageName, "@veryfront/ext-scoped");
+  });
+
+  it("rejects extension packages whose manifest identity or entrypoint escapes", async () => {
+    const mismatched = join(tmp, "node_modules", "ext-mismatched");
+    await writePkg(mismatched, "ext-decoy", { extension: true });
+    await assertRejects(
+      () => discoverPackageExtensions(tmp),
+      TypeError,
+      "unsafe import target",
+    );
+    await Deno.remove(mismatched, { recursive: true });
+
+    const escaping = join(tmp, "node_modules", "ext-escaping");
+    await writePkg(escaping, "ext-escaping", { extension: true });
+    await Deno.writeTextFile(
+      join(escaping, "package.json"),
+      JSON.stringify({
+        name: "ext-escaping",
+        exports: "../outside.js",
+        veryfront: { extension: true },
+      }),
+    );
+    await assertRejects(
+      () => discoverPackageExtensions(tmp),
+      TypeError,
+      "unsafe import target",
+    );
+  });
+
+  it("ignores extension packages whose manifest is a symbolic link", async () => {
+    const pkgDir = join(tmp, "node_modules", "ext-linked-manifest");
+    await Deno.mkdir(pkgDir, { recursive: true });
+    await Deno.writeTextFile(join(pkgDir, "index.js"), "export default {};");
+    const target = join(tmp, "linked-package.json");
+    await Deno.writeTextFile(
+      target,
+      JSON.stringify({
+        name: "ext-linked-manifest",
+        exports: "./index.js",
+        veryfront: { extension: true },
+      }),
+    );
+    await Deno.symlink(target, join(pkgDir, "package.json"));
+
+    assertEquals(await discoverPackageExtensions(tmp), []);
   });
 
   it("tolerates malformed package.json", async () => {
@@ -406,7 +460,10 @@ describe("discoverProjectExtensions()", () => {
     await Deno.writeTextFile(join(dir, "index.ts"), "export default {};");
     const found = await discoverProjectExtensions(tmp);
     assertEquals(found.length, 1);
-    assertEquals(found[0], join(tmp, "extensions", "my-ext", "src", "index.ts"));
+    assertEquals(
+      found[0],
+      await Deno.realPath(join(tmp, "extensions", "my-ext", "src", "index.ts")),
+    );
   });
 
   it("falls back to index.ts when src/index.ts is absent", async () => {
@@ -415,7 +472,10 @@ describe("discoverProjectExtensions()", () => {
     await Deno.writeTextFile(join(dir, "index.ts"), "export default {};");
     const found = await discoverProjectExtensions(tmp);
     assertEquals(found.length, 1);
-    assertEquals(found[0], join(tmp, "extensions", "flat-ext", "index.ts"));
+    assertEquals(
+      found[0],
+      await Deno.realPath(join(tmp, "extensions", "flat-ext", "index.ts")),
+    );
   });
 
   it("prefers src/index.ts over index.ts", async () => {
@@ -425,7 +485,7 @@ describe("discoverProjectExtensions()", () => {
     await Deno.writeTextFile(join(dir, "src", "index.ts"), "src");
     const found = await discoverProjectExtensions(tmp);
     assertEquals(found.length, 1);
-    assertEquals(found[0], join(dir, "src", "index.ts"));
+    assertEquals(found[0], await Deno.realPath(join(dir, "src", "index.ts")));
   });
 
   it("skips extension dirs with no index", async () => {
@@ -450,8 +510,8 @@ describe("discoverProjectExtensions()", () => {
     }
 
     assertEquals(await discoverProjectExtensions(tmp), [
-      join(tmp, "extensions", "a-first", "index.ts"),
-      join(tmp, "extensions", "z-last", "index.ts"),
+      await Deno.realPath(join(tmp, "extensions", "a-first", "index.ts")),
+      await Deno.realPath(join(tmp, "extensions", "z-last", "index.ts")),
     ]);
   });
 
@@ -537,8 +597,8 @@ describe("discoverProjectExtensions()", () => {
 
     await assertRejects(
       () => discoverProjectExtensions(tmp),
-      TypeError,
-      "is not valid JSONC",
+      Error,
+      "Failed to parse JSONC extension manifest",
     );
   });
 
@@ -568,13 +628,13 @@ describe("discoverProjectExtensions()", () => {
     await assertRejects(
       () => discoverProjectExtensions(tmp),
       TypeError,
-      "escapes its extension directory",
+      "not a safe regular file within its extension directory",
     );
     await Deno.remove(directDir, { recursive: true });
     await assertRejects(
       () => discoverProjectExtensions(tmp),
       TypeError,
-      "escapes its extension directory",
+      "not a safe regular file within its extension directory",
     );
   });
 
@@ -598,8 +658,8 @@ describe("discoverProjectExtensions()", () => {
 
     await assertRejects(
       () => discoverProjectExtensions(tmp),
-      TypeError,
-      "is not valid JSON",
+      Error,
+      "Failed to parse JSON extension manifest",
     );
     await Deno.remove(join(tmp, "extensions", "malformed-json"), {
       recursive: true,
@@ -652,8 +712,8 @@ describe("discoverProjectExtensions()", () => {
     );
     await assertRejects(
       () => discoverProjectExtensions(tmp),
-      TypeError,
-      "exceeds the size limit",
+      Error,
+      "exceeds 262144 bytes",
     );
     await Deno.remove(oversized, { recursive: true });
 
@@ -661,8 +721,8 @@ describe("discoverProjectExtensions()", () => {
     await Deno.writeFile(join(invalidUtf8, "deno.json"), new Uint8Array([0xc3, 0x28]));
     await assertRejects(
       () => discoverProjectExtensions(tmp),
-      TypeError,
-      "is not valid UTF-8",
+      Error,
+      "Failed to parse JSON extension manifest",
     );
     await Deno.remove(invalidUtf8, { recursive: true });
 
@@ -675,8 +735,8 @@ describe("discoverProjectExtensions()", () => {
     await Deno.symlink(manifestTarget, join(symlinked, "deno.json"));
     await assertRejects(
       () => discoverProjectExtensions(tmp),
-      TypeError,
-      "must be a regular file",
+      Error,
+      "symbolic link",
     );
   });
 });

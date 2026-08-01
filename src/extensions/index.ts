@@ -39,7 +39,11 @@ export { composeAbortSignals } from "./abort-signal.ts";
 export { resolve, tryResolve } from "./contracts.ts";
 
 // Discovery
-export type { ExtensionActivationMode, PackageMetadata } from "./discovery.ts";
+export type {
+  DiscoveredPackageExtension,
+  ExtensionActivationMode,
+  PackageMetadata,
+} from "./discovery.ts";
 export {
   discoverLocalExtensions,
   discoverPackageExtensions,
