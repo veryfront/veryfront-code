@@ -10,7 +10,7 @@ interface RootInfo {
 export function hasWindowsLikePath(path: string): boolean {
   return path.includes("\\") ||
     /^[A-Za-z]:/.test(path) ||
-    path.startsWith("//");
+    /^\/\/[^/]+\/[^/]+(?:\/|$)/.test(path);
 }
 
 export function toPortableSeparators(path: string): string {
@@ -22,7 +22,7 @@ function analyzeRoot(path: string, windows: boolean): RootInfo {
 
   if (windows) {
     const unc = portable.match(
-      /^\/\/+([^/]+)\/+([^/]+)(\/+(.*))?$/,
+      /^\/\/([^/]+)\/+([^/]+)(\/+(.*))?$/,
     );
     if (unc?.[1] && unc[2]) {
       const device = `//${unc[1]}/${unc[2]}`;

@@ -10,7 +10,14 @@ function decodeFilePath(pathname: string, windows: boolean): string {
 }
 
 function encodePath(path: string): string {
-  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+  // Match filesystem URL encoding: protect characters that URL parsing would
+  // interpret structurally while leaving valid path characters such as a
+  // drive-like colon untouched when it appears inside a POSIX path segment.
+  return path
+    .replaceAll("%", "%25")
+    .replaceAll("\\", "%5C")
+    .replaceAll("#", "%23")
+    .replaceAll("?", "%3F");
 }
 
 function parseUncPath(path: string): { host: string; pathname: string } | null {

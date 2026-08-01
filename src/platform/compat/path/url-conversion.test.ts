@@ -68,6 +68,14 @@ describe("url-conversion", () => {
       assertEquals(fromFileUrl(result), path);
     });
 
+    it("should preserve colons inside POSIX path segments", () => {
+      const path = "/srv/app/node_modules/example/C:/entry.mjs";
+      assertEquals(
+        toFileUrl(path).href,
+        "file:///srv/app/node_modules/example/C:/entry.mjs",
+      );
+    });
+
     it("should handle relative path by resolving", () => {
       const result = toFileUrl("relative/path.ts");
       assertEquals(result.protocol, "file:");

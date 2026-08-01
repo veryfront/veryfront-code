@@ -40,5 +40,20 @@ export function relative(from: string, to: string): string {
 export function normalize(path: string): string {
   const windows = usesWindowsFlavor([path]);
   const pathApi = getNativePathImplementation(windows);
-  return pathApi ? toPortableSeparators(pathApi.normalize(path)) : portableNormalize(path, windows);
+  const normalized = pathApi
+    ? toPortableSeparators(pathApi.normalize(path))
+    : portableNormalize(path, windows);
+
+  // The established Veryfront facade contract returns canonical paths without
+  // a trailing separator, except for filesystem roots. Enforce that
+  // postcondition independently of whether the runtime supplies node:path.
+  if (
+    normalized === "/" ||
+    /^[A-Za-z]:\/$/.test(normalized) ||
+    /^\/\/[^/]+\/[^/]+\/$/.test(normalized)
+  ) {
+    return normalized;
+  }
+  if (normalized === "./") return ".";
+  return normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
 }

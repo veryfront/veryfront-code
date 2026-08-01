@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  hasWindowsLikePath,
   portableBasename,
   portableDirname,
   portableExtname,
@@ -15,6 +16,13 @@ import {
 } from "./portable.ts";
 
 describe("platform/compat/path/portable", () => {
+  it("distinguishes UNC paths from redundant POSIX roots", () => {
+    assertEquals(hasWindowsLikePath("//server/share/file.ts"), true);
+    assertEquals(hasWindowsLikePath("///tmp/file.ts"), false);
+    assertEquals(hasWindowsLikePath("////tmp/file.ts"), false);
+    assertEquals(portableNormalize("///tmp/file.ts", true), "/tmp/file.ts");
+  });
+
   it("normalizes POSIX joins without a native path module", () => {
     assertEquals(
       portableJoin(["/workspace", ".", "src", "..", "test"], false),

@@ -100,12 +100,23 @@ describe("platform/compat/path/resolution", () => {
       assertEquals(normalize("/home//user"), "/home/user");
     });
 
+    it("keeps redundant POSIX roots local", () => {
+      assertEquals(normalize("///tmp/file.ts"), "/tmp/file.ts");
+      assertEquals(normalize("////tmp/file.ts"), "/tmp/file.ts");
+    });
+
     it("should return . for empty string", () => {
       assertEquals(normalize(""), ".");
     });
 
     it("should preserve absolute path root", () => {
       assertEquals(normalize("/"), "/");
+    });
+
+    it("should remove trailing separators from non-root paths", () => {
+      assertEquals(normalize("uploads/"), "uploads");
+      assertEquals(normalize("./"), ".");
+      assertEquals(normalize("D:/project/"), "D:/project");
     });
 
     it("should handle relative parent traversal", () => {
@@ -125,6 +136,7 @@ describe("platform/compat/path/resolution", () => {
         normalize("\\\\server\\share\\project\\..\\src"),
         "//server/share/src",
       );
+      assertEquals(normalize("\\\\server\\share\\"), "//server/share/");
     });
   });
 });
