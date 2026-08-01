@@ -1,5 +1,5 @@
 /**
- * ext-redis — third-party Redis runtime implementation for Veryfront.
+ * ext-redis: third-party Redis runtime implementation for Veryfront.
  *
  * @module extensions/ext-redis
  */

@@ -41,9 +41,13 @@ const NODE_CLIENT_METHODS = [
   "expire",
   "set",
   "get",
+  "publish",
+  "subscribe",
+  "unsubscribe",
   "eval",
   "close",
   "destroy",
+  "on",
 ] as const;
 const CLIENT_METHODS = [
   "connect",
