@@ -7,7 +7,7 @@ const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
-const isWellFormedString = String.prototype.isWellFormed;
+const charCodeAtString = String.prototype.charCodeAt;
 const normalizeString = String.prototype.normalize;
 const trimString = String.prototype.trim;
 const executeRegularExpression = RegExp.prototype.exec;
@@ -40,6 +40,21 @@ export function isDataPropertyDescriptor(
   return descriptor !== undefined && hasOwn(descriptor, "value");
 }
 
+function isWellFormedExtensionString(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = apply(charCodeAtString, value, [index]) as number;
+    if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF) {
+      index++;
+      if (index >= value.length) return false;
+      const trailingCodeUnit = apply(charCodeAtString, value, [index]) as number;
+      if (trailingCodeUnit < 0xDC00 || trailingCodeUnit > 0xDFFF) return false;
+    } else if (codeUnit >= 0xDC00 && codeUnit <= 0xDFFF) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** Validate the canonical, bounded identity shared by asset engine contracts. */
 export function isStableExtensionCacheIdentity(
   value: unknown,
@@ -48,7 +63,7 @@ export function isStableExtensionCacheIdentity(
   return typeof value === "string" &&
     value.length > 0 &&
     value.length <= maxCharacters &&
-    apply(isWellFormedString, value, []) &&
+    isWellFormedExtensionString(value) &&
     apply(trimString, value, []) === value &&
     apply(normalizeString, value, ["NFC"]) === value &&
     apply(executeRegularExpression, CONTROL_OR_LINE_SEPARATOR_PATTERN, [value]) === null;

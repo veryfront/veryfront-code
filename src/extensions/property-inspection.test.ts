@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findExtensionPropertyDescriptor,
   isDataPropertyDescriptor,
+  isStableExtensionCacheIdentity,
 } from "./property-inspection.ts";
 
 describe("extension property inspection", () => {
@@ -77,5 +78,13 @@ describe("extension property inspection", () => {
     assertEquals(isDataPropertyDescriptor({ get: () => "accessor" }), false);
     assertEquals(isDataPropertyDescriptor({ value: undefined }), true);
     assertEquals(reads, 0);
+  });
+
+  it("validates well-formed identities without newer String intrinsics", () => {
+    assertEquals(isStableExtensionCacheIdentity("engine-v1", 64), true);
+    assertEquals(isStableExtensionCacheIdentity("engine-\u{1F680}", 64), true);
+    assertEquals(isStableExtensionCacheIdentity("engine-\uD800", 64), false);
+    assertEquals(isStableExtensionCacheIdentity("engine-\uDC00", 64), false);
+    assertEquals(isStableExtensionCacheIdentity("engine-\uD800x", 64), false);
   });
 });
