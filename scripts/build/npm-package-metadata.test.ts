@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
   BROWSER_SAFE_CLIENT_MODULES,
@@ -7,6 +7,7 @@ import {
 import {
   EXTENSION_OWNED_DEPENDENCIES,
   normalizeNpmPackageMetadata,
+  removeInternalNpmEntryPointExports,
   ROOT_OPTIONAL_RUNTIME_PEERS,
 } from "./npm-package-metadata.ts";
 import {
@@ -53,6 +54,38 @@ Deno.test("npm package provenance metadata points at veryfront-code", async () =
     'url: "https://github.com/veryfront/veryfront-code/issues"',
   );
   assertEquals(source.includes("github.com/veryfront/veryfront.git"), false);
+});
+
+Deno.test("removes build-only entry points from published npm exports", () => {
+  const pkg = {
+    exports: {
+      ".": { import: "./esm/src/index.js" },
+      "./react/public": { import: "./esm/src/react/public.js" },
+    } as Record<string, { import: string }>,
+  };
+
+  removeInternalNpmEntryPointExports(pkg, ["./react/public"]);
+
+  assertEquals(pkg.exports, {
+    ".": { import: "./esm/src/index.js" },
+  });
+});
+
+Deno.test("fails closed when generated npm exports cannot prove an internal entry", () => {
+  assertThrows(
+    () => removeInternalNpmEntryPointExports({}, ["./react/public"]),
+    Error,
+    "missing its exports map",
+  );
+  assertThrows(
+    () =>
+      removeInternalNpmEntryPointExports(
+        { exports: { ".": { import: "./esm/src/index.js" } } },
+        ["./react/public"],
+      ),
+    Error,
+    "missing internal entry point ./react/public",
+  );
 });
 
 Deno.test("root npm build metadata does not inject extension implementation dependencies", async () => {

@@ -1,9 +1,52 @@
-import { assert } from "#std/assert";
+import { assert, assertEquals, assertThrows } from "#std/assert";
 import {
 	BROWSER_SAFE_CLIENT_MODULES,
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
+	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+	createDntEntryPoints,
 } from "./browser-safe-exports.mjs";
+
+Deno.test("ships private browser runtime entry points without publishing their subpaths", async () => {
+	const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
+	const exports = denoJson.exports as Record<string, string>;
+
+	assertEquals(exports["./react/public"], undefined);
+	assertEquals(BROWSER_SAFE_INTERNAL_ENTRY_POINTS, {
+		"./react/public": "./src/react/public.ts",
+	});
+	for (const sourcePath of Object.values(BROWSER_SAFE_INTERNAL_ENTRY_POINTS)) {
+		assert(
+			(await Deno.stat(sourcePath)).isFile,
+			`Build-only entry point source is missing: ${sourcePath}`,
+		);
+	}
+});
+
+Deno.test("composes public and build-only dnt entry points", () => {
+	assertEquals(
+		createDntEntryPoints(
+			{ ".": "./src/index.ts" },
+			BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+		),
+		[
+			{ name: ".", path: "./src/index.ts" },
+			{ name: "./react/public", path: "./src/react/public.ts" },
+		],
+	);
+});
+
+Deno.test("rejects overlap between public and build-only entry points", () => {
+	assertThrows(
+		() =>
+			createDntEntryPoints(
+				{ "./react/public": "./src/public-react.ts" },
+				BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+			),
+		Error,
+		"both public and internal",
+	);
+});
 
 // build-npm-dnt.ts postBuild throws "Missing browser-safe export source" when
 // an entry here no longer exists in deno.json exports — but only at release
