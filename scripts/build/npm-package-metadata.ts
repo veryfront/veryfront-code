@@ -58,6 +58,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
+	"@redis/client",
 	"@sentry/deno",
 	"@sentry/node",
 	"@tailwindcss/forms",

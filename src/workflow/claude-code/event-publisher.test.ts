@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { register, unregister } from "../../extensions/contracts.ts";
+import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed";
 import { MultiEventPublisher, RedisEventPublisher } from "./event-publisher.ts";
 import type { ClaudeCodeEvent, ClaudeCodeEventPublisher } from "./types.ts";
 
@@ -81,32 +83,72 @@ describe("workflow/claude-code/event-publisher", () => {
   });
 
   it("RedisEventPublisher.close fails fast when one client hangs and the other rejects", async () => {
-    const publisher = new RedisEventPublisher({ url: "redis://example" });
-    const publisherState = publisher as unknown as {
-      initialized: boolean;
-      publishClient: { close: () => Promise<void> };
-      subscribeClient: { close: () => Promise<void> };
-    };
+    register(RedisRuntimeProviderName, {
+      id: "test-redis",
+      loadModule: () => Promise.resolve({ createClient: () => ({}) }),
+      getClient: () => Promise.resolve({}),
+      disconnectClient: () => Promise.resolve(),
+      openClient: () => Promise.resolve({ client: {}, close: () => Promise.resolve() }),
+      createEventPublisher: () => ({
+        publish: () => Promise.resolve(),
+        subscribe: () => Promise.resolve(() => undefined),
+        close: () =>
+          Promise.all([
+            new Promise<void>(() => {}),
+            Promise.reject(new Error("close failed")),
+          ]).then(() => undefined),
+      }),
+      close: () => Promise.resolve(),
+    });
+    try {
+      const publisher = new RedisEventPublisher({ url: "redis://example" });
+      await publisher.publish(createErrorEvent());
 
-    publisherState.initialized = true;
-    publisherState.publishClient = {
-      close: () => new Promise<void>(() => {}),
-    };
-    publisherState.subscribeClient = {
-      close: () => Promise.reject(new Error("close failed")),
-    };
+      const result = await raceWithTimeout(
+        publisher.close().then(
+          () => ({ status: "resolved" as const }),
+          (error) => ({
+            status: "rejected" as const,
+            message: error instanceof Error ? error.message : String(error),
+          }),
+        ),
+        100,
+      );
 
-    const result = await raceWithTimeout(
-      publisher.close().then(
-        () => ({ status: "resolved" as const }),
-        (error) => ({
-          status: "rejected" as const,
-          message: error instanceof Error ? error.message : String(error),
-        }),
-      ),
-      100,
-    );
+      assertEquals(result, { status: "rejected", message: "close failed" });
+    } finally {
+      unregister(RedisRuntimeProviderName);
+    }
+  });
 
-    assertEquals(result, { status: "rejected", message: "close failed" });
+  it("RedisEventPublisher creates a fresh implementation after close", async () => {
+    let created = 0;
+    register(RedisRuntimeProviderName, {
+      id: "test-redis",
+      loadModule: () => Promise.resolve({ createClient: () => ({}) }),
+      getClient: () => Promise.resolve({}),
+      disconnectClient: () => Promise.resolve(),
+      openClient: () => Promise.resolve({ client: {}, close: () => Promise.resolve() }),
+      createEventPublisher: () => {
+        created++;
+        return {
+          publish: () => Promise.resolve(),
+          subscribe: () => Promise.resolve(() => undefined),
+          close: () => Promise.resolve(),
+        };
+      },
+      close: () => Promise.resolve(),
+    });
+    try {
+      const publisher = new RedisEventPublisher({ url: "redis://example" });
+      await publisher.publish(createErrorEvent());
+      await publisher.close();
+      await publisher.publish(createErrorEvent());
+
+      assertEquals(created, 2);
+      await publisher.close();
+    } finally {
+      unregister(RedisRuntimeProviderName);
+    }
   });
 });
