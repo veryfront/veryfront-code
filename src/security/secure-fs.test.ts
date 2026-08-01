@@ -795,6 +795,89 @@ describe("SecureFs", () => {
     assertEquals(receivedLimit, 3);
   });
 
+  it("binds snapshot reads to the validated path and construction-time root", async () => {
+    let originalCalls = 0;
+    let replacementCalls = 0;
+    let received: [string, string, number] | undefined;
+    const source = new Uint8Array([1, 2, 3]);
+    const fileSystem = createMockFileSystem({
+      readFileSnapshotWithinLimit(path, root, byteLimit) {
+        originalCalls++;
+        received = [path, root, byteLimit];
+        return Promise.resolve(source);
+      },
+    });
+    const config = {
+      baseDir: "/project/./",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+      context: "internal" as const,
+    };
+    const secureFs = createSecureFs(config);
+    config.baseDir = "/attacker";
+    fileSystem.readFileSnapshotWithinLimit = () => {
+      replacementCalls++;
+      return Promise.resolve(new Uint8Array([9]));
+    };
+
+    const result = await secureFs.readFileSnapshotWithinLimit!("assets/app.bin", 3);
+    source[0] = 9;
+
+    assertEquals([...result], [1, 2, 3]);
+    assertEquals(received, ["/project/assets/app.bin", "/project", 3]);
+    assertEquals({ originalCalls, replacementCalls }, { originalCalls: 1, replacementCalls: 0 });
+  });
+
+  it("rejects traversal before invoking raw snapshot authority", async () => {
+    let reads = 0;
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: {
+        fs: createMockFileSystem({
+          readFileSnapshotWithinLimit() {
+            reads++;
+            return Promise.resolve(new Uint8Array());
+          },
+        }),
+      } as RuntimeAdapter,
+      context: "internal",
+    });
+
+    await assertRejects(
+      () => secureFs.readFileSnapshotWithinLimit!("../secret.txt", 3),
+      VeryfrontError,
+      "Path validation failed",
+    );
+    assertEquals(reads, 0);
+  });
+
+  it("rejects malformed snapshot results before returning them", async () => {
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: {
+        fs: createMockFileSystem({
+          readFileSnapshotWithinLimit: () => Promise.resolve({} as Uint8Array),
+        }),
+      } as RuntimeAdapter,
+      context: "internal",
+    });
+
+    await assertRejects(
+      () => secureFs.readFileSnapshotWithinLimit!("asset.bin", 3),
+      TypeError,
+    );
+  });
+
+  it("omits rooted snapshot authority when the adapter lacks it", () => {
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: createMockAdapter(),
+      context: "internal",
+    });
+
+    assertEquals(secureFs.readFileSnapshotWithinLimit, undefined);
+    assertEquals("readFileSnapshotWithinLimit" in secureFs, false);
+  });
+
   it("rejects traversal before invoking a bounded reader", async () => {
     let reads = 0;
     const fileSystem = createMockFileSystem({
@@ -1116,5 +1199,39 @@ describe("SecureFs", () => {
     assertEquals(shutDown, true);
     assertStrictEquals(wrapped.env, adapter.env);
     assertStrictEquals(wrapped.server, adapter.server);
+  });
+
+  it("keeps raw and rooted snapshot signatures distinct on secured adapters", async () => {
+    let received: [string, string, number] | undefined;
+    const adapter = createMockAdapter();
+    adapter.fs = createMockFileSystem({
+      readFileSnapshotWithinLimit(path, root, byteLimit) {
+        received = [path, root, byteLimit];
+        return Promise.resolve(new Uint8Array([1, 2, 3]));
+      },
+    });
+    const wrapped = wrapAdapterWithSecurity(adapter, { baseDir: "/project" });
+
+    assertEquals(
+      [
+        ...await wrapped.fs.readFileSnapshotWithinLimit!(
+          "/project/asset.bin",
+          "/project",
+          3,
+        ),
+      ],
+      [1, 2, 3],
+    );
+    assertEquals(received, ["/project/asset.bin", "/project", 3]);
+    await assertRejects(
+      () =>
+        wrapped.fs.readFileSnapshotWithinLimit!(
+          "/project/asset.bin",
+          "/attacker",
+          3,
+        ),
+      TypeError,
+      "construction-time root",
+    );
   });
 });

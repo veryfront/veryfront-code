@@ -41,6 +41,19 @@ export interface SecureFsRepositoryConfig {
 export class SecureFsRepository implements FileSystemRepository {
   private readonly secureFs: SecureFs;
   readonly context: RepositoryContext;
+  declare readonly maxWholeFileReadBytes?: number;
+  declare readonly readFileBytesBounded?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  declare readonly readFileBytesWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  declare readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
 
   constructor(config: SecureFsRepositoryConfig) {
     this.context = snapshotRepositoryContext(config.context);
@@ -49,6 +62,27 @@ export class SecureFsRepository implements FileSystemRepository {
       adapter: config.adapter,
       context: requireSecurityContext(config.securityContext),
     });
+    if (this.secureFs.maxWholeFileReadBytes !== undefined) {
+      Object.defineProperty(this, "maxWholeFileReadBytes", {
+        value: this.secureFs.maxWholeFileReadBytes,
+        enumerable: true,
+      });
+    }
+    for (
+      const key of [
+        "readFileBytesBounded",
+        "readFileBytesWithinLimit",
+        "readFileSnapshotWithinLimit",
+      ] as const
+    ) {
+      const capability = this.secureFs[key];
+      if (capability !== undefined) {
+        Object.defineProperty(this, key, {
+          value: (path: string, byteLimit: number) => capability(path, byteLimit),
+          enumerable: true,
+        });
+      }
+    }
   }
 
   readFile(path: string): Promise<string> {

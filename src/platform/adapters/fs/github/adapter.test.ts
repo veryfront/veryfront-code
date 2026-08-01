@@ -36,6 +36,10 @@ function createAdapter(): GitHubFSAdapter {
   });
 }
 
+it("GitHubFSAdapter omits generation-bound snapshot authority", () => {
+  assertEquals("readFileSnapshotWithinLimit" in createAdapter(), false);
+});
+
 function createTreeFetch(tree: unknown): typeof fetch {
   return (url) => {
     if (!String(url).includes("/git/trees/")) {

@@ -26,6 +26,7 @@ import {
 } from "./testing/index.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
+import { FileSnapshotChangedError } from "#veryfront/platform/adapters/file-snapshot-error.ts";
 
 describe("Repository Types", () => {
   describe("RepositoryContext", () => {
@@ -304,6 +305,83 @@ describe("SecureFsRepository", () => {
     await repository.remove("nested/file.txt");
     expect(await repository.exists("nested/file.txt")).toBe(false);
   });
+
+  it("advertises and forwards root-bound snapshots only when the adapter does", async () => {
+    const capable = createMockAdapter();
+    let received: [string, string, number] | undefined;
+    capable.fs.readFileSnapshotWithinLimit = (path, root, byteLimit) => {
+      received = [path, root, byteLimit];
+      return Promise.resolve(new Uint8Array([1, 2]));
+    };
+    const repository = new SecureFsRepository({
+      adapter: capable,
+      baseDir: "/project",
+      context: createMockRepositoryContext(),
+      securityContext: "internal",
+    });
+
+    expect([...await repository.readFileSnapshotWithinLimit!("asset.bin", 2)]).toEqual([1, 2]);
+    expect(received).toEqual(["/project/asset.bin", "/project", 2]);
+
+    const incapable = createMockAdapter();
+    Reflect.deleteProperty(incapable.fs, "readFileSnapshotWithinLimit");
+    const repositoryWithoutSnapshot = new SecureFsRepository({
+      adapter: incapable,
+      baseDir: "/project",
+      context: createMockRepositoryContext(),
+      securityContext: "internal",
+    });
+    expect(repositoryWithoutSnapshot.readFileSnapshotWithinLimit).toBe(undefined);
+    expect("readFileSnapshotWithinLimit" in repositoryWithoutSnapshot).toBe(false);
+  });
+
+  it("recovers bounded and whole-file repository capabilities with exact limits", async () => {
+    const adapter = createMockAdapter();
+    const calls: Array<[string, string, number]> = [];
+    adapter.fs.maxWholeFileReadBytes = 8;
+    adapter.fs.readFileBytesBounded = (path, byteLimit) => {
+      calls.push(["bounded", path, byteLimit]);
+      return Promise.resolve(new Uint8Array([1]));
+    };
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      calls.push(["exact", path, byteLimit]);
+      return Promise.resolve(new Uint8Array([2]));
+    };
+    const repository = new SecureFsRepository({
+      adapter,
+      baseDir: "/project",
+      context: createMockRepositoryContext(),
+      securityContext: "internal",
+    });
+
+    expect(repository.maxWholeFileReadBytes).toBe(8);
+    expect([...await repository.readFileBytesBounded!("asset.bin", 3)]).toEqual([1]);
+    expect([...await repository.readFileBytesWithinLimit!("asset.bin", 4)]).toEqual([2]);
+    expect(calls).toEqual([
+      ["bounded", "/project/asset.bin", 3],
+      ["exact", "/project/asset.bin", 4],
+    ]);
+  });
+
+  it("preserves snapshot source-change and range error classification", async () => {
+    for (
+      const error of [
+        new FileSnapshotChangedError("changed"),
+        new RangeError("oversized"),
+      ]
+    ) {
+      const adapter = createMockAdapter();
+      adapter.fs.readFileSnapshotWithinLimit = () => Promise.reject(error);
+      const repository = new SecureFsRepository({
+        adapter,
+        baseDir: "/project",
+        context: createMockRepositoryContext(),
+        securityContext: "internal",
+      });
+
+      await expect(repository.readFileSnapshotWithinLimit!("asset.bin", 4)).rejects.toBe(error);
+    }
+  });
 });
 
 describe("MockFileSystemRepository", () => {
@@ -361,6 +439,18 @@ describe("MockFileSystemRepository", () => {
     const firstRead = await mockFs.readFileBytes("bytes.txt");
     firstRead[0] = "j".charCodeAt(0);
     expect(new TextDecoder().decode(await mockFs.readFileBytes("bytes.txt"))).toBe("hello");
+  });
+
+  it("rejects a snapshot when the stored generation is replaced during the read", async () => {
+    const mockFs = new MockFileSystemRepository({
+      context: createMockRepositoryContext(),
+      files: { "asset.bin": new Uint8Array([1, 2, 3]) },
+    });
+
+    const read = mockFs.readFileSnapshotWithinLimit!("asset.bin", 3);
+    mockFs.setFile("asset.bin", new Uint8Array([4, 5, 6]));
+
+    await expect(read).rejects.toBeInstanceOf(FileSnapshotChangedError);
   });
 
   it("supports recursive directory lifecycle", async () => {

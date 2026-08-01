@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "./mock.ts";
+import { FileSnapshotChangedError } from "./file-snapshot-error.ts";
 
 type DirEntry = { name: string; isFile: boolean; isDirectory: boolean };
 
@@ -85,6 +86,39 @@ describe("MockAdapter", () => {
         Error,
         "File not found: /missing.txt",
       );
+    });
+  });
+
+  describe("fs.readFileSnapshotWithinLimit", () => {
+    it("reads a complete contained snapshot within the exact limit", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/asset.bin", new Uint8Array([1, 2, 3]));
+      const readSnapshot = adapter.fs.readFileSnapshotWithinLimit;
+      assertExists(readSnapshot);
+
+      assertEquals([...await readSnapshot("/project/asset.bin", "/project", 3)], [1, 2, 3]);
+      await assertRejects(
+        () => readSnapshot("/outside.bin", "/project", 3),
+        TypeError,
+        "contained",
+      );
+      await assertRejects(
+        () => readSnapshot("/project/asset.bin", "/project", 2),
+        RangeError,
+        "exceeds",
+      );
+    });
+
+    it("rejects replacement during a snapshot read", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/asset.bin", new Uint8Array([1, 2, 3]));
+      const readSnapshot = adapter.fs.readFileSnapshotWithinLimit;
+      assertExists(readSnapshot);
+
+      const read = readSnapshot("/project/asset.bin", "/project", 3);
+      adapter.fs.byteFiles.set("/project/asset.bin", new Uint8Array([4, 5, 6]));
+
+      await assertRejects(() => read, FileSnapshotChangedError, "changed");
     });
   });
 

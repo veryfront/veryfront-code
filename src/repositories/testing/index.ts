@@ -21,6 +21,7 @@ import {
 } from "#veryfront/cache/backends/ttl.ts";
 import { snapshotRepositoryContext } from "../context.ts";
 import { ExpiringLruStore } from "../cache/expiring-lru-store.ts";
+import { FileSnapshotChangedError } from "#veryfront/platform/adapters/file-snapshot-error.ts";
 
 export interface TrackedCall {
   method: string;
@@ -48,6 +49,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
   private readonly files = new Map<string, string | Uint8Array>();
   private readonly directories = new Set<string>();
   private readonly calls: TrackedCall[] = [];
+  private generation = 0;
 
   constructor(options: {
     context: RepositoryContext;
@@ -115,6 +117,27 @@ export class MockFileSystemRepository implements FileSystemRepository {
     return new TextEncoder().encode(content);
   }
 
+  async readFileSnapshotWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    this.track("readFileSnapshotWithinLimit", path, byteLimit);
+    if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+      throw new RangeError("Snapshot byte limit must be a positive safe integer");
+    }
+    const generation = this.generation;
+    const content = this.getStoredContent(path);
+    const bytes = content instanceof Uint8Array
+      ? content.slice()
+      : new TextEncoder().encode(content);
+    if (bytes.byteLength > byteLimit) {
+      throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+    }
+
+    await Promise.resolve();
+    if (generation !== this.generation) {
+      throw new FileSnapshotChangedError("File generation changed during snapshot read");
+    }
+    return bytes;
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     this.track("writeFile", path, content);
     if (typeof content !== "string") {
@@ -129,6 +152,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
       throw this.pathError("EISDIR", "path is a directory", path);
     }
     this.files.set(path, content);
+    this.generation++;
   }
 
   async exists(path: string): Promise<boolean> {
@@ -235,6 +259,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
 
     if (this.files.has(path)) {
       this.files.delete(path);
+      this.generation++;
       return;
     }
     if (!this.directories.has(path)) {
@@ -258,11 +283,13 @@ export class MockFileSystemRepository implements FileSystemRepository {
       }
     }
     this.directories.delete(path);
+    this.generation++;
   }
 
   setFile(path: string, content: string | Uint8Array): void {
     this.files.set(path, cloneFileContent(content));
     this.addParentDirectories(path);
+    this.generation++;
   }
 
   addDirectory(path: string): void {
@@ -286,6 +313,7 @@ export class MockFileSystemRepository implements FileSystemRepository {
     this.files.clear();
     this.directories.clear();
     this.calls.length = 0;
+    this.generation++;
   }
 }
 

@@ -3,6 +3,8 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { validateTempDirectoryPrefix } from "#veryfront/platform/compat/temp-directory-prefix.ts";
 import { requireBoundedFileReadLimit } from "#veryfront/platform/adapters/bounded-file-read.ts";
 import type { FileChangeEvent, FileWatcher, RuntimeAdapter, WatchOptions } from "./base.ts";
+import { FileSnapshotChangedError } from "./file-snapshot-error.ts";
+import { isAbsolute, relative, resolve, sep } from "#veryfront/platform/compat/path/index.ts";
 
 export interface MockRuntimeAdapter extends RuntimeAdapter {
   fs: RuntimeAdapter["fs"] & {
@@ -38,6 +40,20 @@ function isDescendantPath(candidate: string, path: string): boolean {
   const normalizedPath = normalizeMockPath(path);
   if (normalizedCandidate === normalizedPath) return false;
   return normalizedCandidate.startsWith(descendantPrefix(normalizedPath));
+}
+
+function isContainedPath(path: string, root: string): boolean {
+  const relation = relative(resolve(root), resolve(path));
+  return relation === "" ||
+    (relation !== ".." && !relation.startsWith(`..${sep}`) && !isAbsolute(relation));
+}
+
+function equalBytes(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  for (let index = 0; index < left.byteLength; index++) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 function getMockUtf8CodePoint(
@@ -120,8 +136,26 @@ function encodeMockUtf8Prefix(content: string, byteLimit: number): Uint8Array {
 }
 
 export function createMockAdapter(): MockRuntimeAdapter {
-  const files = new Map<string, string>();
-  const byteFiles = new Map<string, Uint8Array>();
+  let fileGeneration = 0;
+  class GenerationMap<T> extends Map<string, T> {
+    override set(key: string, value: T): this {
+      fileGeneration++;
+      return super.set(key, value);
+    }
+
+    override delete(key: string): boolean {
+      const deleted = super.delete(key);
+      if (deleted) fileGeneration++;
+      return deleted;
+    }
+
+    override clear(): void {
+      if (this.size > 0) fileGeneration++;
+      super.clear();
+    }
+  }
+  const files = new GenerationMap<string>();
+  const byteFiles = new GenerationMap<Uint8Array>();
   const directories = new Set<string>();
   const envVars = new Map<string, string>();
 
@@ -270,6 +304,38 @@ export function createMockAdapter(): MockRuntimeAdapter {
           return encodeMockUtf8Prefix(content, boundedLimit);
         }
         throw fileNotFoundError(path);
+      },
+      readFileSnapshotWithinLimit: async (
+        path: string,
+        containmentRoot: string,
+        byteLimit: number,
+      ) => {
+        const boundedLimit = requireBoundedFileReadLimit(byteLimit);
+        if (!isContainedPath(path, containmentRoot)) {
+          throw new TypeError("Snapshot path must be contained by the requested root");
+        }
+        const normalizedPath = normalizeMockPath(path);
+        const storedBytes = byteFiles.get(normalizedPath);
+        const storedText = files.get(normalizedPath);
+        if (storedBytes === undefined && storedText === undefined) throw fileNotFoundError(path);
+        const generation = fileGeneration;
+        const bytes = storedBytes?.slice() ?? new TextEncoder().encode(storedText!);
+        if (bytes.byteLength > boundedLimit) {
+          throw new RangeError(`File exceeds byte limit of ${boundedLimit} bytes`);
+        }
+
+        await Promise.resolve();
+        const currentBytes = byteFiles.get(normalizedPath);
+        const currentText = files.get(normalizedPath);
+        const unchanged = generation === fileGeneration &&
+          (storedBytes !== undefined
+            ? currentBytes === storedBytes && currentText === undefined &&
+              equalBytes(storedBytes, bytes)
+            : currentText === storedText && currentBytes === undefined);
+        if (!unchanged) {
+          throw new FileSnapshotChangedError("File generation changed during snapshot read");
+        }
+        return bytes;
       },
       writeFile: (path: string, content: string) => {
         const normalizedPath = normalizeMockPath(path);

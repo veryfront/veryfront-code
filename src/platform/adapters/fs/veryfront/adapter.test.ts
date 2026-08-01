@@ -136,6 +136,7 @@ describe("VeryfrontFSAdapter", () => {
         DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
       );
       assertEquals("readFileBytesBounded" in createAdapter(), false);
+      assertEquals("readFileSnapshotWithinLimit" in createAdapter(), false);
     });
 
     for (const method of methods) {

@@ -3,6 +3,12 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 import { validateTempDirectoryPrefix } from "./temp-directory-prefix.ts";
 import { readFileWithinLimit } from "../adapters/bounded-file-read.ts";
+import {
+  captureExclusiveCreateCapability,
+  captureSnapshotReadCapability,
+} from "../adapters/file-system-capabilities.ts";
+import { DenoFileSystemAdapter } from "../adapters/runtime/deno/filesystem-adapter.ts";
+import { NodeCompatibleFileSystemAdapter } from "../adapters/runtime/shared/node-filesystem-adapter.ts";
 
 const DEFAULT_TEMP_DIRECTORY_PREFIX = "tmp-";
 const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
@@ -63,8 +69,14 @@ export interface FileSystem {
   readFile(path: string): Promise<Uint8Array>;
   /** Exact bounded binary read; implementations must reject oversized files before materializing them. */
   readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
+  createFileBytesExclusive?(path: string, data: Uint8Array): Promise<void>;
   /** Atomically replace a path when same-filesystem rename is supported. */
   rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
@@ -408,7 +420,35 @@ class DenoFileSystem implements FileSystem {
 
 /** Create the runtime-native filesystem implementation. */
 export function createFileSystem(): FileSystem {
-  return isDeno ? new DenoFileSystem() : new NodeFileSystem();
+  const fileSystem = isDeno ? new DenoFileSystem() : new NodeFileSystem();
+  const semanticAdapter = isDeno
+    ? new DenoFileSystemAdapter()
+    : new NodeCompatibleFileSystemAdapter();
+  const snapshotReader = captureSnapshotReadCapability(
+    semanticAdapter,
+    "Native filesystem adapter",
+  );
+  if (snapshotReader !== undefined) {
+    Object.defineProperty(fileSystem, "readFileSnapshotWithinLimit", {
+      value: (
+        path: string,
+        containmentRoot: string,
+        byteLimit: number,
+      ) => snapshotReader.read(path, containmentRoot, byteLimit),
+      enumerable: true,
+    });
+  }
+  const exclusiveCreator = captureExclusiveCreateCapability(
+    semanticAdapter,
+    "Native filesystem adapter",
+  );
+  if (exclusiveCreator !== undefined) {
+    Object.defineProperty(fileSystem, "createFileBytesExclusive", {
+      value: (path: string, content: Uint8Array) => exclusiveCreator.create(path, content),
+      enumerable: true,
+    });
+  }
+  return fileSystem;
 }
 
 let _fs: FileSystem | null = null;

@@ -332,6 +332,7 @@ describe("MultiProjectFSAdapter", () => {
           DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
         );
         assertEquals("readFileBytesBounded" in adapter, false);
+        assertEquals("readFileSnapshotWithinLimit" in adapter, false);
       });
     });
 

@@ -5,6 +5,14 @@ import type { CacheStats, RepositoryContext } from "./schemas/index.ts";
 export interface FileSystemRepository {
   readFile(path: string): Promise<string>;
   readFileBytes(path: string): Promise<Uint8Array>;
+  /** Read a prefix without materializing more than `byteLimit` bytes. */
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /** Read the complete file only when it fits within `byteLimit`. */
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /** Read one stable, root-bound file snapshot within `byteLimit`. */
+  readFileSnapshotWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /** Fixed upstream whole-object ceiling enforced before materialization. */
+  readonly maxWholeFileReadBytes?: number;
   /**
    * Write UTF-8 text.
    *

@@ -19,8 +19,10 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import {
   type CapturedFileSystemCapabilities,
   captureFileSystemCapabilities,
+  captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import { isAbsolute, relative, resolve, sep } from "#veryfront/platform/compat/path/index.ts";
 
 export const SECURITY_CONTEXTS = [
   "user-input",
@@ -644,6 +646,10 @@ export class SecureFs {
     path: string,
     byteLimit: number,
   ) => Promise<Uint8Array>;
+  declare readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
   readonly maxWholeFileReadBytes?: number;
 
   constructor(config: SecureFsConfig) {
@@ -652,10 +658,11 @@ export class SecureFs {
       "SecureFs config",
       SECURE_FS_CONFIG_KEYS,
     );
-    const baseDir = snapshot.baseDir;
-    if (typeof baseDir !== "string" || baseDir.length === 0) {
+    const configuredBaseDir = snapshot.baseDir;
+    if (typeof configuredBaseDir !== "string" || configuredBaseDir.length === 0) {
       invalidSecureFsOption("SecureFs baseDir must be a non-empty string");
     }
+    const baseDir = resolve(configuredBaseDir);
 
     const adapter = snapshot.adapter;
     if (
@@ -683,7 +690,17 @@ export class SecureFs {
         "SecureFs requires an own, data-property runtime adapter filesystem",
       );
     }
-    this.fileSystem = snapshotFilesystem(fsDescriptor.value as RuntimeAdapter["fs"]);
+    const suppliedFileSystem = fsDescriptor.value as RuntimeAdapter["fs"];
+    this.fileSystem = snapshotFilesystem(suppliedFileSystem);
+    let snapshotReader: ReturnType<typeof captureSnapshotReadCapability>;
+    try {
+      snapshotReader = captureSnapshotReadCapability(
+        suppliedFileSystem,
+        "SecureFs filesystem",
+      );
+    } catch (_) {
+      invalidSecureFsOption("SecureFs filesystem snapshot capability is invalid");
+    }
     if (this.fileSystem.maxWholeFileReadBytes !== undefined) {
       this.maxWholeFileReadBytes = this.fileSystem.maxWholeFileReadBytes;
     }
@@ -759,6 +776,31 @@ export class SecureFs {
           "SecureFs exact bounded read",
         );
       };
+    }
+    if (snapshotReader !== undefined) {
+      const containmentRoot = this.config.baseDir;
+      objectDefineProperty(this, "readFileSnapshotWithinLimit", {
+        configurable: false,
+        enumerable: true,
+        value: async (path: string, byteLimit: number) => {
+          if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+            throw new RangeError(
+              "SecureFs snapshot read limit must be a positive safe integer",
+            );
+          }
+          const validation = await this.validatePathForOperation(
+            path,
+            "readFileSnapshotWithinLimit",
+          );
+          const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+          return copyFixedUint8ArrayWithinLimit(
+            await snapshotReader.read(canonicalPath, containmentRoot, byteLimit),
+            byteLimit,
+            "SecureFs snapshot read",
+          );
+        },
+        writable: false,
+      });
     }
     hardenSecureFsAuthority(this);
   }
@@ -1020,6 +1062,61 @@ export function createSecureFs(config: SecureFsConfig): SecureFs {
   return new SecureFs(config);
 }
 
+function createSecuredAdapterFileSystem(
+  secureFs: SecureFs,
+  constructionRoot: string,
+): RuntimeAdapter["fs"] {
+  const fileSystem: RuntimeAdapter["fs"] = {
+    readFile: (path) => secureFs.readFile(path),
+    readFileBytes: (path) => secureFs.readFileBytes(path),
+    writeFile: (path, content) => secureFs.writeFile(path, content),
+    exists: (path) => secureFs.exists(path),
+    readDir: (path) => secureFs.readDir(path),
+    stat: (path) => secureFs.stat(path),
+    mkdir: (path, options) => secureFs.mkdir(path, options),
+    remove: (path, options) => secureFs.remove(path, options),
+    makeTempDir: (prefix) => secureFs.makeTempDir(prefix),
+    watch: (paths, options) => secureFs.watch(paths, options),
+  };
+  if (secureFs.maxWholeFileReadBytes !== undefined) {
+    Object.defineProperty(fileSystem, "maxWholeFileReadBytes", {
+      value: secureFs.maxWholeFileReadBytes,
+      enumerable: true,
+    });
+  }
+  if (secureFs.readFileBytesBounded !== undefined) {
+    fileSystem.readFileBytesBounded = (path, byteLimit) =>
+      secureFs.readFileBytesBounded!(path, byteLimit);
+  }
+  if (secureFs.readFileBytesWithinLimit !== undefined) {
+    fileSystem.readFileBytesWithinLimit = (path, byteLimit) =>
+      secureFs.readFileBytesWithinLimit!(path, byteLimit);
+  }
+  if (secureFs.readFileSnapshotWithinLimit !== undefined) {
+    fileSystem.readFileSnapshotWithinLimit = (
+      path,
+      containmentRoot,
+      byteLimit,
+    ) => {
+      if (containmentRoot !== constructionRoot) {
+        throw new TypeError("Secured snapshot reads require the construction-time root");
+      }
+      const rootedPath = relative(constructionRoot, path);
+      if (
+        rootedPath === ".." ||
+        rootedPath.startsWith(`..${sep}`) ||
+        isAbsolute(rootedPath)
+      ) {
+        throw new TypeError(
+          "Secured snapshot path must be contained by the construction-time root",
+        );
+      }
+      return secureFs.readFileSnapshotWithinLimit!(rootedPath, byteLimit);
+    };
+  }
+  return Object.freeze(fileSystem);
+}
+
 export function wrapAdapterWithSecurity(
   adapter: RuntimeAdapter,
   options: Omit<SecureFsConfig, "adapter">,
@@ -1044,7 +1141,7 @@ export function wrapAdapterWithSecurity(
     id: adapter.id,
     name: adapter.name,
     capabilities: adapter.capabilities,
-    fs: secureFs,
+    fs: createSecuredAdapterFileSystem(secureFs, resolve(snapshot.baseDir as string)),
     env: adapter.env,
     server: adapter.server,
     serve: (handler, serveOptions) => adapter.serve(handler, serveOptions),

@@ -19,6 +19,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import {
   type CapturedFileSystemCapabilities,
   captureFileSystemCapabilities,
+  captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 
@@ -157,6 +158,11 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
     path: string,
     byteLimit: number,
   ) => Promise<Uint8Array>;
+  readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
   readOptionalTextFile(path: string): Promise<string>;
   readdir(path: string): Promise<DirectoryEntry[]>;
   shutdown(): Promise<void>;
@@ -266,6 +272,11 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     path: string,
     byteLimit: number,
   ) => Promise<Uint8Array>;
+  declare readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
   readonly writeFileBytes?: (
     path: string,
     content: Uint8Array,
@@ -281,6 +292,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     }
     this.#fsAdapter = fsAdapter;
     this.#fileCapabilities = captureFileSystemCapabilities(fsAdapter, "FSAdapter");
+    const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter");
     const symlinkSemantics = Object.getOwnPropertyDescriptor(
       fsAdapter,
       "symlinkSemantics",
@@ -315,6 +327,18 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
           "FSAdapter exact bounded read",
         );
       };
+    }
+    if (snapshotReader !== undefined) {
+      defineProperty(this, "readFileSnapshotWithinLimit", {
+        configurable: false,
+        enumerable: true,
+        value: (
+          path: string,
+          containmentRoot: string,
+          byteLimit: number,
+        ) => snapshotReader.read(path, containmentRoot, byteLimit),
+        writable: false,
+      });
     }
     const writeFileBytes = this.#fileCapabilities.writeFileBytes;
     if (writeFileBytes !== undefined) {

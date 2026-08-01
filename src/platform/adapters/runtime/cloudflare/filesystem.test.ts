@@ -106,6 +106,12 @@ function createPaginatedKVNamespace(
 }
 
 describe("CloudflareFileSystemAdapter realPath", () => {
+  it("omits generation-bound snapshot authority", () => {
+    const fs = new CloudflareFileSystemAdapter(createKVNamespace({}));
+
+    assertEquals("readFileSnapshotWithinLimit" in fs, false);
+  });
+
   it("normalizes an existing KV path without allowing dot-segment ambiguity", async () => {
     const fs = new CloudflareFileSystemAdapter(createKVNamespace({
       "/project/pages/empty.mdx": "",

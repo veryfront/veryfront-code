@@ -63,6 +63,25 @@ describe("Filesystem Compat", () => {
         assertEquals(typeof fs[method], "function");
       }
     });
+
+    it("forwards bound native snapshot and exclusive-create capabilities", async () => {
+      const fs = createFileSystem();
+      assertExists(fs.readFileSnapshotWithinLimit);
+      assertExists(fs.createFileBytesExclusive);
+      const readSnapshot = fs.readFileSnapshotWithinLimit;
+      const createExclusive = fs.createFileBytesExclusive;
+      const source = join(testDir, "factory-snapshot.bin");
+      const created = join(testDir, "factory-exclusive.bin");
+      await fs.writeFile(source, new Uint8Array([1, 2, 3]));
+
+      assertEquals([...await readSnapshot(source, testDir, 3)], [1, 2, 3]);
+      await createExclusive(created, new Uint8Array([4, 5]));
+      assertEquals([...await fs.readFile(created)], [4, 5]);
+      await assertRejects(
+        () => createExclusive(created, new Uint8Array([9])),
+        Error,
+      );
+    });
   });
 
   describe("writeTextFile / readTextFile", () => {
