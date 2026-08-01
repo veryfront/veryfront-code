@@ -25,11 +25,18 @@ export { CSSOptimizer, optimizeCSS } from "./css-optimizer/index.ts";
 
 import { type CSSOptimizationOptions, CSSOptimizer } from "./css-optimizer/index.ts";
 import { type ImageOptimizationOptions, ImageOptimizer } from "./image-optimizer/index.ts";
+import { DEFAULT_CSS_OPTIONS } from "./css-optimizer/constants.ts";
+import { DEFAULT_OPTIONS as DEFAULT_IMAGE_OPTIONS } from "./image-optimizer/constants.ts";
+import {
+  assertIndependentAssetStageOutputs,
+  type AssetStageOutputPlan,
+} from "./output-planning.ts";
 import {
   processTailwindCSSInDirectory,
   type TailwindProcessResult,
 } from "./tailwind-processor/index.ts";
 import { getErrorMessage } from "#veryfront/errors";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import { logger } from "#veryfront/utils";
 
 export interface TailwindBatchOptions {
@@ -67,9 +74,31 @@ export interface AssetPipelineResult {
   duration: number;
 }
 
+function configuredStageOutputs(
+  options: AssetPipelineOptions,
+): AssetStageOutputPlan[] {
+  const outputs: AssetStageOutputPlan[] = [];
+  if (options.images?.enabled !== false) {
+    outputs.push({
+      stage: "images",
+      projectDir: options.images?.projectDir ?? cwd(),
+      outputDir: options.images?.outputDir ?? DEFAULT_IMAGE_OPTIONS.outputDir,
+    });
+  }
+  if (options.css?.enabled !== false) {
+    outputs.push({
+      stage: "css",
+      projectDir: options.css?.projectDir ?? cwd(),
+      outputDir: options.css?.outputDir ?? DEFAULT_CSS_OPTIONS.outputDir,
+    });
+  }
+  return outputs;
+}
+
 export async function runAssetPipeline(
   options: AssetPipelineOptions = {},
 ): Promise<AssetPipelineResult> {
+  await assertIndependentAssetStageOutputs(configuredStageOutputs(options));
   const startTime = Date.now();
 
   logger.info("Starting asset pipeline");
