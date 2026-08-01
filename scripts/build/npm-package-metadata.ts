@@ -37,6 +37,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@types/hast",
 	"@types/mdast",
 	"@types/unist",
+	"@types/ws",
 	"better-sqlite3",
 	"brace-expansion",
 	"@kreuzberg/node",
@@ -90,6 +91,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"unified",
 	"unist-util-visit",
 	"vfile",
+	"ws",
 ] as const;
 
 const STALE_DEV_DEPENDENCIES = [

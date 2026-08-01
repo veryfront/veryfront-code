@@ -1,7 +1,7 @@
 ---
 title: "veryfront/utils"
 description: "Runtime detection, logging, constants, hashing, and feature flags."
-order: 38
+order: 39
 ---
 
 ## Import
@@ -95,8 +95,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `__registerLogRecordEmitter` | Register a process-level structured log emitter, for example an OTel bridge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L214) |
-| `__registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L624) |
+| `__registerLogRecordEmitter` | Register a process-level structured log emitter, for example an OTel bridge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L217) |
+| `__registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L649) |
 | `base64urlEncode` | Encode a string as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L52) |
 | `base64urlEncodeBytes` | Encode raw bytes as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L57) |
 | `computeCodeHash` | Compute code hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L29) |
@@ -104,13 +104,13 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `computeHashBytes` | Compute the lowercase hex SHA-256 digest of raw bytes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L18) |
 | `computeIntegrity` | Compute integrity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L28) |
 | `createLockfileManager` | Create lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L76) |
-| `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L754) |
+| `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L779) |
 | `createSubscriberSet` | Create a subscriber set: the canonical subscribe/notify observable used across modules. Notification iterates a snapshot, so a listener that unsubscribes (itself or others) mid-notify is safe, and listener errors are isolated (routed to `onListenerError` when provided, otherwise swallowed). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/subscriber-set.ts#L19) |
 | `encodeBase64` | Encode a string as standard base64. Latin-1 input (all code points &lt;= 0xFF) is encoded with btoa's binary-string semantics; input outside Latin-1 falls back to UTF-8 bytes. Callers that need guaranteed UTF-8 bytes regardless of input (e.g. data: URLs decoded as UTF-8) should use `encodeBase64Bytes(new TextEncoder().encode(value))` instead. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L18) |
 | `encodeBase64Bytes` | Encode raw bytes as standard base64. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L36) |
 | `endRequest` | Request payload for end. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L73) |
 | `fnv1aHash` | FNV-1a hash for strings - returns hex string | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L57) |
-| `getBaseLogger` | Get the base logger without request context awareness. Use this when you need to create a request-scoped logger in middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L724) |
+| `getBaseLogger` | Get the base logger without request context awareness. Use this when you need to create a request-scoped logger in middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L749) |
 | `getBundleManifestStore` | Return bundle manifest store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/bundle-manifest.ts#L160) |
 | `getDenoStdNodeBase` | Return Deno std node base. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L82) |
 | `getReactImportMap` | Return React import map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cdn.ts#L46) |
@@ -127,13 +127,13 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `memoizeHash` | FNV-1a hash algorithm for fast cache key generation. 10-15x faster than JSON.stringify() and uses 70-80% less memory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L90) |
 | `normalizePath` | Normalizes path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L11) |
 | `parallelMap` | Run parallel map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/parallel.ts#L43) |
-| `redactSensitive` | Returns a redacted deep copy of `context`. Any property whose key is `isSensitiveKey` has its value replaced with `REDACTED`; nested plain objects, class instances, and arrays are traversed. The input is never mutated, and the pass fails closed (returns `REDACTED`) on cycles, depth overflow, or a throwing getter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L180) |
-| `refreshLoggerConfig` | Re-read logger configuration from environment variables. Call after loading .env files so the logger picks up any overrides. The active preset (cli/server) is preserved across refreshes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L181) |
-| `registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L624) |
+| `redactSensitive` | Returns a redacted deep copy of `context`. Any property whose key is `isSensitiveKey` has its value replaced with `REDACTED`; nested plain objects, class instances, and arrays are traversed. The input is never mutated, and the pass fails closed (returns `REDACTED`) on cycles, depth overflow, or a throwing getter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L187) |
+| `refreshLoggerConfig` | Re-read logger configuration from environment variables. Call after loading .env files so the logger picks up any overrides. The active preset (cli/server) is preserved across refreshes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L184) |
+| `registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L649) |
 | `runWithRequestContextAsync` | Run with request context async. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L39) |
 | `safeJsonParse` | Parse `value` as JSON without throwing; failures return `{ ok: false, error }` so callers handle them without a surrounding try/catch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/json.ts#L16) |
-| `sanitizeUrlCredentials` | Strip credentials from URL-shaped strings so they can be safely emitted in free-form text (error messages, stacks, lifted `request_url` fields). Unlike `redactSensitive`, which is key-based, this scrubs secrets embedded in the *value* itself: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L225) |
-| `sanitizeUrlForSpan` | Return the URL form safe to attach to observability span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L280) |
+| `sanitizeUrlCredentials` | Strip credentials from URL-shaped strings so they can be safely emitted in free-form text (error messages, stacks, lifted `request_url` fields). Unlike `redactSensitive`, which is key-based, this scrubs secrets embedded in the *value* itself: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L232) |
+| `sanitizeUrlForSpan` | Return the URL form safe to attach to observability span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L287) |
 | `shortHash` | Create short hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L51) |
 | `simpleHash` | Create simple hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L34) |
 | `sleep` | Resolve after `ms` milliseconds; rejects with `abortSignal.reason` if aborted first. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/sleep.ts#L2) |
@@ -159,7 +159,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `HashBundleCode` | Source bundle content used for hash computation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L22) |
 | `LockfileManager` | Public API contract for lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L39) |
 | `LogEntry` | Structured log entry for JSON output. Fields are designed for easy Grafana/Loki filtering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L32) |
-| `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L90) |
+| `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L93) |
 | `RequestContext` | Context for request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L14) |
 | `SafeJsonParseResult` | Tagged-union result of `safeJsonParse`; narrow via the `ok` discriminant. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/json.ts#L8) |
 | `SubscriberSet` | Listener registry returned by `createSubscriberSet`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/subscriber-set.ts#L2) |
@@ -168,12 +168,12 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `agentLogger` | Shared agent logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L715) |
-| `bundlerLogger` | Shared bundler logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L713) |
-| `cliLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L707) |
-| `logger` | Shared logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L718) |
-| `rendererLogger` | Shared renderer logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L711) |
-| `serverLogger` | Shared server logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L709) |
+| `agentLogger` | Shared agent logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L740) |
+| `bundlerLogger` | Shared bundler logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L738) |
+| `cliLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L732) |
+| `logger` | Shared logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L743) |
+| `rendererLogger` | Shared renderer logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L736) |
+| `serverLogger` | Shared server logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L734) |
 
 ## Deep imports
 
@@ -202,32 +202,32 @@ import { __registerLogRecordEmitter, __registerRequestContextGetter, __registerT
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `__registerLogRecordEmitter` | Register a process-level structured log emitter, for example an OTel bridge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L214) |
-| `__registerRequestContextGetter` | Register the request context getter. Called by request-context.ts during module initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L606) |
-| `__registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L624) |
-| `__resetLogRecordEmitterForTests` | Reset the process-level structured log emitter. Only intended for tests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L227) |
-| `__resetTraceContextGetterForTests` | Reset the trace context getter. Only intended for testing purposes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L635) |
-| `__subscribeLogRecordEmitter` | Subscribe to process-level structured log records. Returns an unregister function. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L219) |
+| `__registerLogRecordEmitter` | Register a process-level structured log emitter, for example an OTel bridge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L217) |
+| `__registerRequestContextGetter` | Register the request context getter. Called by request-context.ts during module initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L631) |
+| `__registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L649) |
+| `__resetLogRecordEmitterForTests` | Reset the process-level structured log emitter. Only intended for tests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L230) |
+| `__resetTraceContextGetterForTests` | Reset the trace context getter. Only intended for testing purposes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L660) |
+| `__subscribeLogRecordEmitter` | Subscribe to process-level structured log records. Returns an unregister function. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L222) |
 | `colorize` | Apply ANSI color codes to text if enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L67) |
-| `createRequestLogger` | Create a logger for a specific request context. Useful for binding request-specific metadata to all logs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L742) |
-| `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L754) |
+| `createRequestLogger` | Create a logger for a specific request context. Useful for binding request-specific metadata to all logs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L767) |
+| `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L779) |
 | `formatContextText` | Format context and error as indented key=value pairs. Filters out undefined values for cleaner output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L145) |
 | `formatErrorText` | Format a serialized error for text output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L124) |
 | `formatTimestamp` | Format a timestamp as HH:MM:SS. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L59) |
 | `formatValue` | Format a value for log output (handles strings, numbers, booleans, objects). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L90) |
-| `getBaseLogger` | Get the base logger without request context awareness. Use this when you need to create a request-scoped logger in middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L724) |
-| `getDefaultLevel` | Determine the log level based on environment variables. Exported for testing purposes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L140) |
+| `getBaseLogger` | Get the base logger without request context awareness. Use this when you need to create a request-scoped logger in middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L749) |
+| `getDefaultLevel` | Determine the log level based on environment variables. Exported for testing purposes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L143) |
 | `getRequestContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L26) |
 | `getRequestLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L30) |
 | `isRecord` | Check if value is a non-null, non-array object (plain record). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L163) |
 | `normalizeText` | Normalize whitespace in text (collapse multiple spaces to single space). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L75) |
 | `padTag` | Pad or truncate a tag to fixed width for aligned output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L51) |
-| `refreshLoggerConfig` | Re-read logger configuration from environment variables. Call after loading .env files so the logger picks up any overrides. The active preset (cli/server) is preserved across refreshes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L181) |
+| `refreshLoggerConfig` | Re-read logger configuration from environment variables. Call after loading .env files so the logger picks up any overrides. The active preset (cli/server) is preserved across refreshes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L184) |
 | `runWithRequestContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L34) |
 | `runWithRequestContextAsync` | Run with request context async. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L39) |
 | `serializeError` | Serialize an error object for structured logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L133) |
-| `setLoggerPreset` | Switch the text output format between server-style (timestamp + tag prefix) and CLI-style (2-space indent + glyph only, no timestamp or tag). JSON output is unaffected by this setting. Call before any framework code runs in CLI entry points so framework messages render in the CLI's visual language. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L195) |
-| `setLogLevel` | Override the active log level without re-reading environment variables. Use when a verbosity flag (--verbose, --quiet) has been parsed and its effect needs to propagate to all loggers immediately. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L205) |
+| `setLoggerPreset` | Switch the text output format between server-style (timestamp + tag prefix) and CLI-style (2-space indent + glyph only, no timestamp or tag). JSON output is unaffected by this setting. Call before any framework code runs in CLI entry points so framework messages render in the CLI's visual language. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L198) |
+| `setLogLevel` | Override the active log level without re-reading environment variables. Use when a verbosity flag (--verbose, --quiet) has been parsed and its effect needs to propagate to all loggers immediately. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L208) |
 | `truncateText` | Truncate text to maxLength, adding ellipsis if truncated. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L82) |
 
 #### Types
@@ -237,10 +237,10 @@ import { __registerLogRecordEmitter, __registerRequestContextGetter, __registerT
 | `LogComponent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/components.ts#L93) |
 | `LogEntry` | Structured log entry for JSON output. Fields are designed for easy Grafana/Loki filtering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L32) |
 | `LogFormat` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L26) |
-| `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L90) |
+| `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L93) |
 | `LogLevel` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L19) |
 | `LogLevelName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L16) |
-| `LogRecordEmitter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L119) |
+| `LogRecordEmitter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L122) |
 | `RequestContext` | Context for request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L14) |
 | `SerializedError` | Serialized error structure for structured logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/core.ts#L115) |
 
@@ -248,12 +248,12 @@ import { __registerLogRecordEmitter, __registerRequestContextGetter, __registerT
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `__resetLoggerConfigForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L211) |
-| `agentLogger` | Shared agent logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L715) |
-| `bundlerLogger` | Shared bundler logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L713) |
-| `cliLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L707) |
-| `logger` | Shared logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L718) |
-| `proxyLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L716) |
-| `rendererLogger` | Shared renderer logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L711) |
+| `__resetLoggerConfigForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L214) |
+| `agentLogger` | Shared agent logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L740) |
+| `bundlerLogger` | Shared bundler logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L738) |
+| `cliLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L732) |
+| `logger` | Shared logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L743) |
+| `proxyLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L741) |
+| `rendererLogger` | Shared renderer logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L736) |
 | `requestContextStore` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L24) |
-| `serverLogger` | Shared server logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L709) |
+| `serverLogger` | Shared server logger value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L734) |
