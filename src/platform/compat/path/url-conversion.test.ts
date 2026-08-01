@@ -71,6 +71,21 @@ describe("url-conversion", () => {
     it("should handle relative path by resolving", () => {
       const result = toFileUrl("relative/path.ts");
       assertEquals(result.protocol, "file:");
+      assertEquals(fromFileUrl(result), `${Deno.cwd()}/relative/path.ts`);
+    });
+
+    it("preserves UNC hosts instead of converting them to local-root paths", () => {
+      const result = toFileUrl(String.raw`\\server\share\extension.ts`);
+      assertEquals(result.href, "file://server/share/extension.ts");
+      if (Deno.build.os !== "windows") {
+        assertEquals(fromFileUrl(result), "//server/share/extension.ts");
+      }
+    });
+
+    it("preserves literal backslashes in POSIX paths", () => {
+      if (Deno.build.os === "windows") return;
+      const path = String.raw`/tmp/literal\backslash.ts`;
+      assertEquals(fromFileUrl(toFileUrl(path)), path);
     });
   });
 

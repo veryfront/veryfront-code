@@ -1,29 +1,23 @@
-import { hasNodePath, isDeno } from "./runtime.ts";
-import { isAbsolute, resolve } from "./resolution.ts";
+import { posix } from "./posix.ts";
+import { resolve } from "./resolution.ts";
+import { runtimeUsesWindowsPaths } from "./portable.ts";
 
-type GlobalWithRequire = typeof globalThis & {
-  require?: (specifier: string) => { fileURLToPath?: (url: string | URL) => string };
-  Deno?: { cwd?: () => string; build?: { os?: string } };
-};
-
-let _fileURLToPath: ((url: string | URL) => string) | null = null;
-
-function getFileURLToPath(): ((url: string | URL) => string) | null {
-  if (_fileURLToPath) return _fileURLToPath;
-  if (!hasNodePath) return null;
-
-  try {
-    const nodeUrl = (globalThis as GlobalWithRequire).require?.("node:url");
-    const fileURLToPath = nodeUrl?.fileURLToPath;
-
-    if (!fileURLToPath) return null;
-
-    _fileURLToPath = fileURLToPath;
-    return _fileURLToPath;
-  } catch (_) {
-    /* expected: node:url require may fail in non-Node runtimes */
-    return null;
+function decodeFilePath(pathname: string, windows: boolean): string {
+  if (/%2f/i.test(pathname) || (windows && /%5c/i.test(pathname))) {
+    throw new TypeError("File URL path must not include encoded path separators");
   }
+  return decodeURIComponent(pathname);
+}
+
+function encodePath(path: string): string {
+  return path.split("/").map((segment) => encodeURIComponent(segment)).join("/");
+}
+
+function parseUncPath(path: string): { host: string; pathname: string } | null {
+  const portable = path.replaceAll("\\", "/");
+  const match = portable.match(/^\/\/+([^/]+)(\/.*)$/);
+  if (!match?.[1] || !match[2]) return null;
+  return { host: match[1], pathname: match[2] };
 }
 
 export function fromFileUrl(url: string | URL): string {
@@ -32,33 +26,37 @@ export function fromFileUrl(url: string | URL): string {
     throw new TypeError("Must be a file URL");
   }
 
-  const fileURLToPath = getFileURLToPath();
-  if (fileURLToPath) return fileURLToPath(parsedUrl);
+  const windows = runtimeUsesWindowsPaths();
+  const pathname = decodeFilePath(parsedUrl.pathname, windows);
+  const host = parsedUrl.hostname;
 
-  if (isDeno) {
-    const g = globalThis as GlobalWithRequire;
-    const hasCwd = Boolean(g.Deno?.cwd);
-    const isWindows = g.Deno?.build?.os === "windows";
-
-    if (hasCwd && isWindows) {
-      return decodeURIComponent(parsedUrl.pathname)
-        .replace(/^\/([A-Za-z]:)/, "$1")
-        .replace(/\//g, "\\");
-    }
-
-    return decodeURIComponent(parsedUrl.pathname);
+  if (host && host !== "localhost") {
+    return windows ? `\\\\${host}${pathname.replaceAll("/", "\\")}` : `//${host}${pathname}`;
   }
 
-  return decodeURIComponent(parsedUrl.pathname);
+  if (!windows) return pathname;
+  return pathname
+    .replace(/^\/([A-Za-z]:)/, "$1")
+    .replaceAll("/", "\\");
 }
 
 export function toFileUrl(path: string): URL {
-  const absolute = hasNodePath ? path : isAbsolute(path) ? path : resolve(path);
-  // Preserve filesystem characters that URL parsing would otherwise decode or
-  // interpret as fragment/query delimiters.
-  const encodedPath = absolute
-    .replaceAll("%", "%25")
-    .replaceAll("#", "%23")
-    .replaceAll("?", "%3F");
-  return new URL(`file://${encodedPath}`);
+  if (typeof path !== "string") {
+    throw new TypeError(`Path must be a string. Received ${typeof path}`);
+  }
+
+  const unc = parseUncPath(path);
+  if (unc) {
+    return new URL(`file://${unc.host}${encodePath(unc.pathname)}`);
+  }
+
+  const portable = path.replaceAll("\\", "/");
+  const drive = portable.match(/^([A-Za-z]:)(\/.*)?$/);
+  if (drive?.[1]) {
+    const pathname = drive[2] ?? "/";
+    return new URL(`file:///${drive[1]}${encodePath(pathname)}`);
+  }
+
+  const absolute = runtimeUsesWindowsPaths() ? resolve(path) : posix.resolve(path);
+  return new URL(`file://${encodePath(absolute)}`);
 }

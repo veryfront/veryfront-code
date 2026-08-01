@@ -1,33 +1,41 @@
-import { isDeno, nodePath } from "./runtime.ts";
-import { basename, dirname, extname, join } from "./basic-operations.ts";
-import { isAbsolute } from "./resolution.ts";
 import type { PathObject } from "./types.ts";
+import {
+  hasWindowsLikePath,
+  portableFormat,
+  portableParse,
+  runtimeUsesWindowsPaths,
+  toPortableSeparators,
+} from "./portable.ts";
+import { getNativePathImplementation } from "./runtime.ts";
 
 export function parse(path: string): PathObject {
-  if (!isDeno && nodePath) {
-    return nodePath.parse(path);
-  }
+  const windows = runtimeUsesWindowsPaths() || hasWindowsLikePath(path);
+  const pathApi = getNativePathImplementation(windows);
+  if (!pathApi) return portableParse(path, windows);
 
-  const dir = dirname(path);
-  const base = basename(path);
-  const ext = extname(path);
-
+  const parsed = pathApi.parse(path);
   return {
-    root: isAbsolute(path) ? "/" : "",
-    dir,
-    base,
-    ext,
-    name: base.slice(0, base.length - ext.length),
+    root: toPortableSeparators(parsed.root ?? ""),
+    dir: toPortableSeparators(parsed.dir ?? ""),
+    base: parsed.base ?? "",
+    ext: parsed.ext ?? "",
+    name: parsed.name ?? "",
   };
 }
 
 export function format(pathObject: PathObject): string {
-  if (!isDeno && nodePath) {
-    return nodePath.format(pathObject);
-  }
+  const windows = runtimeUsesWindowsPaths() ||
+    hasWindowsLikePath(pathObject.root ?? "") ||
+    hasWindowsLikePath(pathObject.dir ?? "");
+  const pathApi = getNativePathImplementation(windows);
+  if (!pathApi) return portableFormat(pathObject, windows);
 
-  const { dir = "", base = "", name = "", ext = "" } = pathObject;
-
-  const fileName = base || name + ext;
-  return dir ? join(dir, fileName) : fileName;
+  const formatted = pathApi.format({
+    root: pathObject.root ?? "",
+    dir: pathObject.dir ?? "",
+    base: pathObject.base ?? "",
+    ext: pathObject.ext ?? "",
+    name: pathObject.name ?? "",
+  });
+  return toPortableSeparators(formatted);
 }

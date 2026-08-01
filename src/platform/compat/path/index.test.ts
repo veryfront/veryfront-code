@@ -123,6 +123,10 @@ describe("compat/path/index.ts exports", () => {
       assertEquals(posix.relative("/project/src", "/project/src"), "");
       assertEquals(posix.relative("/project/src", "/project/tests/unit"), "../tests/unit");
       assertEquals(posix.dirname("//server/file.ts"), "//server");
+      assertEquals(posix.basename("/x.y", "x.y"), "x.y");
+      assertEquals(posix.basename("x.y", "x.y"), "");
+      assertEquals(posix.basename("x.y/", "x.y"), "x.y");
+      assertEquals(posix.basename("/", "."), "/");
       assertEquals(posix.extname(".env"), "");
       assertEquals(posix.extname("archive.tar.gz"), ".gz");
     });

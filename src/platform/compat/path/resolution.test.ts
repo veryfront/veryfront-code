@@ -21,6 +21,14 @@ describe("platform/compat/path/resolution", () => {
       assertEquals(resolve("/first", "/second"), "/second");
     });
 
+    it("uses the runtime working directory for relative paths", () => {
+      assertEquals(resolve("."), Deno.cwd().replaceAll("\\", "/"));
+      assertEquals(
+        resolve("relative", "file.ts"),
+        `${Deno.cwd().replaceAll("\\", "/")}/relative/file.ts`,
+      );
+    });
+
     it("should handle Windows drive-letter paths", () => {
       assertEquals(
         resolve("D:/a/project/src/build", "..", "..", ".."),
@@ -37,6 +45,10 @@ describe("platform/compat/path/resolution", () => {
 
     it("should preserve drive letter when resolving to root", () => {
       assertEquals(resolve("D:/a", ".."), "D:/");
+    });
+
+    it("preserves UNC roots", () => {
+      assertEquals(resolve("//server/share/project", ".."), "//server/share/");
     });
   });
 
@@ -104,6 +116,13 @@ describe("platform/compat/path/resolution", () => {
 
     it("should preserve Windows drive letter", () => {
       assertEquals(normalize("D:/"), "D:/");
+    });
+
+    it("preserves UNC roots while normalizing traversal", () => {
+      assertEquals(
+        normalize("\\\\server\\share\\project\\..\\src"),
+        "//server/share/src",
+      );
     });
   });
 });

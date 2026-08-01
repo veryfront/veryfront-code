@@ -184,6 +184,19 @@ describe("WorkspaceSync symlink hardening (VULN-FS-4)", () => {
     assertEquals(info.isDirectory, true);
   });
 
+  it("rejects root-equivalent paths before the workspace exists", async () => {
+    const workspace = new WorkspaceSync({
+      baseDir,
+      runId: "pre-init-root-equivalent",
+      tenant: stubTenant(),
+    });
+
+    for (const path of [".", "segment/..", "segment/../."]) {
+      await assertRejects(() => workspace.writeFile(path, "x"), Error);
+    }
+    assertEquals(await exists(workspace.workspaceDir), false);
+  });
+
   it("rejects paths containing a NUL byte", async () => {
     const { workspace } = await makeWorkspace(baseDir);
     await assertRejects(
