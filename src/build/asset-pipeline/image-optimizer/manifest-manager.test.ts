@@ -116,4 +116,76 @@ describe("manifest-manager", () => {
       await Deno.remove(tmpDir, { recursive: true });
     }
   });
+
+  it("normalizes exact duplicate variants emitted by the legacy generator", async () => {
+    const tmpDir = await makeTempDir();
+    const variant = {
+      format: "webp",
+      size: 400,
+      width: 400,
+      height: 200,
+      path: "logo-400.webp",
+      fileSize: 1234,
+    };
+    try {
+      await Deno.writeTextFile(
+        join(tmpDir, "image-manifest.json"),
+        JSON.stringify({
+          "logo.png": {
+            original: "logo.png",
+            variants: [variant, { ...variant }],
+            defaultFormat: "webp",
+            aspectRatio: 2,
+          },
+        }),
+      );
+
+      const loaded = await loadManifest(tmpDir);
+      assertEquals(loaded.get("logo.png")?.variants, [variant]);
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
+
+  it("rejects conflicting duplicate variants instead of normalizing them", async () => {
+    const tmpDir = await makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        join(tmpDir, "image-manifest.json"),
+        JSON.stringify({
+          "logo.png": {
+            original: "logo.png",
+            variants: [
+              {
+                format: "webp",
+                size: 400,
+                width: 400,
+                height: 200,
+                path: "logo-400.webp",
+                fileSize: 1234,
+              },
+              {
+                format: "webp",
+                size: 400,
+                width: 400,
+                height: 200,
+                path: "logo-400.webp",
+                fileSize: 4321,
+              },
+            ],
+            defaultFormat: "webp",
+            aspectRatio: 2,
+          },
+        }),
+      );
+
+      await assertRejects(
+        () => loadManifest(tmpDir),
+        TypeError,
+        "malformed",
+      );
+    } finally {
+      await Deno.remove(tmpDir, { recursive: true });
+    }
+  });
 });

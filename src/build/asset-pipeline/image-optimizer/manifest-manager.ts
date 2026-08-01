@@ -107,7 +107,12 @@ export function loadManifest(
         throw new TypeError("Image manifest must be a JSON object");
       }
 
-      const entries = Object.entries(parsed);
+      const entries = Object.entries(parsed).map(
+        ([key, value]): [string, unknown] => [
+          key,
+          normalizeLegacyDuplicateVariants(value),
+        ],
+      );
       assertManifestEntries(entries);
       return new Map(entries);
     },
@@ -117,6 +122,61 @@ export function loadManifest(
 
 function isPositiveFinite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function isImageVariant(value: unknown): value is ImageVariant {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const variant = value as Partial<ImageVariant>;
+  return typeof variant.format === "string" &&
+    supportedFormats.has(variant.format) &&
+    isSafeImageManifestPath(variant.path) &&
+    Number.isSafeInteger(variant.size) &&
+    variant.size! > 0 &&
+    variant.size! <= MAX_IMAGE_DIMENSION &&
+    Number.isSafeInteger(variant.width) &&
+    variant.width! > 0 &&
+    variant.width! <= MAX_IMAGE_DIMENSION &&
+    Number.isSafeInteger(variant.height) &&
+    variant.height! > 0 &&
+    variant.height! <= MAX_IMAGE_DIMENSION &&
+    Number.isSafeInteger(variant.fileSize) &&
+    variant.fileSize! > 0;
+}
+
+function variantFingerprint(variant: ImageVariant): string {
+  return JSON.stringify([
+    variant.format,
+    variant.size,
+    variant.width,
+    variant.height,
+    variant.path,
+    variant.fileSize,
+  ]);
+}
+
+/** Normalize only the exact duplicates emitted by the legacy size generator. */
+function normalizeLegacyDuplicateVariants(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const metadata = value as Partial<OptimizedImageMetadata>;
+  if (!Array.isArray(metadata.variants)) return value;
+
+  const fingerprints = new Set<string>();
+  const variants: ImageVariant[] = [];
+  let removedDuplicate = false;
+  for (const candidate of metadata.variants as unknown[]) {
+    if (!isImageVariant(candidate)) return value;
+    const fingerprint = variantFingerprint(candidate);
+    if (fingerprints.has(fingerprint)) {
+      removedDuplicate = true;
+      continue;
+    }
+    fingerprints.add(fingerprint);
+    variants.push(candidate);
+  }
+
+  return removedDuplicate ? { ...metadata, variants } : value;
 }
 
 function isOptimizedImageMetadata(
@@ -144,26 +204,8 @@ function isOptimizedImageMetadata(
   const variantPaths = new Set<string>();
   let hasDefaultFormat = false;
   for (const candidate of metadata.variants as unknown[]) {
-    if (typeof candidate !== "object" || candidate === null) return false;
-    const variant = candidate as Partial<ImageVariant>;
-    if (
-      typeof variant.format !== "string" ||
-      !supportedFormats.has(variant.format) ||
-      !isSafeImageManifestPath(variant.path) ||
-      !Number.isSafeInteger(variant.size) ||
-      variant.size! <= 0 ||
-      variant.size! > MAX_IMAGE_DIMENSION ||
-      !Number.isSafeInteger(variant.width) ||
-      variant.width! <= 0 ||
-      variant.width! > MAX_IMAGE_DIMENSION ||
-      !Number.isSafeInteger(variant.height) ||
-      variant.height! <= 0 ||
-      variant.height! > MAX_IMAGE_DIMENSION ||
-      !Number.isSafeInteger(variant.fileSize) ||
-      variant.fileSize! <= 0
-    ) {
-      return false;
-    }
+    if (!isImageVariant(candidate)) return false;
+    const variant = candidate;
 
     const identity = `${variant.format}\0${variant.size}`;
     const normalizedPath = variant.path.toLocaleLowerCase("en-US");
