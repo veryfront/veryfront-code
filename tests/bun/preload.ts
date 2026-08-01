@@ -10,7 +10,7 @@
 
 import { plugin } from "bun";
 import { existsSync, readFileSync, statSync } from "fs";
-import { extname, resolve } from "path";
+import { dirname, extname, resolve } from "path";
 import { fileURLToPath } from "url";
 
 const projectRoot = resolve(import.meta.dir, "../..");

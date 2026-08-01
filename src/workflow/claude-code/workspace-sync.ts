@@ -13,7 +13,7 @@
 import { computeHash, logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
-import { dirname, join, relative, resolve } from "#veryfront/compat/path";
+import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 
@@ -499,7 +499,7 @@ export class WorkspaceSync {
     if (/^[A-Za-z]:[\\/]/.test(path)) {
       throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
     }
-    if (path.startsWith("//")) {
+    if (path.startsWith("//") || path.startsWith("\\\\")) {
       throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
     }
 
@@ -519,6 +519,7 @@ export class WorkspaceSync {
       !relativePath ||
       relativePath === "." ||
       relativePath === ".." ||
+      isAbsolute(relativePath) ||
       relativePath.startsWith("../") ||
       relativePath.startsWith("..\\")
     ) {

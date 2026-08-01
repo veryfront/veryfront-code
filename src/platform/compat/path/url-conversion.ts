@@ -28,6 +28,16 @@ function parseUncPath(path: string): { host: string; pathname: string } | null {
   return { host: match[1], pathname: match[2] };
 }
 
+/**
+ * Convert a file URL to a runtime-native filesystem path.
+ *
+ * Local and `localhost` URLs are supported on every runtime. A non-local host
+ * becomes a UNC path on Windows; other runtimes reject it because no
+ * unambiguous local path representation exists.
+ *
+ * @throws {TypeError} If the URL is not a file URL, contains an encoded path
+ * separator, or names a non-local host on a non-Windows runtime.
+ */
 export function fromFileUrl(url: string | URL): string {
   const parsedUrl = typeof url === "string" ? new URL(url) : url;
   if (parsedUrl.protocol !== "file:") {
@@ -35,11 +45,17 @@ export function fromFileUrl(url: string | URL): string {
   }
 
   const windows = runtimeUsesWindowsPaths();
-  const pathname = decodeFilePath(parsedUrl.pathname, windows);
   const host = parsedUrl.hostname;
 
+  if (host && host !== "localhost" && !windows) {
+    throw new TypeError(
+      "File URL host must be empty or localhost on non-Windows runtimes",
+    );
+  }
+
+  const pathname = decodeFilePath(parsedUrl.pathname, windows);
   if (host && host !== "localhost") {
-    return windows ? `\\\\${host}${pathname.replaceAll("/", "\\")}` : `//${host}${pathname}`;
+    return `\\\\${host}${pathname.replaceAll("/", "\\")}`;
   }
 
   if (!windows) return pathname;

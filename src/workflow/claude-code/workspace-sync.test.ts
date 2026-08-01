@@ -216,18 +216,27 @@ describe("WorkspaceSync symlink hardening (VULN-FS-4)", () => {
 
   it("rejects Windows-style drive-letter absolute paths", async () => {
     const { workspace } = await makeWorkspace(baseDir);
-    await assertRejects(
-      () => workspace.writeFile("C:\\Windows\\pwn.txt", "x"),
-      Error,
-    );
+    for (const path of ["C:\\Windows\\pwn.txt", "/D:/outside/pwn.txt"]) {
+      await assertRejects(
+        () => workspace.writeFile(path, "x"),
+        Error,
+      );
+    }
   });
 
-  it("rejects UNC-style double-slash paths", async () => {
+  it("rejects UNC-style paths with either separator", async () => {
     const { workspace } = await makeWorkspace(baseDir);
-    await assertRejects(
-      () => workspace.writeFile("//evil-host/share/pwn.txt", "x"),
-      Error,
-    );
+    for (
+      const path of [
+        "//evil-host/share/pwn.txt",
+        String.raw`\\evil-host\share\pwn.txt`,
+      ]
+    ) {
+      await assertRejects(
+        () => workspace.writeFile(path, "x"),
+        Error,
+      );
+    }
   });
 
   it("an absolute-looking Unix path does NOT escape the workspace", async () => {

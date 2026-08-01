@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { runtimeUsesWindowsPaths } from "./portable.ts";
+import { resolve } from "./resolution.ts";
 import { fromFileUrl, toFileUrl } from "./url-conversion.ts";
 
 describe("url-conversion", () => {
@@ -79,28 +81,48 @@ describe("url-conversion", () => {
     it("should handle relative path by resolving", () => {
       const result = toFileUrl("relative/path.ts");
       assertEquals(result.protocol, "file:");
-      assertEquals(fromFileUrl(result), `${Deno.cwd()}/relative/path.ts`);
+      const expected = resolve("relative/path.ts");
+      assertEquals(
+        fromFileUrl(result),
+        runtimeUsesWindowsPaths() ? expected.replaceAll("/", "\\") : expected,
+      );
     });
 
-    it("preserves UNC hosts instead of converting them to local-root paths", () => {
+    it("preserves explicit UNC hosts without inventing ambiguous POSIX paths", () => {
       const result = toFileUrl(String.raw`\\server\share\extension.ts`);
       assertEquals(result.href, "file://server/share/extension.ts");
-      if (Deno.build.os !== "windows") {
-        assertEquals(fromFileUrl(result), "//server/share/extension.ts");
+      if (runtimeUsesWindowsPaths()) {
+        assertEquals(fromFileUrl(result), String.raw`\\server\share\extension.ts`);
+      } else {
+        assertThrows(
+          () => fromFileUrl(result),
+          TypeError,
+          "File URL host must be empty or localhost on non-Windows runtimes",
+        );
+      }
+    });
+
+    it("treats localhost file URLs as local paths", () => {
+      if (!runtimeUsesWindowsPaths()) {
+        assertEquals(fromFileUrl("file://localhost/tmp/file.ts"), "/tmp/file.ts");
       }
     });
 
     it("keeps redundant POSIX root separators local", () => {
       assertEquals(toFileUrl("//").href, "file:///");
-      if (Deno.build.os !== "windows") {
+      if (!runtimeUsesWindowsPaths()) {
         assertEquals(toFileUrl("//tmp/file.ts").href, "file:///tmp/file.ts");
+        assertEquals(
+          toFileUrl("//server/share/file.ts").href,
+          "file:///server/share/file.ts",
+        );
       }
       assertEquals(toFileUrl("///tmp/file.ts").href, "file:///tmp/file.ts");
       assertEquals(toFileUrl("////tmp/file.ts").href, "file:///tmp/file.ts");
     });
 
     it("preserves literal backslashes in POSIX paths", () => {
-      if (Deno.build.os === "windows") return;
+      if (runtimeUsesWindowsPaths()) return;
       const path = String.raw`/tmp/literal\backslash.ts`;
       assertEquals(fromFileUrl(toFileUrl(path)), path);
     });
