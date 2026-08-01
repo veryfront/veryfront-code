@@ -105,6 +105,7 @@ describe("createExtensionPackageSpec", () => {
       exports: "./src/index.ts",
       veryfront: {
         extension: true,
+        activation: "explicit",
         contracts: { provides: ["SandboxShellToolsProvider"] },
         capabilities: [{ type: "sandbox:execute", tools: ["bash"] }],
       },

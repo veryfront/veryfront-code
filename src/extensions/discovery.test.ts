@@ -8,7 +8,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/discovery.test
  */
 
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "@std/path";
 import type { Extension, ResolvedExtension } from "./types.ts";
@@ -36,6 +36,7 @@ describe("parsePackageMetadata()", () => {
       veryfront: { extension: true, capabilities: [{ type: "css" }] },
     });
     assertEquals(result?.isExtension, true);
+    assertEquals(result?.activation, undefined);
     assertEquals(result?.capabilities.length, 1);
     assertEquals(result?.capabilities[0]?.type, "css");
   });
@@ -61,6 +62,56 @@ describe("parsePackageMetadata()", () => {
   it("should return undefined when veryfront field is null", () => {
     const result = parsePackageMetadata({ veryfront: null });
     assertEquals(result, undefined);
+  });
+
+  it("parses explicit activation and rejects unknown activation modes", () => {
+    assertEquals(
+      parsePackageMetadata({
+        veryfront: { extension: true, activation: "auto" },
+      })?.activation,
+      "auto",
+    );
+    assertEquals(
+      parsePackageMetadata({
+        veryfront: { extension: true, activation: "explicit" },
+      })?.activation,
+      "explicit",
+    );
+    assertEquals(
+      parsePackageMetadata({
+        veryfront: { extension: true, activation: "sometimes" },
+      }),
+      undefined,
+    );
+  });
+
+  it("rejects hostile metadata without invoking accessors", () => {
+    let getterCalls = 0;
+    const rootAccessor = Object.defineProperty({}, "veryfront", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return { extension: true, activation: "auto" };
+      },
+    });
+    const activationAccessor = {
+      veryfront: Object.defineProperty({ extension: true }, "activation", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "auto";
+        },
+      }),
+    };
+    const revocable = Proxy.revocable({
+      veryfront: { extension: true, activation: "auto" },
+    }, {});
+    revocable.revoke();
+
+    assertEquals(parsePackageMetadata(rootAccessor), undefined);
+    assertEquals(parsePackageMetadata(activationAccessor), undefined);
+    assertEquals(parsePackageMetadata(revocable.proxy), undefined);
+    assertEquals(getterCalls, 0);
   });
 
   it("should filter malformed capability entries", () => {
@@ -287,6 +338,27 @@ describe("discoverPackageExtensions()", () => {
     assertEquals(found[0]?.packageName, "ext-ok");
   });
 
+  it("ignores oversized and invalid UTF-8 package manifests", async () => {
+    const oversized = join(tmp, "node_modules", "ext-oversized");
+    const invalidUtf8 = join(tmp, "node_modules", "ext-invalid-utf8");
+    await Deno.mkdir(oversized, { recursive: true });
+    await Deno.mkdir(invalidUtf8, { recursive: true });
+    await Deno.writeTextFile(
+      join(oversized, "package.json"),
+      "x".repeat(256 * 1_024 + 1),
+    );
+    await Deno.writeFile(
+      join(invalidUtf8, "package.json"),
+      new Uint8Array([0xc3, 0x28]),
+    );
+    await writePkg(join(tmp, "node_modules", "ext-ok"), "ext-ok", {
+      extension: true,
+    });
+
+    const found = await discoverPackageExtensions(tmp);
+    assertEquals(found.map((entry) => entry.packageName), ["ext-ok"]);
+  });
+
   it("tolerates packages missing package.json", async () => {
     await Deno.mkdir(join(tmp, "node_modules", "empty-dir"), {
       recursive: true,
@@ -354,6 +426,244 @@ describe("discoverProjectExtensions()", () => {
     await Deno.writeTextFile(join(tmp, "extensions", "README.md"), "x");
     const found = await discoverProjectExtensions(tmp);
     assertEquals(found, []);
+  });
+
+  it("returns project entry points in stable lexical order", async () => {
+    for (const name of ["z-last", "a-first"]) {
+      const dir = join(tmp, "extensions", name);
+      await Deno.mkdir(dir, { recursive: true });
+      await Deno.writeTextFile(join(dir, "index.ts"), "export default {};");
+    }
+
+    assertEquals(await discoverProjectExtensions(tmp), [
+      join(tmp, "extensions", "a-first", "index.ts"),
+      join(tmp, "extensions", "z-last", "index.ts"),
+    ]);
+  });
+
+  it("does not discover project extensions whose manifest requires explicit activation", async () => {
+    const dir = join(tmp, "extensions", "explicit-only");
+    await Deno.mkdir(join(dir, "src"), { recursive: true });
+    await Deno.writeTextFile(
+      join(dir, "src", "index.ts"),
+      "throw new Error('must not import');",
+    );
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        veryfront: { extension: true, activation: "explicit" },
+      }),
+    );
+
+    assertEquals(await discoverProjectExtensions(tmp), []);
+  });
+
+  it("uses the stricter activation when Deno and npm manifests coexist", async () => {
+    const dir = join(tmp, "extensions", "dual-manifest");
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ veryfront: { extension: true, activation: "auto" } }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ veryfront: { extension: true, activation: "explicit" } }),
+    );
+
+    assertEquals(await discoverProjectExtensions(tmp), []);
+  });
+
+  it("honors explicit activation from JSONC comments and trailing commas", async () => {
+    const dir = join(tmp, "extensions", "jsonc-explicit");
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+    await Deno.writeTextFile(
+      join(dir, "deno.jsonc"),
+      `{
+        // Deno accepts comments and trailing commas in deno.jsonc.
+        "veryfront": {
+          "extension": true,
+          "activation": "explicit",
+        },
+      }`,
+    );
+
+    assertEquals(await discoverProjectExtensions(tmp), []);
+  });
+
+  it("uses the strictest activation across JSON, JSONC, and npm manifests", async () => {
+    const dir = join(tmp, "extensions", "three-manifests");
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ veryfront: { extension: true, activation: "auto" } }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "deno.jsonc"),
+      '{ "veryfront": { "extension": true, "activation": "explicit", }, }',
+    );
+    await Deno.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ veryfront: { extension: true, activation: "auto" } }),
+    );
+
+    assertEquals(await discoverProjectExtensions(tmp), []);
+  });
+
+  it("fails closed on malformed JSONC activation metadata", async () => {
+    const dir = join(tmp, "extensions", "malformed-jsonc");
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+    await Deno.writeTextFile(
+      join(dir, "deno.jsonc"),
+      '{ "veryfront": { /* unterminated',
+    );
+
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "is not valid JSONC",
+    );
+  });
+
+  it("rejects entrypoint symlinks that escape into an explicit sibling", async () => {
+    const explicitDir = join(tmp, "extensions", "explicit-target");
+    const directDir = join(tmp, "extensions", "auto-direct");
+    const intermediateDir = join(tmp, "extensions", "auto-intermediate");
+    await Deno.mkdir(join(explicitDir, "src"), { recursive: true });
+    await Deno.mkdir(directDir, { recursive: true });
+    await Deno.mkdir(intermediateDir, { recursive: true });
+    await Deno.writeTextFile(
+      join(explicitDir, "src", "index.ts"),
+      "throw new Error('explicit sibling must not import');",
+    );
+    await Deno.writeTextFile(
+      join(explicitDir, "deno.json"),
+      JSON.stringify({
+        veryfront: { extension: true, activation: "explicit" },
+      }),
+    );
+    await Deno.symlink(
+      join(explicitDir, "src", "index.ts"),
+      join(directDir, "index.ts"),
+    );
+    await Deno.symlink(join(explicitDir, "src"), join(intermediateDir, "src"));
+
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "escapes its extension directory",
+    );
+    await Deno.remove(directDir, { recursive: true });
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "escapes its extension directory",
+    );
+  });
+
+  it("fails closed with diagnostics on malformed project activation metadata", async () => {
+    for (
+      const [name, manifest] of [
+        ["malformed-json", "{not-json"],
+        [
+          "unknown-mode",
+          JSON.stringify({
+            veryfront: { extension: true, activation: "sometimes" },
+          }),
+        ],
+      ] as const
+    ) {
+      const dir = join(tmp, "extensions", name);
+      await Deno.mkdir(dir, { recursive: true });
+      await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+      await Deno.writeTextFile(join(dir, "deno.json"), manifest);
+    }
+
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "is not valid JSON",
+    );
+    await Deno.remove(join(tmp, "extensions", "malformed-json"), {
+      recursive: true,
+    });
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "invalid veryfront.activation mode",
+    );
+  });
+
+  it("rejects present malformed veryfront metadata instead of activating it", async () => {
+    for (
+      const [name, veryfront] of [
+        ["null-metadata", null],
+        ["string-metadata", "explicit"],
+        ["numeric-metadata", 1],
+        ["array-metadata", [{ activation: "explicit" }]],
+      ] as const
+    ) {
+      const dir = join(tmp, "extensions", name);
+      await Deno.mkdir(dir, { recursive: true });
+      await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+      await Deno.writeTextFile(
+        join(dir, "deno.json"),
+        JSON.stringify({ veryfront }),
+      );
+
+      await assertRejects(
+        () => discoverProjectExtensions(tmp),
+        TypeError,
+        "invalid veryfront metadata; expected an object",
+      );
+      await Deno.remove(dir, { recursive: true });
+    }
+  });
+
+  it("rejects oversized, invalid UTF-8, and symlinked project manifests", async () => {
+    const makeEntry = async (name: string): Promise<string> => {
+      const dir = join(tmp, "extensions", name);
+      await Deno.mkdir(dir, { recursive: true });
+      await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+      return dir;
+    };
+
+    const oversized = await makeEntry("oversized");
+    await Deno.writeTextFile(
+      join(oversized, "deno.json"),
+      "x".repeat(256 * 1_024 + 1),
+    );
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "exceeds the size limit",
+    );
+    await Deno.remove(oversized, { recursive: true });
+
+    const invalidUtf8 = await makeEntry("invalid-utf8");
+    await Deno.writeFile(join(invalidUtf8, "deno.json"), new Uint8Array([0xc3, 0x28]));
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "is not valid UTF-8",
+    );
+    await Deno.remove(invalidUtf8, { recursive: true });
+
+    const symlinked = await makeEntry("symlinked");
+    const manifestTarget = join(tmp, "manifest-target.json");
+    await Deno.writeTextFile(
+      manifestTarget,
+      JSON.stringify({ veryfront: { extension: true, activation: "auto" } }),
+    );
+    await Deno.symlink(manifestTarget, join(symlinked, "deno.json"));
+    await assertRejects(
+      () => discoverProjectExtensions(tmp),
+      TypeError,
+      "must be a regular file",
+    );
   });
 });
 

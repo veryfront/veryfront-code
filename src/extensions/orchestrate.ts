@@ -89,9 +89,10 @@ function projectExtensionNameFromPath(path: string): string | undefined {
  * Pipeline:
  *   1. Split `config.extensions` into resolved entries and disable directives.
  *   2. Discover extensions from package, project, and local sources.
- *   3. Skip loading factories for package- and project-source extensions whose
- *      names appear in the disable set (local-file names are not reliable
- *      pre-load and are filtered after `mergeExtensions`).
+ *   3. Omit explicit-only discovered extensions and skip loading factories
+ *      for package- and project-source extensions whose names appear in the
+ *      disable set (local-file names are not reliable pre-load and are
+ *      filtered after `mergeExtensions`).
  *   4. Dynamic-import factories for every remaining discovered path.
  *   5. Merge sources honoring priority `config > package > project > local-file`.
  *   6. Construct an `ExtensionLoader` and run `setupAll`.
@@ -137,6 +138,7 @@ export async function orchestrateExtensions(
 
   // Package hits carry the package name directly — filter before loading.
   const enabledPackageNames = packageHits
+    .filter((hit) => hit.metadata.activation === undefined || hit.metadata.activation === "auto")
     .map((hit) => hit.packageName)
     .filter((name) => !disabledNames.has(name));
 
