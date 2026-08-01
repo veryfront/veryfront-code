@@ -9,9 +9,13 @@ import {
 } from "#veryfront/observability/simple-metrics/metrics-recorder.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
+  InvalidResponseBodyError,
+  InvalidResponseBodyJsonError,
+  InvalidResponseBodyJsonNestingError,
   JsonStringValueTooLargeError,
   readResponseJsonStringBytesWithinLimit,
   readResponseTextPrefix,
+  ResponseBodyTooLargeError,
 } from "#veryfront/utils/response-body.ts";
 
 const log = serverLogger.component("veryfront-api-transport");
@@ -20,7 +24,6 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 export const DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES = 64 * 1024 * 1024;
 export const MAX_VERYFRONT_API_SUCCESS_BODY_BYTES = 128 * 1024 * 1024;
 const MAX_ERROR_BODY_BYTES = 8 * 1024;
-const NON_RETRYABLE_PROTOCOL_ERRORS = new WeakSet<object>();
 
 export interface TransportRetryConfig {
   maxRetries: number;
@@ -50,7 +53,12 @@ export interface VeryfrontApiTransportConfig<T> {
   retry: TransportRetryConfig;
   timeoutMs?: number;
   defaultHeaders?: Record<string, string>;
-  onResponse?: (response: Response, init: TransportRequestInit, url: string) => Promise<T>;
+  onResponse?: (
+    response: Response,
+    init: TransportRequestInit,
+    url: string,
+    abortSignal?: AbortSignal,
+  ) => Promise<T>;
   afterFetch?: (status: number, durationMs: number) => void;
   shouldRetry?: (error: unknown, attempt: number) => boolean;
   onRetry?: (info: {
@@ -69,6 +77,52 @@ export interface VeryfrontApiTransport<T> {
   request(pathOrUrl: string, init?: TransportRequestInit): Promise<T>;
 }
 
+function validateMaximumResponseBytes(value: unknown): number {
+  if (
+    !Number.isSafeInteger(value) || (value as number) <= 0 ||
+    (value as number) > MAX_VERYFRONT_API_SUCCESS_BODY_BYTES
+  ) {
+    throw new RangeError(
+      `Veryfront API maxResponseBytes must be a positive integer at most ${MAX_VERYFRONT_API_SUCCESS_BODY_BYTES}`,
+    );
+  }
+  return value as number;
+}
+
+function snapshotRequestInit(init: TransportRequestInit): TransportRequestInit {
+  const maxResponseBytes = validateMaximumResponseBytes(
+    init.maxResponseBytes ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES,
+  );
+  const boundedField = init.jsonStringFieldWithinLimit;
+  let jsonStringFieldWithinLimit: TransportRequestInit["jsonStringFieldWithinLimit"];
+  if (boundedField !== undefined) {
+    if (typeof boundedField !== "object" || boundedField === null || Array.isArray(boundedField)) {
+      throw new TypeError("Veryfront API bounded JSON field options must be an object");
+    }
+    const { fieldName, maximumBytes } = boundedField;
+    if (typeof fieldName !== "string" || fieldName.length === 0) {
+      throw new TypeError("Veryfront API bounded JSON field name must be a non-empty string");
+    }
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) {
+      throw new RangeError(
+        "Veryfront API bounded JSON field maximumBytes must be a non-negative safe integer",
+      );
+    }
+    jsonStringFieldWithinLimit = { fieldName, maximumBytes };
+  }
+
+  return {
+    method: init.method,
+    headers: init.headers,
+    body: init.body,
+    returnText: init.returnText,
+    maxResponseBytes,
+    jsonStringFieldWithinLimit,
+    expected404: init.expected404,
+    timeoutMs: init.timeoutMs,
+  };
+}
+
 export function createVeryfrontApiTransport<T>(
   config: VeryfrontApiTransportConfig<T>,
 ): VeryfrontApiTransport<T> {
@@ -82,7 +136,12 @@ export function createVeryfrontApiTransport<T>(
     wrapFetch,
   } = config;
   const onResponse = config.onResponse ??
-    (defaultOnResponse as (r: Response, i: TransportRequestInit, u: string) => Promise<T>);
+    (defaultOnResponse as (
+      r: Response,
+      i: TransportRequestInit,
+      u: string,
+      signal?: AbortSignal,
+    ) => Promise<T>);
   const shouldRetry = config.shouldRetry ?? defaultShouldRetry;
   const wrapFinalError = config.wrapFinalError ??
     ((err: Error) =>
@@ -92,27 +151,28 @@ export function createVeryfrontApiTransport<T>(
         context: { details: { originalError: err } },
       }));
   return {
-    request(pathOrUrl: string, init: TransportRequestInit = {}): Promise<T> {
+    async request(pathOrUrl: string, init: TransportRequestInit = {}): Promise<T> {
+      const requestInit = snapshotRequestInit(init);
       const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${baseUrl}${pathOrUrl}`;
-      const method = init.method ?? "GET";
-      const timeoutMs = init.timeoutMs ?? cfgTimeout;
+      const method = requestInit.method ?? "GET";
+      const timeoutMs = requestInit.timeoutMs ?? cfgTimeout;
       // Capture the token once per request: retries of this request must not
       // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
       // matching the pre-transport requestWithRetry semantics.
       const token = getToken();
-      return retryWithBackoff(
+      return await retryWithBackoff(
         (signal, attempt) => {
           const doFetch = async (): Promise<T> => {
-            const headers = new Headers(init.headers);
+            const headers = new Headers(requestInit.headers);
             for (const [k, v] of Object.entries(defaultHeaders)) {
               if (!headers.has(k)) headers.set(k, v);
             }
             headers.set("Authorization", `Bearer ${token}`);
             injectContext(headers);
             const start = performance.now();
-            const res = await fetch(url, { method, headers, body: init.body, signal });
+            const res = await fetch(url, { method, headers, body: requestInit.body, signal });
             afterFetch?.(res.status, performance.now() - start);
-            return onResponse(res, init, url);
+            return onResponse(res, requestInit, url, signal);
           };
           return wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch();
         },
@@ -196,14 +256,24 @@ async function defaultOnResponse(
   response: Response,
   init: TransportRequestInit,
   url: string,
+  abortSignal?: AbortSignal,
 ): Promise<unknown> {
   if (!response.ok) {
-    const { text, truncated } = await readResponseTextPrefix(
-      response,
-      MAX_ERROR_BODY_BYTES + 1,
-      undefined,
-      { fatalUtf8: true },
-    );
+    let text = "";
+    let truncated = false;
+    let diagnosticFailure: unknown;
+    try {
+      const diagnostic = await readResponseTextPrefix(
+        response,
+        MAX_ERROR_BODY_BYTES + 1,
+        abortSignal,
+        { fatalUtf8: true },
+      );
+      text = diagnostic.text;
+      truncated = diagnostic.truncated;
+    } catch (cause) {
+      diagnosticFailure = cause;
+    }
     const isExpected404 = init.expected404 === true && response.status === 404;
     const level = isExpected404 ? "debug" : response.status >= 500 ? "error" : "warn";
     const redactedUrl = url.replace(/token=[^&]+/g, "token=***");
@@ -213,6 +283,7 @@ async function defaultOnResponse(
       statusText: response.statusText,
       responseText: text.slice(0, MAX_ERROR_BODY_BYTES),
       responseTruncated: truncated,
+      responseBodyReadFailed: diagnosticFailure !== undefined,
     });
     throw API_CLIENT_ERROR.create({
       detail: `API request failed: ${response.status} ${response.statusText}`,
@@ -223,19 +294,22 @@ async function defaultOnResponse(
           url: redactedUrl,
           responseText: text.slice(0, MAX_ERROR_BODY_BYTES),
           responseTruncated: truncated,
+          responseBodyReadFailed: diagnosticFailure !== undefined,
         },
       },
     });
   }
 
-  const maxResponseBytes = init.maxResponseBytes ?? DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
-  if (
-    !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0 ||
-    maxResponseBytes > MAX_VERYFRONT_API_SUCCESS_BODY_BYTES
-  ) {
-    throw new RangeError(
-      `Veryfront API maxResponseBytes must be a positive integer at most ${MAX_VERYFRONT_API_SUCCESS_BODY_BYTES}`,
-    );
+  let maxResponseBytes: number;
+  try {
+    maxResponseBytes = validateMaximumResponseBytes(init.maxResponseBytes);
+  } catch (error) {
+    try {
+      void response.body?.cancel(error).catch(() => {});
+    } catch {
+      // Best-effort cleanup for a violated internal request snapshot invariant.
+    }
+    throw error;
   }
 
   if (init.jsonStringFieldWithinLimit !== undefined) {
@@ -245,49 +319,73 @@ async function defaultOnResponse(
         init.jsonStringFieldWithinLimit.fieldName,
         init.jsonStringFieldWithinLimit.maximumBytes,
         maxResponseBytes,
+        abortSignal,
       );
     } catch (cause) {
       if (cause instanceof JsonStringValueTooLargeError) {
-        NON_RETRYABLE_PROTOCOL_ERRORS.add(cause);
         throw cause;
       }
+      if (!isDeterministicResponseProtocolError(cause)) throw cause;
       const error = API_CLIENT_ERROR.create({
         detail: "Veryfront API returned invalid bounded JSON content",
         cause,
         context: { details: { url: url.replace(/token=[^&]+/g, "token=***") } },
       });
-      NON_RETRYABLE_PROTOCOL_ERRORS.add(error);
       throw error;
     }
   }
 
-  const { text, truncated } = await readResponseTextPrefix(
-    response,
-    maxResponseBytes + 1,
-    undefined,
-    { fatalUtf8: true },
-  );
+  let text: string;
+  let truncated: boolean;
+  try {
+    const result = await readResponseTextPrefix(
+      response,
+      maxResponseBytes + 1,
+      abortSignal,
+      { fatalUtf8: true },
+    );
+    text = result.text;
+    truncated = result.truncated;
+  } catch (cause) {
+    if (!isDeterministicResponseProtocolError(cause)) throw cause;
+    throw API_CLIENT_ERROR.create({
+      detail: "Veryfront API returned invalid response content",
+      cause,
+      context: { details: { url: url.replace(/token=[^&]+/g, "token=***") } },
+    });
+  }
   if (truncated) {
-    const error = new RangeError(`Veryfront API response exceeded ${maxResponseBytes} bytes`);
-    NON_RETRYABLE_PROTOCOL_ERRORS.add(error);
-    throw error;
+    throw new ResponseBodyTooLargeError(maxResponseBytes);
   }
   if (init.returnText) return text;
   try {
     return JSON.parse(text) as unknown;
   } catch (cause) {
+    const protocolCause = new InvalidResponseBodyJsonError(
+      "Response body is not valid JSON",
+      { cause },
+    );
     const error = API_CLIENT_ERROR.create({
       detail: "Veryfront API returned invalid JSON",
-      cause,
+      cause: protocolCause,
       context: { details: { url: url.replace(/token=[^&]+/g, "token=***") } },
     });
-    NON_RETRYABLE_PROTOCOL_ERRORS.add(error);
     throw error;
   }
 }
 
+function isDeterministicResponseProtocolError(error: unknown): boolean {
+  return error instanceof InvalidResponseBodyError ||
+    error instanceof InvalidResponseBodyJsonNestingError ||
+    error instanceof JsonStringValueTooLargeError ||
+    error instanceof ResponseBodyTooLargeError;
+}
+
 function defaultShouldRetry(error: unknown): boolean {
-  if (typeof error === "object" && error !== null && NON_RETRYABLE_PROTOCOL_ERRORS.has(error)) {
+  if (isDeterministicResponseProtocolError(error)) {
+    return false;
+  }
+  if (error instanceof VeryfrontError && isDeterministicResponseProtocolError(error.cause)) {
     return false;
   }
   if (!(error instanceof VeryfrontError) || error.slug !== "api-client-error") return true;

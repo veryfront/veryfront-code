@@ -42,7 +42,7 @@ function requireTypedArrayGetter(
 function byteLengthOf(bytes: Uint8Array): number {
   const byteLength = ReflectApply(typedArrayByteLengthGetter, bytes, []);
   if (!Number.isSafeInteger(byteLength) || (byteLength as number) < 0) {
-    throw new TypeError("Response body chunk has an invalid byte length");
+    throw new InvalidResponseBodyChunkError("Response body chunk has an invalid byte length");
   }
   return byteLength as number;
 }
@@ -54,19 +54,26 @@ function viewBytes(bytes: Uint8Array, start: number, length: number): Uint8Array
     !Number.isSafeInteger(length) || length < 0 ||
     start > byteLength - length
   ) {
-    throw new RangeError("Response body byte view is outside its source buffer");
+    throw new InvalidResponseBodyChunkError(
+      "Response body byte view is outside its source buffer",
+    );
   }
   const buffer = ReflectApply(typedArrayBufferGetter, bytes, []);
   try {
     ReflectApply(arrayBufferByteLengthGetter, buffer as object, []);
   } catch (cause) {
-    throw new TypeError("Response body chunks must use a fixed ArrayBuffer", { cause });
+    throw new InvalidResponseBodyChunkError(
+      "Response body chunks must use a fixed ArrayBuffer",
+      { cause },
+    );
   }
   if (
     arrayBufferResizableGetter !== undefined &&
     ReflectApply(arrayBufferResizableGetter, buffer as object, []) === true
   ) {
-    throw new TypeError("Response body chunks must use a fixed ArrayBuffer");
+    throw new InvalidResponseBodyChunkError(
+      "Response body chunks must use a fixed ArrayBuffer",
+    );
   }
   const byteOffset = ReflectApply(typedArrayByteOffsetGetter, bytes, []) as number;
   return new NativeUint8Array(buffer as ArrayBuffer, byteOffset + start, length);
@@ -86,8 +93,48 @@ function decodeBytes(
     : ReflectApply(TextDecoderPrototypeDecode, decoder, [input, options]) as string;
 }
 
+/** Base class for deterministic response-protocol violations. */
+export class InvalidResponseBodyError extends TypeError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "InvalidResponseBodyError";
+  }
+}
+
+/** Raised when a response stream yields an invalid byte chunk. */
+export class InvalidResponseBodyChunkError extends InvalidResponseBodyError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "InvalidResponseBodyChunkError";
+  }
+}
+
+/** Raised when response metadata cannot describe a bounded body safely. */
+export class InvalidResponseBodyMetadataError extends InvalidResponseBodyError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "InvalidResponseBodyMetadataError";
+  }
+}
+
+/** Raised when a streamed JSON envelope is malformed or has the wrong shape. */
+export class InvalidResponseBodyJsonError extends InvalidResponseBodyError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "InvalidResponseBodyJsonError";
+  }
+}
+
+/** Raised when streamed JSON nesting exceeds the parser's structural bound. */
+export class InvalidResponseBodyJsonNestingError extends RangeError {
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidResponseBodyJsonNestingError";
+  }
+}
+
 /** Raised when strict response decoding encounters malformed UTF-8. */
-export class InvalidResponseBodyUtf8Error extends TypeError {
+export class InvalidResponseBodyUtf8Error extends InvalidResponseBodyError {
   constructor(options?: ErrorOptions) {
     super("Response body is not valid UTF-8", options);
     this.name = "InvalidResponseBodyUtf8Error";
@@ -144,8 +191,8 @@ const MAX_STREAMED_JSON_NESTING_DEPTH = 128;
 const STREAMED_JSON_DECODE_CHUNK_BYTES = 64 * 1024;
 const STRING_DECODE_CHUNK_CODE_UNITS = 8 * 1024;
 
-function jsonSyntaxError(detail: string): TypeError {
-  return new TypeError(`Response body is not valid JSON: ${detail}`);
+function jsonSyntaxError(detail: string): InvalidResponseBodyJsonError {
+  return new InvalidResponseBodyJsonError(`Response body is not valid JSON: ${detail}`);
 }
 
 function isJsonWhitespace(codeUnit: number): boolean {
@@ -371,7 +418,9 @@ class TopLevelJsonStringReader {
       throw jsonSyntaxError("incomplete document");
     }
     if (!this.selectedSeen || this.selectedValue === undefined) {
-      throw new TypeError(`Response body is missing top-level JSON field ${this.fieldName}`);
+      throw new InvalidResponseBodyJsonError(
+        `Response body is missing top-level JSON field ${this.fieldName}`,
+      );
     }
     return this.selectedValue;
   }
@@ -535,7 +584,9 @@ class TopLevelJsonStringReader {
       }
       frame.currentKeyIsTarget = this.keyMatches && this.keyIndex === this.fieldName.length;
       if (frame.currentKeyIsTarget && this.frames.length === 1 && this.selectedSeen) {
-        throw new TypeError(`Response body has duplicate top-level JSON field ${this.fieldName}`);
+        throw new InvalidResponseBodyJsonError(
+          `Response body has duplicate top-level JSON field ${this.fieldName}`,
+        );
       }
       frame.state = "colon";
       return;
@@ -648,11 +699,15 @@ class TopLevelJsonStringReader {
 
     if (selected) {
       if (this.selectedSeen) {
-        throw new TypeError(`Response body has duplicate top-level JSON field ${this.fieldName}`);
+        throw new InvalidResponseBodyJsonError(
+          `Response body has duplicate top-level JSON field ${this.fieldName}`,
+        );
       }
       this.selectedSeen = true;
       if (kind !== "string" && kind !== "null") {
-        throw new TypeError(`Top-level JSON field ${this.fieldName} must be a string or null`);
+        throw new InvalidResponseBodyJsonError(
+          `Top-level JSON field ${this.fieldName} must be a string or null`,
+        );
       }
     }
     return selected;
@@ -717,7 +772,7 @@ class TopLevelJsonStringReader {
 
   private pushFrame(frame: JsonFrame): void {
     if (this.frames.length >= MAX_STREAMED_JSON_NESTING_DEPTH) {
-      throw new RangeError(
+      throw new InvalidResponseBodyJsonNestingError(
         `Response JSON nesting depth exceeds ${MAX_STREAMED_JSON_NESTING_DEPTH}`,
       );
     }
@@ -818,12 +873,16 @@ async function readResponseJsonStringEncodedWithinLimit(
   if (contentLengthHeader !== null) {
     if (!/^\d+$/.test(contentLengthHeader)) {
       cancelResponseBody(response, "invalid content-length");
-      throw new TypeError("Response body has an invalid Content-Length");
+      throw new InvalidResponseBodyMetadataError(
+        "Response body has an invalid Content-Length",
+      );
     }
     const contentLength = Number(contentLengthHeader);
     if (!Number.isSafeInteger(contentLength)) {
       cancelResponseBody(response, "invalid content-length");
-      throw new TypeError("Response body has an invalid Content-Length");
+      throw new InvalidResponseBodyMetadataError(
+        "Response body has an invalid Content-Length",
+      );
     }
     if (contentLength > responseLimit) {
       cancelResponseBody(response, "response body exceeds limit");
@@ -924,8 +983,8 @@ export async function readResponseTextPrefix(
   abortSignal?: AbortSignal,
   options: { fatalUtf8?: boolean } = {},
 ): Promise<ResponseTextPrefix> {
-  if (!Number.isInteger(maxBytes) || maxBytes < 0) {
-    throw new RangeError("maxBytes must be a non-negative integer");
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new RangeError("maxBytes must be a non-negative safe integer");
   }
   abortSignal?.throwIfAborted();
 
