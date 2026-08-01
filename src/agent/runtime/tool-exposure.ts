@@ -197,8 +197,7 @@ export function createToolExposurePlan(input: {
   pruneLoadedToolNames(input.state, loadableNames);
   retainNewestLoadedToolNames(input.state, maxLoadedTools);
   const visible = authorized
-    .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name))
-    .sort((left, right) => compareAscii(left.name, right.name));
+    .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name));
   const visibleNames = new Set(visible.map((tool) => tool.name));
   const deferred = loadable
     .filter((tool) => !visibleNames.has(tool.name))
@@ -206,6 +205,7 @@ export function createToolExposurePlan(input: {
   if (deferred.length > 0) {
     visible.push(createToolSearchDefinition());
   }
+  visible.sort((left, right) => compareAscii(left.name, right.name));
 
   return {
     authorized,

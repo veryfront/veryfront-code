@@ -77,6 +77,23 @@ it("deferred exposure omits tool_search when only bootstrap tools are authorized
   assertEquals(deferred.deferred, []);
 });
 
+it("deferred exposure keeps injected tool_search in visible ASCII order", () => {
+  const deferred = createToolExposurePlan({
+    authorized: [
+      definition("z_bootstrap", "Always visible"),
+      definition("a_deferred", "Searchable later"),
+    ],
+    bootstrapToolNames: new Set(["z_bootstrap"]),
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+
+  assertEquals(
+    deferred.visible.map((tool) => tool.name),
+    [TOOL_SEARCH_TOOL_NAME, "z_bootstrap"],
+  );
+});
+
 it("tool search ranks exact name, description, and parameter matches", () => {
   const state = createToolExposureState();
   const exact = searchToolExposure({ query: "get_release", authorized: catalog, state });

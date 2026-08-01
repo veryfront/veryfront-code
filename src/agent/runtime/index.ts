@@ -371,14 +371,14 @@ function getResponseFinishReason(response: AgentResponse): string | undefined {
   return typeof finishReason === "string" && finishReason.length > 0 ? finishReason : undefined;
 }
 
-function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
-  return toolName === "create_agent" || toolName === "update_agent";
-}
-
 const AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES = new Set([
   "create_agent",
   "update_agent",
 ]);
+
+function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
+  return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
+}
 
 function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
   const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
