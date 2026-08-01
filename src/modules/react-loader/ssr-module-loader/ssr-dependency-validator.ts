@@ -15,7 +15,7 @@ import { createError, toError } from "#veryfront/errors";
 import { rendererLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { MAX_TRANSFORM_DEPTH, TRANSFORM_BATCH_SIZE } from "./constants.ts";
-import { globalModuleCache } from "./cache/index.ts";
+import type { ModuleCacheEntry } from "./types.ts";
 import {
   createDependencyHashCache,
   type DependencyHashCache,
@@ -34,13 +34,12 @@ export class SSRDependencyValidator {
   missingDependencies: MissingImport[] = [];
 
   constructor(
-    private getCacheKey: (filePath: string) => string,
     private transformWithDependencies: (
       filePath: string,
       source: string | undefined,
       depth: number,
       dependencyHashCache: DependencyHashCache,
-    ) => Promise<void>,
+    ) => Promise<ModuleCacheEntry>,
     private transformCrossProjectImport: (
       crossProjectImport: CrossProjectImport,
     ) => Promise<string>,
@@ -156,24 +155,20 @@ export class SSRDependencyValidator {
           try {
             const depSource = await this.readLocalImportSource(imp.absolutePath, localFs);
 
-            await this.transformWithDependencies(
+            const depEntry = await this.transformWithDependencies(
               imp.absolutePath,
               depSource,
               depth + 1,
               dependencyHashCache,
             );
 
-            const depCacheKey = this.getCacheKey(imp.absolutePath);
-            const depEntry = globalModuleCache.get(depCacheKey);
-            if (depEntry) {
-              importPathMap.set(imp.specifier, depEntry.tempPath);
-              importPathMap.set(imp.absolutePath, depEntry.tempPath);
-            }
+            importPathMap.set(imp.specifier, depEntry.tempPath);
+            importPathMap.set(imp.absolutePath, depEntry.tempPath);
           } catch (error) {
             this.missingDependencies.push({
               specifier: imp.specifier,
               fromFile: fromFilePath,
-              reason: `Failed to read file: ${
+              reason: `Failed to load dependency: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             });
