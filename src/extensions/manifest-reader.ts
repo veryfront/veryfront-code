@@ -34,7 +34,6 @@ const jsonStringify = JSON.stringify;
 const numberIsSafeInteger = Number.isSafeInteger;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSlice = String.prototype.slice;
-const uint8ArraySubarray = Uint8Array.prototype.subarray;
 const textDecoderDecode = TextDecoder.prototype.decode;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const typedArrayPrototype = reflectApply(objectGetPrototypeOf, undefined, [
@@ -44,6 +43,18 @@ const typedArrayByteLength = (
   reflectApply(objectGetOwnPropertyDescriptor, undefined, [
     typedArrayPrototype,
     "byteLength",
+  ]) as PropertyDescriptor
+).get as (this: Uint8Array) => number;
+const typedArrayBuffer = (
+  reflectApply(objectGetOwnPropertyDescriptor, undefined, [
+    typedArrayPrototype,
+    "buffer",
+  ]) as PropertyDescriptor
+).get as (this: Uint8Array) => ArrayBufferLike;
+const typedArrayByteOffset = (
+  reflectApply(objectGetOwnPropertyDescriptor, undefined, [
+    typedArrayPrototype,
+    "byteOffset",
   ]) as PropertyDescriptor
 ).get as (this: Uint8Array) => number;
 
@@ -402,6 +413,12 @@ function assertSameFile(
   }
 }
 
+function byteView(value: Uint8Array, offset: number, length: number): Uint8Array {
+  const buffer = reflectApply(typedArrayBuffer, value, []) as ArrayBufferLike;
+  const byteOffset = reflectApply(typedArrayByteOffset, value, []) as number;
+  return new NativeUint8Array(buffer, byteOffset + offset, length);
+}
+
 async function readBounded(
   path: string,
   handle: ExtensionManifestFileHandle,
@@ -411,7 +428,7 @@ async function readBounded(
 
   while (offset < READ_BUFFER_BYTES) {
     const remainingLength = READ_BUFFER_BYTES - offset;
-    const remaining = reflectApply(uint8ArraySubarray, buffer, [offset]) as Uint8Array;
+    const remaining = byteView(buffer, offset, remainingLength);
     const bytesRead = await handle.read(remaining);
     if (bytesRead === null) break;
     if (!numberIsSafeInteger(bytesRead) || bytesRead <= 0 || bytesRead > remainingLength) {
@@ -422,7 +439,7 @@ async function readBounded(
 
   if (offset > MAX_EXTENSION_MANIFEST_BYTES) throw sizeError(path);
   return {
-    bytes: reflectApply(uint8ArraySubarray, buffer, [0, offset]) as Uint8Array,
+    bytes: byteView(buffer, 0, offset),
     bytesRead: offset,
   };
 }
