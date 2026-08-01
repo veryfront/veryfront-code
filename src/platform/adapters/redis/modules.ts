@@ -1,9 +1,12 @@
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import { ensureRedisRuntimeProvider } from "#veryfront/extensions/distributed/defaults.ts";
 import type { NodeRedisModule } from "./types.ts";
 
 let NodeRedis: NodeRedisModule | null = null;
+let moduleLoad: Promise<{ NodeRedis: NodeRedisModule | null }> | null = null;
+let cacheGeneration = 0;
 
 export function getRedisModule(): Promise<{
   NodeRedis: NodeRedisModule | null;
@@ -11,33 +14,38 @@ export function getRedisModule(): Promise<{
   if (NodeRedis) {
     return Promise.resolve({ NodeRedis });
   }
+  if (moduleLoad) return moduleLoad;
 
-  return withSpan(
+  const generation = cacheGeneration;
+  const pending = withSpan(
     "platform.redis.getModule",
     async () => {
       try {
-        if (isDeno) {
-          NodeRedis = (await import("npm:redis@5.11.0")) as unknown as NodeRedisModule;
-        } else {
-          NodeRedis = (await import("redis")) as unknown as NodeRedisModule;
-        }
+        const provider = await ensureRedisRuntimeProvider();
+        const loaded = await provider.loadModule();
+        if (cacheGeneration === generation) NodeRedis = loaded;
+        return { NodeRedis: loaded };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        const packageName = isDeno ? "npm:redis@5.11.0" : "redis";
 
         throw INITIALIZATION_ERROR.create({
           detail:
-            `Failed to load '${packageName}' package. Please install it with: npm install redis\nError: ${message}`,
+            "Failed to load the Redis runtime. Install @veryfront/ext-redis alongside veryfront.\n" +
+            `Error: ${message}`,
           cause: error instanceof Error ? error : undefined,
         });
       }
-
-      return { NodeRedis };
     },
     { "redis.runtime": isDeno ? "deno" : "node" },
-  );
+  ).finally(() => {
+    if (moduleLoad === pending) moduleLoad = null;
+  });
+  moduleLoad = pending;
+  return pending;
 }
 
 export function clearModuleCache(): void {
+  cacheGeneration++;
   NodeRedis = null;
+  moduleLoad = null;
 }

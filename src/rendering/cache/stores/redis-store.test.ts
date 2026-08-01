@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import type { RedisClient, RedisRuntimeProvider } from "#veryfront/extensions/distributed";
+import { RedisRuntimeProviderName } from "#veryfront/extensions/distributed";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisCacheStore } from "./redis-store.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 
 async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
   const previousGlobal = (globalThis as Record<string, unknown>).__vfDisableLruInterval;
@@ -29,6 +32,47 @@ async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
 
 function createStore(options?: ConstructorParameters<typeof RedisCacheStore>[0]): RedisCacheStore {
   return new RedisCacheStore(options);
+}
+
+function createRedisProvider(
+  client: RedisClient,
+  close: () => Promise<void>,
+): RedisRuntimeProvider {
+  return {
+    id: "render-cache-test",
+    loadModule: () => Promise.resolve({ createClient: () => ({}) } as never),
+    getClient: () => Promise.resolve(client),
+    disconnectClient: () => Promise.resolve(),
+    openClient: () => Promise.resolve({ client, close }),
+    createEventPublisher: () =>
+      Promise.resolve({
+        publish: () => Promise.resolve(),
+        subscribe: () => Promise.resolve(() => undefined),
+        close: () => Promise.resolve(),
+      }),
+    close: () => Promise.resolve(),
+  };
+}
+
+function createRedisClient(
+  scan: RedisClient["scan"] = () => Promise.resolve({ cursor: 0, keys: [] }),
+  del: RedisClient["del"] = () => Promise.resolve(0),
+): RedisClient {
+  return {
+    connect: () => Promise.resolve(),
+    disconnect: () => Promise.resolve(),
+    get: () => Promise.resolve(null),
+    mGet: (keys) => Promise.resolve(keys.map(() => null)),
+    set: () => Promise.resolve("OK"),
+    del,
+    scan,
+    expire: () => Promise.resolve(1),
+    eval: () => Promise.resolve([1, 1_000]),
+    incr: () => Promise.resolve(1),
+    pExpire: () => Promise.resolve(true),
+    pTTL: () => Promise.resolve(1_000),
+    on: () => undefined,
+  };
 }
 
 describe("RedisCacheStore", () => {
@@ -86,6 +130,62 @@ describe("RedisCacheStore", () => {
       const store = createStore();
       await store.destroy();
       await store.destroy();
+    });
+  });
+
+  describe("extension-owned Redis connection", () => {
+    it("uses object-shaped SCAN results and closes its owned connection", async () => {
+      const scanResults = [
+        { cursor: 3, keys: ["render:a"] },
+        { cursor: 0, keys: ["render:b"] },
+      ];
+      const deleted: string[] = [];
+      let closeCalls = 0;
+      const client = createRedisClient(
+        () => Promise.resolve(scanResults.shift()!),
+        (key) => {
+          if (typeof key === "string") deleted.push(key);
+          return Promise.resolve(1);
+        },
+      );
+      register(
+        RedisRuntimeProviderName,
+        createRedisProvider(client, () => {
+          closeCalls++;
+          return Promise.resolve();
+        }),
+      );
+      const store = createStore({ keyPrefix: "render:" });
+
+      try {
+        assertEquals(await store.deleteByPrefix(""), 2);
+        assertEquals(deleted, ["render:a", "render:b"]);
+        await store.destroy();
+        assertEquals(closeCalls, 1);
+      } finally {
+        unregister(RedisRuntimeProviderName);
+      }
+    });
+
+    it("retries a failed owned-handle close", async () => {
+      let closeCalls = 0;
+      register(
+        RedisRuntimeProviderName,
+        createRedisProvider(createRedisClient(), () => {
+          closeCalls++;
+          return closeCalls === 1 ? Promise.reject(new Error("close failed")) : Promise.resolve();
+        }),
+      );
+      const store = createStore();
+
+      try {
+        await store.get("initialize");
+        await assertRejects(() => store.destroy(), Error, "close failed");
+        await store.destroy();
+        assertEquals(closeCalls, 2);
+      } finally {
+        unregister(RedisRuntimeProviderName);
+      }
     });
   });
 

@@ -81,12 +81,13 @@ the same contract.
 
 ### Storage
 
-| Package                                           | Contract          | Description                              |
-| ------------------------------------------------- | ----------------- | ---------------------------------------- |
-| [`@veryfront/ext-blob-gcs`](./ext-blob-gcs)       | `BlobStorage`     | Google Cloud Storage object persistence  |
-| [`@veryfront/ext-blob-s3`](./ext-blob-s3)         | `BlobStorage`     | S3-compatible object persistence         |
-| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore` | Redis-backed token and cache persistence |
-| [`@veryfront/ext-db-sqlite`](./ext-db-sqlite)     | `SqliteStore`     | SQLite persistence                       |
+| Package                                           | Contract               | Description                                         |
+| ------------------------------------------------- | ---------------------- | --------------------------------------------------- |
+| [`@veryfront/ext-blob-gcs`](./ext-blob-gcs)       | `BlobStorage`          | Google Cloud Storage object persistence             |
+| [`@veryfront/ext-blob-s3`](./ext-blob-s3)         | `BlobStorage`          | S3-compatible object persistence                    |
+| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore`      | Redis-backed token and cache persistence            |
+| [`@veryfront/ext-redis`](./ext-redis)             | `RedisRuntimeProvider` | Shared Redis clients, adapters, and Pub/Sub runtime |
+| [`@veryfront/ext-db-sqlite`](./ext-db-sqlite)     | `SqliteStore`          | SQLite persistence                                  |
 
 ### Observability
 
@@ -138,6 +139,7 @@ raw transitive dependencies such as `bash-tool`, `just-bash`, `jose`,
 | Proxy or JWT-authenticated service          | `@veryfront/ext-auth-jwt`                                                                                                    |
 | Document upload or knowledge ingestion      | `@veryfront/ext-document-kreuzberg`                                                                                          |
 | Redis-backed cache or token store           | `@veryfront/ext-cache-redis`                                                                                                 |
+| Redis-backed distributed runtime or Pub/Sub | `@veryfront/ext-redis`                                                                                                       |
 | S3-compatible blob persistence              | `@veryfront/ext-blob-s3`                                                                                                     |
 | Google Cloud Storage blob persistence       | `@veryfront/ext-blob-gcs`                                                                                                    |
 | SQLite-backed persistence                   | `@veryfront/ext-db-sqlite`                                                                                                   |
@@ -172,6 +174,7 @@ level.
 | `BlobStorage`                | S3 or GCS object persistence is configured      | Explicitly configured extension       |
 | `AuthProvider`               | Auth signing or verification is configured      | User-installed extension              |
 | `TokenCacheStore`            | Redis-backed token cache is configured          | User-installed extension              |
+| `RedisRuntimeProvider`       | A core Redis facade or Pub/Sub is used          | Lazy first-party extension            |
 | `EvalReportExporterRegistry` | Eval report exporters are registered            | Auto-enabled core extension           |
 | `TracingExporter`            | OTLP tracing export is configured               | User-installed extension              |
 | `NodeTelemetryProvider`      | Node agent service telemetry is enabled         | Auto-enabled agent service extension  |
@@ -282,6 +285,7 @@ inside their named extension boundaries.
 | Sandbox execution   | `ext-sandbox-shell-tools` | `bash-tool`, `just-bash`                  | `SandboxShellToolsProvider`    |
 | Native SQLite store | `ext-db-sqlite`           | `better-sqlite3`, `@types/better-sqlite3` | `SqliteStore`, filesystem I/O  |
 | Document extraction | `ext-document-kreuzberg`  | `@kreuzberg/wasm`                         | `DocumentExtractor`, file read |
+| Redis runtime       | `ext-redis`               | `redis`, `@redis/client`                  | Network and environment access |
 
 ## Capability policy
 
@@ -290,17 +294,18 @@ capability list in the extension factory and in `veryfront.capabilities` inside
 the extension manifest. CI runs `deno task lint:extension-capabilities` to
 check for drift and to enforce the sensitive capability policies below.
 
-| Extension                         | Required capabilities                                  | Why it is sensitive                          |
-| --------------------------------- | ------------------------------------------------------ | -------------------------------------------- |
-| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage             | Obtains tokens and accesses configured blobs |
-| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys   | Accesses the explicitly configured endpoint  |
-| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`               | Exposes command execution in a sandbox       |
-| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`               | Connects to external cache infrastructure    |
-| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                  | Opens native SQLite databases                |
-| `ext-document-kreuzberg`          | `fs:read`                                              | Parses uploaded or user-provided documents   |
-| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                | Exports telemetry and reads collector config |
-| `ext-observability-sentry`        | `net:outbound`                                         | Sends scrubbed application errors to Sentry  |
-| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*` | Exports eval reports to an external endpoint |
+| Extension                         | Required capabilities                                    | Why it is sensitive                          |
+| --------------------------------- | -------------------------------------------------------- | -------------------------------------------- |
+| `ext-blob-gcs`                    | `net:outbound` to Google OAuth and Storage               | Obtains tokens and accesses configured blobs |
+| `ext-blob-s3`                     | `net:outbound`, declared AWS runtime `env:read` keys     | Accesses the explicitly configured endpoint  |
+| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]`                 | Exposes command execution in a sandbox       |
+| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*`                 | Connects to external cache infrastructure    |
+| `ext-redis`                       | `net:outbound`, `env:read` for Redis connection settings | Connects distributed runtime infrastructure  |
+| `ext-db-sqlite`                   | `fs:read`, `fs:write`                                    | Opens native SQLite databases                |
+| `ext-document-kreuzberg`          | `fs:read`                                                | Parses uploaded or user-provided documents   |
+| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`                  | Exports telemetry and reads collector config |
+| `ext-observability-sentry`        | `net:outbound`                                           | Sends scrubbed application errors to Sentry  |
+| `ext-eval-report-http`            | `net:outbound`, `env:read` for `VERYFRONT_EVAL_HTTP_*`   | Exports eval reports to an external endpoint |
 
 Use `veryfront.contracts` for contract ownership and dependency ordering. Use
 `veryfront.capabilities` only for runtime resource access and audit metadata.

@@ -19,6 +19,7 @@ function createMockRedisClient(): {
   _evalCalls: number;
   _incrCalls: number;
   _pExpireCalls: number;
+  _disconnectCalls: number;
   _store: Map<string, { count: number; ttl: number }>;
 } {
   const store = new Map<string, { count: number; ttl: number }>();
@@ -26,10 +27,14 @@ function createMockRedisClient(): {
   let evalCalls = 0;
   let incrCalls = 0;
   let pExpireCalls = 0;
+  let disconnectCalls = 0;
 
   return {
     connect: () => Promise.resolve(),
-    disconnect: () => Promise.resolve(),
+    disconnect: () => {
+      disconnectCalls++;
+      return Promise.resolve();
+    },
     eval: (_script: string, options: { keys: string[]; arguments: string[] }) => {
       evalCalls += 1;
       const key = options.keys[0];
@@ -80,6 +85,9 @@ function createMockRedisClient(): {
     get _pExpireCalls() {
       return pExpireCalls;
     },
+    get _disconnectCalls() {
+      return disconnectCalls;
+    },
     _store: store,
   };
 }
@@ -92,9 +100,17 @@ function createStoreWithMock(
 } {
   const rateStore = new RedisRateLimitStore(options);
   const mockClient = createMockRedisClient();
+  let closed = false;
 
   // deno-lint-ignore no-explicit-any
-  (rateStore as any).client = mockClient;
+  (rateStore as any).connection = {
+    getClient: () => Promise.resolve(mockClient),
+    close: async () => {
+      if (closed) return;
+      await mockClient.disconnect();
+      closed = true;
+    },
+  };
 
   return { rateStore, mockClient };
 }
@@ -202,10 +218,9 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
 
     describe("destroy", () => {
       it("should disconnect the client", async () => {
-        const { rateStore } = createStoreWithMock();
+        const { rateStore, mockClient } = createStoreWithMock();
         await rateStore.destroy();
-        // deno-lint-ignore no-explicit-any
-        assertEquals((rateStore as any).client, null);
+        assertEquals(mockClient._disconnectCalls, 1);
       });
 
       it("should be safe to call when no client exists", async () => {
@@ -214,11 +229,10 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
       });
 
       it("should be safe to call multiple times", async () => {
-        const { rateStore } = createStoreWithMock();
+        const { rateStore, mockClient } = createStoreWithMock();
         await rateStore.destroy();
         await rateStore.destroy();
-        // deno-lint-ignore no-explicit-any
-        assertEquals((rateStore as any).client, null);
+        assertEquals(mockClient._disconnectCalls, 1);
       });
     });
 
@@ -226,34 +240,8 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
       it("should reuse existing client", async () => {
         const { rateStore, mockClient } = createStoreWithMock();
         await rateStore.increment("a", 1000);
-        // deno-lint-ignore no-explicit-any
-        assertEquals((rateStore as any).client, mockClient);
-      });
-
-      it("should clear cached clients when redis emits error or end", () => {
-        const { rateStore, mockClient } = createStoreWithMock();
-
-        // deno-lint-ignore no-explicit-any
-        (rateStore as any).attachClientLifecycleHandlers(mockClient);
-        // deno-lint-ignore no-explicit-any
-        (rateStore as any).clientPromise = Promise.resolve(mockClient);
-
-        mockClient._emit("error", new Error("network partition"));
-        // deno-lint-ignore no-explicit-any
-        assertEquals((rateStore as any).client, null);
-        // deno-lint-ignore no-explicit-any
-        assertEquals((rateStore as any).clientPromise, null);
-
-        // deno-lint-ignore no-explicit-any
-        (rateStore as any).client = mockClient;
-        // deno-lint-ignore no-explicit-any
-        (rateStore as any).clientPromise = Promise.resolve(mockClient);
-
-        mockClient._emit("end");
-        // deno-lint-ignore no-explicit-any
-        assertEquals((rateStore as any).client, null);
-        // deno-lint-ignore no-explicit-any
-        assertEquals((rateStore as any).clientPromise, null);
+        await rateStore.increment("b", 1000);
+        assertEquals(mockClient._evalCalls, 2);
       });
     });
   });

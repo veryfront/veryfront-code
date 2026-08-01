@@ -19,6 +19,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-node-websocket-ws/src/index.ts",
   "extensions/ext-bundler-esbuild/src/index.ts",
   "extensions/ext-cache-redis/src/index.ts",
+  "extensions/ext-redis/src/index.ts",
   "extensions/ext-content-mdx/src/index.ts",
   "extensions/ext-css-lightning/src/index.ts",
   "extensions/ext-css-purgecss/src/index.ts",
