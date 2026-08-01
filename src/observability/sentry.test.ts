@@ -1,4 +1,5 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type ApplicationErrorContext,
   type ApplicationErrorReporter,
@@ -7,6 +8,7 @@ import {
 } from "./application-errors.ts";
 import {
   initializeSentry,
+  initializeSentryFromEnv,
   isSentryEnabled,
   resetSentryForTests,
   resolveSentryConfigFromEnv,
@@ -39,195 +41,207 @@ function createSentryExtension() {
   };
 }
 
-Deno.test("Sentry stays disabled without a DSN", async () => {
-  resetSentryForTests();
-  const { load, state } = createSentryExtension();
+describe("observability/sentry", () => {
+  it("Sentry stays disabled without a DSN", async () => {
+    resetSentryForTests();
+    const { load, state } = createSentryExtension();
 
-  assertEquals(await initializeSentry({}, load), false);
-  assertEquals(state.config, undefined);
-});
+    assertEquals(await initializeSentry({}, load), false);
+    assertEquals(state.config, undefined);
+  });
 
-Deno.test("Sentry enablement preserves legacy behavior while explicit false always wins", () => {
-  assertEquals(isSentryEnabled("true", false), true);
-  assertEquals(isSentryEnabled("false", true), false);
-  assertEquals(isSentryEnabled("0", true), false);
-  assertEquals(isSentryEnabled(undefined, true), true);
-  assertEquals(isSentryEnabled(undefined, false), false);
-});
+  it("Sentry enablement preserves legacy behavior while explicit false always wins", () => {
+    assertEquals(isSentryEnabled("true", false), true);
+    assertEquals(isSentryEnabled("false", true), false);
+    assertEquals(isSentryEnabled("0", true), false);
+    assertEquals(isSentryEnabled(undefined, true), true);
+    assertEquals(isSentryEnabled(undefined, false), false);
+  });
 
-Deno.test("Sentry environment configuration requires a DSN when explicitly enabled", () => {
-  const previousEnabled = Deno.env.get("SENTRY_ENABLED");
-  const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
-  const previousDsn = Deno.env.get("SENTRY_DSN");
-  try {
-    Deno.env.set("SENTRY_ENABLED", "true");
-    Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
-    Deno.env.delete("SENTRY_DSN");
+  it("Sentry startup warns once without exposing secrets when explicitly enabled without a DSN", async () => {
+    const previousEnabled = Deno.env.get("SENTRY_ENABLED");
+    const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+    const previousDsn = Deno.env.get("SENTRY_DSN");
+    const previousAuthToken = Deno.env.get("SENTRY_AUTH_TOKEN");
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    try {
+      Deno.env.set("SENTRY_ENABLED", "true");
+      Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
+      Deno.env.set("SENTRY_DSN", "   ");
+      Deno.env.set("SENTRY_AUTH_TOKEN", "super-secret-token");
+      console.warn = (...args: unknown[]) => warnings.push(args);
 
-    assertEquals(resolveSentryConfigFromEnv(), undefined);
-  } finally {
-    restoreEnv("SENTRY_ENABLED", previousEnabled);
-    restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
-    restoreEnv("SENTRY_DSN", previousDsn);
-  }
-});
+      assertEquals(await initializeSentryFromEnv(), false);
+      assertEquals(warnings, [[
+        "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.",
+      ]]);
+    } finally {
+      console.warn = originalWarn;
+      restoreEnv("SENTRY_ENABLED", previousEnabled);
+      restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+      restoreEnv("SENTRY_DSN", previousDsn);
+      restoreEnv("SENTRY_AUTH_TOKEN", previousAuthToken);
+    }
+  });
 
-Deno.test("Sentry environment configuration rejects explicit false even with a valid DSN", () => {
-  const previousEnabled = Deno.env.get("SENTRY_ENABLED");
-  const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
-  const previousDsn = Deno.env.get("SENTRY_DSN");
-  try {
-    Deno.env.set("SENTRY_ENABLED", "false");
-    Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
-    Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+  it("Sentry environment configuration rejects explicit false even with a valid DSN", () => {
+    const previousEnabled = Deno.env.get("SENTRY_ENABLED");
+    const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+    const previousDsn = Deno.env.get("SENTRY_DSN");
+    try {
+      Deno.env.set("SENTRY_ENABLED", "false");
+      Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
+      Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
 
-    assertEquals(resolveSentryConfigFromEnv(), undefined);
-  } finally {
-    restoreEnv("SENTRY_ENABLED", previousEnabled);
-    restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
-    restoreEnv("SENTRY_DSN", previousDsn);
-  }
-});
+      assertEquals(resolveSentryConfigFromEnv(), undefined);
+    } finally {
+      restoreEnv("SENTRY_ENABLED", previousEnabled);
+      restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+      restoreEnv("SENTRY_DSN", previousDsn);
+    }
+  });
 
-Deno.test("Sentry environment configuration requires explicit provider opt-in", () => {
-  const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
-  const previousDsn = Deno.env.get("SENTRY_DSN");
-  try {
-    Deno.env.delete("VERYFRONT_ERROR_REPORTER");
-    Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
-    assertEquals(resolveSentryConfigFromEnv(), undefined);
-  } finally {
-    restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
-    restoreEnv("SENTRY_DSN", previousDsn);
-  }
-});
+  it("Sentry environment configuration requires explicit provider opt-in", () => {
+    const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+    const previousDsn = Deno.env.get("SENTRY_DSN");
+    try {
+      Deno.env.delete("VERYFRONT_ERROR_REPORTER");
+      Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+      assertEquals(resolveSentryConfigFromEnv(), undefined);
+    } finally {
+      restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+      restoreEnv("SENTRY_DSN", previousDsn);
+    }
+  });
 
-Deno.test("Sentry environment configuration uses the entrypoint service fallback", () => {
-  const previousEnabled = Deno.env.get("SENTRY_ENABLED");
-  const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
-  const previousDsn = Deno.env.get("SENTRY_DSN");
-  const previousServiceName = Deno.env.get("SENTRY_SERVICE_NAME");
-  const previousOtelServiceName = Deno.env.get("OTEL_SERVICE_NAME");
-  try {
-    Deno.env.delete("SENTRY_ENABLED");
-    Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
-    Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
-    Deno.env.set("SENTRY_SERVICE_NAME", "   ");
-    Deno.env.delete("OTEL_SERVICE_NAME");
+  it("Sentry environment configuration uses the entrypoint service fallback", () => {
+    const previousEnabled = Deno.env.get("SENTRY_ENABLED");
+    const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+    const previousDsn = Deno.env.get("SENTRY_DSN");
+    const previousServiceName = Deno.env.get("SENTRY_SERVICE_NAME");
+    const previousOtelServiceName = Deno.env.get("OTEL_SERVICE_NAME");
+    try {
+      Deno.env.delete("SENTRY_ENABLED");
+      Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
+      Deno.env.set("SENTRY_DSN", "https://public@example.ingest.sentry.io/1");
+      Deno.env.set("SENTRY_SERVICE_NAME", "   ");
+      Deno.env.delete("OTEL_SERVICE_NAME");
 
-    assertEquals(resolveSentryConfigFromEnv("veryfront-proxy"), {
+      assertEquals(resolveSentryConfigFromEnv("veryfront-proxy"), {
+        dsn: "https://public@example.ingest.sentry.io/1",
+        environment: undefined,
+        release: undefined,
+        serviceName: "veryfront-proxy",
+      });
+    } finally {
+      restoreEnv("SENTRY_ENABLED", previousEnabled);
+      restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+      restoreEnv("SENTRY_DSN", previousDsn);
+      restoreEnv("SENTRY_SERVICE_NAME", previousServiceName);
+      restoreEnv("OTEL_SERVICE_NAME", previousOtelServiceName);
+    }
+  });
+
+  it("Sentry accepts a public HTTPS custom-host DSN", () => {
+    const previousEnabled = Deno.env.get("SENTRY_ENABLED");
+    const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+    const previousDsn = Deno.env.get("SENTRY_DSN");
+    try {
+      Deno.env.set("SENTRY_ENABLED", "true");
+      Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
+      Deno.env.set("SENTRY_DSN", "https://public@errors.example.test/42");
+
+      assertEquals(resolveSentryConfigFromEnv()?.dsn, "https://public@errors.example.test/42");
+    } finally {
+      restoreEnv("SENTRY_ENABLED", previousEnabled);
+      restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+      restoreEnv("SENTRY_DSN", previousDsn);
+    }
+  });
+
+  it("Sentry loads the extension with normalized runtime configuration", async () => {
+    resetSentryForTests();
+    const { load, state } = createSentryExtension();
+
+    assertEquals(
+      await initializeSentry(
+        {
+          dsn: "https://public@example.ingest.sentry.io/1",
+          environment: " production ",
+          release: " release-1 ",
+          serviceName: " veryfront-server ",
+        },
+        load,
+      ),
+      true,
+    );
+
+    assertEquals(state.config, {
       dsn: "https://public@example.ingest.sentry.io/1",
-      environment: undefined,
-      release: undefined,
-      serviceName: "veryfront-proxy",
+      environment: "production",
+      release: "release-1",
+      serviceName: "veryfront-server",
     });
-  } finally {
-    restoreEnv("SENTRY_ENABLED", previousEnabled);
-    restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
-    restoreEnv("SENTRY_DSN", previousDsn);
-    restoreEnv("SENTRY_SERVICE_NAME", previousServiceName);
-    restoreEnv("OTEL_SERVICE_NAME", previousOtelServiceName);
-  }
-});
+  });
 
-Deno.test("Sentry accepts a public HTTPS custom-host DSN", () => {
-  const previousEnabled = Deno.env.get("SENTRY_ENABLED");
-  const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
-  const previousDsn = Deno.env.get("SENTRY_DSN");
-  try {
-    Deno.env.set("SENTRY_ENABLED", "true");
-    Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
-    Deno.env.set("SENTRY_DSN", "https://public@errors.example.test/42");
+  it("Sentry initialization is idempotent across concurrent callers", async () => {
+    resetSentryForTests();
+    const { load, state } = createSentryExtension();
+    let resolveLoad: (() => void) | undefined;
+    let loadCount = 0;
+    const delayedLoad = async () => {
+      loadCount += 1;
+      await new Promise<void>((resolve) => {
+        resolveLoad = resolve;
+      });
+      return await load();
+    };
+    const config = { dsn: "https://public@errors.example.test/42" };
 
-    assertEquals(resolveSentryConfigFromEnv()?.dsn, "https://public@errors.example.test/42");
-  } finally {
-    restoreEnv("SENTRY_ENABLED", previousEnabled);
-    restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
-    restoreEnv("SENTRY_DSN", previousDsn);
-  }
-});
+    const first = initializeSentry(config, delayedLoad);
+    const second = initializeSentry(config, delayedLoad);
+    resolveLoad?.();
 
-Deno.test("Sentry loads the extension with normalized runtime configuration", async () => {
-  resetSentryForTests();
-  const { load, state } = createSentryExtension();
+    assertEquals(await Promise.all([first, second]), [true, true]);
+    assertEquals(loadCount, 1);
+    assertEquals(state.config?.dsn, "https://public@errors.example.test/42");
+  });
 
-  assertEquals(
+  it("Sentry captures service and Grafana trace correlation", async () => {
+    resetSentryForTests();
+    const { load, state } = createSentryExtension();
     await initializeSentry(
       {
         dsn: "https://public@example.ingest.sentry.io/1",
-        environment: " production ",
-        release: " release-1 ",
-        serviceName: " veryfront-server ",
+        serviceName: "veryfront-proxy",
       },
       load,
-    ),
-    true,
-  );
+    );
 
-  assertEquals(state.config, {
-    dsn: "https://public@example.ingest.sentry.io/1",
-    environment: "production",
-    release: "release-1",
-    serviceName: "veryfront-server",
+    const error = new Error("proxy failed");
+    const context = {
+      boundary: "proxy.request",
+      method: "GET",
+      requestId: "request-1",
+      spanId: "span-1",
+      traceId: "trace-1",
+    };
+    assertEquals(
+      captureApplicationError(error, context),
+      "event-id",
+    );
+    assertEquals(state.captured, [{ error, context }]);
+
+    assertEquals(await flushApplicationErrors(1_500), true);
+    assertEquals(state.flushTimeouts, [1_500]);
   });
-});
 
-Deno.test("Sentry initialization is idempotent across concurrent callers", async () => {
-  resetSentryForTests();
-  const { load, state } = createSentryExtension();
-  let resolveLoad: (() => void) | undefined;
-  let loadCount = 0;
-  const delayedLoad = async () => {
-    loadCount += 1;
-    await new Promise<void>((resolve) => {
-      resolveLoad = resolve;
-    });
-    return await load();
-  };
-  const config = { dsn: "https://public@errors.example.test/42" };
-
-  const first = initializeSentry(config, delayedLoad);
-  const second = initializeSentry(config, delayedLoad);
-  resolveLoad?.();
-
-  assertEquals(await Promise.all([first, second]), [true, true]);
-  assertEquals(loadCount, 1);
-  assertEquals(state.config?.dsn, "https://public@errors.example.test/42");
-});
-
-Deno.test("Sentry captures service and Grafana trace correlation", async () => {
-  resetSentryForTests();
-  const { load, state } = createSentryExtension();
-  await initializeSentry(
-    {
-      dsn: "https://public@example.ingest.sentry.io/1",
-      serviceName: "veryfront-proxy",
-    },
-    load,
-  );
-
-  const error = new Error("proxy failed");
-  const context = {
-    boundary: "proxy.request",
-    method: "GET",
-    requestId: "request-1",
-    spanId: "span-1",
-    traceId: "trace-1",
-  };
-  assertEquals(
-    captureApplicationError(error, context),
-    "event-id",
-  );
-  assertEquals(state.captured, [{ error, context }]);
-
-  assertEquals(await flushApplicationErrors(1_500), true);
-  assertEquals(state.flushTimeouts, [1_500]);
-});
-
-function restoreEnv(name: string, value: string | undefined): void {
-  if (value === undefined) {
-    Deno.env.delete(name);
-  } else {
-    Deno.env.set(name, value);
+  function restoreEnv(name: string, value: string | undefined): void {
+    if (value === undefined) {
+      Deno.env.delete(name);
+    } else {
+      Deno.env.set(name, value);
+    }
   }
-}
+});

@@ -58,12 +58,18 @@ export function resolveSentryConfigFromEnv(
 ): SentryConfig | undefined {
   const reporterSelected = getEnv("VERYFRONT_ERROR_REPORTER")?.trim().toLowerCase() ===
     SENTRY_ERROR_REPORTER;
-  if (!reporterSelected || !isSentryEnabled(getEnv("SENTRY_ENABLED"), reporterSelected)) {
+  const enabled = getEnv("SENTRY_ENABLED");
+  if (!reporterSelected || !isSentryEnabled(enabled, reporterSelected)) {
     return undefined;
   }
 
   const dsn = getEnv("SENTRY_DSN")?.trim();
-  if (!dsn) return undefined;
+  if (!dsn) {
+    if (isSentryEnabled(enabled, false)) {
+      console.warn("Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.");
+    }
+    return undefined;
+  }
 
   return {
     dsn,

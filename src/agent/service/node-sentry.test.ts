@@ -80,14 +80,41 @@ describe("agent/service/node-sentry", () => {
       dsn,
     );
     assertStrictEquals(
-      resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "true" }),
-      undefined,
-    );
-    assertStrictEquals(
       resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "false", SENTRY_DSN: dsn }),
       undefined,
     );
     assertEquals(resolveNodeAgentServiceSentryConfig({ SENTRY_DSN: dsn })?.dsn, dsn);
+  });
+
+  it("warns once without exposing secrets when Sentry is explicitly enabled without a DSN", async () => {
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    let loadCount = 0;
+    try {
+      console.warn = (...args: unknown[]) => warnings.push(args);
+
+      const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+        env: {
+          SENTRY_ENABLED: "true",
+          SENTRY_DSN: "   ",
+          SENTRY_AUTH_TOKEN: "super-secret-token",
+        },
+        loadExtension: () => {
+          loadCount += 1;
+          return Promise.resolve({
+            createNodeSentryApplicationErrorReporter: () => createReporter(),
+          });
+        },
+      });
+
+      assertEquals(lifecycle.enabled, false);
+      assertEquals(loadCount, 0);
+      assertEquals(warnings, [[
+        "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.",
+      ]]);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it("does not load the Sentry SDK when explicitly disabled with a valid DSN", async () => {

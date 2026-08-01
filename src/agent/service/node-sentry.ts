@@ -69,7 +69,13 @@ export function resolveNodeAgentServiceSentryConfig(
   defaultServiceName = DEFAULT_SERVICE_NAME,
 ): NodeAgentServiceSentryConfig | undefined {
   const dsn = readTrimmedEnv(env, "SENTRY_DSN");
-  if (!dsn || !isSentryEnabled(env.SENTRY_ENABLED, true)) return undefined;
+  if (!isSentryEnabled(env.SENTRY_ENABLED, true)) return undefined;
+  if (!dsn) {
+    if (isSentryEnabled(env.SENTRY_ENABLED, false)) {
+      console.warn("Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.");
+    }
+    return undefined;
+  }
 
   const serviceName = readTrimmedEnv(env, "SENTRY_SERVICE_NAME") ??
     readTrimmedEnv(env, "SENTRY_SERVICE") ??
