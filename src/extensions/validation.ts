@@ -5,6 +5,7 @@
  */
 
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
+import { assertSystemReadCapability } from "./capabilities.ts";
 
 /**
  * Information about a contract conflict between extensions.
@@ -112,6 +113,12 @@ export function validateExtension(ext: unknown): string[] {
     }
     if (typeof cap.type !== "string" || cap.type.length === 0) {
       issues.push(`capabilities[${i}].type must be a non-empty string`);
+    } else if (cap.type === "system:read") {
+      try {
+        assertSystemReadCapability(cap);
+      } catch (error) {
+        issues.push(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
