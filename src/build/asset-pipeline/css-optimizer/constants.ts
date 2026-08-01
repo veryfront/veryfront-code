@@ -1,8 +1,6 @@
 import type { CSSOptimizationOptions } from "./types/index.ts";
 import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 
-export const PURGE_CSS_MODULE_SPECIFIER = "npm:purgecss@8.0.0";
-
 export const CSS_MANIFEST_FILENAME = "css-manifest.json";
 export const MAX_CSS_FILES = CSS_OPTIMIZATION.MAX_FILES;
 export const MAX_CSS_DIRECTORY_DEPTH = 64;

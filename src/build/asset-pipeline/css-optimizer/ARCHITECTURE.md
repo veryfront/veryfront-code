@@ -2,8 +2,9 @@
 
 This document explains the design and operating contract of the CSS optimizer.
 Public option and result shapes remain defined in
-[`types/index.ts`](./types/index.ts); resource bounds and pinned dependencies
-remain defined in [`constants.ts`](./constants.ts).
+[`types/index.ts`](./types/index.ts), while core resource bounds remain defined
+in [`constants.ts`](./constants.ts). Third-party implementation versions belong
+to their independently published extension manifests.
 
 ## Contract
 
@@ -14,8 +15,8 @@ publication:
 1. Validate the project boundary, configuration, and required filesystem
    capabilities.
 2. Discover regular `.css` inputs deterministically within configured bounds.
-3. If enabled, remove unused rules with PurgeCSS using validated project
-   content.
+3. If enabled, remove unused rules through one captured `CSSPurgingEngine`
+   session using validated project content.
 4. Transform every stylesheet through one captured `CSSOptimizationEngine`
    session, including minification and optional source maps.
 5. Write all CSS files, maps, and the complete manifest into an isolated
@@ -30,11 +31,11 @@ published output and in-memory cache unchanged.
 ## Why the stages have a fixed order
 
 Purging and CSS compilation are complementary transformations rather than
-alternative strategies. PurgeCSS must see the uncompiled rule structure and
-content evidence first. The configured optimization provider then parses and
-emits the final syntax. The service therefore uses a fixed `purge -> compile`
-pipeline; strategy priority values remain exported only for compatibility with
-callers that instantiate the strategy classes directly.
+alternative strategies. The purging provider must see the uncompiled rule
+structure and content evidence first. The configured optimization provider
+then parses and emits the final syntax. The service therefore uses a fixed
+`purge -> compile` pipeline; strategy priority values remain exported only for
+compatibility with callers that instantiate the strategy classes directly.
 
 Core owns the dependency-free `CSSOptimizationEngine` boundary. Parser,
 minifier, browser-target, and vendor details belong to an explicitly composed
@@ -43,10 +44,12 @@ per optimization operation, so registry replacement cannot change semantics
 mid-publication. Its immutable `cacheIdentity` is captured with the runner so
 derived caches never need to reread mutable provider state.
 
-Requested optimization rejects when the provider is missing, malformed, or
-fails. PurgeCSS is independently required when purging or critical-CSS
-extraction is requested. There is no CDN import, regex minifier, no-op, or
-partial-success fallback.
+Requested optimization rejects when its provider is missing, malformed, or
+fails. A purging provider is independently required when purging or
+critical-CSS extraction is requested. The recommended implementations are
+`@veryfront/ext-css-lightning` and `@veryfront/ext-css-purgecss`; core never
+imports or probes either package. There is no CDN import, regex, no-op, network,
+workspace, or partial-success fallback.
 
 ## Filesystem and publication safety
 
@@ -79,8 +82,8 @@ Purge output cannot currently be composed with a trustworthy source map, so
 Critical CSS depends on a specific HTML document and is therefore exposed only
 through `CSSOptimizer.extractCriticalCSS(cssPath, html)`. Setting the legacy
 `criticalCSS` batch option rejects with migration guidance. The extraction API
-uses PurgeCSS's parsed retained/rejected outputs so nested at-rules stay
-structurally valid.
+requires the purging engine to return both retained and rejected parser-backed
+outputs so nested at-rules stay structurally valid.
 
 ## Failure model
 

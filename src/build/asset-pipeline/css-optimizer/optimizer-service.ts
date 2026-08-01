@@ -38,6 +38,7 @@ import {
   type CSSOptimizationSession,
   validateCSSSourceMap,
 } from "./optimization-engine.ts";
+import type { CSSPurgingSession } from "./purging-engine.ts";
 import { type PurgeContentSource, PurgeStrategy } from "./strategies/purge-strategy.ts";
 import type { CSSBundle, CSSOptimizationOptions, CSSOptimizerStats } from "./types/index.ts";
 import {
@@ -155,7 +156,8 @@ export class CSSOptimizerService {
         dependencies.purgeStrategy === null ||
         typeof dependencies.purgeStrategy.analyzeContent !== "function" ||
         typeof dependencies.purgeStrategy.process !== "function" ||
-        typeof dependencies.purgeStrategy.clearCache !== "function")
+        typeof dependencies.purgeStrategy.clearCache !== "function" ||
+        typeof dependencies.purgeStrategy.createOperationSession !== "function")
     ) {
       throw new TypeError("CSS purge strategy dependency is invalid");
     }
@@ -370,6 +372,9 @@ export class CSSOptimizerService {
             "CSS source maps cannot be composed safely with purge output",
           );
         }
+        const purgingSession = this.options.purge
+          ? this.purgeStrategy.createOperationSession()
+          : undefined;
         await this.validateFilesystemCapabilities();
         const optimizationSession = this.createOperationOptimizationSession();
 
@@ -419,6 +424,7 @@ export class CSSOptimizerService {
                     plan,
                     publication.buildDir,
                     optimizationSession,
+                    purgingSession,
                   )
                 ),
             );
@@ -614,6 +620,7 @@ export class CSSOptimizerService {
     plan: PlannedCSSFile,
     stagingDir: string,
     optimizationSession: CSSOptimizationSession,
+    purgingSession?: CSSPurgingSession,
   ): Promise<CSSBundle> {
     const content = await this.secureFs.readFile(plan.sourcePath);
     const originalSize = encoder.encode(content).length;
@@ -626,6 +633,7 @@ export class CSSOptimizerService {
       content,
       plan.logicalPath,
       optimizationSession,
+      purgingSession,
     );
 
     let outputContent = optimized;
@@ -676,12 +684,14 @@ export class CSSOptimizerService {
     content: string,
     logicalPath: string,
     optimizationSession: CSSOptimizationSession,
+    purgingSession?: CSSPurgingSession,
   ): Promise<{ optimized: string; sourceMap?: string }> {
     const purged = this.options.purge
       ? (await this.purgeStrategy.process(
         content,
         logicalPath,
         this.options,
+        purgingSession,
       )).code
       : content;
     const result = optimizationSession.run({

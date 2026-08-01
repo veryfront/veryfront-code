@@ -7,6 +7,7 @@ import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import { MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 import type { CSSOptimizationOptions } from "./types/index.ts";
 import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
+import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
 
 const TEST_DIR = "./.veryfront/test-strategies";
 
@@ -71,7 +72,9 @@ describe("MinificationStrategy", () => {
 
 describe("PurgeStrategy", () => {
   it("canProcess returns true when enabled and purge is true", () => {
-    const strategy = new PurgeStrategy();
+    const strategy = new PurgeStrategy({
+      purgingEngine: createTestCSSPurgingEngine(),
+    });
 
     assertEquals(strategy.canProcess({ enabled: true, purge: true }), true);
     assertEquals(strategy.canProcess({ enabled: true, purge: false }), false);
@@ -97,7 +100,7 @@ describe("PurgeStrategy", () => {
     await cleanupTestDir();
   });
 
-  it("process removes unused rules", async () => {
+  it("process routes analyzed content through the configured provider", async () => {
     await setupTestSrcDir();
 
     await writeTextFile(
@@ -110,7 +113,9 @@ describe("PurgeStrategy", () => {
 .unused { color: red; }
 `;
 
-    const strategy = new PurgeStrategy();
+    const strategy = new PurgeStrategy({
+      purgingEngine: createTestCSSPurgingEngine(),
+    });
     const options: CSSOptimizationOptions = {
       enabled: true,
       purge: true,

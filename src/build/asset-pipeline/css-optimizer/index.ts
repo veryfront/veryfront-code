@@ -17,6 +17,7 @@ export type {
 export { CSSOptimizerService } from "./optimizer-service.ts";
 export { CacheManager, loadCSSManifest } from "./css-bundle-cache.ts";
 export { extractCriticalCSS } from "./critical-css.ts";
+export type { CriticalCSSDependencies } from "./critical-css.ts";
 export { MinificationStrategy, PurgeStrategy } from "./strategies/index.ts";
 export * as CSSUtils from "./utils.ts";
 
@@ -134,7 +135,7 @@ export class CSSOptimizer {
       cssPath,
       htmlContent,
       service.getOptions(),
-      this.optimizationEngine,
+      { optimizationEngine: this.optimizationEngine },
     );
   }
 
