@@ -18,6 +18,7 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
+import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
 import extZod from "@veryfront/ext-schema-zod";
 export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
 
@@ -167,6 +168,7 @@ export const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] =
     sourceDirectory: "ext-eval-report-mlflow",
     contracts: { requires: ["EvalReportExporterRegistry"] },
     evalExporterId: "mlflow",
+    factory: extEvalReportMlflow,
     capabilities: [
       { type: "net:outbound", hosts: ["*"] },
       {

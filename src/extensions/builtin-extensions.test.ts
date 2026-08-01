@@ -106,7 +106,7 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("does not statically import optional implementation extensions", async () => {
+  it("does not statically import workspace implementation paths", async () => {
     const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
 
     assertEquals(source.includes('from "../../extensions/'), false);
@@ -158,6 +158,7 @@ describe("createBuiltinExtensions", () => {
     );
 
     assertEquals(mlflow?.evalExporterId, "mlflow");
+    assertEquals(typeof mlflow?.factory, "function");
   });
 
   it("builds a minimal eval CLI builtin set for selected eval exporters", () => {
