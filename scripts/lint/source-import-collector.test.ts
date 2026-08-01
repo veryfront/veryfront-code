@@ -2684,6 +2684,8 @@ Deno.test("source collector reads dependency directives only from real parser co
       'import vendor from "https://vendor.test/mod.js";',
       '/** @typedef {import("jsr:@vendor/contracts@1").Contract} Contract */',
       '/** Documents `import("not-a-type")` expressions without declaring a type. */',
+      '/** Documentation may quote @type {import("not-a-type-tag").Value}. */',
+      '/** Documentation may quote @import { Value } from "not-an-import-tag". */',
       'const template = `/// <reference types="npm:false-positive" />`;',
       "// prose mentioning @jsxImportSource npm:false-positive is not a directive",
       '/// <reference types="npm:late-reference" />',

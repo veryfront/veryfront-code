@@ -1,51 +1,51 @@
 import { assert, assertEquals, assertThrows } from "#std/assert";
 import {
-	BROWSER_SAFE_CLIENT_MODULES,
-	BROWSER_SAFE_DNT_TIMER_MODULES,
-	BROWSER_SAFE_EXPORTS,
-	BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
-	createDntEntryPoints,
+  BROWSER_SAFE_CLIENT_MODULES,
+  BROWSER_SAFE_DNT_TIMER_MODULES,
+  BROWSER_SAFE_EXPORTS,
+  BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+  createDntEntryPoints,
 } from "./browser-safe-exports.mjs";
 
 Deno.test("ships private browser runtime entry points without publishing their subpaths", async () => {
-	const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
-	const exports = denoJson.exports as Record<string, string>;
+  const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
+  const exports = denoJson.exports as Record<string, string>;
 
-	assertEquals(exports["./react/public"], undefined);
-	assertEquals(BROWSER_SAFE_INTERNAL_ENTRY_POINTS, {
-		"./react/public": "./src/react/public.ts",
-	});
-	for (const sourcePath of Object.values(BROWSER_SAFE_INTERNAL_ENTRY_POINTS)) {
-		assert(
-			(await Deno.stat(sourcePath)).isFile,
-			`Build-only entry point source is missing: ${sourcePath}`,
-		);
-	}
+  assertEquals(exports["./react/public"], undefined);
+  assertEquals(BROWSER_SAFE_INTERNAL_ENTRY_POINTS, {
+    "./react/public": "./src/react/public.ts",
+  });
+  for (const sourcePath of Object.values(BROWSER_SAFE_INTERNAL_ENTRY_POINTS)) {
+    assert(
+      (await Deno.stat(sourcePath)).isFile,
+      `Build-only entry point source is missing: ${sourcePath}`,
+    );
+  }
 });
 
 Deno.test("composes public and build-only dnt entry points", () => {
-	assertEquals(
-		createDntEntryPoints(
-			{ ".": "./src/index.ts" },
-			BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
-		),
-		[
-			{ name: ".", path: "./src/index.ts" },
-			{ name: "./react/public", path: "./src/react/public.ts" },
-		],
-	);
+  assertEquals(
+    createDntEntryPoints(
+      { ".": "./src/index.ts" },
+      BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+    ),
+    [
+      { name: ".", path: "./src/index.ts" },
+      { name: "./react/public", path: "./src/react/public.ts" },
+    ],
+  );
 });
 
 Deno.test("rejects overlap between public and build-only entry points", () => {
-	assertThrows(
-		() =>
-			createDntEntryPoints(
-				{ "./react/public": "./src/public-react.ts" },
-				BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
-			),
-		Error,
-		"both public and internal",
-	);
+  assertThrows(
+    () =>
+      createDntEntryPoints(
+        { "./react/public": "./src/public-react.ts" },
+        BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+      ),
+    Error,
+    "both public and internal",
+  );
 });
 
 // build-npm-dnt.ts postBuild throws "Missing browser-safe export source" when
@@ -53,46 +53,55 @@ Deno.test("rejects overlap between public and build-only entry points", () => {
 // time. This test surfaces the drift in PR CI instead (broke release 0.1.761
 // after #2350 demoted six chat exports without updating this list).
 Deno.test("every BROWSER_SAFE_EXPORTS entry is a deno.json export", async () => {
-	const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
-	const exports = denoJson.exports as Record<string, string>;
+  const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
+  const exports = denoJson.exports as Record<string, string>;
 
-	const stale = BROWSER_SAFE_EXPORTS.filter((entry: string) => !exports[entry]);
-	assert(
-		stale.length === 0,
-		`Stale BROWSER_SAFE_EXPORTS entries with no matching deno.json export: ${stale.join(", ")}`,
-	);
+  const stale = BROWSER_SAFE_EXPORTS.filter((entry: string) => !exports[entry]);
+  assert(
+    stale.length === 0,
+    `Stale BROWSER_SAFE_EXPORTS entries with no matching deno.json export: ${
+      stale.join(", ")
+    }`,
+  );
 });
 
 Deno.test("every browser-safe module path points at an existing source file", async () => {
-	const missing: string[] = [];
-	for (const builtPath of [...BROWSER_SAFE_CLIENT_MODULES, ...BROWSER_SAFE_DNT_TIMER_MODULES]) {
-		const sourcePath = (builtPath as string).replace(/\.js$/, ".ts");
-		try {
-			await Deno.stat(sourcePath);
-		} catch {
-			try {
-				await Deno.stat(`${sourcePath}x`); // .tsx
-			} catch {
-				missing.push(builtPath as string);
-			}
-		}
-	}
-	assert(
-		missing.length === 0,
-		`Browser-safe module paths with no matching source file: ${missing.join(", ")}`,
-	);
+  const missing: string[] = [];
+  for (
+    const builtPath of [
+      ...BROWSER_SAFE_CLIENT_MODULES,
+      ...BROWSER_SAFE_DNT_TIMER_MODULES,
+    ]
+  ) {
+    const sourcePath = (builtPath as string).replace(/\.js$/, ".ts");
+    try {
+      await Deno.stat(sourcePath);
+    } catch {
+      try {
+        await Deno.stat(`${sourcePath}x`); // .tsx
+      } catch {
+        missing.push(builtPath as string);
+      }
+    }
+  }
+  assert(
+    missing.length === 0,
+    `Browser-safe module paths with no matching source file: ${
+      missing.join(", ")
+    }`,
+  );
 });
 
 Deno.test("browser-safe client modules include runtime shims reached by browser entrypoints", () => {
-	for (
-		const builtPath of [
-			"src/react/runtime/core.js",
-			"src/react/components/ui/color-mode.js",
-		]
-	) {
-		assert(
-			BROWSER_SAFE_CLIENT_MODULES.includes(builtPath),
-			`${builtPath} must have dnt shim imports stripped for browser-safe npm entrypoints`,
-		);
-	}
+  for (
+    const builtPath of [
+      "src/react/runtime/core.js",
+      "src/react/components/ui/color-mode.js",
+    ]
+  ) {
+    assert(
+      BROWSER_SAFE_CLIENT_MODULES.includes(builtPath),
+      `${builtPath} must have dnt shim imports stripped for browser-safe npm entrypoints`,
+    );
+  }
 });

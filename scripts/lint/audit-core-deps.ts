@@ -300,7 +300,9 @@ export async function readCoreDependencyConfigs(
 if (import.meta.main) {
   const configs = await readCoreDependencyConfigs();
   const rootConfig = configs.find(({ root }) => root === "");
-  if (!rootConfig) throw new Error("Core dependency audit is missing deno.json");
+  if (!rootConfig) {
+    throw new Error("Core dependency audit is missing deno.json");
+  }
   const npmLiteralIssues = configs.flatMap(({ path, config }) =>
     findRootNpmSpecifierLiterals(config).map((issue) => ({
       configPath: path,

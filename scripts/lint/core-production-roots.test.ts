@@ -59,21 +59,29 @@ Deno.test("production root containment is separator-agnostic for Windows paths",
   }
 });
 
-const REQUIRED_RUNTIME_ROOTS = [
+const REQUIRED_ADDITIONAL_RUNTIME_ROOTS = [
   "src/proxy/main.ts",
-  "src/react/public.ts",
   "src/security/sandbox/worker-script.ts",
   "src/server/production-server.ts",
 ];
 
-Deno.test("runtime root inventory derives every browser build entrypoint", () => {
-  assertEquals(CORE_RUNTIME_ENTRYPOINTS, [...REQUIRED_RUNTIME_ROOTS].sort());
-  assertEquals(
-    Object.values(BROWSER_SAFE_INTERNAL_ENTRY_POINTS).map((path) =>
-      path.replace(/^\.\//, "")
-    ).every((path) => CORE_RUNTIME_ENTRYPOINTS.includes(path)),
-    true,
-  );
+const REQUIRED_BROWSER_RUNTIME_ROOTS = Object.values(
+  BROWSER_SAFE_INTERNAL_ENTRY_POINTS,
+).map((path) => path.replace(/^\.\//, ""));
+
+const REQUIRED_RUNTIME_ROOTS = [
+  ...new Set([
+    ...REQUIRED_ADDITIONAL_RUNTIME_ROOTS,
+    ...REQUIRED_BROWSER_RUNTIME_ROOTS,
+  ]),
+].sort();
+
+Deno.test("runtime root inventory composes existing browser and supplemental entrypoints", async () => {
+  assertEquals(CORE_RUNTIME_ENTRYPOINTS, REQUIRED_RUNTIME_ROOTS);
+  for (const path of CORE_RUNTIME_ENTRYPOINTS) {
+    const source = await Deno.lstat(path);
+    assertEquals(source.isFile && !source.isSymlink, true, path);
+  }
 });
 
 async function writeSource(root: string, path: string): Promise<void> {
@@ -112,6 +120,27 @@ async function registryFixture(
   await writeSupplementalProductionPackages(root);
   return root;
 }
+
+Deno.test("registry rejects a declared runtime entrypoint whose source is missing", async () => {
+  const root = await registryFixture({
+    name: "fixture",
+    exports: {
+      ".": "./src/index.ts",
+      "./cli": "./cli/main.ts",
+    },
+  });
+  try {
+    const missingPath = REQUIRED_ADDITIONAL_RUNTIME_ROOTS[0];
+    await Deno.remove(`${root}/${missingPath}`);
+    await assertRejects(
+      () => loadCoreProductionRegistry(root),
+      Error,
+      `missing production entrypoint: root-node: ${missingPath}`,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
 
 async function checkWithDenoConfig(
   root: string,

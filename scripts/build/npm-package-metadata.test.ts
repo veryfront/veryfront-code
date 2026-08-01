@@ -1,13 +1,26 @@
-import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {
   BROWSER_SAFE_CLIENT_MODULES,
   BROWSER_SAFE_EXPORTS,
 } from "./browser-safe-exports.mjs";
 import {
+  assertNoRootExtensionDependencyCollision,
+  assertRootArtifactExcludesExtensionImplementations,
+  deriveExtensionDependencyOwnership,
   EXTENSION_OWNED_DEPENDENCIES,
+  type ExtensionDependencyOwnership,
+  loadExtensionDependencyOwnership,
   normalizeNpmPackageMetadata,
+  NpmPackageOwnershipError,
   removeInternalNpmEntryPointExports,
+  repositoryExtensionDependencyOwnership,
+  resolveNpmBuildVersion,
   ROOT_OPTIONAL_RUNTIME_PEERS,
 } from "./npm-package-metadata.ts";
 import {
@@ -16,6 +29,24 @@ import {
   manifestDependencies,
   type RootPackageConfig,
 } from "./npm-extension-package-metadata.ts";
+
+Deno.test("npm build version accepts only exact configured or release versions", () => {
+  assertEquals(resolveNpmBuildVersion("0.1.1177", undefined), "0.1.1177");
+  assertEquals(
+    resolveNpmBuildVersion("0.1.1177", "0.1.1177-rc.42"),
+    "0.1.1177-rc.42",
+  );
+  assertThrows(
+    () => resolveNpmBuildVersion("0.1.1177", " 0.1.1177-rc.42"),
+    TypeError,
+    "VERYFRONT_NPM_VERSION",
+  );
+  assertThrows(
+    () => resolveNpmBuildVersion(undefined, undefined),
+    TypeError,
+    "deno.json version",
+  );
+});
 
 Deno.test("exports agent skill helpers as a public package subpath", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
@@ -368,6 +399,338 @@ Deno.test("EXTENSION_OWNED_DEPENDENCIES stays in sync with extension manifests",
         `${dependency} (declared by ${manifestPath}) must be added to EXTENSION_OWNED_DEPENDENCIES so it does not leak into root veryfront npm installs`,
       );
     }
+  }
+});
+
+function extensionManifest(
+  name: string,
+  imports: Record<string, string> = {},
+): Record<string, unknown> {
+  return {
+    name,
+    version: "1.2.3",
+    exports: "./src/index.ts",
+    veryfront: { extension: true },
+    imports,
+  };
+}
+
+function fixtureOwnership(): ExtensionDependencyOwnership {
+  return deriveExtensionDependencyOwnership([{
+    manifestPath: "extensions/ext-alpha/deno.json",
+    manifest: extensionManifest("@veryfront/ext-alpha", {
+      alpha: "npm:package-alpha@1.2.3",
+    }),
+  }]);
+}
+
+function assertOwnershipError(
+  callback: () => unknown,
+  code: NpmPackageOwnershipError["code"],
+): NpmPackageOwnershipError {
+  const error = assertThrows(callback, NpmPackageOwnershipError);
+  assertEquals(error.code, code);
+  return error;
+}
+
+Deno.test("derives a canonical extension dependency inventory from workspace manifests", async () => {
+  const denoConfig = JSON.parse(
+    await Deno.readTextFile("deno.json"),
+  ) as RootPackageConfig;
+  const ownership = repositoryExtensionDependencyOwnership();
+  const manifestPaths = firstPartyExtensionManifestPaths(denoConfig);
+
+  assertEquals(manifestPaths.length > 0, true);
+  assertEquals(Object.getPrototypeOf(ownership.packages), null);
+  assertEquals(Object.isFrozen(ownership), true);
+  assertEquals(Object.isFrozen(ownership.packages), true);
+  assertEquals(
+    Object.keys(ownership.packages),
+    Object.keys(ownership.packages).toSorted(),
+  );
+
+  for (const manifestPath of manifestPaths) {
+    const manifest = JSON.parse(
+      await Deno.readTextFile(manifestPath),
+    ) as ExtensionManifest;
+    for (
+      const [dependencyName, version] of Object.entries(
+        manifestDependencies(manifest),
+      )
+    ) {
+      const owner = ownership.packages[dependencyName]?.find((candidate) =>
+        candidate.manifestPath === manifestPath
+      );
+      assertEquals(owner, {
+        extensionName: manifest.name,
+        manifestPath,
+        version,
+      });
+      assertEquals(Object.isFrozen(owner), true);
+    }
+  }
+});
+
+describe("extension dependency ownership", () => {
+  it("is deterministic and records every exact-version owner", () => {
+    const sources = [{
+      manifestPath: "extensions/ext-zeta/deno.json",
+      manifest: extensionManifest("@veryfront/ext-zeta", {
+        zeta: "npm:package-zeta@2.0.0/subpath",
+        shared: "npm:package-shared@3.4.5",
+      }),
+    }, {
+      manifestPath: "extensions/ext-alpha/deno.json",
+      manifest: extensionManifest("@veryfront/ext-alpha", {
+        alpha: "https://esm.sh/package-alpha@1.2.3?target=deno",
+        shared: "npm:package-shared@3.4.5",
+      }),
+    }];
+
+    const forward = deriveExtensionDependencyOwnership(sources);
+    const reverse = deriveExtensionDependencyOwnership(sources.toReversed());
+
+    assertEquals(JSON.stringify(forward), JSON.stringify(reverse));
+    assertEquals(Object.keys(forward.packages), [
+      "package-alpha",
+      "package-shared",
+      "package-zeta",
+    ]);
+    assertEquals(forward.packages["package-shared"], [{
+      extensionName: "@veryfront/ext-alpha",
+      manifestPath: "extensions/ext-alpha/deno.json",
+      version: "3.4.5",
+    }, {
+      extensionName: "@veryfront/ext-zeta",
+      manifestPath: "extensions/ext-zeta/deno.json",
+      version: "3.4.5",
+    }]);
+  });
+
+  it("indexes only dependencies selected for the published runtime", () => {
+    const manifest = extensionManifest("@veryfront/ext-runtime", {
+      runtime: "npm:package-runtime@1.2.3",
+      build: "npm:package-build-only@4.5.6",
+    });
+    manifest.veryfront = {
+      extension: true,
+      npm: { runtimeDependencies: ["package-runtime"] },
+    };
+
+    const ownership = deriveExtensionDependencyOwnership([{
+      manifestPath: "extensions/ext-runtime/deno.json",
+      manifest,
+    }]);
+    assertEquals(Object.keys(ownership.packages), ["package-runtime"]);
+  });
+
+  for (
+    const [description, manifest, code] of [
+      [
+        "a non-exact extension version",
+        { ...extensionManifest("@veryfront/ext-alpha"), version: "^1.2.3" },
+        "invalid-extension-manifest",
+      ],
+      [
+        "a non-first-party extension identity",
+        extensionManifest("package-alpha"),
+        "invalid-extension-manifest",
+      ],
+      [
+        "an npm target without a version",
+        extensionManifest("@veryfront/ext-alpha", {
+          dependency: "npm:package-alpha",
+        }),
+        "invalid-extension-manifest",
+      ],
+      [
+        "a non-exact dependency version",
+        extensionManifest("@veryfront/ext-alpha", {
+          dependency: "npm:package-alpha@^1.2.3",
+        }),
+        "invalid-extension-manifest",
+      ],
+      [
+        "an export escaping its package",
+        {
+          ...extensionManifest("@veryfront/ext-alpha"),
+          exports: "../index.ts",
+        },
+        "invalid-extension-manifest",
+      ],
+      [
+        "an exports map without a root entry",
+        {
+          ...extensionManifest("@veryfront/ext-alpha"),
+          exports: { "./feature": "./src/feature.ts" },
+        },
+        "invalid-extension-manifest",
+      ],
+    ] as const
+  ) {
+    it(`rejects ${description}`, () => {
+      assertOwnershipError(
+        () =>
+          deriveExtensionDependencyOwnership([{
+            manifestPath: "extensions/ext-alpha/deno.json",
+            manifest,
+          }]),
+        code,
+      );
+    });
+  }
+
+  it("rejects conflicting aliases and duplicate extension identities", () => {
+    assertOwnershipError(
+      () =>
+        deriveExtensionDependencyOwnership([{
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifest: extensionManifest("@veryfront/ext-alpha", {
+            first: "npm:package-shared@1.0.0",
+            second: "npm:package-shared@2.0.0/subpath",
+          }),
+        }]),
+      "conflicting-extension-dependency-version",
+    );
+    assertOwnershipError(
+      () =>
+        deriveExtensionDependencyOwnership([{
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifest: extensionManifest("@veryfront/ext-duplicate"),
+        }, {
+          manifestPath: "extensions/ext-zeta/deno.json",
+          manifest: extensionManifest("@veryfront/ext-duplicate"),
+        }]),
+      "duplicate-extension-identity",
+    );
+  });
+
+  it("does not invoke accessors while rejecting hostile manifests", () => {
+    let getterInvoked = false;
+    const manifest = extensionManifest("@veryfront/ext-alpha");
+    Object.defineProperty(manifest, "name", {
+      enumerable: true,
+      get() {
+        getterInvoked = true;
+        return "@veryfront/ext-alpha";
+      },
+    });
+
+    assertOwnershipError(
+      () =>
+        deriveExtensionDependencyOwnership([{
+          manifestPath: "extensions/ext-alpha/deno.json",
+          manifest,
+        }]),
+      "invalid-extension-manifest",
+    );
+    assertEquals(getterInvoked, false);
+  });
+
+  it("rejects duplicate workspace entries before reading manifests", async () => {
+    const root = await Deno.makeTempDir();
+    try {
+      await Deno.writeTextFile(
+        `${root}/deno.json`,
+        JSON.stringify({
+          workspace: ["./extensions/ext-alpha", "./extensions/EXT-ALPHA"],
+        }),
+      );
+      assertOwnershipError(
+        () => loadExtensionDependencyOwnership(new URL(`file://${root}/`)),
+        "duplicate-workspace-entry",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+});
+
+describe("root package ownership gate", () => {
+  const ownership = fixtureOwnership();
+
+  for (
+    const [section, pkg] of [
+      ["dependencies", { dependencies: { "package-alpha": "1.2.3" } }],
+      [
+        "optionalDependencies",
+        { optionalDependencies: { "package-alpha": "1.2.3" } },
+      ],
+      ["peerDependencies", { peerDependencies: { "package-alpha": "^1.2.3" } }],
+      [
+        "peerDependenciesMeta",
+        { peerDependenciesMeta: { "package-alpha": { optional: true } } },
+      ],
+      ["devDependencies", { devDependencies: { "package-alpha": "1.2.3" } }],
+      ["overrides", { overrides: { "package-alpha": "1.2.3" } }],
+    ] as const
+  ) {
+    it(`fails closed when ${section} claims an extension-owned package`, () => {
+      const error = assertOwnershipError(
+        () => assertNoRootExtensionDependencyCollision(pkg, ownership),
+        "root-extension-dependency-collision",
+      );
+      assertStringIncludes(error.location, `package.json.${section}`);
+    });
+  }
+
+  it("detects aliases and version-qualified overrides", () => {
+    assertOwnershipError(
+      () =>
+        assertNoRootExtensionDependencyCollision({
+          dependencies: {
+            "package-alias": "npm:package-alpha@^1.2.3",
+          },
+        }, ownership),
+      "root-extension-dependency-collision",
+    );
+    assertOwnershipError(
+      () =>
+        assertNoRootExtensionDependencyCollision({
+          overrides: { "package-alpha@^1.0.0": "1.2.3" },
+        }, ownership),
+      "root-extension-dependency-collision",
+    );
+  });
+
+  it("rejects malformed records without partially mutating metadata", () => {
+    const pkg = {
+      dependencies: {
+        "package-alpha": "^1.2.3",
+        "package-core": "^4.5.6",
+      },
+    };
+    const before = structuredClone(pkg);
+    assertOwnershipError(
+      () => assertNoRootExtensionDependencyCollision(pkg, ownership),
+      "root-extension-dependency-collision",
+    );
+    assertEquals(pkg, before);
+
+    assertOwnershipError(
+      () =>
+        assertNoRootExtensionDependencyCollision({
+          overrides: {
+            parent: { "package-alpha": "1.2.3" },
+          } as unknown as Record<string, string>,
+        }, ownership),
+      "invalid-generated-package-metadata",
+    );
+  });
+});
+
+Deno.test("root artifact gate rejects extension implementation directories", async () => {
+  const root = await Deno.makeTempDir();
+  try {
+    await assertRootArtifactExcludesExtensionImplementations(root);
+    await Deno.mkdir(`${root}/extensions/ext-alpha`, { recursive: true });
+    await assertRejects(
+      () => assertRootArtifactExcludesExtensionImplementations(root),
+      NpmPackageOwnershipError,
+      "ext-alpha implementation source was bundled",
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
   }
 });
 
@@ -756,49 +1119,26 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
   });
 
-  it("keeps npm CLI agent workflow paths off the DNT Deno shim in real Deno", async () => {
-    const generatedFiles = [
-      "npm/esm/cli/commands/mcp/handler.js",
-      "npm/esm/cli/commands/lint/handler.js",
-      "npm/esm/cli/commands/test/handler.js",
-      "npm/esm/cli/commands/serve/split-mode.js",
-      "npm/esm/cli/shared/animation.js",
-      "npm/esm/cli/utils/write-run-result.js",
-      "npm/esm/src/platform/compat/stdin.js",
-      "npm/esm/src/platform/compat/process/lifecycle.js",
+  it("keeps npm CLI paths on platform adapters before DNT emission", async () => {
+    const sourceFiles = [
+      "cli/commands/mcp/handler.ts",
+      "cli/commands/lint/handler.ts",
+      "cli/commands/test/handler.ts",
+      "cli/commands/serve/split-mode.ts",
+      "cli/shared/animation.ts",
+      "cli/utils/write-run-result.ts",
+      "src/platform/compat/stdin.ts",
+      "src/platform/compat/process/lifecycle.ts",
     ];
 
-    for (const path of generatedFiles) {
+    for (const path of sourceFiles) {
       const source = await Deno.readTextFile(path);
       assertEquals(
-        source.includes("dntShim.Deno.addSignalListener"),
+        /\bDeno\.(?:addSignalListener|stdin|stdout|Command|env|connect)\b/.test(
+          source,
+        ),
         false,
-        `${path} must use real globalThis.Deno for signal handlers`,
-      );
-      assertEquals(
-        source.includes("dntShim.Deno.stdin"),
-        false,
-        `${path} must use real globalThis.Deno for stdin`,
-      );
-      assertEquals(
-        source.includes("dntShim.Deno.stdout"),
-        false,
-        `${path} must use real globalThis.Deno for stdout`,
-      );
-      assertEquals(
-        source.includes("dntShim.Deno.Command"),
-        false,
-        `${path} must use real globalThis.Deno or platform runCommand for subprocesses`,
-      );
-      assertEquals(
-        source.includes("dntShim.Deno.env"),
-        false,
-        `${path} must use platform env helpers`,
-      );
-      assertEquals(
-        source.includes("dntShim.Deno.connect"),
-        false,
-        `${path} must use real globalThis.Deno for TCP readiness checks`,
+        `${path} must use platform adapters rather than Deno globals that DNT rewrites`,
       );
     }
   });
@@ -849,9 +1189,21 @@ describe("npm generated integration artifacts", () => {
       source,
       'await Deno.copyFile("./NOTICE", "./npm/NOTICE");',
     );
-    assertStringIncludes(
-      source,
-      'pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];',
-    );
+    const filesAssignment =
+      source.match(/pkg\.files\s*=\s*\[([\s\S]*?)\];/)?.[1] ?? "";
+    for (
+      const publishedPath of [
+        "esm",
+        "script",
+        "bin",
+        "assets",
+        "tsconfig.json",
+        "LICENSE",
+        "NOTICE",
+        "README.md",
+      ]
+    ) {
+      assertStringIncludes(filesAssignment, `"${publishedPath}"`);
+    }
   });
 });

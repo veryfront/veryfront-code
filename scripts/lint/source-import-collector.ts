@@ -5864,7 +5864,7 @@ interface JsDocTypeExpression {
 function collectJsDocTypeExpressions(value: string): JsDocTypeExpression[] {
   const expressions: JsDocTypeExpression[] = [];
   const typeTag =
-    /@(?:arg(?:ument)?|augments|callback|const(?:ant)?|define|enum|exception|extends|implements|member|namespace|param|prop(?:erty)?|returns?|satisfies|template|this|throws?|type|typedef|var|yields?)\b/g;
+    /(?:^|[\r\n\u2028\u2029])[^\S\r\n\u2028\u2029]*\*?[^\S\r\n\u2028\u2029]*@(?:arg(?:ument)?|augments|callback|const(?:ant)?|define|enum|exception|extends|implements|member|namespace|param|prop(?:erty)?|returns?|satisfies|template|this|throws?|type|typedef|var|yields?)\b/g;
   for (const tag of value.matchAll(typeTag)) {
     let cursor = (tag.index ?? 0) + tag[0].length;
     while (/\s/.test(value[cursor] ?? "")) cursor++;
@@ -5907,10 +5907,12 @@ function collectJsDocImportDeclarations(
   value: string,
 ): JsDocImportDeclaration[] {
   const declarations: JsDocImportDeclaration[] = [];
-  const importTag = /@import\b/g;
+  const importTag =
+    /(?:^|[\r\n\u2028\u2029])[^\S\r\n\u2028\u2029]*\*?[^\S\r\n\u2028\u2029]*@import\b/g;
   for (const tag of value.matchAll(importTag)) {
-    const start = tag.index ?? 0;
-    const clauseStart = start + tag[0].length;
+    const matchStart = tag.index ?? 0;
+    const start = matchStart + tag[0].lastIndexOf("@");
+    const clauseStart = matchStart + tag[0].length;
     const nextTag = /(?:\r\n|[\n\r\u2028\u2029])\s*\*?\s*@[A-Za-z]/g;
     nextTag.lastIndex = clauseStart;
     const boundary = nextTag.exec(value);
@@ -6750,7 +6752,7 @@ function collectSourceDependenciesInternal(
           file.path,
           node,
           node.importKind === "type" ||
-              hasOnlyTypeSpecifiers(node, "importKind")
+            hasOnlyTypeSpecifiers(node, "importKind")
             ? "type-import"
             : "static-import",
           { specifier },
@@ -6767,7 +6769,7 @@ function collectSourceDependenciesInternal(
           file.path,
           node,
           node.exportKind === "type" ||
-              hasOnlyTypeSpecifiers(node, "exportKind")
+            hasOnlyTypeSpecifiers(node, "exportKind")
             ? "type-import"
             : "static-export",
           { specifier },
