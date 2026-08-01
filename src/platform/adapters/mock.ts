@@ -145,7 +145,6 @@ export function createMockAdapter(): MockRuntimeAdapter {
         }
         return bytes;
       },
-      getSourceSnapshotVersion: () => fileGeneration,
       writeFile: (path: string, content: string) => {
         files.set(path, content);
         return Promise.resolve();
