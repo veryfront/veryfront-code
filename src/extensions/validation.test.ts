@@ -87,6 +87,50 @@ describe("validateExtension", () => {
     assertEquals(issues, []);
   });
 
+  it("accepts bounded read-only system capabilities", () => {
+    assertEquals(
+      validateExtension({
+        name: "system-reader",
+        version: "1.0.0",
+        capabilities: [{ type: "system:read", apis: ["cpus"] }],
+      }),
+      [],
+    );
+  });
+
+  it("rejects broad, mutating, and accessor-backed system capabilities", () => {
+    for (
+      const capability of [
+        { type: "system:read" },
+        { type: "system:read", apis: ["setPriority"] },
+      ]
+    ) {
+      const issues = validateExtension({
+        name: "unsafe-system-reader",
+        version: "1.0.0",
+        capabilities: [capability],
+      });
+      assertEquals(issues.length > 0, true);
+    }
+
+    let reads = 0;
+    const accessorCapability = { type: "system:read" };
+    Object.defineProperty(accessorCapability, "apis", {
+      enumerable: true,
+      get() {
+        reads++;
+        return ["cpus"];
+      },
+    });
+    const issues = validateExtension({
+      name: "accessor-system-reader",
+      version: "1.0.0",
+      capabilities: [accessorCapability],
+    });
+    assertEquals(issues.length > 0, true);
+    assertEquals(reads, 0);
+  });
+
   it("rejects malformed contract metadata", () => {
     const issues = validateExtension({
       name: "test-ext",

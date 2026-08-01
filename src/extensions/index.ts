@@ -60,7 +60,13 @@ export type { ConflictInfo } from "./validation.ts";
 export { detectConflicts, validateExtension } from "./validation.ts";
 
 // Capabilities
-export { auditCapabilities, formatCapabilities, mapToDenoPermissions } from "./capabilities.ts";
+export {
+  assertSystemReadCapability,
+  auditCapabilities,
+  formatCapabilities,
+  isSupportedDenoSystemReadApi,
+  mapToDenoPermissions,
+} from "./capabilities.ts";
 
 // Recommendations
 export { getRecommendation } from "./recommendations.ts";
@@ -72,6 +78,21 @@ export {
   EXTENSION_VALIDATION_ERROR,
   MISSING_EXTENSION_ERROR,
 } from "./errors.ts";
+
+// Image optimization
+export type {
+  ImageOptimizationEngine,
+  ImageOptimizationFormat,
+  ImageOptimizationRequest,
+  ImageOptimizationResult,
+  ImageOptimizationVariantResult,
+} from "./image/index.ts";
+export {
+  assertImageOptimizationEngine,
+  captureImageOptimizationEngine,
+  ImageOptimizationEngineName,
+  MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS,
+} from "./image/index.ts";
 
 // Sandbox
 export type {

@@ -7,6 +7,7 @@ export const IMAGE_OPTIMIZATION = {
   DEFAULT_QUALITY: 80,
   MAX_DIMENSION: 32_768,
   MAX_OUTPUT_SIZES: 64,
+  MAX_ENGINE_IDENTITY_CHARACTERS: 256,
 } as const;
 
 /** Shared CSS optimization resource bounds. */
