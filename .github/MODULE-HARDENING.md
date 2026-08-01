@@ -24,35 +24,29 @@ Generated-only changes do not count as module review evidence.
 
 ## Current status
 
-| Status                         | Count | Percentage | Meaning                                             |
-| ------------------------------ | ----: | ---------: | --------------------------------------------------- |
-| Closed                         |    55 |      94.8% | Current formal closure evidence remains valid       |
-| Deep reviewed, fixes pending   |     0 |       0.0% | No reviewed remediation or design work remains open |
-| Touched, revalidation required |     3 |       5.2% | Substantive recovered or current work exists        |
-| Pending current review         |     0 |       0.0% | No current authoritative-branch review delta exists |
-| Total                          |    58 |     100.0% | All audit units                                     |
+| Status                         | Count | Percentage | Meaning                                                       |
+| ------------------------------ | ----: | ---------: | ------------------------------------------------------------- |
+| Closed                         |    43 |      74.1% | Current formal closure evidence remains valid                 |
+| Deep reviewed, fixes pending   |     0 |       0.0% | No unit is tracked solely in this intermediate state          |
+| Touched, revalidation required |    15 |      25.9% | Current work or later source changes require top-level review |
+| Pending current review         |     0 |       0.0% | No unit remains wholly unaudited                              |
+| Total                          |    58 |     100.0% | All audit units                                               |
 
-Closed, deeply reviewed, and touched units give current-cycle substantive
-coverage of 58/58 (100.0%). This is progress coverage, not a substitute for the
-stricter closure count.
+All 58 units have received substantive current-cycle audit work. Fifteen units
+still require top-level revalidation, so this coverage is not a substitute for
+the stricter 43-unit closure count.
 
 ### Closed
 
 - `agent`
-- `build`
-- `cache`
 - `channels`
 - `chat`
 - `client`
-- `config`
 - `data`
 - `discovery`
 - `embedding`
 - `errors`
 - `eval`
-- `extensions`
-- `fs`
-- `html`
 - `index.ts`
 - `internal-agents`
 - `integrations`
@@ -66,14 +60,11 @@ stricter closure count.
 - `modules`
 - `observability`
 - `oauth`
-- `platform`
 - `provider`
 - `prompt`
 - `proxy`
 - `registry`
 - `release-assets`
-- `rendering`
-- `repositories`
 - `resource`
 - `routing`
 - `runs`
@@ -81,16 +72,13 @@ stricter closure count.
 - `sandbox`
 - `schedule`
 - `schemas`
-- `security`
 - `skill`
 - `studio`
 - `task`
 - `testing`
 - `tool`
-- `transforms`
 - `trigger`
 - `types`
-- `utils`
 - `webhook`
 - `version.ts`
 
@@ -100,8 +88,20 @@ None.
 
 ### Touched, revalidation required
 
+- `build`
+- `cache`
+- `config`
+- `extensions`
+- `fs`
+- `html`
+- `platform`
 - `react`
+- `rendering`
+- `repositories`
+- `security`
 - `server`
+- `transforms`
+- `utils`
 - `workflow`
 
 ### Pending current review
@@ -122,45 +122,51 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain covers `agent`, `build`, `cache`, `channels`, `chat`,
-`client`, `config`, `discovery`, `embedding`, `errors`, `eval`, `extensions`, `fs`,
-`html`, `integrations`, `issues`, `knowledge`, `markdown`, `mdx`, `metrics`,
-`internal-agents`, `mcp`, `middleware`, `modules`, `observability`, `oauth`, `platform`, `provider`,
-`prompt`, `proxy`, `registry`, `release-assets`, `rendering`, `repositories`, `routing`, `runs`, `runtime`, `sandbox`, `schedule`,
-`schemas`, `security`, `skill`, `studio`, `task`, `tool`, `transforms`, `trigger`, `types`, `webhook`, `resource`, `index.ts`, and
-`version.ts`.
-The chain also covers `testing` after its portable assertions, BDD adapters,
+The current closed review chain is exactly the 43 units listed under Current
+status. Post-checkpoint source changes reopened `build`, `cache`, `config`,
+`extensions`, `fs`, `html`, `platform`, `rendering`, `repositories`, `security`,
+`transforms`, and `utils`. Earlier closure evidence for these units remains
+useful, but it does not certify their current implementations. `react`,
+`server`, and `workflow` remain open for their existing remediation and
+top-level gates.
+
+`testing` remains closed after its portable assertions, BDD adapters,
 process-global test helpers, timing, documentation, and direct consumers were
 remediated and revalidated.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
-MDX, provider, repositories, runs, runtime, and sandbox findings are remediated
-and revalidated. `prompt` is closed after its cross-cutting registry, discovery,
-HMR, request-lifecycle, and MCP findings were remediated and revalidated.
+MDX, provider, runs, runtime, and sandbox findings are remediated and
+revalidated. The last completed `repositories` review remediated its recorded
+findings; later Repositories changes require top-level revalidation. `prompt`
+is closed after its cross-cutting registry, discovery, HMR, request-lifecycle,
+and MCP findings were remediated and revalidated.
 `registry` is closed after its scope lifecycle, request-generation isolation,
 transaction invalidation, and cross-entry validation findings were remediated
-and revalidated. `cache` is closed after its backend contracts, key identity
-and invalidation, portability, request lifecycle, multi-tier coordination, and
-dependency hashing findings were remediated and revalidated. `channels` is
-closed after its signed-envelope, proxy trust, route identity, invoke lifecycle,
-serialization, and consumer findings were remediated and revalidated. `fs` is
-closed after its public facade, cross-runtime failure semantics, atomic
-temporary allocation, path/cwd dependencies, package declarations, and direct
-consumers were remediated and revalidated. `errors` is closed after its error
+and revalidated. The last completed `cache` review covered its backend
+contracts, key identity and invalidation, portability, request lifecycle,
+multi-tier coordination, and dependency hashing; later Cache changes require
+top-level revalidation. `channels` is closed after its signed-envelope, proxy
+trust, route identity, invoke lifecycle, serialization, and consumer findings
+were remediated and revalidated. The last completed `fs` review covered its
+public facade, cross-runtime failure semantics, atomic temporary allocation,
+path/cwd dependencies, package declarations, and direct consumers; later FS
+changes require top-level revalidation. `errors` is closed after its error
 identity, throwable normalization, HTTP and CLI boundaries, retry semantics,
-diagnostic redaction, cross-runtime compatibility, and direct consumer findings
-were remediated and revalidated. `types` is closed after its shared server and
-RSC contracts, runtime consumers, package surface, dependency direction, and
-type-level regressions were remediated and revalidated.
-`platform` is closed after its runtime registry, capabilities, local and hosted
-adapters, filesystem, HTTP and WebSocket lifecycle, KV and cache behavior,
-native compatibility, environment, process, path, test-support, public
-contracts, and cross-runtime consumers were remediated and revalidated.
+diagnostic redaction, cross-runtime compatibility, and direct consumer
+findings were remediated and revalidated. `types` is closed after its shared
+server and RSC contracts, runtime consumers, package surface, dependency
+direction, and type-level regressions were remediated and revalidated.
+The last completed `platform` review covered its runtime registry,
+capabilities, local and hosted adapters, filesystem, HTTP and WebSocket
+lifecycle, KV and cache behavior, native compatibility, environment, process,
+path, test support, public contracts, and cross-runtime consumers; later
+Platform changes require top-level revalidation.
 `proxy` is closed after its startup transaction, signal and listener ownership,
 cache configuration and lifecycle, routing and renderer dependencies, runtime
 shutdown, telemetry handoff, public operational contract, and direct consumers
-were remediated and revalidated. The narrow Platform and Observability changes
-made during that closure passed their complete affected portfolios and contract
-checks, so both previously closed units remain closed.
+were remediated and revalidated. At that checkpoint, the narrow Platform and
+Observability changes passed their complete affected portfolios and contract
+checks. Later Platform changes reopened `platform`; `observability` remains
+closed.
 `trigger` is closed after its source discovery, canonical identity, bounded
 input, deterministic duplicate handling, local task/workflow/agent execution,
 cancellation, lifecycle, public surface, and direct consumers were remediated
@@ -179,9 +185,10 @@ revalidation, so both previously closed units remain closed.
 deterministic multi-root identity, export validation, registry generation
 transactions, source-module and package-resolution caches, production startup
 policy, documentation, and direct consumers were remediated and revalidated.
-The narrow shared configuration and trigger changes received their complete
-affected suites and repository-boundary checks, so `config` and `trigger`
-remain closed.
+At that checkpoint, the narrow shared configuration and trigger changes passed
+their complete affected suites and repository-boundary checks, so `config` and
+`trigger` remained closed. Later Config changes reopened `config`; `trigger`
+remains closed.
 `agent` is closed after its runtime-state, cancellation-authority, hosted
 steering, project Skill I/O, child-resolution, tool lifecycle, public contract,
 documentation, and complete top-level regression findings were remediated and
@@ -202,10 +209,10 @@ extensions, and direct consumers were remediated and revalidated.
 transport deadlines, refresh ownership, storage capabilities, provider
 protocols, Slack client-profile policy, public surface, documentation, and
 direct consumers were remediated and revalidated.
-`html` is closed after its document assembly, full-document adaptation,
-metadata, escaping, hydration and navigation runtime, release identity, module
-and CSS caching, import maps, internal reference, and direct consumers were
-remediated and revalidated.
+The last completed `html` review covered its document assembly, full-document
+adaptation, metadata, escaping, hydration and navigation runtime, release
+identity, module and CSS caching, import maps, internal reference, and direct
+consumers; later HTML changes require top-level revalidation.
 `internal-agents` is closed after its signed control-plane admission, bounded
 schema and compatibility normalization, project-scoped session identity,
 resumable tool lifecycle, cancellation, runtime setup and teardown, terminal
@@ -232,17 +239,18 @@ resolution, component discovery and materialization, SSR dependency graphs,
 server request and cache boundaries, manifest and WebSocket lifecycle, public
 surfaces, migration documentation, and direct consumers were remediated and
 revalidated.
-`utils` is closed after its shared runtime boundaries, future-lockfile
-compatibility, browser import-map ownership, bounded memoization, public
-contracts, documentation, and direct consumers were remediated and
-revalidated.
-`security` is closed after its request-input, path, filesystem, CORS, response,
-configuration, worker-isolation, telemetry-redaction, and egress boundaries;
-runtime capability ownership; public surface; documentation; and direct
-consumers were remediated and revalidated. The narrow Platform, Routing,
-Repositories, Release Assets, and Server consumer changes passed their complete
-affected portfolios, so those previously closed units remain closed except for
-the already-open top-level Server revalidation.
+The last completed `utils` review covered its shared runtime boundaries,
+future-lockfile compatibility, browser import-map ownership, bounded
+memoization, public contracts, documentation, and direct consumers; later
+Utils changes require top-level revalidation.
+The last completed `security` review covered its request-input, path,
+filesystem, CORS, response, configuration, worker-isolation,
+telemetry-redaction, and egress boundaries; runtime capability ownership;
+public surface; documentation; and direct consumers. At that checkpoint, the
+narrow Platform, Routing, Repositories, Release Assets, and Server consumer
+changes passed their complete affected portfolios. Later source changes
+reopened `platform`, `repositories`, and `security`; `routing` and
+`release-assets` remain closed, and `server` remains open.
 `skill` is closed after its document-parser and script-executor extension
 contracts, untrusted document and filesystem boundaries, authorization policy,
 execution budgets, local and cloud lifecycle, explicit runtime composition,
@@ -252,8 +260,14 @@ core no longer names a third-party TypeScript runner or silently falls back to
 local execution.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
-unit. No unit now lacks a current authoritative-branch review delta; the next
-dependency-ordered work revalidates the touched units.
+unit. The 15 units listed under Touched, revalidation required need current
+top-level revalidation before closure.
+
+## Historical module checkpoints
+
+The module-specific checkpoints below preserve the evidence, status, and
+counts that were true when each checkpoint was recorded. They do not override
+Current status after later source changes.
 
 ### OAuth closure checkpoint
 
@@ -6152,8 +6166,10 @@ Current closure evidence:
   or Important finding.
 
 No known unresolved critical or high-confidence Skill production risk remains.
-The `skill` unit is closed at 55 of 58 formal units; `react`, `server`, and
-`workflow` remain open for their current remediation and top-level gates.
+At this checkpoint, the `skill` unit raised the formal count to 55 of 58;
+`react`, `server`, and `workflow` were then the only open units. Later source
+changes reopened 12 previously closed units; Current status records the
+authoritative 43/15 split.
 
 ### CSS extension-boundary follow-up checkpoint
 
