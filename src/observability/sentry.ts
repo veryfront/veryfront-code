@@ -12,6 +12,8 @@ export type { ApplicationErrorContext, ApplicationErrorReporter } from "./applic
 
 const DEFAULT_SERVICE_NAME = "veryfront-server";
 const SENTRY_ERROR_REPORTER = "sentry";
+const MISSING_DSN_WARNING =
+  "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.";
 
 export type SentryConfig = {
   dsn?: string;
@@ -29,6 +31,7 @@ type SentryExtensionLoader = () => Promise<SentryExtensionModule>;
 let initialized = false;
 let initializationGeneration = 0;
 let initializationPromise: Promise<boolean> | undefined;
+let missingDsnWarningEmitted = false;
 
 /**
  * Resolve the compatibility-release Sentry flag.
@@ -64,12 +67,7 @@ export function resolveSentryConfigFromEnv(
   }
 
   const dsn = getEnv("SENTRY_DSN")?.trim();
-  if (!dsn) {
-    if (isSentryEnabled(enabled, false)) {
-      console.warn("Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.");
-    }
-    return undefined;
-  }
+  if (!dsn) return undefined;
 
   return {
     dsn,
@@ -82,9 +80,11 @@ export function resolveSentryConfigFromEnv(
 
 export function initializeSentryFromEnv(
   defaultServiceName = DEFAULT_SERVICE_NAME,
+  loadExtension: SentryExtensionLoader = loadSentryExtension,
 ): Promise<boolean> {
   const config = resolveSentryConfigFromEnv(defaultServiceName);
-  return config ? initializeSentry(config) : Promise.resolve(false);
+  if (!config && shouldWarnAboutMissingDsn()) warnAboutMissingDsnOnce();
+  return config ? initializeSentry(config, loadExtension) : Promise.resolve(false);
 }
 
 export async function initializeSentry(
@@ -124,8 +124,22 @@ export async function initializeSentry(
 export function resetSentryForTests(): void {
   initializationGeneration += 1;
   initializationPromise = undefined;
+  missingDsnWarningEmitted = false;
   initialized = false;
   setApplicationErrorReporter(undefined);
+}
+
+function shouldWarnAboutMissingDsn(): boolean {
+  const reporterSelected = getEnv("VERYFRONT_ERROR_REPORTER")?.trim().toLowerCase() ===
+    SENTRY_ERROR_REPORTER;
+  return reporterSelected && isSentryEnabled(getEnv("SENTRY_ENABLED"), false) &&
+    !getEnv("SENTRY_DSN")?.trim();
+}
+
+function warnAboutMissingDsnOnce(): void {
+  if (missingDsnWarningEmitted) return;
+  missingDsnWarningEmitted = true;
+  console.warn(MISSING_DSN_WARNING);
 }
 
 function loadSentryExtension(): Promise<SentryExtensionModule> {

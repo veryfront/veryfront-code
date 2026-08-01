@@ -59,12 +59,18 @@ describe("observability/sentry", () => {
   });
 
   it("Sentry startup warns once without exposing secrets when explicitly enabled without a DSN", async () => {
+    resetSentryForTests();
     const previousEnabled = Deno.env.get("SENTRY_ENABLED");
     const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
     const previousDsn = Deno.env.get("SENTRY_DSN");
     const previousAuthToken = Deno.env.get("SENTRY_AUTH_TOKEN");
     const originalWarn = console.warn;
     const warnings: unknown[][] = [];
+    let loadCount = 0;
+    const load = () => {
+      loadCount += 1;
+      return createSentryExtension().load();
+    };
     try {
       Deno.env.set("SENTRY_ENABLED", "true");
       Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
@@ -72,7 +78,19 @@ describe("observability/sentry", () => {
       Deno.env.set("SENTRY_AUTH_TOKEN", "super-secret-token");
       console.warn = (...args: unknown[]) => warnings.push(args);
 
-      assertEquals(await initializeSentryFromEnv(), false);
+      assertEquals(resolveSentryConfigFromEnv(), undefined);
+      assertEquals(resolveSentryConfigFromEnv(), undefined);
+      assertEquals(warnings, []);
+      assertEquals(
+        await Promise.all([
+          initializeSentryFromEnv(undefined, load),
+          initializeSentryFromEnv(undefined, load),
+          initializeSentryFromEnv(undefined, load),
+        ]),
+        [false, false, false],
+      );
+      assertEquals(await initializeSentryFromEnv(undefined, load), false);
+      assertEquals(loadCount, 0);
       assertEquals(warnings, [[
         "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.",
       ]]);
@@ -82,6 +100,38 @@ describe("observability/sentry", () => {
       restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
       restoreEnv("SENTRY_DSN", previousDsn);
       restoreEnv("SENTRY_AUTH_TOKEN", previousAuthToken);
+    }
+  });
+
+  it("Sentry startup does not warn or load the SDK when disabled or compatibility-unset without a DSN", async () => {
+    resetSentryForTests();
+    const previousEnabled = Deno.env.get("SENTRY_ENABLED");
+    const previousProvider = Deno.env.get("VERYFRONT_ERROR_REPORTER");
+    const previousDsn = Deno.env.get("SENTRY_DSN");
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    let loadCount = 0;
+    const load = () => {
+      loadCount += 1;
+      return createSentryExtension().load();
+    };
+    try {
+      Deno.env.set("VERYFRONT_ERROR_REPORTER", "sentry");
+      Deno.env.set("SENTRY_DSN", "   ");
+      console.warn = (...args: unknown[]) => warnings.push(args);
+
+      Deno.env.set("SENTRY_ENABLED", "false");
+      assertEquals(await initializeSentryFromEnv(undefined, load), false);
+      Deno.env.delete("SENTRY_ENABLED");
+      assertEquals(await initializeSentryFromEnv(undefined, load), false);
+
+      assertEquals(warnings, []);
+      assertEquals(loadCount, 0);
+    } finally {
+      console.warn = originalWarn;
+      restoreEnv("SENTRY_ENABLED", previousEnabled);
+      restoreEnv("VERYFRONT_ERROR_REPORTER", previousProvider);
+      restoreEnv("SENTRY_DSN", previousDsn);
     }
   });
 

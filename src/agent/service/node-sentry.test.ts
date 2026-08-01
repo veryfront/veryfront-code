@@ -12,6 +12,7 @@ import {
 import {
   createNodeAgentServiceLogApplicationErrorEmitter,
   initializeNodeAgentServiceSentryApplicationErrors,
+  resetNodeAgentServiceSentryForTests,
   resolveNodeAgentServiceSentryConfig,
 } from "./node-sentry.ts";
 
@@ -87,13 +88,14 @@ describe("agent/service/node-sentry", () => {
   });
 
   it("warns once without exposing secrets when Sentry is explicitly enabled without a DSN", async () => {
+    resetNodeAgentServiceSentryForTests();
     const originalWarn = console.warn;
     const warnings: unknown[][] = [];
     let loadCount = 0;
     try {
       console.warn = (...args: unknown[]) => warnings.push(args);
 
-      const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+      const options = {
         env: {
           SENTRY_ENABLED: "true",
           SENTRY_DSN: "   ",
@@ -105,13 +107,56 @@ describe("agent/service/node-sentry", () => {
             createNodeSentryApplicationErrorReporter: () => createReporter(),
           });
         },
-      });
+      };
 
-      assertEquals(lifecycle.enabled, false);
+      assertStrictEquals(resolveNodeAgentServiceSentryConfig(options.env), undefined);
+      assertStrictEquals(resolveNodeAgentServiceSentryConfig(options.env), undefined);
+      assertEquals(warnings, []);
+      const lifecycles = await Promise.all([
+        initializeNodeAgentServiceSentryApplicationErrors(options),
+        initializeNodeAgentServiceSentryApplicationErrors(options),
+        initializeNodeAgentServiceSentryApplicationErrors(options),
+      ]);
+      const repeated = await initializeNodeAgentServiceSentryApplicationErrors(options);
+
+      assertEquals(lifecycles.map((lifecycle) => lifecycle.enabled), [false, false, false]);
+      assertEquals(repeated.enabled, false);
       assertEquals(loadCount, 0);
       assertEquals(warnings, [[
         "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.",
       ]]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("does not warn or load the SDK when disabled or compatibility-unset without a DSN", async () => {
+    resetNodeAgentServiceSentryForTests();
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    let loadCount = 0;
+    const loadExtension = () => {
+      loadCount += 1;
+      return Promise.resolve({
+        createNodeSentryApplicationErrorReporter: () => createReporter(),
+      });
+    };
+    try {
+      console.warn = (...args: unknown[]) => warnings.push(args);
+
+      const disabled = await initializeNodeAgentServiceSentryApplicationErrors({
+        env: { SENTRY_ENABLED: "false", SENTRY_DSN: "   " },
+        loadExtension,
+      });
+      const compatibilityUnset = await initializeNodeAgentServiceSentryApplicationErrors({
+        env: { SENTRY_DSN: "   " },
+        loadExtension,
+      });
+
+      assertEquals(disabled.enabled, false);
+      assertEquals(compatibilityUnset.enabled, false);
+      assertEquals(warnings, []);
+      assertEquals(loadCount, 0);
     } finally {
       console.warn = originalWarn;
     }
