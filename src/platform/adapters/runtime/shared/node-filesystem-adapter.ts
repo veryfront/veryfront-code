@@ -161,9 +161,19 @@ async function readNodeFileSnapshotWithinLimit(
     throw new TypeError("Snapshot path must identify a regular file");
   }
 
-  const handle = await operations.open(candidate, nodeFsConstants.O_RDONLY | noFollow);
+  let handle: NodeFileHandle;
   try {
-    const handleBefore = await handle.stat();
+    handle = await operations.open(candidate, nodeFsConstants.O_RDONLY | noFollow);
+  } catch (cause) {
+    throw changed("File identity became uncertain while opening the snapshot", cause);
+  }
+  try {
+    let handleBefore: NodeFileSnapshotStat;
+    try {
+      handleBefore = await handle.stat();
+    } catch (cause) {
+      throw changed("Opened file identity could not be verified", cause);
+    }
     if (!handleBefore.isFile() || !sameGeneration(pathnameBefore, handleBefore)) {
       throw changed("File identity changed while opening the snapshot");
     }

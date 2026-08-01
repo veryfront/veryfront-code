@@ -193,6 +193,74 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     assertEquals(closed, true);
   });
 
+  it("wraps post-lstat open failure as snapshot identity uncertainty", async () => {
+    const openFailure = new Error("pathname removed before open");
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let lstatCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => {
+          lstatCalls++;
+          return Promise.resolve(stat);
+        },
+        open: () => Promise.reject(openFailure),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      FileSnapshotChangedError,
+    ) as FileSnapshotChangedError & { cause?: unknown };
+    assertEquals(error.cause, openFailure);
+    assertEquals(lstatCalls, 1);
+  });
+
+  it("wraps the first handle metadata failure as snapshot identity uncertainty", async () => {
+    const statFailure = new Error("opened handle identity unavailable");
+    const pathnameStat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(pathnameStat),
+        open: () =>
+          Promise.resolve({
+            stat: () => Promise.reject(statFailure),
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      FileSnapshotChangedError,
+    ) as FileSnapshotChangedError & { cause?: unknown };
+    assertEquals(error.cause, statFailure);
+    assertEquals(closeCalls, 1);
+  });
+
   it("rejects mutation of the opened file between metadata reads", async () => {
     const before = {
       dev: 1n,
