@@ -109,6 +109,7 @@ export function createRedisRuntimeProvider(
   const connectClient = dependencies.openClient ?? openRedisClient;
   const moduleAdapter: NodeRedisModule = Object.freeze({
     createClient(options: Parameters<NodeRedisModule["createClient"]>[0]) {
+      requireOpen();
       const client = NodeRedis.createClient(options);
       return bindClientMethods<NodeRedisClient>(client, NODE_CLIENT_METHODS);
     },
