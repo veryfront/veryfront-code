@@ -1,14 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path/index.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import type { ImageOptimizationEngine } from "#veryfront/extensions/image/index.ts";
+import { MAX_IMAGE_PROVIDER_DURATION_MS } from "./constants.ts";
 import { chunkArray, ImageOptimizer } from "./optimizer-core.ts";
-import type {
-  OptimizedImageMetadata,
-  SharpConstructor,
-  SharpInstance,
-  SharpMetadata,
-} from "./types.ts";
+import type { OptimizedImageMetadata } from "./types.ts";
 
 function populateManifest(
   optimizer: ImageOptimizer,
@@ -41,39 +39,37 @@ const sampleMetadata: OptimizedImageMetadata = {
   aspectRatio: 16 / 9,
 };
 
-function createSharpConstructor(
+function createImageEngine(
   options: { failEncoding?: boolean } = {},
-): SharpConstructor {
-  const encodedMetadata = new WeakMap<Uint8Array, SharpMetadata>();
-  const sourceMetadata: SharpMetadata = { width: 640, height: 480 };
-
-  const createInstance = (metadata: SharpMetadata): SharpInstance => {
-    let targetWidth = metadata.width ?? 640;
-    const instance: SharpInstance = {
-      metadata: () => Promise.resolve(metadata),
-      clone: () => createInstance(metadata),
-      resize: (width) => {
-        if (width !== null) targetWidth = width;
-        return instance;
-      },
-      webp: () => instance,
-      avif: () => instance,
-      jpeg: () => instance,
-      png: () => instance,
-      toBuffer: async () => {
-        if (options.failEncoding) throw new Error("mock encoding failed");
-        const buffer = new Uint8Array([1, 2, 3, 4]);
-        encodedMetadata.set(buffer, {
-          width: targetWidth,
-          height: Math.round(targetWidth / (640 / 480)),
-        });
-        return buffer;
-      },
-    };
-    return instance;
+): ImageOptimizationEngine {
+  return {
+    cacheIdentity: "test-image-engine@1",
+    optimize(request) {
+      if (options.failEncoding) {
+        return Promise.reject(new Error("mock encoding failed"));
+      }
+      const sourceWidth = 640;
+      const sourceHeight = 480;
+      const widths = [
+        ...new Set([
+          ...request.targetWidths.filter((width) => width <= sourceWidth),
+          sourceWidth,
+        ]),
+      ].sort((left, right) => left - right);
+      return Promise.resolve({
+        sourceWidth,
+        sourceHeight,
+        variants: widths.flatMap((width) =>
+          request.formats.map((format) => ({
+            format,
+            width,
+            height: Math.round(width / (sourceWidth / sourceHeight)),
+            data: new Uint8Array([1, 2, 3, 4]),
+          }))
+        ),
+      });
+    },
   };
-
-  return (input) => createInstance(encodedMetadata.get(input) ?? sourceMetadata);
 }
 
 async function withTempProject(
@@ -327,7 +323,7 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
               sizes: [320],
               preserveOriginal: true,
             },
-            { loadSharp: () => Promise.resolve(createSharpConstructor()) },
+            { engine: createImageEngine() },
           );
 
           const manifest = await optimizer.optimize();
@@ -375,7 +371,7 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
               sizes: [320],
             },
             {
-              loadSharp: () => Promise.resolve(createSharpConstructor({ failEncoding: true })),
+              engine: createImageEngine({ failEncoding: true }),
             },
           );
 
@@ -404,6 +400,80 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
         });
       });
 
+      it("never publishes a provider result that arrives after its deadline", async () => {
+        using time = new FakeTime();
+        await withTempProject(async (projectDir, inputDir) => {
+          await Deno.writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9]));
+          const outputDir = join(projectDir, ".veryfront/images");
+          await Deno.mkdir(outputDir, { recursive: true });
+          await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
+
+          const started = Promise.withResolvers<void>();
+          const lateResult = Promise.withResolvers<
+            Awaited<ReturnType<ImageOptimizationEngine["optimize"]>>
+          >();
+          const optimizer = new ImageOptimizer(
+            {
+              projectDir,
+              inputDir: "public",
+              outputDir: ".veryfront/images",
+              formats: ["webp"],
+              sizes: [320],
+            },
+            {
+              engine: {
+                cacheIdentity: "late-image-engine@1",
+                optimize() {
+                  started.resolve();
+                  return lateResult.promise;
+                },
+              },
+            },
+          );
+
+          const operation = optimizer.optimize();
+          await started.promise;
+          await time.tickAsync(MAX_IMAGE_PROVIDER_DURATION_MS);
+          await assertRejects(
+            () => operation,
+            Error,
+            "cancelled or exceeded its deadline",
+          );
+
+          lateResult.resolve({
+            sourceWidth: 640,
+            sourceHeight: 480,
+            variants: [
+              {
+                format: "webp",
+                width: 320,
+                height: 240,
+                data: new Uint8Array([1]),
+              },
+              {
+                format: "webp",
+                width: 640,
+                height: 480,
+                data: new Uint8Array([2]),
+              },
+            ],
+          });
+          await time.tickAsync(0);
+
+          const outputEntries: string[] = [];
+          for await (const entry of Deno.readDir(outputDir)) {
+            outputEntries.push(entry.name);
+          }
+          outputEntries.sort();
+          assertEquals(outputEntries, ["sentinel.txt"]);
+          assertEquals(
+            await Deno.readTextFile(join(outputDir, "sentinel.txt")),
+            "known good",
+          );
+          assertEquals(optimizer.getStats().totalImages, 0);
+        });
+      });
+
       it("rejects an empty enabled input without replacing existing output", async () => {
         await withTempProject(async (projectDir) => {
           const outputDir = join(projectDir, ".veryfront/images");
@@ -417,7 +487,7 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
               formats: ["webp"],
               sizes: [320],
             },
-            { loadSharp: () => Promise.resolve(createSharpConstructor()) },
+            { engine: createImageEngine() },
           );
 
           await assertRejects(

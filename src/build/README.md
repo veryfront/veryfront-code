@@ -11,8 +11,8 @@ The build module is Veryfront's comprehensive build system, responsible for tran
 - MDX compilation to React components
 - JavaScript/TypeScript bundling and code splitting
 - CSS optimization through an explicitly composed provider
-- Image optimization with Sharp
-- Tailwind CSS processing
+- Image optimization through an explicitly composed provider
+- Tailwind CSS processing through an explicitly composed provider
 - Static site generation (SSG)
 - Asset pipeline orchestration
 - Production build optimization
@@ -28,9 +28,9 @@ The build module is Veryfront's comprehensive build system, responsible for tran
 ```
 build/
 ├── asset-pipeline/          # Image/CSS optimization
-│   ├── image-optimizer/    # Sharp integration
+│   ├── image-optimizer/    # Provider-neutral image optimization
 │   ├── css-optimizer/      # Provider-neutral CSS optimization
-│   └── tailwind-processor/ # Tailwind processing
+│   └── tailwind-processor/ # Provider-neutral Tailwind orchestration
 ├── compiler/               # MDX → React compilation
 │   ├── mdx-compiler/      # MDX processor
 │   └── mdx-to-js.ts       # JavaScript output
@@ -77,8 +77,10 @@ DX(source, options)` - MDX compilation
 ### External
 
 - `esbuild` - JavaScript bundling
-- `sharp` (optional) - Image optimization
+- `@veryfront/ext-image-sharp` (optional) - Explicit image optimization provider
 - `@veryfront/ext-css-lightning` (optional) - Explicit Lightning CSS provider
+- `@veryfront/ext-css-purgecss` (optional) - Explicit CSS purging provider
+- `@veryfront/ext-css-tailwind` (optional) - Explicit Tailwind CSS provider
 - `@mdx-js/mdx` - MDX compilation
 
 ## Usage Examples
@@ -118,8 +120,10 @@ console.log(`Generated ${result.staticPages.length} static pages`)
 ### Asset Optimization
 
 Compose the provider extensions for every enabled stage during application
-setup. For CSS, see
-[`@veryfront/ext-css-lightning`](../../extensions/ext-css-lightning/README.md).
+setup. See
+[`@veryfront/ext-image-sharp`](../../extensions/ext-image-sharp/README.md),
+[`@veryfront/ext-css-lightning`](../../extensions/ext-css-lightning/README.md),
+and [`@veryfront/ext-css-tailwind`](../../extensions/ext-css-tailwind/README.md).
 Absent stages are skipped; a requested stage fails the build if its provider or
 processing fails.
 
@@ -199,6 +203,21 @@ asset-pipeline configuration. Configure `browserQueries` when composing
 `@veryfront/ext-css-lightning`; requested optimization fails closed when no
 `CSSOptimizationEngine` provider is registered.
 
+### Provider status fields
+
+`checkAssetPipelineDependencies()` returns provider-neutral capability status:
+
+```typescript
+{
+  imageOptimization: boolean;
+  cssOptimization: boolean;
+}
+```
+
+The former `sharp` and `lightningCSS` properties are removed. Consumers of the
+status helper must read `imageOptimization` and `cssOptimization`; the helper
+does not report package discovery because core validates registered contracts.
+
 ## Performance
 
 ### Build Times (Typical Project)
@@ -256,8 +275,9 @@ NODE_OPTIONS="--max-old-space-size=4096" deno task build
 
 ### Asset Optimization Failures
 
-- Check Sharp installation: `npm ls sharp`
+- Ensure `@veryfront/ext-image-sharp` is installed and explicitly composed
 - Ensure `@veryfront/ext-css-lightning` is installed and explicitly composed
+- Ensure `@veryfront/ext-css-tailwind` is installed and explicitly composed
 - Disable optional optimizers if needed
 
 ## References

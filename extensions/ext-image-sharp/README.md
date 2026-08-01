@@ -38,14 +38,18 @@ target width that does not exceed the auto-oriented source width. The source
 width is always included exactly once. Variants are returned deterministically
 by ascending width and then canonical format order (`webp`, `avif`, `jpeg`,
 `png`). Sharp is always called with `withoutEnlargement: true`, and returned
-dimensions and format metadata must match the planned variant.
+dimensions, aspect ratio, and format metadata must match the planned variant.
+The complete supported matrix is 64 configured widths plus the source width,
+across all four formats (260 variants).
 
 The extension snapshots descriptor-only request data before native work and
 uses an independent Sharp pipeline for every operation. Inputs, decoded pixels,
 variant count, per-variant bytes, and aggregate output bytes are bounded. Each
 request carries an abort signal used by core for cancellation and deadlines.
 Sharp cannot interrupt every native call already in progress, so the extension
-races native steps with that signal and discards any late result.
+races native steps with that signal and discards any late result. Engines are
+long-lived concurrency-safe services with no caller-managed cleanup lifecycle;
+operation-scoped resources are released when each provider Promise settles.
 
 The extension requests only Sharp's import-time environment reads
 (`MALLOC_ARENA_MAX` and `npm_package_config_libvips`), read access to

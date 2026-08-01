@@ -24,6 +24,10 @@ import {
   captureCSSOptimizationEngine,
   CSSOptimizationEngineName,
 } from "#veryfront/extensions/css/index.ts";
+import {
+  captureImageOptimizationEngine,
+  ImageOptimizationEngineName,
+} from "#veryfront/extensions/image/index.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { logger } from "#veryfront/utils";
@@ -75,6 +79,14 @@ export interface AssetPipelineResult {
     enabled: boolean;
   };
   duration: number;
+}
+
+/** Registered provider capabilities available to the asset pipeline. */
+export interface AssetPipelineDependencyStatus {
+  /** Whether a valid `ImageOptimizationEngine` is registered. */
+  imageOptimization: boolean;
+  /** Whether a valid `CSSOptimizationEngine` is registered. */
+  cssOptimization: boolean;
 }
 
 function configuredStageOutputs(
@@ -234,17 +246,26 @@ export async function runAssetPipeline(
   return result;
 }
 
-export async function checkAssetPipelineDependencies(): Promise<{
-  sharp: boolean;
-  lightningCSS: boolean;
-}> {
-  const dependencies = { sharp: false, lightningCSS: false };
+/**
+ * Inspect registered asset-provider contracts without probing packages or the
+ * network. The provider-neutral fields replace the removed `sharp` and
+ * `lightningCSS` fields.
+ */
+export async function checkAssetPipelineDependencies(): Promise<
+  AssetPipelineDependencyStatus
+> {
+  const dependencies = { imageOptimization: false, cssOptimization: false };
 
-  try {
-    await import("https://esm.sh/sharp@0.33.0");
-    dependencies.sharp = true;
-  } catch (error) {
-    logger.debug("Sharp image processing library not available:", error);
+  const configuredImageOptimizer = tryResolve<unknown>(
+    ImageOptimizationEngineName,
+  );
+  if (configuredImageOptimizer !== undefined) {
+    try {
+      captureImageOptimizationEngine(configuredImageOptimizer);
+      dependencies.imageOptimization = true;
+    } catch (error) {
+      logger.debug("Configured image optimization engine is invalid:", error);
+    }
   }
 
   const configuredCSSOptimizer = tryResolve<unknown>(
@@ -253,7 +274,7 @@ export async function checkAssetPipelineDependencies(): Promise<{
   if (configuredCSSOptimizer !== undefined) {
     try {
       captureCSSOptimizationEngine(configuredCSSOptimizer);
-      dependencies.lightningCSS = true;
+      dependencies.cssOptimization = true;
     } catch (error) {
       logger.debug("Configured CSS optimization engine is invalid:", error);
     }
@@ -273,17 +294,19 @@ export async function getAssetPipelineStatus(): Promise<{
   const missing: string[] = [];
   const recommendations: string[] = [];
 
-  if (deps.sharp) {
-    available.push("Sharp image optimizer");
+  if (deps.imageOptimization) {
+    available.push("Image optimization provider");
   } else {
-    missing.push("Sharp");
-    recommendations.push("Install Sharp for automatic image optimization: npm install sharp");
+    missing.push("Image optimization provider");
+    recommendations.push(
+      "Install and explicitly compose @veryfront/ext-image-sharp for image optimization",
+    );
   }
 
-  if (deps.lightningCSS) {
-    available.push("Lightning CSS optimizer");
+  if (deps.cssOptimization) {
+    available.push("CSS optimization provider");
   } else {
-    missing.push("Lightning CSS");
+    missing.push("CSS optimization provider");
     recommendations.push(
       "Install and explicitly compose @veryfront/ext-css-lightning for CSS optimization",
     );

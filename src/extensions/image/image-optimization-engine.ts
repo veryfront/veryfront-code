@@ -59,7 +59,15 @@ export interface ImageOptimizationResult {
   readonly variants: readonly ImageOptimizationVariantResult[];
 }
 
-/** Image decoder, resizer, and encoder implemented by an explicit extension. */
+/**
+ * Image decoder, resizer, and encoder implemented by an explicit extension.
+ *
+ * Implementations are long-lived, concurrency-safe services. They must not
+ * require caller-managed lifecycle cleanup and must release operation-scoped
+ * resources when the Promise returned by `optimize()` settles. Core may stop
+ * awaiting an operation after aborting its signal, so a late result must not
+ * rely on caller publication or cleanup behavior.
+ */
 export interface ImageOptimizationEngine {
   /**
    * Includes every implementation/version input capable of changing output.

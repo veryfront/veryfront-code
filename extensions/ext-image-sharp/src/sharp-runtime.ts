@@ -86,7 +86,7 @@ export const SHARP_IMAGE_LIMITS = freeze({
   maxDimension: 32_768,
   maxTargetWidths: 64,
   maxFormats: SUPPORTED_FORMATS.length,
-  maxVariants: 256,
+  maxVariants: 260,
   maxOutputBytesPerVariant: 64 * 1024 * 1024,
   maxTotalOutputBytes: 256 * 1024 * 1024,
 });
@@ -689,9 +689,9 @@ function outputWidths(
     invoke(arrayPush, widths, [sourceWidth]);
   }
   invoke(arraySort, widths, [sortNumbers]);
-  if (widths.length > limits.maxTargetWidths) {
+  if (widths.length > limits.maxTargetWidths + 1) {
     throw new TypeError(
-      `Image optimization produces more than ${limits.maxTargetWidths} output widths`,
+      `Image optimization produces more than ${limits.maxTargetWidths + 1} output widths`,
     );
   }
   return freeze(widths);
@@ -718,6 +718,7 @@ function readOutput(
   value: unknown,
   format: ImageOptimizationFormat,
   width: number,
+  sourceWidth: number,
   sourceHeight: number,
   aggregate: { value: number },
   limits: SharpImageLimits,
@@ -766,8 +767,12 @@ function readOutput(
       `Sharp encoded ${outputWidth}px for requested ${width}px output`,
     );
   }
-  if (outputHeight > sourceHeight) {
-    throw new TypeError("Sharp enlarged the image height unexpectedly");
+  const expectedHeight = Math.max(
+    1,
+    Math.round(sourceHeight * width / sourceWidth),
+  );
+  if (outputHeight !== expectedHeight) {
+    throw new TypeError("Sharp did not preserve the source aspect ratio");
   }
   if (!numberIsSafeInteger(outputSize) || outputSize !== dataLength) {
     throw new TypeError("Sharp output size metadata does not match its bytes");
@@ -886,6 +891,7 @@ export class BoundSharpImageOptimizationEngine implements ImageOptimizationEngin
             output,
             format,
             width,
+            sourceSize.width,
             sourceSize.height,
             aggregate,
             this.#limits,
