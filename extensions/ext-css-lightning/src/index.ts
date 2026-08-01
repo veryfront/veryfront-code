@@ -17,6 +17,7 @@ import {
 import browserslist from "browserslist";
 import { browserslistToTargets, transform } from "lightningcss";
 import extensionPackage from "../deno.json" with { type: "json" };
+import { isWellFormedString } from "./is-well-formed-string.ts";
 
 const MAX_BROWSER_QUERIES = 32;
 const MAX_BROWSER_QUERY_CHARACTERS = 256;
@@ -39,7 +40,6 @@ const arraySort = Array.prototype.sort;
 const arrayJoin = Array.prototype.join;
 const encodeText = TextEncoder.prototype.encode;
 const decodeText = TextDecoder.prototype.decode;
-const isWellFormedString = String.prototype.isWellFormed;
 const normalizeString = String.prototype.normalize;
 const trimString = String.prototype.trim;
 const charCodeAtString = String.prototype.charCodeAt;
@@ -161,10 +161,6 @@ function sha256(value: string): string {
   return apply(digestHash, hash, ["hex"]) as string;
 }
 
-function isWellFormed(value: string): boolean {
-  return apply(isWellFormedString, value, []);
-}
-
 function hasControlOrLineSeparator(value: string): boolean {
   for (let index = 0; index < value.length; index++) {
     const code = apply(charCodeAtString, value, [index]);
@@ -250,7 +246,7 @@ function snapshotBrowserQueries(value: unknown): readonly string[] | undefined {
       typeof query !== "string" ||
       query.length === 0 ||
       query.length > MAX_BROWSER_QUERY_CHARACTERS ||
-      !isWellFormed(query) ||
+      !isWellFormedString(query) ||
       apply(normalizeString, query, ["NFC"]) !== query ||
       apply(trimString, query, []) !== query ||
       hasControlOrLineSeparator(query)
@@ -478,14 +474,14 @@ function snapshotRequest(request: CSSOptimizationRequest): CSSOptimizationReques
     "sourceMap",
     "CSS optimization sourceMap",
   );
-  if (typeof css !== "string" || !isWellFormed(css)) {
+  if (typeof css !== "string" || !isWellFormedString(css)) {
     throw new TypeError("CSS optimization css must be a well-formed string");
   }
   if (
     typeof sourcePath !== "string" ||
     sourcePath.length === 0 ||
     sourcePath.length > MAX_SOURCE_PATH_CHARACTERS ||
-    !isWellFormed(sourcePath) ||
+    !isWellFormedString(sourcePath) ||
     apply(normalizeString, sourcePath, ["NFC"]) !== sourcePath ||
     hasControlOrLineSeparator(sourcePath)
   ) {

@@ -12,6 +12,7 @@ import {
   type CSSOptimizationResult,
 } from "#veryfront/extensions/css/index.ts";
 import { resolve } from "#veryfront/extensions/contracts.ts";
+import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 import {
   MAX_CSS_FILE_BYTES,
   MAX_CSS_FILES,
@@ -32,7 +33,6 @@ const isSafeInteger = Number.isSafeInteger;
 const floorNumber = Math.floor;
 const encodeText = TextEncoder.prototype.encode;
 const charCodeAtString = String.prototype.charCodeAt;
-const isWellFormedString = String.prototype.isWellFormed;
 const indexOfString = String.prototype.indexOf;
 const sliceString = String.prototype.slice;
 const setHas = Set.prototype.has;
@@ -69,10 +69,6 @@ export interface CSSOptimizationSession {
 
 function encodedLength(value: string): number {
   return apply(encodeText, encoder, [value]).length;
-}
-
-function isWellFormed(value: string): boolean {
-  return apply(isWellFormedString, value, []);
 }
 
 function hasControlOrLineSeparator(value: string): boolean {
@@ -183,7 +179,7 @@ function snapshotRequest(
 
   if (
     typeof css !== "string" ||
-    !isWellFormed(css)
+    !isWellFormedString(css)
   ) {
     throw new TypeError("CSS optimization input must be a well-formed string");
   }
@@ -404,7 +400,7 @@ export function validateCSSSourceMap(
   logicalPath: string,
 ): void {
   requireSafeSourcePath(logicalPath);
-  if (typeof sourceMap !== "string" || !isWellFormed(sourceMap)) {
+  if (typeof sourceMap !== "string" || !isWellFormedString(sourceMap)) {
     throw new TypeError(
       `CSS source map must be a well-formed string for ${logicalPath}`,
     );
@@ -473,7 +469,7 @@ export function validateCSSSourceMap(
     sources.length === 0 ||
     !isDenseArray(names, MAX_CSS_SELECTOR_TOKENS) ||
     typeof mappings !== "string" ||
-    !isWellFormed(mappings)
+    !isWellFormedString(mappings)
   ) {
     throw invalidSourceMap(logicalPath);
   }
@@ -494,7 +490,7 @@ export function validateCSSSourceMap(
     if (
       typeof name !== "string" ||
       name.length > MAX_CSS_SELECTOR_TOKEN_CHARACTERS ||
-      !isWellFormed(name) ||
+      !isWellFormedString(name) ||
       hasControlOrLineSeparator(name)
     ) {
       throw invalidSourceMap(logicalPath);
@@ -523,7 +519,7 @@ export function validateCSSSourceMap(
       if (
         content !== null &&
         (typeof content !== "string" ||
-          !isWellFormed(content) ||
+          !isWellFormedString(content) ||
           encodedLength(content) > MAX_CSS_FILE_BYTES)
       ) {
         throw invalidSourceMap(logicalPath);
@@ -574,7 +570,7 @@ function validateResult(
     "CSSOptimizationEngine result",
     true,
   );
-  if (typeof css !== "string" || !isWellFormed(css)) {
+  if (typeof css !== "string" || !isWellFormedString(css)) {
     throw new TypeError(
       "CSSOptimizationEngine must return CSS as a well-formed string",
     );

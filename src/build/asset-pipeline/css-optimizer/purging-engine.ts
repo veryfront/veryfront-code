@@ -9,6 +9,7 @@ import {
   type CSSPurgingResult,
 } from "#veryfront/extensions/css/index.ts";
 import { resolve } from "#veryfront/extensions/contracts.ts";
+import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 import {
   MAX_CSS_FILE_BYTES,
   MAX_CSS_FILES,
@@ -31,7 +32,6 @@ const apply = Reflect.apply;
 const encode = TextEncoder.prototype.encode;
 const executeRegularExpression = RegExp.prototype.exec;
 const freeze = Object.freeze;
-const isWellFormed = String.prototype.isWellFormed;
 const normalize = String.prototype.normalize;
 const stringCharacterCodeAt = String.prototype.charCodeAt;
 const weakSetAdd = WeakSet.prototype.add;
@@ -164,7 +164,7 @@ function snapshotSafelist(value: unknown): readonly string[] {
       typeof candidate !== "string" ||
       candidate.length === 0 ||
       candidate.length > MAX_CSS_SELECTOR_TOKEN_CHARACTERS ||
-      !apply(isWellFormed, candidate, []) ||
+      !isWellFormedString(candidate) ||
       apply(normalize, candidate, ["NFC"]) !== candidate ||
       hasControlCharacters(candidate) ||
       matches(/\s/u, candidate)
