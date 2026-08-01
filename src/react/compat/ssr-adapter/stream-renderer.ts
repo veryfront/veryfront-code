@@ -4,7 +4,7 @@ import { getReactVersionInfo } from "../version-detector/index.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import { renderToStringAdapter } from "./string-renderer.ts";
 import type { SSROptions, SSRResult } from "./types.ts";
-import { createError, toError } from "#veryfront/errors";
+import { createError, ensureError, toError } from "#veryfront/errors";
 import { isDebugEnvEnabled } from "#veryfront/config/env.ts";
 import {
   getSSRAdapterTimeoutMs,
@@ -30,6 +30,17 @@ function notifyObserver<Args extends unknown[]>(
   } catch (error) {
     logger.error(`SSR ${name} observer failed`, error);
   }
+}
+
+function createErrorReporter(
+  observer: SSROptions["onError"],
+): (error: unknown) => void {
+  const reported = new Set<unknown>();
+  return (error) => {
+    if (reported.has(error)) return;
+    reported.add(error);
+    notifyObserver("onError", observer, ensureError(error));
+  };
 }
 
 export function __setSSRStreamTimeoutForTests(timeoutMs: number): void {
@@ -58,6 +69,7 @@ async function renderToReadableStreamImpl(
   const debug = isDebugMode();
   const start = performance.now();
   const timeoutMs = getSSRAdapterTimeoutMs();
+  const reportError = createErrorReporter(options.onError);
 
   const controller = new AbortController();
   // Track whether the abort was triggered by our own timeout so we can detect
@@ -86,7 +98,7 @@ async function renderToReadableStreamImpl(
         }
 
         logger.error("SSR_ERROR React streaming error", error);
-        notifyObserver("onError", options.onError, error as Error);
+        reportError(error);
       },
       progressiveChunkSize: options.progressiveChunkSize,
     });
@@ -120,7 +132,7 @@ async function renderToReadableStreamImpl(
     }
 
     logger.error("SSR_ERROR renderToReadableStream failed", { durationMs }, error);
-    notifyObserver("onError", options.onError, error as Error);
+    reportError(error);
     throw error;
   }
 }
@@ -143,6 +155,7 @@ function renderToPipeableStreamImpl(
   const renderToPipeableStream = server.renderToPipeableStream;
   const start = performance.now();
   const timeoutMs = getSSRAdapterTimeoutMs();
+  const reportError = createErrorReporter(options.onError);
   // Track whether the rejection was caused by our own timeout so the catch
   // block can detect it without string-matching the error message.
   let timedOut = false;
@@ -206,7 +219,7 @@ function renderToPipeableStreamImpl(
         onError: (error: unknown) => {
           logger.error("SSR_ERROR pipeable stream error", error);
           rejectAllReady?.(error);
-          notifyObserver("onError", options.onError, error as Error);
+          reportError(error);
         },
         onAllReady: () => {
           logger.debug("SSR pipeable stream all ready");
@@ -239,7 +252,7 @@ function renderToPipeableStreamImpl(
     const durationMs = Math.round(performance.now() - start);
 
     if (!timedOut) logger.error("SSR_ERROR renderToPipeableStream failed", { durationMs }, error);
-    notifyObserver("onError", options.onError, error as Error);
+    reportError(error);
     throw error;
   });
 }
