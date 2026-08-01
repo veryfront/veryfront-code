@@ -6,7 +6,7 @@ import { RenderPipeline, type RenderPipelineConfig } from "./pipeline.ts";
 import type { RenderOptions } from "./types.ts";
 import { markBuildFailure } from "./module-loader/build-failure.ts";
 import { cachePageCss, getPageCssCacheKey } from "./css-cache.ts";
-import { cacheCSSAsync } from "#veryfront/html/styles-builder/index.ts";
+import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
@@ -1115,8 +1115,8 @@ describe("RenderPipeline behavior", () => {
     const projectId = "proj-css-data-reuse";
     const pagePath = "/project/pages/behavior-css-data-reuse.tsx";
     const layoutPath = "/project/layouts/root.tsx";
-    const cssHash = "cssdata1";
     const expectedCss = ".from-data{color:blue}";
+    const cssHash = hashCSS(expectedCss);
     let pageDataCalls = 0;
     let layoutDataCalls = 0;
     let ssrOptions: Record<string, unknown> | undefined;
@@ -1173,10 +1173,7 @@ describe("RenderPipeline behavior", () => {
       } as any,
     });
 
-    await cacheCSSAsync(expectedCss, cssHash, {
-      candidates: ["from-data"],
-      stylesheet: '@import "tailwindcss";',
-    });
+    await cacheCSSAsync(expectedCss, cssHash);
 
     (pipeline as any).loadModule = async (path: string) => {
       if (path === pagePath) {
@@ -1224,13 +1221,10 @@ describe("RenderPipeline behavior", () => {
     const slug = "/behavior-ssr-css";
     const projectId = "proj-ssr-css";
     const pipeline = createPipeline("/project/pages/behavior-ssr-css.tsx");
-    const cssHash = "abc12345";
     const expectedCss = ".from-ssr{color:red}";
+    const cssHash = hashCSS(expectedCss);
 
-    await cacheCSSAsync(expectedCss, cssHash, {
-      candidates: ["from-ssr"],
-      stylesheet: '@import "tailwindcss";',
-    });
+    await cacheCSSAsync(expectedCss, cssHash);
 
     (pipeline as any).loadModule = async () => ({});
     (pipeline as any).renderPage = async () => ({

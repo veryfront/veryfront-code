@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import {
   assertEquals,
   assertExists,
