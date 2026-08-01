@@ -39,6 +39,17 @@ describe("firstPartyExtensionManifestPaths", () => {
 });
 
 describe("manifestDependencies", () => {
+  it("pins the audit-clean Sharp release and its Node runtime floor", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile("extensions/ext-image-sharp/deno.json"),
+    ) as ExtensionManifest & {
+      veryfront?: { npm?: { nodeEngine?: string } };
+    };
+
+    assertEquals(manifestDependencies(manifest), { sharp: "0.35.3" });
+    assertEquals(manifest.veryfront?.npm?.nodeEngine, ">=20.9.0");
+  });
+
   it("pins bash-tool's required AI SDK peer in the sandbox extension", async () => {
     const manifest = JSON.parse(
       await Deno.readTextFile(
