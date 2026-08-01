@@ -696,6 +696,23 @@ export function trySnapshotContractForUse<T>(
   return undefined;
 }
 
+/**
+ * Capture only a loader-generation-owned contract for security-sensitive use.
+ *
+ * Ownerless registrations remain available to compatibility consumers through
+ * `trySnapshotContractForUse`, but cannot satisfy a contract whose safety
+ * depends on retirement fencing and active-use lease drainage.
+ */
+export function trySnapshotGenerationOwnedContractForUse<T>(
+  name: string,
+): Readonly<ContractSnapshot<T>> | undefined {
+  const snapshot = trySnapshotContractForUse<T>(name);
+  if (snapshot === undefined || snapshot.reference.entry.generation === undefined) {
+    return undefined;
+  }
+  return snapshot;
+}
+
 /** Acquire active-use ownership immediately before invoking a contract. */
 export function acquireContractLease<T>(
   reference: Readonly<ContractReference<T>>,

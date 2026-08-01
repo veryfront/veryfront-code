@@ -22,6 +22,7 @@ import {
   stageContract,
   tryResolveRegisteredContract,
   trySnapshotContractForUse,
+  trySnapshotGenerationOwnedContractForUse,
 } from "./contract-registry-internal.ts";
 
 const createObject = Object.create;
@@ -71,6 +72,27 @@ function createCommittedGeneration(
 describe("contract registry lifecycle state", () => {
   afterEach(() => {
     resetContractRegistry();
+  });
+
+  it("distinguishes generation-owned snapshots from ownerless compatibility entries", () => {
+    const ownerless = Object.freeze({ id: "ownerless" });
+    registerUnmanagedContract("OwnedOnlyContract", ownerless);
+    assertEquals(
+      trySnapshotGenerationOwnedContractForUse("OwnedOnlyContract"),
+      undefined,
+    );
+
+    const owned = Object.freeze({ id: "owned" });
+    const generation = beginContractGeneration();
+    stageContract(generation, "OwnedOnlyContract", owned);
+    commitContractGeneration(generation);
+    const snapshot = trySnapshotGenerationOwnedContractForUse<{ id: string }>(
+      "OwnedOnlyContract",
+    );
+
+    assertEquals(snapshot?.implementation, owned);
+    sealContractGeneration(generation);
+    completeContractGenerationRetirement(generation);
   });
 
   it("ignores an inherited generation owner on unmanaged entries", () => {
