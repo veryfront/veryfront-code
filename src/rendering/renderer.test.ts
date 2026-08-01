@@ -16,7 +16,7 @@ import { stub } from "#std/testing/mock";
 import { FakeTime } from "#std/testing/time";
 import type { CachePayload, CacheStore } from "./cache/types.ts";
 import type { RenderContext } from "./context/render-context.ts";
-import type { RenderOptions, RenderResult } from "./orchestrator/types.ts";
+import type { PageDataResponse, RenderOptions, RenderResult } from "./orchestrator/types.ts";
 import { destroyRenderer, getRenderer, initializeRenderer, Renderer } from "./renderer.ts";
 import {
   acquireProjectSlot,
@@ -26,7 +26,10 @@ import {
   RENDER_PER_PROJECT_LIMIT,
   renderSemaphore,
 } from "./renderer-concurrency.ts";
-import { clearReactVersionCache } from "#veryfront/transforms/esm/package-registry.ts";
+import {
+  clearReactVersionCache,
+  type DependencyPinningSource,
+} from "#veryfront/transforms/esm/package-registry.ts";
 
 function getEnv(name: string): string | undefined {
   // deno-lint-ignore no-explicit-any
@@ -1815,6 +1818,88 @@ describe("Renderer release asset cache isolation", () => {
 });
 
 describe("Renderer dependency pin cache isolation", () => {
+  it("forwards preview credentials through renderer-created pinning sources", async () => {
+    const store = createInMemoryStore();
+    const renderer = new Renderer({ cache: { store } });
+    (renderer as unknown as { initialized: boolean }).initialized = true;
+
+    const observedSources: Array<DependencyPinningSource | undefined> = [];
+    const observeSource = (options?: RenderOptions): void => {
+      const source = options?.dependencyPinningSource;
+      observedSources.push(
+        typeof source === "object" && source !== null ? source : undefined,
+      );
+    };
+    (renderer as unknown as {
+      createServicesForContext: () => {
+        pipeline: {
+          renderPage: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<RenderResult>;
+          resolvePageData: (
+            slug: string,
+            options?: RenderOptions,
+          ) => Promise<PageDataResponse>;
+        };
+      };
+    }).createServicesForContext = () => ({
+      pipeline: {
+        renderPage: (_slug, options) => {
+          observeSource(options);
+          return Promise.resolve({
+            html: "<html>preview</html>",
+            frontmatter: {},
+            headings: [],
+            stream: null,
+          });
+        },
+        resolvePageData: (_slug, options) => {
+          observeSource(options);
+          return Promise.resolve({
+            slug: "/data",
+            pagePath: "pages/data.tsx",
+            pageType: "tsx",
+            layouts: [],
+            providers: [],
+            frontmatter: {},
+            props: {},
+            params: {},
+            layoutProps: {},
+            buildVersion: { framework: "test", serverStart: 0 },
+          });
+        },
+      },
+    });
+
+    const ctx = {
+      ...makeRenderContext(),
+      isLocalProject: false,
+      environment: "preview",
+      contentSourceId: "preview-feature",
+      releaseId: undefined,
+      branch: "feature",
+      proxyToken: "request-scoped-token",
+      cachePrefix: buildRenderCachePrefix("proj-1", "preview", "feature"),
+    } as RenderContext;
+
+    try {
+      await renderer.renderPage("/render", ctx);
+      await renderer.resolvePageData("/data", ctx);
+
+      assertEquals(observedSources.length, 2);
+      for (const source of observedSources) {
+        assertEquals(source?.dependencyWritebackToken, "request-scoped-token");
+        assertEquals(source?.dependencyWritebackTarget, {
+          kind: "branch",
+          branch: "feature",
+        });
+      }
+    } finally {
+      await renderer.destroy();
+    }
+  });
+
   it("bounds the complete API render key while preserving the flag-off override", () => {
     const renderer = new Renderer();
     const buildCacheKey = (renderer as unknown as {

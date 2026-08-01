@@ -373,13 +373,14 @@ export function _setDependencyResolutionPosterForTest(
  * Fire-and-forget POST to the platform API to resolve and persist dependency
  * declarations.
  *
- * Follows the same auth pattern as the Veryfront API transport: Bearer token
- * from the environment config. Silently ignores all failures including 404
- * (endpoint may not exist yet while the API track is built in parallel).
+ * Uses the request-scoped bearer token when provided, with the runtime
+ * environment token as a fallback. Silently ignores all failures including
+ * 404 (endpoint may not exist yet while the API track is built in parallel).
  *
  * @param projectId  - project identifier from the render context
  * @param specifiers - raw bare names or package declarations such as
  *                     "pkg", "pkg@^1", "pkg@next", or "pkg@1.2.3"
+ * @param target - canonical main or branch package.json write-back target
  * @param expectedDeclarations - package declarations observed in the immutable
  *                               caller snapshot; null means the package was absent
  * @param authToken - request-scoped bearer token; the runtime token remains the fallback
