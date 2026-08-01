@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  createTestCSSPurgingEngine,
+  withTestCSSPurgingEngine,
+} from "../../../tests/_helpers/css-purging-engine.ts";
 import { CSSOptimizer, loadCSSManifest, optimizeCSS } from "./css-optimizer/index.ts";
 import { LightningCSSOptimizationEngine } from "../../../extensions/ext-css-lightning/src/index.ts";
 
@@ -148,7 +152,7 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
     });
   });
 
-  it("extracts critical and remaining CSS with parser-backed rules", async () => {
+  it("extracts critical and remaining CSS through the configured provider", async () => {
     await withProject(async (projectDir) => {
       const cssPath = join(projectDir, "styles/main.css");
       await Deno.writeTextFile(
@@ -157,14 +161,24 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
           ".footer { color: blue; } " +
           "@media (min-width: 40rem) { .header { display: flex; } .aside { display: block; } }",
       );
-      const optimizer = new CSSOptimizer(
-        { projectDir, minify: true },
-        undefined,
-        { optimizationEngine },
-      );
-      const result = await optimizer.extractCriticalCSS(
-        cssPath,
-        '<header class="header">Title</header>',
+      const result = await withTestCSSPurgingEngine(
+        createTestCSSPurgingEngine(() =>
+          Promise.resolve({
+            css: ".header { color: red; } " +
+              "@media (min-width: 40rem) { .header { display: flex; } }",
+            rejectedCSS: ".footer { color: blue; } " +
+              "@media (min-width: 40rem) { .aside { display: block; } }",
+          })
+        ),
+        () =>
+          new CSSOptimizer(
+            { projectDir, minify: true },
+            undefined,
+            { optimizationEngine },
+          ).extractCriticalCSS(
+            cssPath,
+            '<header class="header">Title</header>',
+          ),
       );
 
       assertEquals(result.critical.includes(".header"), true);
