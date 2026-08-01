@@ -108,7 +108,7 @@ export class StylesCSSHandler extends BaseHandler {
           });
           throw error;
         }
-        const generationSession = acquireCSSGenerationSession(true);
+        const generationSession = acquireCSSGenerationSession(false);
         const resolvedCss = rawCss ?? generationSession.compilationSession.defaultStylesheet;
         const artifactStyleProfileHash = composeCSSStyleProfileHash(
           styleProfile.hash,
@@ -291,7 +291,7 @@ body::before {
     const projectScope = ctx.projectSlug ?? ctx.projectDir;
 
     return getProjectCSS(projectScope, rawCss, candidates, {
-      minify: true,
+      minify: generationSession.minify,
       environment: "preview",
       buildMode: "production",
     }, { generationSession });
@@ -342,7 +342,7 @@ body::before {
       {
         cssPipelineIdentity: generationSession.cacheIdentity,
         candidatesHash: hashCandidates(candidates),
-        minify: true,
+        minify: generationSession.minify,
         environment: "preview",
         buildMode: "production",
       },
