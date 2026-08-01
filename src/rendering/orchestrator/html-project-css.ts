@@ -5,11 +5,13 @@ import { warmPreparedCSSArtifactFromFiles } from "#veryfront/html/styles-builder
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type {
-  FSAdapter,
-  ResolvedContentContext,
-} from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { rendererLogger } from "#veryfront/utils";
+import {
+  captureProjectStyleSourceSnapshot,
+  isProjectStyleSourceSnapshot,
+  type ProjectStyleSourceSnapshot,
+} from "#veryfront/html/styles-builder/project-style-source-snapshot.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { getProjectCandidates } from "./css-candidate-manifest.ts";
 import { getRenderCSSGenerationSession } from "./css-generation-session.ts";
@@ -30,24 +32,33 @@ interface ProjectCssDeps {
   createStyleScopeProfile?: typeof createStyleScopeProfile;
   getProjectCSS?: typeof getProjectCSS;
   getProjectContentVersion?: (
-    config: Pick<ProjectCssConfig, "adapter" | "mode">,
+    snapshot: ProjectStyleSourceSnapshot | null,
   ) => string | undefined;
   getProjectCandidates?: typeof getProjectCandidates;
   resolveStyleContentVersion?: typeof resolveStyleContentVersion;
   warmPreparedCSSArtifactFromFiles?: typeof warmPreparedCSSArtifactFromFiles;
 }
 
-type SourceFileEntry = { path: string; content?: string };
+const projectStyleSourceSnapshots = new WeakMap<
+  HTMLGenerationContext,
+  Promise<ProjectStyleSourceSnapshot | null>
+>();
 
-type FsWithUnderlyingAdapter = { getUnderlyingAdapter: () => FSAdapter };
-
-function hasUnderlyingAdapter(fs: unknown): fs is FsWithUnderlyingAdapter {
-  return typeof (fs as Partial<FsWithUnderlyingAdapter>).getUnderlyingAdapter === "function";
-}
-
-function getUnderlyingFsAdapter(adapter: RuntimeAdapter): FSAdapter | undefined {
-  if (!hasUnderlyingAdapter(adapter.fs)) return undefined;
-  return adapter.fs.getUnderlyingAdapter();
+function getProjectStyleSourceSnapshot(
+  config: ProjectCssConfig,
+  context: HTMLGenerationContext,
+): Promise<ProjectStyleSourceSnapshot | null> {
+  let snapshot = projectStyleSourceSnapshots.get(context);
+  if (snapshot === undefined) {
+    snapshot = captureProjectStyleSourceSnapshot({
+      adapter: config.adapter,
+      projectDir: config.projectDir,
+      config: config.config,
+      includeStylesheets: true,
+    });
+    projectStyleSourceSnapshots.set(context, snapshot);
+  }
+  return snapshot;
 }
 
 export function buildRouteManifestKey(pagePath: string, projectDir: string): string {
@@ -58,25 +69,17 @@ export function buildRouteManifestKey(pagePath: string, projectDir: string): str
 }
 
 export function getProjectContentVersion(
-  config: Pick<ProjectCssConfig, "adapter" | "mode">,
+  snapshot: ProjectStyleSourceSnapshot | null,
   deps: Pick<ProjectCssDeps, "resolveStyleContentVersion"> = {},
 ): string | undefined {
-  const fsAdapter = getUnderlyingFsAdapter(config.adapter) as {
-    getContentContext?: () => ResolvedContentContext | null;
-    getProjectData?: () => { updated_at?: string } | undefined;
-  } | undefined;
-
-  if (!fsAdapter) return undefined;
-
-  const contentContext = typeof fsAdapter.getContentContext === "function"
-    ? fsAdapter.getContentContext()
-    : null;
-  if (contentContext) {
-    const resolveContentVersion = deps.resolveStyleContentVersion ?? resolveStyleContentVersion;
-    return resolveContentVersion(contentContext);
+  if (snapshot !== null && !isProjectStyleSourceSnapshot(snapshot)) {
+    throw new TypeError("Project content version requires an admitted source snapshot");
   }
-
-  return fsAdapter.getProjectData?.()?.updated_at;
+  if (snapshot?.contentContext) {
+    const resolveContentVersion = deps.resolveStyleContentVersion ?? resolveStyleContentVersion;
+    return resolveContentVersion(snapshot.contentContext);
+  }
+  return snapshot?.projectUpdatedAt;
 }
 
 export function startProjectCSSPreparation(
@@ -118,42 +121,40 @@ export function startPreparedCSSWarmup(
   const usesPreviewStylesheet = isLocalProject || htmlOptions.environment !== "production";
   if (!usesPreviewStylesheet) return;
 
-  const fsAdapter = getUnderlyingFsAdapter(config.adapter) as {
-    getAllSourceFiles?: () => SourceFileEntry[] | Promise<SourceFileEntry[]>;
-  } | undefined;
-  if (typeof fsAdapter?.getAllSourceFiles !== "function") return;
-
   const projectScope = htmlOptions.projectSlug || htmlOptions.projectId || context.slug;
   if (!projectScope || projectScope === "default") return;
 
-  const resolveProjectContentVersion = deps.getProjectContentVersion ?? getProjectContentVersion;
-  const projectVersion = resolveProjectContentVersion(config) ??
-    (config.mode === "development" ? "dev" : "unknown");
   const createStyleProfile = deps.createStyleScopeProfile ?? createStyleScopeProfile;
   const warmPreparedCss = deps.warmPreparedCSSArtifactFromFiles ?? warmPreparedCSSArtifactFromFiles;
   const styleProfile = createStyleProfile(config.config);
   const stylesheetPath = config.config?.styles?.stylesheet;
   const generationSession = getRenderCSSGenerationSession(context.options);
 
-  Promise.resolve(fsAdapter.getAllSourceFiles())
-    .then((files) =>
-      warmPreparedCss({
+  getProjectStyleSourceSnapshot(config, context)
+    .then((snapshot) => {
+      if (snapshot === null || snapshot.files === null) return undefined;
+      const resolveProjectContentVersion = deps.getProjectContentVersion ??
+        getProjectContentVersion;
+      const projectVersion = resolveProjectContentVersion(snapshot) ??
+        (config.mode === "development" ? "dev" : "unknown");
+      return warmPreparedCss({
         projectSlug: projectScope,
         projectVersion,
         projectDir: config.projectDir,
-        files,
+        files: snapshot.files,
         styleProfile,
         stylesheetPath,
         minify: true,
         environment: "preview",
         buildMode: "production",
         generationSession,
-      })
-    )
+      });
+    })
     .catch((error) => {
       logger.debug("Prepared CSS warmup skipped after source scan failure", {
         projectScope,
-        error: error instanceof Error ? error.message : String(error),
+        phase: "source-snapshot-or-warmup-rejected",
+        error: snapshotThrowableDiagnostic(error),
       });
     });
 }
@@ -168,17 +169,13 @@ export async function extractProjectClassesForRoute(
   > = {},
 ): Promise<Set<string>> {
   const classes = new Set<string>();
-  const fsAdapter = getUnderlyingFsAdapter(config.adapter) as {
-    getAllSourceFiles?: () => SourceFileEntry[] | Promise<SourceFileEntry[]>;
-  } | undefined;
-
-  if (typeof fsAdapter?.getAllSourceFiles !== "function") return classes;
-
-  const files = await fsAdapter.getAllSourceFiles();
+  const snapshot = await getProjectStyleSourceSnapshot(config, context);
+  if (snapshot === null || snapshot.files === null) return classes;
+  const files = snapshot.files;
   const projectScope = context.options?.projectSlug || context.options?.projectId ||
     config.projectDir;
   const resolveProjectContentVersion = deps.getProjectContentVersion ?? getProjectContentVersion;
-  const projectVersion = resolveProjectContentVersion(config) ??
+  const projectVersion = resolveProjectContentVersion(snapshot) ??
     (config.mode === "development" ? "dev" : "unknown");
 
   const createStyleProfile = deps.createStyleScopeProfile ?? createStyleScopeProfile;

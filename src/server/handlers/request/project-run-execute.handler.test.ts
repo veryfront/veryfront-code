@@ -255,10 +255,16 @@ function createStyleArtifactCtx(
       releaseId?: string;
     };
   },
-): { ctx: HandlerContext; readCalls: string[]; sourceFileCalls: { count: number } } {
+): {
+  ctx: HandlerContext;
+  readCalls: string[];
+  sourceFileCalls: { count: number };
+  providerCalls: { underlying: number; contentContext: number; unboundedReads: number };
+} {
   const ctx = createCtx(publicKeyPem);
   const readCalls: string[] = [];
   const sourceFileCalls = { count: 0 };
+  const providerCalls = { underlying: 0, contentContext: 0, unboundedReads: 0 };
   const stylesheetPath = options.stylesheetPath ?? "src/styles.css";
   const underlyingAdapter = {
     async getAllSourceFiles() {
@@ -266,6 +272,7 @@ function createStyleArtifactCtx(
       return options.files;
     },
     getContentContext() {
+      providerCalls.contentContext++;
       return options.contentContext ?? {
         sourceType: "environment" as const,
         projectSlug: "demo-project",
@@ -280,19 +287,32 @@ function createStyleArtifactCtx(
   ctx.adapter = ({
     ...ctx.adapter,
     fs: {
-      getUnderlyingAdapter: () => underlyingAdapter,
-      async readFile(path: string) {
+      getUnderlyingAdapter: () => {
+        providerCalls.underlying++;
+        return underlyingAdapter;
+      },
+      readFile(path: string) {
+        providerCalls.unboundedReads++;
+        return Promise.reject(new Error(`Unbounded stylesheet read must not run: ${path}`));
+      },
+      async readFileBytesWithinLimit(path: string, byteLimit: number) {
         readCalls.push(path);
         if (path === stylesheetPath) {
           if (options.stylesheetReadError) throw options.stylesheetReadError;
-          if (options.stylesheet !== undefined) return options.stylesheet;
+          if (options.stylesheet !== undefined) {
+            const bytes = new TextEncoder().encode(options.stylesheet);
+            if (bytes.byteLength > byteLimit) {
+              throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+            }
+            return bytes;
+          }
         }
         throw Object.assign(new Error(`Missing test file: ${path}`), { code: "ENOENT" });
       },
     },
   } as unknown) as HandlerContext["adapter"];
 
-  return { ctx, readCalls, sourceFileCalls };
+  return { ctx, readCalls, sourceFileCalls, providerCalls };
 }
 
 function testStyleProfileHash(stylesheetPath = "src/styles.css"): string {
@@ -672,15 +692,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         body,
         { "x-token": "test-token" },
       );
-      const { ctx, readCalls, sourceFileCalls } = createStyleArtifactCtx(publicKeyPem, {
-        files: [{
-          path: "pages/index.tsx",
-          content:
-            'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
-        }],
-        stylesheet: "@tailwind utilities; .from-css { color: red; }",
-        stylesheetPath: "src/styles.css",
-      });
+      const { ctx, readCalls, sourceFileCalls, providerCalls } = createStyleArtifactCtx(
+        publicKeyPem,
+        {
+          files: [{
+            path: "pages/index.tsx",
+            content:
+              'export default function Page() { return <main className="px-4 text-red-500">Hi</main>; }',
+          }],
+          stylesheet: "@tailwind utilities; .from-css { color: red; }",
+          stylesheetPath: "src/styles.css",
+        },
+      );
       const recorder = createStyleArtifactFetchRecorder();
 
       const result = await withMockFetch(
@@ -697,6 +720,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(json.result.selector, { type: "environment", value: "Preview" });
       assertEquals(json.result.kind, "style_artifact");
       assertEquals(sourceFileCalls.count, 1);
+      assertEquals(providerCalls.underlying, 1);
+      assertEquals(providerCalls.contentContext, 1);
+      assertEquals(providerCalls.unboundedReads, 0);
       assertEquals(readCalls, ["src/styles.css"]);
       assertEquals(recorder.upserts.length, 1);
       assertEquals(recorder.upserts[0]?.environment_name, "Preview");

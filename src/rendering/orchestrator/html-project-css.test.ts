@@ -5,6 +5,7 @@ import {
   buildRouteManifestKey,
   extractProjectClassesForRoute,
   getProjectContentVersion,
+  startPreparedCSSWarmup,
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
 import { CSS_GENERATION_SESSION } from "./css-generation-session.ts";
@@ -15,6 +16,10 @@ import {
   createTestCSSOptimizationEngine,
   withTestCSSOptimizationEngine,
 } from "../../../tests/_helpers/css-optimization-engine.ts";
+import {
+  createProjectStyleSourceSnapshot,
+  snapshotResolvedStyleContentContext,
+} from "#veryfront/html/styles-builder/project-style-source-snapshot.ts";
 
 describe("rendering/orchestrator/html-project-css", () => {
   describe("buildRouteManifestKey", () => {
@@ -35,36 +40,31 @@ describe("rendering/orchestrator/html-project-css", () => {
 
   describe("getProjectContentVersion", () => {
     it("prefers the adapter content context version", () => {
-      const version = getProjectContentVersion({
-        mode: "production",
-        adapter: {
-          fs: {
-            getUnderlyingAdapter: () => ({
-              getContentContext: () => ({
-                sourceType: "branch",
-                projectSlug: "demo",
-                branch: "feature/refactor",
-              }),
-              getProjectData: () => ({ updated_at: "2025-01-01T00:00:00Z" }),
-            }),
-          },
-        } as any,
-      });
+      const version = getProjectContentVersion(
+        createProjectStyleSourceSnapshot(
+          "provider",
+          snapshotResolvedStyleContentContext({
+            sourceType: "branch",
+            projectSlug: "demo",
+            branch: "feature/refactor",
+          }),
+          null,
+          "2025-01-01T00:00:00Z",
+        ),
+      );
 
       assertEquals(version, "branch:feature/refactor");
     });
 
     it("falls back to project updated_at when no content context is available", () => {
-      const version = getProjectContentVersion({
-        mode: "production",
-        adapter: {
-          fs: {
-            getUnderlyingAdapter: () => ({
-              getProjectData: () => ({ updated_at: "2025-01-01T00:00:00Z" }),
-            }),
-          },
-        } as any,
-      });
+      const version = getProjectContentVersion(
+        createProjectStyleSourceSnapshot(
+          "provider",
+          null,
+          null,
+          "2025-01-01T00:00:00Z",
+        ),
+      );
 
       assertEquals(version, "2025-01-01T00:00:00Z");
     });
@@ -153,6 +153,136 @@ describe("rendering/orchestrator/html-project-css", () => {
   });
 
   describe("extractProjectClassesForRoute", () => {
+    it("reuses one provider snapshot for route candidates and prepared warmup", async () => {
+      let underlyingCalls = 0;
+      let contextCalls = 0;
+      let listingCalls = 0;
+      let candidateFiles: unknown;
+      let warmupFiles: unknown;
+      let resolveWarmup!: () => void;
+      const warmed = new Promise<void>((resolve) => {
+        resolveWarmup = resolve;
+      });
+      const adapter = {
+        fs: {
+          getUnderlyingAdapter() {
+            underlyingCalls++;
+            return {
+              getContentContext() {
+                contextCalls++;
+                return {
+                  sourceType: "branch" as const,
+                  projectSlug: "demo",
+                  branch: "main",
+                };
+              },
+              getAllSourceFiles() {
+                listingCalls++;
+                return [
+                  {
+                    path: "/project/app/page.tsx",
+                    content: '<main className="safe" />',
+                  },
+                  {
+                    path: "/project/styles/theme.css",
+                    content: ".safe { color: green; }",
+                  },
+                ];
+              },
+            };
+          },
+        },
+      } as any;
+      const config = {
+        projectDir: "/project",
+        adapter,
+        config: {},
+        mode: "development" as const,
+      };
+      const context = {
+        slug: "docs",
+        pageInfo: { entity: { path: "/project/app/page.tsx" } },
+        nestedLayouts: [],
+        options: { projectSlug: "demo" },
+      } as any;
+
+      await extractProjectClassesForRoute(config, context, undefined, {
+        getProjectCandidates: (input) => {
+          candidateFiles = input.files;
+          return new Set(["safe"]);
+        },
+      });
+      startPreparedCSSWarmup(
+        config,
+        context,
+        {
+          environment: "preview",
+          isLocalProject: false,
+          projectSlug: "demo",
+          mode: "production",
+        } as any,
+        {
+          warmPreparedCSSArtifactFromFiles: (input) => {
+            warmupFiles = input.files;
+            resolveWarmup();
+            return Promise.resolve(true);
+          },
+        },
+      );
+      await warmed;
+
+      assertEquals(underlyingCalls, 1);
+      assertEquals(contextCalls, 1);
+      assertEquals(listingCalls, 1);
+      assertStrictEquals(candidateFiles, warmupFiles);
+      assertEquals(Object.isFrozen(candidateFiles), true);
+      assertEquals(
+        (warmupFiles as Array<{ path: string }>).some((file) =>
+          file.path === "/project/styles/theme.css"
+        ),
+        true,
+      );
+    });
+
+    it("keeps warmup diagnostics hook-free for hostile throwables", async () => {
+      let trapCalls = 0;
+      const failure = new Proxy(new Error("source scan failed"), {
+        get(target, property, receiver) {
+          trapCalls++;
+          return Reflect.get(target, property, receiver);
+        },
+        getPrototypeOf(target) {
+          trapCalls++;
+          return Reflect.getPrototypeOf(target);
+        },
+      });
+      const context = { slug: "docs", options: { projectSlug: "demo" } } as any;
+      startPreparedCSSWarmup(
+        {
+          projectDir: "/project",
+          adapter: {
+            fs: {
+              getUnderlyingAdapter: () => ({
+                getAllSourceFiles: () => Promise.reject(failure),
+              }),
+            },
+          } as any,
+          config: {} as any,
+          mode: "development",
+        },
+        context,
+        {
+          environment: "preview",
+          isLocalProject: false,
+          projectSlug: "demo",
+          mode: "production",
+        } as any,
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assertEquals(trapCalls, 0);
+    });
+
     it("includes candidates from component files outside the route module graph", async () => {
       const classes = await extractProjectClassesForRoute(
         {
@@ -206,7 +336,11 @@ describe("rendering/orchestrator/html-project-css", () => {
           adapter: {
             fs: {
               getUnderlyingAdapter: () => ({
-                getAllSourceFiles: () => Promise.resolve([{ path: "/project/pages/docs.tsx" }]),
+                getAllSourceFiles: () =>
+                  Promise.resolve([{
+                    path: "/project/pages/docs.tsx",
+                    content: "export default null;",
+                  }]),
               }),
             },
           } as any,

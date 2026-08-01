@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "../../../html/styles-builder/__tests__/css-processor-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter, type MockRuntimeAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -38,6 +38,7 @@ import { CSSOptimizationEngineName, CSSProcessorName } from "#veryfront/extensio
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import { StylesCSSHandler } from "./styles-css.handler.ts";
+import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 
 const TEST_STYLESHEET = `@import "tailwindcss";`;
 const PROJECT_SLUG = "dreamy-haven";
@@ -252,6 +253,30 @@ describe("server/handlers/dev/styles-css.handler", () => {
       String(problem.detail).includes("requires request-scoped style artifact access"),
       true,
     );
+  });
+
+  it("rejects an accessor-backed filesystem artifact capability without invoking it", async () => {
+    let getterCalls = 0;
+    const adapter = createHandlerAdapter(
+      [{ path: "/project/pages/index.tsx", content: '<div className="text-red-500">Hi</div>' }],
+      { sourceType: "release", projectSlug: PROJECT_SLUG, releaseId: "rel-accessor" },
+      branchOptOutRegistry,
+    );
+    Object.defineProperty(adapter.fs, "getStyleArtifactAccess", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return () => Promise.reject(new Error("must not run"));
+      },
+    });
+
+    const result = await new StylesCSSHandler().handle(
+      new Request("http://localhost/_vf_styles/styles.css"),
+      makeCtx(adapter),
+    );
+
+    assertEquals(result.response!.status, 502);
+    assertEquals(getterCalls, 0);
   });
 
   it("fails closed when style artifact access has no exact source selector", async () => {
@@ -595,6 +620,108 @@ describe("server/handlers/dev/styles-css.handler", () => {
     }
   });
 
+  it("rejects proxied artifact access, context, registry, and operations without traps", async () => {
+    const files = [{
+      path: "/project/pages/index.tsx",
+      content: '<div className="text-red-500">Hi</div>',
+    }];
+    const contentContext: ResolvedContentContext = {
+      sourceType: "release",
+      projectSlug: PROJECT_SLUG,
+      releaseId: "release-proxy",
+    };
+    const registry: StyleArtifactRegistry = {
+      resolveStyleArtifact: () => Promise.reject(new Error("not used")),
+      ensureStyleArtifactBuild: () => Promise.reject(new Error("not used")),
+      upsertStyleArtifact: () => Promise.reject(new Error("not used")),
+    };
+    const cases: Array<{
+      label: string;
+      access: unknown;
+      trapCalls: () => number;
+    }> = [];
+
+    let rootTraps = 0;
+    cases.push({
+      label: "access",
+      access: new Proxy({ contentContext, registry }, {
+        getOwnPropertyDescriptor(target, property) {
+          rootTraps++;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      }),
+      trapCalls: () => rootTraps,
+    });
+
+    let contextTraps = 0;
+    cases.push({
+      label: "context",
+      access: {
+        contentContext: new Proxy(contentContext, {
+          getOwnPropertyDescriptor(target, property) {
+            contextTraps++;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+          },
+        }),
+        registry,
+      },
+      trapCalls: () => contextTraps,
+    });
+
+    let registryTraps = 0;
+    cases.push({
+      label: "registry",
+      access: {
+        contentContext,
+        registry: new Proxy(registry, {
+          getOwnPropertyDescriptor(target, property) {
+            registryTraps++;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+          },
+        }),
+      },
+      trapCalls: () => registryTraps,
+    });
+
+    let operationTraps = 0;
+    cases.push({
+      label: "operation",
+      access: {
+        contentContext,
+        registry: {
+          ...registry,
+          resolveStyleArtifact: new Proxy(registry.resolveStyleArtifact, {
+            apply(target, thisArg, argumentsList) {
+              operationTraps++;
+              return Reflect.apply(target, thisArg, argumentsList);
+            },
+          }),
+        },
+      },
+      trapCalls: () => operationTraps,
+    });
+
+    for (const testCase of cases) {
+      const adapter = createHandlerAdapter(files, contentContext, registry);
+      Object.assign(adapter.fs, {
+        getStyleArtifactAccess: () => Promise.resolve(testCase.access),
+      });
+      const result = await new StylesCSSHandler().handle(
+        new Request("http://localhost/_vf_styles/styles.css"),
+        makeCtx(adapter),
+      );
+      const problem = await result.response!.json() as Record<string, unknown>;
+
+      assertEquals(result.response!.status, 502, testCase.label);
+      assertEquals(
+        String(problem.detail).includes("invalid style artifact access"),
+        true,
+        testCase.label,
+      );
+      assertEquals(testCase.trapCalls(), 0, testCase.label);
+    }
+  });
+
   it("routes style artifact access through the wrapper and active multi-project adapter", async () => {
     const projectSlug = "topology-project";
     const projectId = "project-topology-id";
@@ -640,6 +767,16 @@ describe("server/handlers/dev/styles-css.handler", () => {
       readTextFile(path: string) {
         if (path === "/project/globals.css") return Promise.resolve(TEST_STYLESHEET);
         return Promise.reject(new Error(`Unexpected topology read: ${path}`));
+      },
+      readFileBytesWithinLimit(path: string, byteLimit: number) {
+        if (path !== "/project/globals.css") {
+          return Promise.reject(new Error(`Unexpected topology read: ${path}`));
+        }
+        const bytes = new TextEncoder().encode(TEST_STYLESHEET);
+        if (bytes.byteLength > byteLimit) {
+          return Promise.reject(new RangeError(`File exceeds byte limit of ${byteLimit} bytes`));
+        }
+        return Promise.resolve(bytes);
       },
       getAllSourceFiles() {
         return Promise.resolve([{
@@ -723,7 +860,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       );
       const css = await result.response!.text();
 
-      assertEquals(result.response!.status, 200);
+      assertEquals(result.response!.status, 200, css);
       assertEquals(css.length > 0, true);
       assertEquals(accessCalls, 1);
       assertEquals(resolveInputs.length, 1);
@@ -969,17 +1106,109 @@ describe("server/handlers/dev/styles-css.handler", () => {
     }
   });
 
-  it("does not mask operational stylesheet read failures with default CSS", async () => {
+  it("does not invoke conversion hooks on hostile compiler failures", async () => {
+    const fetchMock = mockTailwindFetch();
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
       [{ path: "/project/pages/index.tsx", content: '<div className="text-red-500">Hi</div>' }],
       { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
     );
-    const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+    let conversionCalls = 0;
+    const hostileFailure = {
+      [Symbol.toPrimitive]() {
+        conversionCalls++;
+        throw new Error("conversion hook must not run");
+      },
+      toString() {
+        conversionCalls++;
+        throw new Error("conversion hook must not run");
+      },
+    };
+
+    try {
+      unregister(CSSOptimizationEngineName);
+      register(
+        CSSOptimizationEngineName,
+        createTestCSSOptimizationEngine(() => {
+          throw hostileFailure;
+        }, "test-css-optimization-engine@hostile-failure"),
+      );
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, makeCtx(adapter));
+      const problem = await result.response!.json() as Record<string, unknown>;
+
+      assertEquals(result.response!.status, 500);
+      assertEquals(String(problem.type).endsWith("/compilation-error"), true);
+      assertEquals(conversionCalls, 0);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("loads the project stylesheet only through the exact bounded reader", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{ path: "/project/pages/index.tsx", content: '<div className="text-red-500">Hi</div>' }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    const exactReader = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+    let receivedLimit = 0;
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      receivedLimit = byteLimit;
+      return exactReader(path, byteLimit);
+    };
     adapter.fs.readFile = (path: string) =>
       path === "/project/globals.css"
+        ? Promise.reject(new Error("unbounded stylesheet read must not run"))
+        : Promise.resolve("");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(
+        new Request("http://localhost/_vf_styles/styles.css"),
+        makeCtx(adapter),
+      );
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(receivedLimit, MAX_CSS_FILE_BYTES);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("does not mask operational exact stylesheet read failures with default CSS", async () => {
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{ path: "/project/pages/index.tsx", content: '<div className="text-red-500">Hi</div>' }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    const originalReadFile = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+    adapter.fs.readFileBytesWithinLimit = (path: string, byteLimit: number) =>
+      path === "/project/globals.css"
         ? Promise.reject(new Error("stylesheet permission denied"))
-        : originalReadFile(path);
+        : originalReadFile(path, byteLimit);
 
     const result = await handler.handle(
       new Request("http://localhost/_vf_styles/styles.css"),
@@ -1786,43 +2015,14 @@ describe("server/handlers/dev/styles-css.handler", () => {
     }
   });
 
-  it("does not serve ready prepared CSS above the 32 MiB response limit", async () => {
+  it("rejects oversized prepared CSS before it can enter the shared cache", async () => {
     const oversizedCSS = "x".repeat(32 * 1024 * 1024 + 1);
-    const oversizedHash = await cacheCSSAsync(oversizedCSS);
-    const registry: StyleArtifactRegistry = {
-      resolveStyleArtifact: (input) => Promise.resolve(readyStyleArtifact(input, oversizedHash)),
-      ensureStyleArtifactBuild: () => {
-        throw new Error("ready artifact must not enqueue a build");
-      },
-      upsertStyleArtifact: () => {
-        throw new Error("ready artifact must not be registered again");
-      },
-    };
-    const adapter = createHandlerAdapter(
-      [{ path: "/project/app/page.tsx", content: "export default null;" }],
-      { sourceType: "release", projectSlug: PROJECT_SLUG, releaseId: "release-oversized" },
-      registry,
+
+    await assertRejects(
+      () => cacheCSSAsync(oversizedCSS),
+      TypeError,
+      "33554432 bytes",
     );
-
-    try {
-      invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
-
-      const result = await new StylesCSSHandler().handle(
-        new Request("http://localhost/_vf_styles/styles.css"),
-        makeCtx(adapter),
-      );
-
-      assertEquals(result.response!.status, 500);
-    } finally {
-      clearCSSCache();
-      invalidateCompiler();
-      invalidateProjectCSS(PROJECT_SLUG);
-      invalidatePreparedProjectCSS(PROJECT_SLUG);
-      invalidateProjectCandidateManifests(PROJECT_SLUG);
-    }
   });
 
   it("includes CSS imported by source modules in the compiled stylesheet", async () => {

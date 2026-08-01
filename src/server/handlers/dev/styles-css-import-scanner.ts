@@ -16,9 +16,14 @@ import { serverLogger } from "#veryfront/utils";
 import { collectCssImportPaths } from "#veryfront/html/styles-builder/css-import-extraction.ts";
 import type { HandlerContext } from "../types.ts";
 import {
-  collectProjectStyleSourceFiles,
+  collectProjectStyleSourceSnapshot,
   type ProjectStyleSourceFile,
 } from "./styles-source-file-collector.ts";
+import {
+  admitProjectStyleSourceFiles,
+  isProjectStyleSourceSnapshot,
+  type ProjectStyleSourceSnapshot,
+} from "#veryfront/html/styles-builder/project-style-source-snapshot.ts";
 
 const logger = serverLogger.component("styles-css-import-scanner");
 
@@ -30,9 +35,24 @@ const logger = serverLogger.component("styles-css-import-scanner");
  */
 export async function extractProjectCssImports(
   ctx: HandlerContext,
-  sourceFiles?: readonly ProjectStyleSourceFile[],
+  sourceInput?: readonly ProjectStyleSourceFile[] | ProjectStyleSourceSnapshot,
 ): Promise<string[]> {
-  const files = sourceFiles ? [...sourceFiles] : await collectProjectStyleSourceFiles(ctx);
+  const capturedSnapshot = sourceInput === undefined
+    ? await collectProjectStyleSourceSnapshot(ctx)
+    : isProjectStyleSourceSnapshot(sourceInput)
+    ? sourceInput
+    : undefined;
+  if (capturedSnapshot?.files === null) {
+    throw new TypeError("CSS source snapshot does not contain a source listing");
+  }
+  const files = capturedSnapshot?.files ?? await admitProjectStyleSourceFiles(
+    sourceInput,
+    {
+      adapter: ctx.adapter,
+      projectDir: ctx.projectDir,
+      config: ctx.config ?? {},
+    },
+  );
   const cssImports = collectCssImportPaths(files, ctx.projectDir);
 
   if (cssImports.length > 0) {

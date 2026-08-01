@@ -11,6 +11,7 @@ import {
 } from "#veryfront/cache/cache-key-builder.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
@@ -39,32 +40,18 @@ async function getBuiltCSSFallback(
   ctx: HandlerContext,
 ): Promise<string | undefined> {
   const builtCSSPath = join(ctx.projectDir, "dist", "_vf", "css", `${cssHash}.css`);
-
-  let fileInfo: Awaited<ReturnType<typeof ctx.adapter.fs.stat>>;
-  try {
-    fileInfo = await ctx.adapter.fs.stat(builtCSSPath);
-  } catch (error) {
-    if (isNotFoundError(error)) return undefined;
-    throw error;
-  }
-
-  if (!fileInfo.isFile) return undefined;
-  if (
-    !Number.isSafeInteger(fileInfo.size) ||
-    fileInfo.size < 0 ||
-    fileInfo.size > MAX_CSS_OUTPUT_FILE_BYTES
-  ) {
-    throw new TypeError(
-      `Built CSS output exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} bytes: ${builtCSSPath}`,
-    );
-  }
+  const reader = captureBoundedTextReader(ctx.adapter.fs, "Built CSS filesystem");
 
   let css: string;
   try {
-    css = await ctx.adapter.fs.readFile(builtCSSPath);
+    css = (await reader.readUtf8(
+      builtCSSPath,
+      MAX_CSS_OUTPUT_FILE_BYTES,
+      "Built CSS output",
+    )).content;
   } catch (error) {
-    // A file can disappear between stat and read. That remains an ordinary
-    // cache miss; permission, transport, and integrity failures must surface.
+    // Absence remains an ordinary cache miss; permission, transport, and
+    // integrity failures must surface.
     if (isNotFoundError(error)) return undefined;
     throw error;
   }

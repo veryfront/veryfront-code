@@ -15,6 +15,13 @@ export function createMockAdapter(readFile: MockReadFile = defaultReadFile) {
   return {
     fs: {
       readFile,
+      async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+        const bytes = new TextEncoder().encode(await readFile(path));
+        if (bytes.byteLength > byteLimit) {
+          throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+        }
+        return bytes;
+      },
       exists: async () => false,
       stat: async () => ({ isFile: false, isDirectory: false, isSymlink: false }),
       readDir: async function* () {},

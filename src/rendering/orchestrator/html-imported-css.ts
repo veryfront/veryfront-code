@@ -1,9 +1,11 @@
 import { isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { createSecureFs } from "#veryfront/security";
 import {
   normalizeCssModuleKey,
-  rewriteCssModuleContent,
+  rewriteCssModuleContentWithinLimit,
   toProjectRelativeCssModuleKey,
 } from "#veryfront/transforms/css-modules/naming.ts";
 import {
@@ -12,29 +14,18 @@ import {
   MAX_CSS_OUTPUT_FILE_BYTES,
   MAX_CSS_TOTAL_BYTES,
 } from "#veryfront/utils/constants/css.ts";
-import {
-  assertCSSFileContent,
-  assertCSSOutputContent,
-} from "#veryfront/utils/css-content-admission.ts";
+import { assertCSSFileContent } from "#veryfront/utils/css-content-admission.ts";
 import {
   assertBoundedPathString,
   assertCanonicalProjectRelativePath,
 } from "#veryfront/utils/project-relative-path.ts";
-import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
-
-interface CssFsAdapterLike {
-  readFile(path: string): Promise<string>;
-  readFileBytes?(path: string): Promise<Uint8Array>;
-  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
-  readonly maxWholeFileReadBytes?: number;
-}
 
 interface CssLoggerLike {
   debug(message: string, context?: Record<string, unknown>): void;
 }
 
 interface MergeImportedCssOptions {
-  fs: CssFsAdapterLike;
+  adapter: RuntimeAdapter;
   logger: CssLoggerLike;
   projectDir: string;
   globalCSS: string | undefined;
@@ -122,7 +113,7 @@ function resolveImportedCSSPath(path: string, projectDir: string): string {
 }
 
 export async function mergeImportedCSS({
-  fs,
+  adapter,
   logger,
   projectDir,
   globalCSS,
@@ -135,6 +126,7 @@ export async function mergeImportedCSS({
     ? 0
     : assertCSSFileContent(globalCSS, "Global CSS input");
   let mergedBytes = sourceBytes;
+  let retainedSegments = globalCSS ? 1 : 0;
   if (importPaths.length === 0) return globalCSS;
 
   const normalizedStylesheetPath = assertBoundedPathString(
@@ -159,7 +151,12 @@ export async function mergeImportedCSS({
   const regularCssSegments: string[] = [];
   const moduleCssSegments: string[] = [];
   const importedCSSReader = captureBoundedTextReader(
-    fs,
+    createSecureFs({
+      baseDir: projectRoot,
+      adapter,
+      context: "build",
+      validationOptions: { followSymlinks: false },
+    }),
     "Imported CSS filesystem",
   );
 
@@ -168,9 +165,17 @@ export async function mergeImportedCSS({
       continue;
     }
 
+    const remainingSourceBytes = MAX_CSS_TOTAL_BYTES - sourceBytes;
+    const separatorBytes = retainedSegments === 0 ? 0 : 1;
+    const remainingOutputBytes = MAX_CSS_OUTPUT_FILE_BYTES - mergedBytes - separatorBytes;
+    const readMaximum = Math.min(
+      MAX_CSS_FILE_BYTES,
+      remainingSourceBytes,
+      remainingOutputBytes,
+    );
     const { content, byteLength: contentBytes } = await importedCSSReader.readUtf8(
       cssPath,
-      MAX_CSS_FILE_BYTES,
+      Math.max(1, readMaximum),
       `Imported CSS file ${cssPath}`,
     );
     if (!content) continue;
@@ -181,19 +186,21 @@ export async function mergeImportedCSS({
 
     if (normalizedCssPath.endsWith(".module.css")) {
       const moduleKey = toProjectRelativeCssModuleKey(normalizedCssPath, projectRoot);
-      const rewritten = rewriteCssModuleContent(content, moduleKey);
-      assertCSSOutputContent(rewritten, `Rewritten CSS module ${cssPath}`);
-      const rewrittenBytes = utf8ByteLength(rewritten, MAX_CSS_OUTPUT_FILE_BYTES);
-      if (rewrittenBytes > MAX_CSS_OUTPUT_FILE_BYTES - mergedBytes) {
-        throw new TypeError(`Merged CSS exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} total bytes`);
-      }
-      mergedBytes += rewrittenBytes;
+      const { content: rewritten, byteLength: rewrittenBytes } = rewriteCssModuleContentWithinLimit(
+        content,
+        moduleKey,
+        remainingOutputBytes,
+        `Rewritten CSS module ${cssPath}`,
+      );
+      mergedBytes += separatorBytes + rewrittenBytes;
+      retainedSegments++;
       moduleCssSegments.push(rewritten);
     } else {
-      if (contentBytes > MAX_CSS_OUTPUT_FILE_BYTES - mergedBytes) {
+      if (contentBytes > MAX_CSS_OUTPUT_FILE_BYTES - mergedBytes - separatorBytes) {
         throw new TypeError(`Merged CSS exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} total bytes`);
       }
-      mergedBytes += contentBytes;
+      mergedBytes += separatorBytes + contentBytes;
+      retainedSegments++;
       regularCssSegments.push(content);
     }
   }
@@ -203,10 +210,6 @@ export async function mergeImportedCSS({
   const segments = [globalCSS, ...regularCssSegments, ...moduleCssSegments].filter(
     (segment): segment is string => Boolean(segment),
   );
-  const separatorBytes = Math.max(0, segments.length - 1);
-  if (separatorBytes > MAX_CSS_OUTPUT_FILE_BYTES - mergedBytes) {
-    throw new TypeError(`Merged CSS exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} total bytes`);
-  }
   const combined = segments.join("\n");
   logger.debug("Merged imported CSS with global stylesheet", {
     importedCount: regularCssSegments.length + moduleCssSegments.length,

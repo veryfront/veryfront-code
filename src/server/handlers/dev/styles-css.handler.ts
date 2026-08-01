@@ -10,6 +10,7 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { joinPath } from "#veryfront/utils/path-utils.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import {
   acquireCSSGenerationSession,
   type CSSGenerationSession,
@@ -32,7 +33,10 @@ import type {
   StyleArtifactAccess,
   StyleArtifactRegistry,
 } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import {
+  captureStyleArtifactAccessCapability,
+  isExtendedFSAdapter,
+} from "#veryfront/platform/adapters/fs/wrapper.ts";
 import {
   API_CLIENT_ERROR,
   assertStyleArtifactResolutionTuple,
@@ -54,7 +58,11 @@ import {
   assertCSSFileContent,
   assertCSSOutputContent,
 } from "#veryfront/utils/css-content-admission.ts";
-import { collectProjectStyleSourceFiles } from "./styles-source-file-collector.ts";
+import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
+import { collectProjectStyleSourceSnapshot } from "./styles-source-file-collector.ts";
+import { snapshotResolvedStyleContentContext } from "#veryfront/html/styles-builder/project-style-source-snapshot.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 
 const logger = serverLogger.component("styles-css-handler");
 
@@ -111,20 +119,20 @@ export class StylesCSSHandler extends BaseHandler {
         // route has no module-loading pass, so discover those imports from the
         // project sources and merge them here. Runs before the prepared-CSS
         // context is created so cache keys reflect the merged stylesheet.
-        const sourceFiles = await profilePhase(
+        const sourceSnapshot = await profilePhase(
           "css.collect_source_files",
-          () => collectProjectStyleSourceFiles(ctx),
+          () => collectProjectStyleSourceSnapshot(ctx),
         );
         const cssImports = await profilePhase(
           "css.scan_css_imports",
-          () => extractProjectCssImports(ctx, sourceFiles),
+          () => extractProjectCssImports(ctx, sourceSnapshot),
         );
         if (cssImports.length > 0) {
           const merged = await profilePhase(
             "css.merge_imported_css",
             () =>
               mergeImportedCSS({
-                fs: ctx.adapter.fs,
+                adapter: ctx.adapter,
                 logger,
                 projectDir: ctx.projectDir,
                 globalCSS: rawCss,
@@ -190,7 +198,7 @@ export class StylesCSSHandler extends BaseHandler {
             extractProjectCandidates(ctx, {
               projectVersion,
               developmentMode: artifactPlan.kind === "branch",
-            }, sourceFiles),
+            }, sourceSnapshot),
         );
         let result: GeneratedStylesResult;
         try {
@@ -199,7 +207,7 @@ export class StylesCSSHandler extends BaseHandler {
             () => this.generateStylesheet(ctx, rawCss, candidates, cssPipeline),
           );
         } catch (error) {
-          const formatted = formatCSSError(error instanceof Error ? error : String(error));
+          const formatted = formatCSSError(snapshotThrowableDiagnostic(error));
           logger.error("CSS compilation error", {
             error: formatted.message,
             suggestion: formatted.suggestion,
@@ -276,16 +284,18 @@ export class StylesCSSHandler extends BaseHandler {
   }
 
   private async loadStylesheet(ctx: HandlerContext): Promise<string | undefined> {
+    const reader = captureBoundedTextReader(ctx.adapter.fs, "Project stylesheet filesystem");
     const configuredPath = ctx.config?.styles?.stylesheet;
 
     if (configuredPath) {
       const filePath = joinPath(ctx.projectDir, configuredPath);
-      return ctx.adapter.fs.readFile(filePath);
+      return (await reader.readUtf8(filePath, MAX_CSS_FILE_BYTES, "Project stylesheet")).content;
     }
 
     const globalsPath = joinPath(ctx.projectDir, "globals.css");
     try {
-      return await ctx.adapter.fs.readFile(globalsPath);
+      return (await reader.readUtf8(globalsPath, MAX_CSS_FILE_BYTES, "Project stylesheet"))
+        .content;
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
       logger.debug("No stylesheet found, using processor default");
@@ -362,11 +372,17 @@ export class StylesCSSHandler extends BaseHandler {
       return Object.freeze({ kind: "branch", branch: tuple.branch, contentContext: null });
     }
 
-    const fs = ctx.adapter.fs as typeof ctx.adapter.fs & {
-      getStyleArtifactAccess?: () => Promise<StyleArtifactAccess>;
-    };
-    const getAccess = fs.getStyleArtifactAccess;
-    if (typeof getAccess !== "function") {
+    let getAccess: (() => Promise<StyleArtifactAccess>) | undefined;
+    try {
+      getAccess = captureStyleArtifactAccessCapability(ctx.adapter.fs);
+    } catch (cause) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Filesystem returned an invalid style artifact capability",
+        status: 502,
+        cause,
+      });
+    }
+    if (getAccess === undefined) {
       if (isExtendedFSAdapter(ctx.adapter.fs) && ctx.adapter.fs.isVeryfrontAdapter()) {
         throw API_CLIENT_ERROR.create({
           detail: "Veryfront filesystem requires request-scoped style artifact access",
@@ -376,7 +392,7 @@ export class StylesCSSHandler extends BaseHandler {
       return LOCAL_STYLE_ARTIFACT_PLAN;
     }
 
-    const access = this.captureStyleArtifactAccess(await getAccess.call(fs));
+    const access = this.captureStyleArtifactAccess(await getAccess());
     if (!access) {
       throw API_CLIENT_ERROR.create({
         detail: "Veryfront filesystem returned invalid style artifact access",
@@ -479,48 +495,30 @@ export class StylesCSSHandler extends BaseHandler {
   }
 
   private captureStyleArtifactAccess(access: unknown): StyleArtifactAccess | null {
-    if (typeof access !== "object" || access === null || Array.isArray(access)) return null;
+    if (
+      typeof access !== "object" || access === null ||
+      isProxyWithoutHooks(access) || Array.isArray(access)
+    ) return null;
     const contentContextValue = this.readOwnDataProperty(access, "contentContext");
     const registryValue = this.readOwnDataProperty(access, "registry");
     if (
       !contentContextValue.ok || !registryValue.ok ||
       typeof contentContextValue.value !== "object" || contentContextValue.value === null ||
-      Array.isArray(contentContextValue.value) ||
+      isProxyWithoutHooks(contentContextValue.value) || Array.isArray(contentContextValue.value) ||
       typeof registryValue.value !== "object" || registryValue.value === null ||
-      Array.isArray(registryValue.value)
+      isProxyWithoutHooks(registryValue.value) || Array.isArray(registryValue.value)
     ) {
       return null;
     }
 
     const rawContext = contentContextValue.value;
-    const projectSlug = this.readOwnDataProperty(rawContext, "projectSlug");
-    const sourceType = this.readOwnDataProperty(rawContext, "sourceType");
-    if (
-      !projectSlug.ok || typeof projectSlug.value !== "string" ||
-      !sourceType.ok ||
-      (sourceType.value !== "branch" &&
-        sourceType.value !== "environment" &&
-        sourceType.value !== "release")
-    ) {
+    let contextSnapshot: Readonly<ResolvedContentContext> | null;
+    try {
+      contextSnapshot = snapshotResolvedStyleContentContext(rawContext);
+    } catch {
       return null;
     }
-
-    const contextSnapshot: ResolvedContentContext = {
-      projectSlug: projectSlug.value,
-      sourceType: sourceType.value,
-    };
-    const selectorKeys = sourceType.value === "branch"
-      ? ["branch"] as const
-      : sourceType.value === "environment"
-      ? ["environmentName", "releaseId"] as const
-      : ["releaseId"] as const;
-    for (const key of selectorKeys) {
-      const selector = this.readOwnDataProperty(rawContext, key, false);
-      if (!selector.ok) return null;
-      if (selector.value === undefined) continue;
-      if (typeof selector.value !== "string") return null;
-      contextSnapshot[key] = selector.value;
-    }
+    if (contextSnapshot === null) return null;
 
     const rawRegistry = registryValue.value;
     const resolve = this.readOwnDataProperty(rawRegistry, "resolveStyleArtifact");
@@ -528,8 +526,11 @@ export class StylesCSSHandler extends BaseHandler {
     const upsert = this.readOwnDataProperty(rawRegistry, "upsertStyleArtifact");
     if (
       !resolve.ok || typeof resolve.value !== "function" ||
+      isProxyWithoutHooks(resolve.value) ||
       !ensure.ok || typeof ensure.value !== "function" ||
-      !upsert.ok || typeof upsert.value !== "function"
+      isProxyWithoutHooks(ensure.value) ||
+      !upsert.ok || typeof upsert.value !== "function" ||
+      isProxyWithoutHooks(upsert.value)
     ) {
       return null;
     }
@@ -552,7 +553,7 @@ export class StylesCSSHandler extends BaseHandler {
         >,
     });
     return Object.freeze({
-      contentContext: Object.freeze(contextSnapshot),
+      contentContext: contextSnapshot,
       registry,
     });
   }
@@ -562,6 +563,7 @@ export class StylesCSSHandler extends BaseHandler {
     key: PropertyKey,
     required = true,
   ): Readonly<{ ok: true; value: unknown }> | Readonly<{ ok: false }> {
+    if (isProxyWithoutHooks(value)) return { ok: false };
     let descriptor: PropertyDescriptor | undefined;
     try {
       descriptor = Object.getOwnPropertyDescriptor(value, key);

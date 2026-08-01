@@ -15,10 +15,14 @@ import type { HandlerContext } from "../types.ts";
 import { MAX_CSS_SELECTOR_TOKENS } from "#veryfront/utils/constants/css.ts";
 import { FRAMEWORK_CANDIDATES } from "./framework-candidates.generated.ts";
 import {
-  collectProjectStyleSourceFiles,
+  collectProjectStyleSourceSnapshot,
   type ProjectStyleSourceFile,
-  resolveStyleSourceProvider,
 } from "./styles-source-file-collector.ts";
+import {
+  admitProjectStyleSourceFiles,
+  isProjectStyleSourceSnapshot,
+  type ProjectStyleSourceSnapshot,
+} from "#veryfront/html/styles-builder/project-style-source-snapshot.ts";
 
 /** De-duplicated set of framework candidates, computed once at import time. */
 const frameworkCandidates = new Set<string>(FRAMEWORK_CANDIDATES);
@@ -40,18 +44,29 @@ interface CandidateExtractionContext {
 export async function extractProjectCandidates(
   ctx: HandlerContext,
   extractionContext: Readonly<CandidateExtractionContext> = {},
-  sourceFiles?: readonly ProjectStyleSourceFile[],
+  sourceInput?: readonly ProjectStyleSourceFile[] | ProjectStyleSourceSnapshot,
 ): Promise<Set<string>> {
   const styleProfile = createStyleScopeProfile(ctx.config);
   const candidates = new Set<string>(frameworkCandidates);
   const hasAuthoritativeContext = extractionContext.projectVersion !== undefined &&
     extractionContext.developmentMode !== undefined;
-  const sourceProvider = hasAuthoritativeContext ? undefined : resolveStyleSourceProvider(ctx);
-  const contentContext = !hasAuthoritativeContext &&
-      typeof sourceProvider?.getContentContext === "function"
-    ? sourceProvider.getContentContext.call(sourceProvider)
-    : null;
-  const files = sourceFiles ? [...sourceFiles] : await collectProjectStyleSourceFiles(ctx);
+  const capturedSnapshot = sourceInput === undefined
+    ? await collectProjectStyleSourceSnapshot(ctx)
+    : isProjectStyleSourceSnapshot(sourceInput)
+    ? sourceInput
+    : undefined;
+  if (capturedSnapshot?.files === null) {
+    throw new TypeError("CSS source snapshot does not contain a source listing");
+  }
+  const files = capturedSnapshot?.files ?? await admitProjectStyleSourceFiles(
+    sourceInput,
+    {
+      adapter: ctx.adapter,
+      projectDir: ctx.projectDir,
+      config: ctx.config ?? {},
+    },
+  );
+  const contentContext = hasAuthoritativeContext ? null : capturedSnapshot?.contentContext ?? null;
 
   for (
     const cls of getProjectCandidates({

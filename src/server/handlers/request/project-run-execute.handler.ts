@@ -29,6 +29,15 @@ import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/ver
 import type { StyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import {
+  captureProjectStyleSourceSnapshot,
+  createProjectStyleSourceSnapshot,
+  type ProjectStyleSourceFileSnapshot,
+  type ProjectStyleSourceSnapshot,
+  snapshotProjectStyleSourceFiles,
+} from "#veryfront/html/styles-builder/project-style-source-snapshot.ts";
+import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { buildConfigCacheKey } from "#veryfront/cache/keys.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
@@ -1208,17 +1217,6 @@ export const projectRunExecuteHandlerInternals = Object.freeze({
   finalizeReleaseAssetBuildTempDir,
 });
 
-type StyleArtifactSourceFile = { path: string; content?: string };
-
-type StyleArtifactSourceProvider = {
-  getAllSourceFiles: () => Promise<StyleArtifactSourceFile[]> | StyleArtifactSourceFile[];
-  getContentContext?: () => ResolvedContentContext | null;
-};
-
-type OptionalTextFileReader = {
-  readOptionalTextFile(path: string): Promise<string>;
-};
-
 const DEFAULT_STYLESHEET_PATHS = [
   "globals.css",
   "global.css",
@@ -1275,61 +1273,23 @@ function styleArtifactResultTuple(tuple: StyleArtifactTuple): Record<string, unk
   };
 }
 
-function getStyleArtifactSourceProvider(ctx: HandlerContext): StyleArtifactSourceProvider | null {
-  const wrappedFs = ctx.adapter.fs as { getUnderlyingAdapter?: () => unknown };
-  if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
-
-  const fsAdapter = wrappedFs.getUnderlyingAdapter() as {
-    getAllSourceFiles?: StyleArtifactSourceProvider["getAllSourceFiles"];
-    getContentContext?: StyleArtifactSourceProvider["getContentContext"];
-  };
-  if (typeof fsAdapter.getAllSourceFiles !== "function") return null;
-
-  return {
-    getAllSourceFiles: fsAdapter.getAllSourceFiles.bind(fsAdapter),
-    getContentContext: typeof fsAdapter.getContentContext === "function"
-      ? fsAdapter.getContentContext.bind(fsAdapter)
-      : undefined,
-  };
-}
-
 function stylesheetCandidatePaths(stylesheetPath?: string): string[] {
   return stylesheetPath ? [stylesheetPath.replace(/^\/+/, "")] : DEFAULT_STYLESHEET_PATHS;
-}
-
-function textFromFileContent(content: Uint8Array | string): string {
-  return typeof content === "string" ? content : new TextDecoder().decode(content);
-}
-
-function getOptionalTextFileReader(ctx: HandlerContext): OptionalTextFileReader | null {
-  const wrappedFs = ctx.adapter.fs as {
-    getUnderlyingAdapter?: () => unknown;
-    readOptionalTextFile?: OptionalTextFileReader["readOptionalTextFile"];
-  };
-
-  if (typeof wrappedFs.readOptionalTextFile === "function") {
-    return { readOptionalTextFile: wrappedFs.readOptionalTextFile.bind(wrappedFs) };
-  }
-
-  if (typeof wrappedFs.getUnderlyingAdapter !== "function") return null;
-  const underlying = wrappedFs.getUnderlyingAdapter() as Partial<OptionalTextFileReader>;
-  if (typeof underlying.readOptionalTextFile !== "function") return null;
-
-  return { readOptionalTextFile: underlying.readOptionalTextFile.bind(underlying) };
 }
 
 async function readStylesheetFromAdapter(
   ctx: HandlerContext,
   stylesheetPath?: string,
 ): Promise<string | undefined> {
-  const optionalReader = getOptionalTextFileReader(ctx);
+  const reader = captureBoundedTextReader(
+    ctx.adapter.fs,
+    "Style artifact stylesheet filesystem",
+  );
 
   for (const path of stylesheetCandidatePaths(stylesheetPath)) {
     try {
-      const content = optionalReader
-        ? await optionalReader.readOptionalTextFile(path)
-        : textFromFileContent(await ctx.adapter.fs.readFile(path));
-      if (content) return content;
+      return (await reader.readUtf8(path, MAX_CSS_FILE_BYTES, "Style artifact stylesheet"))
+        .content;
     } catch (error) {
       if (!isNotFoundError(error)) throw error;
     }
@@ -1344,25 +1304,37 @@ async function resolveStyleArtifactSourceFiles(
   tuple: StyleArtifactTuple,
   collectLocalProjectSourceFiles: (
     options: { projectDir: string; styleProfile: StyleScopeProfile },
-  ) => Promise<StyleArtifactSourceFile[]>,
-): Promise<{ files: StyleArtifactSourceFile[]; contentContext: ResolvedContentContext | null }> {
-  const sourceProvider = getStyleArtifactSourceProvider(ctx);
-  if (sourceProvider) {
-    const contentContext = sourceProvider.getContentContext?.() ?? null;
-    assertStyleArtifactSourceSelector(tuple, contentContext);
-    return {
-      files: await sourceProvider.getAllSourceFiles(),
-      contentContext,
+  ) => Promise<Array<{ path: string; content?: string }>>,
+): Promise<
+  ProjectStyleSourceSnapshot & {
+    readonly files: readonly ProjectStyleSourceFileSnapshot[];
+  }
+> {
+  const snapshotOptions = {
+    adapter: ctx.adapter,
+    projectDir: ctx.projectDir,
+    config: ctx.config ?? {},
+    includeStylesheets: true,
+    validateContentContext: (contentContext: Readonly<ResolvedContentContext> | null) =>
+      assertStyleArtifactSourceSelector(tuple, contentContext),
+  };
+  const providerSnapshot = await captureProjectStyleSourceSnapshot(snapshotOptions);
+  if (providerSnapshot !== null && providerSnapshot.files !== null) {
+    return providerSnapshot as ProjectStyleSourceSnapshot & {
+      readonly files: readonly ProjectStyleSourceFileSnapshot[];
     };
   }
 
   assertStyleArtifactSourceSelector(tuple, null);
-  return {
-    files: await collectLocalProjectSourceFiles({
+  const files = await snapshotProjectStyleSourceFiles(
+    await collectLocalProjectSourceFiles({
       projectDir: ctx.projectDir,
       styleProfile,
     }),
-    contentContext: null,
+    snapshotOptions,
+  );
+  return createProjectStyleSourceSnapshot("local", null, files) as ProjectStyleSourceSnapshot & {
+    readonly files: readonly ProjectStyleSourceFileSnapshot[];
   };
 }
 
@@ -1448,12 +1420,13 @@ async function executeStyleArtifactBuildRun(input: {
       });
     }
 
-    const { files, contentContext } = await resolveStyleArtifactSourceFiles(
+    const sourceSnapshot = await resolveStyleArtifactSourceFiles(
       input.ctx,
       styleProfile,
       tuple,
       collectLocalProjectSourceFiles,
     );
+    const { files, contentContext } = sourceSnapshot;
     if (files.length === 0) {
       throw INVALID_ARGUMENT.create({
         detail: "No project source files were available to build the style artifact",
@@ -1461,8 +1434,8 @@ async function executeStyleArtifactBuildRun(input: {
     }
 
     const stylesheetPath = input.ctx.config?.styles?.stylesheet;
-    const stylesheet = findStylesheetFromFiles(files, stylesheetPath) ??
-      (getStyleArtifactSourceProvider(input.ctx)
+    const stylesheet = findStylesheetFromFiles(files, stylesheetPath, input.ctx.projectDir) ??
+      (sourceSnapshot.origin === "provider"
         ? await readStylesheetFromAdapter(input.ctx, stylesheetPath)
         : await readLocalProjectStylesheet(input.ctx.projectDir, stylesheetPath));
     const result = await buildPreparedCSSArtifactFromFiles({

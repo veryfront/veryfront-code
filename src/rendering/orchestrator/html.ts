@@ -1,5 +1,6 @@
 import { dirname, isAbsolute, join } from "#veryfront/compat/path";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
@@ -50,6 +51,7 @@ import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 import { resolveReleaseId } from "./release-id.ts";
 import { toHTMLFrontmatter } from "../frontmatter.ts";
+import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
@@ -724,12 +726,15 @@ export class HTMLGenerator {
   private async loadProjectFile(filename: string): Promise<string | undefined> {
     try {
       const filePath = join(this.config.projectDir, filename);
-      const fs = this.config.adapter.fs as typeof this.config.adapter.fs & {
-        readOptionalTextFile?: (path: string) => Promise<string>;
-      };
-      const content = fs.readOptionalTextFile
-        ? await fs.readOptionalTextFile(filePath)
-        : await fs.readFile(filePath);
+      const reader = captureBoundedTextReader(
+        this.config.adapter.fs,
+        "HTML project stylesheet filesystem",
+      );
+      const { content } = await reader.readUtf8(
+        filePath,
+        MAX_CSS_FILE_BYTES,
+        "HTML project stylesheet",
+      );
       logger.debug(`Loaded ${filename}`, { length: content.length });
       return content;
     } catch (error) {
@@ -865,7 +870,7 @@ export class HTMLGenerator {
     stylesheetPath: string,
   ): Promise<string | undefined> {
     return mergeImportedProjectCss({
-      fs: this.config.adapter.fs,
+      adapter: this.config.adapter,
       logger,
       projectDir: this.config.projectDir,
       globalCSS,

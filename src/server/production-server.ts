@@ -51,6 +51,7 @@ import {
   snapshotProductionConfig,
   snapshotProductionLocalProjects,
 } from "./production-input-snapshot.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -185,7 +186,7 @@ async function prewarmLocalProductionCSSArtifacts(
       serverLog.debug("Skipping local production CSS prewarm", {
         projectSlug,
         projectDir,
-        error: error instanceof Error ? error.message : String(error),
+        error: snapshotThrowableDiagnostic(error),
       });
     }
   }));

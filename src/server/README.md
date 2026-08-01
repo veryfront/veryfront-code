@@ -224,6 +224,21 @@ Prepared and remote artifacts are accepted only when their content, style
 profile, source selector, and exact CSS pipeline identity agree with the
 request.
 
+Candidate source and imported CSS reads require either the platform's exact
+`readFileBytesWithinLimit()` capability or a whole-object transport ceiling no
+larger than the CSS file budget. Prefix-only and unbounded reads are not used.
+Source listings, route-path lists, and candidate arrays are snapshotted from
+dense data properties before scanning; Proxy and accessor-backed collections
+fail closed. A route source that is present but contains zero candidates stays
+empty, while full-project fallback is reserved for routes with no mapped source.
+
+Shared CSS cache reads require the backend's optional `getWithinLimit()`
+capability. Memory, API, disk, and Redis implementations enforce the caller's
+UTF-8 value limit before returning a payload; an oversized value is a typed
+failure, never a cache miss. CSS cache writers and readers use the same central
+serialized-envelope limits before storage or `JSON.parse()`. A backend without
+an exact bounded-read capability is skipped and CSS is regenerated.
+
 ## Generated framework CSS candidates
 
 Framework component class-name candidates are collected recursively from the
