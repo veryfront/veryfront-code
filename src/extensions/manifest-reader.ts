@@ -255,7 +255,10 @@ function ownStringProperty(value: object, property: string): string | undefined 
     : undefined;
 }
 
-function intrinsicInstanceOf(value: unknown, constructor: typeof Error): boolean {
+function intrinsicInstanceOf(
+  value: unknown,
+  constructor: { readonly prototype: object },
+): boolean {
   try {
     return reflectApply(functionHasInstance, constructor, [value]) as boolean;
   } catch {
@@ -345,11 +348,16 @@ function requireManifestSyntax(
 }
 
 function isManifestError(error: unknown): error is VeryfrontError {
-  if (!(error instanceof VeryfrontError)) return false;
-  return error.slug === MANIFEST_READ_ERROR.slug ||
-    error.slug === MANIFEST_FILE_ERROR.slug ||
-    error.slug === MANIFEST_SIZE_ERROR.slug ||
-    error.slug === MANIFEST_PARSE_ERROR.slug;
+  try {
+    if (!intrinsicInstanceOf(error, VeryfrontError)) return false;
+    const slug = ownStringProperty(error as VeryfrontError, "slug");
+    return slug === MANIFEST_READ_ERROR.slug ||
+      slug === MANIFEST_FILE_ERROR.slug ||
+      slug === MANIFEST_SIZE_ERROR.slug ||
+      slug === MANIFEST_PARSE_ERROR.slug;
+  } catch {
+    return false;
+  }
 }
 
 function validateSize(path: string, info: ExtensionManifestFileInfo): void {
