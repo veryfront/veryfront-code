@@ -12,7 +12,7 @@ import {
   ensureBuiltinSchemaValidator,
   OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
-import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
 describe("ensureBuiltinSchemaValidator", () => {
   afterEach(() => {
@@ -109,6 +109,7 @@ describe("createBuiltinExtensions", () => {
   it("does not statically import optional implementation extensions", async () => {
     const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
 
+    assertEquals(source.includes('from "../../extensions/'), false);
     assertEquals(source.includes('from "../../extensions/ext-auth-jwt/src/index.ts"'), false);
     assertEquals(
       source.includes('from "../../extensions/ext-bundler-esbuild/src/index.ts"'),

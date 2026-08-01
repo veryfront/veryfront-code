@@ -383,8 +383,7 @@
     "react/jsx-runtime": "./react/jsx-runtime.ts",
     "react/jsx-dev-runtime": "./react/jsx-dev-runtime.ts",
     "veryfront/schemas": "./src/schemas/index.ts",
-    "veryfront/chat/message-prep": "./src/chat/message-prep.ts",
-    "#dnt": "jsr:@deno/dnt@0.42.3"
+    "veryfront/chat/message-prep": "./src/chat/message-prep.ts"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
@@ -411,7 +410,7 @@
     "production": "deno task generate && deno run --allow-read --allow-write --allow-net --allow-env --allow-run --allow-sys --unstable-worker-options --unstable-net cli/main.ts serve --mode=production",
     "build:prepare": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/prepare-framework-sources.ts",
     "build": "deno task build:prepare && deno run -A scripts/build/compile-binary.ts --output ./bin/veryfront",
-    "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run -A scripts/build/build-npm-dnt.ts",
+    "build:npm": "deno run -A scripts/build/generate-integrations-module.ts && deno task generate && deno run --config=scripts/test.deno.json --frozen -A scripts/build/build-npm-dnt.ts",
     "release": "deno run -A scripts/release.ts",
     "test": "deno task generate && DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --preload=src/schemas/_test-setup.ts --no-check --parallel --allow-all '--ignore=tests/e2e,tests/integration/compiled-binary-e2e.test.ts' --unstable-worker-options --unstable-net",
     "test:unit": "deno task generate && DENO_TESTING=1 VF_DISABLE_LRU_INTERVAL=1 SSR_TRANSFORM_PER_PROJECT_LIMIT=0 REVALIDATION_PER_PROJECT_LIMIT=0 NODE_ENV=production LOG_FORMAT=text deno test --preload=src/schemas/_test-setup.ts --no-check --parallel --allow-all --v8-flags=--max-old-space-size=8192 '--ignore=tests,src/workflow/__tests__' --unstable-worker-options --unstable-net $(find src cli -name '*.test.ts*' ! -name '*.integration.test.ts*')",
