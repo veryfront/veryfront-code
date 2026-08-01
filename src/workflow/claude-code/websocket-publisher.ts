@@ -6,6 +6,7 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import type {
+  ApprovalRequestEvent,
   BidirectionalPublisher,
   CancelledEvent,
   ClaudeCodeEvent,
@@ -14,10 +15,18 @@ import type {
   ClientCommandDisposition,
   ClientCommandHandler,
   ClientCommandObserver,
-  ClientCommandType,
   CommandAckEvent,
   PongEvent,
 } from "./types.ts";
+import {
+  admitClaudeCodeClientCommandDisposition as admitClientCommandDisposition,
+  admitClaudeCodeClientCommandMessage,
+  encodeClaudeCodeEventMessage,
+  isClaudeCodeWireField as isBoundedString,
+  isClaudeCodeWireIdentifier as isBoundedIdentifier,
+  readRejectedClaudeCodeClientCommandContext as readRejectedCommandContext,
+  snapshotClaudeCodeWireRecord,
+} from "./wire-protocol.ts";
 import { INVALID_ARGUMENT, ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import { parsePositiveDurationWithLabel } from "../types.ts";
 
@@ -35,9 +44,6 @@ const DEFAULT_INPUT_TIMEOUT_MS = 300_000;
 /** Default maximum lifetime for an authoritative command handler. */
 const DEFAULT_COMMAND_HANDLER_TIMEOUT_MS = 30_000;
 
-const MAX_CLIENT_COMMAND_BYTES = 64 * 1024;
-const MAX_CLIENT_COMMAND_TEXT_LENGTH = 32 * 1024;
-const MAX_CLIENT_COMMAND_ID_LENGTH = 256;
 const MAX_TRACKED_CLIENT_COMMANDS = 256;
 
 interface CommandLedgerEntry {
@@ -45,166 +51,27 @@ interface CommandLedgerEntry {
   ack?: CommandAckEvent;
 }
 
-interface RejectedCommandContext {
-  readonly commandId: string;
-  readonly commandType: ClientCommandType;
-  readonly requestId?: string;
+function snapshotApprovalInput(
+  input: Record<string, unknown>,
+): Readonly<Record<string, unknown>> {
+  const snapshot = snapshotClaudeCodeWireRecord(input);
+  if (!snapshot) {
+    throw INVALID_ARGUMENT.create({ detail: "Approval input is not bounded wire JSON" });
+  }
+  return snapshot;
 }
 
-const CLIENT_COMMAND_TYPES = new Set<ClientCommandType>([
-  "cancel",
-  "approve",
-  "reject",
-  "input",
-  "ping",
-]);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readDataProperty(record: object, key: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(record, key);
-  return descriptor && "value" in descriptor ? descriptor.value : undefined;
-}
-
-function hasExactDataProperties(record: object, allowed: ReadonlySet<string>): boolean {
-  const keys = Reflect.ownKeys(record);
-  return keys.every((key) =>
-    typeof key === "string" && allowed.has(key) &&
-    (() => {
-      const descriptor = Object.getOwnPropertyDescriptor(record, key);
-      return descriptor?.enumerable === true && "value" in descriptor;
-    })()
-  );
-}
-
-function isBoundedString(
-  value: unknown,
-  maxLength = MAX_CLIENT_COMMAND_TEXT_LENGTH,
-): value is string {
-  return typeof value === "string" && value.length <= maxLength;
-}
-
-function isBoundedIdentifier(value: unknown): value is string {
-  return isBoundedString(value, MAX_CLIENT_COMMAND_ID_LENGTH) && value.length > 0;
+function serializeWireEvent(event: ClaudeCodeEventExtended): string {
+  const encoding = encodeClaudeCodeEventMessage(event, true);
+  if (!encoding.ok) {
+    throw INVALID_ARGUMENT.create({ detail: encoding.reason });
+  }
+  return encoding.data;
 }
 
 function admitClientCommand(data: unknown, expectedRunId: string): ClientCommand | null {
-  if (typeof data !== "string") return null;
-  if (data.length > MAX_CLIENT_COMMAND_BYTES) return null;
-  if (new TextEncoder().encode(data).byteLength > MAX_CLIENT_COMMAND_BYTES) return null;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(data);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed)) return null;
-
-  const type = readDataProperty(parsed, "type");
-  const timestamp = readDataProperty(parsed, "timestamp");
-  const runId = readDataProperty(parsed, "runId");
-  const commandId = readDataProperty(parsed, "commandId");
-  if (
-    typeof type !== "string" ||
-    typeof timestamp !== "number" || !Number.isSafeInteger(timestamp) || timestamp < 0 ||
-    runId !== expectedRunId ||
-    (commandId !== undefined && !isBoundedIdentifier(commandId))
-  ) return null;
-
-  const baseKeys = ["type", "timestamp", "runId", "commandId"];
-  const commandBase = {
-    timestamp,
-    runId,
-    ...(commandId === undefined ? {} : { commandId }),
-  };
-  switch (type) {
-    case "cancel": {
-      if (!hasExactDataProperties(parsed, new Set([...baseKeys, "reason"]))) return null;
-      const reason = readDataProperty(parsed, "reason");
-      if (reason !== undefined && !isBoundedString(reason)) return null;
-      return { type, ...commandBase, ...(reason === undefined ? {} : { reason }) };
-    }
-    case "approve": {
-      if (!hasExactDataProperties(parsed, new Set([...baseKeys, "toolCallId"]))) {
-        return null;
-      }
-      const toolCallId = readDataProperty(parsed, "toolCallId");
-      if (!isBoundedIdentifier(toolCallId)) return null;
-      return {
-        type,
-        ...commandBase,
-        toolCallId,
-      } as ClientCommand;
-    }
-    case "reject": {
-      if (
-        !hasExactDataProperties(
-          parsed,
-          new Set([...baseKeys, "toolCallId", "reason"]),
-        )
-      ) {
-        return null;
-      }
-      const toolCallId = readDataProperty(parsed, "toolCallId");
-      const reason = readDataProperty(parsed, "reason");
-      if (!isBoundedIdentifier(toolCallId)) return null;
-      if (reason !== undefined && !isBoundedString(reason)) return null;
-      return {
-        type,
-        ...commandBase,
-        toolCallId,
-        ...(reason === undefined ? {} : { reason }),
-      } as ClientCommand;
-    }
-    case "input": {
-      if (!hasExactDataProperties(parsed, new Set([...baseKeys, "content", "requestId"]))) {
-        return null;
-      }
-      const content = readDataProperty(parsed, "content");
-      const requestId = readDataProperty(parsed, "requestId");
-      if (!isBoundedString(content)) return null;
-      if (requestId !== undefined && !isBoundedIdentifier(requestId)) return null;
-      return {
-        type,
-        ...commandBase,
-        content,
-        ...(requestId === undefined ? {} : { requestId }),
-      };
-    }
-    case "ping":
-      return hasExactDataProperties(parsed, new Set(baseKeys)) ? { type, ...commandBase } : null;
-    default:
-      return null;
-  }
-}
-
-function readRejectedCommandContext(data: unknown): RejectedCommandContext | null {
-  if (typeof data !== "string") return null;
-  if (data.length > MAX_CLIENT_COMMAND_BYTES) return null;
-  if (new TextEncoder().encode(data).byteLength > MAX_CLIENT_COMMAND_BYTES) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(data);
-  } catch {
-    return null;
-  }
-  if (!isRecord(parsed)) return null;
-  const commandId = readDataProperty(parsed, "commandId");
-  const commandType = readDataProperty(parsed, "type");
-  if (
-    !isBoundedIdentifier(commandId) || typeof commandType !== "string" ||
-    !CLIENT_COMMAND_TYPES.has(commandType as ClientCommandType)
-  ) return null;
-  const requestId = commandType === "input" ? readDataProperty(parsed, "requestId") : undefined;
-  if (requestId !== undefined && !isBoundedIdentifier(requestId)) return null;
-  return {
-    commandId,
-    commandType: commandType as ClientCommandType,
-    ...(requestId === undefined ? {} : { requestId }),
-  };
+  const admission = admitClaudeCodeClientCommandMessage(data, expectedRunId);
+  return admission.ok ? admission.event : null;
 }
 
 function fingerprintClientCommand(command: ClientCommand): string {
@@ -215,12 +82,14 @@ function fingerprintClientCommand(command: ClientCommand): string {
       return JSON.stringify({
         type: command.type,
         runId: command.runId,
+        requestId: command.requestId,
         toolCallId: command.toolCallId,
       });
     case "reject":
       return JSON.stringify({
         type: command.type,
         runId: command.runId,
+        requestId: command.requestId,
         toolCallId: command.toolCallId,
         reason: command.reason,
       });
@@ -256,6 +125,57 @@ export interface WebSocketPublisherConfig {
   commandHandlerTimeout?: number;
 }
 
+/** Run-scoped controller policy. */
+export interface AgentControllerConfig {
+  /** Maximum time to wait for an approval decision. */
+  approvalTimeout?: number;
+  /** Maximum time to wait for requested input. */
+  inputTimeout?: number;
+  /** Invoked after an admitted cancellation command. */
+  onCancel?: (reason?: string) => void;
+}
+
+/** Run-scoped command surface without transport lifecycle authority. */
+export interface AgentControllerHandle {
+  /** Immutable workflow run identity. */
+  readonly runId: string;
+  /** Whether an admitted cancellation command ended the run. */
+  readonly isCancelled: boolean;
+  /** Request an exactly correlated tool approval. */
+  requestApproval(
+    toolCallId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    reason: string,
+  ): Promise<boolean>;
+  /** Request user input for this run. */
+  requestInput(prompt: string, defaultValue?: string): Promise<string>;
+}
+
+/** Opaque ownership token for one run controller generation. */
+export interface AgentControllerRunRegistration {
+  /** Immutable workflow run identity. */
+  readonly runId: string;
+  /** Unique identity for this controller generation. */
+  readonly generation: symbol;
+  /** Controller retained for the lifetime of this run generation. */
+  readonly controller: AgentControllerHandle;
+}
+
+/** Opaque ownership token for one run publisher generation. */
+export interface AgentControllerRegistration {
+  /** Stable controller ownership token shared by reconnecting publishers. */
+  readonly run: AgentControllerRunRegistration;
+  /** Immutable workflow run identity. */
+  readonly runId: string;
+  /** Unique identity for this publisher generation. */
+  readonly generation: symbol;
+  /** Publisher owned by this exact registration. */
+  readonly publisher: BidirectionalPublisher;
+  /** Run controller shared by reconnecting publishers. */
+  readonly controller: AgentControllerHandle;
+}
+
 /**
  * WebSocket-based bidirectional publisher
  *
@@ -264,8 +184,9 @@ export interface WebSocketPublisherConfig {
  * - Client → Server: Commands (cancel, approve, reject, input)
  */
 export class WebSocketPublisher implements BidirectionalPublisher {
-  private config: Required<Omit<WebSocketPublisherConfig, "socket">> & {
-    socket: WebSocket;
+  readonly #connectionRunId: string;
+  private readonly config: Required<Omit<WebSocketPublisherConfig, "socket" | "runId">> & {
+    readonly socket: WebSocket;
   };
   private commandHandler: ClientCommandHandler | null = null;
   private commandObservers = new Set<ClientCommandObserver>();
@@ -275,8 +196,12 @@ export class WebSocketPublisher implements BidirectionalPublisher {
   private pingTimer: number | null = null;
 
   constructor(config: WebSocketPublisherConfig) {
-    if (typeof config.runId !== "string" || !config.runId.trim()) {
+    const runId = config.runId;
+    if (typeof runId !== "string" || !runId.trim()) {
       throw INVALID_ARGUMENT.create({ detail: "WebSocket publisher runId must not be empty" });
+    }
+    if (!isBoundedIdentifier(runId)) {
+      throw INVALID_ARGUMENT.create({ detail: "WebSocket publisher runId is not canonical" });
     }
     if (config.pingInterval !== undefined && config.pingInterval !== 0) {
       parsePositiveDurationWithLabel(
@@ -290,38 +215,63 @@ export class WebSocketPublisher implements BidirectionalPublisher {
         "WebSocket publisher commandHandlerTimeout",
       );
     }
+    this.#connectionRunId = runId;
+    Object.defineProperty(this, "runId", {
+      configurable: false,
+      enumerable: true,
+      get: () => this.#connectionRunId,
+    });
     this.config = {
-      debug: false,
-      pingInterval: DEFAULT_PING_INTERVAL_MS,
-      commandHandlerTimeout: DEFAULT_COMMAND_HANDLER_TIMEOUT_MS,
-      ...config,
+      socket: config.socket,
+      debug: config.debug ?? false,
+      pingInterval: config.pingInterval ?? DEFAULT_PING_INTERVAL_MS,
+      commandHandlerTimeout: config.commandHandlerTimeout ?? DEFAULT_COMMAND_HANDLER_TIMEOUT_MS,
     };
 
     this.setupSocketListeners();
     this.startPingInterval();
   }
 
+  get runId(): string {
+    return this.#connectionRunId;
+  }
+
   private setupSocketListeners(): void {
     const { socket } = this.config;
 
     socket.addEventListener("message", (event) => {
-      const command = admitClientCommand(event.data, this.config.runId);
+      const command = admitClientCommand(event.data, this.#connectionRunId);
       if (command) {
         this.handleCommand(command);
         return;
       }
       const rejected = readRejectedCommandContext(event.data);
       if (rejected) {
-        this.trySend({
+        const acknowledgementBase = {
           type: "command_ack",
           timestamp: Date.now(),
-          runId: this.config.runId,
+          runId: this.#connectionRunId,
           commandId: rejected.commandId,
-          commandType: rejected.commandType,
           status: "rejected",
-          ...(rejected.requestId === undefined ? {} : { requestId: rejected.requestId }),
           reason: "command failed protocol admission",
-        });
+        } as const;
+        if (rejected.commandType === "approve" || rejected.commandType === "reject") {
+          if (rejected.requestId !== undefined) {
+            this.trySend({
+              ...acknowledgementBase,
+              commandType: rejected.commandType,
+              requestId: rejected.requestId,
+            });
+          }
+        } else if (rejected.commandType === "input") {
+          this.trySend({
+            ...acknowledgementBase,
+            commandType: rejected.commandType,
+            ...(rejected.requestId === undefined ? {} : { requestId: rejected.requestId }),
+          });
+        } else {
+          this.trySend({ ...acknowledgementBase, commandType: rejected.commandType });
+        }
       }
     });
 
@@ -435,19 +385,44 @@ export class WebSocketPublisher implements BidirectionalPublisher {
       finish({ status: "rejected", reason: "command handler rejected the command" });
       return;
     }
-    void Promise.resolve(result)
-      .then((disposition) => {
-        finish(
-          disposition ?? {
-            status: "rejected",
-            reason: "no authoritative handler accepted",
-          },
-        );
-      })
-      .catch((error) => {
-        this.reportHandlerError(error);
-        finish({ status: "rejected", reason: "command handler rejected the command" });
+    const finishResult = (value: unknown): void => {
+      if (value === undefined) {
+        finish({ status: "rejected", reason: "no authoritative handler accepted" });
+        return;
+      }
+      finish(
+        admitClientCommandDisposition(value) ?? {
+          status: "rejected",
+          reason: "command handler returned an invalid disposition",
+        },
+      );
+    };
+    let nativePromise = false;
+    try {
+      nativePromise = result instanceof Promise;
+    } catch {
+      finishResult(result);
+      return;
+    }
+    if (!nativePromise) {
+      finishResult(result);
+      return;
+    }
+    try {
+      void Promise.prototype.then.call(
+        result,
+        finishResult,
+        (error: unknown) => {
+          this.reportHandlerError(error);
+          finish({ status: "rejected", reason: "command handler rejected the command" });
+        },
+      );
+    } catch {
+      finish({
+        status: "rejected",
+        reason: "command handler returned an invalid disposition",
       });
+    }
   }
 
   private reserveCommand(commandId: string, fingerprint: string): boolean {
@@ -478,17 +453,32 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     status: "accepted" | "rejected",
     reason?: string,
   ): CommandAckEvent {
-    const requestId = "requestId" in command ? command.requestId : undefined;
-    return {
+    const acknowledgementBase = {
       type: "command_ack",
       timestamp: Date.now(),
-      runId: this.config.runId,
+      runId: this.#connectionRunId,
       commandId: command.commandId!,
-      commandType: command.type,
       status,
-      ...(requestId === undefined ? {} : { requestId }),
       ...(reason === undefined ? {} : { reason }),
-    };
+    } as const;
+    switch (command.type) {
+      case "approve":
+      case "reject":
+        return {
+          ...acknowledgementBase,
+          commandType: command.type,
+          requestId: command.requestId,
+        };
+      case "input":
+        return {
+          ...acknowledgementBase,
+          commandType: command.type,
+          ...(command.requestId === undefined ? {} : { requestId: command.requestId }),
+        };
+      case "cancel":
+      case "ping":
+        return { ...acknowledgementBase, commandType: command.type };
+    }
   }
 
   private sendCommandAck(
@@ -517,7 +507,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     const pong: PongEvent = {
       type: "pong",
       timestamp: Date.now(),
-      runId: this.config.runId,
+      runId: this.#connectionRunId,
     };
     this.send(pong);
   }
@@ -536,7 +526,7 @@ export class WebSocketPublisher implements BidirectionalPublisher {
         this.send({
           type: "pong",
           timestamp: Date.now(),
-          runId: this.config.runId,
+          runId: this.#connectionRunId,
         } as PongEvent);
       }, this.config.pingInterval);
     }
@@ -558,6 +548,9 @@ export class WebSocketPublisher implements BidirectionalPublisher {
    * Subscribe to client commands
    */
   onCommand(handler: ClientCommandHandler): () => void {
+    if (this.closed) {
+      throw ORCHESTRATION_ERROR.create({ detail: "WebSocket publisher is closed" });
+    }
     if (this.commandHandler !== null) {
       throw ORCHESTRATION_ERROR.create({
         detail: "WebSocket publisher already has an authoritative handler",
@@ -582,13 +575,18 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     if (this.closed) {
       throw ORCHESTRATION_ERROR.create({ detail: "WebSocket publisher is closed" });
     }
+    if (event.runId !== undefined && event.runId !== this.#connectionRunId) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Claude Code event runId does not match the publisher",
+      });
+    }
 
     const { socket } = this.config;
     if (socket.readyState !== WebSocket.OPEN) {
       throw ORCHESTRATION_ERROR.create({ detail: "WebSocket is not open" });
     }
 
-    socket.send(JSON.stringify(event));
+    socket.send(serializeWireEvent(event));
 
     if (this.config.debug) {
       logger.info("Sent event", { eventType: event.type });
@@ -629,8 +627,8 @@ export class WebSocketPublisher implements BidirectionalPublisher {
     const event: CancelledEvent = {
       type: "cancelled",
       timestamp: Date.now(),
-      runId: this.config.runId,
-      reason,
+      runId: this.#connectionRunId,
+      ...(reason === undefined ? {} : { reason }),
     };
     this.send(event);
   }
@@ -650,46 +648,116 @@ export function createWebSocketHandler(config: {
   /** Get run ID from request */
   getRunId: (req: Request) => string | null;
 
-  /** Called when a new connection is established */
-  onConnection: (
-    publisher: WebSocketPublisher,
-    runId: string,
-  ) => void | Promise<void>;
+  /**
+   * Run-keyed controller ownership.
+   *
+   * A socket close only detaches its publisher. The caller must invoke
+   * `releaseRun()` with the exact run registration when the run itself ends.
+   */
+  registry: AgentControllerRegistry;
 
-  /** Called when connection closes */
-  onClose?: (runId: string) => void | Promise<void>;
+  /** Called when a current connection generation is established. */
+  onConnection: (registration: AgentControllerRegistration) => void | Promise<void>;
+
+  /** Called only when the exact current connection generation closes. */
+  onClose?: (registration: AgentControllerRegistration) => void | Promise<void>;
 
   /** Enable debug logging */
   debug?: boolean;
 }): (req: Request) => Response {
+  const { registry } = config;
   return (req: Request): Response => {
     const runId = config.getRunId(req);
     if (!runId) {
       return new Response("Missing runId", { status: 400 });
     }
+    if (!isBoundedIdentifier(runId)) {
+      return new Response("Invalid runId", { status: 400 });
+    }
 
     const { socket, response } = Deno.upgradeWebSocket(req);
 
     socket.addEventListener("open", () => {
-      const publisher = new WebSocketPublisher({
-        socket,
-        runId,
-        debug: config.debug,
-      });
+      let publisher: WebSocketPublisher;
+      try {
+        publisher = new WebSocketPublisher({
+          socket,
+          runId,
+          debug: config.debug,
+        });
+      } catch (error) {
+        logger.error("WebSocket publisher setup failed", {
+          runId,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        try {
+          socket.close();
+        } catch (cleanupError) {
+          logger.error("WebSocket setup failure cleanup failed", {
+            runId,
+            errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+          });
+        }
+        return;
+      }
+      let registration: AgentControllerRegistration;
+      try {
+        registration = registry.register(publisher);
+      } catch (error) {
+        logger.error("WebSocket publisher registration failed", {
+          runId,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        try {
+          publisher.close();
+        } catch (cleanupError) {
+          logger.error("WebSocket publisher registration cleanup failed", {
+            runId,
+            errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+          });
+        }
+        return;
+      }
 
       void Promise.resolve()
-        .then(() => config.onConnection(publisher, runId))
+        .then(() => {
+          if (registry.getPublisher(runId) !== registration) return;
+          return config.onConnection(registration);
+        })
         .catch((error) => {
           logger.error("WebSocket connection callback failed", {
             runId,
             errorName: error instanceof Error ? error.name : typeof error,
           });
-          publisher.close();
+          try {
+            if (registry.detach(registration)) {
+              if (registry.getPublisher(runId) === undefined) {
+                registry.releaseRun(registration.run);
+              }
+            } else {
+              publisher.close();
+            }
+          } catch (cleanupError) {
+            logger.error("WebSocket connection cleanup failed", {
+              runId,
+              errorName: cleanupError instanceof Error ? cleanupError.name : typeof cleanupError,
+            });
+          }
         });
 
       socket.addEventListener("close", () => {
+        let detached = false;
+        try {
+          detached = registry.detach(registration);
+        } catch (error) {
+          logger.error("WebSocket registry detach failed", {
+            runId,
+            errorName: error instanceof Error ? error.name : typeof error,
+          });
+        }
+        if (!detached) return;
         void Promise.resolve()
-          .then(() => config.onClose?.(runId))
+          .then(() => config.onClose?.(registration))
           .catch((error) => {
             logger.error("WebSocket close callback failed", {
               runId,
@@ -703,42 +771,64 @@ export function createWebSocketHandler(config: {
   };
 }
 
-/**
- * Agent controller for handling client commands
- *
- * Wraps an agent execution and provides methods to control it from client commands.
- */
-export class AgentController {
-  private publisher: BidirectionalPublisher;
-  private cancelled = false;
-  private disposed = false;
-  private unsubscribeCommand: () => void = () => {};
-  private handledCommands = new Map<
+interface AgentControllerAuthority {
+  attach(publisher: BidirectionalPublisher, runId: string): void;
+  detach(publisher: BidirectionalPublisher): boolean;
+  dispose(): void;
+}
+
+interface AgentControllerTransport {
+  readonly generation: symbol;
+  readonly publisher: BidirectionalPublisher;
+  readonly unsubscribe: () => void;
+}
+
+interface PendingApprovalOperation {
+  readonly event: Readonly<ApprovalRequestEvent>;
+  readonly resolve: (approved: boolean) => void;
+  readonly reject: (error: Error) => void;
+  readonly timeout: number | null;
+}
+
+const CONTROLLER_AUTHORITIES = new WeakMap<AgentControllerHandle, AgentControllerAuthority>();
+
+function getControllerAuthority(controller: AgentControllerHandle): AgentControllerAuthority {
+  const authority = CONTROLLER_AUTHORITIES.get(controller);
+  if (!authority) {
+    throw ORCHESTRATION_ERROR.create({ detail: "Agent controller lifecycle authority is missing" });
+  }
+  return authority;
+}
+
+/** @deprecated Use {@link AgentControllerHandle}; lifecycle is registry-owned. */
+export type AgentController = AgentControllerHandle;
+
+/** Registry-owned implementation; registrations expose only AgentControllerHandle. */
+class RunAgentController implements AgentControllerHandle {
+  readonly #runId: string;
+  readonly #config: Readonly<AgentControllerConfig>;
+  #transport: AgentControllerTransport | null = null;
+  #cancelled = false;
+  #disposed = false;
+  readonly #handledCommands = new Map<
     string,
     { fingerprint: string; disposition: ClientCommandDisposition }
   >();
-  private pendingApprovals = new Map<
-    string,
-    {
-      resolve: (approved: boolean) => void;
-      reject: (error: Error) => void;
-      timeout: number | null;
-    }
-  >();
-  private inputResolvers = new Map<string, {
+  readonly #pendingApprovals = new Map<string, PendingApprovalOperation>();
+  readonly #pendingApprovalByToolCallId = new Map<string, string>();
+  readonly #inputResolvers = new Map<string, {
     resolve: (input: string) => void;
     reject: (error: Error) => void;
     timeout: number | null;
   }>();
-  private nextInputRequestId = 1;
+  #nextInputRequestId = 1;
+  #nextApprovalRequestSequence = 1;
+  readonly #approvalRequestNamespace: string;
 
   constructor(
     publisher: BidirectionalPublisher,
-    private config: {
-      approvalTimeout?: number;
-      inputTimeout?: number;
-      onCancel?: (reason?: string) => void;
-    } = {},
+    runId: string,
+    config: AgentControllerConfig = {},
   ) {
     if (config.approvalTimeout !== undefined) {
       parsePositiveDurationWithLabel(config.approvalTimeout, "Agent approvalTimeout");
@@ -746,26 +836,111 @@ export class AgentController {
     if (config.inputTimeout !== undefined) {
       parsePositiveDurationWithLabel(config.inputTimeout, "Agent inputTimeout");
     }
-    this.publisher = publisher;
-    this.attachPublisher(publisher);
+    if (!isBoundedIdentifier(runId)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Agent publisher runId must be a bounded identifier",
+      });
+    }
+    let approvalRequestNamespace: string;
+    try {
+      approvalRequestNamespace = globalThis.crypto.randomUUID();
+    } catch (cause) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Agent approval request identity generation is unavailable",
+        cause,
+      });
+    }
+    if (!isBoundedIdentifier(approvalRequestNamespace)) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Agent approval request identity generation returned an invalid identifier",
+      });
+    }
+    this.#runId = runId;
+    this.#approvalRequestNamespace = approvalRequestNamespace;
+    this.#config = Object.freeze({ ...config });
+    Object.defineProperty(this, "runId", {
+      configurable: false,
+      enumerable: true,
+      get: () => this.#runId,
+    });
+    CONTROLLER_AUTHORITIES.set(
+      this,
+      Object.freeze({
+        attach: (replacement: BidirectionalPublisher, replacementRunId: string) =>
+          this.#attachPublisher(replacement, replacementRunId),
+        detach: (current: BidirectionalPublisher) => this.#detachPublisher(current),
+        dispose: () => this.#dispose(),
+      }),
+    );
+    this.#attachPublisher(publisher, runId);
   }
 
-  /** Replace the transport while preserving run-scoped command idempotency. */
-  attachPublisher(publisher: BidirectionalPublisher): void {
-    if (this.disposed) {
+  get runId(): string {
+    return this.#runId;
+  }
+
+  #attachPublisher(publisher: BidirectionalPublisher, knownRunId?: string): void {
+    if (this.#disposed) {
       throw ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" });
     }
-    this.unsubscribeCommand();
-    this.publisher = publisher;
-    this.unsubscribeCommand = publisher.onCommand((command) => this.handleCommand(command));
+    const publisherRunId = knownRunId ?? publisher.runId;
+    if (publisherRunId !== this.#runId) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Replacement publisher runId does not match the agent controller",
+      });
+    }
+    const generation = Symbol(this.#runId);
+    const unsubscribeReplacement = publisher.onCommand((command) =>
+      this.#handleCommand(command, generation)
+    );
+    const current = this.#transport;
+    try {
+      current?.unsubscribe();
+    } catch (cause) {
+      try {
+        unsubscribeReplacement();
+      } catch (cleanupCause) {
+        throw new AggregateError(
+          [cause, cleanupCause],
+          "Agent controller publisher replacement failed and cleanup was incomplete",
+        );
+      }
+      throw cause;
+    }
+    const replacement = {
+      generation,
+      publisher,
+      unsubscribe: unsubscribeReplacement,
+    };
+    this.#transport = replacement;
+    for (const pending of [...this.#pendingApprovals.values()]) {
+      this.#deliverApproval(pending, replacement);
+    }
   }
 
-  private handleCommand(command: ClientCommand): ClientCommandDisposition {
-    if (this.disposed) return { status: "rejected", reason: "Agent controller disposed" };
+  #detachPublisher(publisher: BidirectionalPublisher): boolean {
+    const current = this.#transport;
+    if (!current || current.publisher !== publisher) return false;
+    this.#transport = null;
+    current.unsubscribe();
+    return true;
+  }
+
+  #handleCommand(
+    command: ClientCommand,
+    transportGeneration: symbol,
+  ): ClientCommandDisposition {
+    if (this.#disposed) return { status: "rejected", reason: "Agent controller disposed" };
+    if (this.#transport?.generation !== transportGeneration) {
+      return { status: "rejected", reason: "publisher generation is retired" };
+    }
+    if (command.runId !== this.#runId) {
+      return { status: "rejected", reason: "command runId does not match the agent controller" };
+    }
     const commandId = command.commandId;
     const fingerprint = commandId ? fingerprintClientCommand(command) : undefined;
     if (commandId && fingerprint) {
-      const existing = this.handledCommands.get(commandId);
+      const existing = this.#handledCommands.get(commandId);
       if (existing) {
         return existing.fingerprint === fingerprint
           ? existing.disposition
@@ -776,28 +951,35 @@ export class AgentController {
     let disposition: ClientCommandDisposition;
     switch (command.type) {
       case "cancel":
-        this.handleCancel(command.reason);
+        this.#handleCancel(command.reason);
         disposition = { status: "accepted" };
         break;
 
       case "approve":
-        disposition = this.handleApproval(command.toolCallId, true)
+        disposition = this.#handleApproval(command.toolCallId, command.requestId, true)
           ? { status: "accepted" }
-          : { status: "rejected", reason: "approval request is not pending" };
+          : {
+            status: "rejected",
+            reason: "approval correlation does not match a pending request",
+          };
         break;
 
       case "reject":
-        disposition = this.handleApproval(
+        disposition = this.#handleApproval(
             command.toolCallId,
+            command.requestId,
             false,
             command.reason,
           )
           ? { status: "accepted" }
-          : { status: "rejected", reason: "approval request is not pending" };
+          : {
+            status: "rejected",
+            reason: "approval correlation does not match a pending request",
+          };
         break;
 
       case "input":
-        disposition = this.handleInput(command.content, command.requestId)
+        disposition = this.#handleInput(command.content, command.requestId)
           ? { status: "accepted" }
           : { status: "rejected", reason: "input request is not pending or is ambiguous" };
         break;
@@ -808,60 +990,78 @@ export class AgentController {
     }
 
     if (commandId && fingerprint) {
-      while (this.handledCommands.size >= MAX_TRACKED_CLIENT_COMMANDS) {
-        const oldest = this.handledCommands.keys().next().value;
+      while (this.#handledCommands.size >= MAX_TRACKED_CLIENT_COMMANDS) {
+        const oldest = this.#handledCommands.keys().next().value;
         if (oldest === undefined) break;
-        this.handledCommands.delete(oldest);
+        this.#handledCommands.delete(oldest);
       }
-      this.handledCommands.set(commandId, { fingerprint, disposition });
+      this.#handledCommands.set(commandId, { fingerprint, disposition });
     }
     return disposition;
   }
 
-  private handleCancel(reason?: string): void {
-    this.cancelled = true;
+  #handleCancel(reason?: string): void {
+    this.#cancelled = true;
 
     // Reject all pending approvals
-    for (const [, pending] of this.pendingApprovals) {
+    for (const [, pending] of this.#pendingApprovals) {
       if (pending.timeout) clearTimeout(pending.timeout);
       pending.reject(ORCHESTRATION_ERROR.create({ detail: "Cancelled" }));
     }
-    this.pendingApprovals.clear();
+    this.#pendingApprovals.clear();
+    this.#pendingApprovalByToolCallId.clear();
 
     // Reject all pending inputs
-    for (const pending of this.inputResolvers.values()) {
+    for (const pending of this.#inputResolvers.values()) {
       if (pending.timeout) clearTimeout(pending.timeout);
       pending.reject(ORCHESTRATION_ERROR.create({ detail: "Cancelled" }));
     }
-    this.inputResolvers.clear();
+    this.#inputResolvers.clear();
 
-    this.config.onCancel?.(reason);
+    this.#config.onCancel?.(reason);
   }
 
-  private handleApproval(
+  #handleApproval(
     toolCallId: string,
+    requestId: string,
     approved: boolean,
     _reason?: string,
   ): boolean {
-    const pending = this.pendingApprovals.get(toolCallId);
-    if (!pending) return false;
+    const pending = this.#pendingApprovals.get(requestId);
+    if (!pending || pending.event.toolCallId !== toolCallId) return false;
     if (pending.timeout) clearTimeout(pending.timeout);
     pending.resolve(approved);
-    this.pendingApprovals.delete(toolCallId);
+    this.#pendingApprovals.delete(requestId);
+    if (this.#pendingApprovalByToolCallId.get(toolCallId) === requestId) {
+      this.#pendingApprovalByToolCallId.delete(toolCallId);
+    }
     return true;
   }
 
-  private handleInput(content: string, requestId?: string): boolean {
+  #createApprovalRequestId(): string {
+    if (!Number.isSafeInteger(this.#nextApprovalRequestSequence)) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Agent approval request identity space is exhausted",
+      });
+    }
+    const requestId = `${this.#approvalRequestNamespace}-${
+      this.#nextApprovalRequestSequence.toString(36)
+    }`;
+    this.#nextApprovalRequestSequence += 1;
+    return requestId;
+  }
+
+  #handleInput(content: string, requestId?: string): boolean {
     let selectedId = requestId;
     if (selectedId === undefined) {
-      if (this.inputResolvers.size !== 1) return false;
-      selectedId = this.inputResolvers.keys().next().value;
+      if (this.#inputResolvers.size !== 1) return false;
+      selectedId = this.#inputResolvers.keys().next().value;
     }
     if (selectedId === undefined) return false;
-    const pending = this.inputResolvers.get(selectedId);
+    const pending = this.#inputResolvers.get(selectedId);
     if (!pending) return false;
     if (pending.timeout) clearTimeout(pending.timeout);
-    this.inputResolvers.delete(selectedId);
+    this.#inputResolvers.delete(selectedId);
     pending.resolve(content);
     return true;
   }
@@ -870,7 +1070,7 @@ export class AgentController {
    * Check if the agent has been cancelled
    */
   get isCancelled(): boolean {
-    return this.cancelled;
+    return this.#cancelled;
   }
 
   /**
@@ -882,73 +1082,134 @@ export class AgentController {
     input: Record<string, unknown>,
     reason: string,
   ): Promise<boolean> {
-    if (this.cancelled) {
+    if (this.#cancelled) {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent cancelled" }));
     }
-    if (this.disposed) {
+    if (this.#disposed) {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" }));
     }
-    if (this.pendingApprovals.has(toolCallId)) {
+    if (this.#pendingApprovalByToolCallId.has(toolCallId)) {
       return Promise.reject(
         INVALID_ARGUMENT.create({ detail: `Approval is already pending: ${toolCallId}` }),
       );
     }
 
-    const timeout = this.config.approvalTimeout ?? DEFAULT_APPROVAL_TIMEOUT_MS;
-
-    // Send approval request to client
-    this.publisher.send({
-      type: "approval_request",
-      timestamp: Date.now(),
-      toolCallId,
-      toolName,
-      input,
-      reason,
-      timeout,
-    });
+    let event: Readonly<ApprovalRequestEvent>;
+    try {
+      if (!isBoundedIdentifier(toolCallId)) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Approval toolCallId is not a bounded identifier",
+        });
+      }
+      if (!isBoundedString(toolName) || !isBoundedString(reason)) {
+        throw INVALID_ARGUMENT.create({ detail: "Approval text exceeds the wire field limit" });
+      }
+      const timeout = this.#config.approvalTimeout ?? DEFAULT_APPROVAL_TIMEOUT_MS;
+      const requestId = this.#createApprovalRequestId();
+      event = Object.freeze({
+        type: "approval_request",
+        timestamp: Date.now(),
+        runId: this.#runId,
+        requestId,
+        toolCallId,
+        toolName,
+        input: snapshotApprovalInput(input),
+        reason,
+        timeout,
+      });
+      serializeWireEvent(event);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const { requestId } = event;
+    const timeout = event.timeout ?? DEFAULT_APPROVAL_TIMEOUT_MS;
 
     return new Promise((resolve, reject) => {
+      const clearPending = (): void => {
+        this.#pendingApprovals.delete(requestId);
+        if (this.#pendingApprovalByToolCallId.get(toolCallId) === requestId) {
+          this.#pendingApprovalByToolCallId.delete(toolCallId);
+        }
+      };
       const timeoutId = globalThis.setTimeout(() => {
-        this.pendingApprovals.delete(toolCallId);
+        clearPending();
         // Default to reject on timeout
         resolve(false);
       }, timeout);
 
-      this.pendingApprovals.set(toolCallId, {
+      const pending = {
+        event,
         resolve,
         reject,
         timeout: timeoutId,
-      });
+      };
+      this.#pendingApprovals.set(requestId, pending);
+      this.#pendingApprovalByToolCallId.set(toolCallId, requestId);
+      const transport = this.#transport;
+      if (transport) this.#deliverApproval(pending, transport);
     });
+  }
+
+  #deliverApproval(
+    pending: PendingApprovalOperation,
+    transport: AgentControllerTransport,
+  ): void {
+    const rejectDelivery = (cause: unknown): void => {
+      if (this.#transport?.generation !== transport.generation) return;
+      const { requestId, toolCallId } = pending.event;
+      if (this.#pendingApprovals.get(requestId) !== pending) return;
+      if (pending.timeout !== null) clearTimeout(pending.timeout);
+      this.#pendingApprovals.delete(requestId);
+      if (this.#pendingApprovalByToolCallId.get(toolCallId) === requestId) {
+        this.#pendingApprovalByToolCallId.delete(toolCallId);
+      }
+      pending.reject(ORCHESTRATION_ERROR.create({
+        detail: "Approval request delivery failed",
+        cause,
+      }));
+    };
+    let delivery: void | Promise<void>;
+    try {
+      delivery = transport.publisher.send(pending.event);
+    } catch (cause) {
+      rejectDelivery(cause);
+      return;
+    }
+    if (delivery !== undefined) void Promise.resolve(delivery).catch(rejectDelivery);
   }
 
   /**
    * Request input from the user
    */
   requestInput(prompt: string, defaultValue?: string): Promise<string> {
-    if (this.cancelled) {
+    if (this.#cancelled) {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent cancelled" }));
     }
-    if (this.disposed) {
+    if (this.#disposed) {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" }));
     }
 
-    const timeout = this.config.inputTimeout ?? DEFAULT_INPUT_TIMEOUT_MS;
-    const requestId = `input-${this.nextInputRequestId++}`;
+    const transport = this.#transport;
+    if (!transport) {
+      return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent transport is detached" }));
+    }
+    const timeout = this.#config.inputTimeout ?? DEFAULT_INPUT_TIMEOUT_MS;
+    const requestId = `input-${this.#nextInputRequestId++}`;
 
     // Send input request to client
-    this.publisher.send({
+    transport.publisher.send({
       type: "input_request",
       timestamp: Date.now(),
+      runId: this.#runId,
       requestId,
       prompt,
-      defaultValue,
+      ...(defaultValue === undefined ? {} : { defaultValue }),
       timeout,
     });
 
     return new Promise((resolve, reject) => {
       const timeoutId = globalThis.setTimeout(() => {
-        this.inputResolvers.delete(requestId);
+        this.#inputResolvers.delete(requestId);
         if (defaultValue !== undefined) {
           resolve(defaultValue);
         } else {
@@ -956,7 +1217,7 @@ export class AgentController {
         }
       }, timeout);
 
-      this.inputResolvers.set(requestId, {
+      this.#inputResolvers.set(requestId, {
         resolve,
         reject,
         timeout: timeoutId,
@@ -964,27 +1225,227 @@ export class AgentController {
     });
   }
 
-  /**
-   * Cleanup resources
-   */
-  dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.unsubscribeCommand();
+  #dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    const transport = this.#transport;
+    this.#transport = null;
+    let unsubscribeFailed = false;
+    let unsubscribeError: unknown;
+    try {
+      transport?.unsubscribe();
+    } catch (error) {
+      unsubscribeFailed = true;
+      unsubscribeError = error;
+    }
     const disposalError = ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" });
 
     // Clear all pending operations
-    for (const [, pending] of this.pendingApprovals) {
+    for (const [, pending] of this.#pendingApprovals) {
       if (pending.timeout) clearTimeout(pending.timeout);
       pending.reject(disposalError);
     }
-    this.pendingApprovals.clear();
+    this.#pendingApprovals.clear();
+    this.#pendingApprovalByToolCallId.clear();
 
-    for (const pending of this.inputResolvers.values()) {
+    for (const pending of this.#inputResolvers.values()) {
       if (pending.timeout) clearTimeout(pending.timeout);
       pending.reject(disposalError);
     }
-    this.inputResolvers.clear();
-    this.handledCommands.clear();
+    this.#inputResolvers.clear();
+    this.#handledCommands.clear();
+    if (unsubscribeFailed) throw unsubscribeError;
+  }
+}
+
+/**
+ * Retains one controller generation per run independently of transient
+ * publisher connections. Replacements synchronously retire the old publisher;
+ * only an exact publisher token can detach, and only an exact run token can
+ * terminally release the controller.
+ */
+export class AgentControllerRegistry {
+  private readonly runs = new Map<
+    string,
+    {
+      readonly run: AgentControllerRunRegistration;
+      publisher?: AgentControllerRegistration;
+    }
+  >();
+  private readonly registeredPublishers = new WeakSet<BidirectionalPublisher>();
+  private readonly controllerConfig: Readonly<AgentControllerConfig>;
+  private closed = false;
+
+  constructor(controllerConfig: AgentControllerConfig = {}) {
+    this.controllerConfig = Object.freeze({ ...controllerConfig });
+  }
+
+  /** Attach a new authoritative publisher generation to its run controller. */
+  register(publisher: BidirectionalPublisher): AgentControllerRegistration {
+    if (this.closed) {
+      throw ORCHESTRATION_ERROR.create({ detail: "Agent controller registry is closed" });
+    }
+    const runId = publisher.runId;
+    if (!isBoundedIdentifier(runId)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Agent publisher runId must be a bounded identifier",
+      });
+    }
+    if (this.registeredPublishers.has(publisher)) {
+      throw INVALID_ARGUMENT.create({ detail: "Agent publisher is already registered" });
+    }
+
+    const current = this.runs.get(runId);
+    const retired = current?.publisher;
+    let run: AgentControllerRunRegistration;
+    if (current) {
+      try {
+        getControllerAuthority(current.run.controller).attach(publisher, runId);
+      } catch (cause) {
+        const cleanupErrors: unknown[] = [cause];
+        try {
+          this.releaseRun(current.run);
+        } catch (cleanupCause) {
+          cleanupErrors.push(cleanupCause);
+        }
+        try {
+          publisher.close();
+        } catch (cleanupCause) {
+          cleanupErrors.push(cleanupCause);
+        }
+        throw new AggregateError(
+          cleanupErrors,
+          "Agent controller publisher replacement failed closed",
+        );
+      }
+      run = current.run;
+    } else {
+      const controller = new RunAgentController(publisher, runId, this.controllerConfig);
+      run = Object.freeze({
+        runId,
+        generation: Symbol(runId),
+        controller,
+      });
+    }
+    const registration = Object.freeze({
+      run,
+      runId,
+      generation: Symbol(runId),
+      publisher,
+      controller: run.controller,
+    });
+    this.registeredPublishers.add(publisher);
+    if (current) {
+      current.publisher = registration;
+    } else {
+      this.runs.set(runId, { run, publisher: registration });
+    }
+
+    if (retired) {
+      try {
+        retired.publisher.close();
+      } catch (cause) {
+        const cleanupErrors: unknown[] = [cause];
+        try {
+          this.releaseRun(run);
+        } catch (cleanupCause) {
+          cleanupErrors.push(cleanupCause);
+        }
+        throw new AggregateError(
+          cleanupErrors,
+          "Retired agent publisher could not be closed safely",
+        );
+      }
+    }
+    return registration;
+  }
+
+  /** Return the stable controller ownership token for a live run. */
+  get(runId: string): AgentControllerRunRegistration | undefined {
+    return this.runs.get(runId)?.run;
+  }
+
+  /** Return the currently attached publisher generation, if one exists. */
+  getPublisher(runId: string): AgentControllerRegistration | undefined {
+    return this.runs.get(runId)?.publisher;
+  }
+
+  /**
+   * Detach one exact publisher generation while retaining run-scoped state.
+   * Stale registrations cannot detach a replacement.
+   */
+  detach(registration: AgentControllerRegistration): boolean {
+    const current = this.runs.get(registration.runId);
+    if (current?.publisher !== registration) return false;
+    current.publisher = undefined;
+    const errors: unknown[] = [];
+    try {
+      if (!getControllerAuthority(current.run.controller).detach(registration.publisher)) {
+        errors.push(ORCHESTRATION_ERROR.create({
+          detail: "Agent controller publisher generation did not match its registration",
+        }));
+      }
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      registration.publisher.close();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (errors.length > 0) {
+      throw errors.length === 1
+        ? errors[0]
+        : new AggregateError(errors, "Agent publisher detach cleanup failed");
+    }
+    return true;
+  }
+
+  /**
+   * Terminally release one exact run controller generation.
+   * Stale run registrations cannot release a replacement run with the same ID.
+   */
+  releaseRun(registration: AgentControllerRunRegistration): boolean {
+    const current = this.runs.get(registration.runId);
+    if (current?.run !== registration) return false;
+    this.runs.delete(registration.runId);
+    const errors: unknown[] = [];
+    try {
+      getControllerAuthority(registration.controller).dispose();
+    } catch (error) {
+      errors.push(error);
+    }
+    if (current.publisher) {
+      try {
+        current.publisher.publisher.close();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw errors.length === 1
+        ? errors[0]
+        : new AggregateError(errors, "Agent controller registration cleanup failed");
+    }
+    return true;
+  }
+
+  /** Terminally release every run and reject future registrations. */
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    const errors: unknown[] = [];
+    for (const { run } of [...this.runs.values()]) {
+      try {
+        this.releaseRun(run);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw errors.length === 1
+        ? errors[0]
+        : new AggregateError(errors, "Agent controller registry cleanup failed");
+    }
   }
 }

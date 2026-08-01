@@ -9,13 +9,14 @@ import {
   type UseClaudeCodeWebSocketOptions,
   type UseClaudeCodeWebSocketState,
 } from "./use-claude-code-websocket.ts";
+import { admitClaudeCodeEventMessage } from "./event-protocol.ts";
 
 type HookResult = UseClaudeCodeWebSocketState & {
   connect: () => void;
   disconnect: () => void;
   cancel: (reason?: string) => void;
-  approve: (toolCallId: string) => void;
-  reject: (toolCallId: string, reason?: string) => void;
+  approve: (toolCallId: string, requestId: string) => void;
+  reject: (toolCallId: string, requestId: string, reason?: string) => void;
   sendInput: (content: string) => void;
 };
 
@@ -152,10 +153,12 @@ function mount(options: UseClaudeCodeWebSocketOptions) {
   };
 }
 
-function approvalRequest(toolCallId = "tool-1") {
+function approvalRequest(toolCallId = "tool-1", runId = "run-1") {
   return {
     type: "approval_request",
     timestamp: 1,
+    runId,
+    requestId: `request-${toolCallId}`,
     toolCallId,
     toolName: "write",
     input: { path: "README.md" },
@@ -290,6 +293,43 @@ describe("useClaudeCodeWebSocket transport ownership", () => {
     }
   });
 
+  it("does not let a reentrant disconnect replacement inherit a retired retry timer", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    let reconnectOnce: (() => void) | null = null;
+    let disconnects = 0;
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+        onDisconnect: () => {
+          disconnects += 1;
+          const reconnect = reconnectOnce;
+          reconnectOnce = null;
+          reconnect?.();
+        },
+      });
+      reconnectOnce = () => view.get().connect();
+      const first = FakeWebSocket.instances[0]!;
+
+      flushSync(() => first.emitClose());
+      assertEquals(FakeWebSocket.instances.length, 2);
+      assertEquals(browser.timers.size, 0);
+
+      const replacement = FakeWebSocket.instances[1]!;
+      flushSync(() => replacement.emitClose());
+      assertEquals(browser.timers.size, 1);
+      browser.timers.runAll();
+
+      assertEquals(disconnects, 2);
+      assertEquals(FakeWebSocket.instances.length, 3);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
   it("preserves existing URL query and fragment components", () => {
     const browser = installBrowser();
     FakeWebSocket.instances = [];
@@ -321,7 +361,7 @@ describe("useClaudeCodeWebSocket transport ownership", () => {
       const first = FakeWebSocket.instances[0]!;
       flushSync(() => {
         first.message({ type: "text_delta", timestamp: 1, content: "from-a" });
-        first.message(approvalRequest("tool-a"));
+        first.message(approvalRequest("tool-a", "run-a"));
         first.message(inputRequest("request-a"));
       });
       assertEquals(view.get().pendingApprovals.length, 1);
@@ -483,6 +523,155 @@ describe("useClaudeCodeWebSocket transport ownership", () => {
 });
 
 describe("useClaudeCodeWebSocket delivery", () => {
+  it("fails closed when secure command identity is unavailable or collides", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    const cryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      flushSync(() => socket.open());
+      flushSync(() => socket.message(approvalRequest()));
+
+      Object.defineProperty(globalThis, "crypto", {
+        configurable: true,
+        value: undefined,
+      });
+      flushSync(() => view.get().approve("tool-1", "request-tool-1"));
+      assertEquals(socket.sent, []);
+      assertEquals(view.get().pendingApprovals.length, 1);
+      assertStringIncludes(view.get().error ?? "", "secure command identity");
+
+      Object.defineProperty(globalThis, "crypto", {
+        configurable: true,
+        value: { randomUUID: () => "fixed-command-id" },
+      });
+      flushSync(() => view.get().approve("tool-1", "request-tool-1"));
+      assertEquals(socket.sent.length, 1);
+      flushSync(() => view.get().cancel("stop"));
+      assertEquals(socket.sent.length, 1);
+      assertStringIncludes(view.get().error ?? "", "unique command identity");
+
+      const approvalCommand = JSON.parse(socket.sent[0]!);
+      flushSync(() =>
+        socket.message({
+          type: "command_ack",
+          timestamp: 2,
+          runId: "run-1",
+          requestId: "request-tool-1",
+          commandId: approvalCommand.commandId,
+          commandType: "approve",
+          status: "accepted",
+        })
+      );
+      flushSync(() => view.get().cancel("still stop"));
+      assertEquals(socket.sent.length, 1, "settled command identities remain collision-protected");
+      assertStringIncludes(view.get().error ?? "", "unique command identity");
+      view.unmount();
+    } finally {
+      if (cryptoDescriptor) Object.defineProperty(globalThis, "crypto", cryptoDescriptor);
+      else delete (globalThis as Record<string, unknown>).crypto;
+      browser.restore();
+    }
+  });
+
+  it("carries exact approval run and request identity through commands and acknowledgements", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      flushSync(() => socket.open());
+      flushSync(() =>
+        socket.message({
+          ...approvalRequest(),
+          runId: "run-2",
+          requestId: "foreign-approval-request",
+        })
+      );
+      assertEquals(view.get().pendingApprovals, []);
+      flushSync(() =>
+        socket.message({
+          ...approvalRequest(),
+          runId: "run-1",
+          requestId: "approval-request-1",
+        })
+      );
+      assertEquals(
+        Reflect.set(view.get().pendingApprovals[0]!, "requestId", "mutated-request"),
+        false,
+      );
+
+      flushSync(() => view.get().approve("tool-1", "approval-request-1"));
+      const command = JSON.parse(socket.sent[0]!);
+      assertEquals(command.runId, "run-1");
+      assertEquals(command.requestId, "approval-request-1");
+      assertEquals(view.get().pendingApprovals.length, 1);
+
+      flushSync(() =>
+        socket.message({
+          type: "command_ack",
+          timestamp: 2,
+          runId: "run-2",
+          requestId: "approval-request-1",
+          commandId: command.commandId,
+          commandType: "approve",
+          status: "accepted",
+        })
+      );
+      assertEquals(view.get().pendingApprovals.length, 1);
+
+      flushSync(() =>
+        socket.message({
+          type: "command_ack",
+          timestamp: 3,
+          runId: "run-1",
+          commandId: command.commandId,
+          commandType: "approve",
+          status: "accepted",
+        })
+      );
+      assertEquals(view.get().pendingApprovals.length, 1);
+
+      flushSync(() =>
+        socket.message({
+          type: "command_ack",
+          timestamp: 4,
+          runId: "run-1",
+          requestId: "another-request",
+          commandId: command.commandId,
+          commandType: "approve",
+          status: "accepted",
+        })
+      );
+      assertEquals(view.get().pendingApprovals.length, 1);
+
+      flushSync(() =>
+        socket.message({
+          type: "command_ack",
+          timestamp: 5,
+          runId: "run-1",
+          requestId: "approval-request-1",
+          commandId: command.commandId,
+          commandType: "approve",
+          status: "accepted",
+        })
+      );
+      assertEquals(view.get().pendingApprovals, []);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
   it("retains an approval until the socket accepts approve", () => {
     const browser = installBrowser();
     FakeWebSocket.instances = [];
@@ -498,7 +687,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
       const socket = FakeWebSocket.instances[0]!;
       flushSync(() => socket.message(approvalRequest()));
 
-      flushSync(() => view.get().approve("tool-1"));
+      flushSync(() => view.get().approve("tool-1", "request-tool-1"));
       assertEquals(view.get().pendingApprovals.length, 1);
       assertEquals(errors.length, 1);
       assertStringIncludes(view.get().error ?? "", "not connected");
@@ -511,6 +700,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
           type: "command_ack",
           timestamp: 3,
           runId: "run-1",
+          requestId: "request-tool-1",
           commandId: command.commandId,
           commandType: "approve",
           status: "accepted",
@@ -543,7 +733,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
 
       let thrown: unknown = null;
       try {
-        flushSync(() => view.get().reject("tool-1", "not now"));
+        flushSync(() => view.get().reject("tool-1", "request-tool-1", "not now"));
       } catch (error) {
         thrown = error;
       }
@@ -610,7 +800,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
       const first = FakeWebSocket.instances[0]!;
       flushSync(() => first.open());
       flushSync(() => first.message(approvalRequest()));
-      flushSync(() => view.get().approve("tool-1"));
+      flushSync(() => view.get().approve("tool-1", "request-tool-1"));
       const original = first.sent[0]!;
       const command = JSON.parse(original);
       assertEquals(typeof command.commandId, "string");
@@ -628,6 +818,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
           type: "command_ack",
           timestamp: 3,
           runId: "run-1",
+          requestId: "request-tool-1",
           commandId: command.commandId,
           commandType: "approve",
           status: "accepted",
@@ -652,7 +843,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
       const socket = FakeWebSocket.instances[0]!;
       flushSync(() => socket.open());
       flushSync(() => socket.message(approvalRequest()));
-      flushSync(() => view.get().reject("tool-1", "first"));
+      flushSync(() => view.get().reject("tool-1", "request-tool-1", "first"));
       const firstCommand = JSON.parse(socket.sent[0]!);
 
       flushSync(() =>
@@ -660,6 +851,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
           type: "command_ack",
           timestamp: 3,
           runId: "run-1",
+          requestId: "request-tool-1",
           commandId: firstCommand.commandId,
           commandType: "reject",
           status: "rejected",
@@ -669,7 +861,7 @@ describe("useClaudeCodeWebSocket delivery", () => {
       assertEquals(view.get().pendingApprovals.length, 1);
       assertStringIncludes(view.get().error ?? "", "stale decision");
 
-      flushSync(() => view.get().reject("tool-1", "second"));
+      flushSync(() => view.get().reject("tool-1", "request-tool-1", "second"));
       const secondCommand = JSON.parse(socket.sent[1]!);
       assertEquals(secondCommand.commandId === firstCommand.commandId, false);
       view.unmount();
@@ -733,9 +925,33 @@ describe("useClaudeCodeWebSocket delivery", () => {
         })
       );
       flushSync(() => socket.message(approvalRequest()));
-      flushSync(() => view.get().approve("tool-1"));
+      flushSync(() => view.get().approve("tool-1", "request-tool-1"));
 
       assertEquals(view.get().error, "server warning");
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
+  it("rejects a command over the encoded wire limit before WebSocket.send", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      flushSync(() => socket.open());
+      flushSync(() => socket.message(inputRequest("request-1")));
+
+      flushSync(() => view.get().sendInput("€".repeat(32 * 1024)));
+
+      assertEquals(socket.sent, []);
+      assertEquals(view.get().pendingInput?.requestId, "request-1");
+      assertStringIncludes(view.get().error ?? "", "byte limit");
       view.unmount();
     } finally {
       browser.restore();
@@ -744,6 +960,128 @@ describe("useClaudeCodeWebSocket delivery", () => {
 });
 
 describe("useClaudeCodeWebSocket protocol admission", () => {
+  it("applies the canonical identity bound to optional event run IDs", () => {
+    const admission = admitClaudeCodeEventMessage(JSON.stringify({
+      type: "text_delta",
+      timestamp: 1,
+      runId: "x".repeat(257),
+      content: "must not be admitted",
+    }));
+
+    assertEquals(admission.ok, false);
+    if (!admission.ok) assertStringIncludes(admission.reason, "base fields");
+  });
+
+  it("rejects oversized text before attempting UTF-8 encoding", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    const OriginalTextEncoder = globalThis.TextEncoder;
+    class BoundedTextEncoder extends OriginalTextEncoder {
+      override encode(input?: string) {
+        if ((input?.length ?? 0) > 64 * 1024) {
+          throw new Error("oversized event reached TextEncoder");
+        }
+        return super.encode(input);
+      }
+    }
+    Object.defineProperty(globalThis, "TextEncoder", {
+      configurable: true,
+      value: BoundedTextEncoder,
+      writable: true,
+    });
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        autoReconnect: false,
+        pingInterval: 0,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      flushSync(() =>
+        socket.message({
+          type: "text_delta",
+          timestamp: 1,
+          content: "x".repeat(64 * 1024),
+        })
+      );
+
+      assertEquals(view.get().text, "");
+      assertStringIncludes(view.get().error ?? "", "byte limit");
+      view.unmount();
+    } finally {
+      Object.defineProperty(globalThis, "TextEncoder", {
+        configurable: true,
+        value: OriginalTextEncoder,
+        writable: true,
+      });
+      browser.restore();
+    }
+  });
+
+  it("requires exact own wire fields and snapshots approval input immutably", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    const requestIdDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "requestId");
+    const runIdDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, "runId");
+    Object.defineProperty(Object.prototype, "requestId", {
+      configurable: true,
+      value: "prototype-request",
+    });
+    Object.defineProperty(Object.prototype, "runId", {
+      configurable: true,
+      value: "run-1",
+    });
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        autoReconnect: false,
+        pingInterval: 0,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      flushSync(() =>
+        socket.message({
+          type: "approval_request",
+          timestamp: 1,
+          toolCallId: "tool-inherited",
+          toolName: "write",
+          input: {},
+          reason: "missing own identity",
+        })
+      );
+      flushSync(() => socket.message({ ...approvalRequest("tool-extra"), unexpected: true }));
+      flushSync(() => socket.message(approvalRequest("x".repeat(257))));
+      assertEquals(view.get().pendingApprovals, []);
+
+      flushSync(() =>
+        socket.message({
+          ...approvalRequest("tool-safe"),
+          input: { path: "README.md", nested: { values: [1, { safe: true }] } },
+        })
+      );
+      const input = view.get().pendingApprovals[0]?.input;
+      assert(input);
+      assertEquals(Object.getPrototypeOf(input), null);
+      assertEquals(Object.isFrozen(input), true);
+      assertEquals(Object.getPrototypeOf(input.nested), null);
+      assertEquals(Object.isFrozen(input.nested), true);
+      const values = (input.nested as { values: unknown[] }).values;
+      assertEquals(Object.isFrozen(values), true);
+      assertEquals(Object.getPrototypeOf(values[1]!), null);
+      assertEquals(Object.isFrozen(values[1]!), true);
+      view.unmount();
+    } finally {
+      if (requestIdDescriptor) {
+        Object.defineProperty(Object.prototype, "requestId", requestIdDescriptor);
+      } else {
+        delete (Object.prototype as Record<string, unknown>).requestId;
+      }
+      if (runIdDescriptor) Object.defineProperty(Object.prototype, "runId", runIdDescriptor);
+      else delete (Object.prototype as Record<string, unknown>).runId;
+      browser.restore();
+    }
+  });
+
   it("rejects malformed discriminated events before callbacks and reduction", () => {
     const browser = installBrowser();
     FakeWebSocket.instances = [];

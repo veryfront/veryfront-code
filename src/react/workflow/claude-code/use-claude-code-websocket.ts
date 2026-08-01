@@ -10,6 +10,8 @@ import type {
   ClaudeCodeResult,
   ClientCommandType,
 } from "#veryfront/workflow/claude-code/types.ts";
+import { MAX_CLAUDE_CODE_WIRE_IDENTIFIER_LENGTH } from "#veryfront/workflow/claude-code/types.ts";
+import { encodeClaudeCodeClientCommandMessage } from "#veryfront/workflow/claude-code/wire-protocol.ts";
 import {
   type ClaudeCodeEventState,
   createClaudeCodeEventState,
@@ -33,6 +35,8 @@ const DEFAULT_PING_INTERVAL_MS = 30_000;
 
 const MAX_CLAUDE_CODE_PENDING_INTERACTIONS = 1_000;
 const MAX_CLAUDE_CODE_PENDING_COMMANDS = 1_000;
+const MAX_CLAUDE_CODE_RETAINED_COMMAND_IDS = 1_000;
+const MAX_SECURE_COMMAND_ID_ATTEMPTS = 8;
 
 type KeyedCommandType = Exclude<ClientCommandType, "ping">;
 
@@ -65,16 +69,30 @@ function withRunId(url: string, runId: string): string {
   return `${path}?${params.toString()}${hash}`;
 }
 
+function isCanonicalCommandId(value: unknown): value is string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.length > MAX_CLAUDE_CODE_WIRE_IDENTIFIER_LENGTH || value.trim() !== value
+  ) return false;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return false;
+  }
+  return true;
+}
+
 /**
  * Pending approval state
  */
 export interface PendingApproval {
-  toolCallId: string;
-  toolName: string;
-  input: Record<string, unknown>;
-  reason: string;
-  timeout?: number;
-  requestedAt: number;
+  readonly runId: string;
+  readonly requestId: string;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly input: Record<string, unknown>;
+  readonly reason: string;
+  readonly timeout?: number;
+  readonly requestedAt: number;
 }
 
 /**
@@ -154,10 +172,10 @@ export interface UseClaudeCodeWebSocketActions {
   cancel: (reason?: string) => void;
 
   /** Approve a pending tool call */
-  approve: (toolCallId: string) => void;
+  approve: (toolCallId: string, requestId: string) => void;
 
   /** Reject a pending tool call */
-  reject: (toolCallId: string, reason?: string) => void;
+  reject: (toolCallId: string, requestId: string, reason?: string) => void;
 
   /** Send user input */
   sendInput: (content: string) => void;
@@ -186,11 +204,11 @@ export interface UseClaudeCodeWebSocketActions {
  *       <pre>{text}</pre>
  *
  *       {pendingApprovals.map(pa => (
- *         <div key={pa.toolCallId}>
+ *         <div key={pa.requestId}>
  *           <p>Approve {pa.toolName}?</p>
  *           <pre>{JSON.stringify(pa.input, null, 2)}</pre>
- *           <button onClick={() => approve(pa.toolCallId)}>Approve</button>
- *           <button onClick={() => reject(pa.toolCallId)}>Reject</button>
+ *           <button onClick={() => approve(pa.toolCallId, pa.requestId)}>Approve</button>
+ *           <button onClick={() => reject(pa.toolCallId, pa.requestId)}>Reject</button>
  *         </div>
  *       ))}
  *
@@ -240,7 +258,7 @@ export function useClaudeCodeWebSocket(
   const terminalRef = useRef(false);
   const identityRef = useRef({ url, runId });
   const pendingCommandsRef = useRef<Map<string, PendingCommand>>(new Map());
-  const commandSequenceRef = useRef(0);
+  const retainedCommandIdsRef = useRef<Set<string>>(new Set());
   const deliveryErrorRef = useRef<string | null>(null);
   const optionsRef = useRef({
     autoReconnect,
@@ -370,7 +388,8 @@ export function useClaudeCodeWebSocket(
         if (!acknowledgedCommand) return;
         if (
           acknowledgedCommand.commandType !== event.commandType ||
-          (event.commandType === "input" && event.requestId !== undefined &&
+          ((event.commandType === "approve" || event.commandType === "reject" ||
+            event.commandType === "input") &&
             event.requestId !== acknowledgedCommand.requestId)
         ) {
           const detail = "Invalid Claude Code command acknowledgement correlation";
@@ -400,14 +419,16 @@ export function useClaudeCodeWebSocket(
         }
       }
       if (event.type === "approval_request") {
-        approval = {
+        approval = Object.freeze({
+          runId: event.runId,
+          requestId: event.requestId,
           toolCallId: event.toolCallId,
           toolName: event.toolName,
           input: event.input,
           reason: event.reason,
           timeout: event.timeout,
           requestedAt: Date.now(),
-        };
+        });
         try {
           callbacks.onApprovalRequest?.(structuredClone(approval));
         } catch (error) {
@@ -459,7 +480,7 @@ export function useClaudeCodeWebSocket(
           case "approval_request": {
             if (approval) {
               const withoutDuplicate = prev.pendingApprovals.filter((candidate) =>
-                candidate.toolCallId !== approval!.toolCallId
+                candidate.requestId !== approval!.requestId
               );
               newState.pendingApprovals = [...withoutDuplicate, approval].slice(
                 -MAX_CLAUDE_CODE_PENDING_INTERACTIONS,
@@ -484,6 +505,7 @@ export function useClaudeCodeWebSocket(
                 acknowledgedCommand.commandType === "reject"
               ) {
                 newState.pendingApprovals = prev.pendingApprovals.filter((candidate) =>
+                  candidate.requestId !== acknowledgedCommand!.requestId ||
                   candidate.toolCallId !== acknowledgedCommand!.toolCallId
                 );
               } else if (
@@ -528,15 +550,35 @@ export function useClaudeCodeWebSocket(
     return true;
   }, [recoverDeliveryError, reportDeliveryError]);
 
-  const nextCommandId = useCallback((): string => {
+  const nextCommandId = useCallback(():
+    | { ok: true; commandId: string }
+    | { ok: false; detail: string } => {
+    let cryptoProvider: Crypto | undefined;
+    let randomUUID: Crypto["randomUUID"] | undefined;
     try {
-      const generated = globalThis.crypto?.randomUUID?.();
-      if (generated && generated.length <= MAX_CLAUDE_CODE_FIELD_LENGTH) return generated;
+      cryptoProvider = globalThis.crypto;
+      randomUUID = cryptoProvider?.randomUUID;
     } catch {
-      // Fall through to a process-local bounded identifier.
+      return { ok: false, detail: "WebSocket secure command identity is unavailable" };
     }
-    commandSequenceRef.current += 1;
-    return `cc-${Date.now().toString(36)}-${commandSequenceRef.current.toString(36)}`;
+    if (typeof randomUUID !== "function") {
+      return { ok: false, detail: "WebSocket secure command identity is unavailable" };
+    }
+    for (let attempt = 0; attempt < MAX_SECURE_COMMAND_ID_ATTEMPTS; attempt++) {
+      let generated: unknown;
+      try {
+        generated = randomUUID.call(cryptoProvider);
+      } catch {
+        return { ok: false, detail: "WebSocket secure command identity is unavailable" };
+      }
+      if (!isCanonicalCommandId(generated)) {
+        return { ok: false, detail: "WebSocket secure command identity is invalid" };
+      }
+      if (!retainedCommandIdsRef.current.has(generated)) {
+        return { ok: true, commandId: generated };
+      }
+    }
+    return { ok: false, detail: "WebSocket could not generate a unique command identity" };
   }, []);
 
   const enqueueCommand = useCallback((
@@ -549,32 +591,53 @@ export function useClaudeCodeWebSocket(
       reportError(REQUEST_ERROR.create({ detail }), detail);
       return null;
     }
-    const commandId = nextCommandId();
-    const serialized = JSON.stringify({
+    const identity = nextCommandId();
+    if (!identity.ok) {
+      reportError(REQUEST_ERROR.create({ detail: identity.detail }), identity.detail);
+      return null;
+    }
+    const { commandId } = identity;
+    const encoding = encodeClaudeCodeClientCommandMessage({
       type: commandType,
       ...fields,
       timestamp: Date.now(),
       runId: identityRef.current.runId,
       commandId,
-    });
+    }, identityRef.current.runId);
+    if (!encoding.ok) {
+      reportError(REQUEST_ERROR.create({ detail: encoding.reason }), encoding.reason);
+      return null;
+    }
+    const serialized = encoding.data;
     const pending: PendingCommand = {
       commandId,
       commandType,
       serialized,
       ...correlation,
     };
+    while (retainedCommandIdsRef.current.size >= MAX_CLAUDE_CODE_RETAINED_COMMAND_IDS) {
+      const oldest = retainedCommandIdsRef.current.values().next().value;
+      if (oldest === undefined) break;
+      retainedCommandIdsRef.current.delete(oldest);
+    }
+    retainedCommandIdsRef.current.add(commandId);
     pendingCommandsRef.current.set(commandId, pending);
     sendSerializedCommand(serialized);
     return pending;
   }, [nextCommandId, reportError, sendSerializedCommand]);
 
   const sendLegacyCommand = useCallback((command: Record<string, unknown>): boolean => {
-    return sendSerializedCommand(JSON.stringify({
+    const encoding = encodeClaudeCodeClientCommandMessage({
       ...command,
       timestamp: Date.now(),
       runId: identityRef.current.runId,
-    }));
-  }, [sendSerializedCommand]);
+    }, identityRef.current.runId);
+    if (!encoding.ok) {
+      reportError(REQUEST_ERROR.create({ detail: encoding.reason }), encoding.reason);
+      return false;
+    }
+    return sendSerializedCommand(encoding.data);
+  }, [reportError, sendSerializedCommand]);
 
   const stopTransport = useCallback((updateState: boolean): void => {
     intentionalStopRef.current = true;
@@ -621,6 +684,12 @@ export function useClaudeCodeWebSocket(
     const generation = generationRef.current + 1;
     generationRef.current = generation;
     const identity = identityRef.current;
+    if (!isCanonicalCommandId(identity.runId)) {
+      intentionalStopRef.current = true;
+      const detail = "WebSocket runId is not a canonical wire identity";
+      reportError(REQUEST_ERROR.create({ detail }), detail);
+      return;
+    }
     const wsUrl = withRunId(identity.url, identity.runId);
     let socket: WebSocket;
     try {
@@ -681,13 +750,14 @@ export function useClaudeCodeWebSocket(
       socket.onerror = null;
       socketRef.current = null;
       setState((prev) => ({ ...prev, isConnected: false }));
+      clearPingInterval();
       try {
         optionsRef.current.onDisconnect?.();
       } catch (error) {
         const detail = "Claude Code onDisconnect callback failed";
         reportError(error instanceof Error ? error : new Error(String(error)), detail);
       }
-      clearPingInterval();
+      if (!ownsGeneration(generation)) return;
 
       // Attempt reconnect
       const currentOptions = optionsRef.current;
@@ -754,34 +824,44 @@ export function useClaudeCodeWebSocket(
         sendSerializedCommand(existing.serialized);
         return;
       }
-      enqueueCommand("cancel", { reason });
+      enqueueCommand("cancel", reason === undefined ? {} : { reason });
     },
     [enqueueCommand, reportError, runId, sendSerializedCommand, url],
   );
 
   // Approve a tool call
   const approve = useCallback(
-    (toolCallId: string) => {
+    (toolCallId: string, requestId: string) => {
       if (identityRef.current.url !== url || identityRef.current.runId !== runId) return;
-      if (!state.pendingApprovals.some((approval) => approval.toolCallId === toolCallId)) return;
+      if (
+        !state.pendingApprovals.some((approval) =>
+          approval.runId === runId && approval.toolCallId === toolCallId &&
+          approval.requestId === requestId
+        )
+      ) return;
       const existing = [...pendingCommandsRef.current.values()].find((command) =>
         (command.commandType === "approve" || command.commandType === "reject") &&
-        command.toolCallId === toolCallId
+        command.toolCallId === toolCallId && command.requestId === requestId
       );
       if (existing) {
         sendSerializedCommand(existing.serialized);
         return;
       }
-      enqueueCommand("approve", { toolCallId }, { toolCallId });
+      enqueueCommand("approve", { toolCallId, requestId }, { toolCallId, requestId });
     },
     [enqueueCommand, runId, sendSerializedCommand, state.pendingApprovals, url],
   );
 
   // Reject a tool call
   const reject = useCallback(
-    (toolCallId: string, reason?: string) => {
+    (toolCallId: string, requestId: string, reason?: string) => {
       if (identityRef.current.url !== url || identityRef.current.runId !== runId) return;
-      if (!state.pendingApprovals.some((approval) => approval.toolCallId === toolCallId)) return;
+      if (
+        !state.pendingApprovals.some((approval) =>
+          approval.runId === runId && approval.toolCallId === toolCallId &&
+          approval.requestId === requestId
+        )
+      ) return;
       if (reason !== undefined && reason.length > MAX_CLAUDE_CODE_FIELD_LENGTH) {
         const detail = "WebSocket rejection reason exceeds the protocol limit";
         reportError(REQUEST_ERROR.create({ detail }), detail);
@@ -789,13 +869,17 @@ export function useClaudeCodeWebSocket(
       }
       const existing = [...pendingCommandsRef.current.values()].find((command) =>
         (command.commandType === "approve" || command.commandType === "reject") &&
-        command.toolCallId === toolCallId
+        command.toolCallId === toolCallId && command.requestId === requestId
       );
       if (existing) {
         sendSerializedCommand(existing.serialized);
         return;
       }
-      enqueueCommand("reject", { toolCallId, reason }, { toolCallId });
+      enqueueCommand(
+        "reject",
+        { toolCallId, requestId, ...(reason === undefined ? {} : { reason }) },
+        { toolCallId, requestId },
+      );
     },
     [
       enqueueCommand,
@@ -851,6 +935,7 @@ export function useClaudeCodeWebSocket(
     terminalRef.current = false;
     reconnectAttemptsRef.current = 0;
     pendingCommandsRef.current.clear();
+    retainedCommandIdsRef.current.clear();
     deliveryErrorRef.current = null;
     setState(createWebSocketState());
 
@@ -858,6 +943,7 @@ export function useClaudeCodeWebSocket(
       mountedRef.current = false;
       stopTransport(false);
       pendingCommandsRef.current.clear();
+      retainedCommandIdsRef.current.clear();
     };
   }, [runId, stopTransport, url]);
 

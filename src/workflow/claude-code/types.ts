@@ -4,6 +4,23 @@
  * Type definitions for the Claude Agent SDK workflow tools.
  */
 
+/** Maximum encoded size of one Claude Code wire message. */
+export const MAX_CLAUDE_CODE_WIRE_MESSAGE_BYTES = 64 * 1024;
+/** Maximum UTF-16 length of one non-identity wire field. */
+export const MAX_CLAUDE_CODE_WIRE_FIELD_LENGTH = 32 * 1024;
+/** Maximum UTF-16 length of a wire identity. */
+export const MAX_CLAUDE_CODE_WIRE_IDENTIFIER_LENGTH = 256;
+/** Maximum array entries in structured wire data. */
+export const MAX_CLAUDE_CODE_WIRE_ARRAY_ITEMS = 256;
+/** Maximum nesting depth in structured wire data. */
+export const MAX_CLAUDE_CODE_WIRE_JSON_DEPTH = 16;
+/** Maximum aggregate nodes in structured wire data. */
+export const MAX_CLAUDE_CODE_WIRE_JSON_NODES = 4_096;
+/** Maximum own fields on one structured wire object. */
+export const MAX_CLAUDE_CODE_WIRE_OBJECT_FIELDS = 128;
+/** Maximum UTF-16 length of a structured wire object key. */
+export const MAX_CLAUDE_CODE_WIRE_KEY_LENGTH = 256;
+
 /**
  * Tool modes for Claude Code agent
  */
@@ -293,6 +310,8 @@ export interface CancelCommand extends ClientCommandBase {
  */
 export interface ApproveCommand extends ClientCommandBase {
   type: "approve";
+  commandId: string;
+  requestId: string;
   toolCallId: string;
 }
 
@@ -301,6 +320,8 @@ export interface ApproveCommand extends ClientCommandBase {
  */
 export interface RejectCommand extends ClientCommandBase {
   type: "reject";
+  commandId: string;
+  requestId: string;
   toolCallId: string;
   reason?: string;
 }
@@ -375,6 +396,8 @@ export interface ClaudeCodeEventBaseExtended {
  */
 export interface ApprovalRequestEvent extends ClaudeCodeEventBaseExtended {
   type: "approval_request";
+  runId: string;
+  requestId: string;
   toolCallId: string;
   toolName: string;
   input: Record<string, unknown>;
@@ -409,15 +432,28 @@ export interface CancelledEvent extends ClaudeCodeEventBaseExtended {
   reason?: string;
 }
 
-/** Acknowledges the semantic disposition of a keyed client command. */
-export interface CommandAckEvent extends ClaudeCodeEventBaseExtended {
+interface CommandAckEventBase extends ClaudeCodeEventBaseExtended {
   type: "command_ack";
+  runId: string;
   commandId: string;
-  commandType: ClientCommandType;
   status: "accepted" | "rejected";
-  requestId?: string;
   reason?: string;
 }
+
+/** Acknowledges the semantic disposition of a keyed client command. */
+export type CommandAckEvent =
+  | (CommandAckEventBase & {
+    commandType: "approve" | "reject";
+    requestId: string;
+  })
+  | (CommandAckEventBase & {
+    commandType: "input";
+    requestId?: string;
+  })
+  | (CommandAckEventBase & {
+    commandType: "cancel" | "ping";
+    requestId?: never;
+  });
 
 /**
  * Extended event union including bidirectional events
@@ -434,6 +470,10 @@ export type ClaudeCodeEventExtended =
  * Bidirectional publisher interface (WebSocket)
  */
 export interface BidirectionalPublisher extends ClaudeCodeEventPublisher {
+  /** Immutable workflow run identity owned by this transport. */
+  readonly runId: string;
+  /** Retire this transport synchronously before a replacement becomes observable. */
+  close(): void;
   /** Subscribe to client commands */
   onCommand(handler: ClientCommandHandler): () => void;
   /** Subscribe without becoming the authoritative command handler. */

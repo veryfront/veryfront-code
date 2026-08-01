@@ -58,12 +58,19 @@ export type { DistributedEventPublisherOptions } from "./event-publisher.ts";
 
 // WebSocket Publisher (bidirectional)
 export {
-  AgentController,
+  AgentControllerRegistry,
   createWebSocketHandler,
   WebSocketPublisher,
 } from "./websocket-publisher.ts";
 
-export type { WebSocketPublisherConfig } from "./websocket-publisher.ts";
+export type {
+  AgentController,
+  AgentControllerConfig,
+  AgentControllerHandle,
+  AgentControllerRegistration,
+  AgentControllerRunRegistration,
+  WebSocketPublisherConfig,
+} from "./websocket-publisher.ts";
 
 // Workspace Sync (for cloud deployments with API-backed file operations)
 export {
@@ -84,6 +91,17 @@ export type {
 } from "./workspace-sync.ts";
 
 // Types
+export {
+  MAX_CLAUDE_CODE_WIRE_ARRAY_ITEMS,
+  MAX_CLAUDE_CODE_WIRE_FIELD_LENGTH,
+  MAX_CLAUDE_CODE_WIRE_IDENTIFIER_LENGTH,
+  MAX_CLAUDE_CODE_WIRE_JSON_DEPTH,
+  MAX_CLAUDE_CODE_WIRE_JSON_NODES,
+  MAX_CLAUDE_CODE_WIRE_KEY_LENGTH,
+  MAX_CLAUDE_CODE_WIRE_MESSAGE_BYTES,
+  MAX_CLAUDE_CODE_WIRE_OBJECT_FIELDS,
+} from "./types.ts";
+
 export type {
   ApprovalRequestEvent,
   // Bidirectional types

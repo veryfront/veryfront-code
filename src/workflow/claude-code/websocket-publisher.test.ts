@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
+  ApprovalRequestEvent,
   BidirectionalPublisher,
   ClaudeCodeEvent,
   ClaudeCodeEventExtended,
@@ -9,11 +15,19 @@ import type {
   ClientCommandDisposition,
   ClientCommandHandler,
 } from "./types.ts";
-import { AgentController, WebSocketPublisher } from "./websocket-publisher.ts";
+import {
+  type AgentControllerRegistration,
+  AgentControllerRegistry,
+  createWebSocketHandler,
+  WebSocketPublisher,
+} from "./websocket-publisher.ts";
 
 class FakePublisher implements BidirectionalPublisher {
+  constructor(readonly runId = "run-1") {}
+
   readonly events: ClaudeCodeEventExtended[] = [];
   private handlers = new Set<ClientCommandHandler>();
+  private closed = false;
 
   get subscriberCount(): number {
     return this.handlers.size;
@@ -22,6 +36,7 @@ class FakePublisher implements BidirectionalPublisher {
   emit(
     command: ClientCommand,
   ): Array<ClientCommandDisposition | void | Promise<ClientCommandDisposition | void>> {
+    if (this.closed) return [];
     return [...this.handlers].map((handler) => handler(command));
   }
 
@@ -30,7 +45,8 @@ class FakePublisher implements BidirectionalPublisher {
     return () => this.handlers.delete(handler);
   }
 
-  send(event: ClaudeCodeEventExtended): void {
+  send(event: ClaudeCodeEventExtended): void | Promise<void> {
+    if (this.closed) throw new Error("publisher is closed");
     this.events.push(event);
   }
 
@@ -39,6 +55,7 @@ class FakePublisher implements BidirectionalPublisher {
   }
 
   close(): void {
+    this.closed = true;
     this.handlers.clear();
   }
 }
@@ -83,10 +100,115 @@ async function settleCommands(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function registerController(
+  publisher: BidirectionalPublisher,
+  config: ConstructorParameters<typeof AgentControllerRegistry>[0] = {},
+) {
+  const registry = new AgentControllerRegistry(config);
+  const registration = registry.register(publisher);
+  return { controller: registration.controller, registration, registry };
+}
+
 describe("AgentController", () => {
+  it("publishes an approval only after its exact correlation is pending", async () => {
+    class ReentrantPublisher extends FakePublisher {
+      override send(event: ClaudeCodeEventExtended): void {
+        super.send(event);
+        if (event.type !== "approval_request") return;
+        this.emit(command({
+          type: "approve",
+          toolCallId: event.toolCallId,
+          requestId: event.requestId,
+          commandId: "reentrant-approval",
+        }));
+      }
+    }
+
+    const publisher = new ReentrantPublisher();
+    const { controller, registration, registry } = registerController(publisher, {
+      approvalTimeout: 1,
+    });
+    assertEquals(
+      await controller.requestApproval("tool-reentrant", "Write", {}, "needs permission"),
+      true,
+    );
+    registry.releaseRun(registration.run);
+  });
+
+  it("binds every approval decision to immutable run and unique request identities", async () => {
+    const publisher = new FakePublisher("run-1");
+    const { controller, registration, registry } = registerController(publisher, {
+      approvalTimeout: 1_000,
+    });
+    assertEquals(Reflect.set(controller, "runId", "run-2"), false);
+    assertEquals(Reflect.defineProperty(controller, "runId", { value: "run-2" }), false);
+    Reflect.set(controller, "controllerRunId", "run-2");
+    assertEquals(controller.runId, "run-1");
+    const first = controller.requestApproval("tool-1", "Write", {}, "first request");
+    const second = controller.requestApproval("tool-2", "Write", {}, "second request");
+    const requests = publisher.events.filter((event) => event.type === "approval_request") as Array<
+      ClaudeCodeEventExtended & { runId: string; requestId: string }
+    >;
+    const firstRequest = requests[0];
+    const secondRequest = requests[1];
+
+    assertEquals(firstRequest?.runId, "run-1");
+    assertEquals(typeof firstRequest?.requestId, "string");
+    assertEquals(secondRequest?.runId, "run-1");
+    assertEquals(typeof secondRequest?.requestId, "string");
+    assertEquals(firstRequest?.requestId === secondRequest?.requestId, false);
+
+    const missingCorrelation = {
+      type: "approve",
+      timestamp: Date.now(),
+      runId: "run-1",
+      commandId: "missing-request",
+      toolCallId: "tool-1",
+    } as ClientCommand;
+    assertEquals(
+      publisher.emit(missingCorrelation),
+      [{ status: "rejected", reason: "approval correlation does not match a pending request" }],
+    );
+
+    const wrongRequest = {
+      ...missingCorrelation,
+      commandId: "wrong-request",
+      requestId: secondRequest?.requestId,
+    } as ClientCommand;
+    assertEquals(
+      publisher.emit(wrongRequest),
+      [{ status: "rejected", reason: "approval correlation does not match a pending request" }],
+    );
+
+    const wrongRun = {
+      ...missingCorrelation,
+      commandId: "wrong-run",
+      requestId: firstRequest?.requestId,
+      runId: "run-2",
+    } as ClientCommand;
+    assertEquals(
+      publisher.emit(wrongRun),
+      [{ status: "rejected", reason: "command runId does not match the agent controller" }],
+    );
+
+    assertEquals(
+      publisher.emit({
+        ...missingCorrelation,
+        commandId: "approve-first",
+        requestId: firstRequest?.requestId,
+      } as ClientCommand),
+      [{ status: "accepted" }],
+    );
+    assertEquals(await first, true);
+    registry.releaseRun(registration.run);
+    await assertRejects(() => second, Error, "Agent controller disposed");
+  });
+
   it("correlates keyed input and admits legacy unkeyed input only when unambiguous", async () => {
     const publisher = new FakePublisher();
-    const controller = new AgentController(publisher, { inputTimeout: 1_000 });
+    const { controller, registration, registry } = registerController(publisher, {
+      inputTimeout: 1_000,
+    });
     const first = controller.requestInput("First?");
     const second = controller.requestInput("Second?");
     const inputRequests = publisher.events.filter((event) => event.type === "input_request");
@@ -115,26 +237,31 @@ describe("AgentController", () => {
       [{ status: "accepted" }],
     );
     assertEquals(await second, "second value");
-    controller.dispose();
+    registry.releaseRun(registration.run);
   });
 
   it("does not bind a replayed command to a later request after publisher replacement", async () => {
     const firstPublisher = new FakePublisher();
     const secondPublisher = new FakePublisher();
-    const controller = new AgentController(firstPublisher, { approvalTimeout: 1_000 });
+    const { controller, registry } = registerController(firstPublisher, {
+      approvalTimeout: 1_000,
+    });
     const first = controller.requestApproval("tool-1", "Write", {}, "first request");
+    const firstRequest = firstPublisher.events.find((event) => event.type === "approval_request");
     const replayed = command({
       type: "approve",
       toolCallId: "tool-1",
       commandId: "command-1",
+      requestId: firstRequest?.requestId ?? "missing",
     });
 
     firstPublisher.emit(replayed);
     assertEquals(await first, true);
-    controller.attachPublisher(secondPublisher);
+    const replacementRegistration = registry.register(secondPublisher);
 
     let secondSettled = false;
     const second = controller.requestApproval("tool-1", "Write", {}, "later request");
+    const secondRequest = secondPublisher.events.find((event) => event.type === "approval_request");
     void second.then(() => {
       secondSettled = true;
     });
@@ -146,31 +273,40 @@ describe("AgentController", () => {
       type: "approve",
       toolCallId: "tool-1",
       commandId: "command-2",
+      requestId: secondRequest?.requestId ?? "missing",
     }));
     assertEquals(await second, true);
-    controller.dispose();
+    registry.releaseRun(replacementRegistration.run);
   });
 
   it("rejects duplicate pending approval IDs without orphaning the first request", async () => {
     const publisher = new FakePublisher();
-    const controller = new AgentController(publisher, { approvalTimeout: 1_000 });
+    const { controller, registration, registry } = registerController(publisher, {
+      approvalTimeout: 1_000,
+    });
 
     const first = controller.requestApproval("tool-1", "Write", {}, "needs permission");
+    const request = publisher.events.find((event) => event.type === "approval_request");
     await assertRejects(
       () => controller.requestApproval("tool-1", "Write", {}, "duplicate"),
       Error,
       "Approval is already pending",
     );
 
-    publisher.emit(command({ type: "approve", toolCallId: "tool-1" }));
+    publisher.emit(command({
+      type: "approve",
+      toolCallId: "tool-1",
+      commandId: "approve-tool-1",
+      requestId: request?.requestId ?? "missing",
+    }));
     assertEquals(await first, true);
-    controller.dispose();
+    registry.releaseRun(registration.run);
   });
 
   it("settles pending work and unsubscribes when disposed", async () => {
     const publisher = new FakePublisher();
     let cancelCalls = 0;
-    const controller = new AgentController(publisher, {
+    const { controller, registration, registry } = registerController(publisher, {
       approvalTimeout: 1_000,
       inputTimeout: 1_000,
       onCancel: () => cancelCalls++,
@@ -179,7 +315,7 @@ describe("AgentController", () => {
     const input = controller.requestInput("Value?");
 
     assertEquals(publisher.subscriberCount, 1);
-    controller.dispose();
+    registry.releaseRun(registration.run);
     assertEquals(publisher.subscriberCount, 0);
     await assertRejects(() => approval, Error, "Agent controller disposed");
     await assertRejects(() => input, Error, "Agent controller disposed");
@@ -193,15 +329,40 @@ describe("AgentController", () => {
     );
   });
 
+  it("settles pending work even when publisher unsubscription fails", async () => {
+    class FailingUnsubscribePublisher extends FakePublisher {
+      override onCommand(handler: ClientCommandHandler): () => void {
+        const unsubscribe = super.onCommand(handler);
+        return () => {
+          unsubscribe();
+          throw new Error("unsubscribe failed");
+        };
+      }
+    }
+
+    const publisher = new FailingUnsubscribePublisher();
+    const { controller, registration, registry } = registerController(publisher, {
+      approvalTimeout: 1_000,
+      inputTimeout: 1_000,
+    });
+    const approval = controller.requestApproval("tool-1", "Write", {}, "needs permission");
+    const input = controller.requestInput("Value?");
+
+    assertThrows(() => registry.releaseRun(registration.run), Error, "unsubscribe failed");
+    assertEquals(publisher.subscriberCount, 0);
+    await assertRejects(() => approval, Error, "Agent controller disposed");
+    await assertRejects(() => input, Error, "Agent controller disposed");
+  });
+
   it("validates request timers at construction", () => {
     for (const value of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       assertThrows(
-        () => new AgentController(new FakePublisher(), { approvalTimeout: value }),
+        () => new AgentControllerRegistry({ approvalTimeout: value }).register(new FakePublisher()),
         Error,
         "approvalTimeout",
       );
       assertThrows(
-        () => new AgentController(new FakePublisher(), { inputTimeout: value }),
+        () => new AgentControllerRegistry({ inputTimeout: value }).register(new FakePublisher()),
         Error,
         "inputTimeout",
       );
@@ -209,7 +370,636 @@ describe("AgentController", () => {
   });
 });
 
+describe("AgentControllerRegistry", () => {
+  it("rejects approval identities and payloads that cannot round-trip on the wire", async () => {
+    const registry = new AgentControllerRegistry({ approvalTimeout: 1 });
+    const publisher = new FakePublisher();
+    const registration = registry.register(publisher);
+
+    await assertRejects(
+      () =>
+        registration.controller.requestApproval(
+          "x".repeat(257),
+          "Write",
+          {},
+          "needs permission",
+        ),
+      Error,
+      "toolCallId",
+    );
+    await assertRejects(
+      () =>
+        registration.controller.requestApproval(
+          "tool-large",
+          "Write",
+          { content: "x".repeat(64 * 1024) },
+          "needs permission",
+        ),
+      Error,
+      "wire JSON",
+    );
+    assertEquals(publisher.events, []);
+    assertEquals(registry.releaseRun(registration.run), true);
+  });
+
+  it("replays immutable pending approvals and fences retired delivery failures", async () => {
+    class DeferredPublisher extends FakePublisher {
+      rejectDelivery: ((reason: unknown) => void) | undefined;
+
+      override send(event: ClaudeCodeEventExtended): Promise<void> {
+        super.send(event);
+        return new Promise((_resolve, reject) => {
+          this.rejectDelivery = reject;
+        });
+      }
+    }
+
+    const registry = new AgentControllerRegistry({ approvalTimeout: 1_000 });
+    const firstPublisher = new DeferredPublisher("run-1");
+    const firstRegistration = registry.register(firstPublisher);
+    const sourceInput = { path: "README.md", nested: { safe: true } };
+    const approval = firstRegistration.controller.requestApproval(
+      "tool-1",
+      "Write",
+      sourceInput,
+      "needs permission",
+    );
+    const request = firstPublisher.events.find((event) => event.type === "approval_request");
+    assertExists(request);
+    sourceInput.path = "mutated-after-request";
+    sourceInput.nested.safe = false;
+    assertEquals(Object.isFrozen(request), true);
+    assertEquals(Object.isFrozen(request.input), true);
+    assertEquals(Object.isFrozen(request.input.nested), true);
+    assertEquals(request.input, { path: "README.md", nested: { safe: true } });
+
+    assertEquals(registry.detach(firstRegistration), true);
+    const gapApproval = firstRegistration.controller.requestApproval(
+      "tool-gap",
+      "Write",
+      { path: "gap.txt" },
+      "requested while detached",
+    );
+    assertEquals(firstPublisher.events, [request]);
+    const replacementPublisher = new FakePublisher("run-1");
+    const replacementRegistration = registry.register(replacementPublisher);
+    const gapRequest = replacementPublisher.events.find(
+      (event): event is ApprovalRequestEvent =>
+        event.type === "approval_request" && event.toolCallId === "tool-gap",
+    );
+    assertExists(gapRequest);
+    assertEquals(replacementPublisher.events, [request, gapRequest]);
+
+    firstPublisher.rejectDelivery?.(new Error("retired delivery failed"));
+    await settleCommands();
+    replacementPublisher.emit(command({
+      type: "approve",
+      commandId: "approve-replayed",
+      requestId: request.requestId,
+      toolCallId: request.toolCallId,
+    }));
+    assertEquals(await approval, true);
+    replacementPublisher.emit(command({
+      type: "approve",
+      commandId: "approve-gap",
+      requestId: gapRequest.requestId,
+      toolCallId: gapRequest.toolCallId,
+    }));
+    assertEquals(await gapApproval, true);
+    assertEquals(registry.releaseRun(replacementRegistration.run), true);
+  });
+
+  it("exposes no controller lifecycle authority through registrations", () => {
+    const registry = new AgentControllerRegistry();
+    const registration = registry.register(new FakePublisher());
+
+    assertEquals("attachPublisher" in registration.controller, false);
+    assertEquals("dispose" in registration.controller, false);
+    assertEquals(registry.releaseRun(registration.run), true);
+  });
+
+  it("retains run state across a disconnected gap and fences exact publisher generations", async () => {
+    const registry = new AgentControllerRegistry({ approvalTimeout: 1_000 });
+    const firstPublisher = new FakePublisher("run-1");
+    const firstRegistration = registry.register(firstPublisher);
+    const approval = firstRegistration.controller.requestApproval(
+      "tool-1",
+      "Write",
+      {},
+      "needs permission",
+    );
+    const request = firstPublisher.events.find((event) => event.type === "approval_request");
+    assertEquals(registry.detach(firstRegistration), true);
+    assertEquals(registry.get("run-1"), firstRegistration.run);
+
+    const replacementPublisher = new FakePublisher("run-1");
+    const replacementRegistration = registry.register(replacementPublisher);
+
+    assertEquals(replacementRegistration.controller, firstRegistration.controller);
+    assertEquals(replacementRegistration.run, firstRegistration.run);
+    assertEquals(replacementRegistration.generation === firstRegistration.generation, false);
+    assertEquals(registry.detach(firstRegistration), false);
+    assertEquals(registry.getPublisher("run-1"), replacementRegistration);
+    assertThrows(
+      () => firstPublisher.send({ type: "pong", timestamp: 1, runId: "run-1" }),
+      Error,
+      "publisher is closed",
+    );
+    assertEquals(
+      firstPublisher.emit(command({
+        type: "approve",
+        toolCallId: "tool-1",
+        requestId: request?.requestId ?? "missing",
+        commandId: "stale-command",
+      })),
+      [],
+    );
+
+    assertEquals(
+      replacementPublisher.emit(command({
+        type: "approve",
+        toolCallId: "tool-1",
+        requestId: request?.requestId ?? "missing",
+        commandId: "current-command",
+      })),
+      [{ status: "accepted" }],
+    );
+    assertEquals(await approval, true);
+    assertEquals(registry.releaseRun(replacementRegistration.run), true);
+    assertEquals(registry.get("run-1"), undefined);
+
+    const nextRegistration = registry.register(new FakePublisher("run-1"));
+    assertEquals(nextRegistration.run === replacementRegistration.run, false);
+    assertEquals(registry.releaseRun(replacementRegistration.run), false);
+    assertEquals(registry.get("run-1"), nextRegistration.run);
+    assertEquals(registry.releaseRun(nextRegistration.run), true);
+  });
+
+  it("rejects a delayed command callback from a retired publisher generation", async () => {
+    class DelayedCommandPublisher extends FakePublisher {
+      capturedHandler: ClientCommandHandler | undefined;
+
+      override onCommand(handler: ClientCommandHandler): () => void {
+        this.capturedHandler = handler;
+        return super.onCommand(handler);
+      }
+    }
+
+    const registry = new AgentControllerRegistry({ approvalTimeout: 1_000 });
+    const retiredPublisher = new DelayedCommandPublisher("run-1");
+    const first = registry.register(retiredPublisher);
+    const approval = first.controller.requestApproval(
+      "tool-1",
+      "Write",
+      {},
+      "needs permission",
+    );
+    const request = retiredPublisher.events.find((event) => event.type === "approval_request");
+    assertExists(request);
+    const delayedHandler = retiredPublisher.capturedHandler;
+    assertExists(delayedHandler);
+
+    const currentPublisher = new FakePublisher("run-1");
+    const current = registry.register(currentPublisher);
+    let settled = false;
+    void approval.then(() => {
+      settled = true;
+    });
+
+    const staleDisposition = await Promise.resolve(
+      delayedHandler(command({
+        type: "approve",
+        commandId: "retired-approval",
+        requestId: request.requestId,
+        toolCallId: request.toolCallId,
+      })),
+    );
+    await Promise.resolve();
+
+    assertEquals(staleDisposition?.status, "rejected");
+    assertEquals(settled, false);
+    assertEquals(
+      currentPublisher.emit(command({
+        type: "approve",
+        commandId: "current-approval",
+        requestId: request.requestId,
+        toolCallId: request.toolCallId,
+      })),
+      [{ status: "accepted" }],
+    );
+    assertEquals(await approval, true);
+    assertEquals(registry.releaseRun(current.run), true);
+  });
+});
+
+describe("createWebSocketHandler", () => {
+  it("rejects invalid run identities before WebSocket upgrade", () => {
+    let runId = "";
+    let upgrades = 0;
+    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
+    Object.defineProperty(Deno, "upgradeWebSocket", {
+      configurable: true,
+      value: () => {
+        upgrades += 1;
+        return {
+          socket: new FakeWebSocket() as unknown as WebSocket,
+          response: new Response(),
+        };
+      },
+      writable: true,
+    });
+
+    try {
+      const registry = new AgentControllerRegistry();
+      const handler = createWebSocketHandler({
+        getRunId: () => runId,
+        registry,
+        onConnection: () => {},
+      });
+
+      for (const invalid of ["", " run-1", "run\u0000", "x".repeat(257)]) {
+        runId = invalid;
+        assertEquals(handler(new Request("https://example.test/ws")).status, 400);
+      }
+      assertEquals(upgrades, 0);
+      registry.close();
+    } finally {
+      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+    }
+  });
+
+  it("closes the exact upgraded socket when publisher setup throws", () => {
+    class SetupFailingWebSocket extends FakeWebSocket {
+      override addEventListener(type: string, listener: (event: Event) => void): void {
+        if (type === "message") throw new Error("publisher setup failed");
+        super.addEventListener(type, listener);
+      }
+    }
+
+    const socket = new SetupFailingWebSocket();
+    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
+    Object.defineProperty(Deno, "upgradeWebSocket", {
+      configurable: true,
+      value: () => ({
+        socket: socket as unknown as WebSocket,
+        response: new Response(),
+      }),
+      writable: true,
+    });
+
+    try {
+      let connections = 0;
+      const registry = new AgentControllerRegistry();
+      const handler = createWebSocketHandler({
+        getRunId: () => "run-1",
+        registry,
+        onConnection: () => {
+          connections += 1;
+        },
+      });
+
+      assertEquals(handler(new Request("https://example.test/ws")).status, 200);
+      socket.emit("open");
+      assertEquals(socket.readyState, WebSocket.CLOSED);
+      assertEquals(connections, 0);
+      assertEquals(registry.get("run-1"), undefined);
+      registry.close();
+    } finally {
+      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+    }
+  });
+
+  it("retains pending approvals across a non-overlapping socket reconnect", async () => {
+    const firstSocket = new FakeWebSocket();
+    const replacementSocket = new FakeWebSocket();
+    const sockets = [firstSocket, replacementSocket];
+    const connected: AgentControllerRegistration[] = [];
+    const closed: symbol[] = [];
+    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
+    Object.defineProperty(Deno, "upgradeWebSocket", {
+      configurable: true,
+      value: () => ({
+        socket: sockets.shift() as unknown as WebSocket,
+        response: new Response(),
+      }),
+      writable: true,
+    });
+
+    try {
+      const registry = new AgentControllerRegistry({ approvalTimeout: 1_000 });
+      const handler = createWebSocketHandler({
+        getRunId: () => "run-1",
+        registry,
+        onConnection: (registration) => {
+          connected.push(registration);
+        },
+        onClose: (registration) => {
+          closed.push(registration.generation);
+        },
+      });
+
+      handler(new Request("https://example.test/ws"));
+      firstSocket.emit("open");
+      await settleCommands();
+      const first = connected[0];
+      assertExists(first);
+      const approval = first.controller.requestApproval(
+        "tool-1",
+        "Write",
+        {},
+        "needs permission",
+      );
+      const request = firstSocket.sent.map((value) => JSON.parse(value)).find((event) =>
+        event.type === "approval_request"
+      ) as { requestId: string; toolCallId: string } | undefined;
+      assertExists(request);
+
+      firstSocket.close();
+      await settleCommands();
+      assertEquals(closed, [first.generation]);
+      assertEquals(registry.get("run-1"), first.run);
+      assertEquals(registry.getPublisher("run-1"), undefined);
+
+      handler(new Request("https://example.test/ws"));
+      replacementSocket.emit("open");
+      await settleCommands();
+      const replacement = connected[1];
+      assertExists(replacement);
+      assertEquals(replacement.controller, first.controller);
+      assertEquals(replacement.run, first.run);
+
+      replacementSocket.emitMessage(JSON.stringify({
+        type: "approve",
+        timestamp: Date.now(),
+        runId: "run-1",
+        commandId: "approve-after-reconnect",
+        requestId: request?.requestId,
+        toolCallId: request?.toolCallId,
+      }));
+      assertEquals(await approval, true);
+      await settleCommands();
+      const acknowledgement = replacementSocket.sent.map((value) => JSON.parse(value)).find(
+        (event) => event.type === "command_ack",
+      );
+      assertEquals(acknowledgement?.requestId, request?.requestId);
+      assertEquals(acknowledgement?.status, "accepted");
+
+      replacementSocket.close();
+      await settleCommands();
+      assertEquals(closed, [first.generation, replacement.generation]);
+      assertEquals(registry.get("run-1"), replacement.run);
+      assertEquals(registry.releaseRun(replacement.run), true);
+    } finally {
+      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+    }
+  });
+
+  it("does not report a retired connection close as the current run closing", async () => {
+    const firstSocket = new FakeWebSocket();
+    const replacementSocket = new FakeWebSocket();
+    const sockets = [firstSocket, replacementSocket];
+    const connected: AgentControllerRegistration[] = [];
+    const closed: symbol[] = [];
+    const originalUpgrade = Object.getOwnPropertyDescriptor(Deno, "upgradeWebSocket");
+    Object.defineProperty(Deno, "upgradeWebSocket", {
+      configurable: true,
+      value: () => ({
+        socket: sockets.shift() as unknown as WebSocket,
+        response: new Response(),
+      }),
+      writable: true,
+    });
+
+    try {
+      const registry = new AgentControllerRegistry();
+      const handler = createWebSocketHandler({
+        getRunId: () => "run-1",
+        registry,
+        onConnection: (registration) => {
+          connected.push(registration);
+        },
+        onClose: (registration) => {
+          closed.push(registration.generation);
+        },
+      });
+
+      handler(new Request("https://example.test/ws"));
+      firstSocket.emit("open");
+      await settleCommands();
+      handler(new Request("https://example.test/ws"));
+      replacementSocket.emit("open");
+      await settleCommands();
+
+      assertEquals(connected.length, 2);
+      assertEquals(connected[0]?.controller, connected[1]?.controller);
+      assertEquals(closed, []);
+      firstSocket.emit("close");
+      await settleCommands();
+      assertEquals(closed, []);
+
+      replacementSocket.close();
+      await settleCommands();
+      assertEquals(closed, [connected[1]?.generation]);
+      registry.close();
+    } finally {
+      if (originalUpgrade) Object.defineProperty(Deno, "upgradeWebSocket", originalUpgrade);
+    }
+  });
+});
+
 describe("WebSocketPublisher", () => {
+  it("rejects malformed, inherited, and thenable command dispositions", async () => {
+    const cases: Array<{
+      create: () => ClientCommandDisposition;
+      verify?: () => void;
+    }> = [];
+    cases.push({
+      create: () => Object.create({ status: "accepted" }) as ClientCommandDisposition,
+    });
+    cases.push({
+      create: () => ({ status: "accepted", unexpected: true }) as ClientCommandDisposition,
+    });
+    let getterCalls = 0;
+    cases.push({
+      create: () => {
+        const disposition = {};
+        Object.defineProperty(disposition, "status", {
+          enumerable: true,
+          get: () => {
+            getterCalls += 1;
+            return "accepted";
+          },
+        });
+        return disposition as ClientCommandDisposition;
+      },
+      verify: () => assertEquals(getterCalls, 0),
+    });
+    let thenCalls = 0;
+    cases.push({
+      create: () =>
+        ({
+          then: () => {
+            thenCalls += 1;
+          },
+        }) as unknown as ClientCommandDisposition,
+      verify: () => assertEquals(thenCalls, 0),
+    });
+
+    for (const [index, disposition] of cases.entries()) {
+      const socket = new FakeWebSocket();
+      const publisher = new WebSocketPublisher({
+        socket: socket as unknown as WebSocket,
+        runId: "run-1",
+        pingInterval: 0,
+        commandHandlerTimeout: 1_000,
+      });
+      publisher.onCommand(() => disposition.create());
+      socket.emitMessage(JSON.stringify({
+        type: "cancel",
+        timestamp: index,
+        runId: "run-1",
+        commandId: `malformed-disposition-${index}`,
+      }));
+      await settleCommands();
+
+      disposition.verify?.();
+      const acknowledgement = JSON.parse(socket.sent[0]!);
+      assertEquals(acknowledgement.status, "rejected");
+      assertEquals(acknowledgement.reason, "command handler returned an invalid disposition");
+      publisher.close();
+    }
+
+    const socket = new FakeWebSocket();
+    const publisher = new WebSocketPublisher({
+      socket: socket as unknown as WebSocket,
+      runId: "run-1",
+      pingInterval: 0,
+    });
+    publisher.onCommand(async () => ({ status: "accepted" }));
+    socket.emitMessage(JSON.stringify({
+      type: "cancel",
+      timestamp: 5,
+      runId: "run-1",
+      commandId: "native-promise-disposition",
+    }));
+    await settleCommands();
+    assertEquals(JSON.parse(socket.sent[0]!).status, "accepted");
+    publisher.close();
+  });
+
+  it("rejects a proxied native Promise disposition without escaping dispatch", async () => {
+    const socket = new FakeWebSocket();
+    const publisher = new WebSocketPublisher({
+      socket: socket as unknown as WebSocket,
+      runId: "run-1",
+      pingInterval: 0,
+    });
+    const proxiedPromise = new Proxy(
+      Promise.resolve<ClientCommandDisposition>({ status: "accepted" }),
+      {},
+    );
+    publisher.onCommand(() => proxiedPromise);
+
+    let thrown: unknown;
+    try {
+      socket.emitMessage(JSON.stringify({
+        type: "cancel",
+        timestamp: 1,
+        runId: "run-1",
+        commandId: "proxied-promise-disposition",
+      }));
+    } catch (error) {
+      thrown = error;
+    }
+    await settleCommands();
+
+    assertEquals(thrown, undefined);
+    const acknowledgement = JSON.parse(socket.sent[0]!);
+    assertEquals(acknowledgement.status, "rejected");
+    assertEquals(acknowledgement.reason, "command handler returned an invalid disposition");
+    publisher.close();
+  });
+
+  it("keeps runtime run identity authoritative and bounds outgoing wire payloads", () => {
+    const socket = new FakeWebSocket();
+    const publisher = new WebSocketPublisher({
+      socket: socket as unknown as WebSocket,
+      runId: "run-1",
+      pingInterval: 0,
+    });
+    assertEquals(Reflect.defineProperty(publisher, "runId", { value: "run-2" }), false);
+    Reflect.set(publisher, "connectionRunId", "run-2");
+    publisher.send({ type: "pong", timestamp: 1, runId: "run-1" });
+    assertEquals(JSON.parse(socket.sent[0]!).runId, "run-1");
+
+    const OriginalTextEncoder = globalThis.TextEncoder;
+    class BoundedTextEncoder extends OriginalTextEncoder {
+      override encode(input?: string) {
+        if ((input?.length ?? 0) > 64 * 1024) {
+          throw new Error("oversized payload reached TextEncoder");
+        }
+        return super.encode(input);
+      }
+    }
+    Object.defineProperty(globalThis, "TextEncoder", {
+      configurable: true,
+      value: BoundedTextEncoder,
+      writable: true,
+    });
+    try {
+      assertThrows(
+        () =>
+          publisher.send({
+            type: "text_delta",
+            timestamp: 2,
+            content: "x".repeat(64 * 1024),
+          }),
+        Error,
+        "wire byte limit",
+      );
+    } finally {
+      Object.defineProperty(globalThis, "TextEncoder", {
+        configurable: true,
+        value: OriginalTextEncoder,
+        writable: true,
+      });
+      publisher.close();
+    }
+  });
+
+  it("rejects outgoing events that violate the shared field contract before send", () => {
+    const socket = new FakeWebSocket();
+    const publisher = new WebSocketPublisher({
+      socket: socket as unknown as WebSocket,
+      runId: "run-1",
+      pingInterval: 0,
+    });
+
+    assertThrows(
+      () =>
+        publisher.send({
+          type: "tool_call_start",
+          timestamp: 1,
+          toolCallId: "x".repeat(257),
+          toolName: "Write",
+        }),
+      Error,
+      "tool_call_start",
+    );
+    assertThrows(
+      () =>
+        publisher.send({
+          type: "text_delta",
+          timestamp: 2,
+          content: "x".repeat(32 * 1024 + 1),
+        }),
+      Error,
+      "text_delta",
+    );
+    assertEquals(socket.sent, []);
+    publisher.close();
+  });
+
   it("rejects an oversized text frame before attempting UTF-8 encoding", () => {
     const socket = new FakeWebSocket();
     const publisher = new WebSocketPublisher({
@@ -580,6 +1370,11 @@ describe("WebSocketPublisher", () => {
     assertEquals(publisher.isOpen, false);
     assertThrows(
       () => publisher.send({ type: "pong", timestamp: 2, runId: "run-1" }),
+      Error,
+      "publisher is closed",
+    );
+    assertThrows(
+      () => publisher.onCommand(() => ({ status: "accepted" })),
       Error,
       "publisher is closed",
     );
