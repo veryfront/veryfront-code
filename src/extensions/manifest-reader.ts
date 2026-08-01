@@ -20,13 +20,11 @@ const MAX_MANIFEST_BYTES_BIGINT = BigInt(MAX_EXTENSION_MANIFEST_BYTES);
 // Capture the intrinsics used after asynchronous filesystem calls. This keeps
 // parsing deterministic if application code mutates the corresponding globals
 // while a manifest read is in flight.
-const NativeAggregateError = AggregateError;
 const NativeError = Error;
 const NativeSyntaxError = SyntaxError;
 const NativeUint8Array = Uint8Array;
 const reflectApply = Reflect.apply;
-const arrayIsArray = Array.isArray;
-const arrayMap = Array.prototype.map;
+const functionHasInstance = Function.prototype[Symbol.hasInstance];
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const jsonParse = JSON.parse;
@@ -257,33 +255,42 @@ function ownStringProperty(value: object, property: string): string | undefined 
     : undefined;
 }
 
-function diagnosticCause(cause: unknown): Error {
-  if (cause instanceof NativeAggregateError) {
-    const errorsDescriptor = reflectApply(objectGetOwnPropertyDescriptor, undefined, [
-      cause,
-      "errors",
-    ]) as PropertyDescriptor | undefined;
-    const errors = errorsDescriptor && "value" in errorsDescriptor && arrayIsArray(
-        errorsDescriptor.value,
-      )
-      ? reflectApply(arrayMap, errorsDescriptor.value, [diagnosticCause]) as Error[]
-      : [];
-    const message = ownStringProperty(cause, "message") ?? "Multiple operations failed";
-    return new NativeAggregateError(errors, quotedDiagnosticString(message));
+function intrinsicInstanceOf(value: unknown, constructor: typeof Error): boolean {
+  try {
+    return reflectApply(functionHasInstance, constructor, [value]) as boolean;
+  } catch {
+    return false;
   }
+}
 
-  if (cause instanceof NativeError) {
-    const message = ownStringProperty(cause, "message") ?? "The operation failed";
-    const code = ownStringProperty(cause, "code");
-    const summary = code
-      ? `${quotedDiagnosticString(code)}: ${quotedDiagnosticString(message)}`
-      : quotedDiagnosticString(message);
-    return cause instanceof NativeSyntaxError
-      ? new NativeSyntaxError(summary)
-      : new NativeError(summary);
+function diagnosticCause(cause: unknown): Error {
+  try {
+    if (intrinsicInstanceOf(cause, NativeError)) {
+      const error = cause as Error;
+      const message = ownStringProperty(error, "message") ?? "The operation failed";
+      const code = ownStringProperty(error, "code");
+      const summary = code
+        ? `${quotedDiagnosticString(code)}: ${quotedDiagnosticString(message)}`
+        : quotedDiagnosticString(message);
+      return intrinsicInstanceOf(error, NativeSyntaxError)
+        ? new NativeSyntaxError(summary)
+        : new NativeError(summary);
+    }
+  } catch {
+    return new NativeError("The operation error could not be inspected safely");
   }
 
   return new NativeError("The operation failed without an Error value");
+}
+
+function combinedDiagnosticCause(operationError: unknown, closeError: unknown): Error {
+  const operationCause = diagnosticCause(operationError);
+  const closeCause = diagnosticCause(closeError);
+  const operationMessage = ownStringProperty(operationCause, "message") ?? "unknown operation";
+  const closeMessage = ownStringProperty(closeCause, "message") ?? "unknown close";
+  return new NativeError(
+    `Manifest operation failed: ${operationMessage}; handle close failed: ${closeMessage}`,
+  );
 }
 
 function readError(path: string, operation: string, cause: unknown): VeryfrontError {
@@ -620,10 +627,7 @@ async function closeAfterRead<T>(
     await handle.close();
   } catch (closeError) {
     const cause = operationFailed
-      ? new NativeAggregateError(
-        [operationError, closeError],
-        "Manifest operation and close both failed",
-      )
+      ? combinedDiagnosticCause(operationError, closeError)
       : closeError;
     throw readError(path, "close", cause);
   }
