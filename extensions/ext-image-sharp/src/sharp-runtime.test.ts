@@ -327,6 +327,22 @@ describe("BoundSharpImageOptimizationEngine", () => {
     );
   });
 
+  it("supports the complete core width-by-format matrix", async () => {
+    const targetWidths = Array.from({ length: 64 }, (_, index) => index + 1);
+    const result = await engine(
+      fakeSharpFixture({ sourceWidth: 65, sourceHeight: 65 }),
+    ).engine.optimize(
+      request({
+        targetWidths,
+        formats: ["webp", "avif", "jpeg", "png"],
+      }),
+    );
+
+    assertEquals(result.variants.length, 260);
+    assertEquals(result.variants[0]?.width, 1);
+    assertEquals(result.variants.at(-1)?.width, 65);
+  });
+
   it("rejects request accessors, sparse arrays, and custom array behavior", async () => {
     let reads = 0;
     const value = engine();
@@ -406,10 +422,10 @@ describe("BoundSharpImageOptimizationEngine", () => {
           ...smallLimits,
           maxTargetWidths: 2,
         }).engine.optimize(
-          request({ targetWidths: [1, 2], formats: ["png"] }),
+          request({ targetWidths: [1, 2, 3], formats: ["png"] }),
         ),
       TypeError,
-      "more than 2 output widths",
+      "exceeds its supported length",
     );
 
     await assertRejects(

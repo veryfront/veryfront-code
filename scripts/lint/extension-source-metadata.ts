@@ -12,6 +12,7 @@ export interface ExtensionSourceMetadata {
 }
 
 const KNOWN_CONTRACT_CONSTANTS: Record<string, string> = {
+  CSSProcessorName: "CSSProcessor",
   LLMProviderRegistryName: "LLMProviderRegistry",
   NodeWebSocketServerProviderName: "NodeWebSocketServerProvider",
   SandboxShellToolsProviderName: "SandboxShellToolsProvider",

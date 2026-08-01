@@ -1,12 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  DEFAULT_OPTIONS,
-  MANIFEST_FILENAME,
-  SHARP_MODULE_SPECIFIER,
-  SUPPORTED_EXTENSIONS,
-} from "./constants.ts";
+import { DEFAULT_OPTIONS, MANIFEST_FILENAME, SUPPORTED_EXTENSIONS } from "./constants.ts";
 
 describe("build/asset-pipeline/image-optimizer/constants", () => {
   describe("DEFAULT_OPTIONS", () => {
@@ -49,12 +44,6 @@ describe("build/asset-pipeline/image-optimizer/constants", () => {
 
     it("should have 5 supported extensions", () => {
       assertEquals(SUPPORTED_EXTENSIONS.length, 5);
-    });
-  });
-
-  describe("SHARP_MODULE_SPECIFIER", () => {
-    it("pins the required npm dependency", () => {
-      assertEquals(SHARP_MODULE_SPECIFIER, "npm:sharp@0.34.5");
     });
   });
 

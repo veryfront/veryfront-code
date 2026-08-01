@@ -7,6 +7,10 @@ import {
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import type {
+  ImageOptimizationEngine,
+  ImageOptimizationResult,
+} from "#veryfront/extensions/image/index.ts";
 import {
   createFileSystem,
   type FileSystem,
@@ -25,33 +29,39 @@ import {
 import {
   calculateRequiredAspectRatio,
   generateSrcSet,
+  getVariantPath,
   isContainedAssetPath,
 } from "../../utils/asset-utils.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
 import {
   DEFAULT_OPTIONS,
   MAX_IMAGE_DIMENSION,
+  MAX_IMAGE_INPUT_BYTES,
   MAX_IMAGE_OUTPUT_SIZES,
+  MAX_IMAGE_PROVIDER_DURATION_MS,
   SUPPORTED_FORMATS,
 } from "./constants.ts";
 import { findImages } from "./image-finder.ts";
-import { loadSharp } from "./sharp-loader.ts";
 import { isSafeImageManifestPath, writeManifest } from "./manifest-manager.ts";
-import { generateImageVariants } from "./variant-generator.ts";
+import {
+  acquireConfiguredImageOptimization,
+  createImageOptimizationSession,
+  type ImageOptimizationSession,
+} from "./optimization-engine.ts";
 import type {
   ImageFormat,
   ImageOptimizationOptions,
   ImageOptimizationStats,
+  ImageVariant,
   OptimizedImageMetadata,
-  SharpConstructor,
 } from "./types.ts";
 
 const supportedFormats = new Set<ImageFormat>(SUPPORTED_FORMATS);
 
 export interface ImageOptimizerDependencies {
   fs?: FileSystem;
-  loadSharp?: () => Promise<SharpConstructor>;
   publicationLock?: BuildPublicationLock;
+  engine?: ImageOptimizationEngine;
 }
 
 /** @internal — exported for testing */
@@ -122,14 +132,51 @@ function cloneManifest(
   );
 }
 
+function snapshotDependencies(
+  dependencies: ImageOptimizerDependencies,
+): ImageOptimizerDependencies {
+  if (
+    typeof dependencies !== "object" ||
+    dependencies === null ||
+    Array.isArray(dependencies)
+  ) {
+    throw new TypeError("Image optimizer dependencies must be an object");
+  }
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(dependencies);
+  } catch (cause) {
+    throw new TypeError("Image optimizer dependencies could not be inspected", {
+      cause,
+    });
+  }
+  for (const property of Reflect.ownKeys(descriptors)) {
+    if (property !== "fs" && property !== "engine" && property !== "publicationLock") {
+      throw new TypeError("Image optimizer dependencies contain unsupported properties");
+    }
+  }
+  const read = (property: "fs" | "engine" | "publicationLock"): unknown => {
+    const descriptor = descriptors[property];
+    if (descriptor === undefined) return undefined;
+    if (!Object.hasOwn(descriptor, "value")) {
+      throw new TypeError(`Image optimizer dependency ${property} must be a data property`);
+    }
+    return descriptor.value;
+  };
+  return Object.freeze({
+    fs: read("fs") as FileSystem | undefined,
+    engine: read("engine") as ImageOptimizationEngine | undefined,
+    publicationLock: read("publicationLock") as BuildPublicationLock | undefined,
+  });
+}
+
 export class ImageOptimizer {
   private options: Required<ImageOptimizationOptions>;
-  private sharp: SharpConstructor | null = null;
   private imageManifest = new Map<string, OptimizedImageMetadata>();
-  private fs: FileSystem;
-  private loadSharpDependency: () => Promise<SharpConstructor>;
-  private publicationLock?: BuildPublicationLock;
-  private outputUrlPath: string;
+  private readonly fs: FileSystem;
+  private readonly engine: ImageOptimizationEngine | undefined;
+  private readonly publicationLock: BuildPublicationLock | undefined;
+  private readonly outputUrlPath: string;
 
   constructor(
     options: ImageOptimizationOptions = {},
@@ -144,6 +191,7 @@ export class ImageOptimizer {
     if (options.sizes !== undefined && !Array.isArray(options.sizes)) {
       throw new TypeError("Image sizes must be an array");
     }
+    const capturedDependencies = snapshotDependencies(dependencies);
     this.options = {
       enabled: options.enabled === undefined ? DEFAULT_OPTIONS.enabled : options.enabled,
       projectDir: options.projectDir === undefined ? cwd() : options.projectDir,
@@ -156,10 +204,10 @@ export class ImageOptimizer {
         ? DEFAULT_OPTIONS.preserveOriginal
         : options.preserveOriginal,
     };
-    this.fs = dependencies.fs ?? createFileSystem();
-    this.loadSharpDependency = dependencies.loadSharp ?? loadSharp;
-    this.publicationLock = dependencies.publicationLock ??
-      (dependencies.fs === undefined ? nativeBuildPublicationLock : undefined);
+    this.fs = capturedDependencies.fs ?? createFileSystem();
+    this.engine = capturedDependencies.engine;
+    this.publicationLock = capturedDependencies.publicationLock ??
+      (capturedDependencies.fs === undefined ? nativeBuildPublicationLock : undefined);
     this.validateConfiguration();
     this.outputUrlPath = portablePath(
       relative(this.options.projectDir, this.options.outputDir),
@@ -277,6 +325,11 @@ export class ImageOptimizer {
     }
   }
 
+  /**
+   * Validate that an enabled optimizer can capture its configured provider.
+   * A publication captures a fresh immutable session in `optimize()` so a
+   * prior readiness check never pins stale registry state.
+   */
   init(): Promise<boolean> {
     return withSpan(
       "build.asset.ImageOptimizer.init",
@@ -285,19 +338,17 @@ export class ImageOptimizer {
           logger.info("Image optimization is disabled");
           return false;
         }
-        if (!this.sharp) {
-          const sharp = await this.loadSharpDependency();
-          if (typeof sharp !== "function") {
-            throw INITIALIZATION_ERROR.create({
-              detail: "Sharp loader did not return an image constructor",
-            });
-          }
-          this.sharp = sharp;
-        }
+        this.createOperationSession();
         return true;
       },
       { "optimizer.enabled": this.options.enabled },
     );
+  }
+
+  private createOperationSession(): ImageOptimizationSession {
+    return this.engine === undefined
+      ? acquireConfiguredImageOptimization()
+      : createImageOptimizationSession(this.engine);
   }
 
   optimize(): Promise<Map<string, OptimizedImageMetadata>> {
@@ -306,7 +357,7 @@ export class ImageOptimizer {
       async () => {
         if (!this.options.enabled) return new Map();
         await this.validateFilesystemBoundaries();
-        await this.init();
+        const optimizationSession = this.createOperationSession();
 
         logger.info("Starting image optimization", {
           inputDir: this.options.inputDir,
@@ -340,6 +391,7 @@ export class ImageOptimizer {
                   imagePath,
                   publication.buildDir,
                   outputOwners,
+                  optimizationSession,
                 )
               ),
             );
@@ -418,6 +470,7 @@ export class ImageOptimizer {
     imagePath: string,
     outputDir: string,
     outputOwners: Map<string, string>,
+    optimizationSession: ImageOptimizationSession,
   ): Promise<[string, OptimizedImageMetadata]> {
     const relativePath = portablePath(
       relative(this.options.inputDir, imagePath),
@@ -429,12 +482,6 @@ export class ImageOptimizer {
     return withSpan(
       "build.asset.ImageOptimizer.optimizeImage",
       async () => {
-        const sharp = this.sharp;
-        if (!sharp) {
-          throw INITIALIZATION_ERROR.create({
-            detail: "Sharp was not initialized",
-          });
-        }
         const defaultFormat = this.options.formats[0]!;
         const lstat = this.fs.lstat?.bind(this.fs);
         if (!lstat) {
@@ -443,33 +490,79 @@ export class ImageOptimizer {
           });
         }
         const inputInfo = await lstat(imagePath);
-        if (!inputInfo.isFile || inputInfo.isSymlink) {
+        if (
+          !inputInfo.isFile ||
+          inputInfo.isSymlink ||
+          !Number.isSafeInteger(inputInfo.size) ||
+          inputInfo.size <= 0
+        ) {
           throw new TypeError(`Image input must be a regular file: ${relativePath}`);
+        }
+        if (inputInfo.size > MAX_IMAGE_INPUT_BYTES) {
+          throw new TypeError(
+            `Image input exceeds ${MAX_IMAGE_INPUT_BYTES} bytes: ${relativePath}`,
+          );
         }
         const imageBuffer = await this.fs.readFile(imagePath);
         if (imageBuffer.length === 0) {
           throw new TypeError(`Image input is empty: ${relativePath}`);
         }
-        const image = sharp(imageBuffer);
-        const metadata = await image.metadata();
-        const variants = await generateImageVariants(
-          sharp,
-          image,
-          relativePath,
-          metadata,
-          this.options.formats,
-          this.options.sizes,
-          this.options.quality,
-          outputDir,
-          this.fs,
-        );
+        if (imageBuffer.length > MAX_IMAGE_INPUT_BYTES) {
+          throw new TypeError(
+            `Image input exceeds ${MAX_IMAGE_INPUT_BYTES} bytes: ${relativePath}`,
+          );
+        }
 
-        for (const variant of variants) {
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          MAX_IMAGE_PROVIDER_DURATION_MS,
+        );
+        let result: ImageOptimizationResult;
+        try {
+          result = await optimizationSession.run({
+            input: imageBuffer,
+            targetWidths: Object.freeze([...this.options.sizes]),
+            formats: Object.freeze([...this.options.formats]),
+            quality: this.options.quality,
+            signal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+
+        const plannedVariants = result.variants.map((variant) => {
+          const outputPath = getVariantPath(
+            outputDir,
+            relativePath,
+            variant.format,
+            variant.width,
+          );
+          const manifestPath = portablePath(relative(outputDir, outputPath))
+            .normalize("NFC");
+          if (!isSafeImageManifestPath(manifestPath)) {
+            throw new TypeError(`Unsafe image variant path: ${manifestPath}`);
+          }
           this.registerOutput(
             outputOwners,
-            variant.path,
+            manifestPath,
             `${relativePath} ${variant.width}px ${variant.format}`,
           );
+          return { variant, outputPath, manifestPath };
+        });
+
+        const variants: ImageVariant[] = [];
+        for (const { variant, outputPath, manifestPath } of plannedVariants) {
+          await this.fs.mkdir(dirname(outputPath), { recursive: true });
+          await this.fs.writeFile(outputPath, variant.data);
+          variants.push({
+            format: variant.format,
+            size: variant.width,
+            width: variant.width,
+            height: variant.height,
+            path: manifestPath,
+            fileSize: variant.data.length,
+          });
         }
         if (this.options.preserveOriginal) {
           this.registerOutput(outputOwners, relativePath, `${relativePath} original`);
@@ -486,8 +579,8 @@ export class ImageOptimizer {
             variants,
             defaultFormat,
             aspectRatio: calculateRequiredAspectRatio(
-              metadata.width!,
-              metadata.height!,
+              result.sourceWidth,
+              result.sourceHeight,
             ),
           },
         ];

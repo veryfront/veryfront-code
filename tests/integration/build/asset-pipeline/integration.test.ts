@@ -229,7 +229,6 @@ describe("Asset Pipeline", () => {
         await Deno.remove(projectDir, { recursive: true });
       }
     });
-
   });
 
   describe("checkAssetPipelineDependencies", () => {
@@ -237,8 +236,8 @@ describe("Asset Pipeline", () => {
       const deps = await checkAssetPipelineDependencies();
 
       assertExists(deps);
-      assertEquals(typeof deps.sharp, "boolean");
-      assertEquals(typeof deps.lightningCSS, "boolean");
+      assertEquals(typeof deps.imageOptimization, "boolean");
+      assertEquals(typeof deps.cssOptimization, "boolean");
     });
   });
 
