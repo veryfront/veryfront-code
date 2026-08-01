@@ -3,7 +3,7 @@
  */
 
 import "../../../_helpers/contract-init.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   type AssetPipelineOptions,
@@ -161,22 +161,24 @@ describe("Asset Pipeline", () => {
   });
 
   describe("error handling", () => {
-    it("handles invalid paths without crashing", async () => {
-      const result = await runAssetPipeline({
-        images: {
-          enabled: true,
-          inputDir: "/invalid/path/that/does/not/exist",
-          outputDir: "/invalid/output/path",
-        },
-        css: {
-          enabled: true,
-          inputDir: "/invalid/css/path",
-          outputDir: "/invalid/css/output",
-        },
-      });
-
-      assertExists(result);
-      assertEquals(typeof result.duration, "number");
+    it("rejects output paths outside the project boundary", async () => {
+      await assertRejects(
+        () =>
+          runAssetPipeline({
+            images: {
+              enabled: true,
+              inputDir: "/invalid/path/that/does/not/exist",
+              outputDir: "/invalid/output/path",
+            },
+            css: {
+              enabled: true,
+              inputDir: "/invalid/css/path",
+              outputDir: "/invalid/css/output",
+            },
+          }),
+        TypeError,
+        "must be inside its project",
+      );
     });
   });
 
