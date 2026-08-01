@@ -106,6 +106,16 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
+  it("never auto-loads the explicit Node WebSocket implementation", async () => {
+    const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
+
+    assertEquals(source.includes("ext-node-websocket-ws"), false);
+    assertEquals(
+      OPTIONAL_BUILTIN_EXTENSIONS.some((definition) => definition.name === "ext-node-websocket-ws"),
+      false,
+    );
+  });
+
   it("does not statically import optional implementation extensions", async () => {
     const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
 

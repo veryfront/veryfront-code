@@ -1,5 +1,18 @@
 import { assertEquals } from "#std/assert";
-import { DEFAULT_INCLUDES } from "./compile-binary.ts";
+import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
+
+Deno.test("compiled CLI does not implicitly embed the explicit Node WebSocket extension", () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/main.ts",
+    extraIncludes: [],
+    output: "/tmp/veryfront",
+  });
+
+  assertEquals(
+    args.some((value) => value.includes("ext-node-websocket-ws")),
+    false,
+  );
+});
 
 Deno.test("compiled CLI embeds optional builtin extension source files", async () => {
   const source = await Deno.readTextFile(

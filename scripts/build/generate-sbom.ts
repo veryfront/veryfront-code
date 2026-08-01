@@ -76,6 +76,11 @@ export const SENSITIVE_DEPENDENCY_BOUNDARIES = [
     sourceLocation: "extensions/ext-document-kreuzberg/deno.json",
     expectedComponents: ["@kreuzberg/wasm"],
   },
+  {
+    label: "Node WebSocket transport",
+    sourceLocation: "extensions/ext-node-websocket-ws/deno.json",
+    expectedComponents: ["@types/ws", "ws"],
+  },
 ] as const;
 
 const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
