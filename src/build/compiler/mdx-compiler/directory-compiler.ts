@@ -6,27 +6,33 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { compileMDXFile } from "./compiler.ts";
 import type { CompileOptions, CompileResult } from "./types.ts";
 import { pathExists, validateCompileOptions } from "./validator.ts";
-import { createBuildPublication } from "../../production-build/build/build-publication.ts";
+import {
+  createBuildPublication,
+  resolveBuildOutputOwnership,
+} from "../../production-build/build/build-publication.ts";
 
 export async function compileAllMDX(options: CompileOptions): Promise<Map<string, CompileResult>> {
   validateCompileOptions(options);
   options.signal?.throwIfAborted();
 
-  const publication = await createBuildPublication(options.outputDir, false);
+  const fs = createFileSystem();
+  const publication = await createBuildPublication(options.outputDir, false, { fs });
+  if (publication.dryRun) {
+    throw new TypeError("MDX publication unexpectedly entered dry-run mode");
+  }
+  const stagingDir = resolveBuildOutputOwnership(publication.outputOwnership, fs);
   let results: Map<string, CompileResult> | undefined;
   let compileError: unknown;
 
   try {
-    const fs = createFileSystem();
     options.signal?.throwIfAborted();
-    await fs.mkdir(publication.buildDir, { recursive: true });
     const stagedResults = await compileProjectDirectories({
       ...options,
-      outputDir: publication.buildDir,
+      outputDir: stagingDir,
     });
     results = remapPublishedResults(
       stagedResults,
-      publication.buildDir,
+      stagingDir,
       publication.finalDir,
     );
     await publication.publish();

@@ -19,7 +19,11 @@ import {
   generateProdHydrationModule,
   getProdHydrationModulePath,
 } from "../../../html/hydration-script-builder/prod-scripts.ts";
-import { copyStaticAssets, validateStaticBuildOutput } from "../asset-generation.ts";
+import {
+  copyStaticAssets,
+  type StaticAssetCopyTarget,
+  validateStaticBuildOutput,
+} from "../asset-generation.ts";
 import {
   generateAppModule,
   generateClientModule,
@@ -31,11 +35,11 @@ import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-sc
 import type { VeryfrontConfig } from "#veryfront/config";
 import { compressBuildOutputs } from "../compression.ts";
 import { optimizeProductionImages } from "../image-optimization.ts";
+import { type BuildOutputOwnership, resolveBuildOutputOwnership } from "./build-publication.ts";
 
-export interface OutputGeneratorOptions {
+interface OutputGeneratorCommonOptions {
   adapter: RuntimeAdapter;
   projectDir: string;
-  outputDir: string;
   routes: RouteInfo[];
   appRoutes: AppRouteInfo[];
   stats: BuildStats;
@@ -43,10 +47,29 @@ export interface OutputGeneratorOptions {
   enablePrefetch: boolean;
   enableCompression: boolean;
   chunkManifest: ChunkManifest | null;
-  dryRun: boolean;
   config?: VeryfrontConfig;
   releaseAssetManifest?: ReleaseAssetManifest | null;
 }
+
+export type OutputGeneratorOptions =
+  & OutputGeneratorCommonOptions
+  & (
+    | {
+      readonly dryRun: true;
+      readonly outputDir: string;
+      readonly outputOwnership?: never;
+    }
+    | {
+      readonly dryRun: false;
+      readonly outputOwnership: BuildOutputOwnership;
+      readonly outputDir?: never;
+    }
+  );
+
+type ResolvedOutputGeneratorOptions = OutputGeneratorCommonOptions & {
+  readonly dryRun: boolean;
+  readonly outputDir: string;
+};
 
 /**
  * Generate client runtime scripts
@@ -92,7 +115,7 @@ async function writeOutputFile(
  * Generate manifest and service worker
  */
 export async function generateManifestAndServiceWorker(
-  options: OutputGeneratorOptions,
+  options: ResolvedOutputGeneratorOptions,
 ): Promise<void> {
   const {
     adapter,
@@ -145,17 +168,23 @@ export async function generateRedirectsFile(
 export function copyAssets(
   adapter: RuntimeAdapter,
   projectDir: string,
-  outputDir: string,
-  dryRun: boolean,
+  target: StaticAssetCopyTarget,
 ): Promise<{ assets: number; totalSize: number }> {
-  return copyStaticAssets(adapter, projectDir, outputDir, dryRun);
+  return copyStaticAssets(adapter, projectDir, target);
 }
 
 /**
  * Generate all output files
  */
 export async function generateAllOutputs(options: OutputGeneratorOptions): Promise<void> {
-  const { adapter, projectDir, outputDir, dryRun, stats, config, releaseAssetManifest } = options;
+  const { adapter, projectDir, dryRun, stats, config, releaseAssetManifest } = options;
+  const outputDir = dryRun
+    ? options.outputDir
+    : resolveBuildOutputOwnership(options.outputOwnership, adapter.fs);
+  const resolvedOptions: ResolvedOutputGeneratorOptions = {
+    ...options,
+    outputDir,
+  };
 
   await generateClientScripts(adapter, outputDir, dryRun);
   if (releaseAssetManifest === undefined) {
@@ -168,7 +197,10 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
     });
   }
 
-  const assetStats = await copyAssets(adapter, projectDir, outputDir, dryRun);
+  const assetTarget: StaticAssetCopyTarget = dryRun
+    ? { dryRun: true }
+    : { dryRun: false, output: options.outputOwnership };
+  const assetStats = await copyAssets(adapter, projectDir, assetTarget);
   const imageStats = await optimizeProductionImages({
     projectDir,
     outputDir,
@@ -179,7 +211,7 @@ export async function generateAllOutputs(options: OutputGeneratorOptions): Promi
   stats.totalSize += assetStats.totalSize;
   stats.totalSize += imageStats.stats.totalSize;
 
-  await generateManifestAndServiceWorker(options);
+  await generateManifestAndServiceWorker(resolvedOptions);
   await generateRedirectsFile(adapter, outputDir, dryRun);
   await compressBuildOutputs(outputDir, options.enableCompression, dryRun);
   if (!dryRun) await validateStaticBuildOutput(adapter, outputDir);

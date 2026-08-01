@@ -288,6 +288,48 @@ describe("build/production-build/build/build-orchestrator", () => {
       }
     });
 
+    it("removes the whole failed stage and preserves the previous output", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-build-stage-failure-" });
+      const outputDir = `${projectDir}/dist`;
+      try {
+        await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+        await Deno.mkdir(outputDir);
+        await Deno.writeTextFile(
+          `${projectDir}/pages/broken.mdx`,
+          "# Broken {",
+        );
+        await Deno.writeTextFile(`${outputDir}/previous.txt`, "last known good");
+
+        await assertRejects(
+          () =>
+            buildProduction({
+              projectDir,
+              outputDir,
+              enableSplitting: false,
+              enableCompression: false,
+            }),
+          Error,
+          "Failed to build page /broken",
+        );
+        assertEquals(
+          await Deno.readTextFile(`${outputDir}/previous.txt`),
+          "last known good",
+        );
+        assertEquals(
+          [...Deno.readDirSync(projectDir)].some((entry) =>
+            entry.name.includes(".veryfront-stage-") ||
+            entry.name.includes(".veryfront-backup-") ||
+            entry.name.includes(".veryfront-build.lock")
+          ),
+          false,
+        );
+      } finally {
+        const { stop } = await import("veryfront/extensions/bundler");
+        await stop();
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
     it("threads explicitly composed release asset providers through a flag-on build", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-build-release-providers-" });
       const outputDir = `${projectDir}/dist`;

@@ -15,7 +15,10 @@ import { createSecureFs, type SecureFs } from "#veryfront/security/secure-fs.ts"
 import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
-import { createBuildPublication } from "../../production-build/build/build-publication.ts";
+import {
+  createBuildPublication,
+  resolveBuildOutputOwnership,
+} from "../../production-build/build/build-publication.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
 import {
   CSS_MANIFEST_FILENAME,
@@ -409,15 +412,19 @@ export class CSSOptimizerService {
           false,
           { fs: this.adapter.fs },
         );
+        if (publication.dryRun) {
+          throw new TypeError("CSS publication unexpectedly entered dry-run mode");
+        }
+        const stagingDir = resolveBuildOutputOwnership(
+          publication.outputOwnership,
+          this.adapter.fs,
+        );
         const stagedCache = new CacheManager();
         let totalInputBytes = 0;
         let totalOutputBytes = 0;
         let failed = false;
         let failure: unknown;
         try {
-          await this.secureFs.mkdir(publication.buildDir, {
-            recursive: true,
-          });
           for (
             let start = 0;
             start < plans.length;
@@ -425,7 +432,7 @@ export class CSSOptimizerService {
           ) {
             const settled = await Promise.allSettled(
               plans.slice(start, start + DEFAULT_BUILD_CONCURRENCY)
-                .map((plan) => this.optimizeFile(plan, publication.buildDir)),
+                .map((plan) => this.optimizeFile(plan, stagingDir)),
             );
             const errors = settled.flatMap((result) =>
               result.status === "rejected" ? [result.reason] : []
@@ -464,7 +471,7 @@ export class CSSOptimizerService {
           }
 
           await this.secureFs.writeFile(
-            join(publication.buildDir, CSS_MANIFEST_FILENAME),
+            join(stagingDir, CSS_MANIFEST_FILENAME),
             stagedCache.serializeManifest(),
           );
           await publication.publish();
@@ -658,7 +665,10 @@ export class CSSOptimizerService {
     }
 
     const outputPath = join(stagingDir, plan.outputRelativePath);
-    await this.secureFs.mkdir(dirname(outputPath), { recursive: true });
+    const outputParent = dirname(outputPath);
+    if (outputParent !== stagingDir) {
+      await this.secureFs.mkdir(outputParent, { recursive: true });
+    }
     await this.secureFs.writeFile(outputPath, outputContent);
     if (this.options.sourceMap && sourceMap) {
       await this.secureFs.writeFile(`${outputPath}.map`, sourceMap);

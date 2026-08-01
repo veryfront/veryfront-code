@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { chunkArray, ImageOptimizer } from "./optimizer-core.ts";
 import type { ImageOptimizationSession } from "./optimization-engine.ts";
 import type { OptimizedImageMetadata } from "./types.ts";
@@ -212,6 +213,46 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
 
       metadata.variants.length = 0;
       assertEquals(optimizer.getImageMetadata("photo.jpg")?.variants.length, 4);
+    });
+  });
+
+  it("creates its owned stage exactly once through the selected filesystem", async () => {
+    await withTempProject(async (projectDir, inputDir) => {
+      await Deno.writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9, 8, 7]));
+      const delegate = createFileSystem();
+      let stageMkdirCalls = 0;
+      let stagePath: string | undefined;
+      const fs = new Proxy(delegate, {
+        get(target, property) {
+          if (property === "mkdir") {
+            return async (path: string, options?: { recursive?: boolean }): Promise<void> => {
+              if (stagePath === undefined && path.includes(".veryfront-stage-")) {
+                stagePath = path;
+              }
+              if (path === stagePath) {
+                stageMkdirCalls++;
+                if (stageMkdirCalls > 1) throw new Error("stage root recreated");
+              }
+              await target.mkdir(path, options);
+            };
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as FileSystem;
+      const optimizer = new ImageOptimizer(
+        {
+          projectDir,
+          inputDir: "public",
+          outputDir: ".veryfront/images",
+          formats: ["webp"],
+          sizes: [320],
+        },
+        { fs, optimizationSession: createSession() },
+      );
+
+      await optimizer.optimize();
+      assertEquals(stageMkdirCalls, 1);
     });
   });
 

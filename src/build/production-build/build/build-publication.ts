@@ -8,12 +8,28 @@ const DEFAULT_LOCK_TIMEOUT_MS = 10_000;
 const LOCK_RETRY_INITIAL_MS = 10;
 const LOCK_RETRY_MAX_MS = 100;
 
-export interface BuildPublication {
-  readonly finalDir: string;
-  readonly buildDir: string;
-  publish(): Promise<void>;
-  cleanup(): Promise<void>;
+declare const buildOutputOwnershipBrand: unique symbol;
+
+export interface BuildOutputOwnership {
+  readonly [buildOutputOwnershipBrand]: true;
 }
+
+export type BuildPublication =
+  | {
+    readonly dryRun: true;
+    readonly finalDir: string;
+    readonly buildDir: string;
+    publish(): Promise<void>;
+    cleanup(): Promise<void>;
+  }
+  | {
+    readonly dryRun: false;
+    readonly finalDir: string;
+    readonly buildDir: string;
+    readonly outputOwnership: BuildOutputOwnership;
+    publish(): Promise<void>;
+    cleanup(): Promise<void>;
+  };
 
 export interface BuildPublicationDependencies {
   fs?: BuildPublicationFileSystem;
@@ -27,8 +43,43 @@ export interface BuildPublicationFileSystem {
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
+type BuildOutputLifecycle =
+  | "live"
+  | "publishing"
+  | "published"
+  | "cleanup-started"
+  | "cleaned";
+
+interface BuildOutputOwnershipRecord {
+  readonly buildDir: string;
+  readonly fileSystem: BuildPublicationFileSystem;
+  readonly generation: string;
+  lifecycle: BuildOutputLifecycle;
+}
+
+const buildOutputOwnershipRecords = new WeakMap<
+  BuildOutputOwnership,
+  BuildOutputOwnershipRecord
+>();
+
 function publicationError(detail: string, cause?: unknown): Error {
   return BUILD_FAILED.create({ detail, cause });
+}
+
+export function resolveBuildOutputOwnership(
+  output: BuildOutputOwnership,
+  expectedFileSystem: BuildPublicationFileSystem,
+): string {
+  const record = buildOutputOwnershipRecords.get(output);
+  if (
+    !record || record.lifecycle !== "live" ||
+    record.fileSystem !== expectedFileSystem
+  ) {
+    throw publicationError(
+      "Build output ownership is invalid, expired, or belongs to another filesystem",
+    );
+  }
+  return record.buildDir;
 }
 
 async function acquireBuildLock(
@@ -138,6 +189,7 @@ export async function createBuildPublication(
   const finalDir = resolve(outputDir);
   if (dryRun) {
     return {
+      dryRun: true,
       finalDir,
       buildDir: finalDir,
       publish: () => Promise.resolve(),
@@ -166,6 +218,35 @@ export async function createBuildPublication(
     lockPath,
     dependencies.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS,
   );
+
+  try {
+    await fs.mkdir(buildDir);
+  } catch (error) {
+    const stageError = publicationError(
+      `Failed to create build staging directory: ${buildDir}`,
+      error,
+    );
+    try {
+      await releaseLock();
+    } catch (releaseError) {
+      throw new AggregateError(
+        [stageError, releaseError],
+        "Build staging setup failed and lock release also failed",
+      );
+    }
+    throw stageError;
+  }
+
+  const outputOwnership = Object.freeze(
+    Object.create(null),
+  ) as BuildOutputOwnership;
+  const ownershipRecord: BuildOutputOwnershipRecord = {
+    buildDir,
+    fileSystem: fs,
+    generation: id,
+    lifecycle: "live",
+  };
+  buildOutputOwnershipRecords.set(outputOwnership, ownershipRecord);
 
   let published = false;
   let cleaned = false;
@@ -269,6 +350,7 @@ export async function createBuildPublication(
 
     if (errors.length === 0) {
       cleaned = true;
+      ownershipRecord.lifecycle = "cleaned";
       return;
     }
     if (errors.length === 1) throw errors[0];
@@ -276,8 +358,10 @@ export async function createBuildPublication(
   }
 
   return {
+    dryRun: false,
     finalDir,
     buildDir,
+    outputOwnership,
     async publish(): Promise<void> {
       if (published) return;
       if (cleanupRequested) {
@@ -285,10 +369,14 @@ export async function createBuildPublication(
       }
       if (publishInFlight) return await publishInFlight;
 
+      ownershipRecord.lifecycle = "publishing";
       const operation = performPublish();
       publishInFlight = operation;
       try {
         await operation;
+        if (ownershipRecord.lifecycle === "publishing") {
+          ownershipRecord.lifecycle = "published";
+        }
       } finally {
         if (publishInFlight === operation) publishInFlight = undefined;
       }
@@ -296,6 +384,7 @@ export async function createBuildPublication(
     async cleanup(): Promise<void> {
       if (cleaned) return;
       cleanupRequested = true;
+      ownershipRecord.lifecycle = "cleanup-started";
       if (cleanupInFlight) return await cleanupInFlight;
 
       const operation = performPublicationCleanup(publishInFlight);

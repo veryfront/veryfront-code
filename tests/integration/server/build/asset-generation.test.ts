@@ -9,8 +9,9 @@ import {
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { createBuildPublication } from "../../../../src/build/production-build/build/build-publication.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
-  chmod,
   mkdir,
   readFile,
   remove,
@@ -36,6 +37,27 @@ async function writeFile(
   await symlink(data.symlink, path);
 }
 
+async function copyPublishedStaticAssets(
+  adapter: RuntimeAdapter,
+  projectDir: string,
+  outputDir: string,
+): Promise<{ assets: number; totalSize: number }> {
+  const publication = await createBuildPublication(outputDir, false, {
+    fs: adapter.fs,
+  });
+  if (publication.dryRun) throw new Error("Expected a live publication");
+  try {
+    const stats = await copyStaticAssets(adapter, projectDir, {
+      dryRun: false,
+      output: publication.outputOwnership,
+    });
+    await publication.publish();
+    return stats;
+  } finally {
+    await publication.cleanup();
+  }
+}
+
 describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
     await cleanupBundler();
@@ -57,7 +79,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         const imageData = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
         await writeFile(join(publicDir, "logo.png"), imageData);
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(1);
         expect(stats.totalSize).toBe(8);
@@ -81,7 +103,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         );
         await writeFile(join(publicDir, "style.css"), "body { margin: 0; }");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(4);
         expect(stats.totalSize).toBeGreaterThan(0);
@@ -107,7 +129,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await mkdir(fontsDir, { recursive: true });
         await writeFile(join(fontsDir, "roboto.woff"), "WOFF");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(2);
 
@@ -128,7 +150,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await writeFile(join(publicDir, "file1.txt"), "A".repeat(100));
         await writeFile(join(publicDir, "file2.txt"), "B".repeat(200));
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(2);
         expect(stats.totalSize).toBe(300);
@@ -142,7 +164,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         const outputDir = join(context.projectDir, "dist");
         await mkdir(publicDir, { recursive: true });
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(0);
         expect(stats.totalSize).toBe(0);
@@ -159,7 +181,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
 
         expect(await adapter.fs.exists(publicDir)).toBe(false);
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(0);
         expect(stats.totalSize).toBe(0);
@@ -177,7 +199,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
 
         await writeFile(join(publicDir, "test.txt"), "content");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir, true);
+        const stats = await copyStaticAssets(adapter, context.projectDir, { dryRun: true });
 
         expect(stats.assets).toBe(1);
         expect(stats.totalSize).toBe(7);
@@ -197,7 +219,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await writeFile(join(publicDir, "b.txt"), "BBBBB");
         await writeFile(join(publicDir, "c.txt"), "CC");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir, true);
+        const stats = await copyStaticAssets(adapter, context.projectDir, { dryRun: true });
 
         expect(stats.assets).toBe(3);
         expect(stats.totalSize).toBe(10);
@@ -216,7 +238,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await mkdir(nestedDir, { recursive: true });
         await writeFile(join(nestedDir, "pic.jpg"), "JPEG");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir, true);
+        const stats = await copyStaticAssets(adapter, context.projectDir, { dryRun: true });
 
         expect(stats.assets).toBe(1);
         expect(stats.totalSize).toBe(4);
@@ -238,7 +260,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await writeFile(join(publicDir, "file_with_underscore.txt"), "underscore");
         await writeFile(join(publicDir, "file.multiple.dots.txt"), "dots");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(3);
 
@@ -259,7 +281,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         largeBinary.fill(42);
         await writeFile(join(publicDir, "large.bin"), largeBinary);
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(1);
         expect(stats.totalSize).toBe(2 * 1024 * 1024);
@@ -283,7 +305,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await writeFile(symlinkFile, { symlink: realFile });
 
         await assertRejects(
-          () => copyStaticAssets(adapter, context.projectDir, outputDir),
+          () => copyPublishedStaticAssets(adapter, context.projectDir, outputDir),
           Error,
           "Symbolic links are not supported",
         );
@@ -300,7 +322,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await mkdir(deepPath, { recursive: true });
         await writeFile(join(deepPath, "deep.txt"), "deep file");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(1);
         expect(await adapter.fs.exists(join(outputDir, "a", "b", "c", "d", "e", "deep.txt"))).toBe(
@@ -326,7 +348,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
           new Uint8Array([255, 216, 255, 224, 0, 16, 74, 70]),
         );
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(2);
         expect(stats.totalSize).toBe(18);
@@ -350,7 +372,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await mkdir(join(publicDir, "has-file"), { recursive: true });
         await writeFile(join(publicDir, "has-file", "file.txt"), "content");
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(1);
       });
@@ -365,21 +387,28 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
 
         await writeFile(join(publicDir, "test.txt"), "content");
 
+        const deniedFileSystem = Object.create(adapter.fs) as RuntimeAdapter["fs"];
+        Object.defineProperty(deniedFileSystem, "createFileBytesExclusive", {
+          value: () => Promise.reject(new Deno.errors.PermissionDenied("write denied")),
+        });
+        const deniedAdapter = Object.create(adapter) as RuntimeAdapter;
+        Object.defineProperty(deniedAdapter, "fs", { value: deniedFileSystem });
+        const publication = await createBuildPublication(outputDir, false, {
+          fs: deniedFileSystem,
+        });
+        if (publication.dryRun) throw new Error("Expected a live publication");
         try {
-          await mkdir(outputDir, { recursive: true });
-          await chmod(outputDir, 0o444);
-
-          await assertRejects(async () => {
-            await copyStaticAssets(adapter, context.projectDir, outputDir);
-          });
-
-          await chmod(outputDir, 0o755);
-        } catch {
-          try {
-            await chmod(outputDir, 0o755);
-          } catch {
-            // Ignore cleanup errors
-          }
+          await assertRejects(
+            () =>
+              copyStaticAssets(deniedAdapter, context.projectDir, {
+                dryRun: false,
+                output: publication.outputOwnership,
+              }),
+            Deno.errors.PermissionDenied,
+            "write denied",
+          );
+        } finally {
+          await publication.cleanup();
         }
       });
     });
@@ -395,7 +424,7 @@ describe("Asset Generation Tests", { sanitizeOps: false, sanitizeResources: fals
         await writeFile(join(publicDir, "readme.md"), "# README");
         await writeFile(join(publicDir, "data.bin"), new Uint8Array([0, 1, 2, 3, 255, 254, 253]));
 
-        const stats = await copyStaticAssets(adapter, context.projectDir, outputDir);
+        const stats = await copyPublishedStaticAssets(adapter, context.projectDir, outputDir);
 
         expect(stats.assets).toBe(3);
 

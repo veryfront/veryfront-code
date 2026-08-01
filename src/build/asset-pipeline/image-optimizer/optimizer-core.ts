@@ -19,7 +19,10 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
-import { createBuildPublication } from "../../production-build/build/build-publication.ts";
+import {
+  createBuildPublication,
+  resolveBuildOutputOwnership,
+} from "../../production-build/build/build-publication.ts";
 import {
   calculateRequiredAspectRatio,
   generateSrcSet,
@@ -377,14 +380,16 @@ export class ImageOptimizer {
             { fs: this.fs },
           )
           : undefined;
-        const generatedOutputDir = publication?.buildDir ?? this.options.outputDir;
+        if (publication?.dryRun) {
+          throw new TypeError("Image publication unexpectedly entered dry-run mode");
+        }
+        const generatedOutputDir = publication
+          ? resolveBuildOutputOwnership(publication.outputOwnership, this.fs)
+          : this.options.outputDir;
 
         let failed = false;
         let failure: unknown;
         try {
-          if (publication) {
-            await this.fs.mkdir(publication.buildDir, { recursive: true });
-          }
           for (const chunk of chunkArray(images, DEFAULT_BUILD_CONCURRENCY)) {
             const settledEntries = await Promise.allSettled(
               chunk.map((imagePath) =>
@@ -418,7 +423,7 @@ export class ImageOptimizer {
           }
 
           if (publication) {
-            await writeManifest(stagedManifest, publication.buildDir, this.fs);
+            await writeManifest(stagedManifest, generatedOutputDir, this.fs);
             await publication.publish();
           }
           this.imageManifest = cloneManifest(stagedManifest);
@@ -565,7 +570,10 @@ export class ImageOptimizer {
             const variant = variants[index]!;
             const encoded = optimized.variants[index]!;
             const outputPath = join(outputDir, variant.path);
-            await this.fs.mkdir(dirname(outputPath), { recursive: true });
+            const outputParent = dirname(outputPath);
+            if (outputParent !== outputDir) {
+              await this.fs.mkdir(outputParent, { recursive: true });
+            }
             await this.fs.writeFile(outputPath, encoded.data);
           }
         }
@@ -573,7 +581,10 @@ export class ImageOptimizer {
           this.registerOutput(outputOwners, relativePath, `${relativePath} original`);
           if (writeOutputs) {
             const originalOutput = join(outputDir, relativePath);
-            await this.fs.mkdir(dirname(originalOutput), { recursive: true });
+            const originalParent = dirname(originalOutput);
+            if (originalParent !== outputDir) {
+              await this.fs.mkdir(originalParent, { recursive: true });
+            }
             await this.fs.writeFile(originalOutput, imageBuffer);
           }
         }

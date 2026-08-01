@@ -24,7 +24,10 @@ import {
   CLIENT_DOM_BUNDLE,
   HYDRATE_CLIENT_BUNDLE,
 } from "#veryfront/rendering/rsc/rsc-bundles.generated.ts";
-import { createBuildPublication } from "../production-build/build/build-publication.ts";
+import {
+  createBuildPublication,
+  resolveBuildOutputOwnership,
+} from "../production-build/build/build-publication.ts";
 import { assertSafeBuildOutputDirectory } from "../production-build/build/output-plan.ts";
 import {
   isContainedBuildPath,
@@ -248,12 +251,15 @@ async function executeEmbeddedBuild(
     },
   });
 
-  const publication = await createBuildPublication(embeddedDir, false);
+  const publication = await createBuildPublication(embeddedDir, false, { fs });
+  if (publication.dryRun) {
+    throw buildError("Embedded publication unexpectedly entered dry-run mode");
+  }
   let manifest: EmbeddedBundleManifest | undefined;
   let operationFailure: unknown;
 
   try {
-    const stagingDir = publication.buildDir;
+    const stagingDir = resolveBuildOutputOwnership(publication.outputOwnership, fs);
     await fs.mkdir(join(stagingDir, "rsc"), { recursive: true });
 
     const entry = await findEmbeddedEntry(

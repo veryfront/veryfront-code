@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
@@ -130,6 +131,44 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
         () => Deno.readTextFile(join(outputDir, "stale.css")),
         Deno.errors.NotFound,
       );
+    });
+  });
+
+  it("creates its owned stage exactly once through the selected filesystem", async () => {
+    await withProject(async (projectDir) => {
+      await Deno.writeTextFile(
+        join(projectDir, "styles/main.css"),
+        ".main { color: red; }",
+      );
+      const delegate = await runtime.get();
+      let stageMkdirCalls = 0;
+      let stagePath: string | undefined;
+      const fs = Object.create(delegate.fs) as RuntimeAdapter["fs"];
+      Object.defineProperty(fs, "mkdir", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: async (path: string, options?: { recursive?: boolean }): Promise<void> => {
+          if (stagePath === undefined && path.includes(".veryfront-stage-")) {
+            stagePath = path;
+          }
+          if (path === stagePath) {
+            stageMkdirCalls++;
+            if (stageMkdirCalls > 1) throw new Error("stage root recreated");
+          }
+          await delegate.fs.mkdir(path, options);
+        },
+      });
+      const adapter = { ...delegate, fs } as RuntimeAdapter;
+      const service = new CSSOptimizerService(
+        adapter,
+        projectDir,
+        { inputDir: "styles", outputDir: ".veryfront/css" },
+        { optimizationEngine: createTestCSSOptimizationEngine() },
+      );
+
+      await service.optimize();
+      assertEquals(stageMkdirCalls, 1);
     });
   });
 

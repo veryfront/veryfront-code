@@ -10,7 +10,7 @@ import {
 } from "./build-cleanup.ts";
 import { executeBuild } from "./build-executor.ts";
 import { initializeBuildContext, normalizeBuildOptions } from "./build-initializer.ts";
-import { setupBuildDirectories } from "./build-setup.ts";
+import { type BuildDirectorySetupTarget, setupBuildDirectories } from "./build-setup.ts";
 import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes, type CollectedRoutes } from "./route-collector.ts";
@@ -203,14 +203,21 @@ export function buildProduction(options: BuildProductionOptions): Promise<BuildS
 
         publication = await withSpan(
           "build.preparePublication",
-          () => createBuildPublication(finalOutputDir, dryRun),
+          () =>
+            createBuildPublication(finalOutputDir, dryRun, {
+              fs: context.adapter.fs,
+            }),
           {},
         );
         const outputDir = publication.buildDir;
+        const setupTarget: BuildDirectorySetupTarget = publication.dryRun ? { dryRun: true } : {
+          dryRun: false,
+          output: publication.outputOwnership,
+        };
 
         await withSpan(
           "build.setupDirectories",
-          () => setupBuildDirectories(context.adapter, outputDir, dryRun),
+          () => setupBuildDirectories(context.adapter, setupTarget),
           {},
         );
 
@@ -274,11 +281,19 @@ export function buildProduction(options: BuildProductionOptions): Promise<BuildS
 
         await withSpan(
           "build.generateOutputs",
-          () =>
-            generateAllOutputs({
+          () => {
+            const outputTarget = publication!.dryRun
+              ? {
+                dryRun: true as const,
+                outputDir,
+              }
+              : {
+                dryRun: false as const,
+                outputOwnership: publication!.outputOwnership,
+              };
+            return generateAllOutputs({
               adapter: context.adapter,
               projectDir: normalizedOptions.projectDir,
-              outputDir,
               routes: routes.pages,
               appRoutes: routes.app,
               stats: context.stats,
@@ -286,10 +301,11 @@ export function buildProduction(options: BuildProductionOptions): Promise<BuildS
               enablePrefetch,
               enableCompression,
               chunkManifest: splitResult.manifest,
-              dryRun,
               config: context.config,
               releaseAssetManifest,
-            }),
+              ...outputTarget,
+            });
+          },
           {},
         );
 

@@ -5,10 +5,12 @@ import {
   generateAllOutputs,
   generateClientScripts,
   generateRedirectsFile,
+  type OutputGeneratorOptions,
 } from "./output-generator.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { STATIC_ASSET_MAX_BYTES } from "#veryfront/utils/constants/static-assets.ts";
+import { type BuildOutputOwnership, createBuildPublication } from "./build-publication.ts";
 
 describe("build/production-build/build/output-generator", () => {
   describe("generateClientScripts", () => {
@@ -120,40 +122,146 @@ describe("build/production-build/build/output-generator", () => {
   });
 
   describe("generateAllOutputs", () => {
+    it("enforces the dry-run and owned-output union at the type boundary", () => {
+      const adapter = createMockAdapter();
+      const common = {
+        adapter,
+        projectDir: "/project",
+        routes: [],
+        appRoutes: [],
+        stats: {
+          pages: 0,
+          components: 0,
+          chunks: 0,
+          assets: 0,
+          totalSize: 0,
+          duration: 0,
+        },
+        enableSplitting: false,
+        enablePrefetch: false,
+        enableCompression: false,
+        chunkManifest: null,
+      };
+      // @ts-expect-error Non-dry output requires opaque ownership.
+      const missingOwnership: OutputGeneratorOptions = { ...common, dryRun: false };
+      // @ts-expect-error Non-dry callers cannot supply path-string authority.
+      const arbitraryOutput: OutputGeneratorOptions = {
+        ...common,
+        dryRun: false,
+        outputDir: "/output",
+      };
+      // @ts-expect-error Dry runs cannot carry write authority.
+      const dryOwnership: OutputGeneratorOptions = {
+        ...common,
+        dryRun: true,
+        outputDir: "/output",
+        outputOwnership: Object.freeze(Object.create(null)) as BuildOutputOwnership,
+      };
+      assertEquals(
+        [missingOwnership, arbitraryOutput, dryOwnership].length,
+        3,
+      );
+    });
+
+    it("rejects missing and forged runtime authority before downstream effects", async () => {
+      for (const outputOwnership of [undefined, Object.freeze(Object.create(null))]) {
+        const adapter = createMockAdapter();
+        let capabilityInspections = 0;
+        for (
+          const key of [
+            "readFileSnapshotWithinLimit",
+            "createFileBytesExclusive",
+          ] as const
+        ) {
+          Object.defineProperty(adapter.fs, key, {
+            configurable: true,
+            get() {
+              capabilityInspections++;
+              throw new Error(`${key} must not be inspected`);
+            },
+          });
+        }
+        const stats = {
+          pages: 0,
+          components: 0,
+          chunks: 0,
+          assets: 0,
+          totalSize: 0,
+          duration: 0,
+        };
+        await assertRejects(
+          () =>
+            generateAllOutputs({
+              adapter,
+              projectDir: "/project",
+              routes: [],
+              appRoutes: [],
+              stats,
+              enableSplitting: false,
+              enablePrefetch: false,
+              enableCompression: false,
+              chunkManifest: null,
+              dryRun: false,
+              outputOwnership,
+              releaseAssetManifest: null,
+            } as unknown as OutputGeneratorOptions),
+          Error,
+          "invalid, expired, or belongs to another filesystem",
+        );
+        assertEquals(capabilityInspections, 0);
+        assertEquals(adapter.fs.byteFiles.size, 0);
+        assertEquals(adapter.fs.files.size, 0);
+        assertEquals(stats.totalSize, 0);
+      }
+    });
+
     it("validates every final generated output against the runtime ceiling", async () => {
       const adapter = createMockAdapter();
+      adapter.fs.rename = () => Promise.reject(new Error("publication was not expected"));
+      const lockRoot = await Deno.makeTempDir({ prefix: "vf-output-generator-" });
+      const publication = await createBuildPublication(`${lockRoot}/output`, false, {
+        fs: adapter.fs,
+      });
+      if (publication.dryRun) throw new Error("Expected a live publication");
       const stat = adapter.fs.stat.bind(adapter.fs);
       adapter.fs.stat = async (path) => {
         const info = await stat(path);
-        return path === "/output/sw.js" ? { ...info, size: STATIC_ASSET_MAX_BYTES + 1 } : info;
+        return path === `${publication.buildDir}/sw.js`
+          ? { ...info, size: STATIC_ASSET_MAX_BYTES + 1 }
+          : info;
       };
 
-      await assertRejects(
-        () =>
-          generateAllOutputs({
-            adapter,
-            projectDir: "/project",
-            outputDir: "/output",
-            routes: [],
-            appRoutes: [],
-            stats: {
-              pages: 0,
-              components: 0,
-              chunks: 0,
-              assets: 0,
-              totalSize: 0,
-              duration: 0,
-            },
-            enableSplitting: false,
-            enablePrefetch: false,
-            enableCompression: false,
-            chunkManifest: null,
-            dryRun: false,
-            releaseAssetManifest: null,
-          }),
-        Error,
-        `exceeds the ${STATIC_ASSET_MAX_BYTES}-byte static asset limit: sw.js`,
-      );
+      try {
+        await assertRejects(
+          () =>
+            generateAllOutputs({
+              adapter,
+              projectDir: "/project",
+              outputOwnership: publication.outputOwnership,
+              routes: [],
+              appRoutes: [],
+              stats: {
+                pages: 0,
+                components: 0,
+                chunks: 0,
+                assets: 0,
+                totalSize: 0,
+                duration: 0,
+              },
+              enableSplitting: false,
+              enablePrefetch: false,
+              enableCompression: false,
+              chunkManifest: null,
+              dryRun: false,
+              releaseAssetManifest: null,
+            }),
+          Error,
+          `exceeds the ${STATIC_ASSET_MAX_BYTES}-byte static asset limit: sw.js`,
+        );
+      } finally {
+        await publication.cleanup();
+        await Deno.remove(lockRoot, { recursive: true });
+      }
     });
   });
 });
