@@ -25,8 +25,10 @@ import type {
   PendingApproval,
   WorkflowRun,
 } from "veryfront/extensions/distributed/workflow-support";
+import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "veryfront/extensions/distributed/workflow-support";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { WorkflowRunManager } from "../../../src/workflow/worker/run-manager.ts";
+import { TimedWaitRecoveryService } from "../../../src/workflow/runtime/timed-wait-recovery.ts";
 import type {
   RunExecutionConfig,
   RunExecutionInfo,
@@ -40,6 +42,17 @@ const UNEXPIRED_DECISION_TIMING = {
   decidedAt: new Date("2026-01-01T00:00:00.000Z"),
   expiryCondition: "unexpired",
 } as const;
+
+function timedWaitTestRowId(runId: string, nodeId: string): string {
+  const encode = (value: string) => {
+    let encoded = "";
+    for (let index = 0; index < value.length; index++) {
+      encoded += value.charCodeAt(index).toString(16).padStart(4, "0");
+    }
+    return encoded;
+  };
+  return `${encode(runId)}!${encode(nodeId)}!${JSON.stringify([runId, nodeId])}`;
+}
 
 interface Deferred<T> {
   readonly promise: Promise<T>;
@@ -175,6 +188,7 @@ class MockRedisAdapter implements RedisAdapter {
   smembersCalls = 0;
   snapshotEvalCalls = 0;
   cursorSnapshotEvalCalls = 0;
+  lrangeCalls: Array<{ key: string; start: number; stop: number }> = [];
   timedWaitMigrationRows = 0;
   timedWaitFence = 0;
   redisNow = Date.now();
@@ -193,12 +207,90 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   private timedWaitEntries(runKey: string): Array<{
-    nodeId: string;
+    rowId: string;
     deadline: number;
     waitKind: "delay" | "event";
   }> {
     const encoded = this.hashes.get(runKey)?.get("timedWaitIndex");
     return encoded ? JSON.parse(encoded) : [];
+  }
+
+  private validateTimedWaitRows(
+    encodedIndex: string | undefined,
+    runId: string,
+    expectedRunOrderPrefix: string,
+    expectedRunPayloadPrefix: string,
+  ): boolean {
+    let decoded: unknown;
+    try {
+      decoded = encodedIndex ? JSON.parse(encodedIndex) : null;
+    } catch {
+      return false;
+    }
+    if (!Array.isArray(decoded)) return false;
+    const canonicalRow = timedWaitTestRowId(runId, "publication-sentinel");
+    const canonicalOrderPrefix = canonicalRow.slice(0, canonicalRow.indexOf("!"));
+    const canonicalPayloadPrefix = `[${JSON.stringify(runId)},`;
+    if (
+      expectedRunOrderPrefix !== canonicalOrderPrefix ||
+      expectedRunPayloadPrefix !== canonicalPayloadPrefix
+    ) return false;
+    const seenRows = new Set<string>();
+    for (const candidate of decoded) {
+      if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
+        return false;
+      }
+      const entry = candidate as Record<string, unknown>;
+      const rowId = entry.rowId;
+      const firstSeparator = typeof rowId === "string" ? rowId.indexOf("!") : -1;
+      const secondSeparator = typeof rowId === "string"
+        ? rowId.indexOf("!", firstSeparator + 1)
+        : -1;
+      if (
+        typeof rowId !== "string" || rowId.length === 0 || firstSeparator <= 0 ||
+        secondSeparator <= firstSeparator || seenRows.has(rowId) ||
+        rowId.slice(0, firstSeparator) !== expectedRunOrderPrefix ||
+        rowId.slice(
+            secondSeparator + 1,
+            secondSeparator + 1 + expectedRunPayloadPrefix.length,
+          ) !== expectedRunPayloadPrefix ||
+        !Number.isSafeInteger(entry.deadline) ||
+        (entry.waitKind !== "delay" && entry.waitKind !== "event")
+      ) return false;
+      seenRows.add(rowId);
+    }
+    return true;
+  }
+
+  private validatePublishedTimedWaitRows(
+    metadataKey: string,
+    runId: string,
+    allowMissing: boolean,
+  ): string[] | null {
+    const encodedRows = this.hashes.get(metadataKey)?.get(`run:${runId}`);
+    if (!encodedRows) return allowMissing ? [] : null;
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(encodedRows);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(decoded)) return null;
+    const seen = new Set<string>();
+    for (const rowId of decoded) {
+      if (typeof rowId !== "string" || rowId.length === 0 || seen.has(rowId)) return null;
+      seen.add(rowId);
+    }
+    return decoded as string[];
+  }
+
+  private publishedTimedWaitRowsMatch(
+    entries: Array<{ rowId: string }>,
+    rowIds: string[],
+  ): boolean {
+    if (entries.length !== rowIds.length) return false;
+    const expected = new Set(entries.map((entry) => entry.rowId));
+    return rowIds.every((rowId) => expected.has(rowId));
   }
 
   private removeTimedWaitRows(
@@ -208,29 +300,98 @@ class MockRedisAdapter implements RedisAdapter {
     leaseIndex: string,
     metadataKey: string,
     claimPrefix: string,
+    validatedRows?: string[],
   ): void {
-    const encodedRows = this.hashes.get(metadataKey)?.get(runId);
-    const rows: string[] = encodedRows ? JSON.parse(encodedRows) : [];
+    const metadata = this.hashes.get(metadataKey);
+    const rows = validatedRows ?? this.validatePublishedTimedWaitRows(metadataKey, runId, true);
+    if (!rows) throw new Error("invalid timed-wait publication metadata");
     for (const rowId of rows) {
       this.sortedSets.get(delayIndex)?.delete(rowId);
       this.sortedSets.get(eventIndex)?.delete(rowId);
       this.sortedSets.get(leaseIndex)?.delete(rowId);
       this.store.delete(claimPrefix + rowId);
       this.expiries.delete(claimPrefix + rowId);
+      metadata?.delete(`wait:${rowId}`);
     }
-    this.hashes.get(metadataKey)?.delete(runId);
+    metadata?.delete(`run:${runId}`);
+    metadata?.delete(`order:${runId}`);
+    metadata?.delete(`payload:${runId}`);
+    metadata?.delete(`claim-row:${runId}`);
+    metadata?.delete(`claim-token:${runId}`);
+  }
+
+  private removeTimedWaitRow(
+    runId: string | undefined,
+    rowId: string,
+    delayIndex: string,
+    eventIndex: string,
+    leaseIndex: string,
+    metadataKey: string,
+    claimPrefix: string,
+    validatedRows?: string[],
+  ): void {
+    const rows = runId
+      ? validatedRows ?? this.validatePublishedTimedWaitRows(metadataKey, runId, true)
+      : [];
+    if (!rows) throw new Error("invalid timed-wait publication metadata");
+    this.sortedSets.get(delayIndex)?.delete(rowId);
+    this.sortedSets.get(eventIndex)?.delete(rowId);
+    this.sortedSets.get(leaseIndex)?.delete(rowId);
+    this.store.delete(claimPrefix + rowId);
+    this.expiries.delete(claimPrefix + rowId);
+    const metadata = this.hashes.get(metadataKey);
+    metadata?.delete(`wait:${rowId}`);
+    if (!runId) return;
+    if (metadata?.get(`claim-row:${runId}`) === rowId) {
+      metadata.delete(`claim-row:${runId}`);
+      metadata.delete(`claim-token:${runId}`);
+    }
+    const remaining = rows.filter((candidate) => candidate !== rowId);
+    if (remaining.length === 0) {
+      metadata?.delete(`run:${runId}`);
+      metadata?.delete(`order:${runId}`);
+      metadata?.delete(`payload:${runId}`);
+    } else metadata?.set(`run:${runId}`, JSON.stringify(remaining));
+  }
+
+  private deindexTimedWaitRows(
+    runId: string,
+    delayIndex: string,
+    eventIndex: string,
+    metadataKey: string,
+    waitKind?: "delay" | "event",
+    validatedRows?: string[],
+  ): void {
+    const rows = validatedRows ?? this.validatePublishedTimedWaitRows(metadataKey, runId, true);
+    if (!rows) throw new Error("invalid timed-wait publication metadata");
+    for (const rowId of rows) {
+      if (!waitKind || waitKind === "delay") this.sortedSets.get(delayIndex)?.delete(rowId);
+      if (!waitKind || waitKind === "event") this.sortedSets.get(eventIndex)?.delete(rowId);
+    }
   }
 
   private publishTimedWaitRows(
     runKey: string,
     runId: string,
+    expectedRunOrderPrefix: string,
+    expectedRunPayloadPrefix: string,
     delayIndex: string,
     eventIndex: string,
     metadataKey: string,
   ): void {
+    const encodedIndex = this.hashes.get(runKey)?.get("timedWaitIndex");
+    if (
+      !this.validateTimedWaitRows(
+        encodedIndex,
+        runId,
+        expectedRunOrderPrefix,
+        expectedRunPayloadPrefix,
+      )
+    ) throw new Error("invalid timed-wait index entry");
+    const entries = JSON.parse(encodedIndex!) as ReturnType<MockRedisAdapter["timedWaitEntries"]>;
     const rowIds: string[] = [];
-    for (const entry of this.timedWaitEntries(runKey)) {
-      const rowId = JSON.stringify([runId, entry.nodeId]);
+    for (const entry of entries) {
+      const rowId = entry.rowId;
       this.sortedSet(entry.waitKind === "delay" ? delayIndex : eventIndex).set(
         rowId,
         entry.deadline,
@@ -242,13 +403,17 @@ class MockRedisAdapter implements RedisAdapter {
       metadata = new Map();
       this.hashes.set(metadataKey, metadata);
     }
-    metadata.set(runId, JSON.stringify(rowIds));
+    metadata.set(`run:${runId}`, JSON.stringify(rowIds));
+    metadata.set(`order:${runId}`, expectedRunOrderPrefix);
+    metadata.set(`payload:${runId}`, expectedRunPayloadPrefix);
+    for (const rowId of rowIds) metadata.set(`wait:${rowId}`, runId);
   }
 
   private removeIndexedRun(
     runId: string,
     keys: string[],
     args: string[],
+    validatedRows?: string[],
   ): void {
     const workflowId = this.hashes.get(keys[1]!)?.get(runId);
     const status = this.hashes.get(keys[2]!)?.get(runId);
@@ -259,6 +424,7 @@ class MockRedisAdapter implements RedisAdapter {
       keys[6]!,
       keys[7]!,
       args[9]!,
+      validatedRows,
     );
     for (const prefix of args.slice(0, 5)) {
       const ownedKey = prefix + runId;
@@ -280,26 +446,61 @@ class MockRedisAdapter implements RedisAdapter {
     this.sortedSets.get(keys[0]!)?.delete(runId);
   }
 
-  private cleanupRetention(keys: string[], args: string[]): [number, boolean] {
+  private planRetentionCleanup(keys: string[], args: string[]): {
+    actions: Array<{
+      runId: string;
+      kind: "forget" | "remove" | "reschedule";
+      rows?: string[];
+    }>;
+    plannedRemovals: Set<string>;
+    processed: number;
+    hasMore: boolean;
+  } {
     const limit = Number(args[8]);
     const nowMs = Date.now();
     const retention = this.sortedSets.get(keys[0]!);
-    const due = [...(retention?.entries() ?? [])]
+    const allDue = [...(retention?.entries() ?? [])]
       .filter(([, expiresAt]) => expiresAt <= nowMs)
-      .sort((left, right) => left[1] - right[1] || -compareRunIdsDescending(left[0], right[0]))
-      .slice(0, limit);
+      .sort((left, right) => left[1] - right[1] || -compareRunIdsDescending(left[0], right[0]));
+    const due = allDue.slice(0, limit);
+    const actions: Array<{
+      runId: string;
+      kind: "forget" | "remove" | "reschedule";
+      rows?: string[];
+    }> = [];
+    const plannedRemovals = new Set<string>();
     for (const [runId] of due) {
       const runKey = args[0]! + runId;
       if (this.hashes.has(runKey) && !this.expiries.has(runKey)) {
-        retention?.delete(runId);
+        actions.push({ runId, kind: "forget" });
       } else if (this.hashes.has(runKey)) {
-        retention?.set(runId, nowMs + 1_000);
+        actions.push({ runId, kind: "reschedule" });
       } else {
-        this.removeIndexedRun(runId, keys, args);
+        const rows = this.validatePublishedTimedWaitRows(keys[7]!, runId, true);
+        if (!rows) throw new Error("invalid timed-wait publication metadata");
+        actions.push({ runId, kind: "remove", rows });
+        plannedRemovals.add(runId);
       }
     }
-    const hasMore = [...(retention?.values() ?? [])].some((expiresAt) => expiresAt <= nowMs);
-    return [due.length, hasMore];
+    return {
+      actions,
+      plannedRemovals,
+      processed: due.length,
+      hasMore: allDue.length > due.length,
+    };
+  }
+
+  private applyRetentionCleanup(
+    keys: string[],
+    args: string[],
+    plan: ReturnType<MockRedisAdapter["planRetentionCleanup"]>,
+  ): void {
+    const retention = this.sortedSets.get(keys[0]!);
+    for (const action of plan.actions) {
+      if (action.kind === "forget") retention?.delete(action.runId);
+      else if (action.kind === "reschedule") retention?.set(action.runId, Date.now() + 1_000);
+      else this.removeIndexedRun(action.runId, keys, args, action.rows);
+    }
   }
 
   private orderedIndexRows(key: string, min: string, max: string): Array<[string, number]> {
@@ -440,6 +641,26 @@ class MockRedisAdapter implements RedisAdapter {
       const workflowPrefix = args[5]!;
       const statusPrefix = args[6]!;
       const workflowStatusPrefix = args[7]!;
+      const fieldCount = Number(args[8]);
+      const timedClaimPrefix = args[9 + (fieldCount * 2)]!;
+      const expectedRunOrderPrefix = args[10 + (fieldCount * 2)]!;
+      const expectedRunPayloadPrefix = args[11 + (fieldCount * 2)]!;
+      let encodedTimedWaitIndex: string | undefined;
+      for (let index = 0; index < fieldCount; index++) {
+        const offset = 9 + (index * 2);
+        if (args[offset] === "timedWaitIndex") encodedTimedWaitIndex = args[offset + 1];
+      }
+      if (
+        status === "waiting" &&
+        !this.validateTimedWaitRows(
+          encodedTimedWaitIndex,
+          runId,
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix,
+        )
+      ) return -1;
+      const publishedRows = this.validatePublishedTimedWaitRows(keys[15]!, runId, true);
+      if (!publishedRows) return -2;
       const workflowMetadata = this.hashes.get(keys[5]!);
       const statusMetadata = this.hashes.get(keys[6]!);
       const oldWorkflowId = workflowMetadata?.get(runId);
@@ -453,8 +674,6 @@ class MockRedisAdapter implements RedisAdapter {
       workflowMetadata?.delete(runId);
       statusMetadata?.delete(runId);
       this.sortedSets.get(keys[7]!)?.delete(runId);
-      const fieldCount = Number(args[8]);
-      const timedClaimPrefix = args[9 + (fieldCount * 2)]!;
       this.removeTimedWaitRows(
         runId,
         keys[12]!,
@@ -462,6 +681,7 @@ class MockRedisAdapter implements RedisAdapter {
         keys[14]!,
         keys[15]!,
         timedClaimPrefix,
+        publishedRows,
       );
       for (const staleKey of keys.slice(8, 12)) {
         this.store.delete(staleKey);
@@ -494,7 +714,15 @@ class MockRedisAdapter implements RedisAdapter {
       }
       nextStatusMetadata.set(runId, status);
       if (status === "waiting") {
-        this.publishTimedWaitRows(key, runId, keys[12]!, keys[13]!, keys[15]!);
+        this.publishTimedWaitRows(
+          key,
+          runId,
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix,
+          keys[12]!,
+          keys[13]!,
+          keys[15]!,
+        );
       }
       if (ttl > 0) {
         this.expiries.set(key, ttl);
@@ -584,8 +812,9 @@ class MockRedisAdapter implements RedisAdapter {
     }
 
     if (script.includes("cleanup-expired-workflow-runs")) {
-      const [processed, hasMore] = this.cleanupRetention(keys, args);
-      return [processed, hasMore ? 1 : 0];
+      const plan = this.planRetentionCleanup(keys, args);
+      this.applyRetentionCleanup(keys, args, plan);
+      return [plan.processed, plan.hasMore ? 1 : 0];
     }
 
     if (script.includes("cursor-page-workflow-runs-exact")) {
@@ -596,8 +825,11 @@ class MockRedisAdapter implements RedisAdapter {
       this.beforeRunSnapshotRead = undefined;
       await snapshotHook?.();
       await this.beforeCursorRunSnapshotRead?.(cursorMember);
-      const [processed, hasMore] = this.cleanupRetention(keys, args);
-      if (hasMore) return [0, processed, "retention-backlog"];
+      const plan = this.planRetentionCleanup(keys, args);
+      if (plan.hasMore) {
+        this.applyRetentionCleanup(keys, args, plan);
+        return [0, plan.processed, "retention-backlog"];
+      }
 
       const rows = this.orderedIndexRows(keys[8]!, "-inf", "+inf");
       let start = 0;
@@ -608,7 +840,8 @@ class MockRedisAdapter implements RedisAdapter {
         );
         const existing = rows.find(([member]) => member === cursorMember);
         if (existing && existing[1] !== cursorScoreNumber) {
-          return [2, processed, "cursor-score-mismatch"];
+          this.applyRetentionCleanup(keys, args, plan);
+          return [2, plan.processed, "cursor-score-mismatch"];
         } else if (cursorIndex === -1) {
           const insertionPoint = rows.findIndex(([member, score]) =>
             score < cursorScoreNumber ||
@@ -620,29 +853,49 @@ class MockRedisAdapter implements RedisAdapter {
           start = cursorIndex + 1;
         }
       }
-      const page = rows.slice(start, start + Number(args[12]));
+      const page = rows.slice(start)
+        .filter(([runId]) => !plan.plannedRemovals.has(runId))
+        .slice(0, Number(args[12]));
       const snapshots: unknown[] = [];
+      let ghost: { runId: string; rows: string[] } | undefined;
       for (const [runId] of page) {
         const hash = this.hashes.get(args[0]! + runId);
         if (!hash) {
-          this.removeIndexedRun(runId, keys, args);
-          return [0, processed, "index-ghost"];
+          const rows = this.validatePublishedTimedWaitRows(keys[7]!, runId, true);
+          if (!rows) throw new Error("invalid timed-wait publication metadata");
+          ghost = { runId, rows };
+          break;
         }
         snapshots.push([
           [...hash.entries()].flat(),
           [...(this.lists.get(args[2]! + runId) ?? [])],
         ]);
       }
+      this.applyRetentionCleanup(keys, args, plan);
+      if (ghost) {
+        this.removeIndexedRun(ghost.runId, keys, args, ghost.rows);
+        return [0, plan.processed, "index-ghost"];
+      }
       const next = page.at(-1);
-      return [1, processed, snapshots, next ? String(next[1]) : "", next?.[0] ?? "", 0];
+      return [
+        1,
+        plan.processed,
+        snapshots,
+        next ? String(next[1]) : "",
+        next?.[0] ?? "",
+        0,
+      ];
     }
 
     if (script.includes("list-workflow-runs-exact")) {
       const hook = this.beforeRunSnapshotRead;
       this.beforeRunSnapshotRead = undefined;
       await hook?.();
-      const [processed, hasMore] = this.cleanupRetention(keys, args);
-      if (hasMore) return [0, processed, "retention-backlog"];
+      const plan = this.planRetentionCleanup(keys, args);
+      if (plan.hasMore) {
+        this.applyRetentionCleanup(keys, args, plan);
+        return [0, plan.processed, "retention-backlog"];
+      }
       const maxScore = args[10]!;
       const minScore = args[11]!;
       const offset = Number(args[12]);
@@ -651,30 +904,39 @@ class MockRedisAdapter implements RedisAdapter {
       const byId = new Map<string, number>();
       for (const indexKey of keys.slice(8, 8 + selectedCount)) {
         for (const [runId, score] of this.orderedIndexRows(indexKey, minScore, maxScore)) {
-          byId.set(runId, score);
+          if (!plan.plannedRemovals.has(runId)) byId.set(runId, score);
         }
       }
       const ordered = [...byId.entries()].sort((left, right) =>
         right[1] - left[1] || compareRunIdsDescending(left[0], right[0])
       ).slice(offset, offset + limit);
       const snapshots: unknown[] = [];
+      let ghost: { runId: string; rows: string[] } | undefined;
       for (const [runId] of ordered) {
         const hash = this.hashes.get(args[0]! + runId);
         if (!hash) {
-          this.removeIndexedRun(runId, keys, args);
-          return [0, processed, "index-ghost"];
+          const rows = this.validatePublishedTimedWaitRows(keys[7]!, runId, true);
+          if (!rows) throw new Error("invalid timed-wait publication metadata");
+          ghost = { runId, rows };
+          break;
         }
         snapshots.push([
           [...hash.entries()].flat(),
           [...(this.lists.get(args[2]! + runId) ?? [])],
         ]);
       }
-      return [1, processed, snapshots];
+      this.applyRetentionCleanup(keys, args, plan);
+      if (ghost) {
+        this.removeIndexedRun(ghost.runId, keys, args, ghost.rows);
+        return [0, plan.processed, "index-ghost"];
+      }
+      return [1, plan.processed, snapshots];
     }
 
     if (script.includes("count-workflow-runs-exact")) {
-      const [processed, hasMore] = this.cleanupRetention(keys, args);
-      if (hasMore) return [0, processed, "retention-backlog"];
+      const plan = this.planRetentionCleanup(keys, args);
+      this.applyRetentionCleanup(keys, args, plan);
+      if (plan.hasMore) return [0, plan.processed, "retention-backlog"];
       const maxScore = args[10]!;
       const minScore = args[11]!;
       const selectedCount = Number(args[12]);
@@ -682,7 +944,7 @@ class MockRedisAdapter implements RedisAdapter {
       for (const indexKey of keys.slice(8, 8 + selectedCount)) {
         count += this.orderedIndexRows(indexKey, minScore, maxScore).length;
       }
-      return [1, processed, count];
+      return [1, plan.processed, count];
     }
 
     if (script.includes("append-retained-workflow-run-state")) {
@@ -694,6 +956,8 @@ class MockRedisAdapter implements RedisAdapter {
         this.lists.set(storageKey, list);
       }
       list.push(args[0]!);
+      const maxEntries = Number(args[1]);
+      if (list.length > maxEntries) list.splice(0, list.length - maxEntries);
       const remaining = this.expiries.get(key);
       if (remaining !== undefined) this.expiries.set(storageKey, remaining);
       return 1;
@@ -738,6 +1002,7 @@ class MockRedisAdapter implements RedisAdapter {
       const expectedWorkerId = args[expectedCount + 1]!;
       const storageKey = keys[1]!;
       const value = args[expectedCount + 2]!;
+      const maxEntries = Number(args[expectedCount + 3]);
       const hash = this.hashes.get(key);
       if (
         !hash || !expectedStatuses.includes(hash.get("status") ?? "") ||
@@ -752,6 +1017,7 @@ class MockRedisAdapter implements RedisAdapter {
         this.lists.set(storageKey, list);
       }
       list.push(value);
+      if (list.length > maxEntries) list.splice(0, list.length - maxEntries);
       const remaining = this.expiries.get(key);
       if (remaining !== undefined) this.expiries.set(storageKey, remaining);
       return Promise.resolve(1);
@@ -858,17 +1124,21 @@ class MockRedisAdapter implements RedisAdapter {
       const rows = this.orderedIndexRows(keys[0]!, "-inf", "+inf");
       let start = 0;
       if (cursorMember) {
-        const exact = rows.findIndex(([member, score]) =>
-          member === cursorMember && score === cursorScore
-        );
-        if (exact >= 0) {
-          start = exact + 1;
+        const actualScore = this.sortedSets.get(keys[0]!)?.get(cursorMember);
+        if (actualScore !== undefined) {
+          if (actualScore === cursorScore) {
+            const exact = rows.findIndex(([member]) => member === cursorMember);
+            if (exact >= 0) start = exact + 1;
+          } else {
+            start = 0;
+          }
         } else {
-          const insertion = rows.findIndex(([member, score]) =>
-            score < cursorScore ||
-            (score === cursorScore && compareRunIdsDescending(member, cursorMember) > 0)
-          );
-          start = insertion < 0 ? rows.length : insertion;
+          const waiting = this.sortedSet(keys[0]!);
+          waiting.set(cursorMember, cursorScore);
+          const withCursor = this.orderedIndexRows(keys[0]!, "-inf", "+inf");
+          start = withCursor.findIndex(([member]) => member === cursorMember);
+          waiting.delete(cursorMember);
+          if (start < 0) start = rows.length;
         }
       }
       const page = rows.slice(start, start + limit);
@@ -899,32 +1169,69 @@ class MockRedisAdapter implements RedisAdapter {
       const runPrefix = args[0]!;
       const claimPrefix = args[1]!;
       const count = Number(args[2]);
-      let applied = 0;
+      const pending: Array<{
+        encodedIndex: string;
+        expectedRunOrderPrefix: string;
+        expectedRunPayloadPrefix: string;
+        publishedRows: string[];
+        runId: string;
+        runKey: string;
+      }> = [];
       for (let index = 0; index < count; index++) {
-        const offset = 3 + (index * 3);
+        const offset = 3 + (index * 5);
         const runId = args[offset]!;
         const observedNodeStates = args[offset + 1]!;
         const encodedIndex = args[offset + 2]!;
+        const expectedRunOrderPrefix = args[offset + 3]!;
+        const expectedRunPayloadPrefix = args[offset + 4]!;
         const runKey = runPrefix + runId;
         const hash = this.hashes.get(runKey);
         if (
           hash?.get("status") === "waiting" && !hash.has("timedWaitIndex") &&
           hash.get("nodeStates") === observedNodeStates
         ) {
-          hash.set("timedWaitIndex", encodedIndex);
-          this.removeTimedWaitRows(
+          if (
+            !this.validateTimedWaitRows(
+              encodedIndex,
+              runId,
+              expectedRunOrderPrefix,
+              expectedRunPayloadPrefix,
+            )
+          ) return -1;
+          const publishedRows = this.validatePublishedTimedWaitRows(keys[2]!, runId, true);
+          if (!publishedRows) return -2;
+          pending.push({
+            encodedIndex,
+            expectedRunOrderPrefix,
+            expectedRunPayloadPrefix,
+            publishedRows,
             runId,
-            keys[0]!,
-            keys[1]!,
-            keys[3]!,
-            keys[2]!,
-            claimPrefix,
-          );
-          this.publishTimedWaitRows(runKey, runId, keys[0]!, keys[1]!, keys[2]!);
-          applied++;
+            runKey,
+          });
         }
       }
-      return applied;
+      for (const row of pending) {
+        this.hashes.get(row.runKey)!.set("timedWaitIndex", row.encodedIndex);
+        this.removeTimedWaitRows(
+          row.runId,
+          keys[0]!,
+          keys[1]!,
+          keys[3]!,
+          keys[2]!,
+          claimPrefix,
+          row.publishedRows,
+        );
+        this.publishTimedWaitRows(
+          row.runKey,
+          row.runId,
+          row.expectedRunOrderPrefix,
+          row.expectedRunPayloadPrefix,
+          keys[0]!,
+          keys[1]!,
+          keys[2]!,
+        );
+      }
+      return pending.length;
     }
 
     if (script.includes("claim-due-timed-waits")) {
@@ -937,6 +1244,7 @@ class MockRedisAdapter implements RedisAdapter {
       const waitKind = args[6]! as "delay" | "event";
       const selectedIndex = waitKind === "delay" ? keys[0]! : keys[1]!;
       const leaseNow = this.redisNow;
+      const metadata = this.hashes.get(keys[4]!);
 
       const expired = [...(this.sortedSets.get(keys[2]!)?.entries() ?? [])]
         .filter(([, expiresAt]) => expiresAt <= leaseNow)
@@ -950,17 +1258,86 @@ class MockRedisAdapter implements RedisAdapter {
           this.expiries.delete(claimKey);
         }
         if (!this.store.has(claimKey)) {
-          this.sortedSets.get(keys[2]!)?.delete(rowId);
-          const [runId, nodeId] = JSON.parse(rowId) as [string, string];
+          const runId = this.hashes.get(keys[4]!)?.get(`wait:${rowId}`);
+          if (!runId) {
+            this.removeTimedWaitRow(
+              undefined,
+              rowId,
+              keys[0]!,
+              keys[1]!,
+              keys[2]!,
+              keys[4]!,
+              claimPrefix,
+            );
+            continue;
+          }
           const runKey = runPrefix + runId;
           const hash = this.hashes.get(runKey);
-          const entry = this.timedWaitEntries(runKey).find((candidate) =>
-            candidate.nodeId === nodeId
-          );
-          if (hash?.get("status") === "waiting" && entry) {
-            this.sortedSet(entry.waitKind === "delay" ? keys[0]! : keys[1]!).set(
+          const gateRow = metadata?.get(`claim-row:${runId}`);
+          const expectedRunOrderPrefix = metadata?.get(`order:${runId}`);
+          const expectedRunPayloadPrefix = metadata?.get(`payload:${runId}`);
+          const publishedRows = this.validatePublishedTimedWaitRows(keys[4]!, runId, false);
+          if (hash?.get("status") !== "waiting") {
+            if (publishedRows) {
+              this.removeTimedWaitRows(
+                runId,
+                keys[0]!,
+                keys[1]!,
+                keys[2]!,
+                keys[4]!,
+                claimPrefix,
+                publishedRows,
+              );
+            }
+            continue;
+          }
+          if (!publishedRows) continue;
+          if (
+            !expectedRunOrderPrefix || !expectedRunPayloadPrefix ||
+            !this.validateTimedWaitRows(
+              hash.get("timedWaitIndex"),
+              runId,
+              expectedRunOrderPrefix,
+              expectedRunPayloadPrefix,
+            )
+          ) continue;
+          const entries = this.timedWaitEntries(runKey);
+          if (!this.publishedTimedWaitRowsMatch(entries, publishedRows)) continue;
+          const entry = entries.find((candidate) => candidate.rowId === rowId);
+          if (gateRow && gateRow !== rowId) {
+            this.sortedSets.get(keys[2]!)?.delete(rowId);
+          } else if (!entry) {
+            this.removeTimedWaitRow(
+              runId,
               rowId,
-              entry.deadline,
+              keys[0]!,
+              keys[1]!,
+              keys[2]!,
+              keys[4]!,
+              claimPrefix,
+              publishedRows,
+            );
+            this.publishTimedWaitRows(
+              runKey,
+              runId,
+              expectedRunOrderPrefix,
+              expectedRunPayloadPrefix,
+              keys[0]!,
+              keys[1]!,
+              keys[4]!,
+            );
+          } else {
+            metadata?.delete(`claim-row:${runId}`);
+            metadata?.delete(`claim-token:${runId}`);
+            this.sortedSets.get(keys[2]!)?.delete(rowId);
+            this.publishTimedWaitRows(
+              runKey,
+              runId,
+              expectedRunOrderPrefix,
+              expectedRunPayloadPrefix,
+              keys[0]!,
+              keys[1]!,
+              keys[4]!,
             );
           }
         }
@@ -968,27 +1345,101 @@ class MockRedisAdapter implements RedisAdapter {
 
       const candidates = [...(this.sortedSets.get(selectedIndex)?.entries() ?? [])]
         .filter(([, deadline]) => deadline <= now)
-        .sort((left, right) => left[1] - right[1] || left[0].localeCompare(right[0]))
-        .slice(0, limit);
+        .sort((left, right) => left[1] - right[1] || -compareRunIdsDescending(left[0], right[0]))
+        .slice(0, limit + 100);
       const claims: unknown[] = [];
       for (const [rowId, indexedDeadline] of candidates) {
-        const [runId, nodeId] = JSON.parse(rowId) as [string, string];
+        if (claims.length >= limit) break;
+        const runId = this.hashes.get(keys[4]!)?.get(`wait:${rowId}`);
+        if (!runId) {
+          this.removeTimedWaitRow(
+            undefined,
+            rowId,
+            keys[0]!,
+            keys[1]!,
+            keys[2]!,
+            keys[4]!,
+            claimPrefix,
+          );
+          continue;
+        }
         const runKey = runPrefix + runId;
         const hash = this.hashes.get(runKey);
-        const entry = this.timedWaitEntries(runKey).find((candidate) =>
-          candidate.nodeId === nodeId
-        );
-        if (
-          hash?.get("status") !== "waiting" || !entry || entry.waitKind !== waitKind ||
-          entry.deadline !== indexedDeadline
-        ) {
-          this.sortedSets.get(selectedIndex)?.delete(rowId);
-          if (hash?.get("status") === "waiting" && entry) {
-            this.sortedSet(entry.waitKind === "delay" ? keys[0]! : keys[1]!).set(
-              rowId,
-              entry.deadline,
+        const publishedRows = this.validatePublishedTimedWaitRows(keys[4]!, runId, false);
+        if (hash?.get("status") !== "waiting") {
+          if (publishedRows) {
+            this.removeTimedWaitRows(
+              runId,
+              keys[0]!,
+              keys[1]!,
+              keys[2]!,
+              keys[4]!,
+              claimPrefix,
+              publishedRows,
             );
           }
+          continue;
+        }
+        if (!publishedRows) continue;
+        const expectedRunOrderPrefix = metadata?.get(`order:${runId}`);
+        const expectedRunPayloadPrefix = metadata?.get(`payload:${runId}`);
+        if (
+          !expectedRunOrderPrefix || !expectedRunPayloadPrefix ||
+          !this.validateTimedWaitRows(
+            hash.get("timedWaitIndex"),
+            runId,
+            expectedRunOrderPrefix,
+            expectedRunPayloadPrefix,
+          )
+        ) continue;
+        const entries = this.timedWaitEntries(runKey);
+        if (!this.publishedTimedWaitRowsMatch(entries, publishedRows)) continue;
+        const entry = entries.find((candidate) => candidate.rowId === rowId);
+        if (!entry) {
+          this.removeTimedWaitRow(
+            runId,
+            rowId,
+            keys[0]!,
+            keys[1]!,
+            keys[2]!,
+            keys[4]!,
+            claimPrefix,
+            publishedRows,
+          );
+          continue;
+        }
+        if (metadata?.has(`claim-token:${runId}`)) {
+          this.deindexTimedWaitRows(
+            runId,
+            keys[0]!,
+            keys[1]!,
+            keys[4]!,
+            undefined,
+            publishedRows,
+          );
+          continue;
+        }
+        if (
+          waitKind === "delay" &&
+          entries.some((candidate) => candidate.waitKind === "event" && candidate.deadline <= now)
+        ) {
+          this.deindexTimedWaitRows(
+            runId,
+            keys[0]!,
+            keys[1]!,
+            keys[4]!,
+            "delay",
+            publishedRows,
+          );
+          continue;
+        }
+        if (entry.waitKind !== waitKind || entry.deadline !== indexedDeadline) {
+          this.sortedSets.get(keys[0]!)?.delete(rowId);
+          this.sortedSets.get(keys[1]!)?.delete(rowId);
+          this.sortedSet(entry.waitKind === "delay" ? keys[0]! : keys[1]!).set(
+            rowId,
+            entry.deadline,
+          );
           continue;
         }
         const claimKey = claimPrefix + rowId;
@@ -997,12 +1448,38 @@ class MockRedisAdapter implements RedisAdapter {
           this.store.delete(claimKey);
           this.expiries.delete(claimKey);
         }
-        if (this.store.has(claimKey)) continue;
+        if (this.store.has(claimKey)) {
+          const existingToken = this.store.get(claimKey)!;
+          const existingExpiry = this.expiries.get(claimKey);
+          if (existingExpiry !== undefined && existingExpiry > leaseNow) {
+            metadata?.set(`claim-row:${runId}`, rowId);
+            metadata?.set(`claim-token:${runId}`, existingToken);
+            this.deindexTimedWaitRows(
+              runId,
+              keys[0]!,
+              keys[1]!,
+              keys[4]!,
+              undefined,
+              publishedRows,
+            );
+            this.sortedSet(keys[2]!).set(rowId, existingExpiry);
+          }
+          continue;
+        }
         const claimId = `${ownerId}:${++this.timedWaitFence}`;
         const expiresAt = leaseNow + leaseDuration;
         this.store.set(claimKey, claimId);
         this.expiries.set(claimKey, expiresAt);
-        this.sortedSets.get(selectedIndex)?.delete(rowId);
+        metadata?.set(`claim-row:${runId}`, rowId);
+        metadata?.set(`claim-token:${runId}`, claimId);
+        this.deindexTimedWaitRows(
+          runId,
+          keys[0]!,
+          keys[1]!,
+          keys[4]!,
+          undefined,
+          publishedRows,
+        );
         this.sortedSet(keys[2]!).set(rowId, expiresAt);
         claims.push([
           rowId,
@@ -1018,29 +1495,64 @@ class MockRedisAdapter implements RedisAdapter {
     if (script.includes("release-timed-wait-claim")) {
       const claimId = args[0]!;
       const rowId = args[1]!;
-      const nodeId = args[2]!;
-      if (this.store.get(keys[3]!) !== claimId) return 0;
+      const runId = args[2]!;
+      const claimPrefix = args[3]!;
+      const expectedRunOrderPrefix = args[4]!;
+      const expectedRunPayloadPrefix = args[5]!;
+      const metadata = this.hashes.get(keys[5]!);
+      if (
+        this.store.get(keys[3]!) !== claimId ||
+        metadata?.get(`claim-row:${runId}`) !== rowId ||
+        metadata.get(`claim-token:${runId}`) !== claimId
+      ) return 0;
+      const hash = this.hashes.get(keys[4]!);
+      const waiting = hash?.get("status") === "waiting";
+      if (
+        waiting &&
+        !this.validateTimedWaitRows(
+          hash.get("timedWaitIndex"),
+          runId,
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix,
+        )
+      ) return -1;
+      const entries = waiting ? this.timedWaitEntries(keys[4]!) : [];
+      const publishedRows = this.validatePublishedTimedWaitRows(keys[5]!, runId, !waiting);
+      if (
+        !publishedRows || (waiting && !this.publishedTimedWaitRowsMatch(entries, publishedRows))
+      ) return -2;
       this.store.delete(keys[3]!);
       this.expiries.delete(keys[3]!);
       this.sortedSets.get(keys[2]!)?.delete(rowId);
-      const hash = this.hashes.get(keys[4]!);
-      if (hash?.get("status") === "waiting") {
-        const entry = this.timedWaitEntries(keys[4]!).find((candidate) =>
-          candidate.nodeId === nodeId
+      metadata.delete(`claim-row:${runId}`);
+      metadata.delete(`claim-token:${runId}`);
+      if (waiting) {
+        this.publishTimedWaitRows(
+          keys[4]!,
+          runId,
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix,
+          keys[0]!,
+          keys[1]!,
+          keys[5]!,
         );
-        if (entry) {
-          this.sortedSet(entry.waitKind === "delay" ? keys[0]! : keys[1]!).set(
-            rowId,
-            entry.deadline,
-          );
-        }
+      } else {
+        this.removeTimedWaitRows(
+          runId,
+          keys[0]!,
+          keys[1]!,
+          keys[2]!,
+          keys[5]!,
+          claimPrefix,
+          publishedRows,
+        );
       }
       return 1;
     }
 
     if (script.includes("conditional-timed-wait-resolution")) {
       const claimId = args[0]!;
-      const nodeId = args[2]!;
+      const rowId = args[1]!;
       const expectedDeadline = Number(args[3]);
       const expectedWorkerId = args[4]!;
       const nextStatus = args[5]!;
@@ -1051,15 +1563,33 @@ class MockRedisAdapter implements RedisAdapter {
       const fieldStart = 10;
       const claimPrefix = args[fieldStart + (fieldCount * 2)]!;
       const hash = this.hashes.get(keys[0]!);
-      const exact = this.timedWaitEntries(keys[0]!).some((entry) =>
-        entry.nodeId === nodeId && entry.deadline === expectedDeadline
-      );
+      const metadata = this.hashes.get(keys[6]!);
       if (
         this.store.get(keys[1]!) !== claimId || hash?.get("status") !== "waiting" ||
-        hash.get("workerId") !== expectedWorkerId || !exact
+        hash.get("workerId") !== expectedWorkerId ||
+        metadata?.get(`claim-row:${runId}`) !== rowId ||
+        metadata.get(`claim-token:${runId}`) !== claimId
       ) {
         return 0;
       }
+      const expectedRunOrderPrefix = metadata.get(`order:${runId}`);
+      const expectedRunPayloadPrefix = metadata.get(`payload:${runId}`);
+      if (
+        !expectedRunOrderPrefix || !expectedRunPayloadPrefix ||
+        !this.validateTimedWaitRows(
+          hash.get("timedWaitIndex"),
+          runId,
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix,
+        )
+      ) return -2;
+      const entries = this.timedWaitEntries(keys[0]!);
+      const exact = entries.some((entry) =>
+        entry.rowId === rowId && entry.deadline === expectedDeadline
+      );
+      if (!exact) return 0;
+      const publishedRows = this.validatePublishedTimedWaitRows(keys[6]!, runId, false);
+      if (!publishedRows || !this.publishedTimedWaitRowsMatch(entries, publishedRows)) return -3;
       const workflowId = hash.get("workflowId");
       const createdAtMs = Number(hash.get("createdAtMs"));
       if (!workflowId || !Number.isFinite(createdAtMs)) return -1;
@@ -1070,6 +1600,7 @@ class MockRedisAdapter implements RedisAdapter {
         keys[2]!,
         keys[6]!,
         claimPrefix,
+        publishedRows,
       );
       hash.set("status", nextStatus);
       this.sortedSets.get(statusPrefix + "waiting")?.delete(runId);
@@ -1105,6 +1636,8 @@ class MockRedisAdapter implements RedisAdapter {
       const fieldCount = Number(args[expectedCount + 8]);
       const fieldStart = expectedCount + 9;
       const timedClaimPrefix = args[fieldStart + (fieldCount * 2)]!;
+      const expectedRunOrderPrefix = args[fieldStart + (fieldCount * 2) + 1]!;
+      const expectedRunPayloadPrefix = args[fieldStart + (fieldCount * 2) + 2]!;
       const hash = this.hashes.get(key);
       const oldStatus = hash?.get("status");
       if (!hash || !oldStatus || !expectedStatuses.includes(oldStatus)) {
@@ -1117,6 +1650,32 @@ class MockRedisAdapter implements RedisAdapter {
         return Promise.resolve(0);
       }
 
+      const statusChanges = Boolean(nextStatus && oldStatus !== nextStatus);
+      const workflowId = hash.get("workflowId");
+      const createdAtMs = Number(hash.get("createdAtMs"));
+      if (statusChanges && (!workflowId || !Number.isFinite(createdAtMs))) {
+        return Promise.resolve(-1);
+      }
+      const resultingStatus = nextStatus || oldStatus;
+      const publishedRows = invalidateTimedWait
+        ? this.validatePublishedTimedWaitRows(keys[7]!, runId, true)
+        : undefined;
+      if (invalidateTimedWait && !publishedRows) return Promise.resolve(-3);
+      let encodedTimedWaitIndex = hash.get("timedWaitIndex");
+      for (let index = 0; index < fieldCount; index++) {
+        const offset = fieldStart + (index * 2);
+        if (args[offset] === "timedWaitIndex") encodedTimedWaitIndex = args[offset + 1];
+      }
+      if (
+        invalidateTimedWait && resultingStatus === "waiting" &&
+        !this.validateTimedWaitRows(
+          encodedTimedWaitIndex,
+          runId,
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix,
+        )
+      ) return Promise.resolve(-2);
+
       if (invalidateTimedWait) {
         this.removeTimedWaitRows(
           runId,
@@ -1125,13 +1684,11 @@ class MockRedisAdapter implements RedisAdapter {
           keys[6]!,
           keys[7]!,
           timedClaimPrefix,
+          publishedRows ?? undefined,
         );
       }
 
-      if (nextStatus && oldStatus !== nextStatus) {
-        const workflowId = hash.get("workflowId");
-        const createdAtMs = Number(hash.get("createdAtMs"));
-        if (!workflowId || !Number.isFinite(createdAtMs)) return Promise.resolve(-1);
+      if (statusChanges) {
         hash.set("status", nextStatus);
         this.sortedSets.get(statusPrefix + oldStatus)?.delete(runId);
         this.sortedSets.get(workflowStatusPrefix + workflowId + ":" + oldStatus)?.delete(runId);
@@ -1153,7 +1710,15 @@ class MockRedisAdapter implements RedisAdapter {
         hash.set(args[offset]!, args[offset + 1]!);
       }
       if (invalidateTimedWait && hash.get("status") === "waiting") {
-        this.publishTimedWaitRows(key, runId, keys[4]!, keys[5]!, keys[7]!);
+        this.publishTimedWaitRows(
+          key,
+          runId,
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix,
+          keys[4]!,
+          keys[5]!,
+          keys[7]!,
+        );
       }
       if (nextStatus && nextStatus !== "running") {
         this.store.delete(keys[1]!);
@@ -1208,6 +1773,7 @@ class MockRedisAdapter implements RedisAdapter {
   }
 
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    this.lrangeCalls.push({ key, start, stop });
     if (key.includes(":approvals:")) {
       const hook = this.beforeRunSnapshotRead;
       this.beforeRunSnapshotRead = undefined;
@@ -1327,6 +1893,34 @@ class RecordingRunExecutor implements RunExecutor {
   }
 }
 
+function snapshotRedisWorkflowState(redis: MockRedisAdapter): unknown {
+  const nestedEntries = <T>(source: Map<string, Map<string, T>>) =>
+    [...source.entries()]
+      .filter(([key]) => !key.includes("migration:timed-wait-index"))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, values]) => [
+        key,
+        [...values.entries()].sort(([left], [right]) => left.localeCompare(right)),
+      ]);
+  const setEntries = (source: Map<string, Set<string>>) =>
+    [...source.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, values]) => [key, [...values].sort()]);
+  const flatEntries = <T>(source: Map<string, T>) =>
+    [...source.entries()].sort(([left], [right]) => left.localeCompare(right));
+
+  return {
+    store: flatEntries(redis.store),
+    hashes: nestedEntries(redis.hashes),
+    lists: [...redis.lists.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, values]) => [key, [...values]]),
+    sets: setEntries(redis.sets),
+    sortedSets: nestedEntries(redis.sortedSets),
+    expiries: flatEntries(redis.expiries),
+  };
+}
+
 function createTestRun(id: string, overrides: Partial<WorkflowRun> = {}): WorkflowRun {
   return {
     id,
@@ -1399,6 +1993,62 @@ function createSiblingTimedWaitRun(
       },
     },
   });
+}
+
+async function createCorruptDueRetentionBatch(prefix: string): Promise<{
+  backend: RedisBackend;
+  redis: MockRedisAdapter;
+}> {
+  const redis = new MockRedisAdapter();
+  const backend = new RedisBackend({
+    client: redis as unknown as RedisAdapter,
+    prefix,
+    runTtl: 3_600,
+  });
+  const validRun = createTimedWaitRun(`${prefix}a-valid`, Date.now() + 60_000);
+  const corruptRun = createTimedWaitRun(`${prefix}b-corrupt`, Date.now() + 60_000);
+  await backend.createRun(validRun);
+  await backend.createRun(corruptRun);
+
+  const storagePrefix = `${prefix}schema-v2:`;
+  for (const run of [validRun, corruptRun]) {
+    redis.hashes.delete(`${storagePrefix}run:${run.id}`);
+    redis.expiries.delete(`${storagePrefix}run:${run.id}`);
+    redis.sortedSets.get(`${storagePrefix}index:retention`)?.set(run.id, 0);
+  }
+  redis.hashes.get(`${storagePrefix}index:run-timed-wait-rows`)?.set(
+    `run:${corruptRun.id}`,
+    "not-json",
+  );
+  return { backend, redis };
+}
+
+async function createCorruptIndexGhostAfterDueCleanup(prefix: string): Promise<{
+  backend: RedisBackend;
+  redis: MockRedisAdapter;
+}> {
+  const redis = new MockRedisAdapter();
+  const backend = new RedisBackend({
+    client: redis as unknown as RedisAdapter,
+    prefix,
+    runTtl: 3_600,
+  });
+  const dueRun = createTimedWaitRun(`${prefix}a-due`, Date.now() + 60_000);
+  const corruptGhost = createTimedWaitRun(`${prefix}b-corrupt-ghost`, Date.now() + 60_000);
+  await backend.createRun(dueRun);
+  await backend.createRun(corruptGhost);
+
+  const storagePrefix = `${prefix}schema-v2:`;
+  redis.hashes.delete(`${storagePrefix}run:${dueRun.id}`);
+  redis.expiries.delete(`${storagePrefix}run:${dueRun.id}`);
+  redis.sortedSets.get(`${storagePrefix}index:retention`)?.set(dueRun.id, 0);
+  redis.hashes.delete(`${storagePrefix}run:${corruptGhost.id}`);
+  redis.expiries.delete(`${storagePrefix}run:${corruptGhost.id}`);
+  redis.hashes.get(`${storagePrefix}index:run-timed-wait-rows`)?.set(
+    `run:${corruptGhost.id}`,
+    "not-json",
+  );
+  return { backend, redis };
 }
 
 describe("RedisBackend", () => {
@@ -2212,6 +2862,16 @@ describe("RedisBackend", () => {
   });
 
   describe("checkpoints", () => {
+    function makeCheckpoint(id: string, timestamp = new Date(0)) {
+      return {
+        id,
+        nodeId: id,
+        timestamp,
+        context: { input: {} },
+        nodeStates: {},
+      };
+    }
+
     it("should save and retrieve checkpoints", async () => {
       await backend.createRun(createTestRun("run-cp"));
       await backend.saveCheckpoint("run-cp", {
@@ -2331,6 +2991,90 @@ describe("RedisBackend", () => {
         true,
       );
       assertEquals((await backend.getCheckpoints("synthetic-child-run"))[0]?.id, "cp-owned");
+    });
+
+    it("bounds unconditional checkpoint appends by newest append order", async () => {
+      const runId = "run-cp-bounded";
+      await backend.createRun(createTestRun(runId));
+      for (let index = 0; index <= MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES; index++) {
+        await backend.saveCheckpoint(runId, makeCheckpoint(`cp-${index}`));
+      }
+
+      const retained = await backend.getCheckpoints(runId);
+      assertEquals(retained.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
+      assertEquals(retained[0]?.id, "cp-1");
+      assertEquals(
+        retained.at(-1)?.id,
+        `cp-${MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES}`,
+      );
+      assertEquals((await backend.getLatestCheckpoint(runId))?.id, retained.at(-1)?.id);
+    });
+
+    it("bounds owner-fenced appends atomically and leaves a stale fence unchanged", async () => {
+      const runId = "run-cp-owned-bounded";
+      const workerId = "run-execution:redis-checkpoint-retention";
+      await backend.createRun(createTestRun(runId, { status: "running", workerId }));
+      for (let index = 0; index <= MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES; index++) {
+        assertEquals(
+          await backend.saveCheckpointIfStatusAndWorker(
+            runId,
+            runId,
+            ["running"],
+            workerId,
+            makeCheckpoint(`owned-${index}`),
+          ),
+          true,
+        );
+      }
+      const beforeStaleFence = await backend.getCheckpoints(runId);
+
+      assertEquals(
+        await backend.saveCheckpointIfStatusAndWorker(
+          runId,
+          runId,
+          ["running"],
+          "run-execution:stale-checkpoint-owner",
+          makeCheckpoint("must-not-append"),
+        ),
+        false,
+      );
+      assertEquals(await backend.getCheckpoints(runId), beforeStaleFence);
+      assertEquals(beforeStaleFence.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
+      assertEquals(beforeStaleFence[0]?.id, "owned-1");
+      assertEquals(
+        beforeStaleFence.at(-1)?.id,
+        `owned-${MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES}`,
+      );
+    });
+
+    it("bounds a legacy oversized checkpoint read before materialization", async () => {
+      const runId = "legacy-oversized-checkpoints";
+      const checkpointKey = `test:schema-v2:checkpoints:${runId}`;
+      mockRedis.lists.set(
+        checkpointKey,
+        Array.from(
+          { length: MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES + 7 },
+          (_, index) =>
+            JSON.stringify({
+              ...makeCheckpoint(`legacy-${index}`),
+              timestamp: new Date(0).toISOString(),
+            }),
+        ),
+      );
+
+      const retained = await backend.getCheckpoints(runId);
+
+      assertEquals(mockRedis.lrangeCalls.at(-1), {
+        key: checkpointKey,
+        start: -MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
+        stop: -1,
+      });
+      assertEquals(retained.length, MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES);
+      assertEquals(retained[0]?.id, "legacy-7");
+      assertEquals(
+        retained.at(-1)?.id,
+        `legacy-${MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES + 6}`,
+      );
     });
   });
 
@@ -3094,6 +3838,63 @@ describe("RedisBackend", () => {
       );
     });
 
+    for (
+      const scenario of [
+        {
+          name: "keeps a due cleanup batch unchanged when a later publication row is corrupt",
+          prefix: "atomic-drain:",
+          invoke: (candidate: RedisBackend) => candidate.drainExpiredRuns(),
+        },
+        {
+          name: "keeps query retention cleanup unchanged when a later publication row is corrupt",
+          prefix: "atomic-count:",
+          invoke: (candidate: RedisBackend) => candidate.countRuns({}),
+        },
+      ] as const
+    ) {
+      it(scenario.name, async () => {
+        const batch = await createCorruptDueRetentionBatch(scenario.prefix);
+        const before = snapshotRedisWorkflowState(batch.redis);
+
+        await assertRejects(
+          () => scenario.invoke(batch.backend),
+          Error,
+          "invalid timed-wait publication metadata",
+        );
+
+        assertEquals(snapshotRedisWorkflowState(batch.redis), before);
+      });
+    }
+
+    for (
+      const scenario of [
+        {
+          name: "validates a list index ghost before applying due retention cleanup",
+          prefix: "atomic-list-ghost:",
+          invoke: (candidate: RedisBackend) => candidate.listRuns({}),
+        },
+        {
+          name: "validates a cursor index ghost before applying due retention cleanup",
+          prefix: "atomic-cursor-ghost:",
+          invoke: (candidate: RedisBackend) =>
+            candidate.listRunsAfterCursor({ status: "waiting", limit: 10 }),
+        },
+      ] as const
+    ) {
+      it(scenario.name, async () => {
+        const batch = await createCorruptIndexGhostAfterDueCleanup(scenario.prefix);
+        const before = snapshotRedisWorkflowState(batch.redis);
+
+        await assertRejects(
+          () => scenario.invoke(batch.backend),
+          Error,
+          "invalid timed-wait publication metadata",
+        );
+
+        assertEquals(snapshotRedisWorkflowState(batch.redis), before);
+      });
+    }
+
     it("does not list, count, or retain index ghosts after the run hash expires", async () => {
       const ttlBackend = new RedisBackend({
         client: mockRedis as unknown as RedisAdapter,
@@ -3182,9 +3983,15 @@ describe("RedisBackend", () => {
         mockRedis.sortedSets.get("ttl:schema-v2:index:retention")?.has(run.id) ?? false,
         false,
       );
-      const rowId = JSON.stringify([run.id, timedWaitClaim.nodeId]);
+      const rowId = timedWaitTestRowId(run.id, timedWaitClaim.nodeId);
       assertEquals(
-        mockRedis.hashes.get("ttl:schema-v2:index:run-timed-wait-rows")?.has(run.id) ?? false,
+        mockRedis.hashes.get("ttl:schema-v2:index:run-timed-wait-rows")?.has(`run:${run.id}`) ??
+          false,
+        false,
+      );
+      assertEquals(
+        mockRedis.hashes.get("ttl:schema-v2:index:run-timed-wait-rows")?.has(`wait:${rowId}`) ??
+          false,
         false,
       );
       assertEquals(
@@ -3454,6 +4261,977 @@ describe("RedisBackend", () => {
   });
 
   describe("timed-wait deadline recovery", () => {
+    it("transitions an approval-only wait with no timed-wait rows", async () => {
+      const workerId = "run-execution:redis-approval-only";
+      const run = createTestRun("redis-approval-only", {
+        status: "waiting",
+        workerId,
+        currentNodes: ["review"],
+        nodeStates: {
+          review: {
+            nodeId: "review",
+            status: "running",
+            input: { type: "approval", message: "Review" },
+            attempt: 1,
+            startedAt: new Date("2026-01-01T00:00:00.000Z"),
+          },
+        },
+      });
+      await backend.createRun(run);
+
+      assertEquals(
+        await backend.updateRunIfStatusAndWorker(
+          run.id,
+          ["waiting"],
+          workerId,
+          { status: "pending" },
+        ),
+        true,
+      );
+      assertEquals((await backend.getRun(run.id))?.status, "pending");
+    });
+
+    it("rejects marker-less persisted waits instead of guessing their kind", async () => {
+      const run = createTimedWaitRun("redis-marker-less-wait", Date.now() - 1);
+      delete (run.nodeStates.pause!.input as Record<string, unknown>)._waitKind;
+
+      await assertRejects(
+        () => backend.createRun(run),
+        Error,
+        "missing _waitKind",
+      );
+      assertEquals(await backend.getRun(run.id), null);
+    });
+
+    it("rejects a dormant marker-less wait before persisting its running run", async () => {
+      const run = createTimedWaitRun("redis-running-marker-less-wait", Date.now() - 1, "delay", {
+        status: "running",
+      });
+      delete (run.nodeStates.pause!.input as Record<string, unknown>)._waitKind;
+
+      await assertRejects(
+        () => backend.createRun(run),
+        Error,
+        "missing _waitKind",
+      );
+      assertEquals(await backend.getRun(run.id), null);
+    });
+
+    it("rejects non-well-formed timed-wait run and node identities", async () => {
+      const now = Date.now();
+      const invalidRun = createTimedWaitRun("redis-run-\uD800", now - 1, "delay", {
+        workerId: "run-execution:well-formed-owner",
+      });
+      await assertRejects(
+        () => backend.createRun(invalidRun),
+        Error,
+        "well-formed Unicode",
+      );
+      await assertRejects(
+        () => backend.getRun(invalidRun.id),
+        Error,
+        "well-formed Unicode",
+      );
+
+      const replacementRun = createTimedWaitRun("redis-run-�", now - 1);
+      await backend.createRun(replacementRun);
+      assertEquals((await backend.getRun(replacementRun.id))?.id, replacementRun.id);
+      await assertRejects(
+        () => backend.getRun(invalidRun.id),
+        Error,
+        "well-formed Unicode",
+      );
+
+      const invalidNodeId = "redis-node-\uD800";
+      const invalidNode = createTimedWaitRun("redis-invalid-node", now - 1, "delay", {
+        currentNodes: [invalidNodeId],
+        nodeStates: {
+          [invalidNodeId]: {
+            nodeId: invalidNodeId,
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "__delay__",
+              timeout: 1_000,
+              _waitKind: "delay",
+            },
+            attempt: 1,
+            startedAt: new Date(now - 1_001),
+          },
+        },
+      });
+      await assertRejects(
+        () => backend.createRun(invalidNode),
+        Error,
+        "well-formed Unicode",
+      );
+      assertEquals(await backend.getRun(invalidNode.id), null);
+    });
+
+    it("publishes a dormant marked wait on a status-only transition to waiting", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-dormant-running-wait", now - 1, "delay", {
+        status: "running",
+      });
+      await backend.createRun(run);
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-dormant-running-owner",
+          now,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }),
+        [],
+      );
+
+      await backend.updateRun(run.id, { status: "waiting" });
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-dormant-waiting-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(claim.run.id, run.id);
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          claim.nodeId,
+          claim.claimId,
+          claim.deadline,
+          run.workerId!,
+          { status: "pending" },
+        ),
+        true,
+      );
+    });
+
+    it("restores a dormant marked wait after status-only exit and re-entry", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-wait-status-round-trip", now - 1);
+      await backend.createRun(run);
+
+      await backend.updateRun(run.id, { status: "running" });
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-round-trip-running-owner",
+          now,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }),
+        [],
+      );
+      await backend.updateRun(run.id, { status: "waiting" });
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-round-trip-waiting-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(claim.run.id, run.id);
+    });
+
+    it("preserves an exact timed-wait claim when status index metadata is incomplete", async () => {
+      const now = Date.now();
+      for (const missingField of ["workflowId", "createdAtMs"] as const) {
+        const run = createTimedWaitRun(`redis-cas-missing-${missingField}`, now - 1);
+        await backend.createRun(run);
+        const claim = (await backend.claimDueTimedWaits({
+          ownerId: `redis-cas-missing-${missingField}-owner`,
+          now,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }))[0];
+        assertExists(claim);
+
+        const runKey = `test:schema-v2:run:${run.id}`;
+        const hash = mockRedis.hashes.get(runKey)!;
+        const originalMetadata = hash.get(missingField)!;
+        hash.delete(missingField);
+        const rowId = timedWaitTestRowId(run.id, claim.nodeId);
+        mockRedis.sortedSets.get("test:schema-v2:index:timed-wait:delay")?.set(
+          rowId,
+          claim.deadline,
+        );
+        const before = snapshotRedisWorkflowState(mockRedis);
+
+        await assertRejects(
+          () =>
+            backend.updateRunIfStatusAndWorker(
+              run.id,
+              ["waiting"],
+              run.workerId!,
+              { status: "pending" },
+            ),
+          Error,
+          "index metadata is incomplete",
+        );
+        assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+
+        hash.set(missingField, originalMetadata);
+        assertEquals(
+          await backend.updateRunIfTimedWaitClaim(
+            run.id,
+            claim.nodeId,
+            claim.claimId,
+            claim.deadline,
+            run.workerId!,
+            { status: "pending" },
+          ),
+          true,
+        );
+      }
+    });
+
+    it("does not claim through corrupt published timed-wait row metadata", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-corrupt-published-claim-rows", now - 1);
+      await backend.createRun(run);
+      const metadata = mockRedis.hashes.get(
+        "test:schema-v2:index:run-timed-wait-rows",
+      )!;
+      const metadataField = `run:${run.id}`;
+      const originalRows = metadata.get(metadataField)!;
+      for (const [index, corruptRows] of ["not-json", "[]"].entries()) {
+        metadata.set(metadataField, corruptRows);
+        const before = snapshotRedisWorkflowState(mockRedis);
+
+        assertEquals(
+          await backend.claimDueTimedWaits({
+            ownerId: `redis-corrupt-published-claim-owner-${index}`,
+            now,
+            limit: 1,
+            leaseDuration: 5_000,
+            waitKind: "delay",
+          }),
+          [],
+        );
+        assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+      }
+
+      metadata.set(metadataField, originalRows);
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-repaired-published-claim-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(claim.run.id, run.id);
+    });
+
+    it("recovers independently bounded large durable run values", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-large-durable-values", now - 1);
+      const payload = Array.from({ length: 139 }, () => "x".repeat(60_349));
+      run.input = { payload };
+      run.context = { input: { payload: structuredClone(payload) } };
+      await backend.createRun(run);
+
+      const recovered = await new TimedWaitRecoveryService(
+        backend,
+        "redis-large-durable-owner",
+      ).recover({ now, maxAwakened: 1 });
+
+      assertEquals(recovered.awakenedRuns.map((candidate) => candidate.id), [run.id]);
+      assertEquals(recovered.errors, []);
+      assertEquals((await backend.getRun(run.id))?.status, "pending");
+    });
+
+    it("publishes and resolves a maximum-length escaped run identity", async () => {
+      const boundaryRedis = new MockRedisAdapter();
+      const evalScript = boundaryRedis.eval.bind(boundaryRedis);
+      boundaryRedis.eval = async (script, keys, args) => {
+        if (script.includes("create-workflow-run-if-absent")) {
+          const payloadBound = script.match(
+            /string\.len\(expectedRunPayloadPrefix\) > (\d+)/,
+          );
+          if (!payloadBound) throw new Error("timed-wait payload bound is missing");
+          const fieldCount = Number(args[8]);
+          const expectedRunPayloadPrefix = args[11 + (fieldCount * 2)]!;
+          if (expectedRunPayloadPrefix.length > Number(payloadBound[1])) {
+            throw new Error("invalid timed-wait index entry");
+          }
+        }
+        return await evalScript(script, keys, args);
+      };
+      const boundaryBackend = new RedisBackend({
+        client: boundaryRedis,
+        prefix: "escaped-boundary:",
+      });
+      const now = Date.now();
+      const run = createTimedWaitRun("\0".repeat(1_024), now - 1, "delay", {
+        workerId: "run-execution:escaped-boundary",
+      });
+
+      await boundaryBackend.createRun(run);
+      const claim = (await boundaryBackend.claimDueTimedWaits({
+        ownerId: "redis-escaped-boundary-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(claim.run.id, run.id);
+      assertEquals(
+        await boundaryBackend.updateRunIfTimedWaitClaim(
+          run.id,
+          claim.nodeId,
+          claim.claimId,
+          claim.deadline,
+          run.workerId!,
+          { status: "pending" },
+        ),
+        true,
+      );
+    });
+
+    it("uses one exact row identity across Lua publication and host-side fencing", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis/deadline", now - 1);
+      await backend.createRun(run);
+
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-row-identity",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          claim.nodeId,
+          claim.claimId,
+          claim.deadline,
+          run.workerId!,
+          { status: "pending" },
+        ),
+        true,
+      );
+    });
+
+    it("fences NUL and control-containing run and node identities", async () => {
+      const now = Date.now();
+      const nodeId = "pause\0/line\nbreak";
+      const run = createTimedWaitRun("redis\0/control/run", now - 1, "delay", {
+        currentNodes: [nodeId],
+        nodeStates: {
+          [nodeId]: {
+            nodeId,
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "__delay__",
+              timeout: 1_000,
+              _waitKind: "delay",
+            },
+            attempt: 1,
+            startedAt: new Date(now - 1_001),
+          },
+        },
+      });
+      await backend.createRun(run);
+
+      const recovered = await new TimedWaitRecoveryService(
+        backend,
+        "redis-control-row-owner",
+      ).recover({ now, maxAwakened: 1 });
+      assertEquals(recovered.awakenedRuns.map((candidate) => candidate.id), [run.id]);
+      assertEquals(recovered.outcomes.map((outcome) => outcome.status), ["awakened"]);
+      assertEquals(recovered.errors, []);
+      assertEquals((await backend.getRun(run.id))?.status, "pending");
+
+      const releaseNodeId = "release\0/line\nbreak";
+      const releasable = createTimedWaitRun("redis\0/control/release", now - 1, "delay", {
+        currentNodes: [releaseNodeId],
+        nodeStates: {
+          [releaseNodeId]: {
+            nodeId: releaseNodeId,
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "__delay__",
+              timeout: 1_000,
+              _waitKind: "delay",
+            },
+            attempt: 1,
+            startedAt: new Date(now - 1_001),
+          },
+        },
+      });
+      await backend.createRun(releasable);
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-control-release-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(claim.nodeId, releaseNodeId);
+      assertEquals(
+        await backend.releaseTimedWaitClaim(releasable.id, releaseNodeId, claim.claimId),
+        true,
+      );
+    });
+
+    it("orders escaped, prefixed, and well-formed Unicode sibling identities", async () => {
+      const now = Date.now();
+      const nodeIds = ["a#", 'a"', "a", "aa", "\uE000", "😀", "�"];
+      const nodeStates: WorkflowRun["nodeStates"] = {};
+      for (const nodeId of nodeIds) {
+        nodeStates[nodeId] = {
+          nodeId,
+          status: "running",
+          input: {
+            type: "event",
+            eventName: "never-arrives",
+            timeout: 1_000,
+            _waitKind: "event",
+          },
+          attempt: 1,
+          startedAt: new Date(now - 1_001),
+        };
+      }
+      const run = createTimedWaitRun("redis-escaped-order", now - 1, "event", {
+        currentNodes: nodeIds,
+        nodeStates,
+      });
+      await backend.createRun(run);
+
+      const admitted: string[] = [];
+      const remainingStates = structuredClone(nodeStates);
+      while (Object.keys(remainingStates).length > 0) {
+        const [claim] = await backend.claimDueTimedWaits({
+          ownerId: "redis-escaped-order-owner",
+          now,
+          limit: nodeIds.length,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        });
+        assertExists(claim);
+        admitted.push(claim.nodeId);
+        delete remainingStates[claim.nodeId];
+        await backend.updateRun(run.id, { nodeStates: structuredClone(remainingStates) });
+      }
+
+      assertEquals(admitted, [...nodeIds].sort());
+    });
+
+    it("holds one run-scoped gate across mixed wait kinds without starving other runs", async () => {
+      const now = Date.now();
+      const mixed = createTimedWaitRun("redis-mixed-wait-gate", now - 20);
+      mixed.nodeStates.eventTimeout = {
+        nodeId: "eventTimeout",
+        status: "running",
+        input: {
+          type: "event",
+          eventName: "never-arrives",
+          timeout: 1_000,
+          _waitKind: "event",
+        },
+        attempt: 1,
+        startedAt: new Date(now - 1_010),
+      };
+      const other = createTimedWaitRun("redis-eligible-behind-gate", now - 1);
+      await backend.createRun(mixed);
+      await backend.createRun(other);
+
+      const heldEvent = (await backend.claimDueTimedWaits({
+        ownerId: "redis-mixed-event",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "event",
+      }))[0];
+      assertExists(heldEvent);
+      assertEquals(heldEvent.run.id, mixed.id);
+
+      const delays = await backend.claimDueTimedWaits({
+        ownerId: "redis-mixed-delay",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      });
+      assertEquals(delays.map((claim) => claim.run.id), [other.id]);
+      assertEquals(
+        await backend.releaseTimedWaitClaim(mixed.id, heldEvent.nodeId, heldEvent.claimId),
+        true,
+      );
+      const reclaimedEvent = (await backend.claimDueTimedWaits({
+        ownerId: "redis-mixed-event-reclaimed",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "event",
+      }))[0];
+      assertExists(reclaimedEvent);
+      assertEquals(reclaimedEvent.run.id, mixed.id);
+      assertEquals(
+        await backend.releaseTimedWaitClaim(mixed.id, heldEvent.nodeId, heldEvent.claimId),
+        false,
+      );
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-mixed-delay-stale-release",
+          now,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }),
+        [],
+      );
+    });
+
+    it("refuses a delay while the same run has an unclaimed due event", async () => {
+      const now = Date.now();
+      const mixed = createTimedWaitRun("redis-unclaimed-event-priority", now - 20);
+      mixed.nodeStates.eventTimeout = {
+        nodeId: "eventTimeout",
+        status: "running",
+        input: {
+          type: "event",
+          eventName: "never-arrives",
+          timeout: 1_000,
+          _waitKind: "event",
+        },
+        attempt: 1,
+        startedAt: new Date(now - 1_010),
+      };
+      const other = createTimedWaitRun("redis-unclaimed-event-eligible-delay", now - 1);
+      await backend.createRun(mixed);
+      await backend.createRun(other);
+
+      assertEquals(
+        (await backend.claimDueTimedWaits({
+          ownerId: "redis-unclaimed-event-delay-owner",
+          now,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        })).map((claim) => claim.run.id),
+        [other.id],
+      );
+      assertEquals(
+        (await backend.claimDueTimedWaits({
+          ownerId: "redis-unclaimed-event-owner",
+          now,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        })).map((claim) => claim.run.id),
+        [mixed.id],
+      );
+    });
+
+    it("makes bounded progress past more event-blocked delays than one inspection page", async () => {
+      const now = Date.now();
+      for (let index = 0; index < 102; index++) {
+        const run = createTimedWaitRun(
+          `redis-blocked-delay-${String(index).padStart(3, "0")}`,
+          now - 20,
+        );
+        run.nodeStates.eventTimeout = {
+          nodeId: "eventTimeout",
+          status: "running",
+          input: {
+            type: "event",
+            eventName: "never-arrives",
+            timeout: 1_000,
+            _waitKind: "event",
+          },
+          attempt: 1,
+          startedAt: new Date(now - 1_010),
+        };
+        await backend.createRun(run);
+      }
+      const eligible = createTimedWaitRun("redis-delay-after-blocked-page", now - 1);
+      await backend.createRun(eligible);
+      const request = {
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay" as const,
+      };
+
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ...request,
+          ownerId: "redis-blocked-page-first",
+        }),
+        [],
+      );
+      assertEquals(
+        (await backend.claimDueTimedWaits({
+          ...request,
+          ownerId: "redis-blocked-page-second",
+        })).map((claim) => claim.run.id),
+        [eligible.id],
+      );
+    });
+
+    it("validates a complete row batch before publishing and propagates failure", async () => {
+      const now = Date.now();
+      const run = createSiblingTimedWaitRun("redis-invalid-row-batch", now - 1, "event");
+      await backend.createRun(run);
+      const runKey = `test:schema-v2:run:${run.id}`;
+      const hash = mockRedis.hashes.get(runKey)!;
+      const entries = JSON.parse(hash.get("timedWaitIndex")!) as Array<Record<string, unknown>>;
+      hash.set(
+        "timedWaitIndex",
+        JSON.stringify([
+          entries[0],
+          { ...entries[1], rowId: undefined },
+        ]),
+      );
+      const before = snapshotRedisWorkflowState(mockRedis);
+
+      await assertRejects(
+        () => backend.updateRun(run.id, { workerId: `${run.workerId}:replacement` }),
+        Error,
+        "invalid timed-wait index entry",
+      );
+      assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+    });
+
+    it("preserves an exact claim when a corrupt timed-wait index prevents release", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-corrupt-release-index", now - 1);
+      await backend.createRun(run);
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-corrupt-release-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+
+      const hash = mockRedis.hashes.get(`test:schema-v2:run:${run.id}`)!;
+      const originalIndex = hash.get("timedWaitIndex")!;
+      const entries = JSON.parse(originalIndex) as Array<Record<string, unknown>>;
+      hash.set("timedWaitIndex", JSON.stringify([{ ...entries[0], rowId: undefined }]));
+      const before = snapshotRedisWorkflowState(mockRedis);
+
+      await assertRejects(
+        () => backend.releaseTimedWaitClaim(run.id, claim.nodeId, claim.claimId),
+        Error,
+        "invalid timed-wait index entry",
+      );
+      assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+
+      hash.set("timedWaitIndex", originalIndex);
+      assertEquals(
+        await backend.releaseTimedWaitClaim(run.id, claim.nodeId, claim.claimId),
+        true,
+      );
+    });
+
+    it("preserves an exact claim when publication metadata prevents resolution or release", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-corrupt-claim-publication", now - 1);
+      await backend.createRun(run);
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-corrupt-claim-publication-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+
+      const metadata = mockRedis.hashes.get(
+        "test:schema-v2:index:run-timed-wait-rows",
+      )!;
+      const metadataField = `run:${run.id}`;
+      const originalRows = metadata.get(metadataField)!;
+      metadata.set(metadataField, "not-json");
+      const before = snapshotRedisWorkflowState(mockRedis);
+
+      await assertRejects(
+        () =>
+          backend.updateRunIfTimedWaitClaim(
+            run.id,
+            claim.nodeId,
+            claim.claimId,
+            claim.deadline,
+            run.workerId!,
+            { status: "pending" },
+          ),
+        Error,
+        "invalid timed-wait publication metadata",
+      );
+      assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+      await assertRejects(
+        () => backend.releaseTimedWaitClaim(run.id, claim.nodeId, claim.claimId),
+        Error,
+        "invalid timed-wait publication metadata",
+      );
+      assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+
+      metadata.set(metadataField, originalRows);
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          claim.nodeId,
+          claim.claimId,
+          claim.deadline,
+          run.workerId!,
+          { status: "pending" },
+        ),
+        true,
+      );
+    });
+
+    it("rejects a shape-valid timed-wait row whose payload names another run", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-wrong-row-owner", now - 1);
+      await backend.createRun(run);
+      const runKey = `test:schema-v2:run:${run.id}`;
+      const hash = mockRedis.hashes.get(runKey)!;
+      const [entry] = JSON.parse(hash.get("timedWaitIndex")!) as Array<{
+        rowId: string;
+        deadline: number;
+        waitKind: "delay" | "event";
+      }>;
+      const firstSeparator = entry!.rowId.indexOf("!");
+      const secondSeparator = entry!.rowId.indexOf("!", firstSeparator + 1);
+      hash.set(
+        "timedWaitIndex",
+        JSON.stringify([{
+          ...entry,
+          rowId: `${entry!.rowId.slice(0, secondSeparator + 1)}${
+            JSON.stringify(["redis-other-row-owner", "pause"])
+          }`,
+        }]),
+      );
+
+      await assertRejects(
+        () => backend.updateRun(run.id, { workerId: `${run.workerId}:replacement` }),
+        Error,
+        "invalid timed-wait index entry",
+      );
+    });
+
+    it("rejects an oversized corrupt row identity before decoding its payload", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-oversized-row", now - 1);
+      await backend.createRun(run);
+      const hashRow = [
+        ...mockRedis.hashes.get(`test:schema-v2:run:${run.id}`)!.entries(),
+      ].flat();
+      const originalEval = mockRedis.eval.bind(mockRedis);
+      mockRedis.eval = (script, keys, args) =>
+        script.includes("claim-due-timed-waits")
+          ? Promise.resolve([[
+            "0".repeat(25_000),
+            String(now - 1),
+            "oversized-row-claim",
+            String(now + 5_000),
+            hashRow,
+          ]])
+          : originalEval(script, keys, args);
+
+      await assertRejects(
+        () =>
+          backend.claimDueTimedWaits({
+            ownerId: "redis-oversized-row-owner",
+            now,
+            limit: 1,
+            leaseDuration: 5_000,
+            waitKind: "delay",
+          }),
+        Error,
+        "Invalid Redis timed-wait claim row",
+      );
+    });
+
+    it("removes stale row-owner metadata on refresh, deletion, and id reuse", async () => {
+      const now = Date.now();
+      const runId = "redis-row-owner-lifecycle";
+      const original = createTimedWaitRun(runId, now + 1_000);
+      await backend.createRun(original);
+      const metadataKey = "test:schema-v2:index:run-timed-wait-rows";
+      const metadata = mockRedis.hashes.get(metadataKey)!;
+      const originalRowId = timedWaitTestRowId(runId, "pause");
+      assertEquals(metadata.get(`wait:${originalRowId}`), runId);
+
+      const replacementNodeId = "replacement/control\0node";
+      await backend.updateRun(runId, {
+        nodeStates: {
+          [replacementNodeId]: {
+            nodeId: replacementNodeId,
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "__delay__",
+              timeout: 1_000,
+              _waitKind: "delay",
+            },
+            attempt: 1,
+            startedAt: new Date(now),
+          },
+        },
+      });
+      const replacementRowId = timedWaitTestRowId(runId, replacementNodeId);
+      assertEquals(metadata.has(`wait:${originalRowId}`), false);
+      assertEquals(metadata.get(`wait:${replacementRowId}`), runId);
+
+      await backend.deleteRun(runId);
+      assertEquals(metadata.has(`run:${runId}`), false);
+      assertEquals(metadata.has(`wait:${replacementRowId}`), false);
+      assertEquals(metadata.has(`order:${runId}`), false);
+      assertEquals(metadata.has(`payload:${runId}`), false);
+      assertEquals(metadata.has(`claim-row:${runId}`), false);
+      assertEquals(metadata.has(`claim-token:${runId}`), false);
+
+      const stale = createTimedWaitRun(runId, now + 2_000, "delay", {
+        currentNodes: ["stale"],
+        nodeStates: {
+          stale: {
+            nodeId: "stale",
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "__delay__",
+              timeout: 1_000,
+              _waitKind: "delay",
+            },
+            attempt: 1,
+            startedAt: new Date(now + 1_000),
+          },
+        },
+      });
+      await backend.createRun(stale);
+      const staleRowId = timedWaitTestRowId(runId, "stale");
+      mockRedis.hashes.delete(`test:schema-v2:run:${runId}`);
+
+      const current = createTimedWaitRun(runId, now + 3_000, "delay", {
+        currentNodes: ["current"],
+        nodeStates: {
+          current: {
+            nodeId: "current",
+            status: "running",
+            input: {
+              type: "event",
+              eventName: "__delay__",
+              timeout: 1_000,
+              _waitKind: "delay",
+            },
+            attempt: 1,
+            startedAt: new Date(now + 2_000),
+          },
+        },
+      });
+      await backend.createRun(current);
+      const currentRowId = timedWaitTestRowId(runId, "current");
+      assertEquals(metadata.has(`wait:${staleRowId}`), false);
+      assertEquals(metadata.get(`wait:${currentRowId}`), runId);
+      assertEquals(metadata.has(`run:${runId}`), true);
+    });
+
+    it("reclaims every timed-wait row when a due run hash has expired", async () => {
+      const now = Date.now();
+      const run = createSiblingTimedWaitRun("redis-expired-due-run", now - 1);
+      await backend.createRun(run);
+      const metadataKey = "test:schema-v2:index:run-timed-wait-rows";
+      const metadata = mockRedis.hashes.get(metadataKey)!;
+      const rowIds = ["eventA", "eventB"].map((nodeId) => timedWaitTestRowId(run.id, nodeId));
+
+      // Redis expires the run hash independently; deadline and ownership
+      // indexes must be reclaimed by the claim path even if retention cleanup
+      // has not run yet.
+      mockRedis.hashes.delete(`test:schema-v2:run:${run.id}`);
+
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-expired-due-owner",
+          now,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        }),
+        [],
+      );
+      assertEquals(metadata.has(`run:${run.id}`), false);
+      assertEquals(metadata.has(`order:${run.id}`), false);
+      assertEquals(metadata.has(`payload:${run.id}`), false);
+      assertEquals(metadata.has(`claim-row:${run.id}`), false);
+      assertEquals(metadata.has(`claim-token:${run.id}`), false);
+      for (const rowId of rowIds) {
+        assertEquals(metadata.has(`wait:${rowId}`), false);
+        assertEquals(
+          mockRedis.sortedSets.get("test:schema-v2:index:timed-wait:delay")?.has(rowId) ??
+            false,
+          false,
+        );
+        assertEquals(
+          mockRedis.sortedSets.get("test:schema-v2:index:timed-wait:event")?.has(rowId) ??
+            false,
+          false,
+        );
+        assertEquals(
+          mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.has(rowId) ??
+            false,
+          false,
+        );
+        assertEquals(mockRedis.store.has(`test:schema-v2:timed-wait-claim:${rowId}`), false);
+      }
+    });
+
+    it("reclaims expired lease metadata after the owning run hash expires", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-expired-leased-run", now - 1);
+      await backend.createRun(run);
+      const [claim] = await backend.claimDueTimedWaits({
+        ownerId: "redis-expired-lease-first-owner",
+        now,
+        limit: 1,
+        leaseDuration: 10,
+        waitKind: "delay",
+      });
+      assertExists(claim);
+      const rowId = timedWaitTestRowId(run.id, claim.nodeId);
+      const claimKey = `test:schema-v2:timed-wait-claim:${rowId}`;
+      const metadata = mockRedis.hashes.get("test:schema-v2:index:run-timed-wait-rows")!;
+      mockRedis.hashes.delete(`test:schema-v2:run:${run.id}`);
+      mockRedis.store.delete(claimKey);
+      mockRedis.expiries.delete(claimKey);
+      mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.set(rowId, 0);
+
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-expired-lease-second-owner",
+          now: now + 11,
+          limit: 1,
+          leaseDuration: 5_000,
+          waitKind: "delay",
+        }),
+        [],
+      );
+      assertEquals(metadata.has(`run:${run.id}`), false);
+      assertEquals(metadata.has(`wait:${rowId}`), false);
+      assertEquals(metadata.has(`order:${run.id}`), false);
+      assertEquals(metadata.has(`payload:${run.id}`), false);
+      assertEquals(metadata.has(`claim-row:${run.id}`), false);
+      assertEquals(metadata.has(`claim-token:${run.id}`), false);
+      assertEquals(
+        mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.has(rowId) ?? false,
+        false,
+      );
+    });
+
     it("atomically claims bounded deadline-ordered pages without duplicate delivery", async () => {
       const now = Date.now();
       await backend.createRun(createTimedWaitRun("redis-deadline-c", now - 10));
@@ -3490,7 +5268,7 @@ describe("RedisBackend", () => {
       );
     });
 
-    it("claims same-deadline siblings by node identity and fences the losing transition", async () => {
+    it("admits only the stable first sibling while its run-scoped gate is live", async () => {
       const now = Date.now();
       const run = createSiblingTimedWaitRun("redis-sibling-deadlines", now - 1);
       await backend.createRun(run);
@@ -3503,8 +5281,17 @@ describe("RedisBackend", () => {
         waitKind: "event",
       });
 
-      assertEquals(claims.map((claim) => claim.nodeId), ["eventA", "eventB"]);
-      assertEquals(new Set(claims.map((claim) => claim.claimId)).size, 2);
+      assertEquals(claims.map((claim) => claim.nodeId), ["eventA"]);
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-sibling-blocked-owner",
+          now,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        }),
+        [],
+      );
       assertEquals(
         await backend.updateRunIfTimedWaitClaim(
           run.id,
@@ -3515,25 +5302,6 @@ describe("RedisBackend", () => {
           { status: "failed", error: { message: "event timed out" } },
         ),
         true,
-      );
-      assertEquals(
-        await backend.updateRunIfTimedWaitClaim(
-          run.id,
-          claims[1]!.nodeId,
-          claims[1]!.claimId,
-          claims[1]!.deadline,
-          run.workerId!,
-          { status: "failed", error: { message: "stale sibling" } },
-        ),
-        false,
-      );
-      assertEquals(
-        await backend.releaseTimedWaitClaim(
-          run.id,
-          claims[1]!.nodeId,
-          claims[1]!.claimId,
-        ),
-        false,
       );
       assertEquals((await backend.getRun(run.id))?.status, "failed");
     });
@@ -3549,7 +5317,7 @@ describe("RedisBackend", () => {
         leaseDuration: 10,
         waitKind: "event",
       });
-      assertEquals(initial.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+      assertEquals(initial.map((claim) => claim.nodeId), ["eventA"]);
 
       assertEquals(
         await backend.releaseTimedWaitClaim(
@@ -3568,13 +5336,14 @@ describe("RedisBackend", () => {
       });
       assertEquals(released.map((claim) => claim.nodeId), ["eventA"]);
 
-      for (const claim of [initial[1]!, released[0]!]) {
-        const rowId = JSON.stringify([run.id, claim.nodeId]);
-        const claimKey = `test:schema-v2:timed-wait-claim:${rowId}`;
-        mockRedis.store.delete(claimKey);
-        mockRedis.expiries.delete(claimKey);
-        mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.set(rowId, 0);
-      }
+      const releasedRowId = timedWaitTestRowId(run.id, released[0]!.nodeId);
+      const releasedClaimKey = `test:schema-v2:timed-wait-claim:${releasedRowId}`;
+      mockRedis.store.delete(releasedClaimKey);
+      mockRedis.expiries.delete(releasedClaimKey);
+      mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.set(
+        releasedRowId,
+        0,
+      );
       const expired = await backend.claimDueTimedWaits({
         ownerId: "redis-sibling-expired",
         now: now + 11,
@@ -3582,11 +5351,13 @@ describe("RedisBackend", () => {
         leaseDuration: 5_000,
         waitKind: "event",
       });
-      assertEquals(expired.map((claim) => claim.nodeId), ["eventA", "eventB"]);
+      assertEquals(expired.map((claim) => claim.nodeId), ["eventA"]);
 
       const refreshedDeadline = now + 60_000;
+      const refreshedStates = createSiblingTimedWaitRun(run.id, refreshedDeadline).nodeStates;
+      delete refreshedStates.eventA;
       await backend.updateRun(run.id, {
-        nodeStates: createSiblingTimedWaitRun(run.id, refreshedDeadline).nodeStates,
+        nodeStates: refreshedStates,
       });
       assertEquals(
         await backend.claimDueTimedWaits({
@@ -3606,7 +5377,7 @@ describe("RedisBackend", () => {
           leaseDuration: 5_000,
           waitKind: "event",
         })).map((claim) => claim.nodeId),
-        ["eventA", "eventB"],
+        ["eventB"],
       );
     });
 
@@ -3675,7 +5446,7 @@ describe("RedisBackend", () => {
         waitKind: "delay",
       }))[0];
       assertExists(stale);
-      const claimRowId = JSON.stringify([run.id, stale.nodeId]);
+      const claimRowId = timedWaitTestRowId(run.id, stale.nodeId);
       const claimKey = `test:schema-v2:timed-wait-claim:${claimRowId}`;
       mockRedis.store.delete(claimKey);
       mockRedis.expiries.delete(claimKey);
@@ -3714,6 +5485,143 @@ describe("RedisBackend", () => {
       );
     });
 
+    it("does not let a stale sibling expiry clear the live run-scoped gate", async () => {
+      const now = Date.now();
+      const run = createSiblingTimedWaitRun("redis-stale-sibling-expiry", now - 1);
+      await backend.createRun(run);
+      const [current] = await backend.claimDueTimedWaits({
+        ownerId: "redis-stale-sibling-current",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "event",
+      });
+      assertExists(current);
+      const staleSiblingRow = timedWaitTestRowId(run.id, "eventB");
+      mockRedis.sortedSets.get("test:schema-v2:index:timed-wait-claims")?.set(
+        staleSiblingRow,
+        0,
+      );
+
+      assertEquals(
+        await backend.claimDueTimedWaits({
+          ownerId: "redis-stale-sibling-observer",
+          now: now + 1,
+          limit: 2,
+          leaseDuration: 5_000,
+          waitKind: "event",
+        }),
+        [],
+      );
+      assertEquals(
+        await backend.updateRunIfTimedWaitClaim(
+          run.id,
+          current.nodeId,
+          current.claimId,
+          current.deadline,
+          run.workerId!,
+          { status: "failed", error: { message: "event timed out" } },
+        ),
+        true,
+      );
+    });
+
+    it("keeps a legacy wait unchanged when backfill prevalidation rejects its index", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-invalid-backfill-index", now - 1);
+      await backend.createRun(run);
+      const runKey = `test:schema-v2:run:${run.id}`;
+      const hash = mockRedis.hashes.get(runKey)!;
+      hash.delete("timedWaitIndex");
+      const rowId = timedWaitTestRowId(run.id, "pause");
+      const metadata = mockRedis.hashes.get("test:schema-v2:index:run-timed-wait-rows")!;
+      metadata.delete(`run:${run.id}`);
+      metadata.delete(`wait:${rowId}`);
+      metadata.delete(`order:${run.id}`);
+      metadata.delete(`payload:${run.id}`);
+      mockRedis.sortedSets.get("test:schema-v2:index:timed-wait:delay")?.delete(rowId);
+      const before = snapshotRedisWorkflowState(mockRedis);
+
+      const originalEval = mockRedis.eval.bind(mockRedis);
+      let corrupted = false;
+      mockRedis.eval = (script, keys, args) => {
+        if (script.includes("backfill-timed-wait-index-page") && !corrupted) {
+          corrupted = true;
+          const invalidArgs = [...args];
+          const entries = JSON.parse(invalidArgs[5]!) as Array<Record<string, unknown>>;
+          invalidArgs[5] = JSON.stringify([{ ...entries[0], rowId: undefined }]);
+          return originalEval(script, keys, invalidArgs);
+        }
+        return originalEval(script, keys, args);
+      };
+
+      await assertRejects(
+        () =>
+          backend.claimDueTimedWaits({
+            ownerId: "redis-invalid-backfill-owner",
+            now,
+            limit: 1,
+            leaseDuration: 5_000,
+            waitKind: "delay",
+          }),
+        Error,
+        "invalid timed-wait index entry",
+      );
+      assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+
+      mockRedis.eval = originalEval;
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-valid-backfill-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(claim.run.id, run.id);
+    });
+
+    it("keeps a legacy wait unchanged when published-row metadata is corrupt", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-corrupt-backfill-published-rows", now - 1);
+      await backend.createRun(run);
+      const runKey = `test:schema-v2:run:${run.id}`;
+      const hash = mockRedis.hashes.get(runKey)!;
+      hash.delete("timedWaitIndex");
+      const metadata = mockRedis.hashes.get(
+        "test:schema-v2:index:run-timed-wait-rows",
+      )!;
+      const metadataField = `run:${run.id}`;
+      const originalRows = metadata.get(metadataField)!;
+      metadata.set(metadataField, "not-json");
+      const before = snapshotRedisWorkflowState(mockRedis);
+
+      await assertRejects(
+        () =>
+          backend.claimDueTimedWaits({
+            ownerId: "redis-corrupt-backfill-published-owner",
+            now,
+            limit: 1,
+            leaseDuration: 5_000,
+            waitKind: "delay",
+          }),
+        Error,
+        "invalid timed-wait publication metadata",
+      );
+      assertEquals(snapshotRedisWorkflowState(mockRedis), before);
+
+      metadata.set(metadataField, originalRows);
+      const claim = (await backend.claimDueTimedWaits({
+        ownerId: "redis-repaired-backfill-published-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      }))[0];
+      assertExists(claim);
+      assertEquals(claim.run.id, run.id);
+    });
+
     it("incrementally migrates legacy waiting rows without hydrating the full set", async () => {
       const now = Date.now();
       const runIds: string[] = [];
@@ -3724,9 +5632,12 @@ describe("RedisBackend", () => {
           createdAt: new Date(index),
         }));
         mockRedis.hashes.get(`test:schema-v2:run:${runId}`)?.delete("timedWaitIndex");
-        mockRedis.hashes.get("test:schema-v2:index:run-timed-wait-rows")?.delete(runId);
+        const metadata = mockRedis.hashes.get("test:schema-v2:index:run-timed-wait-rows");
+        const rowId = timedWaitTestRowId(runId, "pause");
+        metadata?.delete(`run:${runId}`);
+        metadata?.delete(`wait:${rowId}`);
         mockRedis.sortedSets.get("test:schema-v2:index:timed-wait:delay")?.delete(
-          JSON.stringify([runId, "pause"]),
+          timedWaitTestRowId(runId, "pause"),
         );
       }
 
@@ -3756,6 +5667,32 @@ describe("RedisBackend", () => {
       assertEquals(second.length, 1);
       assertEquals(runIds.includes(second[0]!.run.id), true);
       assertEquals(mockRedis.timedWaitMigrationRows <= 200, true);
+    });
+
+    it("does not delete a live waiting member when a migration cursor id is reused", async () => {
+      const now = Date.now();
+      const run = createTimedWaitRun("redis-migration-reused", now - 1);
+      await backend.createRun(run);
+      const waitingIndex = "test:schema-v2:index:created:status:waiting";
+      const migrationCursor = "test:schema-v2:migration:timed-wait-index";
+      mockRedis.hashes.set(
+        migrationCursor,
+        new Map([
+          ["member", run.id],
+          ["score", String(run.createdAt.getTime())],
+        ]),
+      );
+      mockRedis.sortedSets.get(waitingIndex)!.set(run.id, run.createdAt.getTime() + 1);
+
+      await backend.claimDueTimedWaits({
+        ownerId: "redis-migration-reused-owner",
+        now,
+        limit: 1,
+        leaseDuration: 5_000,
+        waitKind: "delay",
+      });
+
+      assertEquals(mockRedis.sortedSets.get(waitingIndex)?.has(run.id), true);
     });
   });
 });

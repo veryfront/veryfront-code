@@ -283,6 +283,7 @@ export interface WorkflowNode {
 export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   id: string;
   description?: string;
+  /** Required for a persisted run to be safely resumed after its initial start admission. */
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
@@ -330,6 +331,7 @@ export interface CapturedTenantContext {
 export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   id: string;
   workflowId: string;
+  /** Immutable definition version; persisted recovery requires a non-null exact match. */
   version?: string;
   status: WorkflowStatus;
   input: TInput;

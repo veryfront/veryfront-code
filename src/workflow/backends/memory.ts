@@ -16,6 +16,7 @@ import type {
 } from "../types.ts";
 import {
   type ApprovalDecisionTiming,
+  assertWorkflowIdentity,
   assertWorkflowLockId,
   assertWorkflowRunUpdate,
   assertWorkflowWorkerId,
@@ -44,6 +45,10 @@ import {
   resolveWorkflowRunCursorPage,
 } from "./run-filter.ts";
 import { getTimedWorkflowWaits } from "../runtime/timed-wait-reconciliation.ts";
+import {
+  appendRetainedCheckpoint,
+  deleteOldestCheckpointOccurrences,
+} from "./checkpoint-retention.ts";
 
 const logger = baseLogger.component("memory-backend");
 
@@ -145,6 +150,7 @@ export class MemoryBackend implements WorkflowBackend {
     event: [],
   };
   private timedWaitClaims = new Map<string, MemoryTimedWaitClaim>();
+  private timedWaitClaimRowByRun = new Map<string, string>();
   private timedWaitClaimExpiryHeap: TimedWaitHeapEntry[] = [];
   private timedWaitGeneration = 0;
   private timedWaitFence = 0;
@@ -164,13 +170,17 @@ export class MemoryBackend implements WorkflowBackend {
   // =========================================================================
 
   createRun(run: WorkflowRun): Promise<void> {
-    logger.debug(`Creating run: ${run.id}`);
     let sourceIntegrationPolicy;
     try {
+      assertWorkflowIdentity(run.id, "Workflow run id");
+      assertWorkflowIdentity(run.workflowId, "Workflow id");
+      if (run.version !== undefined) assertWorkflowIdentity(run.version, "Workflow version");
+      if (run.workerId !== undefined) assertWorkflowWorkerId(run.workerId);
       sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
     } catch (error) {
       return Promise.reject(error);
     }
+    logger.debug(`Creating run: ${run.id}`);
     if (this.runs.has(run.id)) {
       return Promise.reject(
         WORKFLOW_RUN_CONFLICT.create({ detail: `Workflow run already exists: ${run.id}` }),
@@ -418,7 +428,8 @@ export class MemoryBackend implements WorkflowBackend {
       ) continue;
 
       const run = this.runs.get(candidate.runId);
-      const currentDeadline = run ? this.getTimedWaitDeadline(run, candidate.nodeId) : undefined;
+      const currentRegistrations = run ? this.getTimedWaitDeadlines(run) : [];
+      const currentDeadline = currentRegistrations.find((wait) => wait.nodeId === candidate.nodeId);
       if (
         !run || currentDeadline?.deadline !== candidate.deadline ||
         currentDeadline?.waitKind !== request.waitKind
@@ -431,7 +442,25 @@ export class MemoryBackend implements WorkflowBackend {
         continue;
       }
 
-      this.removeTimedWaitDeadlineRow(candidate.rowId);
+      if (
+        request.waitKind === "delay" &&
+        currentRegistrations.some((wait) =>
+          wait.waitKind === "event" && wait.deadline <= request.now
+        )
+      ) {
+        // A due event timeout is terminal and therefore outranks awakening a
+        // sibling delay. Remove this run's delay rows until the event is
+        // claimed (or the run is refreshed), so a bounded scan can continue
+        // to eligible runs behind any number of event-blocked delays.
+        this.removeTimedWaitDeadlineRowsForRun(candidate.runId, "delay");
+        continue;
+      }
+
+      if (this.timedWaitClaimRowByRun.has(candidate.runId)) {
+        this.removeTimedWaitDeadlineRowsForRun(candidate.runId);
+        continue;
+      }
+      this.removeTimedWaitDeadlineRowsForRun(candidate.runId);
       const fence = ++this.timedWaitFence;
       const claimId = `${request.ownerId}:${fence}`;
       const expiresAt = Date.now() + request.leaseDuration;
@@ -445,6 +474,7 @@ export class MemoryBackend implements WorkflowBackend {
         waitKind: request.waitKind,
       };
       this.timedWaitClaims.set(candidate.rowId, claim);
+      this.timedWaitClaimRowByRun.set(candidate.runId, candidate.rowId);
       pushTimedWaitHeap(this.timedWaitClaimExpiryHeap, {
         rowId: candidate.rowId,
         runId: candidate.runId,
@@ -494,11 +524,16 @@ export class MemoryBackend implements WorkflowBackend {
     const claim = this.timedWaitClaims.get(rowId);
     if (
       !claim || claim.claimId !== claimId || claim.deadline !== expectedDeadline ||
+      this.timedWaitClaimRowByRun.get(runId) !== rowId ||
       claim.expiresAt <= Date.now()
     ) {
-      if (claim?.claimId === claimId && claim.expiresAt <= Date.now()) {
+      if (
+        claim?.claimId === claimId && claim.expiresAt <= Date.now() &&
+        this.timedWaitClaimRowByRun.get(runId) === rowId
+      ) {
         this.timedWaitClaims.delete(rowId);
-        this.reindexCurrentTimedWait(runId, nodeId);
+        this.timedWaitClaimRowByRun.delete(runId);
+        this.reindexCurrentTimedWaitsForRun(runId);
         this.compactTimedWaitClaimExpiryHeap();
       }
       return Promise.resolve(false);
@@ -527,9 +562,13 @@ export class MemoryBackend implements WorkflowBackend {
     }
     const rowId = this.timedWaitRowId(runId, nodeId);
     const claim = this.timedWaitClaims.get(rowId);
-    if (!claim || claim.claimId !== claimId) return Promise.resolve(false);
+    if (
+      !claim || claim.claimId !== claimId ||
+      this.timedWaitClaimRowByRun.get(runId) !== rowId
+    ) return Promise.resolve(false);
     this.timedWaitClaims.delete(rowId);
-    this.reindexCurrentTimedWait(runId, nodeId);
+    this.timedWaitClaimRowByRun.delete(runId);
+    this.reindexCurrentTimedWaitsForRun(runId);
     this.compactTimedWaitClaimExpiryHeap();
     return Promise.resolve(true);
   }
@@ -566,8 +605,7 @@ export class MemoryBackend implements WorkflowBackend {
     deadline: number;
     waitKind: "delay" | "event";
   }> {
-    if (run.status !== "waiting") return [];
-    return getTimedWorkflowWaits(run).map((wait) => {
+    const waits = getTimedWorkflowWaits(run).map((wait) => {
       if (!Number.isSafeInteger(wait.deadline)) {
         throw INVALID_ARGUMENT.create({
           detail:
@@ -576,6 +614,7 @@ export class MemoryBackend implements WorkflowBackend {
       }
       return { nodeId: wait.nodeId, deadline: wait.deadline, waitKind: wait.waitKind };
     });
+    return run.status === "waiting" ? waits : [];
   }
 
   private getTimedWaitDeadline(
@@ -590,13 +629,13 @@ export class MemoryBackend implements WorkflowBackend {
   }
 
   private timedWaitRowId(runId: string, nodeId: string): string {
+    assertWorkflowIdentity(runId, "Timed-wait run id");
+    assertWorkflowIdentity(nodeId, "Timed-wait node id");
     return JSON.stringify([runId, nodeId]);
   }
 
   private assertTimedWaitNodeId(nodeId: unknown): asserts nodeId is string {
-    if (typeof nodeId !== "string" || nodeId.length === 0) {
-      throw INVALID_ARGUMENT.create({ detail: "Timed-wait node id must be a non-empty string" });
-    }
+    assertWorkflowIdentity(nodeId, "Timed-wait node id");
   }
 
   private replaceTimedWaitDeadlinesForRun(
@@ -607,13 +646,21 @@ export class MemoryBackend implements WorkflowBackend {
       waitKind: "delay" | "event";
     }>,
   ): void {
-    for (const rowId of [...(this.timedWaitRowsByRun.get(runId) ?? [])]) {
-      this.removeTimedWaitDeadlineRow(rowId);
-    }
+    this.removeTimedWaitDeadlineRowsForRun(runId);
     for (const registration of registrations) {
       this.replaceTimedWaitDeadlineRow(runId, registration.nodeId, registration);
     }
     this.compactTimedWaitDeadlineHeaps();
+  }
+
+  private removeTimedWaitDeadlineRowsForRun(
+    runId: string,
+    waitKind?: "delay" | "event",
+  ): void {
+    for (const rowId of [...(this.timedWaitRowsByRun.get(runId) ?? [])]) {
+      if (waitKind && this.timedWaitDeadlines.get(rowId)?.waitKind !== waitKind) continue;
+      this.removeTimedWaitDeadlineRow(rowId);
+    }
   }
 
   private replaceTimedWaitDeadlineRow(
@@ -682,6 +729,7 @@ export class MemoryBackend implements WorkflowBackend {
     for (const [rowId, claim] of this.timedWaitClaims) {
       if (claim.runId === runId) this.timedWaitClaims.delete(rowId);
     }
+    this.timedWaitClaimRowByRun.delete(runId);
     this.compactTimedWaitClaimExpiryHeap();
   }
 
@@ -703,14 +751,12 @@ export class MemoryBackend implements WorkflowBackend {
     }
   }
 
-  private reindexCurrentTimedWait(runId: string, nodeId: string): void {
+  private reindexCurrentTimedWaitsForRun(runId: string): void {
     const run = this.runs.get(runId);
-    this.replaceTimedWaitDeadlineRow(
+    this.replaceTimedWaitDeadlinesForRun(
       runId,
-      nodeId,
-      run ? this.getTimedWaitDeadline(run, nodeId) : undefined,
+      run ? this.getTimedWaitDeadlines(run) : [],
     );
-    this.compactTimedWaitDeadlineHeaps();
   }
 
   private recoverExpiredTimedWaitClaims(now: number): void {
@@ -725,7 +771,10 @@ export class MemoryBackend implements WorkflowBackend {
         continue;
       }
       this.timedWaitClaims.delete(candidate.rowId);
-      this.reindexCurrentTimedWait(candidate.runId, candidate.nodeId);
+      if (this.timedWaitClaimRowByRun.get(candidate.runId) === candidate.rowId) {
+        this.timedWaitClaimRowByRun.delete(candidate.runId);
+        this.reindexCurrentTimedWaitsForRun(candidate.runId);
+      }
     }
     this.compactTimedWaitClaimExpiryHeap();
   }
@@ -759,7 +808,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
     logger.debug("Saving checkpoint", { checkpointId: checkpoint.id, runId });
     const checkpoints = this.checkpoints.get(runId) ?? [];
-    checkpoints.push(structuredClone(checkpoint));
+    appendRetainedCheckpoint(checkpoints, checkpoint);
     this.checkpoints.set(runId, checkpoints);
     return Promise.resolve();
   }
@@ -779,7 +828,7 @@ export class MemoryBackend implements WorkflowBackend {
     }
 
     const checkpoints = this.checkpoints.get(storageRunId) ?? [];
-    checkpoints.push(structuredClone(checkpoint));
+    appendRetainedCheckpoint(checkpoints, checkpoint);
     this.checkpoints.set(storageRunId, checkpoints);
     return Promise.resolve(true);
   }
@@ -813,8 +862,10 @@ export class MemoryBackend implements WorkflowBackend {
     const checkpoints = this.checkpoints.get(runId);
     if (!checkpoints) return Promise.resolve();
 
-    const idsToDelete = new Set(checkpointIds);
-    this.checkpoints.set(runId, checkpoints.filter((c) => !idsToDelete.has(c.id)));
+    this.checkpoints.set(
+      runId,
+      deleteOldestCheckpointOccurrences(checkpoints, checkpointIds),
+    );
 
     logger.debug("Deleted checkpoints", { count: checkpointIds.length });
     return Promise.resolve();
@@ -1232,6 +1283,7 @@ export class MemoryBackend implements WorkflowBackend {
     this.timedWaitRowsByRun.clear();
     this.timedWaitDeadlineHeaps = { delay: [], event: [] };
     this.timedWaitClaims.clear();
+    this.timedWaitClaimRowByRun.clear();
     this.timedWaitClaimExpiryHeap = [];
     this.timedWaitGeneration = 0;
     this.timedWaitFence = 0;

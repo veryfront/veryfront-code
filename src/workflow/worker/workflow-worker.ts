@@ -14,6 +14,7 @@ import { CONFIG_INVALID, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { runWithWorkflowSourceIntegrationPolicy } from "../source-integration-policy.ts";
 import { validatePositiveSafeInteger } from "../dsl/validation.ts";
 import { TimedWaitRecoveryService } from "../runtime/timed-wait-recovery.ts";
+import { getTimedWaitWakeNodeId } from "../runtime/timed-wait-reconciliation.ts";
 
 const logger = baseLogger.component("workflow-worker");
 
@@ -122,7 +123,8 @@ export class WorkflowWorker {
         detail: "Backend does not support worker features. " +
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, extendLock, releaseLock, " +
           "updateRunIfStatusAndLock, findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
-          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker. " +
+          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker, " +
+          "claimDueTimedWaits, updateRunIfTimedWaitClaim, releaseTimedWaitClaim. " +
           "Use a distributed workflow backend with worker support enabled.",
       });
     }
@@ -523,8 +525,22 @@ export class WorkflowWorker {
           logger.info(`Successfully resumed run ${run.id}`);
         }
       } catch (error) {
-        this.recordError(error);
-        logger.error(`Failed to resume run ${run.id}:`, error);
+        let observedError: unknown = error;
+        try {
+          if (
+            run.workerId === this.config.workerId &&
+            getTimedWaitWakeNodeId(run) !== null
+          ) {
+            await this.failAwakenedTimedWaitResume(run, error);
+          }
+        } catch (failureError) {
+          observedError = new AggregateError(
+            [error, failureError],
+            `Timed-wait resume and terminal compensation both failed for ${run.id}`,
+          );
+        }
+        this.recordError(observedError);
+        logger.error(`Failed to resume run ${run.id}:`, observedError);
       }
     })();
     // Remove through the tracked promise so an older completion can never
@@ -535,6 +551,45 @@ export class WorkflowWorker {
       }
     });
     this.activeResumes.set(run.id, trackedAttempt);
+  }
+
+  /**
+   * A claimed delay wake has already consumed its timed-wait row. If resume
+   * admission then rejects (including workflow-version proof), fail the exact
+   * pending owner so the run cannot become an unscannable poison row.
+   */
+  private async failAwakenedTimedWaitResume(
+    run: WorkflowRun,
+    error: unknown,
+  ): Promise<void> {
+    const failure = error instanceof Error ? error : new Error(String(error));
+    const failed = await updateRunIfStatus(
+      this.config.backend,
+      run.id,
+      ["pending"],
+      {
+        status: "failed",
+        currentNodes: [],
+        error: {
+          message: `TIMED_WAIT_RESUME_ERROR: ${failure.message}`,
+          stack: failure.stack,
+        },
+        completedAt: new Date(),
+      },
+      this.config.workerId,
+    );
+    if (failed) return;
+
+    const latest = await this.config.backend.getRun(run.id);
+    if (
+      !latest || latest.status !== "pending" ||
+      latest.workerId !== this.config.workerId
+    ) return;
+
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Workflow worker ${this.config.workerId} could not terminalize failed timed-wait ` +
+        `resume ${run.id}; the same worker still owns the pending run`,
+    });
   }
 }
 

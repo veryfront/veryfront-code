@@ -22,6 +22,7 @@ import { CONFIG_INVALID, ensureError, ORCHESTRATION_ERROR } from "#veryfront/err
 import { claimWorkflowRunControl } from "../runtime/workflow-run-control.ts";
 import { validatePositiveSafeInteger } from "../dsl/validation.ts";
 import { TimedWaitRecoveryService } from "../runtime/timed-wait-recovery.ts";
+import { MAX_WORKFLOW_RUN_LIST_LIMIT } from "../limits.ts";
 
 const logger = baseLogger.component("workflow-run-manager");
 
@@ -160,7 +161,8 @@ export class WorkflowRunManager {
         detail: "Backend does not support managed workflow execution. " +
           "Required methods: enqueue, dequeue, acknowledge, acquireLock, extendLock, releaseLock, " +
           "updateRunIfStatusAndLock, findStalledRuns, claimStalledRun, updateRunIfStatusAndWorker, " +
-          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker.",
+          "saveCheckpointIfStatusAndWorker, savePendingApprovalIfStatusAndWorker, " +
+          "claimDueTimedWaits, updateRunIfTimedWaitClaim, releaseTimedWaitClaim.",
       });
     }
     this.managerId = generateId("mgr");
@@ -434,8 +436,9 @@ export class WorkflowRunManager {
           status: "pending",
           // A just-awakened run is already pending and can also appear in this
           // query. Read enough rows to remove those duplicates without losing
-          // another admission slot.
-          limit: availableSlots,
+          // another admission slot, while keeping each poll within the shared
+          // backend page bound. Larger concurrency targets fill on later polls.
+          limit: Math.min(availableSlots, MAX_WORKFLOW_RUN_LIST_LIMIT),
         })
         : [];
       const recoveredRunIds = new Set(recovered.awakenedRuns.map((run) => run.id));

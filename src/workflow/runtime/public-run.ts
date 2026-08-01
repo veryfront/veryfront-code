@@ -1,4 +1,5 @@
 import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
+import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import {
   captureWorkflowContextProjection,
   captureWorkflowProjectionPaths,
@@ -96,7 +97,7 @@ function projectExplicitValueInPlace(
   value: unknown,
   paths: readonly WorkflowProjectionPath[],
 ): unknown {
-  let projected = value;
+  const projected = value;
   for (const entry of paths) {
     if (entry.path.length === 0) {
       if (entry.kind === INTERNAL_RUNTIME_PROJECTION_KIND) return undefined;
@@ -404,8 +405,14 @@ export function materializeWorkflowContextDelta(
 /** Detach a durable run for public callbacks and read APIs. */
 export function toPublicWorkflowRun(run: WorkflowRun): WorkflowRun {
   const projected = structuredClone(run);
+  if (projected._runtimeStateVersion !== WORKFLOW_RUNTIME_STATE_VERSION) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: `Cannot safely expose workflow run "${projected.id}": its legacy runtime state ` +
+        "has ambiguous public-data provenance; migration is required",
+    });
+  }
   const metadata = captureFrameworkContextMetadata(projected.context, projected._tenant);
-  const securityFirstLegacy = projected._runtimeStateVersion !== WORKFLOW_RUNTIME_STATE_VERSION;
+  const securityFirstLegacy = false;
   const runContextProjection = captureWorkflowContextProjection(
     projected._workflowProjection?.context,
   );

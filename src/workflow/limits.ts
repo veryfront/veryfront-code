@@ -27,3 +27,9 @@ export const MAX_WORKFLOW_DEFINITION_STATIC_VALUES = 100_000;
 
 /** Maximum aggregate static binary/string payload admitted per definition batch. */
 export const MAX_WORKFLOW_DEFINITION_STATIC_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Maximum checkpoint history retained and accepted in one read. Built-in
+ * backends evict the oldest entries by append order once this bound is reached.
+ */
+export const MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES = 1_000;

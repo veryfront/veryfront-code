@@ -368,6 +368,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       const approvalWorkflow = workflow({
         id: "approval-test",
+        version: "1",
         steps: [
           step("before", { tool: beforeTool }),
           waitForApproval("need-approval", {
@@ -402,6 +403,7 @@ describe("Workflow Integration", { sanitizeOps: false, sanitizeResources: false 
 
       const approvalWorkflow = workflow({
         id: "resume-test",
+        version: "1",
         steps: [
           step("before", { tool: beforeTool }),
           waitForApproval("need-approval", {

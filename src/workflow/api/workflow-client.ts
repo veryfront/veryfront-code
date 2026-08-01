@@ -18,6 +18,7 @@ import { parsePositiveDurationWithLabel } from "../types.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import {
+  attachWorkflowClientWaitingObserver,
   reserveWorkflowCancel,
   reserveWorkflowResume,
   reserveWorkflowStart,
@@ -222,31 +223,7 @@ export class WorkflowClient {
       // approvals, and destroy() by smuggling a second backend through the
       // nested executor configuration.
       backend: this.backend,
-      onWaiting: async (run, nodeId) => {
-        const input = getOwnRecordValue(run.nodeStates, nodeId)?.input;
-
-        if (!input) {
-          logger.debug("No wait config found for node", { nodeId });
-          await userOnWaiting?.(run, nodeId);
-          return;
-        }
-
-        const waitConfig = restoreApprovalWaitConfig(input);
-        if (!waitConfig) {
-          await userOnWaiting?.(run, nodeId);
-          return;
-        }
-
-        try {
-          await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
-          logger.debug("Created approval for node", { nodeId });
-        } catch (error) {
-          logger.error("Failed to create approval", error);
-          throw error;
-        }
-
-        await userOnWaiting?.(run, nodeId);
-      },
+      onWaiting: userOnWaiting,
     });
 
     this.approvalManager = new ApprovalManager({
@@ -258,6 +235,26 @@ export class WorkflowClient {
       // client created, regardless of values supplied by untyped callers.
       backend: this.backend,
       executor: this.executor,
+    });
+
+    attachWorkflowClientWaitingObserver(this.executor, async (run, nodeId) => {
+      const input = getOwnRecordValue(run.nodeStates, nodeId)?.input;
+
+      if (!input) {
+        logger.debug("No wait config found for node", { nodeId });
+        return;
+      }
+
+      const waitConfig = restoreApprovalWaitConfig(input);
+      if (!waitConfig) return;
+
+      try {
+        await this.approvalManager.createApproval(run, nodeId, waitConfig, run.context);
+        logger.debug("Created approval for node", { nodeId });
+      } catch (error) {
+        logger.error("Failed to create approval", error);
+        throw error;
+      }
     });
   }
 

@@ -19,6 +19,7 @@ import {
   runDynamicWorkflowRunWithDependencies,
 } from "./dynamic-run-entrypoint.ts";
 import { createIsolatedWorkflowRuntime } from "./shared.ts";
+import { WORKFLOW_RUNTIME_STATE_VERSION } from "../runtime-state.ts";
 
 const ENV_KEYS = [
   "WORKFLOW_RUN_ID",
@@ -67,6 +68,7 @@ function createClaimedRun(
   return {
     id,
     workflowId: options.workflowId ?? "workflow-1",
+    version: "1",
     status: "running",
     input: {},
     nodeStates: {},
@@ -76,6 +78,8 @@ function createClaimedRun(
     pendingApprovals: [],
     createdAt: new Date(),
     sourceIntegrationPolicy: SOURCE_INTEGRATION_POLICY,
+    _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+    _workflowProjection: { context: {} },
     workerId: options.workerId ?? "run-execution:current-owner",
     _tenant: {
       projectSlug: "acme",
@@ -553,6 +557,7 @@ describe("runDynamicWorkflowRun", () => {
     const run = createClaimedRun("run-dynamic-runtime-cleanup");
     const workflowDefinition = workflow({
       id: run.workflowId,
+      version: "1",
       steps: [waitForApproval("review", { message: "Review dynamic run" })],
     });
     await backend.createRun(run);

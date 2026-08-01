@@ -9,6 +9,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import type { WorkflowRunUpdate } from "../backends/types.ts";
 import { delay, waitForApproval, workflow } from "../dsl/index.ts";
 import type { WorkflowRun } from "../types.ts";
+import { WORKFLOW_RUNTIME_STATE_VERSION } from "../runtime-state.ts";
 import {
   acquireRunExecutionLock,
   captureWorkflowRunEntrypointOptions,
@@ -64,6 +65,7 @@ function createRun(id: string, status: WorkflowRun["status"], workerId?: string)
   return {
     id,
     workflowId: "workflow-1",
+    version: "1",
     status,
     input: {},
     nodeStates: {},
@@ -73,6 +75,8 @@ function createRun(id: string, status: WorkflowRun["status"], workerId?: string)
     pendingApprovals: [],
     createdAt: new Date(),
     sourceIntegrationPolicy: normalizeSourceIntegrationPolicy(undefined),
+    _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+    _workflowProjection: { context: {} },
     workerId,
   };
 }
@@ -316,6 +320,7 @@ describe("workflow worker shared helpers", () => {
     runtime.executor.register(
       workflow({
         id: "workflow-1",
+        version: "1",
         steps: [waitForApproval("review", { message: "Review required" })],
       }).definition,
     );
@@ -339,6 +344,7 @@ describe("workflow worker shared helpers", () => {
     runtime.executor.register(
       workflow({
         id: "workflow-1",
+        version: "1",
         steps: [delay("pause", 60_000)],
       }).definition,
     );

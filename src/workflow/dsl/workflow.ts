@@ -22,6 +22,7 @@ export type { Workflow } from "../types.ts";
 export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   id: string;
   description?: string;
+  /** Required for a persisted run to be safely resumed after its initial start admission. */
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;

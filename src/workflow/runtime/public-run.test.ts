@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import type { NodeState, WorkflowContext, WorkflowRun } from "../types.ts";
@@ -230,7 +235,7 @@ describe("workflow/runtime/public-run", () => {
     assertEquals(run.checkpoints[0].nodeStates.step?.output, nestedUserOutput);
   });
 
-  it("uses a security-first projection for unversioned rotated contexts", () => {
+  it("rejects an unversioned legacy public read as migration-required", () => {
     const leakedContext = {
       input: { PROJECT_SECRET: "input-secret" },
       env: { PROJECT_SECRET: "rotated-old-secret" },
@@ -258,11 +263,11 @@ describe("workflow/runtime/public-run", () => {
       sourceIntegrationPolicy: SOURCE_POLICY,
     };
 
-    const projected = toPublicWorkflowRun(run);
-    assertEquals(projected.context.input, {});
-    assertEquals(projected.context.nested, { payload: "keep" });
-    assertEquals(projected.nodeStates.nested?.output, { payload: "keep" });
-    assertEquals(projected.output, { nested: { payload: "keep" } });
+    assertThrows(
+      () => toPublicWorkflowRun(run),
+      Error,
+      "ambiguous public-data provenance; migration is required",
+    );
   });
 
   it("projects cyclic provenance values without recursion failure", () => {

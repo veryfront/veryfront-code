@@ -2545,6 +2545,7 @@ describe("DAGExecutor", () => {
       const checkpointManager = new RecordingCheckpointManager({ backend });
       const run = createTestRun({
         id: "canonical-resume-run",
+        version: "1",
         workerId: "run-execution:resume-owner",
         context: {
           input: { topic: "test" },
@@ -2599,7 +2600,17 @@ describe("DAGExecutor", () => {
         ownership,
       );
       assertEquals(firstResult.waiting, true);
-      const resumeInfo = await checkpointManager.prepareResume(run.id, nodes);
+      const resumeInfo = await checkpointManager.prepareResume(
+        run.id,
+        nodes,
+        undefined,
+        "1",
+        {
+          context: run.context,
+          workflowProjection: run._workflowProjection,
+          workflowVersion: run.version,
+        },
+      );
       assertExists(resumeInfo);
       assertEquals(resumeInfo.checkpoint._resumeEnvelope?.ownerNodeId, "resume-parallel");
       assertEquals(resumeInfo.context.owned, {

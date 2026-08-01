@@ -9,7 +9,42 @@ import type {
 } from "../types.ts";
 import { INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
-import { MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS } from "../limits.ts";
+import {
+  MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
+  MAX_WORKFLOW_DEFINITION_TEXT_CODE_UNITS,
+} from "../limits.ts";
+
+function isWellFormedUnicode(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      if (index + 1 >= value.length) return false;
+      const trailing = value.charCodeAt(index + 1);
+      if (trailing < 0xdc00 || trailing > 0xdfff) return false;
+      index++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Whether a persisted workflow identity has one transport-stable Unicode representation. */
+export function isCanonicalWorkflowIdentity(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    value.length <= MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS && value.trim() === value &&
+    isWellFormedUnicode(value);
+}
+
+/** Reject identities that cannot round-trip exactly through UTF-8 storage backends. */
+export function assertWorkflowIdentity(value: unknown, label: string): asserts value is string {
+  if (!isCanonicalWorkflowIdentity(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `${label} must be a canonical non-empty string of at most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units with well-formed Unicode`,
+    });
+  }
+}
 
 function isPlainDataRecord(value: unknown): value is Record<PropertyKey, unknown> {
   if (
@@ -67,11 +102,15 @@ export function assertWorkflowRunUpdate(patch: WorkflowRunUpdate): void {
       }`,
     });
   }
+  if (patch.workerId !== undefined) assertWorkflowWorkerId(patch.workerId);
 }
 
 /** Reject missing or whitespace-only opaque workflow lock tokens. */
 export function assertWorkflowLockId(value: unknown): asserts value is string {
-  if (typeof value !== "string" || value.trim().length === 0) {
+  if (
+    typeof value !== "string" || value.trim().length === 0 ||
+    !isWellFormedUnicode(value)
+  ) {
     throw INVALID_ARGUMENT.create({ detail: "Workflow lock id must be a non-empty string" });
   }
 }
@@ -80,10 +119,10 @@ export function assertWorkflowLockId(value: unknown): asserts value is string {
 export function assertWorkflowWorkerId(value: unknown): asserts value is string {
   if (
     typeof value !== "string" || value.length === 0 ||
-    value.trim() !== value
+    value.trim() !== value || !isWellFormedUnicode(value)
   ) {
     throw INVALID_ARGUMENT.create({
-      detail: "Workflow worker id must be a canonical non-empty string",
+      detail: "Workflow worker id must be a canonical non-empty string with well-formed Unicode",
     });
   }
 }
@@ -267,9 +306,16 @@ export interface WorkflowBackend {
   listRunsAfterCursor?(filter: WorkflowRunCursorFilter): Promise<WorkflowRun[]>;
   countRuns?(filter: RunFilter): Promise<number>;
 
-  /** Append a checkpoint to an existing run; reject when the run does not exist. */
+  /**
+   * Append a checkpoint to an existing run; reject when the run does not exist.
+   * Built-ins retain only the newest bounded history in append order, so an
+   * older explicit checkpoint id may no longer resolve after eviction.
+   */
   saveCheckpoint(runId: string, checkpoint: Checkpoint): Promise<void>;
-  /** Append a checkpoint only while the canonical run status and worker owner match. */
+  /**
+   * Append and apply the same retention bound atomically, but only while the
+   * canonical run status and worker owner match.
+   */
   saveCheckpointIfStatusAndWorker?(
     storageRunId: string,
     ownershipRunId: string,
@@ -278,8 +324,14 @@ export interface WorkflowBackend {
     checkpoint: Checkpoint,
   ): Promise<boolean>;
   getLatestCheckpoint(runId: string): Promise<Checkpoint | null>;
+  /** Return checkpoints in durable append order, oldest first. */
   getCheckpoints?(runId: string): Promise<Checkpoint[]>;
+  /** Delete the oldest append-ordered occurrence matching the checkpoint ID. */
   deleteCheckpoint?(runId: string, checkpointId: string): Promise<void>;
+  /**
+   * Delete one oldest append-ordered occurrence for each supplied ID occurrence,
+   * with behavior equivalent to sequential `deleteCheckpoint` calls.
+   */
   deleteCheckpoints?(runId: string, checkpointIds: string[]): Promise<void>;
 
   /**
@@ -361,8 +413,13 @@ export interface WorkflowBackend {
   /**
    * Atomically lease the earliest due timed-wait rows from a deadline index.
    * Implementations must return rows in `(deadline ASC, run id ASC, node id ASC)` order,
-   * never return more than `request.limit`, and fence a stale claimant after
-   * its lease expires or a replacement claim is issued.
+   * never return more than `request.limit`, and return at most one live claim
+   * per run across both wait kinds. A due event timeout is terminal and must
+   * prevent admission of every sibling delay for that run, including events
+   * beyond the current claim-page boundary. Run-scoped admission must not
+   * permanently starve otherwise eligible runs behind blocked rows. Exact
+   * release, expiry, and resolution must fence stale claimants and atomically
+   * restore or consume the run-scoped gate together with the row claim.
    */
   claimDueTimedWaits?(request: TimedWaitClaimRequest): Promise<TimedWaitClaim[]>;
   /**
@@ -549,6 +606,9 @@ type WithWorkerSupport =
       | "updateRunIfStatusAndWorker"
       | "saveCheckpointIfStatusAndWorker"
       | "savePendingApprovalIfStatusAndWorker"
+      | "claimDueTimedWaits"
+      | "updateRunIfTimedWaitClaim"
+      | "releaseTimedWaitClaim"
     >
   >;
 
@@ -561,7 +621,8 @@ export function hasWorkerSupport(backend: WorkflowBackend): backend is WithWorke
     typeof backend.claimStalledRun === "function" &&
     typeof backend.updateRunIfStatusAndWorker === "function" &&
     typeof backend.saveCheckpointIfStatusAndWorker === "function" &&
-    typeof backend.savePendingApprovalIfStatusAndWorker === "function"
+    typeof backend.savePendingApprovalIfStatusAndWorker === "function" &&
+    hasTimedWaitRecoverySupport(backend)
   );
 }
 

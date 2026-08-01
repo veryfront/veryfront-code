@@ -1,16 +1,13 @@
 import { ORCHESTRATION_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import {
   hasTimedWaitRecoverySupport,
+  isCanonicalWorkflowIdentity,
   type TimedWaitClaim,
   updateRunIfStatus,
   type WorkflowBackend,
   type WorkflowRunUpdate,
 } from "../backends/types.ts";
-import {
-  type DurableTimedWaitKind,
-  INTERNAL_DELAY_EVENT_NAME,
-  INTERNAL_WAIT_KIND_FIELD,
-} from "../timed-wait-state.ts";
+import { type DurableTimedWaitKind, INTERNAL_WAIT_KIND_FIELD } from "../timed-wait-state.ts";
 import type { Checkpoint, NodeState, WorkflowRun } from "../types.ts";
 import { parsePositiveDurationWithLabel } from "../types.ts";
 
@@ -63,10 +60,9 @@ function getPersistedWaitKind(input: Record<string, unknown>): DurableTimedWaitK
       detail: `Persisted timed wait has an invalid ${INTERNAL_WAIT_KIND_FIELD}`,
     });
   }
-
-  // Compatibility for delays persisted before the explicit discriminator was
-  // introduced. Newly captured event definitions cannot use this name.
-  return input.eventName === INTERNAL_DELAY_EVENT_NAME ? "delay" : "event";
+  throw ORCHESTRATION_ERROR.create({
+    detail: `Persisted timed wait is missing ${INTERNAL_WAIT_KIND_FIELD}`,
+  });
 }
 
 function getStartedAtMs(state: NodeState, nodeId: string): number {
@@ -100,6 +96,11 @@ function parseTimedWaitState(
   const input = getWaitInput(state);
   if (!input || input.type !== "event" || typeof input.eventName !== "string") return null;
   if (input.timeout === undefined) return null;
+  if (!isCanonicalWorkflowIdentity(run.id) || !isCanonicalWorkflowIdentity(nodeId)) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Persisted timed-wait run and node ids must contain well-formed Unicode",
+    });
+  }
 
   const timeoutMs = parsePositiveDurationWithLabel(
     input.timeout as string | number,
@@ -137,7 +138,7 @@ export function getTimedWorkflowWaits(run: WorkflowRun): TimedWorkflowWaitRegist
   }
   waits.sort((left, right) =>
     left.deadline - right.deadline ||
-    left.nodeId.localeCompare(right.nodeId)
+    (left.nodeId < right.nodeId ? -1 : left.nodeId > right.nodeId ? 1 : 0)
   );
   return waits;
 }
@@ -152,12 +153,21 @@ function registrationsMatch(
     left.startedAtMs === right.startedAtMs && left.deadline === right.deadline;
 }
 
+function requireTimedWaitUpdateResult(value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "Workflow backend returned a non-boolean timed-wait claim update result",
+    });
+  }
+  return value;
+}
+
 async function persistTimedWaitResolution(
   backend: WorkflowBackend,
   run: WorkflowRun,
   registration: TimedWorkflowWaitRegistration,
   options: ReconcileTimedWorkflowWaitOptions,
-  update: (patch: WorkflowRunUpdate) => Promise<boolean>,
+  update: (patch: WorkflowRunUpdate) => Promise<unknown>,
 ): Promise<TimedWorkflowWaitReconciliationOutcome> {
   const now = options.now ?? Date.now();
   const completedAt = new Date(now);
@@ -175,7 +185,7 @@ async function persistTimedWaitResolution(
       nodeStates,
       ...(options.nextWorkerId === undefined ? {} : { workerId: options.nextWorkerId }),
     };
-    const awakened = await update(patch);
+    const awakened = requireTimedWaitUpdateResult(await update(patch));
     if (!awakened) {
       return { status: "unchanged", run: await backend.getRun(run.id) ?? undefined, registration };
     }
@@ -209,7 +219,7 @@ async function persistTimedWaitResolution(
     error: { message: error.message, stack: error.stack },
     completedAt,
   };
-  const failed = await update(patch);
+  const failed = requireTimedWaitUpdateResult(await update(patch));
   if (!failed) {
     return { status: "unchanged", run: await backend.getRun(run.id) ?? undefined, registration };
   }
@@ -238,6 +248,17 @@ function validateCurrentTimedWait(
   return !!current && registrationsMatch(current, registration);
 }
 
+function selectLocalTimedWait(
+  run: WorkflowRun,
+  registration: TimedWorkflowWaitRegistration,
+  now: number,
+): TimedWorkflowWaitRegistration {
+  if (registration.waitKind === "event") return registration;
+  return getTimedWorkflowWaits(run).find((candidate) =>
+    candidate.waitKind === "event" && candidate.deadline <= now
+  ) ?? registration;
+}
+
 /**
  * Reconcile one exact persisted wait deadline through an owner-fenced CAS.
  * Delay expiry wakes the run; ordinary event expiry fails it durably.
@@ -252,11 +273,14 @@ export async function reconcileTimedWorkflowWait(
     return { status: "unchanged", run: run ?? undefined, registration };
   }
   const now = options.now ?? Date.now();
-  if (now < registration.deadline) return { status: "not-due", run, registration };
+  const selectedRegistration = selectLocalTimedWait(run, registration, now);
+  if (now < selectedRegistration.deadline) {
+    return { status: "not-due", run, registration: selectedRegistration };
+  }
   return await persistTimedWaitResolution(
     backend,
     run,
-    registration,
+    selectedRegistration,
     { ...options, now },
     (patch) =>
       updateRunIfStatus(
@@ -264,7 +288,7 @@ export async function reconcileTimedWorkflowWait(
         run.id,
         ["waiting"],
         patch,
-        registration.workerId,
+        selectedRegistration.workerId,
       ),
   );
 }
@@ -280,12 +304,21 @@ export async function reconcileClaimedTimedWorkflowWait(
       detail: "Workflow backend does not support indexed timed-wait recovery",
     });
   }
-  const registration = getTimedWorkflowWaits(claim.run).find((candidate) =>
+  const registrations = getTimedWorkflowWaits(claim.run);
+  const registration = registrations.find((candidate) =>
     candidate.nodeId === claim.nodeId && candidate.deadline === claim.deadline &&
     candidate.waitKind === claim.waitKind
   );
   if (!registration || registration.workerId === undefined) return null;
   const now = options.now ?? Date.now();
+  if (
+    registration.waitKind === "delay" &&
+    registrations.some((candidate) => candidate.waitKind === "event" && candidate.deadline <= now)
+  ) {
+    throw ORCHESTRATION_ERROR.create({
+      detail: "A timed-wait delay claim cannot precede a due event timeout",
+    });
+  }
   if (now < registration.deadline) {
     return { status: "not-due", run: claim.run, registration };
   }
@@ -316,7 +349,8 @@ export function reconcileDueTimedWorkflowWait(
   options: ReconcileTimedWorkflowWaitOptions = {},
 ): Promise<TimedWorkflowWaitReconciliationOutcome | null> {
   const now = options.now ?? Date.now();
-  const registration = getTimedWorkflowWaits(run).find((wait) => wait.deadline <= now);
+  const due = getTimedWorkflowWaits(run).filter((wait) => wait.deadline <= now);
+  const registration = due.find((wait) => wait.waitKind === "event") ?? due[0];
   return registration
     ? reconcileTimedWorkflowWait(backend, registration, { ...options, now })
     : Promise.resolve(null);

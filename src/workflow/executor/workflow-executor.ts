@@ -59,8 +59,16 @@ import {
 } from "../runtime/timed-wait-reconciliation.ts";
 import { WORKFLOW_RUNTIME_STATE_VERSION, type WorkflowProjectionState } from "../runtime-state.ts";
 import { captureCanonicalWorkflowGraphIdentity } from "./dag/graph-identity.ts";
+import {
+  isWorkflowVersionAdmissionError,
+  markWorkflowVersionAdmissionError,
+} from "./workflow-version-admission-error.ts";
 
 const logger = baseLogger.component("workflow-executor");
+
+function createWorkflowVersionAdmissionError(detail: string): Error {
+  return markWorkflowVersionAdmissionError(ORCHESTRATION_ERROR.create({ detail }));
+}
 
 /** Default polling interval for waiting on workflow result */
 const DEFAULT_RESULT_POLL_INTERVAL_MS = 1_000;
@@ -189,6 +197,11 @@ interface WorkflowExecutorAdmissionController {
   reserveCancel(runId: string): WorkflowExecutorAdmission<void>;
 }
 
+type WorkflowClientWaitingObserver = (
+  run: WorkflowRun,
+  nodeId: string,
+) => void | Promise<void>;
+
 interface CapturedWorkflowStart<TInput, TOutput> {
   readonly workflow: WorkflowDefinition<TInput, TOutput>;
   readonly workflowId: string;
@@ -255,6 +268,11 @@ const executorAdmissionControllers = new WeakMap<
   WorkflowExecutorAdmissionController
 >();
 
+const workflowClientWaitingObservers = new WeakMap<
+  WorkflowExecutor,
+  WorkflowClientWaitingObserver
+>();
+
 function requireAdmissionController(
   executor: WorkflowExecutor,
 ): WorkflowExecutorAdmissionController {
@@ -299,6 +317,23 @@ export function reserveWorkflowCancel(
   runId: string,
 ): WorkflowExecutorAdmission<void> {
   return requireAdmissionController(executor).reserveCancel(runId);
+}
+
+/**
+ * @internal Attach the client's durable waiting-state observer without
+ * exposing executor ownership fields through the public onWaiting callback.
+ */
+export function attachWorkflowClientWaitingObserver(
+  executor: WorkflowExecutor,
+  observer: WorkflowClientWaitingObserver,
+): void {
+  requireAdmissionController(executor);
+  if (workflowClientWaitingObservers.has(executor)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Workflow executor already has a client waiting observer",
+    });
+  }
+  workflowClientWaitingObservers.set(executor, observer);
 }
 
 /**
@@ -614,7 +649,15 @@ export class WorkflowExecutor {
 
     await this.config.backend.createRun(run);
 
-    const settled = this.launchExecution(run.id, undefined, executionWorkerId).catch((error) => {
+    const settled = this.launchExecution(
+      run.id,
+      undefined,
+      executionWorkerId,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    ).catch((error) => {
       logger.error("Workflow failed", { runId: run.id }, error);
     });
 
@@ -655,10 +698,20 @@ export class WorkflowExecutor {
     }
     const executionWorkerId = expectedWorkerId ?? run.workerId;
 
-    await runWithWorkflowSourceIntegrationPolicy(
-      run,
-      () => this.resumeRun(run, fromCheckpoint, executionWorkerId, existingLockId),
-    );
+    try {
+      await runWithWorkflowSourceIntegrationPolicy(
+        run,
+        () => this.resumeRun(run, fromCheckpoint, executionWorkerId, existingLockId),
+      );
+    } catch (error) {
+      if (!isWorkflowVersionAdmissionError(error)) throw error;
+      await this.rethrowAfterWorkflowVersionAdmissionFailure(
+        run,
+        error,
+        executionWorkerId,
+        existingLockId,
+      );
+    }
   }
 
   private async resumeRun(
@@ -697,6 +750,13 @@ export class WorkflowExecutor {
           : (context) => this.resolveNodes(workflow, context),
         fromCheckpoint,
         workflow.version ?? null,
+        {
+          context: run.context,
+          workflowVersion: run.version ?? null,
+          ...(run._workflowProjection === undefined
+            ? {}
+            : { workflowProjection: run._workflowProjection }),
+        },
       );
     if (
       wakeNodeId && resumeInfo &&
@@ -770,6 +830,7 @@ export class WorkflowExecutor {
     existingLockId?: string,
     capturedNodes?: WorkflowNode[],
     capturedGraphAdmission?: WorkflowGraphAdmission,
+    allowUnversionedFreshStart = false,
   ): Promise<void> {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
@@ -780,18 +841,29 @@ export class WorkflowExecutor {
     }
     const executionWorkerId = expectedWorkerId ?? run.workerId;
 
-    await runWithWorkflowSourceIntegrationPolicy(
-      run,
-      () =>
-        this.executeRun(
-          run,
-          startFromNode,
-          executionWorkerId,
-          existingLockId,
-          capturedNodes,
-          capturedGraphAdmission,
-        ),
-    );
+    try {
+      await runWithWorkflowSourceIntegrationPolicy(
+        run,
+        () =>
+          this.executeRun(
+            run,
+            startFromNode,
+            executionWorkerId,
+            existingLockId,
+            capturedNodes,
+            capturedGraphAdmission,
+            allowUnversionedFreshStart,
+          ),
+      );
+    } catch (error) {
+      if (!isWorkflowVersionAdmissionError(error)) throw error;
+      await this.rethrowAfterWorkflowVersionAdmissionFailure(
+        run,
+        error,
+        executionWorkerId,
+        existingLockId,
+      );
+    }
   }
 
   private async executeRun(
@@ -801,12 +873,13 @@ export class WorkflowExecutor {
     existingLockId?: string,
     capturedNodes?: WorkflowNode[],
     capturedGraphAdmission?: WorkflowGraphAdmission,
+    allowUnversionedFreshStart = false,
   ): Promise<void> {
     const workflow = this.workflows.get(run.workflowId);
     if (!workflow) {
       throw RESOURCE_NOT_FOUND.create({ detail: `Workflow not found: ${run.workflowId}` });
     }
-    this.assertWorkflowRunVersion(run, workflow);
+    this.assertWorkflowRunVersion(run, workflow, allowUnversionedFreshStart);
 
     await executeWorkflowRunControl({
       backend: this.config.backend,
@@ -895,7 +968,16 @@ export class WorkflowExecutor {
         this.clearTimedWaitsForRun(errorRun.id);
         await this.notifyWorkflowFailure(workflow, errorRun, error);
       },
+      beforeWaiting: (waitingRun) => {
+        this.assertWorkflowRunVersion(
+          waitingRun,
+          workflow,
+          false,
+          "persist a durable waiting state for",
+        );
+      },
       onWaiting: async (waitingRun, nodeId) => {
+        await workflowClientWaitingObservers.get(this)?.(waitingRun, nodeId);
         await this.config.onWaiting?.(toPublicWorkflowRun(waitingRun), nodeId);
         this.scheduleTimedWaits(waitingRun);
       },
@@ -1062,12 +1144,81 @@ export class WorkflowExecutor {
   private assertWorkflowRunVersion(
     run: WorkflowRun,
     workflow: WorkflowDefinition,
+    allowUnversionedFreshStart = false,
+    action = "resume",
   ): void {
-    if ((run.version ?? null) === (workflow.version ?? null)) return;
-    throw ORCHESTRATION_ERROR.create({
-      detail: `Cannot resume workflow run "${run.id}" because definition version changed from ` +
+    const runVersion = run.version ?? null;
+    const workflowVersion = workflow.version ?? null;
+    if (runVersion === null || workflowVersion === null) {
+      if (allowUnversionedFreshStart && runVersion === null && workflowVersion === null) return;
+      throw createWorkflowVersionAdmissionError(
+        `Cannot ${action} workflow run "${run.id}": a non-null durable workflow version ` +
+          "is required on both the stored run and current definition; migration is required",
+      );
+    }
+    if (runVersion === workflowVersion) return;
+    throw createWorkflowVersionAdmissionError(
+      `Cannot ${action} workflow run "${run.id}" because definition version changed from ` +
         `"${run.version ?? "unversioned"}" to "${workflow.version ?? "unversioned"}"`,
-    });
+    );
+  }
+
+  /**
+   * Version admission happens before workflow code can run. If that admission
+   * rejects a durable row, terminalize only the exact status/owner/lease
+   * snapshot this execution observed so recovery cannot retry it forever.
+   */
+  private async rethrowAfterWorkflowVersionAdmissionFailure(
+    run: WorkflowRun,
+    error: Error,
+    expectedWorkerId?: string,
+    existingLockId?: string,
+  ): Promise<never> {
+    if (run.status !== "pending" && run.status !== "waiting" && run.status !== "running") {
+      throw error;
+    }
+
+    let compensationError: unknown;
+    try {
+      const failed = await updateRunIfStatus(
+        this.config.backend,
+        run.id,
+        [run.status],
+        {
+          status: "failed",
+          currentNodes: [],
+          error: {
+            message: error.message,
+            stack: error.stack,
+          },
+          completedAt: new Date(),
+        },
+        expectedWorkerId,
+        existingLockId,
+      );
+      if (!failed) {
+        const latest = await this.config.backend.getRun(run.id);
+        if (
+          latest?.status === run.status &&
+          latest.workerId === run.workerId
+        ) {
+          compensationError = ORCHESTRATION_ERROR.create({
+            detail: `Workflow version admission failed for run "${run.id}", but the exact ` +
+              `${run.status} owner remains active and could not be terminalized`,
+          });
+        }
+      }
+    } catch (failure) {
+      compensationError = failure;
+    }
+
+    if (compensationError !== undefined) {
+      throw new AggregateError(
+        [error, compensationError],
+        `Workflow version admission and terminal compensation both failed for run "${run.id}"`,
+      );
+    }
+    throw error;
   }
 
   /**
@@ -1573,6 +1724,7 @@ export class WorkflowExecutor {
     existingLockId?: string,
     capturedNodes?: WorkflowNode[],
     capturedGraphAdmission?: WorkflowGraphAdmission,
+    allowUnversionedFreshStart = false,
   ): Promise<void> {
     const execution = this.executeOperation(
       runId,
@@ -1581,6 +1733,7 @@ export class WorkflowExecutor {
       existingLockId,
       capturedNodes,
       capturedGraphAdmission,
+      allowUnversionedFreshStart,
     );
     this.activeExecutions.add(execution);
     execution.then(

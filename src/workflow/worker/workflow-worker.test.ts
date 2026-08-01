@@ -3,7 +3,11 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Tool } from "#veryfront/tool";
 import { MemoryBackend } from "../backends/memory.ts";
+import { delay, dependsOn, step, workflow } from "../dsl/index.ts";
+import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowRun } from "../types.ts";
 import { WorkflowWorker } from "./workflow-worker.ts";
 import { FakeTime } from "#std/testing/time";
@@ -190,6 +194,114 @@ describe("workflow/worker/workflow-worker", () => {
       }]);
       assertEquals((await backend.getRun(run.id))?.status, "pending");
       assertEquals((await backend.getRun(run.id))?.workerId, "worker-timed-wait-restart");
+    } finally {
+      await worker.stop();
+    }
+  });
+
+  for (
+    const scenario of [
+      {
+        label: "unversioned stored run",
+        storedVersion: undefined,
+        currentVersion: "1",
+        error: "non-null durable workflow version",
+      },
+      {
+        label: "changed workflow version",
+        storedVersion: "1",
+        currentVersion: "2",
+        error: "definition version changed",
+      },
+    ] as const
+  ) {
+    it(`terminalizes an awakened delay with ${scenario.label}`, async () => {
+      const backend = new MemoryBackend();
+      const run: WorkflowRun = {
+        ...createExpiredTimedWaitRun(`run-worker-${scenario.label.replaceAll(" ", "-")}`),
+        ...(scenario.storedVersion === undefined ? {} : { version: scenario.storedVersion }),
+      };
+      await backend.createRun(run);
+      let resumedEffects = 0;
+      const effect: Tool = {
+        id: `post-wake-${scenario.currentVersion}`,
+        type: "function",
+        description: "Must not run after version admission fails",
+        inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+        execute: () => {
+          resumedEffects++;
+          return Promise.resolve({ done: true });
+        },
+      };
+      const executor = new WorkflowExecutor({ backend });
+      executor.register(
+        workflow({
+          id: run.workflowId,
+          version: scenario.currentVersion,
+          steps: [
+            delay("pause", 5),
+            dependsOn(step("effect", { tool: effect }), "pause"),
+          ],
+        }).definition,
+      );
+      const worker = new WorkflowWorker({
+        backend,
+        workerId: `worker-${scenario.currentVersion}`,
+        pollInterval: NO_SCHEDULED_POLL,
+        resumeFn: (runId, workerId) => executor.resume(runId, undefined, workerId),
+      });
+
+      worker.start();
+      try {
+        await pollOnce(worker);
+        await worker.stop();
+
+        const failedRun = await backend.getRun(run.id);
+        assertEquals(failedRun?.status, "failed");
+        assertEquals(failedRun?.error?.message.includes(scenario.error), true);
+        assertEquals(resumedEffects, 0);
+        assertEquals(worker.getStats().resumeCount, 0);
+        assertEquals(worker.getStats().errorCount, 1);
+      } finally {
+        await Promise.allSettled([worker.stop(), executor.destroy()]);
+      }
+    });
+  }
+
+  it("does not terminalize a replacement owner after timed-wait resume fails", async () => {
+    const backend = new MemoryBackend();
+    const run = createExpiredTimedWaitRun("run-worker-timed-wake-replacement");
+    await backend.createRun(run);
+    const workerId = "worker-timed-wake-original";
+    const replacementWorkerId = "worker-timed-wake-replacement";
+    const worker = new WorkflowWorker({
+      backend,
+      workerId,
+      pollInterval: NO_SCHEDULED_POLL,
+      resumeFn: async (runId, expectedWorkerId) => {
+        assertEquals(
+          await backend.updateRunIfStatusAndWorker(
+            runId,
+            ["pending"],
+            expectedWorkerId!,
+            { workerId: replacementWorkerId },
+          ),
+          true,
+        );
+        throw new Error("old owner resume failed after replacement");
+      },
+    });
+
+    worker.start();
+    try {
+      await pollOnce(worker);
+      await worker.stop();
+
+      const replacementRun = await backend.getRun(run.id);
+      assertEquals(replacementRun?.status, "pending");
+      assertEquals(replacementRun?.workerId, replacementWorkerId);
+      assertEquals(replacementRun?.error, undefined);
+      assertEquals(worker.getStats().errorCount, 1);
     } finally {
       await worker.stop();
     }

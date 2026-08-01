@@ -28,12 +28,16 @@ import { createClient } from "redis";
 import type { RedisAdapter } from "./redis-adapter.ts";
 import {
   type ApprovalDecisionTiming,
+  assertWorkflowIdentity,
   assertWorkflowLockId,
   assertWorkflowRunUpdate,
   assertWorkflowWorkerId,
   captureApprovalDecisionTiming,
   capturePendingApprovalMetadataUpdate,
   getTimedWorkflowWaits,
+  isCanonicalWorkflowIdentity,
+  MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
+  MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
   MAX_WORKFLOW_RUN_LIST_LIMIT,
   type PendingApprovalMetadataUpdate,
   requeueRun,
@@ -76,6 +80,10 @@ const MAX_INTERNAL_CURSOR_RESTARTS = 8;
 const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 5_000;
 const TIMED_WAIT_MIGRATION_BATCH_SIZE = 100;
 const MAX_TIMED_WAIT_CLAIM_BATCH_SIZE = 100;
+const MAX_TIMED_WAIT_ROW_ID_CODE_UNITS = (MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 4 * 2) +
+  (MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 6 * 2) + 9;
+const MAX_TIMED_WAIT_RUN_PAYLOAD_PREFIX_CODE_UNITS = (MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 6) +
+  4;
 
 type RedisBackendLifecycleState = "open" | "closing" | "closed";
 type RedisClientCloseMode = "quit" | "disconnect";
@@ -125,7 +133,8 @@ interface CursorRunSnapshotPage {
 }
 
 interface TimedWaitIndexEntry {
-  readonly nodeId: string;
+  /** Canonical host-serialized identity consumed verbatim by Lua. */
+  readonly rowId: string;
   readonly deadline: number;
   readonly waitKind: "delay" | "event";
 }
@@ -194,7 +203,6 @@ function requireRedisScriptBoolean(value: unknown, operation: string): boolean {
 }
 
 function getTimedWaitIndexEntries(run: WorkflowRun): TimedWaitIndexEntry[] {
-  if (run.status !== "waiting") return [];
   return getTimedWorkflowWaits(run).map((wait) => {
     if (!Number.isSafeInteger(wait.deadline)) {
       throw INVALID_ARGUMENT.create({
@@ -203,7 +211,7 @@ function getTimedWaitIndexEntries(run: WorkflowRun): TimedWaitIndexEntry[] {
       });
     }
     return {
-      nodeId: wait.nodeId,
+      rowId: timedWaitRowId(run.id, wait.nodeId),
       deadline: wait.deadline,
       waitKind: wait.waitKind,
     };
@@ -227,13 +235,66 @@ function serializeTimedWaitIndexFromNodeStates(
   } as WorkflowRun));
 }
 
+function encodeTimedWaitIdentityOrder(value: string): string {
+  let encoded = "";
+  for (let index = 0; index < value.length; index++) {
+    encoded += value.charCodeAt(index).toString(16).padStart(4, "0");
+  }
+  return encoded;
+}
+
+function timedWaitRunPublicationIdentity(runId: string): [string, string] {
+  return [
+    encodeTimedWaitIdentityOrder(runId),
+    `[${JSON.stringify(runId)},`,
+  ];
+}
+
+function isCanonicalTimedWaitIdentity(value: unknown): value is string {
+  return isCanonicalWorkflowIdentity(value);
+}
+
 function timedWaitRowId(runId: string, nodeId: string): string {
-  if (typeof nodeId !== "string" || nodeId.length === 0) {
+  if (
+    !isCanonicalTimedWaitIdentity(runId) || !isCanonicalTimedWaitIdentity(nodeId)
+  ) {
     throw INVALID_ARGUMENT.create({
-      detail: "Timed-wait node id must be a non-empty string",
+      detail:
+        `Timed-wait run and node ids must be canonical strings of at most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units`,
     });
   }
-  return JSON.stringify([runId, nodeId]);
+  // Redis orders equal-score members by bytes, while the workflow contract
+  // orders JavaScript identities by UTF-16 code unit. Fixed-width lowercase
+  // hex preserves that order, `!` sorts before every hex digit for prefix
+  // identities, and the JSON payload lets Lua recover every original code
+  // unit (including NUL) without re-encoding the key.
+  return `${encodeTimedWaitIdentityOrder(runId)}!${encodeTimedWaitIdentityOrder(nodeId)}!${
+    JSON.stringify([runId, nodeId])
+  }`;
+}
+
+function parseTimedWaitRowId(value: string): [string, string] | null {
+  if (value.length > MAX_TIMED_WAIT_ROW_ID_CODE_UNITS) return null;
+  const firstSeparator = value.indexOf("!");
+  const secondSeparator = value.indexOf("!", firstSeparator + 1);
+  const runPrefixLength = firstSeparator;
+  const nodePrefixLength = secondSeparator - firstSeparator - 1;
+  const payloadLength = value.length - secondSeparator - 1;
+  if (
+    runPrefixLength <= 0 || runPrefixLength % 4 !== 0 ||
+    runPrefixLength > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 4 ||
+    nodePrefixLength <= 0 || nodePrefixLength % 4 !== 0 ||
+    nodePrefixLength > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 4 ||
+    payloadLength <= 0 || payloadLength > (MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 6 * 2) + 7
+  ) return null;
+  const parsed = safeJsonParse<unknown>(value.slice(secondSeparator + 1));
+  if (
+    !parsed.ok || !Array.isArray(parsed.value) || parsed.value.length !== 2 ||
+    !isCanonicalTimedWaitIdentity(parsed.value[0]) ||
+    !isCanonicalTimedWaitIdentity(parsed.value[1])
+  ) return null;
+  const identity: [string, string] = [parsed.value[0], parsed.value[1]];
+  return timedWaitRowId(...identity) === value ? identity : null;
 }
 
 /**
@@ -259,35 +320,180 @@ return {
 }`;
 
 const TIMED_WAIT_INDEX_LUA = `
-local function removeTimedWaitRows(runId, metadataKey, delayIndex, eventIndex, leaseIndex, claimPrefix)
-  local encodedRows = redis.call('hget', metadataKey, runId)
-  if encodedRows and encodedRows ~= '' then
-    local rows = cjson.decode(encodedRows)
-    for _, rowId in ipairs(rows) do
-      redis.call('zrem', delayIndex, rowId)
-      redis.call('zrem', eventIndex, rowId)
-      redis.call('zrem', leaseIndex, rowId)
-      redis.call('del', claimPrefix .. rowId)
-    end
+local function validatePublishedTimedWaitRows(encodedRows, allowMissing)
+  if not encodedRows or encodedRows == '' then
+    if allowMissing then return {} end
+    return nil
   end
-  redis.call('hdel', metadataKey, runId)
+  if string.sub(encodedRows, 1, 1) ~= '[' or string.sub(encodedRows, -1) ~= ']' then
+    return nil
+  end
+  local decoded, rows = pcall(cjson.decode, encodedRows)
+  if not decoded or type(rows) ~= 'table' then return nil end
+  local seenRows = {}
+  for _, rowId in ipairs(rows) do
+    if type(rowId) ~= 'string' or rowId == '' or
+        string.len(rowId) > ${MAX_TIMED_WAIT_ROW_ID_CODE_UNITS} or seenRows[rowId] then
+      return nil
+    end
+    seenRows[rowId] = true
+  end
+  return rows
 end
 
-local function publishTimedWaitRows(runKey, runId, metadataKey, delayIndex, eventIndex)
-  local encodedIndex = redis.call('hget', runKey, 'timedWaitIndex')
-  if not encodedIndex or encodedIndex == '' then return end
-  local entries = cjson.decode(encodedIndex)
+local function publishedTimedWaitRowsMatch(entries, rowIds)
+  if #entries ~= #rowIds then return false end
+  local expected = {}
+  for _, entry in ipairs(entries) do expected[entry.rowId] = true end
+  for _, rowId in ipairs(rowIds) do
+    if not expected[rowId] then return false end
+  end
+  return true
+end
+
+local function removeTimedWaitRow(runId, rowId, metadataKey, delayIndex, eventIndex, leaseIndex, claimPrefix, validatedRows)
+  local rows = validatedRows
+  if runId and not rows then
+    rows = validatePublishedTimedWaitRows(
+      redis.call('hget', metadataKey, 'run:' .. runId),
+      true
+    )
+    if not rows then error('invalid timed-wait publication metadata') end
+  end
+  redis.call('zrem', delayIndex, rowId)
+  redis.call('zrem', eventIndex, rowId)
+  redis.call('zrem', leaseIndex, rowId)
+  redis.call('del', claimPrefix .. rowId)
+  redis.call('hdel', metadataKey, 'wait:' .. rowId)
+  if not runId then return end
+
+  if redis.call('hget', metadataKey, 'claim-row:' .. runId) == rowId then
+    redis.call('hdel', metadataKey, 'claim-row:' .. runId, 'claim-token:' .. runId)
+  end
+
+  if #rows == 0 then
+    redis.call('hdel', metadataKey, 'order:' .. runId, 'payload:' .. runId)
+    return
+  end
+  local remaining = {}
+  for _, candidate in ipairs(rows) do
+    if candidate ~= rowId then table.insert(remaining, candidate) end
+  end
+  if #remaining == 0 then
+    redis.call('hdel', metadataKey, 'run:' .. runId, 'order:' .. runId, 'payload:' .. runId)
+  else
+    redis.call('hset', metadataKey, 'run:' .. runId, cjson.encode(remaining))
+  end
+end
+
+local function removeTimedWaitRows(runId, metadataKey, delayIndex, eventIndex, leaseIndex, claimPrefix, validatedRows)
+  local rows = validatedRows or validatePublishedTimedWaitRows(
+    redis.call('hget', metadataKey, 'run:' .. runId),
+    true
+  )
+  if not rows then error('invalid timed-wait publication metadata') end
+  for _, rowId in ipairs(rows) do
+    redis.call('zrem', delayIndex, rowId)
+    redis.call('zrem', eventIndex, rowId)
+    redis.call('zrem', leaseIndex, rowId)
+    redis.call('del', claimPrefix .. rowId)
+    redis.call('hdel', metadataKey, 'wait:' .. rowId)
+  end
+  redis.call(
+    'hdel',
+    metadataKey,
+    'run:' .. runId,
+    'order:' .. runId,
+    'payload:' .. runId,
+    'claim-row:' .. runId,
+    'claim-token:' .. runId
+  )
+end
+
+local function deindexTimedWaitRows(runId, metadataKey, delayIndex, eventIndex, waitKind, validatedRows)
+  local rows = validatedRows or validatePublishedTimedWaitRows(
+    redis.call('hget', metadataKey, 'run:' .. runId),
+    true
+  )
+  if not rows then error('invalid timed-wait publication metadata') end
+  for _, rowId in ipairs(rows) do
+    if not waitKind or waitKind == 'delay' then redis.call('zrem', delayIndex, rowId) end
+    if not waitKind or waitKind == 'event' then redis.call('zrem', eventIndex, rowId) end
+  end
+end
+
+local function validateTimedWaitRows(encodedIndex, expectedRunOrderPrefix, expectedRunPayloadPrefix)
+  if not encodedIndex or encodedIndex == '' or
+      string.sub(encodedIndex, 1, 1) ~= '[' or
+      string.sub(encodedIndex, -1) ~= ']' then return nil end
+  local decoded, entries = pcall(cjson.decode, encodedIndex)
+  if not decoded or type(entries) ~= 'table' or
+      type(expectedRunOrderPrefix) ~= 'string' or expectedRunOrderPrefix == '' or
+      string.len(expectedRunOrderPrefix) % 4 ~= 0 or
+      string.len(expectedRunOrderPrefix) > ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 4} or
+      string.find(expectedRunOrderPrefix, '[^0-9a-f]') or
+      type(expectedRunPayloadPrefix) ~= 'string' or expectedRunPayloadPrefix == '' or
+      string.len(expectedRunPayloadPrefix) > ${MAX_TIMED_WAIT_RUN_PAYLOAD_PREFIX_CODE_UNITS} then
+    return nil
+  end
+  local seenRows = {}
+  for _, entry in ipairs(entries) do
+    local rowId = type(entry) == 'table' and entry.rowId or nil
+    local firstSeparator = type(rowId) == 'string' and string.find(rowId, '!', 1, true) or nil
+    local secondSeparator = firstSeparator and string.find(rowId, '!', firstSeparator + 1, true) or nil
+    local runPrefixLength = firstSeparator and (firstSeparator - 1) or 0
+    local nodePrefixLength = secondSeparator and (secondSeparator - firstSeparator - 1) or 0
+    local payloadLength = secondSeparator and (string.len(rowId) - secondSeparator) or 0
+    local deadline = type(entry) == 'table' and entry.deadline or nil
+    if type(rowId) ~= 'string' or rowId == '' or
+        string.len(rowId) > ${MAX_TIMED_WAIT_ROW_ID_CODE_UNITS} or
+        runPrefixLength <= 0 or runPrefixLength % 4 ~= 0 or
+        runPrefixLength > ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 4} or
+        nodePrefixLength <= 0 or nodePrefixLength % 4 ~= 0 or
+        nodePrefixLength > ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 4} or
+        payloadLength <= 0 or
+        payloadLength > ${(MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS * 6 * 2) + 7} or
+        string.find(string.sub(rowId, 1, firstSeparator - 1), '[^0-9a-f]') or
+        string.find(string.sub(rowId, firstSeparator + 1, secondSeparator - 1), '[^0-9a-f]') or
+        string.sub(rowId, 1, firstSeparator - 1) ~= expectedRunOrderPrefix or
+        string.sub(rowId, secondSeparator + 1, secondSeparator + string.len(expectedRunPayloadPrefix)) ~= expectedRunPayloadPrefix or
+        seenRows[rowId] or
+        (entry.waitKind ~= 'delay' and entry.waitKind ~= 'event') or
+        type(deadline) ~= 'number' or deadline % 1 ~= 0 or
+        math.abs(deadline) > ${Number.MAX_SAFE_INTEGER} then
+      return nil
+    end
+    seenRows[rowId] = true
+  end
+  return entries
+end
+
+local function publishTimedWaitRows(entries, runId, expectedRunOrderPrefix, expectedRunPayloadPrefix, metadataKey, delayIndex, eventIndex)
   local rowIds = {}
   for _, entry in ipairs(entries) do
-    local rowId = cjson.encode({runId, entry.nodeId})
+    -- The host and Lua CJSON intentionally spell some JSON strings
+    -- differently (notably forward slashes). Persist the host's exact row
+    -- identity once and reuse it everywhere so claim fencing addresses the
+    -- same Redis key that publication created.
+    local rowId = entry.rowId
     if entry.waitKind == 'delay' then
       redis.call('zadd', delayIndex, tonumber(entry.deadline), rowId)
     elseif entry.waitKind == 'event' then
       redis.call('zadd', eventIndex, tonumber(entry.deadline), rowId)
     end
+    redis.call('hset', metadataKey, 'wait:' .. rowId, runId)
     table.insert(rowIds, rowId)
   end
-  redis.call('hset', metadataKey, runId, cjson.encode(rowIds))
+  redis.call(
+    'hset',
+    metadataKey,
+    'run:' .. runId,
+    #rowIds == 0 and '[]' or cjson.encode(rowIds),
+    'order:' .. runId,
+    expectedRunOrderPrefix,
+    'payload:' .. runId,
+    expectedRunPayloadPrefix
+  )
 end`;
 
 /**
@@ -306,6 +512,30 @@ local createdAtMs = tonumber(ARGV[5])
 local workflowPrefix = ARGV[6]
 local statusPrefix = ARGV[7]
 local workflowStatusPrefix = ARGV[8]
+local fieldCount = tonumber(ARGV[9])
+local fieldStart = 10
+local timedClaimPrefix = ARGV[fieldStart + (fieldCount * 2)]
+local expectedRunOrderPrefix = ARGV[fieldStart + (fieldCount * 2) + 1]
+local expectedRunPayloadPrefix = ARGV[fieldStart + (fieldCount * 2) + 2]
+local timedWaitEntries = nil
+if status == 'waiting' then
+  local encodedIndex = nil
+  for i = 0, fieldCount - 1 do
+    local offset = fieldStart + (i * 2)
+    if ARGV[offset] == 'timedWaitIndex' then encodedIndex = ARGV[offset + 1] end
+  end
+  timedWaitEntries = validateTimedWaitRows(
+    encodedIndex,
+    expectedRunOrderPrefix,
+    expectedRunPayloadPrefix
+  )
+  if not timedWaitEntries then return -1 end
+end
+local publishedRows = validatePublishedTimedWaitRows(
+  redis.call('hget', KEYS[16], 'run:' .. runId),
+  true
+)
+if not publishedRows then return -2 end
 local oldWorkflowId = redis.call('hget', KEYS[6], runId)
 local oldStatus = redis.call('hget', KEYS[7], runId)
 redis.call('zrem', KEYS[2], runId)
@@ -322,10 +552,15 @@ redis.call('hdel', KEYS[6], runId)
 redis.call('hdel', KEYS[7], runId)
 redis.call('zrem', KEYS[8], runId)
 redis.call('del', KEYS[9], KEYS[10], KEYS[11], KEYS[12])
-local fieldCount = tonumber(ARGV[9])
-local fieldStart = 10
-local timedClaimPrefix = ARGV[fieldStart + (fieldCount * 2)]
-removeTimedWaitRows(runId, KEYS[16], KEYS[13], KEYS[14], KEYS[15], timedClaimPrefix)
+removeTimedWaitRows(
+  runId,
+  KEYS[16],
+  KEYS[13],
+  KEYS[14],
+  KEYS[15],
+  timedClaimPrefix,
+  publishedRows
+)
 for i = 0, fieldCount - 1 do
   local offset = fieldStart + (i * 2)
   redis.call('hset', KEYS[1], ARGV[offset], ARGV[offset + 1])
@@ -337,7 +572,7 @@ redis.call('zadd', KEYS[5], createdAtMs, runId)
 redis.call('hset', KEYS[6], runId, workflowId)
 redis.call('hset', KEYS[7], runId, status)
 if status == 'waiting' then
-  publishTimedWaitRows(KEYS[1], runId, KEYS[16], KEYS[13], KEYS[14])
+  publishTimedWaitRows(timedWaitEntries, runId, expectedRunOrderPrefix, expectedRunPayloadPrefix, KEYS[16], KEYS[13], KEYS[14])
 end
 if ttl and ttl > 0 then
   redis.call('expire', KEYS[1], ttl)
@@ -405,55 +640,30 @@ redis.call('hdel', KEYS[8], runId)
 redis.call('zrem', KEYS[9], runId)
 return 1`;
 
-/**
- * Lazily drain only retention-ledger entries whose deadline has passed. The
- * caller supplies its current time so the write script remains deterministic;
- * PTTL is rechecked before deletion, preventing a skewed clock from deleting a
- * live run. This is bounded and never scans the Redis keyspace.
- */
-const CLEANUP_EXPIRED_RUNS_SCRIPT = `-- cleanup-expired-workflow-runs
-${TIMED_WAIT_INDEX_LUA}
-local limit = tonumber(ARGV[9])
-local timedClaimPrefix = ARGV[10]
-local now = redis.call('time')
-local nowMs = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
-local runIds = redis.call('zrangebyscore', KEYS[1], '-inf', nowMs, 'LIMIT', 0, limit)
-for _, runId in ipairs(runIds) do
-  local runKey = ARGV[1] .. runId
-  local remaining = redis.call('pttl', runKey)
-  if remaining > 0 then
-    redis.call('zadd', KEYS[1], nowMs + remaining, runId)
-  elseif remaining == -1 then
-    redis.call('zrem', KEYS[1], runId)
-  else
-    local workflowId = redis.call('hget', KEYS[2], runId)
-    local status = redis.call('hget', KEYS[3], runId)
-    removeTimedWaitRows(runId, KEYS[8], KEYS[5], KEYS[6], KEYS[7], timedClaimPrefix)
-    redis.call('del', runKey, ARGV[2] .. runId, ARGV[3] .. runId, ARGV[4] .. runId, ARGV[5] .. runId)
-    redis.call('zrem', KEYS[4], runId)
-    if workflowId and workflowId ~= '' then
-      redis.call('zrem', ARGV[6] .. workflowId, runId)
-    end
-    if status and status ~= '' then
-      redis.call('zrem', ARGV[7] .. status, runId)
-    end
-    if workflowId and workflowId ~= '' and status and status ~= '' then
-      redis.call('zrem', ARGV[8] .. workflowId .. ':' .. status, runId)
-    end
-    redis.call('hdel', KEYS[2], runId)
-    redis.call('hdel', KEYS[3], runId)
-    redis.call('zrem', KEYS[1], runId)
-  end
-end
-local hasMore = redis.call('zcount', KEYS[1], '-inf', nowMs) > 0
-return {#runIds, hasMore and 1 or 0}`;
-
 const RETENTION_CLEANUP_LUA = `
 ${TIMED_WAIT_INDEX_LUA}
-local function removeRun(runId)
+
+local function validateIndexedRunRemoval(runId)
+  local rows = validatePublishedTimedWaitRows(
+    redis.call('hget', KEYS[8], 'run:' .. runId),
+    true
+  )
+  if not rows then error('invalid timed-wait publication metadata') end
+  return rows
+end
+
+local function removeRun(runId, validatedRows)
   local workflowId = redis.call('hget', KEYS[2], runId)
   local status = redis.call('hget', KEYS[3], runId)
-  removeTimedWaitRows(runId, KEYS[8], KEYS[5], KEYS[6], KEYS[7], ARGV[10])
+  removeTimedWaitRows(
+    runId,
+    KEYS[8],
+    KEYS[5],
+    KEYS[6],
+    KEYS[7],
+    ARGV[10],
+    validatedRows
+  )
   redis.call('del', ARGV[1] .. runId, ARGV[2] .. runId, ARGV[3] .. runId, ARGV[4] .. runId, ARGV[5] .. runId)
   redis.call('zrem', KEYS[4], runId)
   if workflowId and workflowId ~= '' then
@@ -470,30 +680,63 @@ local function removeRun(runId)
   redis.call('zrem', KEYS[1], runId)
 end
 
-local function cleanupRetention()
+local function planRetentionCleanup()
   local cleanupLimit = tonumber(ARGV[9])
   local now = redis.call('time')
   local nowMs = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
   local due = redis.call('zrangebyscore', KEYS[1], '-inf', nowMs, 'LIMIT', 0, cleanupLimit)
+  local actions = {}
+  local plannedRemovals = {}
+  local plannedRemovalCount = 0
   for _, runId in ipairs(due) do
     local remaining = redis.call('pttl', ARGV[1] .. runId)
     if remaining > 0 then
-      redis.call('zadd', KEYS[1], nowMs + remaining, runId)
+      table.insert(actions, {kind = 'reschedule', runId = runId, score = nowMs + remaining})
     elseif remaining == -1 then
-      redis.call('zrem', KEYS[1], runId)
+      table.insert(actions, {kind = 'forget', runId = runId})
     else
-      removeRun(runId)
+      local rows = validateIndexedRunRemoval(runId)
+      table.insert(actions, {kind = 'remove', runId = runId, rows = rows})
+      plannedRemovals[runId] = true
+      plannedRemovalCount = plannedRemovalCount + 1
     end
   end
-  local hasMore = redis.call('zcount', KEYS[1], '-inf', nowMs) > 0
-  return #due, hasMore
+  local hasMore = redis.call('zcount', KEYS[1], '-inf', nowMs) > #due
+  return actions, plannedRemovals, plannedRemovalCount, #due, hasMore
+end
+
+local function applyRetentionCleanup(actions)
+  for _, action in ipairs(actions) do
+    if action.kind == 'reschedule' then
+      redis.call('zadd', KEYS[1], action.score, action.runId)
+    elseif action.kind == 'forget' then
+      redis.call('zrem', KEYS[1], action.runId)
+    else
+      removeRun(action.runId, action.rows)
+    end
+  end
 end`;
+
+/**
+ * Lazily drain only retention-ledger entries whose deadline has passed. PTTL
+ * is rechecked before deletion, preventing a skewed clock from deleting a live
+ * run. The whole bounded batch is decoded and planned before its first write
+ * because Redis does not roll back earlier script mutations after a Lua error.
+ */
+const CLEANUP_EXPIRED_RUNS_SCRIPT = `-- cleanup-expired-workflow-runs
+${RETENTION_CLEANUP_LUA}
+local actions, _, _, processed, hasMore = planRetentionCleanup()
+applyRetentionCleanup(actions)
+return {processed, hasMore and 1 or 0}`;
 
 /** Bounded exact run page plus run/approval snapshots in one Redis transaction. */
 const LIST_RUNS_SCRIPT = `-- list-workflow-runs-exact
 ${RETENTION_CLEANUP_LUA}
-local processed, hasMore = cleanupRetention()
-if hasMore then return {0, processed, 'retention-backlog'} end
+local actions, plannedRemovals, plannedRemovalCount, processed, hasMore = planRetentionCleanup()
+if hasMore then
+  applyRetentionCleanup(actions)
+  return {0, processed, 'retention-backlog'}
+end
 local maxScore = ARGV[11]
 local minScore = ARGV[12]
 local offset = tonumber(ARGV[13])
@@ -510,10 +753,13 @@ for index = 1, selectedCount do
     'withscores',
     'limit',
     0,
-    window
+    window + plannedRemovalCount
   )
   for valueIndex = 1, #values, 2 do
-    byId[values[valueIndex]] = tonumber(values[valueIndex + 1])
+    local runId = values[valueIndex]
+    if not plannedRemovals[runId] then
+      byId[runId] = tonumber(values[valueIndex + 1])
+    end
   end
 end
 local ordered = {}
@@ -525,63 +771,123 @@ table.sort(ordered, function(left, right)
   return left[2] > right[2]
 end)
 local snapshots = {}
+local ghostRunId = nil
+local ghostRows = nil
 local last = math.min(#ordered, offset + limit)
 for index = offset + 1, last do
   local runId = ordered[index][1]
   local run = redis.call('hgetall', ARGV[1] .. runId)
   if #run == 0 then
-    removeRun(runId)
-    return {0, processed, 'index-ghost'}
+    ghostRunId = runId
+    ghostRows = validateIndexedRunRemoval(runId)
+    break
   end
   local approvals = redis.call('lrange', ARGV[3] .. runId, 0, -1)
   table.insert(snapshots, {run, approvals})
+end
+applyRetentionCleanup(actions)
+if ghostRunId then
+  removeRun(ghostRunId, ghostRows)
+  return {0, processed, 'index-ghost'}
 end
 return {1, processed, snapshots}`;
 
 /**
  * Bounded single-index cursor page for internal polling. The cursor is the
- * exact sorted-set (score, member) row from the prior page. If that row moved
- * or disappeared, restart from the head; the caller de-duplicates the replay.
+ * exact sorted-set (score, member) row from the prior page. If that row was
+ * removed, a read-only binary search finds its exclusive insertion point; a
+ * surviving member at a different score is rejected as a cursor mismatch.
  */
 const CURSOR_LIST_RUNS_SCRIPT = `-- cursor-page-workflow-runs-exact
 ${RETENTION_CLEANUP_LUA}
-local processed, hasMore = cleanupRetention()
-if hasMore then return {0, processed, 'retention-backlog'} end
+local actions, plannedRemovals, plannedRemovalCount, processed, hasMore = planRetentionCleanup()
+if hasMore then
+  applyRetentionCleanup(actions)
+  return {0, processed, 'retention-backlog'}
+end
 local cursorScore = ARGV[11]
 local cursorMember = ARGV[12]
 local limit = tonumber(ARGV[13])
+
+local function memberComesBeforeDescending(member, boundary)
+  local commonLength = math.min(string.len(member), string.len(boundary))
+  for index = 1, commonLength do
+    local memberByte = string.byte(member, index)
+    local boundaryByte = string.byte(boundary, index)
+    if memberByte ~= boundaryByte then return memberByte > boundaryByte end
+  end
+  return string.len(member) > string.len(boundary)
+end
+
+local function cursorInsertionPoint(score, member)
+  local low = 0
+  local high = redis.call('zcard', KEYS[9])
+  while low < high do
+    local middle = math.floor((low + high) / 2)
+    local row = redis.call('zrevrange', KEYS[9], middle, middle, 'withscores')
+    if #row ~= 2 then return nil end
+    local rowScore = tonumber(row[2])
+    local comesBefore = rowScore > score or
+      (rowScore == score and memberComesBeforeDescending(row[1], member))
+    if comesBefore then low = middle + 1 else high = middle end
+  end
+  return low
+end
+
 local start = 0
 if cursorMember ~= '' then
   local actualScore = redis.call('zscore', KEYS[9], cursorMember)
   if actualScore then
     if tonumber(actualScore) ~= tonumber(cursorScore) then
+      applyRetentionCleanup(actions)
       return {2, processed, 'cursor-score-mismatch'}
     end
     local rank = redis.call('zrevrank', KEYS[9], cursorMember)
-    if not rank then return {2, processed, 'cursor-rank-missing'} end
+    if not rank then
+      applyRetentionCleanup(actions)
+      return {2, processed, 'cursor-rank-missing'}
+    end
     start = rank + 1
   else
-    -- Reconstruct the insertion point even after the cursor run left this
-    -- status index. Redis executes the script atomically, so the temporary
-    -- boundary member is never externally visible.
-    redis.call('zadd', KEYS[9], tonumber(cursorScore), cursorMember)
-    local rank = redis.call('zrevrank', KEYS[9], cursorMember)
-    redis.call('zrem', KEYS[9], cursorMember)
-    if not rank then return {2, processed, 'cursor-rank-missing'} end
-    start = rank
+    start = cursorInsertionPoint(tonumber(cursorScore), cursorMember)
+    if not start then
+      applyRetentionCleanup(actions)
+      return {2, processed, 'cursor-rank-missing'}
+    end
   end
 end
-local values = redis.call('zrevrange', KEYS[9], start, start + limit - 1, 'withscores')
+local candidates = redis.call(
+  'zrevrange',
+  KEYS[9],
+  start,
+  start + limit + plannedRemovalCount - 1,
+  'withscores'
+)
+local values = {}
+for index = 1, #candidates, 2 do
+  if not plannedRemovals[candidates[index]] and #values < limit * 2 then
+    table.insert(values, candidates[index])
+    table.insert(values, candidates[index + 1])
+  end
+end
 local snapshots = {}
+local ghostRunId = nil
+local ghostRows = nil
 for index = 1, #values, 2 do
   local runId = values[index]
   local run = redis.call('hgetall', ARGV[1] .. runId)
   if #run == 0 then
-    removeRun(runId)
-    return {0, processed, 'index-ghost'}
+    ghostRunId = runId
+    ghostRows = validateIndexedRunRemoval(runId)
+    break
   end
   local approvals = redis.call('lrange', ARGV[3] .. runId, 0, -1)
   table.insert(snapshots, {run, approvals})
+end
+applyRetentionCleanup(actions)
+if ghostRunId then
+  removeRun(ghostRunId, ghostRows)
+  return {0, processed, 'index-ghost'}
 end
 local nextScore = ''
 local nextMember = ''
@@ -594,7 +900,8 @@ return {1, processed, snapshots, nextScore, nextMember, 0}`;
 /** Exact filtered count from disjoint ordered indexes, without run hydration. */
 const COUNT_RUNS_SCRIPT = `-- count-workflow-runs-exact
 ${RETENTION_CLEANUP_LUA}
-local processed, hasMore = cleanupRetention()
+local actions, _, _, processed, hasMore = planRetentionCleanup()
+applyRetentionCleanup(actions)
 if hasMore then return {0, processed, 'retention-backlog'} end
 local maxScore = ARGV[11]
 local minScore = ARGV[12]
@@ -611,6 +918,7 @@ if redis.call('exists', KEYS[1]) == 0 then return 0 end
 local remaining = redis.call('pttl', KEYS[1])
 if remaining == -2 or remaining == 0 then return 0 end
 redis.call('rpush', KEYS[2], ARGV[1])
+redis.call('ltrim', KEYS[2], -tonumber(ARGV[2]), -1)
 if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
 return 1`;
 
@@ -690,13 +998,51 @@ local invalidateTimedWait = ARGV[expectedCount + 8] == '1'
 local fieldCount = tonumber(ARGV[expectedCount + 9])
 local fieldStart = expectedCount + 10
 local timedClaimPrefix = ARGV[fieldStart + (fieldCount * 2)]
-if invalidateTimedWait then
-  removeTimedWaitRows(runId, KEYS[8], KEYS[5], KEYS[6], KEYS[7], timedClaimPrefix)
-end
-if nextStatus ~= '' and old ~= nextStatus then
-  local workflowId = redis.call('hget', KEYS[1], 'workflowId')
-  local createdAtMs = tonumber(redis.call('hget', KEYS[1], 'createdAtMs'))
+local expectedRunOrderPrefix = ARGV[fieldStart + (fieldCount * 2) + 1]
+local expectedRunPayloadPrefix = ARGV[fieldStart + (fieldCount * 2) + 2]
+local statusChanges = nextStatus ~= '' and old ~= nextStatus
+local workflowId = nil
+local createdAtMs = nil
+if statusChanges then
+  workflowId = redis.call('hget', KEYS[1], 'workflowId')
+  createdAtMs = tonumber(redis.call('hget', KEYS[1], 'createdAtMs'))
   if not workflowId or workflowId == '' or not createdAtMs then return -1 end
+end
+local resultingStatus = nextStatus ~= '' and nextStatus or old
+local timedWaitEntries = nil
+local publishedRows = nil
+if invalidateTimedWait then
+  publishedRows = validatePublishedTimedWaitRows(
+    redis.call('hget', KEYS[8], 'run:' .. runId),
+    true
+  )
+  if not publishedRows then return -3 end
+end
+if invalidateTimedWait and resultingStatus == 'waiting' then
+  local encodedIndex = redis.call('hget', KEYS[1], 'timedWaitIndex')
+  for i = 0, fieldCount - 1 do
+    local offset = fieldStart + (i * 2)
+    if ARGV[offset] == 'timedWaitIndex' then encodedIndex = ARGV[offset + 1] end
+  end
+  timedWaitEntries = validateTimedWaitRows(
+    encodedIndex,
+    expectedRunOrderPrefix,
+    expectedRunPayloadPrefix
+  )
+  if not timedWaitEntries then return -2 end
+end
+if invalidateTimedWait then
+  removeTimedWaitRows(
+    runId,
+    KEYS[8],
+    KEYS[5],
+    KEYS[6],
+    KEYS[7],
+    timedClaimPrefix,
+    publishedRows
+  )
+end
+if statusChanges then
   redis.call('hset', KEYS[1], 'status', nextStatus)
   redis.call('zrem', statusPrefix .. old, runId)
   redis.call('zrem', workflowStatusPrefix .. workflowId .. ':' .. old, runId)
@@ -709,7 +1055,7 @@ for i = 0, fieldCount - 1 do
   redis.call('hset', KEYS[1], ARGV[offset], ARGV[offset + 1])
 end
 if invalidateTimedWait and redis.call('hget', KEYS[1], 'status') == 'waiting' then
-  publishTimedWaitRows(KEYS[1], runId, KEYS[8], KEYS[5], KEYS[6])
+  publishTimedWaitRows(timedWaitEntries, runId, expectedRunOrderPrefix, expectedRunPayloadPrefix, KEYS[8], KEYS[5], KEYS[6])
 end
 if nextStatus ~= '' and nextStatus ~= 'running' then
   redis.call('del', KEYS[2])
@@ -726,9 +1072,16 @@ local cursorScore = redis.call('hget', KEYS[2], 'score') or ''
 local start = 0
 if cursorMember ~= '' then
   local actualScore = redis.call('zscore', KEYS[1], cursorMember)
-  if actualScore and tonumber(actualScore) == tonumber(cursorScore) then
-    local rank = redis.call('zrevrank', KEYS[1], cursorMember)
-    if rank then start = rank + 1 end
+  if actualScore then
+    if tonumber(actualScore) == tonumber(cursorScore) then
+      local rank = redis.call('zrevrank', KEYS[1], cursorMember)
+      if rank then start = rank + 1 end
+    else
+      -- The id now names a moved/recreated live row. Restarting this bounded
+      -- scan is safe because already-migrated hashes are skipped; temporarily
+      -- overwriting its score and ZREMing it would delete live index state.
+      start = 0
+    end
   else
     redis.call('zadd', KEYS[1], tonumber(cursorScore), cursorMember)
     local rank = redis.call('zrevrank', KEYS[1], cursorMember)
@@ -759,18 +1112,57 @@ local runPrefix = ARGV[1]
 local claimPrefix = ARGV[2]
 local count = tonumber(ARGV[3])
 local applied = 0
+local validated = {}
+local validatedPublishedRows = {}
 for index = 0, count - 1 do
-  local offset = 4 + (index * 3)
+  local offset = 4 + (index * 5)
   local runId = ARGV[offset]
   local observedNodeStates = ARGV[offset + 1]
   local encodedIndex = ARGV[offset + 2]
+  local expectedRunOrderPrefix = ARGV[offset + 3]
+  local expectedRunPayloadPrefix = ARGV[offset + 4]
   local runKey = runPrefix .. runId
   if redis.call('hget', runKey, 'status') == 'waiting' and
       redis.call('hexists', runKey, 'timedWaitIndex') == 0 and
       redis.call('hget', runKey, 'nodeStates') == observedNodeStates then
+    local entries = validateTimedWaitRows(
+      encodedIndex,
+      expectedRunOrderPrefix,
+      expectedRunPayloadPrefix
+    )
+    if not entries then return -1 end
+    local publishedRows = validatePublishedTimedWaitRows(
+      redis.call('hget', KEYS[3], 'run:' .. runId),
+      true
+    )
+    if not publishedRows then return -2 end
+    validated[index + 1] = entries
+    validatedPublishedRows[index + 1] = publishedRows
+  end
+end
+for index = 0, count - 1 do
+  local offset = 4 + (index * 5)
+  local runId = ARGV[offset]
+  local observedNodeStates = ARGV[offset + 1]
+  local encodedIndex = ARGV[offset + 2]
+  local expectedRunOrderPrefix = ARGV[offset + 3]
+  local expectedRunPayloadPrefix = ARGV[offset + 4]
+  local runKey = runPrefix .. runId
+  local entries = validated[index + 1]
+  if entries and redis.call('hget', runKey, 'status') == 'waiting' and
+      redis.call('hexists', runKey, 'timedWaitIndex') == 0 and
+      redis.call('hget', runKey, 'nodeStates') == observedNodeStates then
     redis.call('hset', runKey, 'timedWaitIndex', encodedIndex)
-    removeTimedWaitRows(runId, KEYS[3], KEYS[1], KEYS[2], KEYS[4], claimPrefix)
-    publishTimedWaitRows(runKey, runId, KEYS[3], KEYS[1], KEYS[2])
+    removeTimedWaitRows(
+      runId,
+      KEYS[3],
+      KEYS[1],
+      KEYS[2],
+      KEYS[4],
+      claimPrefix,
+      validatedPublishedRows[index + 1]
+    )
+    publishTimedWaitRows(entries, runId, expectedRunOrderPrefix, expectedRunPayloadPrefix, KEYS[3], KEYS[1], KEYS[2])
     applied = applied + 1
   end
 end
@@ -778,6 +1170,7 @@ return applied`;
 
 /** Atomically lease earliest due rows and recover expired claim leases. */
 const CLAIM_DUE_TIMED_WAITS_SCRIPT = `-- claim-due-timed-waits
+${TIMED_WAIT_INDEX_LUA}
 local now = tonumber(ARGV[1])
 local limit = tonumber(ARGV[2])
 local leaseDuration = tonumber(ARGV[3])
@@ -789,83 +1182,270 @@ local selectedIndex = requestedKind == 'delay' and KEYS[1] or KEYS[2]
 local serverTime = redis.call('time')
 local leaseNow = (tonumber(serverTime[1]) * 1000) + math.floor(tonumber(serverTime[2]) / 1000)
 
-local function findEntry(runKey, nodeId)
+local function inspectEntries(runKey, rowId)
   local encoded = redis.call('hget', runKey, 'timedWaitIndex')
-  if not encoded or encoded == '' then return nil end
-  for _, entry in ipairs(cjson.decode(encoded)) do
-    if entry.nodeId == nodeId then return entry end
+  if not encoded or encoded == '' then return nil, false, nil end
+  local decoded, entries = pcall(cjson.decode, encoded)
+  if not decoded or type(entries) ~= 'table' then return nil, false, nil end
+  local exact = nil
+  local hasDueEvent = false
+  for _, entry in ipairs(entries) do
+    if type(entry) == 'table' and entry.rowId == rowId then exact = entry end
+    if type(entry) == 'table' and entry.waitKind == 'event' and
+        tonumber(entry.deadline) and tonumber(entry.deadline) <= now then
+      hasDueEvent = true
+    end
   end
-  return nil
+  return exact, hasDueEvent, entries
 end
 
 local expired = redis.call('zrangebyscore', KEYS[3], '-inf', leaseNow, 'LIMIT', 0, limit)
 for _, rowId in ipairs(expired) do
   local claimKey = claimPrefix .. rowId
   if redis.call('exists', claimKey) == 0 then
-    redis.call('zrem', KEYS[3], rowId)
-    local identity = cjson.decode(rowId)
-    local runKey = runPrefix .. identity[1]
-    local entry = findEntry(runKey, identity[2])
-    if redis.call('hget', runKey, 'status') == 'waiting' and entry then
-      local target = entry.waitKind == 'delay' and KEYS[1] or KEYS[2]
-      redis.call('zadd', target, tonumber(entry.deadline), rowId)
+    local runId = redis.call('hget', KEYS[5], 'wait:' .. rowId)
+    if not runId then
+      removeTimedWaitRow(nil, rowId, KEYS[5], KEYS[1], KEYS[2], KEYS[3], claimPrefix)
+    else
+      local runKey = runPrefix .. runId
+      local entry, _, decodedEntries = inspectEntries(runKey, rowId)
+      local gateRow = redis.call('hget', KEYS[5], 'claim-row:' .. runId)
+      local expectedRunOrderPrefix = redis.call('hget', KEYS[5], 'order:' .. runId)
+      local expectedRunPayloadPrefix = redis.call('hget', KEYS[5], 'payload:' .. runId)
+      local publishedRows = validatePublishedTimedWaitRows(
+        redis.call('hget', KEYS[5], 'run:' .. runId),
+        false
+      )
+      if redis.call('hget', runKey, 'status') ~= 'waiting' then
+        if publishedRows then
+          removeTimedWaitRows(
+            runId,
+            KEYS[5],
+            KEYS[1],
+            KEYS[2],
+            KEYS[3],
+            claimPrefix,
+            publishedRows
+          )
+        end
+      elseif not publishedRows then
+        -- Corrupt publication metadata cannot authorize mutation.
+      elseif gateRow and gateRow ~= rowId then
+        -- A stale expiry entry must not disturb a newer run-scoped gate.
+        redis.call('zrem', KEYS[3], rowId)
+      elseif not decodedEntries then
+        -- Corrupt canonical state is left byte-for-byte intact for repair.
+      elseif not entry then
+        local entries = nil
+        if expectedRunOrderPrefix and expectedRunPayloadPrefix then
+          entries = validateTimedWaitRows(
+            redis.call('hget', runKey, 'timedWaitIndex'),
+            expectedRunOrderPrefix,
+            expectedRunPayloadPrefix
+          )
+        end
+        if entries and publishedTimedWaitRowsMatch(entries, publishedRows) then
+          removeTimedWaitRow(
+            runId,
+            rowId,
+            KEYS[5],
+            KEYS[1],
+            KEYS[2],
+            KEYS[3],
+            claimPrefix,
+            publishedRows
+          )
+          publishTimedWaitRows(
+            entries,
+            runId,
+            expectedRunOrderPrefix,
+            expectedRunPayloadPrefix,
+            KEYS[5],
+            KEYS[1],
+            KEYS[2]
+          )
+        end
+      elseif not expectedRunOrderPrefix or not expectedRunPayloadPrefix then
+        -- Missing publication metadata cannot authorize destructive cleanup.
+      else
+        local entries = validateTimedWaitRows(
+          redis.call('hget', runKey, 'timedWaitIndex'),
+          expectedRunOrderPrefix,
+          expectedRunPayloadPrefix
+        )
+        if entries and publishedTimedWaitRowsMatch(entries, publishedRows) then
+          redis.call('hdel', KEYS[5], 'claim-row:' .. runId, 'claim-token:' .. runId)
+          redis.call('zrem', KEYS[3], rowId)
+          publishTimedWaitRows(
+            entries,
+            runId,
+            expectedRunOrderPrefix,
+            expectedRunPayloadPrefix,
+            KEYS[5],
+            KEYS[1],
+            KEYS[2]
+          )
+        end
+      end
     end
   end
 end
 
-local candidates = redis.call('zrangebyscore', selectedIndex, '-inf', now, 'LIMIT', 0, limit)
+local candidates = redis.call(
+  'zrangebyscore',
+  selectedIndex,
+  '-inf',
+  now,
+  'LIMIT',
+  0,
+  limit + ${MAX_TIMED_WAIT_CLAIM_BATCH_SIZE}
+)
 local claims = {}
 for _, rowId in ipairs(candidates) do
-  local identity = cjson.decode(rowId)
-  local runId = identity[1]
-  local nodeId = identity[2]
-  local runKey = runPrefix .. runId
-  local entry = findEntry(runKey, nodeId)
-  local indexedDeadline = redis.call('zscore', selectedIndex, rowId)
-  if redis.call('hget', runKey, 'status') ~= 'waiting' or not entry then
-    redis.call('zrem', selectedIndex, rowId)
-  elseif entry.waitKind ~= requestedKind or
-      tonumber(entry.deadline) ~= tonumber(indexedDeadline) then
-    redis.call('zrem', KEYS[1], rowId)
-    redis.call('zrem', KEYS[2], rowId)
-    local currentIndex = entry.waitKind == 'delay' and KEYS[1] or KEYS[2]
-    redis.call('zadd', currentIndex, tonumber(entry.deadline), rowId)
+  if #claims >= limit then break end
+  local runId = redis.call('hget', KEYS[5], 'wait:' .. rowId)
+  if not runId then
+    removeTimedWaitRow(nil, rowId, KEYS[5], KEYS[1], KEYS[2], KEYS[3], claimPrefix)
   else
-    local fence = redis.call('incr', KEYS[4])
-    local token = ownerId .. ':' .. tostring(fence)
-    local claimKey = claimPrefix .. rowId
-    local acquired = redis.call('set', claimKey, token, 'NX', 'PX', leaseDuration)
-    if acquired then
-      local expiresAt = leaseNow + leaseDuration
-      redis.call('zrem', selectedIndex, rowId)
-      redis.call('zadd', KEYS[3], expiresAt, rowId)
-      table.insert(claims, {
+    local runKey = runPrefix .. runId
+    local entry, hasDueEvent = inspectEntries(runKey, rowId)
+    local expectedRunOrderPrefix = redis.call('hget', KEYS[5], 'order:' .. runId)
+    local expectedRunPayloadPrefix = redis.call('hget', KEYS[5], 'payload:' .. runId)
+    local publishedRows = validatePublishedTimedWaitRows(
+      redis.call('hget', KEYS[5], 'run:' .. runId),
+      false
+    )
+    local validatedEntries = nil
+    if expectedRunOrderPrefix and expectedRunPayloadPrefix then
+      validatedEntries = validateTimedWaitRows(
+        redis.call('hget', runKey, 'timedWaitIndex'),
+        expectedRunOrderPrefix,
+        expectedRunPayloadPrefix
+      )
+    end
+    if redis.call('hget', runKey, 'status') ~= 'waiting' then
+      if publishedRows then
+        removeTimedWaitRows(
+          runId,
+          KEYS[5],
+          KEYS[1],
+          KEYS[2],
+          KEYS[3],
+          claimPrefix,
+          publishedRows
+        )
+      end
+    elseif not publishedRows or not validatedEntries or
+        not publishedTimedWaitRowsMatch(validatedEntries, publishedRows) then
+      -- Corrupt or incomplete canonical state cannot authorize mutation.
+    elseif not entry then
+      removeTimedWaitRow(
+        runId,
         rowId,
-        tostring(entry.deadline),
-        token,
-        tostring(expiresAt),
-        redis.call('hgetall', runKey)
-      })
+        KEYS[5],
+        KEYS[1],
+        KEYS[2],
+        KEYS[3],
+        claimPrefix,
+        publishedRows
+      )
+    elseif redis.call('hget', KEYS[5], 'claim-token:' .. runId) then
+      deindexTimedWaitRows(runId, KEYS[5], KEYS[1], KEYS[2], nil, publishedRows)
+    elseif requestedKind == 'delay' and hasDueEvent then
+      deindexTimedWaitRows(runId, KEYS[5], KEYS[1], KEYS[2], 'delay', publishedRows)
+    else
+      local indexedDeadline = redis.call('zscore', selectedIndex, rowId)
+      if entry.waitKind ~= requestedKind or
+        tonumber(entry.deadline) ~= tonumber(indexedDeadline) then
+        redis.call('zrem', KEYS[1], rowId)
+        redis.call('zrem', KEYS[2], rowId)
+        local currentIndex = entry.waitKind == 'delay' and KEYS[1] or KEYS[2]
+        redis.call('zadd', currentIndex, tonumber(entry.deadline), rowId)
+      else
+        local fence = redis.call('incr', KEYS[4])
+        local token = ownerId .. ':' .. tostring(fence)
+        local claimKey = claimPrefix .. rowId
+        local acquired = redis.call('set', claimKey, token, 'NX', 'PX', leaseDuration)
+        if acquired then
+          local expiresAt = leaseNow + leaseDuration
+          redis.call(
+            'hset',
+            KEYS[5],
+            'claim-row:' .. runId,
+            rowId,
+            'claim-token:' .. runId,
+            token
+          )
+          deindexTimedWaitRows(runId, KEYS[5], KEYS[1], KEYS[2], nil, publishedRows)
+          redis.call('zadd', KEYS[3], expiresAt, rowId)
+          table.insert(claims, {
+            rowId,
+            tostring(entry.deadline),
+            token,
+            tostring(expiresAt),
+            redis.call('hgetall', runKey)
+          })
+        else
+          local existingToken = redis.call('get', claimKey)
+          local remaining = redis.call('pttl', claimKey)
+          if existingToken and remaining > 0 then
+            redis.call(
+              'hset',
+              KEYS[5],
+              'claim-row:' .. runId,
+              rowId,
+              'claim-token:' .. runId,
+              existingToken
+            )
+            deindexTimedWaitRows(runId, KEYS[5], KEYS[1], KEYS[2], nil, publishedRows)
+            redis.call('zadd', KEYS[3], leaseNow + remaining, rowId)
+          end
+        end
+      end
     end
   end
 end
 return claims`;
 
-/** Release one exact claim and restore only its still-current row. */
+/** Release one exact row/run claim and restore every still-current sibling. */
 const RELEASE_TIMED_WAIT_CLAIM_SCRIPT = `-- release-timed-wait-claim
+${TIMED_WAIT_INDEX_LUA}
 if redis.call('get', KEYS[4]) ~= ARGV[1] then return 0 end
+if redis.call('hget', KEYS[6], 'claim-row:' .. ARGV[3]) ~= ARGV[2] then return 0 end
+if redis.call('hget', KEYS[6], 'claim-token:' .. ARGV[3]) ~= ARGV[1] then return 0 end
+local waiting = redis.call('hget', KEYS[5], 'status') == 'waiting'
+local entries = nil
+if waiting then
+  entries = validateTimedWaitRows(
+    redis.call('hget', KEYS[5], 'timedWaitIndex'),
+    ARGV[5],
+    ARGV[6]
+  )
+  if not entries then return -1 end
+end
+local publishedRows = validatePublishedTimedWaitRows(
+  redis.call('hget', KEYS[6], 'run:' .. ARGV[3]),
+  not waiting
+)
+if not publishedRows or (waiting and not publishedTimedWaitRowsMatch(entries, publishedRows)) then
+  return -2
+end
 redis.call('del', KEYS[4])
 redis.call('zrem', KEYS[3], ARGV[2])
-if redis.call('hget', KEYS[5], 'status') ~= 'waiting' then return 1 end
-local encoded = redis.call('hget', KEYS[5], 'timedWaitIndex')
-if not encoded or encoded == '' then return 1 end
-for _, entry in ipairs(cjson.decode(encoded)) do
-  if entry.nodeId == ARGV[3] then
-    local target = entry.waitKind == 'delay' and KEYS[1] or KEYS[2]
-    redis.call('zadd', target, tonumber(entry.deadline), ARGV[2])
-    return 1
-  end
+redis.call('hdel', KEYS[6], 'claim-row:' .. ARGV[3], 'claim-token:' .. ARGV[3])
+if not waiting then
+  removeTimedWaitRows(
+    ARGV[3],
+    KEYS[6],
+    KEYS[1],
+    KEYS[2],
+    KEYS[3],
+    ARGV[4],
+    publishedRows
+  )
+  return 1
 end
+publishTimedWaitRows(entries, ARGV[3], ARGV[5], ARGV[6], KEYS[6], KEYS[1], KEYS[2])
 return 1`;
 
 /** Resolve one wait only while its exact row lease and run owner remain live. */
@@ -874,16 +1454,33 @@ ${TIMED_WAIT_INDEX_LUA}
 if redis.call('get', KEYS[2]) ~= ARGV[1] then return 0 end
 if redis.call('hget', KEYS[1], 'status') ~= 'waiting' then return 0 end
 if redis.call('hget', KEYS[1], 'workerId') ~= ARGV[5] then return 0 end
+if redis.call('hget', KEYS[7], 'claim-row:' .. ARGV[9]) ~= ARGV[2] then return 0 end
+if redis.call('hget', KEYS[7], 'claim-token:' .. ARGV[9]) ~= ARGV[1] then return 0 end
 local encoded = redis.call('hget', KEYS[1], 'timedWaitIndex')
-if not encoded or encoded == '' then return 0 end
+local expectedRunOrderPrefix = redis.call('hget', KEYS[7], 'order:' .. ARGV[9])
+local expectedRunPayloadPrefix = redis.call('hget', KEYS[7], 'payload:' .. ARGV[9])
+local entries = nil
+if expectedRunOrderPrefix and expectedRunPayloadPrefix then
+  entries = validateTimedWaitRows(
+    encoded,
+    expectedRunOrderPrefix,
+    expectedRunPayloadPrefix
+  )
+end
+if not entries then return -2 end
 local exact = false
-for _, entry in ipairs(cjson.decode(encoded)) do
-  if entry.nodeId == ARGV[3] and tonumber(entry.deadline) == tonumber(ARGV[4]) then
+for _, entry in ipairs(entries) do
+  if entry.rowId == ARGV[2] and tonumber(entry.deadline) == tonumber(ARGV[4]) then
     exact = true
     break
   end
 end
 if not exact then return 0 end
+local publishedRows = validatePublishedTimedWaitRows(
+  redis.call('hget', KEYS[7], 'run:' .. ARGV[9]),
+  false
+)
+if not publishedRows or not publishedTimedWaitRowsMatch(entries, publishedRows) then return -3 end
 
 local nextStatus = ARGV[6]
 local statusPrefix = ARGV[7]
@@ -896,7 +1493,15 @@ local workflowId = redis.call('hget', KEYS[1], 'workflowId')
 local createdAtMs = tonumber(redis.call('hget', KEYS[1], 'createdAtMs'))
 if not workflowId or workflowId == '' or not createdAtMs then return -1 end
 
-removeTimedWaitRows(runId, KEYS[7], KEYS[4], KEYS[5], KEYS[3], claimPrefix)
+removeTimedWaitRows(
+  runId,
+  KEYS[7],
+  KEYS[4],
+  KEYS[5],
+  KEYS[3],
+  claimPrefix,
+  publishedRows
+)
 redis.call('hset', KEYS[1], 'status', nextStatus)
 redis.call('zrem', statusPrefix .. 'waiting', runId)
 redis.call('zrem', workflowStatusPrefix .. workflowId .. ':waiting', runId)
@@ -926,6 +1531,7 @@ if redis.call('hget', KEYS[1], 'workerId') ~= expectedWorkerId then return 0 end
 local remaining = redis.call('pttl', KEYS[1])
 if remaining == -2 or remaining == 0 then return 0 end
 redis.call('rpush', KEYS[2], ARGV[expectedCount + 3])
+redis.call('ltrim', KEYS[2], -tonumber(ARGV[expectedCount + 4]), -1)
 if remaining > 0 then redis.call('pexpire', KEYS[2], remaining) end
 return 1`;
 
@@ -1107,6 +1713,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private runKey(runId: string): string {
+    assertWorkflowIdentity(runId, "Workflow run id");
     return `${this.runKeyPrefix()}${runId}`;
   }
 
@@ -1115,6 +1722,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private checkpointsKey(runId: string): string {
+    assertWorkflowIdentity(runId, "Workflow run id");
     return `${this.checkpointsKeyPrefix()}${runId}`;
   }
 
@@ -1123,6 +1731,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private approvalsKey(runId: string): string {
+    assertWorkflowIdentity(runId, "Workflow run id");
     return `${this.approvalsKeyPrefix()}${runId}`;
   }
 
@@ -1139,6 +1748,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private workflowIndexKey(workflowId: string): string {
+    assertWorkflowIdentity(workflowId, "Workflow id");
     return `${this.workflowIndexPrefix()}${workflowId}`;
   }
 
@@ -1147,6 +1757,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private workflowStatusIndexKey(workflowId: string, status: WorkflowStatus): string {
+    assertWorkflowIdentity(workflowId, "Workflow id");
     return `${this.workflowStatusIndexPrefix()}${workflowId}:${status}`;
   }
 
@@ -1249,6 +1860,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private lockKey(runId: string): string {
+    assertWorkflowIdentity(runId, "Workflow run id");
     return `${this.lockKeyPrefix()}${runId}`;
   }
 
@@ -1257,6 +1869,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private claimKey(runId: string): string {
+    assertWorkflowIdentity(runId, "Workflow run id");
     return `${this.claimKeyPrefix()}${runId}`;
   }
 
@@ -1293,6 +1906,10 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   private serializeRun(run: WorkflowRun): Record<string, string> {
+    assertWorkflowIdentity(run.id, "Workflow run id");
+    assertWorkflowIdentity(run.workflowId, "Workflow id");
+    if (run.version !== undefined) assertWorkflowIdentity(run.version, "Workflow version");
+    if (run.workerId !== undefined) assertWorkflowWorkerId(run.workerId);
     const sourceIntegrationPolicy = requireWorkflowSourceIntegrationPolicy(run);
     return {
       id: run.id,
@@ -1334,8 +1951,6 @@ export class RedisBackend implements WorkflowBackend {
         patch.nodeStates,
         patch.workerId ?? undefined,
       );
-    } else if (patch.status !== undefined && patch.status !== "waiting") {
-      fields.timedWaitIndex = "[]";
     }
     if (patch.currentNodes !== undefined) fields.currentNodes = JSON.stringify(patch.currentNodes);
     if (patch.context !== undefined) fields.context = JSON.stringify(patch.context);
@@ -1377,6 +1992,7 @@ export class RedisBackend implements WorkflowBackend {
         ...expectedStatuses,
         expectedWorkerId,
         value,
+        String(MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES),
       ],
     );
     return Number(result) === 1;
@@ -1391,7 +2007,7 @@ export class RedisBackend implements WorkflowBackend {
     const appended = await client.eval(
       APPEND_RUN_STATE_SCRIPT,
       [this.runKey(runId), storageKey],
-      [value],
+      [value, String(MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES)],
     );
     if (Number(appended) !== 1) {
       await this.cleanupMissingRun(client, runId);
@@ -1904,6 +2520,9 @@ export class RedisBackend implements WorkflowBackend {
 
   async createRun(run: WorkflowRun): Promise<void> {
     const serializedRun = this.serializeRun(run);
+    const [timedWaitRunOrderPrefix, timedWaitRunPayloadPrefix] = timedWaitRunPublicationIdentity(
+      run.id,
+    );
     const client = await this.ensureClient();
     const nowMs = Date.now();
     assertValidRunTtl(this.config.runTtl, nowMs);
@@ -1943,12 +2562,28 @@ export class RedisBackend implements WorkflowBackend {
         String(Object.keys(serializedRun).length),
         ...fieldArgs,
         this.timedWaitClaimKeyPrefix(),
+        timedWaitRunOrderPrefix,
+        timedWaitRunPayloadPrefix,
       ],
     );
-    if (Number(created) !== 1) {
+    const createCode = requireRedisScriptInteger(created, "workflow run creation");
+    if (createCode === -1) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected an invalid timed-wait index entry for run: ${run.id}`,
+      });
+    }
+    if (createCode === -2) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected invalid timed-wait publication metadata for run: ${run.id}`,
+      });
+    }
+    if (createCode === 0) {
       throw WORKFLOW_RUN_CONFLICT.create({
         detail: `Workflow run already exists: ${run.id}`,
       });
+    }
+    if (createCode !== 1) {
+      throw INVALID_ARGUMENT.create({ detail: "Invalid Redis workflow run creation response" });
     }
   }
 
@@ -2029,6 +2664,9 @@ export class RedisBackend implements WorkflowBackend {
     assertWorkflowRunUpdate(patch);
     const client = await this.ensureClient();
     const fields = this.serializeRunPatch(runId, patch);
+    const [timedWaitRunOrderPrefix, timedWaitRunPayloadPrefix] = timedWaitRunPublicationIdentity(
+      runId,
+    );
     const fieldArgs = Object.entries(fields).flatMap(([field, value]) => [field, value]);
     const result = await client.eval(
       UPDATE_RUN_IF_STATUS_SCRIPT,
@@ -2057,12 +2695,34 @@ export class RedisBackend implements WorkflowBackend {
         String(Object.keys(fields).length),
         ...fieldArgs,
         this.timedWaitClaimKeyPrefix(),
+        timedWaitRunOrderPrefix,
+        timedWaitRunPayloadPrefix,
       ],
     );
     const code = requireRedisScriptInteger(result, "conditional run update");
     if (code === -1) {
       throw SERVICE_OVERLOADED.create({
         detail: `Workflow run index metadata is incomplete for run: ${runId}`,
+      });
+    }
+    if (code === -2) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected an invalid timed-wait index entry for run: ${runId}`,
+      });
+    }
+    if (code === -3) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected invalid timed-wait publication metadata for run: ${runId}`,
+      });
+    }
+    if (code === -2) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected an invalid timed-wait index entry for run: ${runId}`,
+      });
+    }
+    if (code === -3) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected invalid timed-wait publication metadata for run: ${runId}`,
       });
     }
     if (code === 1) return true;
@@ -2307,10 +2967,15 @@ export class RedisBackend implements WorkflowBackend {
         throw INVALID_ARGUMENT.create({ detail: "Invalid Redis timed-wait migration row" });
       }
       const run = this.deserializeRun(arrayToObject(row as string[]));
+      const [timedWaitRunOrderPrefix, timedWaitRunPayloadPrefix] = timedWaitRunPublicationIdentity(
+        run.id,
+      );
       backfillArgs.push(
         run.id,
         JSON.stringify(run.nodeStates),
         serializeTimedWaitIndex(run),
+        timedWaitRunOrderPrefix,
+        timedWaitRunPayloadPrefix,
       );
     }
     if (backfillArgs.length === 0) return;
@@ -2326,12 +2991,22 @@ export class RedisBackend implements WorkflowBackend {
       [
         this.runKeyPrefix(),
         this.timedWaitClaimKeyPrefix(),
-        String(backfillArgs.length / 3),
+        String(backfillArgs.length / 5),
         ...backfillArgs,
       ],
     );
     const count = requireRedisScriptInteger(applied, "timed-wait migration backfill");
-    if (count < 0 || count > backfillArgs.length / 3) {
+    if (count === -1) {
+      throw SERVICE_OVERLOADED.create({
+        detail: "Redis rejected an invalid timed-wait index entry during migration backfill",
+      });
+    }
+    if (count === -2) {
+      throw SERVICE_OVERLOADED.create({
+        detail: "Redis rejected invalid timed-wait publication metadata during migration backfill",
+      });
+    }
+    if (count < 0 || count > backfillArgs.length / 5) {
       throw INVALID_ARGUMENT.create({
         detail: "Invalid Redis timed-wait migration backfill response code",
       });
@@ -2401,23 +3076,22 @@ export class RedisBackend implements WorkflowBackend {
       ) {
         throw INVALID_ARGUMENT.create({ detail: "Invalid Redis timed-wait claim row" });
       }
-      const identity = safeJsonParse<[string, string]>(encodedIdentity);
+      const identity = parseTimedWaitRowId(encodedIdentity);
       const deadline = Number(encodedDeadline);
       const leaseExpiresAtMs = Number(encodedExpiry);
       if (
-        !identity.ok || !Array.isArray(identity.value) || identity.value.length !== 2 ||
-        identity.value.some((value) => typeof value !== "string" || value.length === 0) ||
+        !identity ||
         !Number.isSafeInteger(deadline) || !Number.isSafeInteger(leaseExpiresAtMs)
       ) {
         throw INVALID_ARGUMENT.create({ detail: "Invalid Redis timed-wait claim row" });
       }
       const run = this.deserializeRun(arrayToObject(hashRow as string[]));
-      if (run.id !== identity.value[0]) {
+      if (run.id !== identity[0]) {
         throw INVALID_ARGUMENT.create({ detail: "Invalid Redis timed-wait claim identity" });
       }
       return {
         run: { ...run, pendingApprovals: [] },
-        nodeId: identity.value[1],
+        nodeId: identity[1],
         deadline,
         claimId,
         leaseExpiresAt: new Date(leaseExpiresAtMs),
@@ -2481,6 +3155,16 @@ export class RedisBackend implements WorkflowBackend {
         detail: `Workflow run index metadata is incomplete for run: ${runId}`,
       });
     }
+    if (code === -2) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected an invalid timed-wait index entry for run: ${runId}`,
+      });
+    }
+    if (code === -3) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected invalid timed-wait publication metadata for run: ${runId}`,
+      });
+    }
     if (code === 0 || code === 1) return code === 1;
     throw INVALID_ARGUMENT.create({ detail: "Invalid Redis timed-wait claim update response" });
   }
@@ -2492,7 +3176,10 @@ export class RedisBackend implements WorkflowBackend {
   ): Promise<boolean> {
     assertWorkflowLockId(claimId);
     const rowId = timedWaitRowId(runId, nodeId);
-    return requireRedisScriptBoolean(
+    const [timedWaitRunOrderPrefix, timedWaitRunPayloadPrefix] = timedWaitRunPublicationIdentity(
+      runId,
+    );
+    const result = requireRedisScriptInteger(
       await (await this.ensureClient()).eval(
         RELEASE_TIMED_WAIT_CLAIM_SCRIPT,
         [
@@ -2501,11 +3188,33 @@ export class RedisBackend implements WorkflowBackend {
           this.timedWaitClaimLeaseIndexKey(),
           this.timedWaitClaimKey(rowId),
           this.runKey(runId),
+          this.timedWaitRowsMetadataKey(),
         ],
-        [claimId, rowId, nodeId],
+        [
+          claimId,
+          rowId,
+          runId,
+          this.timedWaitClaimKeyPrefix(),
+          timedWaitRunOrderPrefix,
+          timedWaitRunPayloadPrefix,
+        ],
       ),
       "timed-wait claim release",
     );
+    if (result === -1) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected an invalid timed-wait index entry for run: ${runId}`,
+      });
+    }
+    if (result === -2) {
+      throw SERVICE_OVERLOADED.create({
+        detail: `Redis rejected invalid timed-wait publication metadata for run: ${runId}`,
+      });
+    }
+    if (result === 0 || result === 1) return result === 1;
+    throw INVALID_ARGUMENT.create({
+      detail: "Invalid Redis timed-wait claim release response code",
+    });
   }
 
   async countRuns(filter: RunFilter): Promise<number> {
@@ -2571,7 +3280,11 @@ export class RedisBackend implements WorkflowBackend {
 
   async getCheckpoints(runId: string): Promise<Checkpoint[]> {
     const client = await this.ensureClient();
-    const rawList = await client.lrange(this.checkpointsKey(runId), 0, -1);
+    const rawList = await client.lrange(
+      this.checkpointsKey(runId),
+      -MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES,
+      -1,
+    );
 
     return rawList.map((raw) => {
       const data = JSON.parse(raw);
@@ -2806,6 +3519,8 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async enqueue(job: WorkflowQueueItem): Promise<void> {
+    assertWorkflowIdentity(job.runId, "Workflow run id");
+    assertWorkflowIdentity(job.workflowId, "Workflow id");
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Enqueueing job: ${job.runId}`);
@@ -2834,6 +3549,8 @@ export class RedisBackend implements WorkflowBackend {
 
     const data = message.data;
     const runId = data.runId ?? "";
+    assertWorkflowIdentity(runId, "Workflow run id");
+    assertWorkflowIdentity(data.workflowId ?? "", "Workflow id");
 
     // Remember the stream message id so acknowledge()/nack() can XACK the exact
     // PEL entry. Without this the message stays pending forever and is
@@ -2854,6 +3571,7 @@ export class RedisBackend implements WorkflowBackend {
   }
 
   async acknowledge(runId: string): Promise<void> {
+    assertWorkflowIdentity(runId, "Workflow run id");
     const messageIds = this.pendingMessageIds.get(runId);
     if (!messageIds || messageIds.length === 0) {
       // Nothing tracked in this process — the message was either already acked

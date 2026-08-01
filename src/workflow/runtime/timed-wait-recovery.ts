@@ -1,13 +1,14 @@
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
+  assertWorkflowLockId,
+  assertWorkflowWorkerId,
   hasTimedWaitRecoverySupport,
+  isCanonicalWorkflowIdentity,
   type TimedWaitClaim,
   type WorkflowBackend,
-  type WorkflowRunCursor,
 } from "../backends/types.ts";
-import { compareRunIdsDescending } from "../backends/run-filter.ts";
-import { isCanonicalApprovalIdentity, type WorkflowRun } from "../types.ts";
+import type { WorkflowRun } from "../types.ts";
 import {
   MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES,
   MAX_WORKFLOW_DEFINITION_DEPTH,
@@ -17,7 +18,6 @@ import {
 import {
   getTimedWorkflowWaits,
   reconcileClaimedTimedWorkflowWait,
-  reconcileTimedWorkflowWait,
   type TimedWorkflowWaitReconciliationOutcome,
 } from "./timed-wait-reconciliation.ts";
 
@@ -54,8 +54,22 @@ export interface TimedWaitRecoveryCycleResult {
   readonly errors: TimedWaitRecoveryError[];
 }
 
-function isCanonicalIdentity(value: unknown): value is string {
-  return isCanonicalApprovalIdentity(value);
+function isCanonicalWorkerIdentity(value: unknown): value is string {
+  try {
+    assertWorkflowWorkerId(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isOpaqueClaimIdentity(value: unknown): value is string {
+  try {
+    assertWorkflowLockId(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function compareIdentities(left: string, right: string): number {
@@ -149,6 +163,74 @@ function snapshotTimedWaitData(
   return snapshot;
 }
 
+/**
+ * Durable run values are admitted independently by the executor and persisted
+ * as independent backend fields. Preserve that boundary while still applying
+ * the static-value limits to every field before recovery mutates the backend.
+ */
+function snapshotTimedWaitRunData(value: unknown): WorkflowRun {
+  if (
+    typeof value !== "object" || value === null || Array.isArray(value) ||
+    isProxyWithoutHooks(value)
+  ) throw new TypeError();
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError();
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES ||
+    keys.some((key) => typeof key !== "string")
+  ) throw new TypeError();
+
+  const snapshot = Object.create(prototype) as Record<string, unknown>;
+  for (const key of keys as string[]) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError();
+    const budget: TimedWaitSnapshotBudget = {
+      nodes: 0,
+      bytes: 0,
+      seen: new Map([[value, snapshot]]),
+    };
+    consumeSnapshotString(key, budget);
+    Object.defineProperty(snapshot, key, {
+      value: snapshotTimedWaitData(descriptor.value, budget, 1),
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return snapshot as unknown as WorkflowRun;
+}
+
+function snapshotTimedWaitClaim(value: unknown): TimedWaitClaim {
+  if (
+    typeof value !== "object" || value === null || Array.isArray(value) ||
+    isProxyWithoutHooks(value)
+  ) throw new TypeError();
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new TypeError();
+  const keys = Reflect.ownKeys(value);
+  if (
+    keys.length !== TIMED_WAIT_CLAIM_FIELDS.size ||
+    keys.some((key) => !TIMED_WAIT_CLAIM_FIELDS.has(key))
+  ) throw new TypeError();
+
+  const snapshot = Object.create(prototype) as Record<string, unknown>;
+  for (const key of keys as string[]) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError();
+    const field = key === "run"
+      ? snapshotTimedWaitRunData(descriptor.value)
+      : snapshotTimedWaitData(descriptor.value, { nodes: 0, bytes: 0, seen: new Map() });
+    Object.defineProperty(snapshot, key, {
+      value: field,
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return snapshot as unknown as TimedWaitClaim;
+}
+
 function snapshotTimedWaitClaimPage(value: unknown, limit: number): TimedWaitClaim[] {
   if (isProxyWithoutHooks(value) || !Array.isArray(value)) throw new TypeError();
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
@@ -164,31 +246,28 @@ function snapshotTimedWaitClaimPage(value: unknown, limit: number): TimedWaitCla
     )
   ) throw new TypeError();
 
-  const budget: TimedWaitSnapshotBudget = { nodes: 0, bytes: 0, seen: new Map() };
   const claims: TimedWaitClaim[] = [];
   for (let index = 0; index < length; index++) {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (!descriptor?.enumerable || !("value" in descriptor)) throw new TypeError();
-    const claim = snapshotTimedWaitData(descriptor.value, budget);
-    if (
-      typeof claim !== "object" || claim === null || Array.isArray(claim) ||
-      Reflect.ownKeys(claim).length !== TIMED_WAIT_CLAIM_FIELDS.size ||
-      Reflect.ownKeys(claim).some((key) => !TIMED_WAIT_CLAIM_FIELDS.has(key))
-    ) throw new TypeError();
-    claims.push(claim as TimedWaitClaim);
+    claims.push(snapshotTimedWaitClaim(descriptor.value));
   }
   return claims;
 }
 
 /** Shared bounded timed-wait recovery service used by every managed worker. */
 export class TimedWaitRecoveryService {
-  private legacyCursor?: WorkflowRunCursor;
   private readonly backend: WorkflowBackend;
   private readonly ownerId: string;
 
   constructor(backend: WorkflowBackend, ownerId: string) {
-    if (typeof ownerId !== "string" || ownerId.length === 0 || ownerId.trim() !== ownerId) {
+    if (!isCanonicalWorkerIdentity(ownerId)) {
       throw new TypeError("Timed-wait recovery owner id must be a canonical non-empty string");
+    }
+    if (!hasTimedWaitRecoverySupport(backend)) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Workflow backend must implement atomic indexed timed-wait recovery",
+      });
     }
     this.backend = backend;
     this.ownerId = ownerId;
@@ -204,15 +283,7 @@ export class TimedWaitRecoveryService {
       throw new TypeError("Timed-wait recovery awakened limit must be a non-negative integer");
     }
 
-    if (hasTimedWaitRecoverySupport(this.backend)) {
-      return await this.recoverIndexed(options);
-    }
-    if (typeof this.backend.listRunsAfterCursor === "function") {
-      return await this.recoverLegacyPage(options);
-    }
-    // Compatibility window for existing third-party worker backends. Once the
-    // managed-backend breaking policy is approved this branch can fail closed.
-    return { awakenedRuns: [], outcomes: [], errors: [] };
+    return await this.recoverIndexed(options);
   }
 
   private async recoverIndexed(
@@ -263,6 +334,7 @@ export class TimedWaitRecoveryService {
     try {
       const claims = snapshotTimedWaitClaimPage(value, request.limit);
       const rowIds = new Set<string>();
+      const runIds = new Set<string>();
       const claimIds = new Set<string>();
       let previous: TimedWaitClaim | undefined;
       for (const claim of claims) {
@@ -272,9 +344,10 @@ export class TimedWaitRecoveryService {
         const run = claim.run;
         if (
           typeof run !== "object" || run === null || Array.isArray(run) ||
-          !isCanonicalIdentity(run.id) || run.status !== "waiting" ||
-          !isCanonicalIdentity(run.workerId) || !isCanonicalIdentity(claim.nodeId) ||
-          !isCanonicalIdentity(claim.claimId) || claim.waitKind !== request.waitKind ||
+          !isCanonicalWorkflowIdentity(run.id) || run.status !== "waiting" ||
+          !isCanonicalWorkerIdentity(run.workerId) ||
+          !isCanonicalWorkflowIdentity(claim.nodeId) ||
+          !isOpaqueClaimIdentity(claim.claimId) || claim.waitKind !== request.waitKind ||
           !Number.isSafeInteger(claim.deadline) || claim.deadline > request.now
         ) {
           throw new TypeError();
@@ -287,15 +360,23 @@ export class TimedWaitRecoveryService {
         }
         if (!Number.isSafeInteger(leaseExpiresAt)) throw new TypeError();
 
-        const exactRegistration = getTimedWorkflowWaits(run).some((registration) =>
+        const registrations = getTimedWorkflowWaits(run);
+        const exactRegistration = registrations.some((registration) =>
           registration.nodeId === claim.nodeId && registration.deadline === claim.deadline &&
           registration.waitKind === claim.waitKind && registration.workerId === run.workerId
         );
-        if (!exactRegistration) throw new TypeError();
+        const hasDueEventSibling = claim.waitKind === "delay" &&
+          registrations.some((registration) =>
+            registration.waitKind === "event" && registration.deadline <= request.now
+          );
+        if (!exactRegistration || hasDueEventSibling) throw new TypeError();
 
         const rowId = JSON.stringify([run.id, claim.nodeId]);
-        if (rowIds.has(rowId) || claimIds.has(claim.claimId)) throw new TypeError();
+        if (
+          rowIds.has(rowId) || runIds.has(run.id) || claimIds.has(claim.claimId)
+        ) throw new TypeError();
         rowIds.add(rowId);
+        runIds.add(run.id);
         claimIds.add(claim.claimId);
 
         if (previous) {
@@ -332,7 +413,7 @@ export class TimedWaitRecoveryService {
       } catch (error) {
         let observedError: unknown = error;
         try {
-          await this.backend.releaseTimedWaitClaim!(claim.run.id, claim.nodeId, claim.claimId);
+          await this.releaseClaim(claim);
         } catch (releaseError) {
           observedError = new AggregateError(
             [error, releaseError],
@@ -344,7 +425,7 @@ export class TimedWaitRecoveryService {
       }
       if (!outcome || outcome.status === "not-due" || outcome.status === "unchanged") {
         try {
-          await this.backend.releaseTimedWaitClaim!(claim.run.id, claim.nodeId, claim.claimId);
+          await this.releaseClaim(claim);
         } catch (error) {
           errors.push({ error, runId: claim.run.id });
         }
@@ -355,85 +436,16 @@ export class TimedWaitRecoveryService {
     }
   }
 
-  private async recoverLegacyPage(
-    options: TimedWaitRecoveryCycleOptions,
-  ): Promise<TimedWaitRecoveryCycleResult> {
-    const requestedCursor = this.legacyCursor;
-    const page = await this.backend.listRunsAfterCursor!({
-      status: "waiting",
-      limit: TIMED_WAIT_RECOVERY_BATCH_SIZE,
-      cursor: requestedCursor,
-    });
-    this.validateLegacyPage(page, requestedCursor);
-    const last = page.at(-1);
-    this.legacyCursor = page.length === TIMED_WAIT_RECOVERY_BATCH_SIZE && last
-      ? { createdAt: new Date(last.createdAt), runId: last.id }
-      : undefined;
-
-    let awakened = 0;
-    const awakenedRuns: WorkflowRun[] = [];
-    const outcomes: TimedWorkflowWaitReconciliationOutcome[] = [];
-    const errors: TimedWaitRecoveryError[] = [];
-    for (const run of page) {
-      try {
-        const dueWaits = getTimedWorkflowWaits(run).filter((wait) => wait.deadline <= options.now);
-        // Event expiry is terminal and must not be hidden by an earlier delay
-        // when this compatibility path has no delay execution capacity.
-        const due = dueWaits.find((wait) => wait.waitKind === "event") ?? dueWaits[0];
-        if (!due || (due.waitKind === "delay" && awakened >= options.maxAwakened)) continue;
-        const outcome = await reconcileTimedWorkflowWait(this.backend, due, {
-          now: options.now,
-          nextWorkerId: options.nextWorkerId,
-        });
-        if (!outcome || outcome.status === "not-due" || outcome.status === "unchanged") continue;
-        if (outcome.status === "awakened") {
-          if (awakened >= options.maxAwakened) continue;
-          awakened++;
-          awakenedRuns.push(outcome.run);
-        }
-        outcomes.push(outcome);
-      } catch (error) {
-        errors.push({ error, runId: run.id });
-      }
-    }
-    return { awakenedRuns, outcomes, errors };
-  }
-
-  private validateLegacyPage(page: WorkflowRun[], requestedCursor?: WorkflowRunCursor): void {
-    if (page.length > TIMED_WAIT_RECOVERY_BATCH_SIZE) {
+  private async releaseClaim(claim: TimedWaitClaim): Promise<void> {
+    const released = await this.backend.releaseTimedWaitClaim!(
+      claim.run.id,
+      claim.nodeId,
+      claim.claimId,
+    );
+    if (typeof released !== "boolean") {
       throw ORCHESTRATION_ERROR.create({
-        detail: "Workflow backend exceeded the timed-wait recovery page limit",
+        detail: "Workflow backend returned a non-boolean timed-wait claim release result",
       });
-    }
-    let previous = requestedCursor;
-    for (const run of page) {
-      let createdAtMs: number;
-      try {
-        createdAtMs = Date.prototype.getTime.call(run.createdAt);
-      } catch {
-        createdAtMs = Number.NaN;
-      }
-      if (
-        run.status !== "waiting" || typeof run.id !== "string" || run.id.length === 0 ||
-        !Number.isFinite(createdAtMs)
-      ) {
-        throw ORCHESTRATION_ERROR.create({
-          detail: "Workflow backend returned an invalid timed-wait recovery row",
-        });
-      }
-      if (previous) {
-        const previousMs = previous.createdAt.getTime();
-        const strictlyAfter = createdAtMs < previousMs ||
-          (createdAtMs === previousMs &&
-            compareRunIdsDescending(run.id, previous.runId) > 0);
-        if (!strictlyAfter) {
-          throw ORCHESTRATION_ERROR.create({
-            detail:
-              "Workflow backend returned a duplicate or out-of-order timed-wait recovery page",
-          });
-        }
-      }
-      previous = { createdAt: new Date(createdAtMs), runId: run.id };
     }
   }
 }

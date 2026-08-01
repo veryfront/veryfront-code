@@ -17,8 +17,13 @@ import type { WorkflowRun } from "../types.ts";
 import { createWorkflowRunEntrypoint, EXIT_CODES, runWorkflowRun } from "./run-entrypoint.ts";
 import { getActiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
+import { WORKFLOW_RUNTIME_STATE_VERSION } from "../runtime-state.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
+const CURRENT_RUNTIME_STATE = {
+  _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+  _workflowProjection: { context: {} },
+} as const;
 
 const ENV_KEYS = [
   "WORKFLOW_RUN_ID",
@@ -532,6 +537,7 @@ describe("runWorkflowRun", () => {
     const executor = new WorkflowExecutor({ backend });
     const workflowDefinition = workflow({
       id: "running-workflow",
+      version: "1",
       steps: [
         step("finish", {
           tool: createMockTool("finish-tool", () => ({ ok: true })),
@@ -543,6 +549,7 @@ describe("runWorkflowRun", () => {
     const run: WorkflowRun = {
       id: "run-running",
       workflowId: "running-workflow",
+      version: "1",
       status: "running",
       input: {},
       nodeStates: {},
@@ -552,6 +559,7 @@ describe("runWorkflowRun", () => {
       pendingApprovals: [],
       createdAt: new Date(),
       sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      ...CURRENT_RUNTIME_STATE,
       startedAt: new Date(),
       workerId: "run-execution:run-exec-1",
     };
@@ -581,6 +589,7 @@ describe("runWorkflowRun", () => {
     let secondExecuted = false;
     const workflowDefinition = workflow({
       id: "checkpointed-workflow",
+      version: "1",
       steps: [
         step("first", {
           tool: createMockTool("first-tool", () => {
@@ -610,6 +619,7 @@ describe("runWorkflowRun", () => {
     const run: WorkflowRun = {
       id: "run-checkpointed",
       workflowId: "checkpointed-workflow",
+      version: "1",
       status: "running",
       input: {},
       nodeStates: { first: firstNodeState },
@@ -619,6 +629,7 @@ describe("runWorkflowRun", () => {
       pendingApprovals: [],
       createdAt: new Date(),
       sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+      ...CURRENT_RUNTIME_STATE,
       startedAt: new Date(),
       workerId: "run-execution:run-exec-2",
     };
@@ -654,6 +665,7 @@ describe("runWorkflowRun", () => {
     const backend = new EntrypointLifecycleBackend();
     const workflowDefinition = workflow({
       id: "static-approval-workflow",
+      version: "1",
       steps: [waitForApproval("review", { message: "Review static run" })],
     });
 
@@ -664,6 +676,7 @@ describe("runWorkflowRun", () => {
       const run: WorkflowRun = {
         id: "run-static-approval",
         workflowId: workflowDefinition.id,
+        version: "1",
         status: "running",
         input: {},
         nodeStates: {},
@@ -674,6 +687,7 @@ describe("runWorkflowRun", () => {
         createdAt: new Date(),
         startedAt: new Date(),
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        ...CURRENT_RUNTIME_STATE,
       };
       await backend.createRun(run);
       await prepareManagedExecution(backend, run, "static-approval-execution");
@@ -697,6 +711,7 @@ describe("runWorkflowRun", () => {
     const backend = new EntrypointLifecycleBackend();
     const workflowDefinition = workflow({
       id: "static-timed-wait-workflow",
+      version: "1",
       steps: [delay("pause", 60_000)],
     });
 
@@ -707,6 +722,7 @@ describe("runWorkflowRun", () => {
       const run: WorkflowRun = {
         id: "run-static-timed-wait",
         workflowId: workflowDefinition.id,
+        version: "1",
         status: "running",
         input: {},
         nodeStates: {},
@@ -717,6 +733,7 @@ describe("runWorkflowRun", () => {
         createdAt: new Date(),
         startedAt: new Date(),
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        ...CURRENT_RUNTIME_STATE,
       };
       await backend.createRun(run);
       await prepareManagedExecution(backend, run, "static-timed-wait-execution");
@@ -738,6 +755,7 @@ describe("runWorkflowRun", () => {
     const executionGate = Promise.withResolvers<void>();
     const workflowDefinition = workflow({
       id: "static-lifecycle-gate",
+      version: "1",
       steps: [
         step("gated", {
           tool: createMockTool("gated-tool", async () => {
@@ -756,6 +774,7 @@ describe("runWorkflowRun", () => {
       const run: WorkflowRun = {
         id: "run-static-lifecycle-gate",
         workflowId: workflowDefinition.id,
+        version: "1",
         status: "running",
         input: {},
         nodeStates: {},
@@ -765,6 +784,7 @@ describe("runWorkflowRun", () => {
         pendingApprovals: [],
         createdAt: new Date(),
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        ...CURRENT_RUNTIME_STATE,
       };
       await backend.createRun(run);
       await prepareManagedExecution(backend, run, "static-lifecycle-gate");
@@ -987,6 +1007,7 @@ describe("runWorkflowRun", () => {
     let replacementExecuted = false;
     const admittedWorkflow = workflow({
       id: "static-admission-snapshot",
+      version: "1",
       steps: [
         step("admitted", {
           tool: createMockTool("admitted-tool", () => {
@@ -998,6 +1019,7 @@ describe("runWorkflowRun", () => {
     });
     const replacementWorkflow = workflow({
       id: "replacement-workflow",
+      version: "1",
       steps: [
         step("replacement", {
           tool: createMockTool("replacement-tool", () => {
@@ -1035,6 +1057,7 @@ describe("runWorkflowRun", () => {
         const run: WorkflowRun = {
           id: "run-static-admission-snapshot",
           workflowId: admittedWorkflow.id,
+          version: "1",
           status: "running",
           input: {},
           nodeStates: {},
@@ -1044,6 +1067,7 @@ describe("runWorkflowRun", () => {
           pendingApprovals: [],
           createdAt: new Date(),
           sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+          ...CURRENT_RUNTIME_STATE,
         };
         await backend.createRun(run);
         await prepareManagedExecution(backend, run, "static-admission-snapshot");

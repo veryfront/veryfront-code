@@ -25,17 +25,32 @@ import type { ApprovalDecision, PendingApproval, WorkflowRun } from "../types.ts
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { ApprovalDecisionTiming, WorkflowRunUpdate } from "../backends/types.ts";
+import { WORKFLOW_RUNTIME_STATE_VERSION } from "../runtime-state.ts";
 
 const UNRESTRICTED_SOURCE_INTEGRATION_POLICY = normalizeSourceIntegrationPolicy(undefined);
 const BORROWED_BACKEND_OWNERSHIP: ApiBackendOwnership & PublicBackendOwnership = "borrowed";
 
 class RejectingApprovalPersistenceBackend extends MemoryBackend {
+  unconditionalApprovalSaves = 0;
+  ownerFencedApprovalSaves = 0;
+  ownerFencedWorkers: string[] = [];
+
+  override savePendingApproval(
+    runId: string,
+    approval: PendingApproval,
+  ): Promise<void> {
+    this.unconditionalApprovalSaves++;
+    return super.savePendingApproval(runId, approval);
+  }
+
   override savePendingApprovalIfStatusAndWorker(
     _runId: string,
     _expectedStatuses: WorkflowRun["status"][],
-    _expectedWorkerId: string,
+    expectedWorkerId: string,
     _approval: PendingApproval,
   ): Promise<boolean> {
+    this.ownerFencedApprovalSaves++;
+    this.ownerFencedWorkers.push(expectedWorkerId);
     return Promise.resolve(false);
   }
 }
@@ -389,6 +404,7 @@ describe("WorkflowClient", () => {
 
   const approvalWorkflow = workflow({
     id: "approval-workflow",
+    version: "1",
     steps: [
       step("prepare", { agent: "preparer" }),
       waitForApproval("review", { message: "Please review" }),
@@ -444,6 +460,7 @@ describe("WorkflowClient", () => {
       authoritativeClient.register(
         workflow({
           id: "authoritative-client-backend",
+          version: "1",
           steps: [waitForApproval("review")],
         }),
       );
@@ -631,14 +648,6 @@ describe("WorkflowClient", () => {
         );
 
         await handle.settled();
-        await sensitiveBackend.updateRun(handle.runId, {
-          output: {
-            input: {},
-            env: { PROJECT_SECRET: "historical-project-secret" },
-            _tenant: { token: "historical-tenant-secret" },
-            "safe-step": nestedUserOutput,
-          },
-        });
         const output = await handle.result();
         const rawCheckpoint = await sensitiveBackend.getLatestCheckpoint(handle.runId);
         assertExists(rawCheckpoint);
@@ -696,9 +705,7 @@ describe("WorkflowClient", () => {
 
         assertEquals(internalRun._tenant?.token, "tenant-secret");
         assertEquals(internalRun.context.env, { PROJECT_SECRET: "project-secret" });
-        assertEquals((internalRun.output as Record<string, unknown>).env, {
-          PROJECT_SECRET: "historical-project-secret",
-        });
+        assertEquals(internalRun.output, expectedOutput);
         assertEquals(rawCheckpoint.context.env, { PROJECT_SECRET: "project-secret" });
         assertEquals(rawCheckpoint.context._tenant, {
           projectSlug: "private-project",
@@ -800,6 +807,7 @@ describe("WorkflowClient", () => {
 
         const tenantWorkflow = workflow({
           id: "tenant-scoped-tool-workflow",
+          version: "1",
           steps: [step("tenant-step", { tool: "scoped-tool" })],
         });
         scopedClient.register(tenantWorkflow);
@@ -807,6 +815,7 @@ describe("WorkflowClient", () => {
         const run: WorkflowRun = {
           id: "run-scoped-tool",
           workflowId: tenantWorkflow.id,
+          version: "1",
           status: "pending",
           input: {},
           nodeStates: {},
@@ -817,6 +826,8 @@ describe("WorkflowClient", () => {
           createdAt: new Date(),
           workerId: "worker-current-owner",
           sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+          _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+          _workflowProjection: { context: {} },
           _tenant: {
             projectSlug: "acme",
             token: "tenant-token",
@@ -898,6 +909,7 @@ describe("WorkflowClient", () => {
       await backend.createRun({
         id: runId,
         workflowId: "approval-workflow",
+        version: "1",
         status: "waiting",
         input: {},
         nodeStates: {},
@@ -907,6 +919,8 @@ describe("WorkflowClient", () => {
         pendingApprovals: [],
         createdAt: new Date(),
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        _workflowProjection: { context: {} },
       });
 
       await backend.savePendingApproval(runId, {
@@ -924,7 +938,7 @@ describe("WorkflowClient", () => {
       const hostileClient = createWorkflowClient({ backend: hostileBackend });
       const workflowId = "hostile-persisted-wait";
       hostileClient.register(
-        workflow({ id: workflowId, steps: [waitForApproval("review")] }),
+        workflow({ id: workflowId, version: "1", steps: [waitForApproval("review")] }),
       );
       let hooks = 0;
       hostileBackend.injectNextWaitingInput = new Proxy({}, {
@@ -982,6 +996,7 @@ describe("WorkflowClient", () => {
       restrictedClient.register(
         workflow({
           id: workflowId,
+          version: "1",
           steps: [
             waitForApproval("review", {
               approvers: ["alice@example.com"],
@@ -1054,6 +1069,7 @@ describe("WorkflowClient", () => {
       lockedClient.register(
         workflow({
           id: workflowId,
+          version: "1",
           steps: [
             waitForApproval("review"),
             dependsOn(
@@ -1066,6 +1082,7 @@ describe("WorkflowClient", () => {
       const run: WorkflowRun = {
         id: "run-immediate-approval",
         workflowId,
+        version: "1",
         status: "pending",
         input: {},
         nodeStates: {},
@@ -1076,6 +1093,8 @@ describe("WorkflowClient", () => {
         createdAt: new Date(),
         workerId: "worker-current-owner",
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        _workflowProjection: { context: {} },
       };
       await lockedBackend.createRun(run);
       const waitingExecution = lockedClient.resume(run.id, run.workerId);
@@ -1097,16 +1116,17 @@ describe("WorkflowClient", () => {
       }
     });
 
-    it("fails an owner-bound run when approval persistence fails", async () => {
+    it("fails an owner-bound wait when fenced approval persistence is rejected", async () => {
       const rejectingBackend = new RejectingApprovalPersistenceBackend();
       const rejectingClient = createWorkflowClient({ backend: rejectingBackend });
       const workflowId = "approval-persistence-failure-workflow";
       rejectingClient.register(
-        workflow({ id: workflowId, steps: [waitForApproval("review")] }),
+        workflow({ id: workflowId, version: "1", steps: [waitForApproval("review")] }),
       );
       const run: WorkflowRun = {
         id: "run-approval-persistence-failure",
         workflowId,
+        version: "1",
         status: "pending",
         input: {},
         nodeStates: {},
@@ -1117,6 +1137,8 @@ describe("WorkflowClient", () => {
         createdAt: new Date(),
         workerId: "worker-current-owner",
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        _workflowProjection: { context: {} },
       };
       await rejectingBackend.createRun(run);
 
@@ -1127,8 +1149,15 @@ describe("WorkflowClient", () => {
           "ownership changed before approval persistence",
         );
 
+        assertEquals(rejectingBackend.ownerFencedApprovalSaves, 1);
+        assertEquals(rejectingBackend.ownerFencedWorkers, [run.workerId]);
+        assertEquals(rejectingBackend.unconditionalApprovalSaves, 0);
         const failedRun = await rejectingBackend.getRun(run.id);
         assertEquals(failedRun?.status, "failed");
+        assertEquals(
+          failedRun?.error?.message,
+          "Workflow execution ownership changed before approval persistence",
+        );
         assertEquals(await rejectingBackend.getPendingApprovals(run.id), []);
       } finally {
         await rejectingClient.destroy();
@@ -1980,6 +2009,7 @@ describe("WorkflowClient", () => {
       lifecycleClient.register(
         workflow({
           id: "client-result-waiter-lifecycle",
+          version: "1",
           steps: [waitForApproval("review")],
         }),
       );
@@ -2039,12 +2069,14 @@ describe("WorkflowClient", () => {
       lifecycleClient.register(
         workflow({
           id: "client-resume-destroy",
+          version: "1",
           steps: [step("block", { tool: blockingTool })],
         }),
       );
       await lifecycleBackend.createRun({
         id: "client-resume-destroy-run",
         workflowId: "client-resume-destroy",
+        version: "1",
         status: "pending",
         input: {},
         nodeStates: {},
@@ -2054,6 +2086,8 @@ describe("WorkflowClient", () => {
         pendingApprovals: [],
         createdAt: new Date(),
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        _workflowProjection: { context: {} },
       });
       const resumePromise = lifecycleClient.resume("client-resume-destroy-run");
       let destroyPromise: Promise<void> | undefined;
@@ -2096,6 +2130,7 @@ describe("WorkflowClient", () => {
       lifecycleClient.register(
         workflow({
           id: "client-stale-resume",
+          version: "1",
           steps: [step("block", { tool: blockingTool })],
         }),
       );
@@ -2105,6 +2140,7 @@ describe("WorkflowClient", () => {
       await lifecycleBackend.createRun({
         id: runId,
         workflowId: "client-stale-resume",
+        version: "1",
         status: "pending",
         input: {},
         nodeStates: {},
@@ -2115,6 +2151,8 @@ describe("WorkflowClient", () => {
         createdAt: new Date(),
         workerId: admittedWorkerId,
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        _workflowProjection: { context: {} },
       });
 
       const resumePromise = lifecycleClient.resume(runId, admittedWorkerId);
@@ -2186,6 +2224,7 @@ describe("WorkflowClient", () => {
       });
       const approvalWorkflow = workflow({
         id: "client-approval-destroy",
+        version: "1",
         steps: [waitForApproval("review")],
       });
       lifecycleClient.register(approvalWorkflow);
@@ -2196,6 +2235,7 @@ describe("WorkflowClient", () => {
       await lifecycleBackend.createRun({
         id: runId,
         workflowId: "client-approval-destroy",
+        version: "1",
         status: "waiting",
         input: {},
         nodeStates: {},
@@ -2206,6 +2246,8 @@ describe("WorkflowClient", () => {
         createdAt: new Date(),
         workerId: "run-execution:decision-original",
         sourceIntegrationPolicy: UNRESTRICTED_SOURCE_INTEGRATION_POLICY,
+        _runtimeStateVersion: WORKFLOW_RUNTIME_STATE_VERSION,
+        _workflowProjection: { context: {} },
       });
       await lifecycleBackend.savePendingApproval(runId, {
         id: approvalId,

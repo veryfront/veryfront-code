@@ -20,6 +20,8 @@ import {
   cloneCapturedWorkflowStaticValue,
 } from "./workflow-definition-snapshot.ts";
 import { captureCanonicalWorkflowGraphIdentity } from "./dag/graph-identity.ts";
+import { MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES } from "../limits.ts";
+import { markWorkflowVersionAdmissionError } from "./workflow-version-admission-error.ts";
 
 const logger = baseLogger.component("checkpoint-manager");
 
@@ -37,11 +39,22 @@ export interface ResumeInfo {
   graphAdmission?: WorkflowGraphAdmission;
 }
 
+export interface CheckpointRunRecoveryState {
+  context: WorkflowContext;
+  workflowProjection?: WorkflowProjectionState;
+  /** Immutable workflow version persisted on the owning run. */
+  workflowVersion?: string | null;
+}
+
 function recoveryFailure(detail: string, cause?: unknown): Error {
   return ORCHESTRATION_ERROR.create({
     detail: `Cannot safely resume workflow checkpoint: ${detail}`,
     ...(cause === undefined ? {} : { cause }),
   });
+}
+
+function workflowVersionRecoveryFailure(detail: string): Error {
+  return markWorkflowVersionAdmissionError(recoveryFailure(detail));
 }
 
 function inspectPlainRecord(value: unknown, label: string): Record<PropertyKey, unknown> {
@@ -109,6 +122,31 @@ function captureDurableRecord<T extends object>(value: unknown, label: string): 
 }
 
 const NODE_STATUSES = new Set(["pending", "running", "completed", "failed", "skipped"]);
+const intrinsicDateGetTime = Date.prototype.getTime;
+
+function captureCheckpointDate(
+  value: unknown,
+  label: string,
+  acceptString: boolean,
+): Date {
+  if (isProxyWithoutHooks(value)) {
+    throw recoveryFailure(`${label} must not be a Proxy`);
+  }
+  const date = acceptString && typeof value === "string" ? new Date(value) : value;
+  if (isProxyWithoutHooks(date) || typeof date !== "object" || date === null) {
+    throw recoveryFailure(`${label} must be a valid Date`);
+  }
+  let timestamp: number;
+  try {
+    timestamp = Reflect.apply(intrinsicDateGetTime, date, []) as number;
+  } catch (cause) {
+    throw recoveryFailure(`${label} must be a valid Date`, cause);
+  }
+  if (!Number.isFinite(timestamp)) {
+    throw recoveryFailure(`${label} must be a valid Date`);
+  }
+  return new Date(timestamp);
+}
 
 function normalizeNodeStateDate(
   state: Record<PropertyKey, unknown>,
@@ -117,12 +155,9 @@ function normalizeNodeStateDate(
 ): void {
   const value = readOwnData(state, key, label, false);
   if (value === undefined) return;
-  const date = value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
-  if (!date || !Number.isFinite(date.getTime())) {
-    throw recoveryFailure(`${label}.${key} must be a valid Date`);
-  }
+  const date = captureCheckpointDate(value, `${label}.${key}`, true);
   Object.defineProperty(state, key, {
-    value: new Date(date.getTime()),
+    value: date,
     enumerable: true,
     configurable: true,
     writable: true,
@@ -199,6 +234,231 @@ function captureGraphAdmission(value: unknown): WorkflowGraphAdmission {
   };
 }
 
+function captureLegacyGraphAdmission(
+  nodesOrResolver: WorkflowNode[] | ((context: WorkflowContext) => WorkflowNode[]),
+  evaluationContext: WorkflowContext,
+  evaluationProjection: WorkflowProjectionState,
+  workflowVersion: string | null | undefined,
+): { nodes: WorkflowNode[]; graphAdmission: WorkflowGraphAdmission } {
+  const stepsEvaluationContext = captureDurableRecord<WorkflowContext>(
+    evaluationContext,
+    "legacy workflow steps evaluation context",
+  );
+  const stepsEvaluationProjection = captureProjection(
+    evaluationProjection,
+    "legacy workflow steps evaluation projection",
+  );
+  let nodes: WorkflowNode[];
+  try {
+    nodes = typeof nodesOrResolver === "function"
+      ? nodesOrResolver(cloneCapturedWorkflowStaticValue(
+        stepsEvaluationContext,
+        "Legacy workflow steps callback context",
+      ))
+      : nodesOrResolver;
+  } catch (cause) {
+    throw recoveryFailure("legacy workflow graph builder failed", cause);
+  }
+  return {
+    nodes,
+    graphAdmission: {
+      stepsEvaluationContext,
+      stepsEvaluationProjection,
+      graphIdentity: captureCanonicalWorkflowGraphIdentity(nodes),
+      workflowVersion: workflowVersion ?? null,
+    },
+  };
+}
+
+function requireLegacyWorkflowVersionProof(
+  expectedWorkflowVersion: string | null | undefined,
+  recoveryState: CheckpointRunRecoveryState | undefined,
+  label: string,
+): CheckpointRunRecoveryState & { workflowVersion: string } {
+  const storedWorkflowVersion = recoveryState?.workflowVersion;
+  if (
+    expectedWorkflowVersion === undefined || expectedWorkflowVersion === null ||
+    storedWorkflowVersion === undefined || storedWorkflowVersion === null
+  ) {
+    throw workflowVersionRecoveryFailure(
+      `${label} has no complete durable workflow-version proof; migration is required`,
+    );
+  }
+  if (storedWorkflowVersion !== expectedWorkflowVersion) {
+    throw workflowVersionRecoveryFailure(
+      `stored workflow version "${storedWorkflowVersion}" does not match current version ` +
+        `"${expectedWorkflowVersion}"`,
+    );
+  }
+  return recoveryState as CheckpointRunRecoveryState & { workflowVersion: string };
+}
+
+function captureResumeEnvelopeSnapshot(value: unknown, label: string): Record<string, unknown> {
+  const record = inspectPlainRecord(value, label);
+  const schemaVersion = readOwnData(record, "schemaVersion", label);
+  if (schemaVersion === 1) {
+    const startFromNode = readOwnData(record, "startFromNode", label);
+    if (typeof startFromNode !== "string" || startFromNode.length === 0) {
+      throw recoveryFailure(`${label}.startFromNode must be a non-empty string`);
+    }
+    return {
+      schemaVersion: 1,
+      startFromNode,
+      context: captureDurableRecord<WorkflowContext>(
+        readOwnData(record, "context", label),
+        `${label}.context`,
+      ),
+      nodeStates: captureNodeStates(
+        readOwnData(record, "nodeStates", label),
+        `${label}.nodeStates`,
+      ),
+      workflowProjection: captureProjection(
+        readOwnData(record, "workflowProjection", label),
+        `${label}.workflowProjection`,
+      ),
+    };
+  }
+  if (schemaVersion === 2) {
+    const ownerNodeId = readOwnData(record, "ownerNodeId", label);
+    if (typeof ownerNodeId !== "string" || ownerNodeId.length === 0) {
+      throw recoveryFailure(`${label}.ownerNodeId must be a non-empty string`);
+    }
+    return {
+      schemaVersion: 2,
+      ownerNodeId,
+      context: captureDurableRecord<WorkflowContext>(
+        readOwnData(record, "context", label),
+        `${label}.context`,
+      ),
+      nodeStates: captureNodeStates(
+        readOwnData(record, "nodeStates", label),
+        `${label}.nodeStates`,
+      ),
+      workflowProjection: captureProjection(
+        readOwnData(record, "workflowProjection", label),
+        `${label}.workflowProjection`,
+      ),
+      graphAdmission: captureGraphAdmission(
+        readOwnData(record, "graphAdmission", label),
+      ),
+    };
+  }
+  throw recoveryFailure(`${label} has unsupported schema ${String(schemaVersion)}`);
+}
+
+function captureCheckpointSnapshot(value: unknown, label = "checkpoint"): Checkpoint {
+  const record = inspectPlainRecord(value, label);
+  const id = readOwnData(record, "id", label);
+  const nodeId = readOwnData(record, "nodeId", label);
+  if (typeof id !== "string" || id.length === 0) {
+    throw recoveryFailure(`${label} id must be a non-empty string`);
+  }
+  if (typeof nodeId !== "string" || nodeId.length === 0) {
+    throw recoveryFailure(`${label} nodeId must be a non-empty string`);
+  }
+  const timestamp = captureCheckpointDate(
+    readOwnData(record, "timestamp", label),
+    `${label}.timestamp`,
+    false,
+  );
+  const context = captureDurableRecord<WorkflowContext>(
+    readOwnData(record, "context", label),
+    `${label}.context`,
+  );
+  const nodeStates = captureNodeStates(
+    readOwnData(record, "nodeStates", label),
+    `${label}.nodeStates`,
+  );
+  const rawProjection = readOwnData(record, "_workflowProjection", label, false);
+  const workflowProjection = rawProjection === undefined
+    ? undefined
+    : captureProjection(rawProjection, `${label}._workflowProjection`);
+  const rawEnvelope = readOwnData(record, "_resumeEnvelope", label, false);
+  const resumeEnvelope = rawEnvelope === undefined
+    ? undefined
+    : captureResumeEnvelopeSnapshot(rawEnvelope, `${label}._resumeEnvelope`);
+
+  return {
+    id,
+    nodeId,
+    timestamp,
+    context,
+    nodeStates,
+    ...(workflowProjection === undefined ? {} : { _workflowProjection: workflowProjection }),
+    ...(resumeEnvelope === undefined
+      ? {}
+      // The public Checkpoint type models only newly-written schema-2
+      // envelopes; schema-1 is retained here solely for compatibility decode.
+      : {
+        _resumeEnvelope: resumeEnvelope as unknown as NonNullable<Checkpoint["_resumeEnvelope"]>,
+      }),
+  };
+}
+
+function captureCheckpointHistory(value: unknown): Checkpoint[] {
+  const label = "checkpoint history";
+  if (isProxyWithoutHooks(value) || !Array.isArray(value)) {
+    throw recoveryFailure(`${label} must be a non-Proxy dense array`);
+  }
+
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch (cause) {
+    throw recoveryFailure(`${label} length could not be inspected`, cause);
+  }
+  if (
+    !lengthDescriptor || !("value" in lengthDescriptor) ||
+    !Number.isSafeInteger(lengthDescriptor.value) || lengthDescriptor.value < 0
+  ) {
+    throw recoveryFailure(`${label} length must be an own non-negative safe integer`);
+  }
+  const length = lengthDescriptor.value as number;
+  if (length > MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES) {
+    throw recoveryFailure(
+      `${label} must contain at most ${MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES} entries`,
+    );
+  }
+
+  let ownKeys: PropertyKey[];
+  try {
+    ownKeys = Reflect.ownKeys(value);
+  } catch (cause) {
+    throw recoveryFailure(`${label} own keys could not be inspected`, cause);
+  }
+  const expectedKeys = new Set<PropertyKey>([
+    "length",
+    ...Array.from({ length }, (_, index) => String(index)),
+  ]);
+  if (
+    ownKeys.length !== expectedKeys.size ||
+    ownKeys.some((key) => !expectedKeys.has(key))
+  ) {
+    throw recoveryFailure(`${label} must contain exactly its dense entries and length`);
+  }
+
+  const history = new Array<Checkpoint>(length);
+  for (let index = 0; index < length; index++) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch (cause) {
+      throw recoveryFailure(`${label}[${index}] could not be inspected`, cause);
+    }
+    if (!descriptor) {
+      throw recoveryFailure(`${label} must be dense; entry ${index} is missing`);
+    }
+    if (!("value" in descriptor)) {
+      throw recoveryFailure(`${label}[${index}] must be an own data property`);
+    }
+    history[index] = captureCheckpointSnapshot(
+      descriptor.value,
+      `${label}[${index}]`,
+    );
+  }
+  return history;
+}
+
 /** Canonical run identity used to fence auxiliary writes from stale workers. */
 export interface CheckpointOwnership {
   runId: string;
@@ -258,16 +518,19 @@ export class CheckpointManager {
     return checkpoint;
   }
 
-  getLatest(runId: string): Promise<Checkpoint | null> {
-    return this.config.backend.getLatestCheckpoint(runId);
+  async getLatest(runId: string): Promise<Checkpoint | null> {
+    const checkpoint = await this.config.backend.getLatestCheckpoint(runId);
+    return checkpoint === null ? null : captureCheckpointSnapshot(checkpoint);
   }
 
   async getAll(runId: string): Promise<Checkpoint[]> {
     const { getCheckpoints } = this.config.backend;
-    if (getCheckpoints) return getCheckpoints.call(this.config.backend, runId);
+    if (getCheckpoints) {
+      return captureCheckpointHistory(await getCheckpoints.call(this.config.backend, runId));
+    }
 
     const latest = await this.getLatest(runId);
-    return latest ? [latest] : [];
+    return captureCheckpointHistory(latest ? [latest] : []);
   }
 
   async prepareResume(
@@ -275,6 +538,7 @@ export class CheckpointManager {
     nodesOrResolver: WorkflowNode[] | ((context: WorkflowContext) => WorkflowNode[]),
     fromCheckpoint?: string,
     expectedWorkflowVersion?: string | null,
+    recoveryState?: CheckpointRunRecoveryState,
   ): Promise<ResumeInfo | null> {
     let checkpoint: Checkpoint | null;
     if (fromCheckpoint) {
@@ -286,8 +550,10 @@ export class CheckpointManager {
           throw recoveryFailure("checkpoint id must be a string");
         }
         if (candidateId === fromCheckpoint) {
+          if (checkpoint !== null) {
+            throw recoveryFailure("requested checkpoint id is ambiguous within run history");
+          }
           checkpoint = candidate;
-          break;
         }
       }
     } else {
@@ -306,9 +572,11 @@ export class CheckpointManager {
     if (typeof checkpointId !== "string" || typeof checkpointNodeId !== "string") {
       throw recoveryFailure("checkpoint id and nodeId must be strings");
     }
-    if (!(checkpointTimestamp instanceof Date) || !Number.isFinite(checkpointTimestamp.getTime())) {
-      throw recoveryFailure("checkpoint timestamp must be a valid Date");
-    }
+    const safeCheckpointTimestamp = captureCheckpointDate(
+      checkpointTimestamp,
+      "checkpoint.timestamp",
+      false,
+    );
     const checkpointContext = captureDurableRecord<WorkflowContext>(
       readOwnData(checkpointRecord, "context", "checkpoint"),
       "checkpoint.context",
@@ -330,18 +598,18 @@ export class CheckpointManager {
     const safeCheckpoint: Checkpoint = {
       id: checkpointId,
       nodeId: checkpointNodeId,
-      timestamp: new Date(checkpointTimestamp.getTime()),
+      timestamp: safeCheckpointTimestamp,
       context: checkpointContext,
       nodeStates: checkpointNodeStates,
       ...(checkpointProjection === undefined ? {} : { _workflowProjection: checkpointProjection }),
     };
 
     if (rawEnvelope === undefined) {
-      if (expectedWorkflowVersion === undefined || expectedWorkflowVersion === null) {
-        throw recoveryFailure(
-          "legacy checkpoint has no graph identity and its unversioned definition cannot be proven unchanged; migration is required",
-        );
-      }
+      const provenRecoveryState = requireLegacyWorkflowVersionProof(
+        expectedWorkflowVersion,
+        recoveryState,
+        "legacy checkpoint",
+      );
       if (typeof nodesOrResolver === "function") {
         throw recoveryFailure(
           "legacy dynamic workflow checkpoint has no original graph-admission snapshot; migration is required",
@@ -352,12 +620,18 @@ export class CheckpointManager {
           "legacy descendant checkpoint has no owning root envelope; migration is required",
         );
       }
+      const legacyAdmission = captureLegacyGraphAdmission(
+        nodesOrResolver,
+        provenRecoveryState.context,
+        provenRecoveryState.workflowProjection ?? checkpointProjection ?? { context: {} },
+        provenRecoveryState.workflowVersion,
+      );
       return {
         checkpoint: safeCheckpoint,
         context: checkpointContext,
         nodeStates: checkpointNodeStates,
         ...(checkpointProjection === undefined ? {} : { workflowProjection: checkpointProjection }),
-        nodes: nodesOrResolver,
+        ...legacyAdmission,
       };
     }
 
@@ -393,28 +667,34 @@ export class CheckpointManager {
         ),
         "legacy checkpoint resume envelope.workflowProjection",
       );
-      if (expectedWorkflowVersion === undefined || expectedWorkflowVersion === null) {
-        throw recoveryFailure(
-          "legacy resume envelope has no graph identity and its unversioned definition cannot be proven unchanged; migration is required",
-        );
+      if (typeof ownerNodeId !== "string" || ownerNodeId.length === 0) {
+        throw recoveryFailure("legacy checkpoint owner must be a non-empty string");
       }
+      const provenRecoveryState = requireLegacyWorkflowVersionProof(
+        expectedWorkflowVersion,
+        recoveryState,
+        "legacy schema-1 resume envelope",
+      );
       if (typeof nodesOrResolver === "function") {
         throw recoveryFailure(
           "legacy dynamic workflow envelope has no original graph identity; migration is required",
         );
       }
-      if (
-        typeof ownerNodeId !== "string" ||
-        !nodesOrResolver.some((node) => node.id === ownerNodeId)
-      ) {
+      if (!nodesOrResolver.some((node) => node.id === ownerNodeId)) {
         throw recoveryFailure("legacy checkpoint owner is not present in the current root graph");
       }
+      const legacyAdmission = captureLegacyGraphAdmission(
+        nodesOrResolver,
+        provenRecoveryState.context,
+        provenRecoveryState.workflowProjection ?? workflowProjection,
+        provenRecoveryState.workflowVersion,
+      );
       return {
         checkpoint: safeCheckpoint,
         context,
         nodeStates,
         workflowProjection,
-        nodes: nodesOrResolver,
+        ...legacyAdmission,
       };
     }
 
@@ -444,13 +724,25 @@ export class CheckpointManager {
     const graphAdmission = captureGraphAdmission(
       readOwnData(envelopeRecord, "graphAdmission", "checkpoint resume envelope"),
     );
+    const storedWorkflowVersion = recoveryState?.workflowVersion;
     if (
-      expectedWorkflowVersion !== undefined &&
+      expectedWorkflowVersion === undefined || expectedWorkflowVersion === null ||
+      storedWorkflowVersion === undefined || storedWorkflowVersion === null ||
+      graphAdmission.workflowVersion === null
+    ) {
+      throw workflowVersionRecoveryFailure(
+        "schema-2 checkpoint recovery requires non-null durable workflow versions on the " +
+          "stored run, checkpoint admission, and current definition; migration is required",
+      );
+    }
+    if (
+      storedWorkflowVersion !== expectedWorkflowVersion ||
       graphAdmission.workflowVersion !== expectedWorkflowVersion
     ) {
-      throw recoveryFailure(
-        `checkpoint workflow version "${graphAdmission.workflowVersion ?? "unversioned"}" ` +
-          `does not match current version "${expectedWorkflowVersion ?? "unversioned"}"`,
+      throw workflowVersionRecoveryFailure(
+        `checkpoint workflow version "${graphAdmission.workflowVersion}" and stored run version ` +
+          `"${storedWorkflowVersion}" must both match current version ` +
+          `"${expectedWorkflowVersion}"`,
       );
     }
 
@@ -514,12 +806,16 @@ export class CheckpointManager {
   }
 
   async cleanup(runId: string, keepCount: number = 5): Promise<void> {
+    if (!Number.isSafeInteger(keepCount) || keepCount < 0) {
+      throw new RangeError("Checkpoint keepCount must be a non-negative safe integer");
+    }
+
     const all = await this.getAll(runId);
     if (all.length <= keepCount) return;
 
-    all.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-
-    const idsToDelete = all.slice(keepCount).map((c) => c.id);
+    // getCheckpoints is append-ordered oldest-to-newest. Retention follows
+    // that durable order and never trusts backend-owned timestamps for recency.
+    const idsToDelete = all.slice(0, all.length - keepCount).map((c) => c.id);
     if (idsToDelete.length === 0) return;
 
     logger.debug("Cleaning up old checkpoints", {

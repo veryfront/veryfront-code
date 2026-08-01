@@ -68,6 +68,12 @@ export interface WorkflowRunControlExecuteInput {
     error: Error,
     context: WorkflowContext,
   ): void | Promise<void>;
+  /**
+   * Synchronous fail-closed admission before a resumable waiting state is
+   * persisted. Throwing keeps the run under its current running lease so the
+   * normal failure path can transition it directly to a terminal state.
+   */
+  beforeWaiting?(run: WorkflowRun, nodeId: string): void;
   onWaiting?(run: WorkflowRun, nodeId: string): void | Promise<void>;
 }
 
@@ -1095,6 +1101,11 @@ export async function executeWorkflowRunControl(
     }
 
     if (result.waiting) {
+      // Durable waiting is a recovery boundary. Admission must run before the
+      // running -> waiting CAS; checking in onWaiting is too late because the
+      // lease has already been consumed and a recovery worker can observe the
+      // resumable row in the intervening crash window.
+      input.beforeWaiting?.(run, result.waitingNode!);
       const paused = await pauseRun(
         input,
         executionController,
@@ -1199,9 +1210,7 @@ export async function executeWorkflowRunControl(
     await notifyTerminalObserver(
       "failure",
       runId,
-      input.onError
-        ? () => input.onError!(failedRun, normalizedError, failureContext)
-        : undefined,
+      input.onError ? () => input.onError!(failedRun, normalizedError, failureContext) : undefined,
     );
     throw normalizedError;
   } finally {
