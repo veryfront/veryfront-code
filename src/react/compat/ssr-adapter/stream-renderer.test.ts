@@ -149,6 +149,29 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
     assertEquals(errors, ["readable failed"]);
   });
 
+  it("reports one readable failure once when React also reports it", async () => {
+    const failure = new Error("reported readable failure");
+    const observed: Error[] = [];
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: async (_element, options) => {
+          options?.onError?.(failure, { componentStack: "" });
+          throw failure;
+        },
+      }),
+    );
+
+    await assertRejects(
+      () =>
+        renderToStreamAdapter(React.createElement("div"), {
+          onError: (error) => observed.push(error),
+        }),
+      Error,
+      failure.message,
+    );
+    assertEquals(observed, [failure]);
+  });
+
   it("aborts readable stream setup when it exceeds the timeout", async () => {
     let aborted = false;
     __setSSRStreamTimeoutForTests(5);
@@ -224,6 +247,33 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
     );
     assertEquals(stringRenderCalls, 0);
     assertEquals(errors, ["pipe failed"]);
+  });
+
+  it("reports one pipeable failure once across error and shell callbacks", async () => {
+    const failure = new Error("reported pipeable failure");
+    const observed: Error[] = [];
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: undefined,
+        renderToPipeableStream: (_element, options) => {
+          queueMicrotask(() => {
+            options?.onError?.(failure, { componentStack: "" });
+            options?.onShellError?.(failure);
+          });
+          return createPipeableSSRStream(() => {});
+        },
+      }),
+    );
+
+    await assertRejects(
+      () =>
+        renderToStreamAdapter(React.createElement("div"), {
+          onError: (error) => observed.push(error),
+        }),
+      Error,
+      failure.message,
+    );
+    assertEquals(observed, [failure]);
   });
 
   it("aborts pipeable stream rendering when shell readiness never arrives", async () => {
