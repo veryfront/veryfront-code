@@ -209,12 +209,14 @@ describe("server/handlers/request/static.handler", () => {
 
     assertExists(result.response);
     assertEquals(await result.response.text(), "export const bounded = true;");
+    assertEquals(result.response.headers.get("etag"), '"asset-etag"');
     assertEquals(sliceCalls, 0);
   });
 
   it("serves HEAD from metadata without reading asset content", async () => {
     const data = new Uint8Array([1, 2, 3, 4]);
     let boundedLimit = 0;
+    let exactLimit = 0;
     let wholeReads = 0;
     const repo = {
       readFile: () => Promise.resolve(""),
@@ -225,6 +227,12 @@ describe("server/handlers/request/static.handler", () => {
       readFileBytesBounded: (_path: string, byteLimit: number) => {
         boundedLimit = byteLimit;
         return Promise.resolve(data);
+      },
+      readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+        exactLimit = byteLimit;
+        return data.byteLength <= byteLimit
+          ? Promise.resolve(data)
+          : Promise.reject(new RangeError("source exceeds limit"));
       },
       stat: (path: string) => {
         if (path === "public/asset.bin") {
@@ -252,6 +260,7 @@ describe("server/handlers/request/static.handler", () => {
     assertEquals((await result.response.arrayBuffer()).byteLength, 0);
     assertEquals(result.response.headers.get("content-length"), String(data.byteLength));
     assertEquals(boundedLimit, 0);
+    assertEquals(exactLimit, 0);
     assertEquals(wholeReads, 0);
   });
 

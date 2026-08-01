@@ -199,12 +199,13 @@ export class StaticHandler extends BaseHandler {
             return response.withContentType(result.contentType, null, HTTP_OK);
           }
 
-          const responseData = isHtmlResponse(result.contentType)
+          const isHtml = isHtmlResponse(result.contentType);
+          const responseData = isHtml
             ? new TextEncoder().encode(
               addNonceToHtmlTags(new TextDecoder().decode(result.data), builder.nonce),
             )
             : result.data;
-          const etag = computeEtag(responseData);
+          const etag = isHtml ? computeEtag(responseData) : result.etag;
 
           if (hasMatchingEtag(req, etag)) {
             return builder

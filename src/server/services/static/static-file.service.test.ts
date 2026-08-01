@@ -56,6 +56,14 @@ function createMockFsRepo(
       if (!data) throw new Error("not found");
       return data.subarray(0, byteLimit);
     },
+    readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+      const data = files.get(toMockAbsolutePath(path));
+      if (!data) throw new Error("not found");
+      if (data.byteLength > byteLimit) {
+        throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+      }
+      return data;
+    },
     stat: async (path: string) => {
       if (files.has(toMockAbsolutePath(path))) {
         return { isFile: true, isDirectory: false, mtime: new Date() };
@@ -101,6 +109,23 @@ function createManifestFsRepo(
         throw createFsError("not found", "ENOENT");
       }
       return new TextEncoder().encode(content).subarray(0, byteLimit);
+    },
+    readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+      const absolutePath = toMockAbsolutePath(path);
+      let bytes: Uint8Array;
+      if (absolutePath === manifestPath) {
+        options.onManifestRead?.();
+        await options.beforeManifestRead?.();
+        bytes = new TextEncoder().encode(manifest);
+      } else if (absolutePath === assetPath) {
+        bytes = new TextEncoder().encode(content);
+      } else {
+        throw createFsError("not found", "ENOENT");
+      }
+      if (bytes.byteLength > byteLimit) {
+        throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+      }
+      return bytes;
     },
     stat: async (path: string) => {
       const absolutePath = toMockAbsolutePath(path);
@@ -436,6 +461,28 @@ describe("server/services/static/static-file.service", () => {
         readFileBytes: async (path: string) => new TextEncoder().encode(toMockAbsolutePath(path)),
         readFileBytesBounded: async (path: string, byteLimit: number) =>
           new TextEncoder().encode(toMockAbsolutePath(path)).subarray(0, byteLimit),
+        readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+          const absolutePath = toMockAbsolutePath(path);
+          let bytes: Uint8Array;
+          if (absolutePath === manifestPath) {
+            const fileSnapshot = activeFile;
+            manifestReads++;
+            if (manifestReads === 1) {
+              firstReadStarted.resolve();
+              await releaseFirstRead.promise;
+            }
+            bytes = new TextEncoder().encode(JSON.stringify({
+              chunks: { chunks: { main: { file: fileSnapshot } }, shared: [] },
+              routes: [],
+            }));
+          } else {
+            bytes = new TextEncoder().encode(absolutePath);
+          }
+          if (bytes.byteLength > byteLimit) {
+            throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+          }
+          return bytes;
+        },
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (
@@ -501,6 +548,28 @@ describe("server/services/static/static-file.service", () => {
         readFileBytes: async (path: string) => new TextEncoder().encode(toMockAbsolutePath(path)),
         readFileBytesBounded: async (path: string, byteLimit: number) =>
           new TextEncoder().encode(toMockAbsolutePath(path)).subarray(0, byteLimit),
+        readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+          const absolutePath = toMockAbsolutePath(path);
+          let bytes: Uint8Array;
+          if (absolutePath === manifestPath) {
+            const fileSnapshot = activeFile;
+            manifestReads++;
+            if (manifestReads === 1) {
+              firstReadStarted.resolve();
+              await releaseFirstRead.promise;
+            }
+            bytes = new TextEncoder().encode(JSON.stringify({
+              chunks: { chunks: { main: { file: fileSnapshot } }, shared: [] },
+              routes: [],
+            }));
+          } else {
+            bytes = new TextEncoder().encode(absolutePath);
+          }
+          if (bytes.byteLength > byteLimit) {
+            throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+          }
+          return bytes;
+        },
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (
@@ -555,6 +624,21 @@ describe("server/services/static/static-file.service", () => {
           });
         },
         readFileBytes: async (path: string) => new TextEncoder().encode(toMockAbsolutePath(path)),
+        readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+          if (toMockAbsolutePath(path) !== manifestPath) {
+            const bytes = new TextEncoder().encode(toMockAbsolutePath(path));
+            if (bytes.byteLength > byteLimit) throw new RangeError("source exceeds limit");
+            return bytes;
+          }
+          manifestReads++;
+          const file = manifestReads === 1 ? "old.js" : "new.js";
+          const bytes = new TextEncoder().encode(JSON.stringify({
+            chunks: { chunks: { main: { file } }, shared: [] },
+            routes: [],
+          }));
+          if (bytes.byteLength > byteLimit) throw new RangeError("source exceeds limit");
+          return bytes;
+        },
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (absolutePath === manifestPath) {
@@ -623,6 +707,16 @@ describe("server/services/static/static-file.service", () => {
           }));
         },
         readFileBytes: () => Promise.resolve(new Uint8Array()),
+        readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+          manifestReads++;
+          const bytes = new TextEncoder().encode(JSON.stringify({
+            chunks: { chunks: { main: { file: "unstable.js" } }, shared: [] },
+            routes: [],
+          }));
+          return bytes.byteLength <= byteLimit
+            ? Promise.resolve(bytes)
+            : Promise.reject(new RangeError("source exceeds limit"));
+        },
         stat: () => {
           manifestStats++;
           return Promise.resolve({
@@ -674,6 +768,20 @@ describe("server/services/static/static-file.service", () => {
           });
         },
         readFileBytes: () => Promise.resolve(new Uint8Array()),
+        readFileBytesWithinLimit: async (_path: string, byteLimit: number) => {
+          const file = activeFile;
+          manifestReads++;
+          if (manifestReads === 1) {
+            firstReadStarted.resolve();
+            await releaseFirstRead.promise;
+          }
+          const bytes = new TextEncoder().encode(JSON.stringify({
+            chunks: { chunks: { main: { file } }, shared: [] },
+            routes: [],
+          }));
+          if (bytes.byteLength > byteLimit) throw new RangeError("source exceeds limit");
+          return bytes;
+        },
         stat: () =>
           Promise.resolve({
             isFile: true,
@@ -723,9 +831,14 @@ describe("server/services/static/static-file.service", () => {
         routes: [],
         padding: "x".repeat(128),
       });
+      let requestedLimit = 0;
       const repo = {
         readFile: () => Promise.resolve(oversizedManifest),
         readFileBytes: () => Promise.resolve(new Uint8Array()),
+        readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+          requestedLimit = byteLimit;
+          return Promise.reject(new RangeError("source exceeds limit"));
+        },
         stat: () =>
           Promise.resolve({
             isFile: true,
@@ -736,9 +849,10 @@ describe("server/services/static/static-file.service", () => {
 
       await assertRejects(
         () => new StaticFileService(repo).resolveFile("/app.js", makeOptions()),
-        RangeError,
-        "Static build manifest byte limit of 64 was exceeded",
+        TypeError,
+        "Static build manifest exceeds 64 bytes",
       );
+      assertEquals(requestedLimit, 64);
     });
 
     it("rejects a manifest that exceeds its total asset-entry budget", async () => {
@@ -917,6 +1031,9 @@ describe("server/services/static/static-file.service", () => {
         readFileBytesBounded?:
           | ((path: string, byteLimit: number) => Promise<Uint8Array>)
           | null;
+        readFileBytesWithinLimit?:
+          | ((path: string, byteLimit: number) => Promise<Uint8Array>)
+          | null;
         maxWholeFileReadBytes?: number;
       } = {},
     ): FileSystemRepository {
@@ -926,6 +1043,13 @@ describe("server/services/static/static-file.service", () => {
         ...(overrides.readFileBytesBounded === null ? {} : {
           readFileBytesBounded: overrides.readFileBytesBounded ??
             (() => Promise.resolve(data)),
+        }),
+        ...(overrides.readFileBytesWithinLimit === null ? {} : {
+          readFileBytesWithinLimit: overrides.readFileBytesWithinLimit ??
+            ((_path: string, byteLimit: number) =>
+              data.byteLength <= byteLimit ? Promise.resolve(data) : Promise.reject(
+                new RangeError(`File exceeds byte limit of ${byteLimit} bytes`),
+              )),
         }),
         ...(overrides.maxWholeFileReadBytes === undefined
           ? {}
@@ -1009,7 +1133,7 @@ describe("server/services/static/static-file.service", () => {
       );
     });
 
-    it("uses a bounded reader for missing-size assets and validates its result", async () => {
+    it("uses an exact reader for missing-size assets without requesting a sentinel byte", async () => {
       let requestedLimit = 0;
       let wholeReads = 0;
       const repo = createAssetRepository(new Uint8Array(5), undefined, {
@@ -1017,9 +1141,9 @@ describe("server/services/static/static-file.service", () => {
           wholeReads++;
           return Promise.resolve(new Uint8Array(5));
         },
-        readFileBytesBounded: (_path, byteLimit) => {
+        readFileBytesWithinLimit: (_path, byteLimit) => {
           requestedLimit = byteLimit;
-          return Promise.resolve(new Uint8Array(5));
+          return Promise.reject(new RangeError("source exceeds limit"));
         },
       });
 
@@ -1032,8 +1156,24 @@ describe("server/services/static/static-file.service", () => {
         StaticAssetUnavailableError,
         "Static asset byte limit of 4 was exceeded",
       );
-      assertEquals(requestedLimit, 5);
+      assertEquals(requestedLimit, 4);
       assertEquals(wholeReads, 0);
+    });
+
+    it("rejects an exact reader that returns more bytes than requested", async () => {
+      const repo = createAssetRepository(new Uint8Array(5), undefined, {
+        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array(5)),
+      });
+
+      await assertRejects(
+        () =>
+          new StaticFileService(repo, { maxAssetBytes: 4 }).resolveFile(
+            "/asset.bin",
+            makeOptions({ isLocalProject: true }),
+          ),
+        StaticAssetUnavailableError,
+        "outside its admitted fixed-buffer contract",
+      );
     });
 
     it("fails closed instead of falling back to a whole-file read", async () => {
@@ -1064,7 +1204,7 @@ describe("server/services/static/static-file.service", () => {
             makeOptions({ isLocalProject: true }),
           ),
         Error,
-        "bounded reads or an admitted fixed-ceiling whole-file reader",
+        "exact bounded reader or an admitted fixed-ceiling whole-file reader",
       );
       assertEquals(wholeReads, 0);
     });
@@ -1074,6 +1214,7 @@ describe("server/services/static/static-file.service", () => {
       let wholeReads = 0;
       const repo = createAssetRepository(data, data.byteLength, {
         readFileBytesBounded: null,
+        readFileBytesWithinLimit: null,
         maxWholeFileReadBytes: data.byteLength,
         readFileBytes: () => {
           wholeReads++;
@@ -1094,6 +1235,7 @@ describe("server/services/static/static-file.service", () => {
       let wholeReads = 0;
       const repo = createAssetRepository(new Uint8Array([1, 2, 3, 4]), 4, {
         readFileBytesBounded: null,
+        readFileBytesWithinLimit: null,
         maxWholeFileReadBytes: 5,
         readFileBytes: () => {
           wholeReads++;
@@ -1117,6 +1259,7 @@ describe("server/services/static/static-file.service", () => {
       let wholeReads = 0;
       const repo = createAssetRepository(new Uint8Array(4), 4, {
         readFileBytesBounded: null,
+        readFileBytesWithinLimit: null,
         maxWholeFileReadBytes: 3,
         readFileBytes: () => {
           wholeReads++;
@@ -1139,6 +1282,7 @@ describe("server/services/static/static-file.service", () => {
     it("rejects a whole reader that violates its advertised ceiling", async () => {
       const repo = createAssetRepository(new Uint8Array(4), 3, {
         readFileBytesBounded: null,
+        readFileBytesWithinLimit: null,
         maxWholeFileReadBytes: 3,
       });
 
@@ -1159,6 +1303,7 @@ describe("server/services/static/static-file.service", () => {
       let replacementReads = 0;
       const repo = createAssetRepository(data, 4, {
         readFileBytesBounded: null,
+        readFileBytesWithinLimit: null,
         maxWholeFileReadBytes: 4,
         readFileBytes: () => {
           originalReads++;
@@ -1183,7 +1328,13 @@ describe("server/services/static/static-file.service", () => {
     });
 
     it("rejects accessor-backed repository capabilities without invoking them", () => {
-      for (const key of ["readFileBytesBounded", "maxWholeFileReadBytes"] as const) {
+      for (
+        const key of [
+          "readFileBytesBounded",
+          "readFileBytesWithinLimit",
+          "maxWholeFileReadBytes",
+        ] as const
+      ) {
         let getterCalls = 0;
         const repo = {
           readFile: () => Promise.resolve(""),
@@ -1230,9 +1381,53 @@ describe("server/services/static/static-file.service", () => {
       assertEquals(descriptorTraps, 0);
     });
 
+    it("does not inherit exact-read authority from Object.prototype", async () => {
+      const key = "readFileBytesWithinLimit";
+      const previous = Object.getOwnPropertyDescriptor(Object.prototype, key);
+      let inheritedReads = 0;
+      Object.defineProperty(Object.prototype, key, {
+        configurable: true,
+        value: () => {
+          inheritedReads++;
+          return Promise.resolve(new Uint8Array([1, 2, 3, 4]));
+        },
+      });
+      try {
+        const repo = {
+          readFileBytes: () => Promise.resolve(new Uint8Array([1, 2, 3, 4])),
+          readFileBytesBounded: () => Promise.resolve(new Uint8Array([1, 2, 3, 4])),
+          stat: () =>
+            Promise.resolve({
+              isFile: true,
+              isDirectory: false,
+              mtime: new Date(1),
+              size: 4,
+            }),
+        } as unknown as FileSystemRepository;
+
+        await assertRejects(
+          () =>
+            new StaticFileService(repo, { maxAssetBytes: 4 }).resolveFile(
+              "/asset.bin",
+              makeOptions({ isLocalProject: true }),
+            ),
+          StaticAssetUnavailableError,
+          "requires an exact bounded reader",
+        );
+        assertEquals(inheritedReads, 0);
+      } finally {
+        if (previous === undefined) {
+          delete (Object.prototype as Record<string, unknown>)[key];
+        } else {
+          Object.defineProperty(Object.prototype, key, previous);
+        }
+      }
+    });
+
     it("resolves HEAD metadata without reading asset content", async () => {
       let wholeReads = 0;
       let boundedReads = 0;
+      let exactReads = 0;
       const repo = createAssetRepository(new Uint8Array([1, 2, 3, 4]), 4, {
         readFileBytes: () => {
           wholeReads++;
@@ -1241,6 +1436,10 @@ describe("server/services/static/static-file.service", () => {
         readFileBytesBounded: () => {
           boundedReads++;
           return Promise.reject(new Error("HEAD must not read bounded content"));
+        },
+        readFileBytesWithinLimit: () => {
+          exactReads++;
+          return Promise.reject(new Error("HEAD must not read exact content"));
         },
       });
 
@@ -1255,6 +1454,7 @@ describe("server/services/static/static-file.service", () => {
       assertEquals(result.source, "public");
       assertEquals(wholeReads, 0);
       assertEquals(boundedReads, 0);
+      assertEquals(exactReads, 0);
     });
 
     it("rejects unsafe declared asset sizes without reading bytes", async () => {
@@ -1460,6 +1660,13 @@ describe("server/services/static/static-file.service", () => {
           }
           return fileData.subarray(0, byteLimit);
         },
+        readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+          if (toMockAbsolutePath(path) === "/project/dist/app.js") {
+            throw createFsError("temporary read failure", "EIO");
+          }
+          if (fileData.byteLength > byteLimit) throw new RangeError("source exceeds limit");
+          return fileData;
+        },
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (
@@ -1493,6 +1700,9 @@ describe("server/services/static/static-file.service", () => {
           throw createFsError("temporary read failure", "EIO");
         },
         readFileBytesBounded: async () => {
+          throw createFsError("temporary read failure", "EIO");
+        },
+        readFileBytesWithinLimit: async () => {
           throw createFsError("temporary read failure", "EIO");
         },
         stat: async (path: string) => {
@@ -1579,6 +1789,13 @@ describe("server/services/static/static-file.service", () => {
           return "";
         },
         readFileBytes: async () => fileData,
+        readFileBytesWithinLimit: async (path: string, byteLimit: number) => {
+          if (toMockAbsolutePath(path) === "/project/dist/_veryfront/manifest.json") {
+            throw createFsError("manifest read failed", "EIO");
+          }
+          if (fileData.byteLength > byteLimit) throw new RangeError("source exceeds limit");
+          return fileData;
+        },
         stat: async (path: string) => {
           const absolutePath = toMockAbsolutePath(path);
           if (
