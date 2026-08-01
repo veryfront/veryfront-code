@@ -4,11 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createSecureFs } from "./secure-fs.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
-
-// Minimal adapter stub — only getUnsafeAdapter() is being tested
-function createMockAdapter() {
-  return { fs: {} } as any;
-}
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 
 describe("SecureFs", () => {
   it("rejects a missing write target beneath a symlinked parent", async () => {

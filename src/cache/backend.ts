@@ -27,6 +27,14 @@ export {
   RedisCacheBackend,
 } from "./backends/index.ts";
 
+export {
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
+  CacheValueTooLargeError,
+  captureBoundedCacheRead,
+  readCacheValueWithinLimit,
+} from "./bounded-read.ts";
+
 // Re-export types
 export type { CacheBackend } from "./types.ts";
 export type { CodeCacheGateway, TokenizingCacheGateway } from "./backends/index.ts";

@@ -87,7 +87,10 @@ export class CircuitBreaker {
   }
 
   /** Execute operation through circuit breaker. Throws CircuitBreakerOpen if open. */
-  async execute<T>(operation: () => Promise<T>): Promise<T> {
+  async execute<T>(
+    operation: () => Promise<T>,
+    options: { isNeutralError?: (error: unknown) => boolean } = {},
+  ): Promise<T> {
     if (this.state === "OPEN") {
       const remaining = this.resetTimeoutMs - (Date.now() - this.lastFailureTime);
       if (remaining > 0) throw new CircuitBreakerOpen(this.breakerName, remaining);
@@ -108,6 +111,12 @@ export class CircuitBreaker {
       this.recordSuccess();
       return result;
     } catch (error) {
+      if (options.isNeutralError?.(error) === true) {
+        if (this.state === "HALF_OPEN" && this.halfOpenAttempts > 0) {
+          this.halfOpenAttempts--;
+        }
+        throw error;
+      }
       this.recordFailure();
       throw error;
     }

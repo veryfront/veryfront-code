@@ -31,6 +31,19 @@ export interface SecureFsRepositoryConfig {
 export class SecureFsRepository implements FileSystemRepository {
   private readonly secureFs: SecureFs;
   readonly context: RepositoryContext;
+  declare readonly maxWholeFileReadBytes?: number;
+  declare readonly readFileBytesBounded?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  declare readonly readFileBytesWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  declare readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
 
   constructor(config: SecureFsRepositoryConfig) {
     this.context = config.context;
@@ -40,6 +53,27 @@ export class SecureFsRepository implements FileSystemRepository {
       context: config.securityContext ?? "internal",
       throwOnError: config.throwOnError ?? true,
     });
+    if (this.secureFs.maxWholeFileReadBytes !== undefined) {
+      Object.defineProperty(this, "maxWholeFileReadBytes", {
+        enumerable: true,
+        value: this.secureFs.maxWholeFileReadBytes,
+      });
+    }
+    for (
+      const key of [
+        "readFileBytesBounded",
+        "readFileBytesWithinLimit",
+        "readFileSnapshotWithinLimit",
+      ] as const
+    ) {
+      const capability = this.secureFs[key];
+      if (capability !== undefined) {
+        Object.defineProperty(this, key, {
+          enumerable: true,
+          value: (path: string, byteLimit: number) => capability(path, byteLimit),
+        });
+      }
+    }
   }
 
   readFile(path: string): Promise<string> {
@@ -50,11 +84,8 @@ export class SecureFsRepository implements FileSystemRepository {
     return this.secureFs.readFileBytes(path);
   }
 
-  async writeFile(path: string, content: string | Uint8Array): Promise<void> {
-    await this.secureFs.writeFile(
-      path,
-      typeof content === "string" ? content : new TextDecoder().decode(content),
-    );
+  async writeFile(path: string, content: string): Promise<void> {
+    await this.secureFs.writeFile(path, content);
   }
 
   exists(path: string): Promise<boolean> {

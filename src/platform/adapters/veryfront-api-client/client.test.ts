@@ -4,6 +4,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontApiClient } from "./client.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import type { VeryfrontAPIConfig } from "./types.ts";
 
 const baseConfig = {
   apiBaseUrl: "http://test.api",
@@ -11,7 +12,7 @@ const baseConfig = {
   projectSlug: "config-slug",
 };
 
-function createClient(config = baseConfig): VeryfrontApiClient {
+function createClient(config: VeryfrontAPIConfig = baseConfig): VeryfrontApiClient {
   return new VeryfrontApiClient(config);
 }
 

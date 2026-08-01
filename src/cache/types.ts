@@ -28,6 +28,9 @@ export interface CacheBackend {
    */
   get(key: string): Promise<string | null>;
 
+  /** Return a value only when its complete UTF-8 payload fits within the limit. */
+  getWithinLimit?(key: string, maximumBytes: number): Promise<string | null>;
+
   /**
    * Get the remaining lifetime in seconds. Returns null when the entry is
    * absent, expired, or the backend cannot determine its expiry.

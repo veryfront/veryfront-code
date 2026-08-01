@@ -6,6 +6,13 @@
 
 // Re-export CacheBackend interface from types
 export type { CacheBackend } from "../types.ts";
+export {
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
+  CacheValueTooLargeError,
+  captureBoundedCacheRead,
+  readCacheValueWithinLimit,
+} from "../bounded-read.ts";
 
 // Backend implementations
 export { MemoryCacheBackend } from "./memory.ts";

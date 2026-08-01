@@ -35,6 +35,8 @@ import {
   toNativeResponse,
 } from "../../../compat/http/native-response.ts";
 import { resolveDenoUpgradeWebSocketOptions } from "../../../compat/http/websocket.ts";
+import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
+import { readNodeFileSnapshotWithinLimit } from "../shared/native-file-capabilities.ts";
 
 const logger = serverLogger.component("deno");
 
@@ -153,9 +155,73 @@ class DenoFileSystemAdapter implements FileSystemAdapter {
     return Deno.readFile(path);
   }
 
+  async readFileBytesBounded(path: string, byteLimit: number): Promise<Uint8Array> {
+    assertDenoRuntime("DenoFileSystemAdapter", "readFileBytesBounded");
+    return await readBoundedFilePrefix(async () => {
+      const file = await Deno.open(path, { read: true });
+      return { close: () => file.close(), read: (buffer) => file.read(buffer) };
+    }, byteLimit);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    assertDenoRuntime("DenoFileSystemAdapter", "readFileBytesWithinLimit");
+    return await readFileWithinLimit(async () => {
+      const file = await Deno.open(path, { read: true });
+      return { close: () => file.close(), read: (buffer) => file.read(buffer) };
+    }, byteLimit);
+  }
+
+  readFileSnapshotWithinLimit(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array> {
+    assertDenoRuntime("DenoFileSystemAdapter", "readFileSnapshotWithinLimit");
+    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     assertDenoRuntime("DenoFileSystemAdapter", "writeFile");
     await Deno.writeTextFile(path, content);
+  }
+
+  async writeFileBytes(path: string, content: Uint8Array): Promise<void> {
+    assertDenoRuntime("DenoFileSystemAdapter", "writeFileBytes");
+    await Deno.writeFile(path, content);
+  }
+
+  async createFileBytesExclusive(path: string, content: Uint8Array): Promise<void> {
+    assertDenoRuntime("DenoFileSystemAdapter", "createFileBytesExclusive");
+    const file = await Deno.open(path, { write: true, createNew: true });
+    let failed = false;
+    let primaryFailure: unknown;
+    try {
+      let offset = 0;
+      while (offset < content.byteLength) {
+        const written = await file.write(content.subarray(offset));
+        if (
+          !Number.isSafeInteger(written) || written <= 0 || written > content.byteLength - offset
+        ) {
+          throw new Error("Deno exclusive create write made no forward progress");
+        }
+        offset += written;
+      }
+    } catch (error) {
+      failed = true;
+      primaryFailure = error;
+    }
+    try {
+      file.close();
+    } catch (cleanupFailure) {
+      if (failed) {
+        throw new AggregateError(
+          [primaryFailure, cleanupFailure],
+          "Deno exclusive create and cleanup both failed",
+        );
+      }
+      throw cleanupFailure;
+    }
+    if (failed) throw primaryFailure;
   }
 
   async rename(from: string, to: string): Promise<void> {
