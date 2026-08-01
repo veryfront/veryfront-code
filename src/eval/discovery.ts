@@ -2,7 +2,7 @@
  * Eval discovery for project-local eval definitions.
  */
 
-import { join } from "veryfront/platform/path";
+import { join } from "#veryfront/compat/path";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import { importDiscoveryModule } from "#veryfront/discovery/module-import.ts";

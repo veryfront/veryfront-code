@@ -1,4 +1,4 @@
-import { join, relative } from "veryfront/platform/path";
+import { join, relative } from "#veryfront/compat/path";
 import { compareEvalReports } from "./baseline.ts";
 import type { DiscoveredEval } from "./discovery.ts";
 import { compareEvalModelReports, createEvalModelComparisonMarkdown } from "./model-comparison.ts";

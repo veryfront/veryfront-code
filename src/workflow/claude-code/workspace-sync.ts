@@ -13,7 +13,7 @@
 import { computeHash, logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
-import { dirname, join, relative, resolve } from "veryfront/platform/path";
+import { dirname, join, relative, resolve } from "#veryfront/compat/path";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 

@@ -7,7 +7,7 @@
  * @module extensions/factory-loader
  */
 
-import { isAbsolute, toFileUrl } from "veryfront/platform/path";
+import { isAbsolute, toFileUrl } from "#veryfront/compat/path";
 import { EXTENSION_VALIDATION_ERROR } from "./errors.ts";
 import type { Extension, ExtensionFactory, ExtensionSource, ResolvedExtension } from "./types.ts";
 
