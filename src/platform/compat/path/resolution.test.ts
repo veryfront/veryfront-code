@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { cwd } from "../process.ts";
 import { isAbsolute, normalize, relative, resolve } from "./resolution.ts";
 
 describe("platform/compat/path/resolution", () => {
@@ -22,10 +23,11 @@ describe("platform/compat/path/resolution", () => {
     });
 
     it("uses the runtime working directory for relative paths", () => {
-      assertEquals(resolve("."), Deno.cwd().replaceAll("\\", "/"));
+      const workingDirectory = cwd().replaceAll("\\", "/");
+      assertEquals(resolve("."), workingDirectory);
       assertEquals(
         resolve("relative", "file.ts"),
-        `${Deno.cwd().replaceAll("\\", "/")}/relative/file.ts`,
+        `${workingDirectory}/relative/file.ts`,
       );
     });
 
