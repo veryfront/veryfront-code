@@ -46,6 +46,7 @@
     "./extensions/ext-auth-jwt",
     "./extensions/ext-bundler-esbuild",
     "./extensions/ext-cache-redis",
+    "./extensions/ext-css-lightning",
     "./extensions/ext-css-tailwind",
     "./extensions/ext-document-kreuzberg",
     "./extensions/ext-db-sqlite",

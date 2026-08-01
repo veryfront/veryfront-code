@@ -4,7 +4,28 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CSSOptimizerService } from "./optimizer-service.ts";
-import { LightningCSSStrategy } from "./strategies/lightning-strategy.ts";
+import {
+  createTestCSSOptimizationEngine,
+  createTestCSSSourceMap,
+} from "../../../../tests/_helpers/css-optimization-engine.ts";
+
+const optimizationEngine = createTestCSSOptimizationEngine((request) => {
+  if (request.css.includes("@media (")) {
+    throw new TypeError("invalid CSS");
+  }
+  const css = request.minify
+    ? request.css
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\s+/g, " ")
+      .replace(/\s*([{}:;,])\s*/g, "$1")
+      .replace(/;}/g, "}")
+      .trim()
+    : request.css;
+  return {
+    css,
+    ...(request.sourceMap ? { sourceMap: createTestCSSSourceMap(request.sourcePath) } : {}),
+  };
+});
 
 async function withProject(
   callback: (projectDir: string) => Promise<void>,
@@ -31,7 +52,7 @@ async function createService(
       outputDir: ".veryfront/css",
       ...options,
     },
-    dependencies,
+    { optimizationEngine, ...dependencies },
   );
 }
 
@@ -135,18 +156,18 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
         join(projectDir, "styles/main.css"),
         ".main { color: red; }",
       );
-      const missingDependency = new LightningCSSStrategy(() =>
-        Promise.reject(new Error("compiler unavailable"))
-      );
+      const missingDependency = createTestCSSOptimizationEngine(() => {
+        throw new Error("compiler unavailable");
+      });
       const dependencyService = await createService(
         projectDir,
         {},
-        { lightningStrategy: missingDependency },
+        { optimizationEngine: missingDependency },
       );
       await assertRejects(
         () => dependencyService.optimize(),
         Error,
-        "requires npm:lightningcss",
+        "compiler unavailable",
       );
     });
   });

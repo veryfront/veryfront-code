@@ -265,7 +265,6 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 )
                 .optional(),
               minify: v.boolean().optional(),
-              autoprefixer: v.boolean().optional(),
               purge: v.boolean().optional(),
               criticalCSS: v.boolean().optional(),
               inputFiles: v
@@ -274,15 +273,6 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 .optional(),
               inputDir: v.string().min(1).max(MAX_PATH_LENGTH_CHARS).optional(),
               outputDir: v.string().min(1).max(MAX_PATH_LENGTH_CHARS).optional(),
-              browsers: v
-                .array(
-                  v.string().min(1).max(
-                    CSS_OPTIMIZATION.MAX_BROWSER_QUERY_CHARACTERS,
-                  ),
-                )
-                .min(1)
-                .max(CSS_OPTIMIZATION.MAX_BROWSER_QUERIES)
-                .optional(),
               purgeContent: v
                 .array(v.string().min(1).max(MAX_PATH_LENGTH_CHARS))
                 .max(CSS_OPTIMIZATION.MAX_PURGE_PATTERNS)
@@ -293,7 +283,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 .optional(),
               sourceMap: v.boolean().optional(),
             })
-            .partial()
+            .strict()
             .optional(),
         })
         .partial()

@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import { extractCriticalCSS } from "./critical-css.ts";
+
+const optimizationEngine = createTestCSSOptimizationEngine((request) => ({
+  css: request.css.replaceAll(" ", ""),
+}));
 
 describe("build/asset-pipeline/css-optimizer/critical-css", () => {
   describe("extractCriticalCSS", () => {
@@ -34,7 +39,12 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
 
       try {
         const html = `<div class="header">Hi</div>`;
-        const result = await extractCriticalCSS(cssPath, html, { minify: true });
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          { minify: true },
+          optimizationEngine,
+        );
 
         // Minified result should have less whitespace
         assertExists(result.critical);
@@ -52,7 +62,12 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
 
       try {
         const html = `<div class="a">Test</div>`;
-        const result = await extractCriticalCSS(cssPath, html, {});
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          {},
+          optimizationEngine,
+        );
 
         // Should not throw, minify defaults to true
         assertExists(result.critical);
