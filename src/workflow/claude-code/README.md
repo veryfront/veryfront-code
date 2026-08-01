@@ -127,12 +127,17 @@ The module provides several independent event transports:
 - `CallbackEventPublisher` and `MultiEventPublisher` for composition.
 - `createDistributedEventPublisher()` through the configured distributed
   runtime extension.
-- `WebSocketPublisher` and `AgentController` for commands, approvals, input,
-  cancellation, and keepalive traffic.
+- `WebSocketPublisher` and `AgentControllerRegistry` for commands, approvals,
+  input, cancellation, and keepalive traffic.
 
-Always close publishers and unsubscribe handlers during request or worker
-cleanup. WebSocket sends fail closed when the socket is unavailable; callers
-must handle the resulting error instead of assuming delivery.
+The registry retains one run-scoped controller across transient WebSocket
+reconnections. Closing a socket detaches only that exact publisher generation;
+terminal run cleanup requires the exact run registration. Commands and events
+share one dependency-free wire codec, and invalid fields or oversized encoded
+messages fail before `WebSocket.send()`.
+
+See [Migrate bidirectional Claude Code control](../../../docs/guides/workflows-advanced.md#migrate-bidirectional-claude-code-control)
+for the registry, handler-callback, cleanup, and approval-correlation changes.
 
 ## Isolated workspace synchronization
 

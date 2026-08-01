@@ -65,6 +65,10 @@ import { schedule } from "../../src/schedule/index.ts";
 import { webhook } from "../../src/webhook/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
+  AgentControllerRegistry,
+  createWebSocketHandler,
+} from "../../src/workflow/claude-code/index.ts";
+import {
   getConnector,
   getIcon,
   getRemoteIntegrationToolDefinitions,
@@ -1100,8 +1104,18 @@ describe("Guide: skills.md", () => {
 });
 
 describe("Guide: workflows-advanced.md", () => {
-  it("documents loop helpers, blob storage, and React hook surface", async () => {
+  it("documents loop, storage, React, and bidirectional control APIs", async () => {
     const guide = await readGuide("workflows-advanced.md");
+    const registry = new AgentControllerRegistry();
+    const handler = createWebSocketHandler({
+      registry,
+      getRunId: () => "run-1",
+      onConnection: () => {},
+    });
+
+    assertEquals(typeof handler, "function");
+    assertEquals(typeof registry.releaseRun, "function");
+    registry.close();
 
     for (
       const snippet of [
@@ -1114,6 +1128,11 @@ describe("Guide: workflows-advanced.md", () => {
         'import { useWorkflow, useWorkflowStart } from "veryfront/workflow/react"',
         "useWorkflowStart({",
         "useWorkflow({ runId })",
+        "AgentControllerRegistry,",
+        "createWebSocketHandler,",
+        "registry.releaseRun(run)",
+        "approve(approval.toolCallId, approval.requestId)",
+        'reject(approval.toolCallId, approval.requestId, "Not allowed")',
       ]
     ) {
       assertStringIncludes(guide, snippet);

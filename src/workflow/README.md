@@ -436,6 +436,47 @@ Both built-in backends reject unconditional checkpoint or approval writes when t
 not exist. Owner-fenced checkpoint writes may use a synthetic storage run ID, but their lifetime and
 permission remain tied to the existing canonical ownership run.
 
+Managed workflow backends must implement the atomic indexed timed-wait capability group:
+`claimDueTimedWaits`, `updateRunIfTimedWaitClaim`, and `releaseTimedWaitClaim`. Timed-wait claims are
+fenced by both exact row identity and one run-scoped lease across delay and event rows. A due event
+timeout is terminal and blocks every sibling delay, including when that event falls beyond the
+current claim page; release or lease expiry restores all still-current rows atomically. Active
+persisted waits must carry the explicit `_waitKind` discriminator. Missing or invalid markers are
+rejected. The complete dormant wait page is retained while a run is outside `waiting` and published
+on a status-only transition back to `waiting`. Persisted workflow and timed-wait identities must use
+well-formed Unicode; unpaired surrogates are rejected before storage. Managed workers fail closed for
+non-indexed backends rather than using cursor or event-name heuristics.
+If persisted execute or resume admission rejects a workflow-version proof, the executor
+terminalizes only the exact observed status, worker, and existing lease before rethrowing. This
+covers direct recovery, managed workers, and manager-owned child executions without leaving an
+active retry row; a replacement owner or lease is never overwritten. The managed worker also keeps
+an exact-owner compensation path for a claimed delay whose wake was already consumed.
+
+Checkpoint retention is bounded by `MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES`. Memory and Redis
+atomically keep the newest entries in append order for both unconditional and owner-fenced writes;
+timestamps do not influence eviction. Once the bound is crossed, an older explicit checkpoint ID
+may no longer resolve, while latest-checkpoint recovery remains available.
+
+Checkpoint IDs are not unique. Cleanup treats requested IDs as a multiset and removes one oldest
+append-ordered occurrence per request. An explicit resume ID that still matches multiple retained
+checkpoints is ambiguous and fails closed instead of selecting an older or newer occurrence.
+
+Persisted-run recovery requires an exact, non-null durable workflow version on the stored run and
+current definition. Schema-2 checkpoint recovery additionally requires the same version in the
+checkpoint's original graph admission; an unversioned record is migration-required because the
+structural graph identity does not capture executable callbacks, tools, or behavior-bearing config.
+The executor may run a newly-created unversioned workflow only within its same in-process start
+admission, but that run cannot later be resumed after persistence. If fresh execution reaches a
+durable waiting boundary, it fails while still running, before publishing a resumable waiting row,
+approval, or timed-wait registration. Legacy envelope-less and schema-1
+checkpoints retain only one narrow migration path: a static root owner must exist and the stored run
+and current definition must carry the same non-null version. Legacy dynamic graphs, descendant-only
+checkpoints, and call paths without the stored version fail closed.
+
+Public run projection also requires the current workflow runtime-state provenance marker. Older
+ambiguous rows must be migrated before read APIs or lifecycle callbacks can expose them; the runtime
+does not guess whether context-shaped values are framework-owned or user-owned.
+
 Approval IDs are unique for the lifetime of a run. Both unconditional and owner-fenced approval
 appends reserve the ID atomically, require the run to still be `waiting`, and reject duplicates.
 `updateApproval` is a mandatory compare-and-set over the owning run status, approval status, and
