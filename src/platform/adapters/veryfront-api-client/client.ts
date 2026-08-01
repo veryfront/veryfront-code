@@ -12,6 +12,10 @@ import {
   VeryfrontAPIOperations,
 } from "./operations.ts";
 import { API_CLIENT_ERROR, type VeryfrontAPIConfig, VeryfrontError } from "./types.ts";
+import type {
+  DependencyArtifactBuildResultBody,
+  DependencyArtifactContentType,
+} from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 
 const logger = baseLogger.component("veryfront-api-client");
 
@@ -425,6 +429,38 @@ export class VeryfrontApiClient {
     projectRef = this.requireProjectSlug(),
   ): Promise<ProjectStyleArtifactResolution> {
     return this.operations.upsertStyleArtifact(projectRef, input);
+  }
+
+  // =============================================================================
+  // Dependency Artifact Build Operations
+  // =============================================================================
+
+  uploadDependencyArtifactAsset(
+    artifactId: string,
+    attemptCount: number,
+    contentHash: string,
+    contentType: DependencyArtifactContentType,
+    bytes: Uint8Array,
+  ) {
+    return this.operations.uploadDependencyArtifactAsset(
+      artifactId,
+      attemptCount,
+      contentHash,
+      contentType,
+      bytes,
+    );
+  }
+
+  reportDependencyArtifactBuildResult(
+    artifactId: string,
+    attemptCount: number,
+    result: DependencyArtifactBuildResultBody,
+  ) {
+    return this.operations.reportDependencyArtifactBuildResult(
+      artifactId,
+      attemptCount,
+      result,
+    );
   }
 
   // =============================================================================

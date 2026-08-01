@@ -172,6 +172,38 @@ export class MetricsRecorder {
     safelyRecord(() => this.instruments.bundleCounter?.add(1, attributes));
   }
 
+  recordDependencyArtifactBuild(
+    input: {
+      event: "claim" | "success" | "failure";
+      durationMs?: number;
+      totalBytes?: number;
+      assetCount?: number;
+      remainingExternalImportCount?: number;
+      failureCode?: string;
+    },
+  ): void {
+    const attributes = {
+      event: input.event,
+      ...(input.failureCode ? { failure_code: input.failureCode } : {}),
+    };
+    this.instruments.dependencyArtifactBuildCounter?.add(1, attributes);
+    if (input.durationMs !== undefined) {
+      this.instruments.dependencyArtifactBuildDuration?.record(input.durationMs, attributes);
+    }
+    if (input.totalBytes !== undefined) {
+      this.instruments.dependencyArtifactBuildBytes?.record(input.totalBytes, attributes);
+    }
+    if (input.assetCount !== undefined) {
+      this.instruments.dependencyArtifactBuildAssetCount?.record(input.assetCount, attributes);
+    }
+    if (input.remainingExternalImportCount !== undefined) {
+      this.instruments.dependencyArtifactBuildExternalImportCount?.record(
+        input.remainingExternalImportCount,
+        attributes,
+      );
+    }
+  }
+
   recordDataFetch(
     durationMs: number,
     attributes?: Record<string, string>,

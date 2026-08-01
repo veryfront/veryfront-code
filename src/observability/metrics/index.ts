@@ -146,6 +146,18 @@ export function recordBundle(
   getRecorder()?.recordBundle(sizeKb, attributes);
 }
 
+/** Record one dependency artifact build lifecycle event. */
+export function recordDependencyArtifactBuild(input: {
+  event: "claim" | "success" | "failure";
+  durationMs?: number;
+  totalBytes?: number;
+  assetCount?: number;
+  remainingExternalImportCount?: number;
+  failureCode?: string;
+}): void {
+  getRecorder()?.recordDependencyArtifactBuild(input);
+}
+
 /** Record data fetch. */
 export function recordDataFetch(
   durationMs: number,

@@ -960,6 +960,51 @@ describe("release asset build executor", () => {
     ]);
   });
 
+  it("preserves permissive auxiliary references in the legacy release fallback", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'import legacy from "legacy-package"; export default legacy;',
+    }];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import legacy from "https://esm.sh/legacy-package@1"; export default legacy;',
+      );
+    const legacyCode = [
+      "export const load = (path) => import(path);",
+      'export const asset = new URL("./worker.wasm", import.meta.url);',
+      "//# sourceMappingURL=legacy-package.js.map",
+    ].join("\n");
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: withFakeReactVendor((code: string) =>
+        Promise.resolve({
+          code: code.replace(
+            "https://esm.sh/legacy-package@1",
+            "file:///tmp/veryfront-http-bundle/http-legacy.mjs",
+          ),
+          dependencies: [{
+            specifier: "file:///tmp/veryfront-http-bundle/http-legacy.mjs",
+            manifestKey: "https://esm.sh/legacy-package@1",
+            code: legacyCode,
+          }],
+        })
+      ),
+    };
+
+    await runReleaseAssetBuild(input, await tmp());
+
+    const manifest = parseReleaseAssetManifest(rec.manifest);
+    assertExists(manifest);
+    const dependencyHash = manifest.dependencies["https://esm.sh/legacy-package@1"]?.contentHash;
+    assertExists(dependencyHash);
+    const dependencyUpload = rec.uploads.find((upload) => upload.hash === dependencyHash);
+    assertExists(dependencyUpload);
+    assertEquals(dependencyUpload.text, legacyCode);
+  });
+
   it("rewrites nested vendored HTTP dependency imports to immutable assets", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
