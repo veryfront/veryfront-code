@@ -172,6 +172,52 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
     });
   });
 
+  it("does not resurrect a deleted owned stage while creating nested output", async () => {
+    await withProject(async (projectDir) => {
+      await Deno.mkdir(join(projectDir, "styles/nested"));
+      await Deno.writeTextFile(
+        join(projectDir, "styles/nested/main.css"),
+        ".main { color: red; }",
+      );
+      const outputDir = join(projectDir, ".veryfront/css");
+      await Deno.mkdir(outputDir, { recursive: true });
+      await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
+
+      const delegate = await runtime.get();
+      let stagePath: string | undefined;
+      let removedStage = false;
+      const fs = Object.create(delegate.fs) as RuntimeAdapter["fs"];
+      Object.defineProperty(fs, "mkdir", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: async (path: string, options?: { recursive?: boolean }): Promise<void> => {
+          if (stagePath === undefined && path.includes(".css.veryfront-stage-")) {
+            stagePath = path;
+          } else if (
+            !removedStage && stagePath !== undefined &&
+            path.startsWith(`${stagePath}/`)
+          ) {
+            removedStage = true;
+            await delegate.fs.remove(stagePath, { recursive: true });
+          }
+          await delegate.fs.mkdir(path, options);
+        },
+      });
+      const service = new CSSOptimizerService(
+        { ...delegate, fs } as RuntimeAdapter,
+        projectDir,
+        { inputDir: "styles", outputDir: ".veryfront/css" },
+        { optimizationEngine: createTestCSSOptimizationEngine() },
+      );
+
+      await assertRejects(() => service.optimize());
+      assertEquals(removedStage, true);
+      await assertRejects(() => Deno.stat(stagePath!), Deno.errors.NotFound);
+      assertEquals(await Deno.readTextFile(join(outputDir, "sentinel.txt")), "known good");
+    });
+  });
+
   it("fails closed on empty input and optimization engine failures", async () => {
     await withProject(async (projectDir) => {
       const emptyService = await createService(projectDir);

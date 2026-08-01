@@ -256,6 +256,55 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
     });
   });
 
+  it("does not resurrect a deleted owned stage while creating nested output", async () => {
+    await withTempProject(async (projectDir, inputDir) => {
+      await Deno.mkdir(join(inputDir, "nested"));
+      await Deno.writeFile(join(inputDir, "nested/photo.jpg"), new Uint8Array([9, 8, 7]));
+      const outputDir = join(projectDir, ".veryfront/images");
+      await Deno.mkdir(outputDir, { recursive: true });
+      await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
+
+      const delegate = createFileSystem();
+      let stagePath: string | undefined;
+      let removedStage = false;
+      const fs = new Proxy(delegate, {
+        get(target, property) {
+          if (property === "mkdir") {
+            return async (path: string, options?: { recursive?: boolean }): Promise<void> => {
+              if (stagePath === undefined && path.includes(".images.veryfront-stage-")) {
+                stagePath = path;
+              } else if (
+                !removedStage && stagePath !== undefined &&
+                path.startsWith(`${stagePath}/`)
+              ) {
+                removedStage = true;
+                await target.remove(stagePath, { recursive: true });
+              }
+              await target.mkdir(path, options);
+            };
+          }
+          const value = Reflect.get(target, property);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }) as FileSystem;
+      const optimizer = new ImageOptimizer(
+        {
+          projectDir,
+          inputDir: "public",
+          outputDir: ".veryfront/images",
+          formats: ["webp"],
+          sizes: [320],
+        },
+        { fs, optimizationSession: createSession() },
+      );
+
+      await assertRejects(() => optimizer.optimize());
+      assertEquals(removedStage, true);
+      await assertRejects(() => Deno.stat(stagePath!), Deno.errors.NotFound);
+      assertEquals(await Deno.readTextFile(join(outputDir, "sentinel.txt")), "known good");
+    });
+  });
+
   it("preserves last-known-good output when the engine fails", async () => {
     await withTempProject(async (projectDir, inputDir) => {
       await Deno.writeFile(join(inputDir, "photo.jpg"), new Uint8Array([9]));

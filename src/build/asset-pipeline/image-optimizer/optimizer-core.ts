@@ -20,7 +20,9 @@ import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
 import {
+  type BuildOutputOwnership,
   createBuildPublication,
+  ensureOwnedBuildDescendant,
   resolveBuildOutputOwnership,
 } from "../../production-build/build/build-publication.ts";
 import {
@@ -398,6 +400,7 @@ export class ImageOptimizer {
                   generatedOutputDir,
                   outputOwners,
                   publishOutputs,
+                  publication?.outputOwnership,
                 )
               ),
             );
@@ -481,6 +484,7 @@ export class ImageOptimizer {
     outputDir: string,
     outputOwners: Map<string, string>,
     writeOutputs: boolean,
+    outputOwnership: BuildOutputOwnership | undefined,
   ): Promise<[string, OptimizedImageMetadata]> {
     const relativePath = portablePath(
       relative(this.options.inputDir, imagePath),
@@ -566,25 +570,39 @@ export class ImageOptimizer {
           );
         }
         if (writeOutputs) {
+          if (!outputOwnership) {
+            throw new TypeError("Image output publication ownership is missing");
+          }
           for (let index = 0; index < variants.length; index++) {
             const variant = variants[index]!;
             const encoded = optimized.variants[index]!;
-            const outputPath = join(outputDir, variant.path);
-            const outputParent = dirname(outputPath);
-            if (outputParent !== outputDir) {
-              await this.fs.mkdir(outputParent, { recursive: true });
-            }
+            const relativeParent = portablePath(dirname(variant.path));
+            const outputParent = relativeParent === "."
+              ? outputDir
+              : await ensureOwnedBuildDescendant(
+                outputOwnership,
+                this.fs,
+                relativeParent,
+              );
+            const outputPath = join(outputParent, basename(variant.path));
             await this.fs.writeFile(outputPath, encoded.data);
           }
         }
         if (this.options.preserveOriginal) {
           this.registerOutput(outputOwners, relativePath, `${relativePath} original`);
           if (writeOutputs) {
-            const originalOutput = join(outputDir, relativePath);
-            const originalParent = dirname(originalOutput);
-            if (originalParent !== outputDir) {
-              await this.fs.mkdir(originalParent, { recursive: true });
+            if (!outputOwnership) {
+              throw new TypeError("Image output publication ownership is missing");
             }
+            const relativeParent = portablePath(dirname(relativePath));
+            const originalParent = relativeParent === "."
+              ? outputDir
+              : await ensureOwnedBuildDescendant(
+                outputOwnership,
+                this.fs,
+                relativeParent,
+              );
+            const originalOutput = join(originalParent, basename(relativePath));
             await this.fs.writeFile(originalOutput, imageBuffer);
           }
         }

@@ -6,12 +6,13 @@ import type { CompileOptions, CompileResult, MDXFrontmatter } from "./types.ts";
 import { validateCompileParams, validateFileExists } from "./validator.ts";
 import { compileMDX } from "./mdx-processor.ts";
 import { transpileCode } from "./transpiler.ts";
-import { writeCompiledFile } from "./file-writer.ts";
+import { type CompileMDXFileDependencies, writeCompiledFile } from "./file-writer.ts";
 
 export function compileMDXFile(
   filePath: string,
   content: string,
   options: CompileOptions,
+  dependencies: CompileMDXFileDependencies = {},
 ): Promise<CompileResult> {
   return withSpan(
     "mdx.compileMDXFile",
@@ -45,7 +46,12 @@ export function compileMDXFile(
 
         const finalCode = await transpileCode(compiledCode, options);
 
-        const outputPath = await writeCompiledFile(filePath, finalCode, options);
+        const outputPath = await writeCompiledFile(
+          filePath,
+          finalCode,
+          options,
+          dependencies,
+        );
 
         logger.debug(`Compiled MDX to: ${outputPath}`);
 

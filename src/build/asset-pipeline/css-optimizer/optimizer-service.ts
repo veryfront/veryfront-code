@@ -16,7 +16,9 @@ import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isContainedBuildPath } from "../../bundler/project-module-resolver.ts";
 import {
+  type BuildOutputOwnership,
   createBuildPublication,
+  ensureOwnedBuildDescendant,
   resolveBuildOutputOwnership,
 } from "../../production-build/build/build-publication.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
@@ -432,7 +434,13 @@ export class CSSOptimizerService {
           ) {
             const settled = await Promise.allSettled(
               plans.slice(start, start + DEFAULT_BUILD_CONCURRENCY)
-                .map((plan) => this.optimizeFile(plan, stagingDir)),
+                .map((plan) =>
+                  this.optimizeFile(
+                    plan,
+                    stagingDir,
+                    publication.outputOwnership,
+                  )
+                ),
             );
             const errors = settled.flatMap((result) =>
               result.status === "rejected" ? [result.reason] : []
@@ -625,6 +633,7 @@ export class CSSOptimizerService {
   private async optimizeFile(
     plan: PlannedCSSFile,
     stagingDir: string,
+    outputOwnership: BuildOutputOwnership,
   ): Promise<CSSBundle> {
     const content = await this.secureFs.readFile(plan.sourcePath);
     const originalSize = encoder.encode(content).length;
@@ -664,11 +673,13 @@ export class CSSOptimizerService {
       );
     }
 
-    const outputPath = join(stagingDir, plan.outputRelativePath);
-    const outputParent = dirname(outputPath);
-    if (outputParent !== stagingDir) {
-      await this.secureFs.mkdir(outputParent, { recursive: true });
-    }
+    const relativeParent = portablePath(dirname(plan.outputRelativePath));
+    const outputParent = relativeParent === "." ? stagingDir : await ensureOwnedBuildDescendant(
+      outputOwnership,
+      this.adapter.fs,
+      relativeParent,
+    );
+    const outputPath = join(outputParent, basename(plan.outputRelativePath));
     await this.secureFs.writeFile(outputPath, outputContent);
     if (this.options.sourceMap && sourceMap) {
       await this.secureFs.writeFile(`${outputPath}.map`, sourceMap);

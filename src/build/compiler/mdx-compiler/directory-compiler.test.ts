@@ -3,6 +3,7 @@ import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { compileAllMDX } from "./directory-compiler.ts";
 
 function hasCompilerArtifact(parentDir: string, outputName: string): boolean {
@@ -82,6 +83,53 @@ describe("build/compiler/mdx-compiler/directory-compiler", () => {
         Deno.errors.NotFound,
       );
       assertEquals(hasCompilerArtifact(`${projectDir}/.veryfront`, "compiled"), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not resurrect a deleted owned stage while creating nested output", async () => {
+    const projectDir = await Deno.makeTempDir();
+    const outputDir = `${projectDir}/.veryfront/compiled`;
+    await Deno.mkdir(`${projectDir}/pages/blog`, { recursive: true });
+    await Deno.mkdir(outputDir, { recursive: true });
+    await Deno.writeTextFile(`${projectDir}/pages/blog/post.mdx`, "# Post");
+    await Deno.writeTextFile(`${outputDir}/sentinel.txt`, "known good");
+
+    const delegate = createFileSystem();
+    let stagePath: string | undefined;
+    let removedStage = false;
+    const fs = new Proxy(delegate, {
+      get(target, property) {
+        if (property === "mkdir") {
+          return async (path: string, options?: { recursive?: boolean }): Promise<void> => {
+            if (stagePath === undefined && path.includes(".compiled.veryfront-stage-")) {
+              stagePath = path;
+            } else if (
+              !removedStage && stagePath !== undefined &&
+              path.startsWith(`${stagePath}/`)
+            ) {
+              removedStage = true;
+              await target.remove(stagePath, { recursive: true });
+            }
+            await target.mkdir(path, options);
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as FileSystem;
+    try {
+      await assertRejects(() =>
+        compileAllMDX({
+          projectDir,
+          outputDir,
+          mode: "production",
+        }, { fs })
+      );
+      assertEquals(removedStage, true);
+      await assertRejects(() => Deno.stat(stagePath!), Deno.errors.NotFound);
+      assertEquals(await Deno.readTextFile(`${outputDir}/sentinel.txt`), "known good");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

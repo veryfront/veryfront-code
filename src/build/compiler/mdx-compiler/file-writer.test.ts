@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createBuildPublication } from "../../production-build/build/build-publication.ts";
 import { writeCompiledFile } from "./file-writer.ts";
 
 describe("build/compiler/mdx-compiler/file-writer", () => {
@@ -173,6 +175,59 @@ describe("build/compiler/mdx-compiler/file-writer", () => {
           false,
         );
       } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("uses owned authority and its exact filesystem for every output operation", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      const delegate = createFileSystem();
+      let stagePath: string | undefined;
+      const ownedOperations: string[] = [];
+      const fs = new Proxy(delegate, {
+        get(target, property) {
+          const value = Reflect.get(target, property);
+          if (typeof value !== "function") return value;
+          return async (...args: unknown[]): Promise<unknown> => {
+            const firstPath = typeof args[0] === "string" ? args[0] : "";
+            if (
+              stagePath === undefined && property === "mkdir" &&
+              firstPath.includes(".dist.veryfront-stage-")
+            ) {
+              stagePath = firstPath;
+            } else if (stagePath !== undefined && firstPath.startsWith(stagePath)) {
+              ownedOperations.push(String(property));
+            }
+            return await Reflect.apply(value, target, args);
+          };
+        },
+      }) as FileSystem;
+      const publication = await createBuildPublication(`${tmpDir}/dist`, false, { fs });
+      if (publication.dryRun) throw new Error("Expected a live publication");
+      try {
+        const outputPath = await writeCompiledFile(
+          `${tmpDir}/pages/blog/post.mdx`,
+          "compiled",
+          {
+            projectDir: tmpDir,
+            outputDir: `${tmpDir}/forged-output`,
+            mode: "production",
+          },
+          {
+            ownedOutput: {
+              output: publication.outputOwnership,
+              fileSystem: fs,
+            },
+          },
+        );
+
+        assertEquals(outputPath, `${publication.buildDir}/pages/blog/post.js`);
+        for (const operation of ["lstat", "mkdir", "writeTextFile", "rename", "remove"]) {
+          assertEquals(ownedOperations.includes(operation), true, `missing exact ${operation}`);
+        }
+        await assertRejects(() => Deno.lstat(`${tmpDir}/forged-output`), Deno.errors.NotFound);
+      } finally {
+        await publication.cleanup();
         await Deno.remove(tmpDir, { recursive: true });
       }
     });

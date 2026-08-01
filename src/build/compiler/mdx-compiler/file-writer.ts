@@ -7,10 +7,23 @@ import {
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors";
 import type { CompileOptions } from "./types.ts";
+import {
+  type BuildOutputOwnership,
+  ensureOwnedBuildDescendant,
+  resolveBuildOutputOwnership,
+} from "../../production-build/build/build-publication.ts";
 
 const fs = createFileSystem();
+
+export interface CompileMDXFileDependencies {
+  readonly ownedOutput?: {
+    readonly output: BuildOutputOwnership;
+    readonly fileSystem: FileSystem;
+  };
+}
 
 function isContainedPath(basePath: string, candidatePath: string): boolean {
   const relativePath = relative(basePath, candidatePath);
@@ -63,9 +76,9 @@ async function assertContained(
   });
 }
 
-async function removeIfPresent(path: string): Promise<void> {
+async function removeIfPresent(path: string, fileSystem: FileSystem): Promise<void> {
   try {
-    await fs.remove(path);
+    await fileSystem.remove(path);
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
   }
@@ -75,29 +88,49 @@ export async function writeCompiledFile(
   filePath: string,
   code: string,
   options: CompileOptions,
+  dependencies: CompileMDXFileDependencies = {},
 ): Promise<string> {
-  const outputPath = await getCompiledOutputPath(filePath, options);
-
-  await fs.mkdir(dirname(outputPath), { recursive: true });
+  const ownedOutput = dependencies.ownedOutput;
+  const fileSystem = ownedOutput?.fileSystem ?? fs;
+  let outputPath: string;
+  if (ownedOutput) {
+    const relativeOutputPath = await getCompiledRelativeOutputPath(
+      filePath,
+      options.projectDir,
+    );
+    const portableRelativePath = relativeOutputPath.replaceAll("\\", "/");
+    const relativeParent = dirname(portableRelativePath);
+    const outputParent = relativeParent === "."
+      ? resolveBuildOutputOwnership(ownedOutput.output, fileSystem)
+      : await ensureOwnedBuildDescendant(
+        ownedOutput.output,
+        fileSystem,
+        relativeParent,
+      );
+    outputPath = join(outputParent, basename(portableRelativePath));
+  } else {
+    outputPath = await getCompiledOutputPath(filePath, options);
+    await fileSystem.mkdir(dirname(outputPath), { recursive: true });
+  }
   const temporaryPath = join(
     dirname(outputPath),
     `.${basename(outputPath)}.tmp-${crypto.randomUUID()}`,
   );
-  const rename = fs.rename?.bind(fs);
+  const rename = fileSystem.rename?.bind(fileSystem);
   if (!rename) {
     throw new Error("Atomic MDX output requires filesystem rename support");
   }
 
   let writeError: unknown;
   try {
-    await fs.writeTextFile(temporaryPath, code);
+    await fileSystem.writeTextFile(temporaryPath, code);
     await rename(temporaryPath, outputPath);
   } catch (error) {
     writeError = error;
   }
 
   try {
-    await removeIfPresent(temporaryPath);
+    await removeIfPresent(temporaryPath, fileSystem);
   } catch (cleanupError) {
     if (writeError !== undefined) {
       throw new AggregateError(
@@ -117,7 +150,22 @@ export async function getCompiledOutputPath(
   filePath: string,
   options: Pick<CompileOptions, "projectDir" | "outputDir">,
 ): Promise<string> {
-  const projectDir = resolve(options.projectDir);
+  const sourceRelativePath = await getCompiledRelativeOutputPath(
+    filePath,
+    options.projectDir,
+  );
+  const outputDir = resolve(options.outputDir);
+  const outputPath = resolve(outputDir, sourceRelativePath);
+  await assertContained(outputDir, outputPath, "Compiled MDX output path");
+
+  return outputPath;
+}
+
+async function getCompiledRelativeOutputPath(
+  filePath: string,
+  configuredProjectDir: string,
+): Promise<string> {
+  const projectDir = resolve(configuredProjectDir);
   const sourcePath = resolve(filePath);
   await assertContained(projectDir, sourcePath, "MDX source path");
 
@@ -134,12 +182,5 @@ export async function getCompiledOutputPath(
     });
   }
 
-  const outputDir = resolve(options.outputDir);
-  const outputPath = resolve(
-    outputDir,
-    sourceRelativePath.replace(/\.mdx$/i, ".js"),
-  );
-  await assertContained(outputDir, outputPath, "Compiled MDX output path");
-
-  return outputPath;
+  return sourceRelativePath.replace(/\.mdx$/i, ".js");
 }

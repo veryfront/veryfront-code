@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createBuildPublication, resolveBuildOutputOwnership } from "./build-publication.ts";
+import {
+  createBuildPublication,
+  ensureOwnedBuildDescendant,
+  resolveBuildOutputOwnership,
+} from "./build-publication.ts";
 
 describe("build/production-build/build/build-publication", () => {
   it("replaces a previous output only when the staged build is published", async () => {
@@ -462,6 +466,133 @@ describe("build/production-build/build/build-publication", () => {
     } finally {
       await second.cleanup();
       await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("creates owned descendants component-by-component under concurrent callers", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-build-descendant-" });
+    const delegate = createFileSystem();
+    const descendantMkdirOptions: Array<{ path: string; recursive: boolean }> = [];
+    let stagePath: string | undefined;
+    const fs = new Proxy(delegate, {
+      get(target, property) {
+        if (property === "mkdir") {
+          return async (path: string, options?: { recursive?: boolean }): Promise<void> => {
+            if (stagePath === undefined && path.includes(".dist.veryfront-stage-")) {
+              stagePath = path;
+            } else if (stagePath !== undefined && path.startsWith(`${stagePath}/`)) {
+              descendantMkdirOptions.push({ path, recursive: options?.recursive ?? false });
+            }
+            await target.mkdir(path, options);
+          };
+        }
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    }) as FileSystem;
+    const publication = await createBuildPublication(`${root}/dist`, false, { fs });
+    if (publication.dryRun) throw new Error("Expected a live publication");
+    try {
+      const paths = await Promise.all([
+        ensureOwnedBuildDescendant(publication.outputOwnership, fs, "nested/deep"),
+        ensureOwnedBuildDescendant(publication.outputOwnership, fs, "nested/deep"),
+      ]);
+      assertEquals(paths, [
+        `${publication.buildDir}/nested/deep`,
+        `${publication.buildDir}/nested/deep`,
+      ]);
+      assertEquals((await Deno.lstat(paths[0]!)).isDirectory, true);
+      assertEquals(descendantMkdirOptions.every((entry) => !entry.recursive), true);
+      assertEquals(
+        descendantMkdirOptions.every((entry) => entry.path !== publication.buildDir),
+        true,
+      );
+    } finally {
+      await publication.cleanup();
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects unsafe owned descendant paths and a different filesystem identity", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-build-descendant-" });
+    const fs = createFileSystem();
+    const publication = await createBuildPublication(`${root}/dist`, false, { fs });
+    if (publication.dryRun) throw new Error("Expected a live publication");
+    try {
+      for (
+        const relativePath of [
+          "",
+          ".",
+          "..",
+          "../escape",
+          "/absolute",
+          "a//b",
+          "a\\b",
+          "a/./b",
+          "cafe\u0301",
+        ]
+      ) {
+        await assertRejects(
+          () => ensureOwnedBuildDescendant(publication.outputOwnership, fs, relativePath),
+          TypeError,
+          "safe relative descendant",
+        );
+      }
+      await assertRejects(
+        () =>
+          ensureOwnedBuildDescendant(
+            publication.outputOwnership,
+            createFileSystem(),
+            "nested",
+          ),
+        Error,
+        "belongs to another filesystem",
+      );
+      assertEquals([...Deno.readDirSync(publication.buildDir)].length, 0);
+    } finally {
+      await publication.cleanup();
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
+  it("rejects missing roots and incompatible descendant collisions without replacing them", async () => {
+    for (const collision of ["missing-root", "file", "symlink"] as const) {
+      const root = await Deno.makeTempDir({ prefix: "vf-build-descendant-" });
+      const fs = createFileSystem();
+      const publication = await createBuildPublication(`${root}/dist`, false, { fs });
+      if (publication.dryRun) throw new Error("Expected a live publication");
+      const descendant = `${publication.buildDir}/nested`;
+      const outside = `${root}/outside`;
+      try {
+        if (collision === "missing-root") {
+          await Deno.remove(publication.buildDir, { recursive: true });
+        } else if (collision === "file") {
+          await Deno.writeTextFile(descendant, "sentinel");
+        } else {
+          await Deno.mkdir(outside);
+          await Deno.writeTextFile(`${outside}/sentinel.txt`, "untouched");
+          await Deno.symlink(outside, descendant);
+        }
+
+        await assertRejects(() =>
+          ensureOwnedBuildDescendant(
+            publication.outputOwnership,
+            fs,
+            "nested/deep",
+          )
+        );
+        if (collision === "missing-root") {
+          await assertRejects(() => Deno.lstat(publication.buildDir), Deno.errors.NotFound);
+        } else if (collision === "file") {
+          assertEquals(await Deno.readTextFile(descendant), "sentinel");
+        } else {
+          assertEquals((await Deno.lstat(descendant)).isSymlink, true);
+          assertEquals(await Deno.readTextFile(`${outside}/sentinel.txt`), "untouched");
+        }
+      } finally {
+        await publication.cleanup().catch(() => undefined);
+        await Deno.remove(root, { recursive: true });
+      }
     }
   });
 

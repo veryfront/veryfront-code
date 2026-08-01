@@ -26,6 +26,7 @@ import {
 } from "#veryfront/rendering/rsc/rsc-bundles.generated.ts";
 import {
   createBuildPublication,
+  ensureOwnedBuildDescendant,
   resolveBuildOutputOwnership,
 } from "../production-build/build/build-publication.ts";
 import { assertSafeBuildOutputDirectory } from "../production-build/build/output-plan.ts";
@@ -260,7 +261,11 @@ async function executeEmbeddedBuild(
 
   try {
     const stagingDir = resolveBuildOutputOwnership(publication.outputOwnership, fs);
-    await fs.mkdir(join(stagingDir, "rsc"), { recursive: true });
+    const rscDir = await ensureOwnedBuildDescendant(
+      publication.outputOwnership,
+      fs,
+      "rsc",
+    );
 
     const entry = await findEmbeddedEntry(
       fs,
@@ -292,15 +297,21 @@ async function executeEmbeddedBuild(
         bundleCache.set(cacheKey, bundle);
       }
 
-      const outputPath = join(stagingDir, route.outputRelativePath);
-      await fs.mkdir(dirname(outputPath), { recursive: true });
+      const portableOutputPath = route.outputRelativePath.replaceAll("\\", "/");
+      const relativeParent = dirname(portableOutputPath);
+      const outputParent = relativeParent === "." ? stagingDir : await ensureOwnedBuildDescendant(
+        publication.outputOwnership,
+        fs,
+        relativeParent,
+      );
+      const outputPath = join(outputParent, presetBasename(portableOutputPath));
       await fs.writeTextFile(outputPath, await bundle);
     }
 
     await Promise.all([
-      fs.writeTextFile(join(stagingDir, "rsc", "client-dom.js"), CLIENT_DOM_BUNDLE),
+      fs.writeTextFile(join(rscDir, "client-dom.js"), CLIENT_DOM_BUNDLE),
       fs.writeTextFile(
-        join(stagingDir, "rsc", "hydrate-client.js"),
+        join(rscDir, "hydrate-client.js"),
         HYDRATE_CLIENT_BUNDLE,
       ),
     ]);

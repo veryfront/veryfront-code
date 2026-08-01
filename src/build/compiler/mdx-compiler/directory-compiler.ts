@@ -4,6 +4,7 @@ import { discoverFiles } from "#veryfront/utils/file-discovery.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { compileMDXFile } from "./compiler.ts";
+import type { CompileMDXFileDependencies } from "./file-writer.ts";
 import type { CompileOptions, CompileResult } from "./types.ts";
 import { pathExists, validateCompileOptions } from "./validator.ts";
 import {
@@ -11,11 +12,18 @@ import {
   resolveBuildOutputOwnership,
 } from "../../production-build/build/build-publication.ts";
 
-export async function compileAllMDX(options: CompileOptions): Promise<Map<string, CompileResult>> {
+export interface CompileAllMDXDependencies {
+  readonly fs?: ReturnType<typeof createFileSystem>;
+}
+
+export async function compileAllMDX(
+  options: CompileOptions,
+  dependencies: CompileAllMDXDependencies = {},
+): Promise<Map<string, CompileResult>> {
   validateCompileOptions(options);
   options.signal?.throwIfAborted();
 
-  const fs = createFileSystem();
+  const fs = dependencies.fs ?? createFileSystem();
   const publication = await createBuildPublication(options.outputDir, false, { fs });
   if (publication.dryRun) {
     throw new TypeError("MDX publication unexpectedly entered dry-run mode");
@@ -29,6 +37,11 @@ export async function compileAllMDX(options: CompileOptions): Promise<Map<string
     const stagedResults = await compileProjectDirectories({
       ...options,
       outputDir: stagingDir,
+    }, {
+      ownedOutput: {
+        output: publication.outputOwnership,
+        fileSystem: fs,
+      },
     });
     results = remapPublishedResults(
       stagedResults,
@@ -65,6 +78,7 @@ export async function compileAllMDX(options: CompileOptions): Promise<Map<string
 
 async function compileProjectDirectories(
   options: CompileOptions,
+  dependencies: CompileMDXFileDependencies,
 ): Promise<Map<string, CompileResult>> {
   const results = new Map<string, CompileResult>();
   const failures: Error[] = [];
@@ -79,7 +93,14 @@ async function compileProjectDirectories(
     if (!info.isDirectory) {
       throw new TypeError(`MDX source location is not a directory: ${fullPath}`);
     }
-    await compileMDXDirectory(fullPath, options, results, failures, adapter);
+    await compileMDXDirectory(
+      fullPath,
+      options,
+      dependencies,
+      results,
+      failures,
+      adapter,
+    );
   }
 
   if (failures.length > 0) {
@@ -94,6 +115,7 @@ async function compileProjectDirectories(
 async function compileMDXDirectory(
   dir: string,
   options: CompileOptions,
+  dependencies: CompileMDXFileDependencies,
   results: Map<string, CompileResult>,
   failures: Error[],
   adapter: Awaited<ReturnType<typeof runtime.get>>,
@@ -108,7 +130,7 @@ async function compileMDXDirectory(
     options.signal?.throwIfAborted();
     try {
       const content = await adapter.fs.readFile(filePath);
-      const result = await compileMDXFile(filePath, content, options);
+      const result = await compileMDXFile(filePath, content, options, dependencies);
       results.set(filePath, result);
     } catch (error) {
       logger.error(`Failed to compile ${filePath}:`, error);

@@ -1,5 +1,9 @@
 import { basename, dirname, join, resolve } from "#veryfront/compat/path/index.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  createFileSystem,
+  isAlreadyExistsError,
+  isNotFoundError,
+} from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { serverLogger } from "#veryfront/utils";
 
@@ -43,6 +47,20 @@ export interface BuildPublicationFileSystem {
   remove(path: string, options?: { recursive?: boolean }): Promise<void>;
 }
 
+export interface OwnedBuildDirectoryFileSystem extends BuildPublicationFileSystem {
+  stat(path: string): Promise<{
+    readonly isDirectory: boolean;
+    readonly isFile: boolean;
+    readonly isSymlink?: boolean;
+  }>;
+  lstat?(path: string): Promise<{
+    readonly isDirectory: boolean;
+    readonly isFile: boolean;
+    readonly isSymlink?: boolean;
+  }>;
+  readonly symlinkSemantics?: unknown;
+}
+
 type BuildOutputLifecycle =
   | "live"
   | "publishing"
@@ -61,6 +79,9 @@ const buildOutputOwnershipRecords = new WeakMap<
   BuildOutputOwnership,
   BuildOutputOwnershipRecord
 >();
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const MAX_OWNED_DESCENDANT_PATH_LENGTH = 4_096;
+const MAX_OWNED_DESCENDANT_DEPTH = 64;
 
 function publicationError(detail: string, cause?: unknown): Error {
   return BUILD_FAILED.create({ detail, cause });
@@ -80,6 +101,100 @@ export function resolveBuildOutputOwnership(
     );
   }
   return record.buildDir;
+}
+
+function splitOwnedDescendantPath(relativePath: string): string[] {
+  if (
+    typeof relativePath !== "string" ||
+    relativePath.length === 0 ||
+    relativePath.length > MAX_OWNED_DESCENDANT_PATH_LENGTH ||
+    relativePath !== relativePath.normalize("NFC")
+  ) {
+    throw new TypeError("Owned build output requires a safe relative descendant path");
+  }
+
+  const segments: string[] = [];
+  let segmentStart = 0;
+  for (let index = 0; index <= relativePath.length; index++) {
+    const atEnd = index === relativePath.length;
+    const code = atEnd ? 0x2f : relativePath.charCodeAt(index);
+    if (!atEnd && (code <= 0x1f || (code >= 0x7f && code <= 0x9f) || code === 0x5c)) {
+      throw new TypeError("Owned build output requires a safe relative descendant path");
+    }
+    if (!atEnd && code !== 0x2f) continue;
+
+    const segment = relativePath.slice(segmentStart, index);
+    if (segment === "" || segment === "." || segment === ".." || segment.includes(":")) {
+      throw new TypeError("Owned build output requires a safe relative descendant path");
+    }
+    segments.push(segment);
+    if (segments.length > MAX_OWNED_DESCENDANT_DEPTH) {
+      throw new TypeError("Owned build output requires a safe relative descendant path");
+    }
+    segmentStart = index + 1;
+  }
+  return segments;
+}
+
+function hasOwnNoSymlinkSemantics(fileSystem: object): boolean {
+  try {
+    const descriptor = getOwnPropertyDescriptor(fileSystem, "symlinkSemantics");
+    return descriptor !== undefined && "value" in descriptor && descriptor.value === "none";
+  } catch {
+    return false;
+  }
+}
+
+async function assertRealDirectory(
+  fileSystem: OwnedBuildDirectoryFileSystem,
+  path: string,
+): Promise<void> {
+  const lstat = fileSystem.lstat?.bind(fileSystem);
+  if (!lstat && !hasOwnNoSymlinkSemantics(fileSystem)) {
+    throw new TypeError(
+      `Owned build output directory reuse requires non-following metadata: ${path}`,
+    );
+  }
+  const info = lstat ? await lstat(path) : await fileSystem.stat(path);
+  if (info.isSymlink || !info.isDirectory || info.isFile) {
+    throw new TypeError(`Owned build output path is not a real directory: ${path}`);
+  }
+}
+
+async function createOrReuseOwnedDirectory(
+  fileSystem: OwnedBuildDirectoryFileSystem,
+  path: string,
+): Promise<void> {
+  try {
+    await assertRealDirectory(fileSystem, path);
+    return;
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+  }
+
+  try {
+    await fileSystem.mkdir(path);
+  } catch (error) {
+    if (!isAlreadyExistsError(error)) throw error;
+    await assertRealDirectory(fileSystem, path);
+  }
+}
+
+export async function ensureOwnedBuildDescendant(
+  output: BuildOutputOwnership,
+  expectedFileSystem: OwnedBuildDirectoryFileSystem,
+  relativePath: string,
+): Promise<string> {
+  const segments = splitOwnedDescendantPath(relativePath);
+  const buildDir = resolveBuildOutputOwnership(output, expectedFileSystem);
+  await assertRealDirectory(expectedFileSystem, buildDir);
+
+  let current = buildDir;
+  for (const segment of segments) {
+    current = join(current, segment);
+    await createOrReuseOwnedDirectory(expectedFileSystem, current);
+  }
+  return current;
 }
 
 async function acquireBuildLock(

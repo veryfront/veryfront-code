@@ -102,6 +102,51 @@ describe("build/embedded/preset", () => {
     }
   });
 
+  it("does not resurrect a deleted owned stage while creating nested output", async () => {
+    const root = await Deno.makeTempDir({ prefix: "vf-embedded-missing-stage-" });
+    const projectDir = join(root, "project");
+    const outDir = join(root, "dist");
+    const outputDir = join(outDir, "embedded");
+    await Deno.mkdir(join(projectDir, "app"), { recursive: true });
+    await Deno.mkdir(outputDir, { recursive: true });
+    await Deno.writeTextFile(join(projectDir, "app/page.md"), "# Home");
+    await Deno.writeTextFile(join(outputDir, "sentinel.txt"), "known good");
+
+    const originalMkdir = Deno.mkdir;
+    let stagePath: string | undefined;
+    let removedStage = false;
+    const interceptingMkdir: typeof Deno.mkdir = async (path, options) => {
+      const stringPath = String(path);
+      if (stagePath === undefined && stringPath.includes(".embedded.veryfront-stage-")) {
+        stagePath = stringPath;
+      } else if (
+        !removedStage && stagePath !== undefined &&
+        stringPath.startsWith(`${stagePath}/`)
+      ) {
+        removedStage = true;
+        await Deno.remove(stagePath, { recursive: true });
+      }
+      return await originalMkdir(path, options);
+    };
+    Deno.mkdir = interceptingMkdir;
+    try {
+      await assertRejects(() =>
+        buildEmbeddedPreset({
+          projectDir,
+          outDir,
+          runtime: "deno",
+          config: { directories: { app: "app", pages: "pages" } },
+        })
+      );
+      assertEquals(removedStage, true);
+      await assertRejects(() => Deno.stat(stagePath!), Deno.errors.NotFound);
+      assertEquals(await Deno.readTextFile(join(outputDir, "sentinel.txt")), "known good");
+    } finally {
+      if (Deno.mkdir === interceptingMkdir) Deno.mkdir = originalMkdir;
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("bundles project aliases and nested MDX dependencies into each route", async () => {
     const root = await Deno.makeTempDir({ prefix: "vf-embedded-route-imports-" });
     const projectDir = join(root, "project");
