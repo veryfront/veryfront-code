@@ -8,6 +8,7 @@
  */
 
 import { isAbsolute, toFileUrl } from "#veryfront/compat/path";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
 import { EXTENSION_VALIDATION_ERROR } from "./errors.ts";
 import { quoteDiagnosticString } from "./diagnostic-string.ts";
 import {
@@ -16,11 +17,65 @@ import {
 } from "./entrypoint-identity.ts";
 import type { Extension, ExtensionFactory, ExtensionSource, ResolvedExtension } from "./types.ts";
 
-const importMetaResolve = import.meta.resolve;
+type ImportMetaResolver = (specifier: string) => string;
+
+interface ImportResolutionCapabilities {
+  readonly resolver?: ImportMetaResolver;
+  readonly runtime: "node" | "other";
+}
+
+const importMetaResolve = typeof import.meta.resolve === "function"
+  ? import.meta.resolve
+  : undefined;
+const nativeImportResolution: ImportResolutionCapabilities = Object.freeze({
+  ...(importMetaResolve === undefined ? {} : { resolver: importMetaResolve }),
+  runtime: isNode ? "node" : "other",
+});
 const reflectApply = Reflect.apply;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** @internal Verify that a canonical file URL is not redirected by runtime resolution. */
+export function assertCanonicalExtensionImport(
+  specifier: string,
+  path: string,
+  capabilities: ImportResolutionCapabilities = nativeImportResolution,
+): void {
+  // Node does not expose an import-map facility that can redirect an absolute
+  // file URL. DNT also injects an import.meta.resolve ponyfill on Node 18 that
+  // delegates to require.resolve(), which cannot resolve file URLs at all.
+  // Runtime identity is therefore the stable capability boundary here.
+  if (capabilities.runtime === "node") return;
+
+  const resolver = capabilities.resolver;
+  if (resolver === undefined) {
+    throw EXTENSION_VALIDATION_ERROR.create({
+      detail: `The current runtime cannot verify extension import target ${
+        quoteDiagnosticString(path)
+      }`,
+    });
+  }
+
+  let resolvedSpecifier: string;
+  try {
+    resolvedSpecifier = reflectApply(resolver, undefined, [specifier]) as string;
+  } catch (error) {
+    throw EXTENSION_VALIDATION_ERROR.create({
+      detail: `Failed to resolve extension import target ${quoteDiagnosticString(path)}: ${
+        quoteDiagnosticString(errorMessage(error))
+      }`,
+      cause: error,
+    });
+  }
+  if (resolvedSpecifier !== specifier) {
+    throw EXTENSION_VALIDATION_ERROR.create({
+      detail: `Extension import target ${
+        quoteDiagnosticString(path)
+      } was remapped from its canonical file URL and was not imported`,
+    });
+  }
 }
 
 /**
@@ -71,24 +126,7 @@ export async function loadExtensionFactory(
   const absoluteTarget = isAbsolute(path);
   const specifier = absoluteTarget ? toFileUrl(path).href : path;
   if (absoluteTarget) {
-    let resolvedSpecifier: string;
-    try {
-      resolvedSpecifier = reflectApply(importMetaResolve, undefined, [specifier]) as string;
-    } catch (error) {
-      throw EXTENSION_VALIDATION_ERROR.create({
-        detail: `Failed to resolve extension import target ${quoteDiagnosticString(path)}: ${
-          quoteDiagnosticString(errorMessage(error))
-        }`,
-        cause: error,
-      });
-    }
-    if (resolvedSpecifier !== specifier) {
-      throw EXTENSION_VALIDATION_ERROR.create({
-        detail: `Extension import target ${
-          quoteDiagnosticString(path)
-        } was remapped from its canonical file URL and was not imported`,
-      });
-    }
+    assertCanonicalExtensionImport(specifier, path);
   }
 
   let mod: { default?: unknown };

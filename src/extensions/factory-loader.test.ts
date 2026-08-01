@@ -5,12 +5,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/factory-loader.test
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { toFileUrl } from "#veryfront/compat/path";
 import { join } from "@std/path";
 import { bindExtensionEntrypoint, captureExtensionOwner } from "./entrypoint-identity.ts";
-import { loadExtensionFactory } from "./factory-loader.ts";
+import { assertCanonicalExtensionImport, loadExtensionFactory } from "./factory-loader.ts";
 
 describe("loadExtensionFactory()", () => {
   let tmp: string;
@@ -124,6 +124,35 @@ describe("loadExtensionFactory()", () => {
 
     const resolved = await loadExtensionFactory(path, "package");
     assertEquals(resolved.source, "package");
+  });
+
+  it("does not call DNT's incompatible import.meta.resolve ponyfill on Node 18", () => {
+    let resolverCalls = 0;
+    assertCanonicalExtensionImport(
+      "file:///project/extension.ts",
+      "/project/extension.ts",
+      {
+        runtime: "node",
+        resolver: () => {
+          resolverCalls++;
+          throw new Error("require.resolve cannot load file URLs");
+        },
+      },
+    );
+    assertEquals(resolverCalls, 0);
+  });
+
+  it("fails closed without a resolver outside Node", () => {
+    assertThrows(
+      () =>
+        assertCanonicalExtensionImport(
+          "file:///project/extension.ts",
+          "/project/extension.ts",
+          { runtime: "other" },
+        ),
+      Error,
+      "cannot verify extension import target",
+    );
   });
 
   it("rejects a discovered target replaced before import", async () => {
