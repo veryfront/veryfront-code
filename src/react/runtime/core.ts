@@ -188,13 +188,13 @@ function getHeadElementContent(
   props: Record<string, unknown>,
 ): { content?: string; isRawHTML: boolean } {
   const rawHTML = props.dangerouslySetInnerHTML;
-  if (
-    rawHTML && typeof rawHTML === "object" &&
-    "__html" in rawHTML
-  ) {
-    const value = (rawHTML as { __html?: unknown }).__html;
-    if (value !== undefined && value !== null) {
-      return { content: String(value), isRawHTML: true };
+  if (rawHTML && typeof rawHTML === "object") {
+    const descriptor = Reflect.getOwnPropertyDescriptor(rawHTML, "__html");
+    if (
+      descriptor && "value" in descriptor &&
+      descriptor.value !== undefined && descriptor.value !== null
+    ) {
+      return { content: String(descriptor.value), isRawHTML: true };
     }
   }
 
@@ -233,7 +233,7 @@ function applyHeadElementAttributes(
     if (key === "children" || key === "dangerouslySetInnerHTML") continue;
     // React event callbacks cannot be represented as HTML attributes. Turning
     // a function into source text is both incorrect and unsafe.
-    if (/^on[A-Z]/.test(key) || typeof value === "function" || typeof value === "symbol") {
+    if (/^on/i.test(key) || typeof value === "function" || typeof value === "symbol") {
       continue;
     }
 
