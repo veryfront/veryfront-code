@@ -220,8 +220,9 @@ transformHtmlNonceWithinLimit(
 The transform:
 
 - fatally decodes UTF-8;
-- scans comments, tags, and script/style raw text in linear spans rather than
-  appending ordinary text one code unit at a time;
+- scans comments, declarations, RCDATA, RAWTEXT, PLAINTEXT, and the full
+  required script-data, escaped, and double-escaped state family in linear
+  spans rather than appending ordinary text one code unit at a time;
 - replaces or inserts nonce attributes with the existing escaping rules;
 - performs a first pass that calculates the exact UTF-8 output size without
   retaining the output;
@@ -236,6 +237,10 @@ and final-size overflow become classified representation-unavailable failures.
 The existing string and
 stream nonce helpers share the same linear lexical state machine, while the
 static handler uses only the bounded byte API.
+
+The scanner, nonce-input, failure-identity, stream-lifecycle, and adversarial
+state contracts are specified in
+`2026-08-01-html-nonce-transform-contract-design.md`.
 
 A request-specific nonce makes the HTML representation unsuitable for shared
 caching. Such responses use `Cache-Control: private, no-store` and do not emit
