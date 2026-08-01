@@ -7,7 +7,7 @@
  * @module extensions/discovery
  */
 
-import { join } from "@std/path";
+import { join } from "veryfront/platform/path";
 import type { Capability, PackageContractMetadata, ResolvedExtension } from "./types.ts";
 
 /**

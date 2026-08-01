@@ -1,58 +1,22 @@
 /**
  * Cross-runtime console styling
  *
- * Provides terminal colors that work in Deno, Node.js, and Bun.
- * Falls back to no-op functions in environments without terminal support.
+ * Provides terminal colors in Deno. Node.js and Bun use identity styling
+ * because the logging layer owns color policy and TTY detection there.
  */
 
 import { isDeno } from "../runtime.ts";
+import { colors as denoColors } from "./deno.ts";
+import { colors as nodeColors } from "./node.ts";
 import type { ColorFunction, ConsoleStyler } from "./types.ts";
 
 export type { ColorFunction, ConsoleStyler } from "./types.ts";
 
-const noOp: ColorFunction = (text: string) => text;
-
-const fallbackColors: ConsoleStyler = {
-  red: noOp,
-  green: noOp,
-  yellow: noOp,
-  blue: noOp,
-  cyan: noOp,
-  magenta: noOp,
-  white: noOp,
-  gray: noOp,
-  bold: noOp,
-  dim: noOp,
-  italic: noOp,
-  underline: noOp,
-  strikethrough: noOp,
-  reset: noOp,
-};
-
-let _colors: ConsoleStyler | null = null;
-
-async function loadColors(): Promise<ConsoleStyler> {
-  if (_colors) return _colors;
-
-  try {
-    const mod = await (isDeno ? import("./deno.ts") : import("./node.ts"));
-    _colors = mod.colors;
-  } catch (_) {
-    /* expected: color module may not be available in all runtimes */
-    _colors = fallbackColors;
-  }
-
-  return _colors;
-}
-
-const colorsPromise = loadColors();
-
-function getColors(): ConsoleStyler {
-  return _colors ?? fallbackColors;
-}
+const runtimeColors: ConsoleStyler = isDeno ? denoColors : nodeColors;
+const colorsPromise = Promise.resolve(runtimeColors);
 
 function makeColor(getter: (c: ConsoleStyler) => ColorFunction): ColorFunction {
-  return (text: string) => getter(getColors())(text);
+  return (text: string) => getter(runtimeColors)(text);
 }
 
 export const red: ColorFunction = makeColor((c) => c.red);

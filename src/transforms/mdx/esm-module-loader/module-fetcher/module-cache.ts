@@ -7,8 +7,7 @@
  * @module transforms/mdx/esm-module-loader/module-fetcher/module-cache
  */
 
-import { join } from "#veryfront/compat/path";
-import * as posix from "#std/path/posix";
+import { join, posix } from "#veryfront/compat/path";
 import type { Logger } from "#veryfront/utils";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";

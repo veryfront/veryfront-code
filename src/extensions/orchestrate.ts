@@ -8,7 +8,7 @@
  * @module extensions/orchestrate
  */
 
-import { basename, dirname } from "@std/path";
+import { basename, dirname } from "veryfront/platform/path";
 import * as defaultDiscovery from "./discovery.ts";
 import { loadExtensionFactory as defaultLoadFactory } from "./factory-loader.ts";
 import { ExtensionLoader } from "./loader.ts";

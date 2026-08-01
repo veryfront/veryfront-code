@@ -1,21 +1,20 @@
 /**
- * Portable @std/fmt/colors shim for Node.js and Bun.
- *
- * In Deno: Uses @std/fmt/colors
- * In Node.js/Bun: Provides ANSI escape code implementations
+ * Dependency-free ANSI color functions for every supported runtime.
  *
  * @module
  */
 
-import { isDeno } from "../runtime.ts";
-
 type ColorFn = (str: string) => string;
 
-function createColor(open: number, close: number): ColorFn {
-  return (str: string) => `\x1b[${open}m${str}\x1b[${close}m`;
+/** @internal Builds one ANSI wrapper while preserving an outer nested style. */
+export function createColor(open: number, close: number): ColorFn {
+  const openSequence = `\x1b[${open}m`;
+  const closeSequence = `\x1b[${close}m`;
+  return (str: string) =>
+    openSequence + str.split(closeSequence).join(openSequence) + closeSequence;
 }
 
-const nodeColors = {
+const colors = {
   red: createColor(31, 39),
   green: createColor(32, 39),
   yellow: createColor(33, 39),
@@ -51,12 +50,8 @@ const nodeColors = {
   hidden: createColor(8, 28),
   strikethrough: createColor(9, 29),
 
-  reset: (str: string) => `\x1b[0m${str}\x1b[0m`,
+  reset: createColor(0, 0),
 } satisfies Record<string, ColorFn>;
-
-const colors: Record<string, ColorFn> = isDeno
-  ? ((await import("#std/fmt/colors.ts")) as unknown as Record<string, ColorFn>)
-  : nodeColors;
 
 export const {
   red,
