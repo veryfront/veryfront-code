@@ -5,6 +5,9 @@
   "veryfront": {
     "extension": true,
     "activation": "explicit",
+    "npm": {
+      "nodeEngine": ">=20.0.0"
+    },
     "contracts": {
       "provides": ["BlobStorage"]
     },
@@ -17,6 +20,8 @@
           "AWS_LAMBDA_FUNCTION_NAME",
           "AWS_LAMBDA_MAX_CONCURRENCY",
           "AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA",
+          "AWS_NEW_RETRIES_2026",
+          "AWS_SDK_JS_NODE_VERSION_SUPPORT_WARNING_DISABLED",
           "SMITHY_NEW_RETRIES_2026",
           "_X_AMZN_TRACE_ID"
         ]
@@ -24,8 +29,8 @@
     ]
   },
   "imports": {
-    "@aws-sdk/client-s3": "npm:@aws-sdk/client-s3@3.967.0",
-    "@aws-sdk/lib-storage": "npm:@aws-sdk/lib-storage@3.967.0",
+    "@aws-sdk/client-s3": "npm:@aws-sdk/client-s3@3.980.0",
+    "@aws-sdk/lib-storage": "npm:@aws-sdk/lib-storage@3.980.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "veryfront/errors": "../../src/errors/index.ts",
@@ -33,6 +38,6 @@
     "veryfront/workflow/blob": "../../src/workflow/blob/index.ts"
   },
   "tasks": {
-    "test": "deno test --frozen --allow-env=AWS_LAMBDA_BENCHMARK_MODE,AWS_LAMBDA_FUNCTION_NAME,AWS_LAMBDA_MAX_CONCURRENCY,AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA,SMITHY_NEW_RETRIES_2026,_X_AMZN_TRACE_ID src/"
+    "test": "deno test --frozen --allow-env=AWS_LAMBDA_BENCHMARK_MODE,AWS_LAMBDA_FUNCTION_NAME,AWS_LAMBDA_MAX_CONCURRENCY,AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA,AWS_NEW_RETRIES_2026,AWS_SDK_JS_NODE_VERSION_SUPPORT_WARNING_DISABLED,SMITHY_NEW_RETRIES_2026,_X_AMZN_TRACE_ID src/"
   }
 }

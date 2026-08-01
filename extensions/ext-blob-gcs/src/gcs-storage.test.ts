@@ -94,6 +94,21 @@ function decodeBase64Url(value: string): Uint8Array {
   return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
 }
 
+function withoutAbortSignalAny(run: () => void): void {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+  Object.defineProperty(AbortSignal, "any", {
+    configurable: true,
+    value: undefined,
+    writable: true,
+  });
+  try {
+    run();
+  } finally {
+    if (descriptor) Object.defineProperty(AbortSignal, "any", descriptor);
+    else delete (AbortSignal as { any?: unknown }).any;
+  }
+}
+
 describe("GCSBlobStorage", () => {
   it("validates service-account and endpoint configuration synchronously", async () => {
     assertThrows(
@@ -777,6 +792,22 @@ describe("GCSBlobStorage", () => {
       logger: { debug() {}, info() {}, warn() {}, error() {} },
     });
     extension.teardown?.();
+  });
+
+  it("sets up when AbortSignal.any is unavailable", async () => {
+    const extension = extBlobGCS(await config());
+    withoutAbortSignalAny(() => {
+      extension.setup?.({
+        get: () => undefined,
+        require: () => {
+          throw new Error("unexpected requirement");
+        },
+        provide() {},
+        config: {},
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+      });
+      extension.teardown?.();
+    });
   });
 
   it("rolls setup back and forwards context revocation exactly", async () => {

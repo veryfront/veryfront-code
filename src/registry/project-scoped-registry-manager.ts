@@ -29,10 +29,22 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 const DEFAULT_SCOPE_ID = "__default__";
 
+type RegistrationOwner = object;
+
 type RegistryMutation<T> =
   | { readonly type: "clear" }
   | { readonly type: "delete"; readonly id: string }
-  | { readonly type: "set"; readonly id: string; readonly item: T };
+  | {
+    readonly type: "deleteOwned";
+    readonly id: string;
+    readonly owner: RegistrationOwner;
+  }
+  | {
+    readonly type: "set";
+    readonly id: string;
+    readonly item: T;
+    readonly owner?: RegistrationOwner;
+  };
 
 interface RegistryTransactionPublication {
   publish(): void;
@@ -44,6 +56,7 @@ interface RegistryTransactionStage {
 }
 
 interface ManagedRegistryTransactionStage<T> extends RegistryTransactionStage {
+  readonly ownership: Map<string, RegistrationOwner>;
   readonly registry: Map<string, T>;
   validateRegistration(id: string, incoming: T): void;
   record(mutation: RegistryMutation<T>): void;
@@ -154,6 +167,7 @@ export async function runWithRegistryTransaction<T>(fn: () => Promise<T>): Promi
  */
 export class ProjectScopedRegistryManager<T> {
   private registriesByScope = new Map<string, Map<string, T>>();
+  private ownershipByScope = new Map<string, Map<string, RegistrationOwner>>();
   private sharedRegistry = new Map<string, T>();
   private activeStagesByScope = new Map<string, Set<ManagedRegistryTransactionStage<T>>>();
 
@@ -173,21 +187,31 @@ export class ProjectScopedRegistryManager<T> {
 
   private applyMutation(
     registry: Map<string, T>,
+    ownership: Map<string, RegistrationOwner>,
     mutation: RegistryMutation<T>,
     validateRegistration = false,
   ): void {
     switch (mutation.type) {
       case "clear":
         registry.clear();
+        ownership.clear();
         break;
       case "delete":
         registry.delete(mutation.id);
+        ownership.delete(mutation.id);
+        break;
+      case "deleteOwned":
+        if (ownership.get(mutation.id) !== mutation.owner) break;
+        registry.delete(mutation.id);
+        ownership.delete(mutation.id);
         break;
       case "set":
         if (validateRegistration) {
           this.validateRegistration(registry, mutation.id, mutation.item);
         }
         registry.set(mutation.id, mutation.item);
+        if (mutation.owner) ownership.set(mutation.id, mutation.owner);
+        else ownership.delete(mutation.id);
         break;
     }
   }
@@ -227,8 +251,11 @@ export class ProjectScopedRegistryManager<T> {
     if (existing) return existing;
 
     const baseRegistry = new Map(this.registriesByScope.get(scopeId));
+    const baseOwnership = new Map(this.ownershipByScope.get(scopeId));
     const registry = new Map(baseRegistry);
+    const ownership = new Map(baseOwnership);
     const validationRegistry = new Map(baseRegistry);
+    const validationOwnership = new Map(baseOwnership);
     const mutations: RegistryMutation<T>[] = [];
     let closed = false;
 
@@ -241,18 +268,20 @@ export class ProjectScopedRegistryManager<T> {
     };
 
     const stage: ManagedRegistryTransactionStage<T> = {
+      ownership,
       registry,
       validateRegistration: (id, incoming) => {
         this.validateRegistration(validationRegistry, id, incoming);
       },
       record: (mutation) => {
         mutations.push(mutation);
-        this.applyMutation(validationRegistry, mutation);
+        this.applyMutation(validationRegistry, validationOwnership, mutation);
       },
       prepare: () => {
         const replacement = new Map(baseRegistry);
+        const replacementOwnership = new Map(baseOwnership);
         for (const mutation of mutations) {
-          this.applyMutation(replacement, mutation, true);
+          this.applyMutation(replacement, replacementOwnership, mutation, true);
         }
 
         return {
@@ -262,6 +291,11 @@ export class ProjectScopedRegistryManager<T> {
               this.registriesByScope.delete(scopeId);
             } else {
               this.registriesByScope.set(scopeId, replacement);
+            }
+            if (replacementOwnership.size === 0) {
+              this.ownershipByScope.delete(scopeId);
+            } else {
+              this.ownershipByScope.set(scopeId, replacementOwnership);
             }
           },
         };
@@ -303,6 +337,14 @@ export class ProjectScopedRegistryManager<T> {
    * Register an item for the current project.
    */
   register(id: string, item: T): void {
+    this.registerWithOwner(id, item);
+  }
+
+  private registerWithOwner(
+    id: string,
+    item: T,
+    owner?: RegistrationOwner,
+  ): void {
     const scopeId = this.getCurrentScopeId();
     const stage = this.getTransactionStage(scopeId);
     const registry = stage?.registry ?? this.getScopeRegistry(scopeId);
@@ -316,7 +358,19 @@ export class ProjectScopedRegistryManager<T> {
     }
 
     registry.set(id, item);
-    const mutation: RegistryMutation<T> = { type: "set", id, item };
+    if (stage) {
+      if (owner) stage.ownership.set(id, owner);
+      else stage.ownership.delete(id);
+    } else if (owner) {
+      const ownership = this.ownershipByScope.get(scopeId) ?? new Map();
+      ownership.set(id, owner);
+      this.ownershipByScope.set(scopeId, ownership);
+    } else {
+      const ownership = this.ownershipByScope.get(scopeId);
+      ownership?.delete(id);
+      if (ownership?.size === 0) this.ownershipByScope.delete(scopeId);
+    }
+    const mutation: RegistryMutation<T> = { type: "set", id, item, owner };
     if (stage) stage.record(mutation);
     else this.recordLiveMutation(scopeId, mutation);
     agentLogger.debug(`[${this.registryName}] Registered "${id}" for scope ${scopeId}`);
@@ -329,12 +383,14 @@ export class ProjectScopedRegistryManager<T> {
    * The disposer captures the canonical scope at registration time, so
    * lifecycle teardown does not depend on whichever request context happens to
    * be active later. It removes the entry only while the registered value is
-   * still current; a subsequent replacement therefore remains owned by its
-   * own lifecycle.
+   * exact generation is still current; a subsequent replacement therefore
+   * remains owned by its own lifecycle even when both registrations contain
+   * the same value or object.
    */
   registerOwned(id: string, item: T): () => void {
     const scopeId = this.getCurrentScopeId();
-    this.register(id, item);
+    const owner: RegistrationOwner = {};
+    this.registerWithOwner(id, item, owner);
     let disposed = false;
 
     return () => {
@@ -346,22 +402,26 @@ export class ProjectScopedRegistryManager<T> {
         transaction.targetScopeId === scopeId
       ) {
         const stage = this.getTransactionStage(scopeId);
-        if (stage?.registry.get(id) !== item) return;
+        if (stage?.ownership.get(id) !== owner) return;
         stage.registry.delete(id);
-        stage.record({ type: "delete", id });
+        stage.ownership.delete(id);
+        stage.record({ type: "deleteOwned", id, owner });
         return;
       }
 
       const registry = this.registriesByScope.get(scopeId);
-      if (registry?.get(id) !== item) {
+      const ownership = this.ownershipByScope.get(scopeId);
+      if (!registry || ownership?.get(id) !== owner) {
         disposed = true;
         return;
       }
 
       registry.delete(id);
+      ownership.delete(id);
       disposed = true;
-      this.recordLiveMutation(scopeId, { type: "delete", id });
+      this.recordLiveMutation(scopeId, { type: "deleteOwned", id, owner });
       if (registry.size === 0) this.registriesByScope.delete(scopeId);
+      if (ownership.size === 0) this.ownershipByScope.delete(scopeId);
       agentLogger.debug(
         `[${this.registryName}] Disposed owned registration "${id}" from scope ${scopeId}`,
       );
@@ -470,6 +530,8 @@ export class ProjectScopedRegistryManager<T> {
     if (!existed && !stage && !this.activeStagesByScope.has(scopeId)) return false;
 
     registry?.delete(id);
+    const ownership = stage?.ownership ?? this.ownershipByScope.get(scopeId);
+    ownership?.delete(id);
     const mutation: RegistryMutation<T> = { type: "delete", id };
     if (stage) stage.record(mutation);
     else this.recordLiveMutation(scopeId, mutation);
@@ -485,6 +547,7 @@ export class ProjectScopedRegistryManager<T> {
     const stage = this.getTransactionStage(scopeId);
     if (stage) {
       stage.registry.clear();
+      stage.ownership.clear();
       stage.record({ type: "clear" });
       return;
     }
@@ -510,6 +573,7 @@ export class ProjectScopedRegistryManager<T> {
     for (const scopeId of scopeIds) {
       if (scopeId === projectId || scopeId.startsWith(`${projectId}:`)) {
         cleared = this.registriesByScope.delete(scopeId) || cleared;
+        this.ownershipByScope.delete(scopeId);
         this.recordLiveMutation(scopeId, { type: "clear" });
       }
     }
@@ -538,6 +602,7 @@ export class ProjectScopedRegistryManager<T> {
       this.recordLiveMutation(scopeId, { type: "clear" });
     }
     this.registriesByScope.clear();
+    this.ownershipByScope.clear();
     this.sharedRegistry.clear();
     agentLogger.debug(`[${this.registryName}] Cleared all registries`);
   }

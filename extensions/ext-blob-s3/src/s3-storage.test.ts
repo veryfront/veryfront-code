@@ -89,6 +89,21 @@ async function consumeUploadBody(value: ReadableStream): Promise<number> {
   }
 }
 
+function withoutAbortSignalAny(run: () => void): void {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+  Object.defineProperty(AbortSignal, "any", {
+    configurable: true,
+    value: undefined,
+    writable: true,
+  });
+  try {
+    run();
+  } finally {
+    if (descriptor) Object.defineProperty(AbortSignal, "any", descriptor);
+    else delete (AbortSignal as { any?: unknown }).any;
+  }
+}
+
 describe("S3BlobStorage", () => {
   it("validates required configuration synchronously", () => {
     assertThrows(
@@ -571,6 +586,22 @@ describe("S3BlobStorage", () => {
       logger: { debug() {}, info() {}, warn() {}, error() {} },
     });
     extension.teardown?.();
+  });
+
+  it("sets up when AbortSignal.any is unavailable", () => {
+    const extension = extBlobS3(config());
+    withoutAbortSignalAny(() => {
+      extension.setup?.({
+        get: () => undefined,
+        require: () => {
+          throw new Error("unexpected requirement");
+        },
+        provide() {},
+        config: {},
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+      });
+      extension.teardown?.();
+    });
   });
 
   it("rolls setup back and forwards context revocation exactly", async () => {

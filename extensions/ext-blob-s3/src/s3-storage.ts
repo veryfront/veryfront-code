@@ -381,6 +381,7 @@ function createDefaultResources(config: NormalizedS3Config): DefaultS3Resources 
       ["lang/js"],
       ["app/veryfront-ext-blob-s3", "0.1.0"],
     ],
+    disableClockSkewCorrection: false,
     disableS3ExpressSessionAuth: config.disableS3ExpressSessionAuth,
     region: config.region,
     credentials: {

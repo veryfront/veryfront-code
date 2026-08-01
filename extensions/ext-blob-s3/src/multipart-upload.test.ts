@@ -69,6 +69,7 @@ function createClient(handler: S3ProtocolHandler): S3Client {
       ["lang/js"],
       ["app/veryfront-ext-blob-s3-test", "0.1.0"],
     ],
+    disableClockSkewCorrection: false,
     disableS3ExpressSessionAuth: false,
     region: "eu-north-1",
     credentials: { accessKeyId: "access-key", secretAccessKey: "secret-key" },

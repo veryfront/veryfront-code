@@ -5,7 +5,7 @@
  * @module extensions/ext-blob-gcs
  */
 
-import type { Extension } from "veryfront/extensions";
+import { composeAbortSignals, type Extension } from "veryfront/extensions";
 import { type BlobStorage, BlobStorageContractName } from "veryfront/workflow/blob";
 import { GCSBlobStorage, type GCSBlobStorageConfig } from "./gcs-storage.ts";
 
@@ -35,7 +35,7 @@ export const extBlobGCS = (config: GCSBlobStorageConfig): Extension => {
       selectedConfig.signal?.throwIfAborted();
       ctx.signal?.throwIfAborted();
       const controller = new AbortController();
-      const signal = AbortSignal.any([
+      const signal = composeAbortSignals([
         controller.signal,
         ...(selectedConfig.signal ? [selectedConfig.signal] : []),
         ...(ctx.signal ? [ctx.signal] : []),
