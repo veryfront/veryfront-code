@@ -275,6 +275,20 @@ describe("discoverPackageExtensions()", () => {
     assertEquals(found[0]?.metadata.capabilities[0]?.type, "bundler");
   });
 
+  it("returns package hits in stable lexical order", async () => {
+    await writePkg(join(tmp, "node_modules", "z-last"), "z-last", {
+      extension: true,
+    });
+    await writePkg(join(tmp, "node_modules", "a-first"), "a-first", {
+      extension: true,
+    });
+
+    assertEquals(
+      (await discoverPackageExtensions(tmp)).map((entry) => entry.packageName),
+      ["a-first", "z-last"],
+    );
+  });
+
   it("skips packages without veryfront.extension", async () => {
     await writePkg(join(tmp, "node_modules", "lodash"), "lodash");
     await writePkg(join(tmp, "node_modules", "ext-a"), "ext-a", {
@@ -689,7 +703,10 @@ describe("discoverLocalExtensions()", () => {
     await Deno.writeTextFile(join(tmp, "foo.extension.ts"), "x");
     await Deno.writeTextFile(join(tmp, "bar.extension.ts"), "x");
     const found = await discoverLocalExtensions(tmp);
-    assertEquals(found.length, 2);
+    assertEquals(found, [
+      join(tmp, "bar.extension.ts"),
+      join(tmp, "foo.extension.ts"),
+    ]);
   });
 
   it("ignores non-matching files", async () => {
@@ -707,5 +724,19 @@ describe("discoverLocalExtensions()", () => {
     const found = await discoverLocalExtensions(tmp);
     assertEquals(found.length, 1);
     assertEquals(found[0], join(tmp, "real.extension.ts"));
+  });
+
+  it("ignores symlinked local extensions", async () => {
+    const explicit = join(tmp, "extensions", "explicit", "index.ts");
+    await Deno.mkdir(join(tmp, "extensions", "explicit"), {
+      recursive: true,
+    });
+    await Deno.writeTextFile(
+      explicit,
+      "throw new Error('explicit target must not import');",
+    );
+    await Deno.symlink(explicit, join(tmp, "alias.extension.ts"));
+
+    assertEquals(await discoverLocalExtensions(tmp), []);
   });
 });
