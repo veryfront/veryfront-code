@@ -17,6 +17,11 @@ import { build, type OnResolveArgs, type Plugin } from "veryfront/extensions/bun
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import {
+  isNativeErrorWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 import { CLIENT_PREFETCH_BUNDLE, CLIENT_ROUTER_BUNDLE } from "./templates.ts";
 import { PRODUCTION_BUILD_FORMAT_VERSION } from "./constants.ts";
 
@@ -345,7 +350,42 @@ async function isSafeClientSourceFile(path: string): Promise<boolean> {
 
 async function readClientSource(path: string): Promise<string> {
   const { fs, size } = await getClientSourceFileInfo(path);
-  const bytes = await fs.readFile(path);
+  const exactReader = fs.readFileBytesWithinLimit;
+  if (typeof exactReader !== "function") {
+    throw BUILD_FAILED.create({
+      detail: "Client runtime source requires an exact bounded filesystem reader",
+    });
+  }
+
+  let rawBytes: unknown;
+  try {
+    rawBytes = await Reflect.apply(exactReader, fs, [path, MAX_CLIENT_SOURCE_BYTES]);
+  } catch (error) {
+    if (
+      isNativeErrorWithoutHooks(error) &&
+      readNativeErrorNameWithoutHooks(error) === "RangeError"
+    ) {
+      throw BUILD_FAILED.create({
+        detail: `Client runtime source exceeds ${MAX_CLIENT_SOURCE_BYTES} bytes`,
+        cause: error,
+      });
+    }
+    throw error;
+  }
+
+  let bytes: Uint8Array;
+  try {
+    bytes = copyFixedUint8ArrayWithinLimit(
+      rawBytes,
+      MAX_CLIENT_SOURCE_BYTES,
+      "Client runtime source",
+    );
+  } catch (error) {
+    throw BUILD_FAILED.create({
+      detail: "Client runtime source reader violated its exact bounded-read contract",
+      cause: error,
+    });
+  }
   if (bytes.byteLength !== size || bytes.byteLength > MAX_CLIENT_SOURCE_BYTES) {
     throw BUILD_FAILED.create({
       detail: "Client runtime source changed while it was being read",

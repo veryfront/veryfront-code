@@ -135,6 +135,33 @@ describe(
     );
 
     describe("source bundle safety", () => {
+      it("reads framework sources through the exact bounded reader", async () => {
+        const originalReadFile = Deno.readFile;
+        let wholeFileReads = 0;
+        Deno.readFile = () => {
+          wholeFileReads++;
+          return Promise.reject(new Error("whole-file source reads are forbidden"));
+        };
+        try {
+          await withBundler(
+            {
+              bundle: () => Promise.resolve(bundleResult("export const boundedSource = true;")),
+              transform: () => Promise.resolve({ code: "", warnings: [] }),
+            },
+            async () => {
+              assertEquals(
+                await generateClientModule({ forceSourceBundle: true }),
+                "export const boundedSource = true;",
+              );
+            },
+          );
+        } finally {
+          Deno.readFile = originalReadFile;
+        }
+
+        assertEquals(wholeFileReads, 0);
+      });
+
       it("does not stop a process-global bundler it does not own", async () => {
         let stopCalls = 0;
         const output = "export const clientRuntimeMarker = true;";
