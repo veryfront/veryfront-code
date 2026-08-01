@@ -31,6 +31,7 @@ import {
   setSSRServerPort,
 } from "#veryfront/rendering/ssr-globals.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
+import { snapshotNodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
@@ -161,6 +162,12 @@ export interface StartProductionServerOptions extends ServerOptions {
 export function startProductionServer(
   options: StartProductionServerOptions,
 ): Promise<ServerHandle> {
+  const suppliedBootstrap = options.bootstrapResult;
+  const suppliedProviderSource = suppliedBootstrap?.nodeWebSocketServerProvider;
+  const suppliedNodeWebSocketServerProvider = suppliedProviderSource === undefined
+    ? undefined
+    : snapshotNodeWebSocketServerProvider(suppliedProviderSource);
+
   return withSpan(
     "server.startProductionServer",
     async () => {
@@ -175,7 +182,6 @@ export function startProductionServer(
         defaultReleaseId,
         defaultEnvironment,
         requestInterceptor,
-        bootstrapResult,
         discoveryConfig,
         localProjects,
       } = options;
@@ -186,8 +192,11 @@ export function startProductionServer(
 
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-        const bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        const bootstrap = suppliedBootstrap ?? await bootstrapProd(projectDir, baseAdapter);
         const adapter = bootstrap.adapter;
+        const nodeWebSocketServerProvider = suppliedBootstrap === undefined
+          ? bootstrap.nodeWebSocketServerProvider
+          : suppliedNodeWebSocketServerProvider;
 
         if (bootstrap.usingFSAdapter) {
           logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
@@ -293,6 +302,7 @@ export function startProductionServer(
           port,
           hostname: bindAddress, // Deno uses "hostname" for bind address
           signal,
+          nodeWebSocketServerProvider,
           onListen: (params) => {
             resolveListenReady?.();
             logger.info("Production server listening", params);

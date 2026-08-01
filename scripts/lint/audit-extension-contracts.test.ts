@@ -115,16 +115,25 @@ describe("extractExtensionSourceMetadata contracts", () => {
         LLMProviderRegistryName,
         SandboxShellToolsProviderName,
       } from "veryfront/extensions/sandbox";
+      import {
+        NodeWebSocketServerProviderName,
+      } from "veryfront/extensions/websocket";
       const ext = () => ({
         contracts: {
-          provides: [SandboxShellToolsProviderName],
+          provides: [
+            NodeWebSocketServerProviderName,
+            SandboxShellToolsProviderName,
+          ],
           requires: [LLMProviderRegistryName],
         },
         capabilities: [],
       });
     `);
 
-    assertEquals(metadata.contracts?.provides, ["SandboxShellToolsProvider"]);
+    assertEquals(metadata.contracts?.provides, [
+      "NodeWebSocketServerProvider",
+      "SandboxShellToolsProvider",
+    ]);
     assertEquals(metadata.contracts?.requires, ["LLMProviderRegistry"]);
   });
 });

@@ -57,6 +57,23 @@ function sensitiveExtensionManifests() {
         },
       ],
     },
+    {
+      sourceLocation: "extensions/ext-node-websocket-ws/deno.json",
+      group: "extension" as const,
+      componentCount: 2,
+      components: [
+        {
+          name: "@types/ws",
+          version: "8.18.1",
+          purl: "pkg:npm/%40types/ws@8.18.1",
+        },
+        {
+          name: "ws",
+          version: "8.21.1",
+          purl: "pkg:npm/ws@8.21.1",
+        },
+      ],
+    },
   ];
 }
 
@@ -293,6 +310,7 @@ describe("auditDependencyBoundaries", () => {
       "sensitive extension sandbox execution boundary is missing expected component just-bash",
       "sensitive extension native SQLite storage boundary is missing from dependency index",
       "sensitive extension document extraction boundary is missing from dependency index",
+      "sensitive extension Node WebSocket transport boundary is missing from dependency index",
     ]);
   });
 });

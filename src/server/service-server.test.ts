@@ -320,13 +320,16 @@ Deno.test("Node service shutdown runs runtime stop when server close fails", asy
   const originalClose = server.server.close;
   server.server.close = ((callback?: (error?: Error) => void) => {
     events.push("server-close");
-    originalClose.call(server.server, () => {
-      callback?.(closeError);
-    });
+    callback?.(closeError);
+    // Release the real listener after exposing the injected failure. A native
+    // close event is terminal and must not be reinterpreted as a late callback
+    // failure by the hardened transport lifecycle.
+    originalClose.call(server.server);
     return server.server;
   }) as typeof server.server.close;
 
   const rejected = await assertRejects(() => server.stop(), Error, "node close failed");
+  await server.stop();
 
   assertStrictEquals(rejected, closeError);
   assertEquals(events, ["runtime-shutdown", "server-close", "runtime-stop"]);

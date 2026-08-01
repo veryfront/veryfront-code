@@ -160,4 +160,3 @@ describe("NodeUpgradeLifecycle", () => {
     assertEquals(destroyCalls, 1);
   });
 });
-
