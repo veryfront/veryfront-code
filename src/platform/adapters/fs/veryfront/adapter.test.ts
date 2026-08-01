@@ -116,6 +116,7 @@ describe("VeryfrontFSAdapter", () => {
       "setContentContext",
       "resolveFile",
       "readFileBytes",
+      "readFileBytesWithinLimit",
       "getAllSourceFiles",
       "getEntityIdForPath",
       "getFilePathByEntityId",
@@ -142,6 +143,110 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(typeof (createAdapter() as any)[method], "function");
       });
     }
+  });
+
+  describe("bounded byte reads", () => {
+    it("delegates to the upstream exact reader after minimal cold initialization", async () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      let exactCall: [string, number] | undefined;
+      const internals = adapter as unknown as {
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
+        exactCall = [path, byteLimit];
+        return Promise.resolve(new Uint8Array([7, 8]));
+      };
+
+      assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [7, 8]);
+      assertEquals(exactCall, ["manifest.json", 2]);
+    });
+
+    it("keeps cold exact misses off file-list initialization and branch recovery", async () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const client = adapter.getClient();
+      let exactCalls = 0;
+      let projectCalls = 0;
+      let listAllFilesCalls = 0;
+      let unboundedContentCalls = 0;
+      const clientInternals = client as unknown as {
+        getFileContent(path: string): Promise<string>;
+        getFileContentBytesWithinLimit(path: string, maximumBytes: number): Promise<Uint8Array>;
+        getProject(projectRef?: string): Promise<{
+          id: string;
+          slug: string;
+          provider: string;
+          layout: string;
+        }>;
+        listAllFiles(): Promise<Array<{ path: string; content?: string }>>;
+      };
+      clientInternals.getProject = () => {
+        projectCalls++;
+        return Promise.resolve({
+          id: "project-id",
+          slug: "test-project",
+          provider: "veryfront",
+          layout: "default",
+        });
+      };
+      clientInternals.listAllFiles = () => {
+        listAllFilesCalls++;
+        return Promise.reject(new Error("file-list content path must not run"));
+      };
+      clientInternals.getFileContent = () => {
+        unboundedContentCalls++;
+        return Promise.reject(new Error("unbounded content path must not run"));
+      };
+      clientInternals.getFileContentBytesWithinLimit = () => {
+        exactCalls++;
+        return Promise.reject(new Error("404 Not Found"));
+      };
+
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit("manifest.json", 32),
+        Error,
+        "404 Not Found: manifest.json",
+      );
+      assertEquals(exactCalls, 1);
+      assertEquals(projectCalls, 0);
+      assertEquals(listAllFilesCalls, 0);
+      assertEquals(unboundedContentCalls, 0);
+    });
+
+    it("rejects an invalid limit before initialization", async () => {
+      const adapter = createAdapter();
+      let initializeCalls = 0;
+      (adapter as unknown as { initialize(): Promise<void> }).initialize = () => {
+        initializeCalls++;
+        return Promise.resolve();
+      };
+
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit("manifest.json", 0),
+        RangeError,
+        "positive safe integer",
+      );
+      assertEquals(initializeCalls, 0);
+    });
   });
 
   describe("exists", () => {

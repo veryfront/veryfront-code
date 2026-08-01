@@ -547,6 +547,202 @@ describe("VeryfrontAPIOperations", () => {
     });
   });
 
+  describe("bounded file content", () => {
+    it("returns exact branch content bytes through the normal file endpoint", async () => {
+      let requestedUrl = "";
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        requestedUrl = String(input);
+        return Promise.resolve(
+          new Response(JSON.stringify({ ignored: [1, 2, 3], content: "é" }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+
+      const bytes = await createOps().getBranchFileContentBytesWithinLimit(
+        "project-slug",
+        "main",
+        "styles/manifest.json",
+        2,
+      );
+
+      assertEquals([...bytes], [0xc3, 0xa9]);
+      assertStringIncludes(requestedUrl, "/projects/project-slug/files/styles%2Fmanifest.json?");
+      assertStringIncludes(requestedUrl, "branch=main");
+      assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+
+    it("does not warn-log expected 404s for bounded branch probes", async () => {
+      const entries: LogEntry[] = [];
+      const originalWarn = console.warn;
+      console.warn = () => {};
+      __registerLogRecordEmitter((entry) => entries.push(entry));
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: "Not found" }), {
+            status: 404,
+            statusText: "Not Found",
+            headers: { "Content-Type": "application/json" },
+          }),
+        )) as typeof fetch;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getBranchFileContentBytesWithinLimit(
+              "project-slug",
+              "main",
+              "pages/home.tsx",
+              1,
+              { expectedMissing: true },
+            ),
+          Error,
+          "API request failed: 404 Not Found",
+        );
+      } finally {
+        console.warn = originalWarn;
+      }
+
+      assertEquals(
+        entries.some((entry) =>
+          (entry.level === "warn" || entry.level === "error") &&
+          entry.component === "veryfront-api-client" &&
+          entry.message === "Request failed"
+        ),
+        false,
+      );
+    });
+
+    it("rejects oversized ASCII before JSON.parse and without retries", async () => {
+      let fetchCalls = 0;
+      let parseCalls = 0;
+      const originalJsonParse = JSON.parse;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response(JSON.stringify({ content: "xx" })));
+      }) as typeof fetch;
+      JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+        parseCalls++;
+        return Reflect.apply(originalJsonParse, JSON, args);
+      }) as typeof JSON.parse;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getBranchFileContentBytesWithinLimit(
+              "project-slug",
+              "main",
+              "styles/manifest.json",
+              1,
+            ),
+          RangeError,
+          "1 UTF-8 bytes",
+        );
+      } finally {
+        JSON.parse = originalJsonParse;
+      }
+
+      assertEquals(fetchCalls, 1);
+      assertEquals(parseCalls, 0);
+    });
+
+    it("post-validates transport bytes with captured typed-array intrinsics", async () => {
+      const operations = createOps();
+      const OriginalUint8Array = globalThis.Uint8Array;
+      class TransportBytes extends OriginalUint8Array {}
+      const source = new TransportBytes([1, 2]);
+      (operations as unknown as {
+        transport: { request(): Promise<unknown> };
+      }).transport = { request: () => Promise.resolve(source) };
+      const originalSpecies = Object.getOwnPropertyDescriptor(
+        OriginalUint8Array,
+        Symbol.species,
+      );
+      class PoisonedUint8Array extends OriginalUint8Array {
+        constructor(..._args: unknown[]) {
+          super(0);
+          throw new Error("ambient Uint8Array constructor must not run");
+        }
+      }
+      Object.defineProperty(OriginalUint8Array, Symbol.species, {
+        configurable: true,
+        get() {
+          throw new Error("ambient typed-array species must not run");
+        },
+      });
+      Object.defineProperty(globalThis, "Uint8Array", {
+        configurable: true,
+        value: PoisonedUint8Array,
+        writable: true,
+      });
+
+      try {
+        const result = await operations.getBranchFileContentBytesWithinLimit(
+          "project-slug",
+          "main",
+          "manifest.json",
+          2,
+        );
+        source[0] = 9;
+        assertEquals([...result], [1, 2]);
+      } finally {
+        Object.defineProperty(globalThis, "Uint8Array", {
+          configurable: true,
+          value: OriginalUint8Array,
+          writable: true,
+        });
+        if (originalSpecies === undefined) {
+          delete (OriginalUint8Array as unknown as Record<PropertyKey, unknown>)[Symbol.species];
+        } else {
+          Object.defineProperty(OriginalUint8Array, Symbol.species, originalSpecies);
+        }
+      }
+    });
+
+    it("rejects oversized, shared, and resizable custom transport bytes", async () => {
+      const operations = createOps();
+      const transport = operations as unknown as {
+        transport: { request(): Promise<unknown> };
+      };
+
+      transport.transport = {
+        request: () => Promise.resolve(new Uint8Array([1, 2, 3])),
+      };
+      await assertRejects(
+        () =>
+          operations.getBranchFileContentBytesWithinLimit(
+            "project-slug",
+            "main",
+            "manifest.json",
+            2,
+          ),
+        TypeError,
+        "exceeds 2 bytes",
+      );
+
+      const unsafe: Uint8Array[] = [];
+      if (typeof SharedArrayBuffer === "function") {
+        unsafe.push(new Uint8Array(new SharedArrayBuffer(2)));
+      }
+      const resizableBuffer = new ArrayBuffer(2, { maxByteLength: 4 });
+      if (resizableBuffer.resizable) unsafe.push(new Uint8Array(resizableBuffer));
+      for (const bytes of unsafe) {
+        transport.transport = { request: () => Promise.resolve(bytes) };
+        await assertRejects(
+          () =>
+            operations.getBranchFileContentBytesWithinLimit(
+              "project-slug",
+              "main",
+              "manifest.json",
+              2,
+            ),
+          TypeError,
+          "fixed ArrayBuffer",
+        );
+      }
+    });
+  });
+
   describe("file pagination guards", () => {
     it("fails closed when the API repeats a pagination cursor", async () => {
       let requests = 0;

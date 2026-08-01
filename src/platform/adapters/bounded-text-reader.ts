@@ -1,33 +1,47 @@
-import { isProxyWithoutHooks } from "../compat/error-introspection.ts";
+import {
+  isNativeErrorWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "../compat/error-introspection.ts";
+import { captureFileSystemCapabilities } from "./file-system-capabilities.ts";
 
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const numberIsSafeInteger = Number.isSafeInteger;
-const typedArrayPrototype = getPrototypeOf(Uint8Array.prototype);
+const NativeUint8Array = Uint8Array;
+const typedArrayPrototype = getPrototypeOf(NativeUint8Array.prototype);
+const typedArrayBufferGetter = requireIntrinsicGetter(
+  typedArrayPrototype,
+  "buffer",
+  "Uint8Array buffer",
+);
 const typedArrayByteLengthGetter = requireIntrinsicGetter(
   typedArrayPrototype,
   "byteLength",
   "Uint8Array byteLength",
+);
+const typedArrayByteOffsetGetter = requireIntrinsicGetter(
+  typedArrayPrototype,
+  "byteOffset",
+  "Uint8Array byte offset",
 );
 const typedArrayNameGetter = requireIntrinsicGetter(
   typedArrayPrototype,
   Symbol.toStringTag,
   "Uint8Array name",
 );
+const arrayBufferByteLengthGetter = requireIntrinsicGetter(
+  ArrayBuffer.prototype,
+  "byteLength",
+  "ArrayBuffer byteLength",
+);
+const arrayBufferResizableGetter = getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "resizable",
+)?.get;
+const setBytes = NativeUint8Array.prototype.set;
 const textDecoderDecode = TextDecoder.prototype.decode;
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
-
-type ReaderProperty =
-  | "maxWholeFileReadBytes"
-  | "readFileBytes"
-  | "readFileBytesWithinLimit";
-
-type ByteReader = (path: string) => Promise<Uint8Array>;
-type ExactByteReader = (
-  path: string,
-  byteLimit: number,
-) => Promise<Uint8Array>;
 
 export interface CapturedBoundedTextReader {
   readUtf8(
@@ -49,73 +63,6 @@ function requireIntrinsicGetter(
   return getter;
 }
 
-function readDataProperty(
-  value: object,
-  property: ReaderProperty,
-  label: string,
-): unknown {
-  let owner: object | null = value;
-  const seen = new Set<object>();
-  for (let depth = 0; owner !== null && depth < 64; depth++) {
-    if (isProxyWithoutHooks(owner)) {
-      throw new TypeError(`${label} must not be a Proxy`);
-    }
-    if (seen.has(owner)) {
-      throw new TypeError(`${label} has an invalid prototype chain`);
-    }
-    seen.add(owner);
-
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = getOwnPropertyDescriptor(owner, property);
-    } catch (cause) {
-      throw new TypeError(`${label} capabilities could not be inspected safely`, {
-        cause,
-      });
-    }
-    if (descriptor !== undefined) {
-      if (!("value" in descriptor)) {
-        throw new TypeError(`${label} ${property} must be a data property`);
-      }
-      return descriptor.value;
-    }
-
-    try {
-      owner = getPrototypeOf(owner);
-    } catch (cause) {
-      throw new TypeError(`${label} capabilities could not be inspected safely`, {
-        cause,
-      });
-    }
-  }
-  if (owner !== null) {
-    throw new TypeError(`${label} prototype chain is too deep`);
-  }
-  return undefined;
-}
-
-function captureMethod<T extends (...args: never[]) => unknown>(
-  value: object,
-  property: ReaderProperty,
-  label: string,
-): T | undefined {
-  const method = readDataProperty(value, property, label);
-  if (method === undefined) return undefined;
-  if (typeof method !== "function" || isProxyWithoutHooks(method)) {
-    throw new TypeError(`${label} ${property} must be a non-Proxy function`);
-  }
-  return method as T;
-}
-
-function captureWholeReadCeiling(value: object, label: string): number | undefined {
-  const ceiling = readDataProperty(value, "maxWholeFileReadBytes", label);
-  if (ceiling === undefined) return undefined;
-  if (!numberIsSafeInteger(ceiling) || (ceiling as number) <= 0) {
-    throw new TypeError(`${label} maxWholeFileReadBytes must be a positive safe integer`);
-  }
-  return ceiling as number;
-}
-
 function getUint8ArrayByteLength(value: unknown): number | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
@@ -129,6 +76,109 @@ function getUint8ArrayByteLength(value: unknown): number | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Admit an untrusted byte result before copying it into an immutable-size,
+ * tightly allocated ArrayBuffer. The maximum is checked from the intrinsic
+ * Uint8Array byte length before allocating the defensive copy.
+ */
+export function copyFixedUint8ArrayWithinLimit(
+  value: unknown,
+  maximumBytes: number,
+  label: string,
+): Uint8Array {
+  if (!numberIsSafeInteger(maximumBytes) || maximumBytes <= 0) {
+    throw new RangeError(`${label} maximum must be a positive safe integer`);
+  }
+  const byteLength = getUint8ArrayByteLength(value);
+  if (byteLength === undefined) {
+    throw new TypeError(`${label} reader returned invalid bytes`);
+  }
+  if (byteLength > maximumBytes) {
+    throw new TypeError(`${label} exceeds ${maximumBytes} bytes`);
+  }
+
+  let buffer: unknown;
+  let resizable = false;
+  try {
+    buffer = apply(typedArrayBufferGetter, value as object, []);
+    apply(arrayBufferByteLengthGetter, buffer as object, []);
+    resizable = arrayBufferResizableGetter !== undefined &&
+      apply(arrayBufferResizableGetter, buffer as object, []) === true;
+  } catch (cause) {
+    throw new TypeError(`${label} reader must return bytes backed by a fixed ArrayBuffer`, {
+      cause,
+    });
+  }
+  if (resizable) {
+    throw new TypeError(`${label} reader must return bytes backed by a fixed ArrayBuffer`);
+  }
+
+  const copy = new NativeUint8Array(byteLength);
+  try {
+    apply(setBytes, copy, [value]);
+  } catch (cause) {
+    throw new TypeError(`${label} reader returned invalid bytes`, { cause });
+  }
+  let copyByteLength: unknown;
+  let copyByteOffset: unknown;
+  let copyBuffer: unknown;
+  let copyBufferByteLength: unknown;
+  try {
+    copyByteLength = apply(typedArrayByteLengthGetter, copy, []);
+    copyByteOffset = apply(typedArrayByteOffsetGetter, copy, []);
+    copyBuffer = apply(typedArrayBufferGetter, copy, []);
+    copyBufferByteLength = apply(arrayBufferByteLengthGetter, copyBuffer as object, []);
+  } catch (cause) {
+    throw new TypeError(`${label} could not allocate a fixed byte copy`, { cause });
+  }
+  if (
+    copyByteLength !== byteLength ||
+    copyByteOffset !== 0 ||
+    copyBufferByteLength !== byteLength
+  ) {
+    throw new TypeError(`${label} could not allocate a tight fixed byte copy`);
+  }
+  return copy;
+}
+
+/**
+ * Extract the ArrayBuffer from an admitted tight fixed Uint8Array without
+ * consulting mutable global constructors or configurable typed-array getters.
+ */
+export function getFixedUint8ArrayBuffer(value: unknown, label: string): ArrayBuffer {
+  const byteLength = getUint8ArrayByteLength(value);
+  if (byteLength === undefined) {
+    throw new TypeError(`${label} must be a Uint8Array`);
+  }
+  let byteOffset: unknown;
+  let buffer: unknown;
+  let bufferByteLength: unknown;
+  let resizable = false;
+  try {
+    byteOffset = apply(typedArrayByteOffsetGetter, value as object, []);
+    buffer = apply(typedArrayBufferGetter, value as object, []);
+    bufferByteLength = apply(arrayBufferByteLengthGetter, buffer as object, []);
+    resizable = arrayBufferResizableGetter !== undefined &&
+      apply(arrayBufferResizableGetter, buffer as object, []) === true;
+  } catch (cause) {
+    throw new TypeError(`${label} must use a tight fixed ArrayBuffer`, { cause });
+  }
+  if (byteOffset !== 0 || bufferByteLength !== byteLength || resizable) {
+    throw new TypeError(`${label} must use a tight fixed ArrayBuffer`);
+  }
+  return buffer as ArrayBuffer;
+}
+
+/** Read the intrinsic byte length only after verifying a tight fixed buffer. */
+export function getFixedUint8ArrayByteLength(value: unknown, label: string): number {
+  const byteLength = getUint8ArrayByteLength(value);
+  if (byteLength === undefined) {
+    throw new TypeError(`${label} must be a Uint8Array`);
+  }
+  getFixedUint8ArrayBuffer(value, label);
+  return byteLength;
 }
 
 function decodeUtf8(bytes: Uint8Array, label: string): string {
@@ -149,22 +199,9 @@ export function captureBoundedTextReader(
   value: unknown,
   label = "Bounded text reader",
 ): CapturedBoundedTextReader {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    Array.isArray(value) ||
-    isProxyWithoutHooks(value)
-  ) {
-    throw new TypeError(`${label} must be a non-Proxy object`);
-  }
-
-  const exactReader = captureMethod<ExactByteReader>(
-    value,
-    "readFileBytesWithinLimit",
-    label,
-  );
-  const wholeReader = captureMethod<ByteReader>(value, "readFileBytes", label);
-  const wholeReadCeiling = captureWholeReadCeiling(value, label);
+  const capabilities = captureFileSystemCapabilities(value, label);
+  const exactReader = capabilities.readFileBytesWithinLimit;
+  const wholeFileReader = capabilities.wholeFileReader;
 
   return Object.freeze({
     async readUtf8(
@@ -182,12 +219,15 @@ export function captureBoundedTextReader(
       let bytes: unknown;
       if (exactReader !== undefined) {
         try {
-          bytes = await apply(exactReader, value, [path, maximumBytes]);
+          bytes = await exactReader(path, maximumBytes);
         } catch (cause) {
           // The exact-read contract reserves RangeError for source overflow.
           // Normalize it to the content-admission error used by CSS callers
           // while preserving operational filesystem failures unchanged.
-          if (cause instanceof RangeError) {
+          if (
+            isNativeErrorWithoutHooks(cause) &&
+            readNativeErrorNameWithoutHooks(cause) === "RangeError"
+          ) {
             throw new TypeError(`${contentLabel} exceeds ${maximumBytes} bytes`, {
               cause,
             });
@@ -195,27 +235,28 @@ export function captureBoundedTextReader(
           throw cause;
         }
       } else if (
-        wholeReader !== undefined &&
-        wholeReadCeiling !== undefined &&
-        wholeReadCeiling <= maximumBytes
+        wholeFileReader !== undefined &&
+        wholeFileReader.maximumBytes <= maximumBytes
       ) {
-        bytes = await apply(wholeReader, value, [path]);
+        bytes = await wholeFileReader.read(path);
       } else {
         throw new TypeError(
           `${contentLabel} requires a genuine exact bounded byte reader or a fixed whole-file ceiling no larger than ${maximumBytes} bytes`,
         );
       }
 
-      const byteLength = getUint8ArrayByteLength(bytes);
-      if (byteLength === undefined) {
-        throw new TypeError(`${contentLabel} reader returned invalid bytes`);
-      }
-      if (byteLength > maximumBytes) {
-        throw new TypeError(`${contentLabel} exceeds ${maximumBytes} bytes`);
-      }
+      const admittedMaximum = exactReader === undefined
+        ? wholeFileReader!.maximumBytes
+        : maximumBytes;
+      const admittedBytes = copyFixedUint8ArrayWithinLimit(
+        bytes,
+        admittedMaximum,
+        contentLabel,
+      );
+      const byteLength = getFixedUint8ArrayByteLength(admittedBytes, contentLabel);
 
       return {
-        content: decodeUtf8(bytes as Uint8Array, contentLabel),
+        content: decodeUtf8(admittedBytes, contentLabel),
         byteLength,
       };
     },

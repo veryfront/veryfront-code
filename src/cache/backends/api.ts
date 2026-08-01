@@ -4,6 +4,11 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { isValidCachePattern, sanitizeCacheKey } from "../keys/utils.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
+import {
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
+  CacheValueTooLargeError,
+} from "../bounded-read.ts";
 import { getEnvValue } from "./helpers.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { assertCacheBatchSize } from "../batch-policy.ts";
@@ -11,7 +16,11 @@ import { REQUEST_ERROR } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "../verified-api-credential-context.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import {
+  JsonStringValueTooLargeError,
+  readResponseJsonStringWithinLimit,
+  readResponseTextPrefix,
+} from "#veryfront/utils/response-body.ts";
 import {
   DEFAULT_CACHE_TTL_SECONDS,
   expiresImmediately,
@@ -30,10 +39,34 @@ const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 15_000;
 const CIRCUIT_BREAKER_FAILURE_THRESHOLD = 10;
 const CIRCUIT_BREAKER_SUCCESS_THRESHOLD = 2;
 const EncodeURIComponent = encodeURIComponent;
+const isNeutralCacheReadError = (error: unknown): boolean =>
+  error instanceof CacheValueTooLargeError;
+
+function discardResponseBody(response: Response, message: string): void {
+  const logCancellationFailure = (error: unknown): void => {
+    logger.debug(message, {
+      status: response.status,
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+  };
+
+  try {
+    const cancellation = response.body?.cancel();
+    if (cancellation !== undefined) {
+      void cancellation.catch(logCancellationFailure);
+    }
+  } catch (error) {
+    logCancellationFailure(error);
+  }
+}
 
 type CacheRequestOptions = {
   failOnError?: boolean;
   expectJson?: boolean;
+  boundedJsonString?: {
+    fieldName: string;
+    maximumBytes: number;
+  };
 };
 
 function normalizeApiBaseUrl(value: string): string {
@@ -85,7 +118,7 @@ export class ApiCacheBackend implements CacheBackend {
       apiBaseUrl?: string;
       keyPrefix?: string;
       timeoutMs?: number;
-      /** Maximum decoded JSON response body size accepted from the cache API. */
+      /** Maximum encoded JSON response-body bytes accepted from the cache API. */
       maxResponseBytes?: number;
       circuitBreakerName?: string;
       /** Project identity bound to process-level credentials at construction. */
@@ -171,6 +204,10 @@ export class ApiCacheBackend implements CacheBackend {
     body?: Record<string, unknown>,
     options: CacheRequestOptions = {},
   ): Promise<unknown | null> {
+    const boundedJsonString = options.boundedJsonString === undefined ? undefined : {
+      fieldName: options.boundedJsonString.fieldName,
+      maximumBytes: assertCacheReadMaximumBytes(options.boundedJsonString.maximumBytes),
+    };
     const verifiedCredential = getVerifiedCacheApiCredential();
     const reqCtx = getCurrentRequestContext();
     const requestCredential = reqCtx?.cacheApiCredential;
@@ -219,79 +256,86 @@ export class ApiCacheBackend implements CacheBackend {
     }
 
     try {
-      return await this.circuitBreaker.execute(async () => {
-        const encodedProjectRef = EncodeURIComponent(projectRef);
-        const url = `${this.apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
-        const spanUrl = sanitizeUrlForSpan(url);
-        const cacheOperation = sanitizeUrlForSpan(path);
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+      return await this.circuitBreaker.execute(
+        async () => {
+          const encodedProjectRef = EncodeURIComponent(projectRef);
+          const url = `${this.apiBaseUrl}/projects/${encodedProjectRef}/cache${path}`;
+          const spanUrl = sanitizeUrlForSpan(url);
+          const cacheOperation = sanitizeUrlForSpan(path);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
 
-        try {
-          const response = await withSpan(
-            SpanNames.HTTP_CLIENT_FETCH,
-            () =>
-              fetch(url, {
-                method,
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${token}`,
-                },
-                body: body ? JSON.stringify(body) : undefined,
-                signal: controller.signal,
-              }),
-            {
-              "http.method": method,
-              "http.url": spanUrl,
-              "http.host": new URL(this.apiBaseUrl).host,
-              "cache.operation": cacheOperation,
-              "cache.project_slug": projectRef,
-            },
-          );
+          try {
+            const response = await withSpan(
+              SpanNames.HTTP_CLIENT_FETCH,
+              () =>
+                fetch(url, {
+                  method,
+                  headers: {
+                    "Content-Type": "application/json",
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: body ? JSON.stringify(body) : undefined,
+                  signal: controller.signal,
+                }),
+              {
+                "http.method": method,
+                "http.url": spanUrl,
+                "http.host": new URL(this.apiBaseUrl).host,
+                "cache.operation": cacheOperation,
+                "cache.project_slug": projectRef,
+              },
+            );
 
-          if (!response.ok) {
-            try {
-              await response.body?.cancel();
-            } catch (bodyError) {
-              logger.debug("Failed to discard API error response body", {
-                status: response.status,
-                errorName: bodyError instanceof Error ? bodyError.name : typeof bodyError,
+            if (!response.ok) {
+              discardResponseBody(response, "Failed to discard API error response body");
+              throw REQUEST_ERROR.create({
+                detail: `Cache API returned HTTP ${response.status}`,
               });
             }
-            throw REQUEST_ERROR.create({
-              detail: `Cache API returned HTTP ${response.status}`,
-            });
-          }
 
-          if (options.expectJson === false) {
-            try {
-              await response.body?.cancel();
-            } catch (bodyError) {
-              logger.debug("Failed to discard API mutation response body", {
-                status: response.status,
-                errorName: bodyError instanceof Error ? bodyError.name : typeof bodyError,
+            if (options.expectJson === false) {
+              discardResponseBody(response, "Failed to discard API mutation response body");
+              return null;
+            }
+
+            if (boundedJsonString !== undefined) {
+              try {
+                return await readResponseJsonStringWithinLimit(
+                  response,
+                  boundedJsonString.fieldName,
+                  boundedJsonString.maximumBytes,
+                  this.maxResponseBytes,
+                  controller.signal,
+                );
+              } catch (error) {
+                if (error instanceof JsonStringValueTooLargeError) {
+                  throw new CacheValueTooLargeError(boundedJsonString.maximumBytes);
+                }
+                throw error;
+              }
+            }
+
+            const { text, truncated } = await readResponseTextPrefix(
+              response,
+              this.maxResponseBytes + 1,
+              controller.signal,
+              { fatalUtf8: true },
+            );
+            if (truncated) {
+              throw REQUEST_ERROR.create({
+                detail: `Cache API response exceeded ${this.maxResponseBytes} bytes`,
               });
             }
-            return null;
+            return JSON.parse(text) as unknown;
+          } finally {
+            clearTimeout(timeoutId);
           }
-
-          const { text, truncated } = await readResponseTextPrefix(
-            response,
-            this.maxResponseBytes + 1,
-            controller.signal,
-            { fatalUtf8: true },
-          );
-          if (truncated) {
-            throw REQUEST_ERROR.create({
-              detail: `Cache API response exceeded ${this.maxResponseBytes} bytes`,
-            });
-          }
-          return JSON.parse(text) as unknown;
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      });
+        },
+        { isNeutralError: isNeutralCacheReadError },
+      );
     } catch (error) {
+      if (error instanceof CacheValueTooLargeError) throw error;
       if (error instanceof CircuitBreakerOpen) {
         logger.info("Circuit breaker open, failing fast", {
           path: sanitizeUrlForSpan(path),
@@ -327,6 +371,31 @@ export class ApiCacheBackend implements CacheBackend {
       valueType: Array.isArray(result.value) ? "array" : typeof result.value,
     });
     return null;
+  }
+
+  async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
+    const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
+    const prefixedKey = await this.prefixKey(key);
+    const result = await this.request(
+      "GET",
+      `/get?key=${EncodeURIComponent(prefixedKey)}`,
+      undefined,
+      {
+        boundedJsonString: {
+          fieldName: "value",
+          maximumBytes: admittedMaximum,
+        },
+      },
+    );
+    if (result === null) return null;
+    if (typeof result !== "string") {
+      logger.warn("Cache API returned an invalid bounded get response", {
+        valueType: Array.isArray(result) ? "array" : typeof result,
+      });
+      return null;
+    }
+    assertCacheValueWithinLimit(result, admittedMaximum);
+    return result;
   }
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {

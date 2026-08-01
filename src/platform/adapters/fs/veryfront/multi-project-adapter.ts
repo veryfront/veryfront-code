@@ -19,6 +19,9 @@ import {
 } from "./request-context.ts";
 import { getVeryfrontFSAdapterKind, VERYFRONT_FS_ADAPTER_KIND } from "./adapter-kind.ts";
 import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
+import { captureFileSystemCapabilities } from "../../file-system-capabilities.ts";
+import { copyFixedUint8ArrayWithinLimit } from "../../bounded-text-reader.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 export {
   clearRequestScopedFileCache,
   getCurrentRequestContext,
@@ -232,6 +235,34 @@ export class MultiProjectFSAdapter implements FSAdapter {
   async readFileBytes(path: string): Promise<Uint8Array> {
     const adapter = await this.getAdapter();
     return adapter.readFileBytes(path);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    const adapter = await this.getAdapter();
+    const capabilities = captureFileSystemCapabilities(
+      adapter,
+      "Selected Veryfront filesystem adapter",
+    );
+    const exactReader = capabilities.readFileBytesWithinLimit;
+    if (exactReader !== undefined) {
+      return copyFixedUint8ArrayWithinLimit(
+        await exactReader(path, admittedLimit),
+        admittedLimit,
+        "Veryfront filesystem file",
+      );
+    }
+    const wholeReader = capabilities.wholeFileReader;
+    if (wholeReader !== undefined && wholeReader.maximumBytes <= admittedLimit) {
+      return copyFixedUint8ArrayWithinLimit(
+        await wholeReader.read(path),
+        wholeReader.maximumBytes,
+        "Veryfront filesystem file",
+      );
+    }
+    throw new TypeError(
+      `Veryfront filesystem file requires an exact bounded byte reader or a fixed whole-file ceiling no larger than ${admittedLimit} bytes`,
+    );
   }
 
   async readTextFile(path: string): Promise<string> {

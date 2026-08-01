@@ -4,6 +4,7 @@ import {
   type EnsureStyleArtifactBuildInput,
   type FileDetail,
   type FileListResult,
+  type GetFileOptions,
   type ListFilesOptions,
   type ListProjectsOptions,
   type ProjectStyleArtifactResolution,
@@ -369,6 +370,42 @@ export class VeryfrontApiClient {
     return file.content;
   }
 
+  getFileContentBytesWithinLimit(
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const projectRef = this.requireProjectSlug();
+    const context = this.getContext();
+
+    switch (context.type) {
+      case "branch":
+        return this.operations.getBranchFileContentBytesWithinLimit(
+          projectRef,
+          context.name,
+          pathOrId,
+          maximumBytes,
+          options,
+        );
+      case "environment":
+        return this.operations.getEnvironmentFileContentBytesWithinLimit(
+          projectRef,
+          context.name,
+          pathOrId,
+          maximumBytes,
+          options,
+        );
+      case "release":
+        return this.operations.getReleaseFileContentBytesWithinLimit(
+          projectRef,
+          context.version,
+          pathOrId,
+          maximumBytes,
+          options,
+        );
+    }
+  }
+
   async getOptionalFileContent(pathOrId: string): Promise<string> {
     const file = await this.getFile(pathOrId, { expectedMissing: true });
     return file.content;
@@ -632,6 +669,41 @@ export class VeryfrontApiClient {
     if (environmentName) {
       const result = await this.operations.getEnvironmentFile(projectRef, environmentName, path);
       return result.content;
+    }
+
+    throw API_CLIENT_ERROR.create({
+      detail: "Cannot fetch published file without releaseId or environmentName",
+      status: 400,
+    });
+  }
+
+  getPublishedFileContentBytesWithinLimit(
+    path: string,
+    maximumBytes: number,
+    releaseId?: string,
+    environmentName?: string,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const projectRef = this.requireProjectSlug();
+
+    if (releaseId) {
+      return this.operations.getReleaseFileContentBytesWithinLimit(
+        projectRef,
+        releaseId,
+        path,
+        maximumBytes,
+        options,
+      );
+    }
+
+    if (environmentName) {
+      return this.operations.getEnvironmentFileContentBytesWithinLimit(
+        projectRef,
+        environmentName,
+        path,
+        maximumBytes,
+        options,
+      );
     }
 
     throw API_CLIENT_ERROR.create({

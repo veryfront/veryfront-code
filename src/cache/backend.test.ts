@@ -75,6 +75,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function settleWithin(
+  promise: Promise<unknown>,
+  milliseconds: number,
+): Promise<"fulfilled" | "rejected" | "pending"> {
+  let timeoutId = 0;
+  try {
+    return await Promise.race([
+      promise.then(
+        () => "fulfilled" as const,
+        () => "rejected" as const,
+      ),
+      new Promise<"pending">((resolve) => {
+        timeoutId = setTimeout(() => resolve("pending"), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 function createRecordingSpan(record: RecordedSpan): Span {
   return {
     setAttribute(key, value) {
@@ -151,6 +171,20 @@ Deno.test("MemoryCacheBackend basic operations", async () => {
 
   cache.clear();
   assertEquals(cache.size, 0);
+});
+
+Deno.test("MemoryCacheBackend enforces exact bounded UTF-8 reads without deleting", async () => {
+  const { CacheValueTooLargeError, MemoryCacheBackend } = await importBackend();
+  const cache = new MemoryCacheBackend(10);
+  await cache.set("unicode", "é", 60);
+
+  assertEquals(await cache.getWithinLimit("unicode", 2), "é");
+  await assertRejects(
+    () => cache.getWithinLimit("unicode", 1),
+    CacheValueTooLargeError,
+    "1 UTF-8 bytes",
+  );
+  assertEquals(await cache.get("unicode"), "é");
 });
 
 Deno.test("MemoryCacheBackend TTL expiration", async () => {
@@ -726,6 +760,218 @@ Deno.test("ApiCacheBackend bounds successful JSON response bodies", async () => 
   }
 });
 
+Deno.test("ApiCacheBackend enforces bounded decoded cache values", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() => Promise.resolve(Response.json({ value: "é" }))) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-bounded-value-test",
+    });
+
+    assertEquals(await cache.getWithinLimit("key", 2), "é");
+    await assertRejects(
+      () => cache.getWithinLimit("key", 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend bounded reads preserve escaped lone UTF-16 surrogates", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response('{"value":"\\ud800x\\udc00y\\ud83d\\ude00"}'),
+    )) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-bounded-surrogate-value-test",
+    });
+    const value = "\ud800x\udc00y😀";
+
+    assertEquals(await cache.getWithinLimit("key", 12), value);
+    await assertRejects(
+      () => cache.getWithinLimit("key", 11),
+      CacheValueTooLargeError,
+      "11 UTF-8 bytes",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend bounds the encoded JSON envelope before parsing", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch =
+    (() => Promise.resolve(Response.json({ value: "\0".repeat(1_000) }))) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-bounded-envelope-test",
+    });
+
+    await assertRejects(
+      () => cache.getWithinLimit("key", 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend rejects oversized ASCII before invoking JSON.parse", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  const originalJsonParse = JSON.parse;
+  let parseCalls = 0;
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  const body = JSON.stringify({ value: "x".repeat(32) });
+  globalThis.fetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
+  JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+    parseCalls++;
+    return Reflect.apply(originalJsonParse, JSON, args);
+  }) as typeof JSON.parse;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-ascii-before-parser-test",
+    });
+
+    await assertRejects(
+      () => cache.getWithinLimit("key", 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+    assertEquals(parseCalls, 0);
+  } finally {
+    JSON.parse = originalJsonParse;
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let fetchCalls = 0;
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(new Response(JSON.stringify({ value: "xx" })));
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-neutral-bounded-overflow-test",
+    });
+
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await assertRejects(
+        () => cache.getWithinLimit("key", 1),
+        CacheValueTooLargeError,
+        "1 UTF-8 bytes",
+      );
+    }
+    assertEquals(fetchCalls, 12);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend bounded reads use captured UTF-8 decoder intrinsics", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  const OriginalTextDecoder = globalThis.TextDecoder;
+  const originalDecode = Object.getOwnPropertyDescriptor(
+    OriginalTextDecoder.prototype,
+    "decode",
+  );
+  class PoisonedTextDecoder extends OriginalTextDecoder {
+    constructor() {
+      super();
+      throw new Error("ambient TextDecoder constructor must not run");
+    }
+  }
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  const body = JSON.stringify({ value: "é" });
+  globalThis.fetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
+  Object.defineProperty(OriginalTextDecoder.prototype, "decode", {
+    configurable: true,
+    value() {
+      throw new Error("ambient TextDecoder.decode must not run");
+    },
+    writable: true,
+  });
+  Object.defineProperty(globalThis, "TextDecoder", {
+    configurable: true,
+    value: PoisonedTextDecoder,
+    writable: true,
+  });
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-captured-decoder-test",
+    });
+    assertEquals(await cache.getWithinLimit("key", 2), "é");
+  } finally {
+    Object.defineProperty(globalThis, "TextDecoder", {
+      configurable: true,
+      value: OriginalTextDecoder,
+      writable: true,
+    });
+    if (originalDecode !== undefined) {
+      Object.defineProperty(OriginalTextDecoder.prototype, "decode", originalDecode);
+    }
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
 Deno.test("ApiCacheBackend rejects malformed UTF-16 keys before network I/O", async () => {
   const { ApiCacheBackend } = await importBackend();
   const originalFetch = globalThis.fetch;
@@ -835,6 +1081,132 @@ Deno.test("ApiCacheBackend accepts empty successful mutation responses", async (
     } else {
       Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
     }
+  }
+});
+
+Deno.test("ApiCacheBackend does not await stalled error-response cancellation", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let releaseCancellation = () => {};
+  const stalledCancellation = new Promise<void>((resolve) => {
+    releaseCancellation = resolve;
+  });
+  let cancelCalls = 0;
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelCalls++;
+            return stalledCancellation;
+          },
+        }),
+        { status: 503 },
+      ),
+    )) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-stalled-error-cancel-test",
+    });
+    const operation = cache.set("key", "value");
+
+    const outcome = await settleWithin(operation, 100);
+    releaseCancellation();
+    await operation.catch(() => {});
+
+    assertEquals(cancelCalls, 1);
+    assertEquals(outcome, "rejected");
+  } finally {
+    releaseCancellation();
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend does not await stalled successful mutation cancellation", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let releaseCancellation = () => {};
+  const stalledCancellation = new Promise<void>((resolve) => {
+    releaseCancellation = resolve;
+  });
+  let cancelCalls = 0;
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelCalls++;
+            return stalledCancellation;
+          },
+        }),
+        { status: 200 },
+      ),
+    )) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-stalled-mutation-cancel-test",
+    });
+    const operation = cache.set("key", "value");
+
+    const outcome = await settleWithin(operation, 100);
+    releaseCancellation();
+    await operation;
+
+    assertEquals(cancelCalls, 1);
+    assertEquals(outcome, "fulfilled");
+  } finally {
+    releaseCancellation();
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
+  }
+});
+
+Deno.test("ApiCacheBackend contains detached body-cancellation rejections", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const originalToken = Deno.env.get("VERYFRONT_API_TOKEN");
+
+  Deno.env.set("VERYFRONT_API_TOKEN", "host-framework-token");
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(
+        new ReadableStream({
+          cancel() {
+            return Promise.reject(new Error("cancel failed"));
+          },
+        }),
+        { status: 200 },
+      ),
+    )) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      projectRef: "project-slug",
+      circuitBreakerName: "api-cache-rejected-mutation-cancel-test",
+    });
+
+    await cache.set("key", "value");
+    await Promise.resolve();
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalToken);
   }
 });
 

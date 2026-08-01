@@ -1,9 +1,76 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { captureBoundedTextReader } from "./bounded-text-reader.ts";
+import { runInNewContext } from "node:vm";
+import { captureBoundedTextReader, copyFixedUint8ArrayWithinLimit } from "./bounded-text-reader.ts";
 
 describe("platform/adapters/bounded-text-reader", () => {
+  it("copies admitted byte views into a tight fixed buffer", () => {
+    const source = new Uint8Array([9, 1, 2, 8]);
+    const admitted = copyFixedUint8ArrayWithinLimit(
+      source.subarray(1, 3),
+      2,
+      "Test bytes",
+    );
+
+    source[1] = 7;
+    assertEquals([...admitted], [1, 2]);
+    assertEquals(admitted.byteOffset, 0);
+    assertEquals(admitted.buffer.byteLength, 2);
+  });
+
+  it("uses the captured native constructor after the global is replaced", () => {
+    const NativeUint8Array = globalThis.Uint8Array;
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, "Uint8Array");
+    const source = new NativeUint8Array([1, 2, 3, 4]);
+    class OversizedUint8Array extends NativeUint8Array {
+      constructor(length: number) {
+        super(length * 8);
+      }
+    }
+    Object.defineProperty(globalThis, "Uint8Array", {
+      configurable: true,
+      writable: true,
+      value: OversizedUint8Array,
+    });
+    try {
+      const admitted = copyFixedUint8ArrayWithinLimit(source, 4, "Test bytes");
+      assertEquals(admitted.byteLength, 4);
+      assertEquals([...admitted], [1, 2, 3, 4]);
+    } finally {
+      if (descriptor === undefined) {
+        delete (globalThis as Record<string, unknown>).Uint8Array;
+      } else {
+        Object.defineProperty(globalThis, "Uint8Array", descriptor);
+      }
+    }
+  });
+
+  it("rejects a dishonest exact-reader result before fixed-buffer admission", async () => {
+    const reader = captureBoundedTextReader({
+      readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array(5)),
+    });
+
+    await assertRejects(
+      () => reader.readUtf8("/oversized.css", 4, "Exact stylesheet"),
+      TypeError,
+      "Exact stylesheet exceeds 4 bytes",
+    );
+  });
+
+  it("rejects a dishonest whole-reader result before fixed-buffer admission", async () => {
+    const reader = captureBoundedTextReader({
+      readFileBytes: () => Promise.resolve(new Uint8Array(5)),
+      maxWholeFileReadBytes: 4,
+    });
+
+    await assertRejects(
+      () => reader.readUtf8("/oversized.css", 4, "Whole stylesheet"),
+      TypeError,
+      "Whole stylesheet exceeds 4 bytes",
+    );
+  });
+
   it("passes the accepted maximum directly to an exact bounded reader", async () => {
     let receivedLimit = 0;
     const reader = captureBoundedTextReader({
@@ -18,6 +85,48 @@ describe("platform/adapters/bounded-text-reader", () => {
       byteLength: 4,
     });
     assertEquals(receivedLimit, 4);
+  });
+
+  it("accounts bytes through the captured intrinsic getter", async () => {
+    const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+    const descriptor = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!;
+    const source = new TextEncoder().encode("safe");
+    const reader = captureBoundedTextReader({
+      readFileBytesWithinLimit: () => Promise.resolve(source),
+    });
+    Object.defineProperty(typedArrayPrototype, "byteLength", {
+      configurable: true,
+      get: () => 999,
+    });
+    try {
+      assertEquals(await reader.readUtf8("safe.css", 4, "CSS input"), {
+        content: "safe",
+        byteLength: 4,
+      });
+    } finally {
+      Object.defineProperty(typedArrayPrototype, "byteLength", descriptor);
+    }
+  });
+
+  it("exposes fixed byte length without consulting a poisoned getter", async () => {
+    const module = await import("./bounded-text-reader.ts") as unknown as {
+      getFixedUint8ArrayByteLength?: (value: unknown, label: string) => number;
+    };
+    const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+    const descriptor = Object.getOwnPropertyDescriptor(typedArrayPrototype, "byteLength")!;
+    const source = new TextEncoder().encode("safe");
+    Object.defineProperty(typedArrayPrototype, "byteLength", {
+      configurable: true,
+      get: () => 999,
+    });
+    try {
+      assertEquals(
+        module.getFixedUint8ArrayByteLength?.(source, "CSS input"),
+        4,
+      );
+    } finally {
+      Object.defineProperty(typedArrayPrototype, "byteLength", descriptor);
+    }
   });
 
   it("accepts a whole reader only when its fixed upstream ceiling fits", async () => {
@@ -75,6 +184,37 @@ describe("platform/adapters/bounded-text-reader", () => {
     assertEquals(trapCalls, 0);
   });
 
+  it("does not accept a capability forged on a foreign Object.prototype", async () => {
+    const foreign = runInNewContext(`
+      let calls = 0;
+      Object.prototype.readFileBytesWithinLimit = function () {
+        calls++;
+        return Promise.resolve(new Uint8Array([1]));
+      };
+      ({ adapter: {}, getCalls: () => calls });
+    `) as { adapter: object; getCalls: () => number };
+    const reader = captureBoundedTextReader(foreign.adapter);
+
+    await assertRejects(
+      () => reader.readUtf8("forged.css", 1, "Foreign CSS source"),
+      TypeError,
+      "exact bounded byte reader",
+    );
+    assertEquals(foreign.getCalls(), 0);
+  });
+
+  it("accepts an explicitly supplied null-prototype capability object", async () => {
+    const adapter = Object.assign(Object.create(null), {
+      readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode("safe")),
+    });
+    const reader = captureBoundedTextReader(adapter);
+
+    assertEquals(await reader.readUtf8("safe.css", 4, "CSS source"), {
+      content: "safe",
+      byteLength: 4,
+    });
+  });
+
   it("does not accept a prefix-only reader as an exact bounded reader", async () => {
     let reads = 0;
     const reader = captureBoundedTextReader({
@@ -90,5 +230,65 @@ describe("platform/adapters/bounded-text-reader", () => {
       "exact bounded byte reader",
     );
     assertEquals(reads, 0);
+  });
+
+  it("propagates proxied operational failures without invoking their traps", async () => {
+    let trapCalls = 0;
+    const failure = new Proxy(new Error("read failed"), {
+      getPrototypeOf() {
+        trapCalls++;
+        throw new Error("must not run");
+      },
+      getOwnPropertyDescriptor() {
+        trapCalls++;
+        throw new Error("must not run");
+      },
+    });
+    const reader = captureBoundedTextReader({
+      readFileBytesWithinLimit: () => Promise.reject(failure),
+    });
+
+    let caught: unknown;
+    try {
+      await reader.readUtf8("source.tsx", 16, "CSS source file");
+    } catch (error) {
+      caught = error;
+    }
+    assertEquals(caught === failure, true);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("rejects SharedArrayBuffer-backed bytes before UTF-8 decoding", async () => {
+    const shared = new SharedArrayBuffer(4);
+    const bytes = new Uint8Array(shared);
+    bytes.set([0x73, 0x61, 0x66, 0x65]);
+    const reader = captureBoundedTextReader({
+      readFileBytesWithinLimit: () => Promise.resolve(bytes),
+    });
+
+    await assertRejects(
+      () => reader.readUtf8("shared.css", 4, "CSS source file"),
+      TypeError,
+      "fixed ArrayBuffer",
+    );
+  });
+
+  it("rejects resizable ArrayBuffer-backed bytes before UTF-8 decoding", async () => {
+    const ResizableArrayBuffer = ArrayBuffer as unknown as new (
+      byteLength: number,
+      options: { maxByteLength: number },
+    ) => ArrayBuffer;
+    const buffer = new ResizableArrayBuffer(4, { maxByteLength: 8 });
+    const bytes = new Uint8Array(buffer);
+    bytes.set([0x73, 0x61, 0x66, 0x65]);
+    const reader = captureBoundedTextReader({
+      readFileBytesWithinLimit: () => Promise.resolve(bytes),
+    });
+
+    await assertRejects(
+      () => reader.readUtf8("resizable.css", 4, "CSS source file"),
+      TypeError,
+      "fixed ArrayBuffer",
+    );
   });
 });

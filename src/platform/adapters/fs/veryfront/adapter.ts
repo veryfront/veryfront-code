@@ -46,6 +46,7 @@ import { isNotFoundLikeError } from "./read-operations-helpers.ts";
 import { getCurrentRequestContext } from "./request-context.ts";
 import { VERYFRONT_FS_ADAPTER_KIND } from "./adapter-kind.ts";
 import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -185,6 +186,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private statOps: StatOperations;
   private initialized = false;
   private initializationPromise: Promise<void> | null = null;
+  private exactReadInitializationPromise: Promise<void> | null = null;
   private lifecycleGeneration = 0;
   private disposed = false;
   private contentContextRevision = 0;
@@ -1236,6 +1238,12 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    await this.ensureExactReadInitialized();
+    return this.readOps.readFileBytesWithinLimit(path, admittedLimit);
+  }
+
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
@@ -1308,6 +1316,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.dirOps.clearTree();
     this.initialized = false;
     this.initializationPromise = null;
+    this.exactReadInitializationPromise = null;
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.branchMissRecoveryPromise = null;
@@ -1658,6 +1667,51 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
     await this.initialize();
+  }
+
+  private async ensureExactReadInitialized(): Promise<void> {
+    this.assertNotDisposed();
+    if (this.client.isInitialized() && this.contentContext) return;
+
+    const pendingInitialization = this.exactReadInitializationPromise;
+    if (pendingInitialization) {
+      await pendingInitialization;
+      return;
+    }
+
+    const generation = this.lifecycleGeneration;
+    const initialization = (async () => {
+      await this.client.initialize();
+      this.assertLifecycleCurrent(generation);
+
+      if (!this.contentContext) {
+        const resolvedContext = await resolveContentContext(
+          this.client,
+          this.contentSource,
+          this.projectSlug,
+        );
+        this.assertLifecycleCurrent(generation);
+        if (!this.contentContext) this.setContentContext(resolvedContext);
+      }
+
+      if (!this.contentContext) {
+        throw toError(
+          createError({
+            type: "config",
+            message: "Veryfront adapter content context resolution failed",
+          }),
+        );
+      }
+    })();
+    this.exactReadInitializationPromise = initialization;
+
+    try {
+      await initialization;
+    } finally {
+      if (this.exactReadInitializationPromise === initialization) {
+        this.exactReadInitializationPromise = null;
+      }
+    }
   }
 
   /**

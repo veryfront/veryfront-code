@@ -9,6 +9,7 @@ import {
   testKeyCollisionResistance,
 } from "../testing/invariants.ts";
 import { DEFAULT_CACHE_TTL_SECONDS, MAX_CACHE_TTL_SECONDS } from "./ttl.ts";
+import { CacheValueTooLargeError } from "../bounded-read.ts";
 
 const TEST_DIR = join(Deno.makeTempDirSync(), "disk-cache-test");
 
@@ -21,7 +22,7 @@ async function listCacheFiles(baseDir: string): Promise<string[]> {
   const files: string[] = [];
   try {
     for await (const entry of Deno.readDir(cacheDir)) {
-      if (entry.isFile && entry.name.endsWith(".json")) files.push(entry.name);
+      if (entry.isFile && entry.name.endsWith(".vfcache")) files.push(entry.name);
     }
   } catch (error) {
     if (!(error instanceof Deno.errors.NotFound)) throw error;
@@ -29,17 +30,80 @@ async function listCacheFiles(baseDir: string): Promise<string[]> {
   return files.sort();
 }
 
-async function updateEnvelopeIntegrity(envelope: Record<string, unknown>): Promise<void> {
-  const payload = JSON.stringify([
-    envelope.formatVersion,
-    envelope.key,
-    envelope.value,
-    envelope.expiresAt ?? null,
-  ]);
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload)),
+async function cacheFileNameForKey(key: string): Promise<string> {
+  const bytes = new Uint8Array(key.length * 2);
+  for (let index = 0; index < key.length; index++) {
+    const codeUnit = key.charCodeAt(index);
+    bytes[index * 2] = codeUnit >>> 8;
+    bytes[index * 2 + 1] = codeUnit & 0xff;
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return `${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}.vfcache`;
+}
+
+async function replaceFramedCacheKey(filePath: string, replacement: string): Promise<void> {
+  const content = await Deno.readFile(filePath);
+  const view = new DataView(content.buffer, content.byteOffset, content.byteLength);
+  const keyCodeUnits = Number(view.getBigUint64(8));
+  assertEquals(replacement.length, keyCodeUnits);
+  let offset = 40;
+  for (let index = 0; index < replacement.length; index++) {
+    const codeUnit = replacement.charCodeAt(index);
+    content[offset++] = codeUnit >>> 8;
+    content[offset++] = codeUnit & 0xff;
+  }
+  const integrityOffset = content.byteLength - 32;
+  const integrity = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", content.subarray(0, integrityOffset)),
   );
-  envelope.integrity = [...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  content.set(integrity, integrityOffset);
+  await Deno.writeFile(filePath, content);
+}
+
+async function forgeOversizedFramedLengths(
+  filePath: string,
+  storedBytes: number,
+): Promise<void> {
+  const content = await Deno.readFile(filePath);
+  const originalView = new DataView(content.buffer, content.byteOffset, content.byteLength);
+  const keyCodeUnits = Number(originalView.getBigUint64(8));
+  const forged = new Uint8Array(40 + keyCodeUnits * 2 + storedBytes + 32);
+  forged.set(content.subarray(0, Math.min(content.byteLength, forged.byteLength)));
+  const forgedView = new DataView(forged.buffer, forged.byteOffset, forged.byteLength);
+  forgedView.setBigUint64(16, BigInt(storedBytes));
+  forgedView.setBigUint64(24, BigInt(storedBytes));
+  await Deno.writeFile(filePath, forged);
+}
+
+async function replaceFramedCacheValueBytes(
+  filePath: string,
+  replacement: Uint8Array,
+): Promise<void> {
+  const content = await Deno.readFile(filePath);
+  const view = new DataView(content.buffer, content.byteOffset, content.byteLength);
+  const keyCodeUnits = Number(view.getBigUint64(8));
+  const valueStoredBytes = Number(view.getBigUint64(16));
+  assertEquals(replacement.byteLength, valueStoredBytes);
+  const valueOffset = 40 + keyCodeUnits * 2;
+  content.set(replacement, valueOffset);
+  const integrityOffset = content.byteLength - 32;
+  const integrity = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", content.subarray(0, integrityOffset)),
+  );
+  content.set(integrity, integrityOffset);
+  await Deno.writeFile(filePath, content);
+}
+
+async function replaceFramedCacheExpiry(filePath: string, expiresAt: number): Promise<void> {
+  const content = await Deno.readFile(filePath);
+  const view = new DataView(content.buffer, content.byteOffset, content.byteLength);
+  view.setFloat64(32, expiresAt);
+  const integrityOffset = content.byteLength - 32;
+  const integrity = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", content.subarray(0, integrityOffset)),
+  );
+  content.set(integrity, integrityOffset);
+  await Deno.writeFile(filePath, content);
 }
 
 function captureDebugLogs(): {
@@ -139,7 +203,7 @@ Deno.test("DiskCacheBackend", async (t) => {
     const cacheDir = join(isolatedDir, "veryfront-files");
     let wroteInvalidEnvelope = false;
     for await (const file of Deno.readDir(cacheDir)) {
-      if (file.isFile && file.name.endsWith(".json")) {
+      if (file.isFile && file.name.endsWith(".vfcache")) {
         await Deno.writeTextFile(
           join(cacheDir, file.name),
           JSON.stringify({ key, value: { nested: true } }),
@@ -151,6 +215,66 @@ Deno.test("DiskCacheBackend", async (t) => {
 
     assertEquals(wroteInvalidEnvelope, true);
     assertEquals(await backend.get(key), null);
+  });
+
+  await t.step("stale invalid-entry cleanup preserves concurrent replacements", async (t) => {
+    const readers: Array<{
+      name: string;
+      read: (backend: DiskCacheBackend, key: string) => Promise<unknown>;
+    }> = [
+      { name: "get", read: (backend, key) => backend.get(key) },
+      {
+        name: "getWithinLimit",
+        read: (backend, key) => backend.getWithinLimit(key, 1),
+      },
+      {
+        name: "getRemainingTtlSeconds",
+        read: (backend, key) => backend.getRemainingTtlSeconds(key),
+      },
+    ];
+
+    for (const { name, read } of readers) {
+      await t.step(name, async () => {
+        const isolatedDir = join(Deno.makeTempDirSync(), `stale-${name}-cleanup-test`);
+        const backend = new DiskCacheBackend(isolatedDir);
+        const key = `stale-${name}`;
+        await backend.set(key, "old");
+        const [fileName] = await listCacheFiles(isolatedDir);
+        await Deno.writeFile(
+          join(isolatedDir, "veryfront-files", fileName!),
+          new Uint8Array([0xff]),
+        );
+
+        const internals = backend as unknown as {
+          removeKnownFile(fileName: string): Promise<void>;
+        };
+        const removeKnownFile = internals.removeKnownFile.bind(backend);
+        let signalCleanupStarted = () => {};
+        const cleanupStarted = new Promise<void>((resolve) => {
+          signalCleanupStarted = resolve;
+        });
+        let resumeCleanup = () => {};
+        const cleanupResumed = new Promise<void>((resolve) => {
+          resumeCleanup = resolve;
+        });
+        internals.removeKnownFile = async (staleFileName) => {
+          signalCleanupStarted();
+          await cleanupResumed;
+          await removeKnownFile(staleFileName);
+        };
+
+        const staleRead = read(backend, key);
+        await cleanupStarted;
+        try {
+          await backend.set(key, "fresh");
+        } finally {
+          resumeCleanup();
+        }
+        await staleRead;
+
+        assertEquals(await backend.get(key), "fresh");
+      });
+    }
   });
 
   await t.step("del removes a key", async () => {
@@ -186,7 +310,7 @@ Deno.test("DiskCacheBackend", async (t) => {
       const dir = (backend as unknown as { dir: string }).dir;
       const files: string[] = [];
       for await (const entry of Deno.readDir(dir)) {
-        if (entry.isFile && entry.name.endsWith(".json")) files.push(entry.name);
+        if (entry.isFile && entry.name.endsWith(".vfcache")) files.push(entry.name);
       }
       assertEquals(files, []);
       assertEquals(await backend.get("ttl-zero"), null);
@@ -309,9 +433,56 @@ Deno.test("DiskCacheBackend", async (t) => {
 
     const files = await listCacheFiles(isolatedDir);
     assertEquals(files.length, 2);
-    assertEquals(files.every((file) => /^[0-9a-f]{64}\.json$/.test(file)), true);
+    assertEquals(files.every((file) => /^[0-9a-f]{64}\.vfcache$/.test(file)), true);
     assertEquals(await backend.get(firstKey), "first");
     assertEquals(await backend.get(secondKey), "second");
+  });
+
+  await t.step("round-trips lone surrogates and counts their logical UTF-8 bytes", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "surrogate-value-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const value = "\ud800x\udc00y\ud83d\ude00";
+
+    await backend.set("surrogate-value", value);
+
+    assertEquals(await backend.get("surrogate-value"), value);
+    assertEquals(await backend.getWithinLimit("surrogate-value", 12), value);
+    await assertRejects(
+      () => backend.getWithinLimit("surrogate-value", 11),
+      CacheValueTooLargeError,
+      "11 UTF-8 bytes",
+    );
+    assertEquals(await backend.get("surrogate-value"), value);
+  });
+
+  await t.step("cleans checksum-verified noncanonical WTF-8 surrogate pairs", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "noncanonical-wtf8-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("noncanonical", "abcdef");
+    const [fileName] = await listCacheFiles(isolatedDir);
+    const filePath = join(isolatedDir, "veryfront-files", fileName!);
+
+    await replaceFramedCacheValueBytes(
+      filePath,
+      new Uint8Array([0xed, 0xa0, 0x80, 0xed, 0xb0, 0x80]),
+    );
+
+    assertEquals(await backend.get("noncanonical"), null);
+    assertEquals(await listCacheFiles(isolatedDir), []);
+  });
+
+  await t.step("cleans a checksum-verified writer-impossible zero expiry", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "noncanonical-expiry-zero-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const key = "noncanonical-expiry-zero";
+    await backend.set(key, "value");
+    const [fileName] = await listCacheFiles(isolatedDir);
+    const filePath = join(isolatedDir, "veryfront-files", fileName!);
+
+    await replaceFramedCacheExpiry(filePath, 0);
+
+    assertEquals(await backend.get(key), null);
+    assertEquals(await listCacheFiles(isolatedDir), []);
   });
 
   await t.step("key prefixes cannot escape the disk cache namespace", async () => {
@@ -346,19 +517,10 @@ Deno.test("DiskCacheBackend", async (t) => {
     await backend.set("user:invalid", "value");
 
     const cacheDir = join(isolatedDir, "veryfront-files");
-    for await (const file of Deno.readDir(cacheDir)) {
-      if (!file.isFile || !file.name.endsWith(".json")) continue;
-      const filePath = join(cacheDir, file.name);
-      const raw = await Deno.readTextFile(filePath);
-      const parsed = JSON.parse(raw) as { key?: string };
-      if (parsed.key === "user:invalid") {
-        await Deno.writeTextFile(
-          filePath,
-          JSON.stringify({ key: "user:invalid", value: { nested: true } }),
-        );
-        break;
-      }
-    }
+    await Deno.writeTextFile(
+      join(cacheDir, await cacheFileNameForKey("user:invalid")),
+      JSON.stringify({ key: "user:invalid", value: { nested: true } }),
+    );
 
     const deleted = await backend.delByPattern("user:*");
     assertEquals(deleted, 1);
@@ -401,6 +563,145 @@ Deno.test("DiskCacheBackend", async (t) => {
     const largeValue = "x".repeat(100_000);
     await backend.set("large", largeValue);
     assertEquals(await backend.get("large"), largeValue);
+  });
+
+  await t.step("bounded reads preserve valid oversized entries", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "bounded-value-read-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("unicode", "é");
+
+    assertEquals(await backend.getWithinLimit("unicode", 2), "é");
+    await assertRejects(
+      () => backend.getWithinLimit("unicode", 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+    assertEquals(await backend.get("unicode"), "é");
+    assertEquals((await listCacheFiles(isolatedDir)).length, 1);
+  });
+
+  await t.step(
+    "bounded reads classify a checksum-verified stored-key mismatch before overflow",
+    async () => {
+      const isolatedDir = join(Deno.makeTempDirSync(), "bounded-collision-read-test");
+      const cacheDir = join(isolatedDir, "veryfront-files");
+      const backend = new DiskCacheBackend(isolatedDir);
+      const requestedKey = "bounded-key-a";
+      const storedKey = "bounded-key-b";
+      const requestedFileName = await cacheFileNameForKey(requestedKey);
+      const storedFileName = await cacheFileNameForKey(storedKey);
+      await backend.set(storedKey, "oversized");
+      await Deno.rename(
+        join(cacheDir, storedFileName),
+        join(cacheDir, requestedFileName),
+      );
+
+      assertEquals(await backend.getWithinLimit(requestedKey, 1), null);
+      assertEquals(await listCacheFiles(isolatedDir), [requestedFileName]);
+    },
+  );
+
+  await t.step("bounded reads reject oversized ASCII before invoking JSON.parse", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "bounded-ascii-parser-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("ascii", "x".repeat(32));
+    const originalJsonParse = JSON.parse;
+    let parseCalls = 0;
+    JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+      parseCalls++;
+      return Reflect.apply(originalJsonParse, JSON, args);
+    }) as typeof JSON.parse;
+
+    try {
+      await assertRejects(
+        () => backend.getWithinLimit("ascii", 8),
+        CacheValueTooLargeError,
+        "8 UTF-8 bytes",
+      );
+      assertEquals(parseCalls, 0);
+    } finally {
+      JSON.parse = originalJsonParse;
+    }
+
+    assertEquals(await backend.get("ascii"), "x".repeat(32));
+    assertEquals((await listCacheFiles(isolatedDir)).length, 1);
+  });
+
+  await t.step("bounded reads count multibyte UTF-8 before constructing the value", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "bounded-unicode-before-string-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("unicode", "é".repeat(8));
+    const originalFromCharCode = String.fromCharCode;
+    const constructedChunkSizes: number[] = [];
+    String.fromCharCode = ((...codeUnits: number[]) => {
+      constructedChunkSizes.push(codeUnits.length);
+      return Reflect.apply(originalFromCharCode, String, codeUnits);
+    }) as typeof String.fromCharCode;
+
+    try {
+      await assertRejects(
+        () => backend.getWithinLimit("unicode", 8),
+        CacheValueTooLargeError,
+        "8 UTF-8 bytes",
+      );
+      assertEquals(constructedChunkSizes, ["unicode".length]);
+    } finally {
+      String.fromCharCode = originalFromCharCode;
+    }
+
+    assertEquals(await backend.get("unicode"), "é".repeat(8));
+  });
+
+  await t.step("cleans checksum-invalid entries that forge oversized framed lengths", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "forged-bounded-length-test");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("forged", "value");
+    const [fileName] = await listCacheFiles(isolatedDir);
+    await forgeOversizedFramedLengths(
+      join(isolatedDir, "veryfront-files", fileName!),
+      128,
+    );
+
+    assertEquals(await backend.getWithinLimit("forged", 8), null);
+    assertEquals(await listCacheFiles(isolatedDir), []);
+  });
+
+  await t.step("treats expired oversized bounded values as cache misses", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "expired-bounded-value-test");
+    const originalDateNow = Date.now;
+    let now = originalDateNow();
+    Date.now = () => now;
+    try {
+      const backend = new DiskCacheBackend(isolatedDir);
+      await backend.set("expired-large", "xx", 1);
+      now += 2_000;
+
+      assertEquals(await backend.getWithinLimit("expired-large", 1), null);
+      for (let attempt = 0; attempt < 50; attempt++) {
+        if ((await listCacheFiles(isolatedDir)).length === 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assertEquals(await listCacheFiles(isolatedDir), []);
+    } finally {
+      Date.now = originalDateNow;
+    }
+  });
+
+  await t.step("maxEntryBytes accounts for physical UTF-8-like value storage", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "physical-entry-size-test");
+    const backend = new DiskCacheBackend(isolatedDir, undefined, {
+      maxEntries: 10,
+      maxBytes: 512,
+      maxEntryBytes: 256,
+    });
+    const ascii = "x".repeat(128);
+
+    await backend.set("ascii", ascii);
+
+    assertEquals(await backend.get("ascii"), ascii);
+    const [fileName] = await listCacheFiles(isolatedDir);
+    const stat = await Deno.stat(join(isolatedDir, "veryfront-files", fileName!));
+    assertEquals(stat.size <= 256, true);
   });
 
   await t.step("validates deterministic capacity options", () => {
@@ -476,9 +777,10 @@ Deno.test("DiskCacheBackend", async (t) => {
 
     const [fileName] = await listCacheFiles(isolatedDir);
     const filePath = join(isolatedDir, "veryfront-files", fileName!);
-    const envelope = JSON.parse(await Deno.readTextFile(filePath)) as Record<string, unknown>;
-    envelope.value = "tampered-but-valid-json";
-    await Deno.writeTextFile(filePath, JSON.stringify(envelope));
+    const content = await Deno.readFile(filePath);
+    const valueByteIndex = content.byteLength - 33;
+    content[valueByteIndex] = content[valueByteIndex]! ^ 1;
+    await Deno.writeFile(filePath, content);
 
     assertEquals(await backend.get(key), null);
     assertEquals(await listCacheFiles(isolatedDir), []);
@@ -516,12 +818,16 @@ Deno.test("DiskCacheBackend", async (t) => {
     await writer.set("newer", "two");
 
     const cacheDir = join(isolatedDir, "veryfront-files");
-    for (const fileName of await listCacheFiles(isolatedDir)) {
-      const filePath = join(cacheDir, fileName);
-      const envelope = JSON.parse(await Deno.readTextFile(filePath)) as { key: string };
-      const timestamp = envelope.key === "oldest" ? new Date(1_000) : new Date(2_000);
-      await Deno.utime(filePath, timestamp, timestamp);
-    }
+    await Deno.utime(
+      join(cacheDir, await cacheFileNameForKey("oldest")),
+      new Date(1_000),
+      new Date(1_000),
+    );
+    await Deno.utime(
+      join(cacheDir, await cacheFileNameForKey("newer")),
+      new Date(2_000),
+      new Date(2_000),
+    );
 
     const reloaded = new DiskCacheBackend(isolatedDir, undefined, options);
     await reloaded.set("newest", "three");
@@ -536,8 +842,8 @@ Deno.test("DiskCacheBackend", async (t) => {
     const isolatedDir = join(Deno.makeTempDirSync(), "byte-limit-test");
     const backend = new DiskCacheBackend(isolatedDir, undefined, {
       maxEntries: 10,
-      maxBytes: 400,
-      maxEntryBytes: 400,
+      maxBytes: 300,
+      maxEntryBytes: 300,
     });
     await backend.set("byte-first", "a".repeat(100));
     await backend.set("byte-second", "b".repeat(100));
@@ -547,7 +853,7 @@ Deno.test("DiskCacheBackend", async (t) => {
     const files = await listCacheFiles(isolatedDir);
     assertEquals(files.length, 1);
     const stat = await Deno.stat(join(isolatedDir, "veryfront-files", files[0]!));
-    assertEquals(stat.size <= 400, true);
+    assertEquals(stat.size <= 300, true);
   });
 
   await t.step("sweeps expired entries after a backend restart", async () => {
@@ -592,6 +898,26 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await reloaded.get("live"), "value");
   });
 
+  await t.step("ignores cache-shaped directories during maintenance", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "cache-shaped-directories-test");
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    await Deno.mkdir(cacheDir, { recursive: true });
+    const directoryNames = [
+      `${"a".repeat(64)}.vfcache`,
+      `${"b".repeat(64)}.json`,
+      `${"c".repeat(64)}.vfcache.tmp.1.00000000-0000-0000-0000-000000000000`,
+    ];
+    for (const name of directoryNames) await Deno.mkdir(join(cacheDir, name));
+
+    const backend = new DiskCacheBackend(isolatedDir, undefined, { sweepIntervalMs: 0 });
+    await backend.set("live", "value");
+
+    assertEquals(await backend.get("live"), "value");
+    for (const name of directoryNames) {
+      assertEquals((await Deno.lstat(join(cacheDir, name))).isDirectory, true);
+    }
+  });
+
   await t.step("does not follow a cache entry symlink outside its namespace", async () => {
     const isolatedDir = join(Deno.makeTempDirSync(), "entry-symlink-test");
     const backend = new DiskCacheBackend(isolatedDir);
@@ -629,10 +955,8 @@ Deno.test("DiskCacheBackend", async (t) => {
     await backend.set("collision-guard", "original");
     const [fileName] = await listCacheFiles(isolatedDir);
     const filePath = join(isolatedDir, "veryfront-files", fileName!);
-    const envelope = JSON.parse(await Deno.readTextFile(filePath)) as Record<string, unknown>;
-    envelope.key = "different-key-with-the-same-file";
-    await updateEnvelopeIntegrity(envelope);
-    await Deno.writeTextFile(filePath, JSON.stringify(envelope));
+    await replaceFramedCacheKey(filePath, "collision-other");
+    const tamperedContent = await Deno.readFile(filePath);
 
     await backend.del("collision-guard");
     assertEquals((await Deno.stat(filePath)).isFile, true);
@@ -641,12 +965,7 @@ Deno.test("DiskCacheBackend", async (t) => {
       Error,
       "digest collision",
     );
-    const stored = JSON.parse(await Deno.readTextFile(filePath)) as {
-      key: string;
-      value: string;
-    };
-    assertEquals(stored.key, "different-key-with-the-same-file");
-    assertEquals(stored.value, "original");
+    assertEquals(await Deno.readFile(filePath), tamperedContent);
   });
 
   await t.step("delByPattern with no matching keys returns 0", async () => {

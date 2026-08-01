@@ -13,7 +13,11 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
-import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import {
+  JsonStringValueTooLargeError,
+  readResponseJsonStringBytesWithinLimit,
+  readResponseTextPrefix,
+} from "#veryfront/utils/response-body.ts";
 
 const log = serverLogger.component("veryfront-api-transport");
 const apiClientLog = serverLogger.component("veryfront-api-client");
@@ -37,6 +41,11 @@ export interface TransportRequestInit {
   returnText?: boolean;
   /** Maximum decoded success-body bytes accepted before JSON/text parsing. */
   maxResponseBytes?: number;
+  /** Stream one top-level JSON string without materializing the response envelope. */
+  jsonStringFieldWithinLimit?: {
+    fieldName: string;
+    maximumBytes: number;
+  };
   expected404?: boolean;
   timeoutMs?: number;
   /** Caller-owned cancellation signal, composed with the per-attempt timeout. */
@@ -267,6 +276,29 @@ async function defaultOnResponse(
   }
 
   const maxResponseBytes = requireSuccessResponseByteLimit(init.maxResponseBytes);
+  if (init.jsonStringFieldWithinLimit !== undefined) {
+    try {
+      return await readResponseJsonStringBytesWithinLimit(
+        response,
+        init.jsonStringFieldWithinLimit.fieldName,
+        init.jsonStringFieldWithinLimit.maximumBytes,
+        maxResponseBytes,
+        signal,
+      );
+    } catch (cause) {
+      if (cause instanceof JsonStringValueTooLargeError) {
+        const overflow = new RangeError(cause.message, { cause });
+        NON_RETRYABLE_RESPONSE_PROTOCOL_ERRORS.add(overflow);
+        throw overflow;
+      }
+      signal?.throwIfAborted();
+      throw successfulResponseProtocolError(
+        "Veryfront API successful response is not valid bounded JSON content",
+        url,
+        cause,
+      );
+    }
+  }
   const text = await readSuccessfulResponseText(
     response,
     maxResponseBytes,

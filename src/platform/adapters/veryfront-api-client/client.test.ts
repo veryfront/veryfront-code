@@ -546,4 +546,67 @@ describe("VeryfrontApiClient", () => {
       );
     });
   });
+
+  describe("bounded content probes", () => {
+    it("forwards expected-missing options for branch and published exact reads", async () => {
+      const client = createClient();
+      const calls: Array<[string, boolean | undefined]> = [];
+      const mutable = client as unknown as {
+        operations: {
+          getBranchFileContentBytesWithinLimit: (
+            projectRef: string,
+            branchRef: string,
+            path: string,
+            maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => Promise<Uint8Array>;
+          getReleaseFileContentBytesWithinLimit: (
+            projectRef: string,
+            releaseId: string,
+            path: string,
+            maximumBytes: number,
+            options?: { expectedMissing?: boolean },
+          ) => Promise<Uint8Array>;
+        };
+      };
+      mutable.operations.getBranchFileContentBytesWithinLimit = (
+        _projectRef,
+        _branchRef,
+        path,
+        _maximumBytes,
+        options,
+      ) => {
+        calls.push([path, options?.expectedMissing]);
+        return Promise.resolve(new Uint8Array([1]));
+      };
+      mutable.operations.getReleaseFileContentBytesWithinLimit = (
+        _projectRef,
+        _releaseId,
+        path,
+        _maximumBytes,
+        options,
+      ) => {
+        calls.push([path, options?.expectedMissing]);
+        return Promise.resolve(new Uint8Array([2]));
+      };
+
+      await client.getFileContentBytesWithinLimit(
+        "pages/home.tsx",
+        1,
+        { expectedMissing: true },
+      );
+      await client.getPublishedFileContentBytesWithinLimit(
+        "pages/home.tsx",
+        1,
+        "release-id",
+        undefined,
+        { expectedMissing: true },
+      );
+
+      assertEquals(calls, [
+        ["pages/home.tsx", true],
+        ["pages/home.tsx", true],
+      ]);
+    });
+  });
 });

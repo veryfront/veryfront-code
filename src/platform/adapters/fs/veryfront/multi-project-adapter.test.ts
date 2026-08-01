@@ -17,6 +17,50 @@ import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { registerRequestContextFinalizer } from "./request-context.ts";
 import type { StyleArtifactAccess, StyleArtifactRegistry } from "./types.ts";
 import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
+import { VeryfrontFSAdapter } from "./adapter.ts";
+import { FSAdapterWrapper } from "../wrapper.ts";
+import { captureBoundedTextReader } from "../../bounded-text-reader.ts";
+
+function streamedFileContentResponse(contentBytes: number): Response {
+  const encoder = new TextEncoder();
+  const prefix = encoder.encode('{"ignored":{"nested":[1,2,3]},"content":"');
+  const suffix = encoder.encode('"}');
+  const chunk = new Uint8Array(64 * 1024);
+  chunk.fill(0x78);
+  let phase: "prefix" | "content" | "suffix" | "done" = "prefix";
+  let remaining = contentBytes;
+
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (phase === "prefix") {
+          phase = "content";
+          controller.enqueue(prefix);
+          return;
+        }
+        if (phase === "content" && remaining > 0) {
+          const byteLength = Math.min(remaining, chunk.byteLength);
+          if (byteLength === chunk.byteLength) {
+            controller.enqueue(chunk);
+          } else {
+            const finalChunk = new Uint8Array(byteLength);
+            finalChunk.fill(0x78);
+            controller.enqueue(finalChunk);
+          }
+          remaining -= byteLength;
+          return;
+        }
+        if (phase === "content") phase = "suffix";
+        if (phase === "suffix") {
+          phase = "done";
+          controller.enqueue(suffix);
+          controller.close();
+        }
+      },
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
 
 function createStyleArtifactAccess(projectSlug: string): StyleArtifactAccess {
   const registry: Readonly<StyleArtifactRegistry> = Object.freeze({
@@ -99,6 +143,186 @@ describe("MultiProjectFSAdapter", () => {
 
     it("should have readFileBytes method", () => {
       withAdapter((adapter) => assertMethod(adapter, "readFileBytes"));
+    });
+
+    it("should have exact bounded byte read method", () => {
+      withAdapter((adapter) => assertMethod(adapter, "readFileBytesWithinLimit"));
+    });
+
+    it("rejects an invalid exact-read limit before selecting an adapter", async () => {
+      await withAdapterAsync(async (adapter) => {
+        await assertRejects(
+          () => adapter.readFileBytesWithinLimit("asset.css", 0),
+          RangeError,
+          "positive safe integer",
+        );
+      });
+    });
+
+    it("forwards exact bounded reads only to the selected adapter snapshot", async () => {
+      await withAdapterAsync(async (adapter) => {
+        let exactCalls = 0;
+        let unboundedCalls = 0;
+        const source = new Uint8Array([1, 2, 3]);
+        adapter.setDefaultAdapter(
+          {
+            readFileBytesWithinLimit(path: string, byteLimit: number) {
+              exactCalls++;
+              assertEquals(path, "asset.css");
+              assertEquals(byteLimit, 3);
+              return Promise.resolve(source);
+            },
+            readFileBytes() {
+              unboundedCalls++;
+              return Promise.resolve(source);
+            },
+            dispose() {},
+          } as unknown as Parameters<MultiProjectFSAdapter["setDefaultAdapter"]>[0],
+        );
+
+        const result = await adapter.readFileBytesWithinLimit("asset.css", 3);
+        source[0] = 9;
+        assertEquals([...result], [1, 2, 3]);
+        assertEquals(exactCalls, 1);
+        assertEquals(unboundedCalls, 0);
+      });
+    });
+
+    it("uses a fixed whole-file reader only when its ceiling fits", async () => {
+      await withAdapterAsync(async (adapter) => {
+        let reads = 0;
+        adapter.setDefaultAdapter(
+          {
+            maxWholeFileReadBytes: 4,
+            readFileBytes() {
+              reads++;
+              return Promise.resolve(new Uint8Array([1, 2, 3, 4]));
+            },
+            dispose() {},
+          } as unknown as Parameters<MultiProjectFSAdapter["setDefaultAdapter"]>[0],
+        );
+
+        assertEquals(
+          [...await adapter.readFileBytesWithinLimit("asset.css", 4)],
+          [1, 2, 3, 4],
+        );
+        await assertRejects(
+          () => adapter.readFileBytesWithinLimit("asset.css", 3),
+          TypeError,
+          "exact bounded byte reader",
+        );
+        assertEquals(reads, 1);
+      });
+    });
+
+    it("streams the real API adapter chain at the 32 MiB boundary", async () => {
+      await withAdapterAsync(async (adapter) => {
+        const maximumBytes = 32 * 1024 * 1024;
+        const single = new VeryfrontFSAdapter({
+          veryfront: {
+            apiBaseUrl: "https://api.example.com",
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            projectId: "project-id",
+            contentSource: { type: "branch", branch: "main" },
+            cache: { enabled: false },
+            retry: { maxRetries: 3, initialDelay: 0, maxDelay: 0 },
+          },
+        });
+        single.setContentContext({
+          sourceType: "branch",
+          projectSlug: "test-project",
+          branch: "main",
+        });
+        adapter.setDefaultAdapter(single);
+
+        const client = single.getClient();
+        let projectCalls = 0;
+        let listAllFilesCalls = 0;
+        let unboundedCalls = 0;
+        client.getProject = () => {
+          projectCalls++;
+          return Promise.resolve({
+            id: "project-id",
+            slug: "test-project",
+            provider: "veryfront",
+            layout: "default",
+          } as Awaited<ReturnType<typeof client.getProject>>);
+        };
+        client.listAllFiles = () => {
+          listAllFilesCalls++;
+          return Promise.reject(new Error("file-list content path must not run"));
+        };
+        client.getFileContent = () => {
+          unboundedCalls++;
+          return Promise.reject(new Error("unbounded content path must not run"));
+        };
+
+        const originalFetch = globalThis.fetch;
+        const originalJsonParse = JSON.parse;
+        let fetchCalls = 0;
+        let parseCalls = 0;
+        const requestedUrls: string[] = [];
+        globalThis.fetch = ((input: RequestInfo | URL) => {
+          requestedUrls.push(String(input));
+          fetchCalls++;
+          return Promise.resolve(
+            streamedFileContentResponse(fetchCalls === 1 ? maximumBytes : maximumBytes + 1),
+          );
+        }) as typeof fetch;
+        JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+          parseCalls++;
+          return Reflect.apply(originalJsonParse, JSON, args);
+        }) as typeof JSON.parse;
+
+        try {
+          const boundedReader = captureBoundedTextReader(
+            new FSAdapterWrapper(adapter),
+            "Real Veryfront filesystem chain",
+          );
+          {
+            const exact = await boundedReader.readUtf8(
+              "styles/manifest.json",
+              maximumBytes,
+              "Style manifest",
+            );
+            assertEquals(exact.byteLength, maximumBytes);
+            assertEquals(exact.content.length, maximumBytes);
+            assertEquals(exact.content.charCodeAt(0), 0x78);
+            assertEquals(exact.content.charCodeAt(exact.content.length - 1), 0x78);
+          }
+
+          const beforeOverflowFetches = fetchCalls;
+          await assertRejects(
+            () =>
+              boundedReader.readUtf8(
+                "styles/manifest.json",
+                maximumBytes,
+                "Style manifest",
+              ),
+            TypeError,
+            `exceeds ${maximumBytes} bytes`,
+          );
+          assertEquals(fetchCalls - beforeOverflowFetches, 1);
+        } finally {
+          JSON.parse = originalJsonParse;
+          globalThis.fetch = originalFetch;
+        }
+
+        assertEquals(fetchCalls, 2);
+        assertEquals(parseCalls, 0);
+        assertEquals(projectCalls, 0);
+        assertEquals(listAllFilesCalls, 0);
+        assertEquals(unboundedCalls, 0);
+        assertEquals(
+          requestedUrls.every((url) =>
+            url.includes(
+              "/projects/test-project/files/styles%2Fmanifest.json?branch=main&include_server_functions=true",
+            )
+          ),
+          true,
+        );
+      });
     });
 
     it("advertises only the fixed whole-response ceiling", () => {

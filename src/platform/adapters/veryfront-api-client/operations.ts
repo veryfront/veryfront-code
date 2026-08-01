@@ -37,6 +37,7 @@ import {
 } from "./schemas/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { copyFixedUint8ArrayWithinLimit } from "../bounded-text-reader.ts";
 
 const logger = baseLogger.component("api");
 
@@ -48,6 +49,21 @@ const MAX_RELEASE_FILE_PAGE_CONTENT_BYTES = 64 * 1024 * 1024;
 const MAX_RELEASE_FILE_TOTAL_CONTENT_BYTES = 64 * 1024 * 1024;
 const MAX_DOMAIN_CODE_UNITS = 253;
 const MAX_DOMAIN_INPUT_CODE_UNITS = MAX_DOMAIN_CODE_UNITS + 8;
+
+function requireBoundedFileContentLimit(maximumBytes: number): number {
+  if (!Number.isSafeInteger(maximumBytes) || maximumBytes <= 0) {
+    throw new RangeError("File content maximumBytes must be a positive safe integer");
+  }
+  return maximumBytes;
+}
+
+function requireBoundedFileContentBytes(raw: unknown, maximumBytes: number): Uint8Array {
+  return copyFixedUint8ArrayWithinLimit(
+    raw,
+    maximumBytes,
+    "Veryfront API file content",
+  );
+}
 
 export type TokenProvider = () => string;
 
@@ -884,6 +900,39 @@ export class VeryfrontAPIOperations {
     );
   }
 
+  getBranchFileContentBytesWithinLimit(
+    projectRef: string,
+    branchRef: string,
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const admittedMaximum = requireBoundedFileContentLimit(maximumBytes);
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams({ branch: branchRef }));
+        const url = `/projects/${encodeURIComponent(projectRef)}/files/${
+          encodeURIComponent(pathOrId)
+        }?${params}`;
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          jsonStringFieldWithinLimit: {
+            fieldName: "content",
+            maximumBytes: admittedMaximum,
+          },
+        });
+        return requireBoundedFileContentBytes(raw, admittedMaximum);
+      },
+      {
+        "api.operation": "getBranchFileContentBytesWithinLimit",
+        "api.project": projectRef,
+        "api.branch": branchRef,
+        "api.path": pathOrId,
+      },
+    );
+  }
+
   async listEnvironmentFiles(
     projectRef: string,
     environmentName = "production",
@@ -973,6 +1022,39 @@ export class VeryfrontAPIOperations {
     );
   }
 
+  getEnvironmentFileContentBytesWithinLimit(
+    projectRef: string,
+    environmentName: string,
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const admittedMaximum = requireBoundedFileContentLimit(maximumBytes);
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams());
+        const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
+          encodeURIComponent(environmentName)
+        }/files/${encodeURIComponent(pathOrId)}?${params}`;
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          jsonStringFieldWithinLimit: {
+            fieldName: "content",
+            maximumBytes: admittedMaximum,
+          },
+        });
+        return requireBoundedFileContentBytes(raw, admittedMaximum);
+      },
+      {
+        "api.operation": "getEnvironmentFileContentBytesWithinLimit",
+        "api.project": projectRef,
+        "api.environment": environmentName,
+        "api.path": pathOrId,
+      },
+    );
+  }
+
   async listReleaseFiles(
     projectRef: string,
     version = "latest",
@@ -1053,6 +1135,39 @@ export class VeryfrontAPIOperations {
       },
       {
         "api.operation": "getReleaseFile",
+        "api.project": projectRef,
+        "api.version": version,
+        "api.path": pathOrId,
+      },
+    );
+  }
+
+  getReleaseFileContentBytesWithinLimit(
+    projectRef: string,
+    version: string,
+    pathOrId: string,
+    maximumBytes: number,
+    options: GetFileOptions = {},
+  ): Promise<Uint8Array> {
+    const admittedMaximum = requireBoundedFileContentLimit(maximumBytes);
+    return withSpan(
+      SpanNames.API_GET_FILE,
+      async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams());
+        const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
+          encodeURIComponent(version)
+        }/files/${encodeURIComponent(pathOrId)}?${params}`;
+        const raw = await this.request(url, {
+          expected404: options.expectedMissing === true,
+          jsonStringFieldWithinLimit: {
+            fieldName: "content",
+            maximumBytes: admittedMaximum,
+          },
+        });
+        return requireBoundedFileContentBytes(raw, admittedMaximum);
+      },
+      {
+        "api.operation": "getReleaseFileContentBytesWithinLimit",
         "api.project": projectRef,
         "api.version": version,
         "api.path": pathOrId,

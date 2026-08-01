@@ -2,28 +2,38 @@ import { join, resolve } from "#veryfront/compat/path/index.ts";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { logger } from "#veryfront/utils";
 import type { CacheBackend } from "../types.ts";
+import { assertCacheReadMaximumBytes, CacheValueTooLargeError } from "../bounded-read.ts";
 import { type CacheGlob, compileCacheGlob } from "./glob.ts";
 import { DEFAULT_CACHE_TTL_SECONDS, expiresImmediately, resolveCacheTtlSeconds } from "./ttl.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
 const CACHE_SUBDIR = "veryfront-files";
-const CACHE_FILE_PATTERN = /^[0-9a-f]{64}\.json$/;
-const LEGACY_CACHE_FILE_PATTERN = /^[0-9a-f]{32}\.json$/;
-const TEMP_FILE_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{64})\.json\.tmp\.\d+\.[0-9a-f-]+$/;
+const CACHE_FILE_PATTERN = /^[0-9a-f]{64}\.vfcache$/;
+const LEGACY_CACHE_FILE_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{64})\.json$/;
+const TEMP_FILE_PATTERN = /^[0-9a-f]{64}\.vfcache\.tmp\.\d+\.[0-9a-f-]+$/;
+const LEGACY_TEMP_FILE_PATTERN = /^(?:[0-9a-f]{32}|[0-9a-f]{64})\.json\.tmp\.\d+\.[0-9a-f-]+$/;
 const MAX_GLOB_CACHE_SIZE = 100;
 const MAX_CACHE_NAMESPACE_BYTES = 240;
 const MAX_CACHE_KEY_CODE_UNITS = 64 * 1024;
-const READ_CHUNK_BYTES = 64 * 1024;
 const STALE_TEMP_FILE_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ENTRIES = 10_000;
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
 const DEFAULT_MAX_ENTRY_BYTES = 16 * 1024 * 1024;
 const DEFAULT_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_SCAN_ENTRIES = 100_000;
-const DISK_CACHE_FORMAT_VERSION = 2;
+const DISK_CACHE_FORMAT_VERSION = 3;
 const PORTABLE_NAMESPACE_CHAR = /^[a-z0-9_-]$/;
 const WINDOWS_RESERVED_NAMES = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 const fsPromises = import("node:fs/promises");
 const MAX_COORDINATOR_REFS = 1_000;
+const DISK_CACHE_MAGIC = new Uint8Array([0x56, 0x46, 0x43, 0x41, 0x43, 0x48, 0x45, 0x33]);
+const DISK_CACHE_HEADER_BYTES = 40;
+const DISK_CACHE_INTEGRITY_BYTES = 32;
+const DISK_CACHE_KEY_CODE_UNITS_OFFSET = 8;
+const DISK_CACHE_VALUE_STORED_BYTES_OFFSET = 16;
+const DISK_CACHE_VALUE_UTF8_BYTES_OFFSET = 24;
+const DISK_CACHE_EXPIRES_AT_OFFSET = 32;
+const STRING_DECODE_CHUNK_CODE_UNITS = 8 * 1024;
 
 interface NamespaceCoordinator {
   generation: symbol;
@@ -49,6 +59,15 @@ function getNamespaceCoordinator(directoryPath: string): NamespaceCoordinator {
   return coordinator;
 }
 
+/**
+ * Capacity and maintenance options for the OS-owned disk performance cache.
+ *
+ * Cache bytes are treated as untrusted parser input and carry an unkeyed
+ * SHA-256 checksum for accidental, torn, or non-recomputed corruption. The
+ * checksum does not authenticate hostile-writer changes: deployments must
+ * protect the cache directory from hostile writes, and callers must never use
+ * cache values as an authorization boundary.
+ */
 export interface DiskCacheOptions {
   /** Maximum number of live cache entries retained in this namespace. */
   maxEntries?: number;
@@ -112,33 +131,6 @@ class DiskCacheKeyCollisionError extends Error {
     super("Disk cache key digest collision detected");
     this.name = "DiskCacheKeyCollisionError";
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function parseDiskCacheEnvelope(value: unknown): DiskCacheEnvelope | null {
-  if (!isRecord(value)) return null;
-  if (value.formatVersion !== DISK_CACHE_FORMAT_VERSION) return null;
-  if (typeof value.integrity !== "string" || !/^[0-9a-f]{64}$/.test(value.integrity)) {
-    return null;
-  }
-  if (typeof value.key !== "string") return null;
-  if (typeof value.value !== "string") return null;
-  if (
-    value.expiresAt !== undefined &&
-    (typeof value.expiresAt !== "number" || !Number.isFinite(value.expiresAt))
-  ) {
-    return null;
-  }
-  return {
-    formatVersion: DISK_CACHE_FORMAT_VERSION,
-    integrity: value.integrity,
-    key: value.key,
-    value: value.value,
-    expiresAt: value.expiresAt,
-  };
 }
 
 function resolvePositiveSafeInteger(value: number, name: string): number {
@@ -246,99 +238,404 @@ async function digestKey(input: string): Promise<string> {
   return result;
 }
 
-async function computeEnvelopeIntegrity(
+function setSafeUint64(view: DataView, offset: number, value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("Disk cache framed length must be a non-negative safe integer");
+  }
+  view.setBigUint64(offset, BigInt(value));
+}
+
+function getSafeUint64(view: DataView, offset: number): number {
+  const encoded = view.getBigUint64(offset);
+  const value = Number(encoded);
+  if (!Number.isSafeInteger(value) || BigInt(value) !== encoded) {
+    throw new InvalidDiskCacheFileError();
+  }
+  return value;
+}
+
+function cacheFileSize(keyCodeUnits: number, valueStoredBytes: number): number {
+  const size = DISK_CACHE_HEADER_BYTES + keyCodeUnits * 2 + valueStoredBytes +
+    DISK_CACHE_INTEGRITY_BYTES;
+  if (!Number.isSafeInteger(size)) throw new InvalidDiskCacheFileError();
+  return size;
+}
+
+function writeStringCodeUnits(target: Uint8Array, offset: number, value: string): void {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    target[offset++] = codeUnit >>> 8;
+    target[offset++] = codeUnit & 0xff;
+  }
+}
+
+function readStringCodeUnits(source: Uint8Array, offset: number, codeUnits: number): string {
+  const chunks: string[] = [];
+  const values = new Array<number>(
+    Math.min(codeUnits, STRING_DECODE_CHUNK_CODE_UNITS),
+  );
+  let remaining = codeUnits;
+  while (remaining > 0) {
+    const count = Math.min(remaining, STRING_DECODE_CHUNK_CODE_UNITS);
+    for (let index = 0; index < count; index++) {
+      values[index] = source[offset++]! << 8 | source[offset++]!;
+    }
+    chunks.push(String.fromCharCode(...values.slice(0, count)));
+    remaining -= count;
+  }
+  return chunks.join("");
+}
+
+function encodeWtf8(value: string): Uint8Array {
+  const encoded = new Uint8Array(utf8ByteLength(value));
+  let offset = 0;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    let codePoint = codeUnit;
+    if (
+      codeUnit >= 0xd800 && codeUnit <= 0xdbff && index + 1 < value.length
+    ) {
+      const low = value.charCodeAt(index + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        codePoint = 0x10000 + ((codeUnit - 0xd800) << 10) + (low - 0xdc00);
+        index++;
+      }
+    }
+
+    if (codePoint <= 0x7f) {
+      encoded[offset++] = codePoint;
+    } else if (codePoint <= 0x7ff) {
+      encoded[offset++] = 0xc0 | (codePoint >>> 6);
+      encoded[offset++] = 0x80 | (codePoint & 0x3f);
+    } else if (codePoint <= 0xffff) {
+      // WTF-8 intentionally encodes lone UTF-16 surrogates as their three-byte
+      // code-unit values so cache strings continue to round-trip losslessly.
+      encoded[offset++] = 0xe0 | (codePoint >>> 12);
+      encoded[offset++] = 0x80 | ((codePoint >>> 6) & 0x3f);
+      encoded[offset++] = 0x80 | (codePoint & 0x3f);
+    } else {
+      encoded[offset++] = 0xf0 | (codePoint >>> 18);
+      encoded[offset++] = 0x80 | ((codePoint >>> 12) & 0x3f);
+      encoded[offset++] = 0x80 | ((codePoint >>> 6) & 0x3f);
+      encoded[offset++] = 0x80 | (codePoint & 0x3f);
+    }
+  }
+  return encoded;
+}
+
+function readWtf8CodePoint(
+  source: Uint8Array,
+  offset: number,
+  end: number,
+): { codePoint: number; nextOffset: number } {
+  const first = source[offset]!;
+  if (first <= 0x7f) return { codePoint: first, nextOffset: offset + 1 };
+
+  let width: number;
+  let codePoint: number;
+  let minimum: number;
+  if (first >= 0xc2 && first <= 0xdf) {
+    width = 2;
+    codePoint = first & 0x1f;
+    minimum = 0x80;
+  } else if (first >= 0xe0 && first <= 0xef) {
+    width = 3;
+    codePoint = first & 0x0f;
+    minimum = 0x800;
+  } else if (first >= 0xf0 && first <= 0xf4) {
+    width = 4;
+    codePoint = first & 0x07;
+    minimum = 0x10000;
+  } else {
+    throw new InvalidDiskCacheFileError();
+  }
+  if (offset + width > end) throw new InvalidDiskCacheFileError();
+  for (let index = 1; index < width; index++) {
+    const next = source[offset + index]!;
+    if ((next & 0xc0) !== 0x80) throw new InvalidDiskCacheFileError();
+    codePoint = (codePoint << 6) | (next & 0x3f);
+  }
+  if (codePoint < minimum || codePoint > 0x10ffff) {
+    throw new InvalidDiskCacheFileError();
+  }
+  return { codePoint, nextOffset: offset + width };
+}
+
+function measureWtf8LogicalBytes(
+  source: Uint8Array,
+  offset: number,
+  byteLength: number,
+): number {
+  const end = offset + byteLength;
+  let logicalBytes = 0;
+  let pendingHighSurrogate = false;
+  while (offset < end) {
+    const decoded = readWtf8CodePoint(source, offset, end);
+    offset = decoded.nextOffset;
+    const codePoint = decoded.codePoint;
+
+    if (pendingHighSurrogate) {
+      pendingHighSurrogate = false;
+      if (codePoint >= 0xdc00 && codePoint <= 0xdfff) {
+        // A surrogate pair must use the canonical four-byte scalar form.
+        throw new InvalidDiskCacheFileError();
+      }
+      logicalBytes += 3;
+    }
+
+    if (codePoint >= 0xd800 && codePoint <= 0xdbff) {
+      pendingHighSurrogate = true;
+      continue;
+    }
+    logicalBytes += codePoint <= 0x7f ? 1 : codePoint <= 0x7ff ? 2 : codePoint <= 0xffff ? 3 : 4;
+  }
+  if (pendingHighSurrogate) logicalBytes += 3;
+  return logicalBytes;
+}
+
+function decodeWtf8(source: Uint8Array, offset: number, byteLength: number): string {
+  const end = offset + byteLength;
+  const chunks: string[] = [];
+  const codeUnits: number[] = [];
+  const flush = () => {
+    if (codeUnits.length === 0) return;
+    chunks.push(String.fromCharCode(...codeUnits));
+    codeUnits.length = 0;
+  };
+  while (offset < end) {
+    const decoded = readWtf8CodePoint(source, offset, end);
+    offset = decoded.nextOffset;
+    if (decoded.codePoint <= 0xffff) {
+      codeUnits.push(decoded.codePoint);
+    } else {
+      const scalar = decoded.codePoint - 0x10000;
+      codeUnits.push(0xd800 + (scalar >>> 10), 0xdc00 + (scalar & 0x3ff));
+    }
+    if (codeUnits.length >= STRING_DECODE_CHUNK_CODE_UNITS) flush();
+  }
+  flush();
+  return chunks.join("");
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.byteLength !== right.byteLength) return false;
+  let difference = 0;
+  for (let index = 0; index < left.byteLength; index++) {
+    difference |= left[index]! ^ right[index]!;
+  }
+  return difference === 0;
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  let result = "";
+  for (const byte of bytes) result += byte.toString(16).padStart(2, "0");
+  return result;
+}
+
+async function encodeDiskCacheEnvelope(
   key: string,
   value: string,
   expiresAt: number | undefined,
-): Promise<string> {
-  const payload = JSON.stringify([
-    DISK_CACHE_FORMAT_VERSION,
-    key,
-    value,
-    expiresAt ?? null,
-  ]);
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload)),
+): Promise<{ content: Uint8Array; envelope: DiskCacheEnvelope }> {
+  const encodedValue = encodeWtf8(value);
+  const valueUtf8Bytes = encodedValue.byteLength;
+  const content = new Uint8Array(cacheFileSize(key.length, encodedValue.byteLength));
+  content.set(DISK_CACHE_MAGIC, 0);
+  const view = new DataView(content.buffer, content.byteOffset, DISK_CACHE_HEADER_BYTES);
+  setSafeUint64(view, DISK_CACHE_KEY_CODE_UNITS_OFFSET, key.length);
+  setSafeUint64(view, DISK_CACHE_VALUE_STORED_BYTES_OFFSET, encodedValue.byteLength);
+  setSafeUint64(view, DISK_CACHE_VALUE_UTF8_BYTES_OFFSET, valueUtf8Bytes);
+  view.setFloat64(DISK_CACHE_EXPIRES_AT_OFFSET, expiresAt ?? 0);
+  writeStringCodeUnits(content, DISK_CACHE_HEADER_BYTES, key);
+  content.set(encodedValue, DISK_CACHE_HEADER_BYTES + key.length * 2);
+  const integrityOffset = content.byteLength - DISK_CACHE_INTEGRITY_BYTES;
+  const integrity = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", content.subarray(0, integrityOffset)),
   );
-  let result = "";
-  for (const byte of digest) result += byte.toString(16).padStart(2, "0");
-  return result;
+  content.set(integrity, integrityOffset);
+  return {
+    content,
+    envelope: {
+      formatVersion: DISK_CACHE_FORMAT_VERSION,
+      integrity: bytesToHex(integrity),
+      key,
+      value,
+      expiresAt,
+    },
+  };
+}
+
+type DiskFileHandle = Awaited<ReturnType<(Awaited<typeof fsPromises>)["open"]>>;
+
+async function readExactly(
+  handle: DiskFileHandle,
+  target: Uint8Array,
+  fileOffset: number,
+): Promise<void> {
+  let targetOffset = 0;
+  while (targetOffset < target.byteLength) {
+    const { bytesRead } = await handle.read(
+      target,
+      targetOffset,
+      target.byteLength - targetOffset,
+      fileOffset + targetOffset,
+    );
+    if (bytesRead === 0) throw new InvalidDiskCacheFileError();
+    targetOffset += bytesRead;
+  }
 }
 
 async function readBoundedCacheFile(
   filePath: string,
   maxBytes: number,
+  maximumValueBytes?: number,
+  expectedKey?: string,
 ): Promise<CacheFileRead> {
+  const valueLimit = maximumValueBytes === undefined
+    ? undefined
+    : assertCacheReadMaximumBytes(maximumValueBytes);
   const { lstat, open } = await fsPromises;
   const before = await lstat(filePath);
   if (!before.isFile()) throw new InvalidDiskCacheFileError();
   if (before.size > maxBytes) throw new OversizedDiskCacheFileError();
+  if (before.size < DISK_CACHE_HEADER_BYTES + DISK_CACHE_INTEGRITY_BYTES) {
+    throw new InvalidDiskCacheFileError();
+  }
 
   const handle = await open(filePath, "r");
   try {
     const opened = await handle.stat();
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new InvalidDiskCacheFileError();
+    }
+    if (opened.size > maxBytes) throw new OversizedDiskCacheFileError();
+
+    const header = new Uint8Array(DISK_CACHE_HEADER_BYTES);
+    await readExactly(handle, header, 0);
+    if (!bytesEqual(header.subarray(0, DISK_CACHE_MAGIC.byteLength), DISK_CACHE_MAGIC)) {
+      throw new InvalidDiskCacheFileError();
+    }
+    const headerView = new DataView(
+      header.buffer,
+      header.byteOffset,
+      header.byteLength,
+    );
+    const keyCodeUnits = getSafeUint64(headerView, DISK_CACHE_KEY_CODE_UNITS_OFFSET);
+    const valueStoredBytes = getSafeUint64(
+      headerView,
+      DISK_CACHE_VALUE_STORED_BYTES_OFFSET,
+    );
+    const declaredValueUtf8Bytes = getSafeUint64(
+      headerView,
+      DISK_CACHE_VALUE_UTF8_BYTES_OFFSET,
+    );
+    const expiresAtValue = headerView.getFloat64(DISK_CACHE_EXPIRES_AT_OFFSET);
     if (
-      !opened.isFile() ||
-      opened.dev !== before.dev ||
-      opened.ino !== before.ino ||
-      opened.size > maxBytes
+      keyCodeUnits > MAX_CACHE_KEY_CODE_UNITS ||
+      !Number.isFinite(expiresAtValue) ||
+      expiresAtValue <= 0
     ) {
       throw new InvalidDiskCacheFileError();
     }
-
-    const decoder = new TextDecoder("utf-8", { fatal: true });
-    const chunk = new Uint8Array(Math.min(READ_CHUNK_BYTES, maxBytes + 1));
-    let raw = "";
-    let total = 0;
-    while (true) {
-      const bytesToRead = Math.min(chunk.byteLength, maxBytes - total + 1);
-      const { bytesRead } = await handle.read(chunk, 0, bytesToRead, total);
-      if (bytesRead === 0) break;
-      total += bytesRead;
-      if (total > maxBytes) throw new OversizedDiskCacheFileError();
-      try {
-        raw += decoder.decode(chunk.subarray(0, bytesRead), { stream: true });
-      } catch {
-        throw new InvalidDiskCacheFileError();
-      }
-    }
-    try {
-      raw += decoder.decode();
-    } catch {
-      throw new InvalidDiskCacheFileError();
-    }
+    const expectedSize = cacheFileSize(keyCodeUnits, valueStoredBytes);
+    if (expectedSize > maxBytes) throw new OversizedDiskCacheFileError();
+    if (expectedSize !== opened.size) throw new InvalidDiskCacheFileError();
+    const integrityOffset = expectedSize - DISK_CACHE_INTEGRITY_BYTES;
+    const checksumVerifiedContent = new Uint8Array(integrityOffset);
+    checksumVerifiedContent.set(header);
+    await readExactly(
+      handle,
+      checksumVerifiedContent.subarray(DISK_CACHE_HEADER_BYTES),
+      DISK_CACHE_HEADER_BYTES,
+    );
+    const storedIntegrity = new Uint8Array(DISK_CACHE_INTEGRITY_BYTES);
+    await readExactly(handle, storedIntegrity, integrityOffset);
 
     const after = await handle.stat();
     if (
       after.dev !== opened.dev ||
       after.ino !== opened.ino ||
-      after.size !== total
+      after.size !== expectedSize ||
+      after.mtimeMs !== opened.mtimeMs
     ) {
       throw new InvalidDiskCacheFileError();
     }
 
-    let envelope: DiskCacheEnvelope | null = null;
-    try {
-      const candidate = parseDiskCacheEnvelope(JSON.parse(raw));
-      if (
-        candidate &&
-        candidate.integrity === await computeEnvelopeIntegrity(
-            candidate.key,
-            candidate.value,
-            candidate.expiresAt,
-          )
-      ) {
-        envelope = candidate;
-      }
-    } catch {
-      // Corrupt cache data is a miss and is removed by the caller.
+    const computedIntegrity = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", checksumVerifiedContent),
+    );
+    if (!bytesEqual(computedIntegrity, storedIntegrity)) {
+      throw new InvalidDiskCacheFileError();
     }
+    if (valueStoredBytes !== declaredValueUtf8Bytes) {
+      throw new InvalidDiskCacheFileError();
+    }
+
+    const keyOffset = DISK_CACHE_HEADER_BYTES;
+    const valueOffset = keyOffset + keyCodeUnits * 2;
+    const key = readStringCodeUnits(checksumVerifiedContent, keyOffset, keyCodeUnits);
+    const keyMatches = expectedKey === undefined || key === expectedKey;
+    const actualValueUtf8Bytes = measureWtf8LogicalBytes(
+      checksumVerifiedContent,
+      valueOffset,
+      valueStoredBytes,
+    );
+    if (actualValueUtf8Bytes !== declaredValueUtf8Bytes) {
+      throw new InvalidDiskCacheFileError();
+    }
+    const expiresAt = expiresAtValue;
+    if (!keyMatches) {
+      return {
+        dev: after.dev,
+        envelope: {
+          formatVersion: DISK_CACHE_FORMAT_VERSION,
+          integrity: bytesToHex(storedIntegrity),
+          key,
+          // The caller classifies checksum-verified filename collisions before it
+          // observes the payload, so an unrelated oversized value is not an
+          // overflow of the requested key.
+          value: "",
+          expiresAt,
+        },
+        ino: after.ino,
+        mtimeMs: after.mtimeMs,
+        size: expectedSize,
+      };
+    }
+    if (valueLimit !== undefined && expiresAt !== undefined && Date.now() >= expiresAt) {
+      return {
+        dev: after.dev,
+        envelope: {
+          formatVersion: DISK_CACHE_FORMAT_VERSION,
+          integrity: bytesToHex(storedIntegrity),
+          key,
+          // The caller applies expiry before observing the value. Avoid
+          // materializing an already-dead payload solely to report a miss.
+          value: "",
+          expiresAt,
+        },
+        ino: after.ino,
+        mtimeMs: after.mtimeMs,
+        size: expectedSize,
+      };
+    }
+    if (valueLimit !== undefined && actualValueUtf8Bytes > valueLimit) {
+      throw new CacheValueTooLargeError(valueLimit);
+    }
+    const value = decodeWtf8(checksumVerifiedContent, valueOffset, valueStoredBytes);
+    const envelope: DiskCacheEnvelope = {
+      formatVersion: DISK_CACHE_FORMAT_VERSION,
+      integrity: bytesToHex(storedIntegrity),
+      key,
+      value,
+      expiresAt,
+    };
     return {
       dev: after.dev,
       envelope,
       ino: after.ino,
       mtimeMs: after.mtimeMs,
-      size: total,
+      size: expectedSize,
     };
   } finally {
     await handle.close();
@@ -380,7 +677,7 @@ export class DiskCacheBackend implements CacheBackend {
   }
 
   private async cacheFileName(key: string): Promise<string> {
-    return `${await digestKey(key)}.json`;
+    return `${await digestKey(key)}.vfcache`;
   }
 
   private filePath(fileName: string): string {
@@ -513,7 +810,11 @@ export class DiskCacheBackend implements CacheBackend {
       const fileName = directoryEntry.name;
       const candidatePath = join(this.dir, fileName);
 
-      if (TEMP_FILE_PATTERN.test(fileName)) {
+      // Cache-shaped directories are untrusted namespace contents, not cache
+      // entries. Never recurse into or unlink them during maintenance.
+      if (directoryEntry.isDirectory()) continue;
+
+      if (TEMP_FILE_PATTERN.test(fileName) || LEGACY_TEMP_FILE_PATTERN.test(fileName)) {
         try {
           const stat = await lstat(candidatePath);
           if (!stat.isFile() || now - stat.mtimeMs >= STALE_TEMP_FILE_MS) {
@@ -524,8 +825,8 @@ export class DiskCacheBackend implements CacheBackend {
         }
         continue;
       }
-      // The previous backend used a 128-bit non-cryptographic FNV construction.
-      // Those entries cannot be addressed safely after the identity migration.
+      // Prior JSON formats used either 128-bit FNV or 256-bit SHA identities.
+      // Neither has the checksummed framing required by the current reader.
       if (LEGACY_CACHE_FILE_PATTERN.test(fileName)) {
         await this.unlinkFile(candidatePath);
         continue;
@@ -627,7 +928,20 @@ export class DiskCacheBackend implements CacheBackend {
   private async removeKnownFile(fileName: string): Promise<void> {
     await this.withMutation(async () => {
       if (!await this.validateCacheDirectory(false)) return;
-      await this.unlinkFile(this.filePath(fileName));
+      const filePath = this.filePath(fileName);
+      try {
+        const current = await readBoundedCacheFile(filePath, this.options.maxEntryBytes);
+        if (current.envelope !== null) return;
+      } catch (error) {
+        if (isNotFound(error)) return;
+        if (
+          !(error instanceof InvalidDiskCacheFileError) &&
+          !(error instanceof OversizedDiskCacheFileError)
+        ) {
+          throw error;
+        }
+      }
+      await this.unlinkFile(filePath);
       this.removeFromIndex(fileName);
     });
   }
@@ -695,7 +1009,10 @@ export class DiskCacheBackend implements CacheBackend {
       }
     } catch (error) {
       if (isNotFound(error)) return;
-      if (error instanceof OversizedDiskCacheFileError) return;
+      if (
+        error instanceof InvalidDiskCacheFileError ||
+        error instanceof OversizedDiskCacheFileError
+      ) return;
       throw error;
     }
   }
@@ -741,7 +1058,7 @@ export class DiskCacheBackend implements CacheBackend {
     let keyHash: string;
     try {
       keyHash = await digestKey(key);
-      fileName = `${keyHash}.json`;
+      fileName = `${keyHash}.vfcache`;
     } catch {
       return null;
     }
@@ -794,6 +1111,62 @@ export class DiskCacheBackend implements CacheBackend {
     return result;
   }
 
+  async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
+    const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
+    let fileName: string;
+    let keyHash: string;
+    try {
+      keyHash = await digestKey(key);
+      fileName = `${keyHash}.vfcache`;
+    } catch {
+      return null;
+    }
+
+    let result: string | null = null;
+    try {
+      if (await this.validateCacheDirectory(false)) {
+        const read = await readBoundedCacheFile(
+          this.filePath(fileName),
+          this.options.maxEntryBytes,
+          admittedMaximum,
+          key,
+        );
+        const envelope = read.envelope;
+        if (!envelope) {
+          await this.removeKnownFile(fileName);
+        } else if (envelope.key !== key) {
+          logger.warn("[DiskCache] Filename digest collision; stored key does not match", {
+            keyHash,
+            requestedKeyLength: key.length,
+            storedKeyLength: envelope.key.length,
+          });
+        } else if (envelope.expiresAt != null && Date.now() >= envelope.expiresAt) {
+          this.removeObservedFile(fileName, read).catch(() => undefined);
+        } else {
+          result = envelope.value;
+        }
+      }
+    } catch (error) {
+      if (error instanceof CacheValueTooLargeError) throw error;
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (
+        error instanceof InvalidDiskCacheFileError ||
+        error instanceof OversizedDiskCacheFileError
+      ) {
+        await this.removeKnownFile(fileName).catch(() => undefined);
+      } else if (code !== "ENOENT") {
+        logger.error("[DiskCache] Bounded read error", {
+          keyHash,
+          errorName: error instanceof Error ? error.name : typeof error,
+          code,
+        });
+      }
+    }
+
+    await this.maybeSweep().catch((error) => this.logSweepFailure(error));
+    return result;
+  }
+
   async getRemainingTtlSeconds(key: string): Promise<number | null> {
     let fileName: string;
     try {
@@ -834,19 +1207,12 @@ export class DiskCacheBackend implements CacheBackend {
     }
 
     const keyHash = await digestKey(key);
-    const fileName = `${keyHash}.json`;
-    if (key.length + value.length > this.options.maxEntryBytes) {
+    const fileName = `${keyHash}.vfcache`;
+    if (cacheFileSize(key.length, utf8ByteLength(value)) > this.options.maxEntryBytes) {
       throw new RangeError("Disk cache entry exceeds maxEntryBytes");
     }
     const expiresAt = ttl != null ? Date.now() + ttl * 1000 : undefined;
-    const envelope: DiskCacheEnvelope = {
-      formatVersion: DISK_CACHE_FORMAT_VERSION,
-      integrity: await computeEnvelopeIntegrity(key, value, expiresAt),
-      key,
-      value,
-      expiresAt,
-    };
-    const content = new TextEncoder().encode(JSON.stringify(envelope));
+    const { content, envelope } = await encodeDiskCacheEnvelope(key, value, expiresAt);
     if (
       content.byteLength > this.options.maxEntryBytes ||
       content.byteLength > this.options.maxBytes
@@ -904,7 +1270,7 @@ export class DiskCacheBackend implements CacheBackend {
 
   async del(key: string): Promise<void> {
     const keyHash = await digestKey(key);
-    const fileName = `${keyHash}.json`;
+    const fileName = `${keyHash}.vfcache`;
     try {
       await this.removeKeyFile(fileName, key);
     } catch (error) {

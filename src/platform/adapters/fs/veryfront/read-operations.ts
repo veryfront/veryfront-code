@@ -19,6 +19,7 @@ import {
   splitKnownFileExtension,
 } from "./read-operations-helpers.ts";
 import type { ResolvedContentContext } from "./types.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 
 export {
   endRequestMetrics,
@@ -75,6 +76,99 @@ export class ReadOperations {
       },
       { "fs.path": path },
     );
+  }
+
+  readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    return withSpan(
+      "fs.veryfront.readFileBytesWithinLimit",
+      async () => {
+        const normalizedPath = this.normalizer.normalize(path);
+        assertProjectSourcePath(normalizedPath);
+        const ctx = this.contextProvider?.getContentContext() ?? null;
+        const { apiPath, hasKnownExtension, isPublished } = buildReadFetchState({
+          normalizedPath,
+          contentContext: ctx,
+          contextProvider: this.contextProvider,
+          getOriginalApiPath: this.getOriginalApiPath,
+        });
+
+        try {
+          const lastSlash = normalizedPath.lastIndexOf("/");
+          const hasExplicitExtension = hasKnownExtension ||
+            normalizedPath.indexOf(".", lastSlash + 1) !== -1;
+          if (!hasExplicitExtension) {
+            const normalizedCandidates = buildExtensionCandidatePaths(normalizedPath);
+            for (const candidate of normalizedCandidates) {
+              const candidateApiPath = this.getOriginalApiPath?.(candidate) ?? candidate;
+              try {
+                return await this.readExactApiPath(
+                  candidateApiPath,
+                  admittedLimit,
+                  isPublished,
+                  ctx,
+                  true,
+                );
+              } catch (error) {
+                if (!isNotFoundLikeError(error)) throw error;
+              }
+            }
+          }
+
+          try {
+            return await this.readExactApiPath(apiPath, admittedLimit, isPublished, ctx);
+          } catch (error) {
+            if (!isPublished || !isNotFoundLikeError(error)) throw error;
+            const split = splitKnownFileExtension(apiPath);
+            if (!split) throw error;
+            for (const extension of EXTENSION_PRIORITY) {
+              if (extension === split.originalExtension) continue;
+              try {
+                return await this.readExactApiPath(
+                  split.basePath + extension,
+                  admittedLimit,
+                  isPublished,
+                  ctx,
+                  true,
+                );
+              } catch (candidateError) {
+                if (!isNotFoundLikeError(candidateError)) throw candidateError;
+              }
+            }
+            throw error;
+          }
+        } catch (error) {
+          if (isNotFoundLikeError(error)) {
+            throw createNotFoundLikeError(normalizedPath, error);
+          }
+          throw error;
+        }
+      },
+      { "fs.path": path, "fs.maximum_bytes": admittedLimit },
+    );
+  }
+
+  private readExactApiPath(
+    apiPath: string,
+    admittedLimit: number,
+    isPublished: boolean,
+    ctx: ResolvedContentContext | null,
+    expectedMissing = false,
+  ): Promise<Uint8Array> {
+    const options = expectedMissing ? { expectedMissing: true } : undefined;
+    return isPublished
+      ? this.client.getPublishedFileContentBytesWithinLimit(
+        apiPath,
+        admittedLimit,
+        ctx?.releaseId ?? undefined,
+        ctx?.environmentName ?? undefined,
+        options,
+      )
+      : this.client.getFileContentBytesWithinLimit(
+        apiPath,
+        admittedLimit,
+        options,
+      );
   }
 
   readTextFile(path: string): Promise<string> {
