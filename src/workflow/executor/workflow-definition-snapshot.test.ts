@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { WaitNodeConfig, WorkflowDefinition, WorkflowNode } from "../types.ts";
 import { captureWorkflowDefinition } from "./workflow-definition-snapshot.ts";
@@ -100,6 +100,7 @@ describe("workflow definition snapshot", () => {
         checkpoint: true,
       },
     }));
+    assert(Array.isArray(captured.steps));
     const config = captured.steps[0]?.config as WaitNodeConfig & { _waitKind?: string };
 
     assertEquals(config.eventName, "__delay__");

@@ -9,8 +9,10 @@ import {
 } from "../adapters/file-system-capabilities.ts";
 import { DenoFileSystemAdapter } from "../adapters/runtime/deno/filesystem-adapter.ts";
 import { NodeCompatibleFileSystemAdapter } from "../adapters/runtime/shared/node-filesystem-adapter.ts";
+import { isProxyWithoutHooks } from "./error-introspection.ts";
+import { isNotFoundError } from "./not-found-error.ts";
 
-export { isNotFoundError } from "./not-found-error.ts";
+export { isNotFoundError };
 
 const DEFAULT_TEMP_DIRECTORY_PREFIX = "tmp-";
 const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
@@ -18,6 +20,20 @@ const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
   "ENOTSUP",
   "EOPNOTSUPP",
 ]);
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const reflectApply = Reflect.apply;
+
+function hasOwnDataValue(
+  value: object,
+  key: PropertyKey,
+  expected: unknown,
+): boolean {
+  const descriptor = getOwnPropertyDescriptor(value, key);
+  return descriptor !== undefined &&
+    reflectApply(hasOwnProperty, descriptor, ["value"]) === true &&
+    descriptor.value === expected;
+}
 
 /** Stable native identity for one filesystem object. */
 export interface PathIdentity {
@@ -228,7 +244,7 @@ class NodeFileSystem implements FileSystem {
       await this.getFs().access(path);
       return true;
     } catch (error: unknown) {
-      if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
+      if (isNotFoundError(error)) return false;
       throw error;
     }
   }
@@ -348,7 +364,7 @@ class DenoFileSystem implements FileSystem {
       await denoGlobal().stat(path);
       return true;
     } catch (error: unknown) {
-      if (error instanceof denoGlobal().errors.NotFound) return false;
+      if (isNotFoundError(error)) return false;
       throw error;
     }
   }
@@ -586,18 +602,15 @@ export async function realPath(path: string): Promise<string> {
   return await fs.realpath(path);
 }
 
-type DenoGlobal = typeof globalThis & {
-  Deno?: {
-    errors?: {
-      NotFound?: new (...args: unknown[]) => Error;
-      AlreadyExists?: new (...args: unknown[]) => Error;
-    };
-  };
-};
-
 /** Error shape for is already exists. */
 export function isAlreadyExistsError(error: unknown): boolean {
-  const AlreadyExists = (globalThis as DenoGlobal).Deno?.errors?.AlreadyExists;
-  if (isDeno && AlreadyExists && error instanceof AlreadyExists) return true;
-  return (error as NodeJS.ErrnoException)?.code === "EEXIST";
+  if (typeof error !== "object" || error === null || isProxyWithoutHooks(error)) {
+    return false;
+  }
+
+  try {
+    return hasOwnDataValue(error, "code", "EEXIST");
+  } catch {
+    return false;
+  }
 }

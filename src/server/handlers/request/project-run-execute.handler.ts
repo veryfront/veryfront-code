@@ -58,7 +58,7 @@ import type {
   EvalReport,
   RunEvalOptions,
 } from "#veryfront/eval/types.ts";
-import type { Logger } from "#veryfront/utils";
+import { type Logger, sleep as abortableSleep } from "#veryfront/utils";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
 import { createDistributedWorkflowBackend, createWorkflowClient } from "#veryfront/workflow";
@@ -173,7 +173,7 @@ export interface ProjectRunExecuteHandlerDeps {
     ctx: HandlerContext;
     req: Request;
   }): Promise<ProjectRunExecuteResponse>;
-  sleep(ms: number): Promise<void>;
+  sleep(ms: number, signal?: AbortSignal): Promise<void>;
   now(): number;
 }
 
@@ -333,11 +333,42 @@ async function createRuntimeWorkflowClient(
   const backend = createDistributedWorkflowBackend({
     debug: config?.debug,
   });
-  if (backend.initialize) {
-    await backend.initialize();
+
+  let client: ReturnType<typeof createWorkflowClient>;
+  try {
+    client = createWorkflowClient({
+      ...clientConfig,
+      backend,
+      backendOwnership: "owned",
+      debug: config?.debug,
+    });
+  } catch (constructionError) {
+    try {
+      await backend.destroy();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [constructionError, cleanupError],
+        "Distributed workflow client construction and backend cleanup failed",
+      );
+    }
+    throw constructionError;
   }
 
-  return Object.assign(createWorkflowClient({ ...clientConfig, backend, debug: config?.debug }), {
+  try {
+    await client.initialize();
+  } catch (initializationError) {
+    try {
+      await client.destroy();
+    } catch (cleanupError) {
+      throw new AggregateError(
+        [initializationError, cleanupError],
+        "Distributed workflow client initialization and cleanup failed",
+      );
+    }
+    throw initializationError;
+  }
+
+  return Object.assign(client, {
     statePersistence: "durable" as const,
   });
 }
@@ -404,12 +435,15 @@ async function executeTaskRun(
 async function waitForWorkflowResult(
   client: WorkflowClientView,
   runId: string,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<WorkflowRunView> {
   const deadline = deps.now() + DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS;
 
   while (true) {
+    signal.throwIfAborted();
     const run = await client.getRun(runId);
+    signal.throwIfAborted();
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Workflow run not found: ${runId}` });
 
     if (
@@ -421,19 +455,22 @@ async function waitForWorkflowResult(
       return run;
     }
 
-    if (deps.now() >= deadline) {
+    const remainingMs = deadline - deps.now();
+    if (remainingMs <= 0) {
       throw TIMEOUT_ERROR.create({ detail: `Workflow run timed out: ${runId}` });
     }
 
-    await deps.sleep(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS);
+    await deps.sleep(Math.min(DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS, remainingMs), signal);
   }
 }
 
 async function executeWorkflowRun(
   request: ProjectRunExecuteRequest,
   ctx: HandlerContext,
+  signal: AbortSignal,
   deps: ProjectRunExecuteHandlerDeps,
 ): Promise<ProjectRunExecuteResponse> {
+  signal.throwIfAborted();
   const startedAt = deps.now();
   const workflowId = stripTargetPrefix(request.target, "workflow:");
   await deps.ensureProjectDiscovery(ctx);
@@ -457,7 +494,7 @@ async function executeWorkflowRun(
   try {
     client.register(workflow.definition);
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
-    const run = await waitForWorkflowResult(client, handle.runId, deps);
+    const run = await waitForWorkflowResult(client, handle.runId, signal, deps);
     await handle.settled?.();
     const durationMs = Math.max(0, deps.now() - startedAt);
 
@@ -611,6 +648,52 @@ function createLocalEvalAgentFetch(input: {
   };
 }
 
+function bindFetchToRequestSignal(
+  requestFetch: NonNullable<AgentServiceEvalAdapterConfig["fetch"]>,
+  requestSignal: AbortSignal,
+): NonNullable<AgentServiceEvalAdapterConfig["fetch"]> {
+  return async (input, init) => {
+    const initSignal = init?.signal;
+    const operationSignal = initSignal === undefined && input instanceof Request
+      ? input.signal
+      : initSignal;
+    if (!operationSignal || operationSignal === requestSignal) {
+      return await requestFetch(input, { ...init, signal: requestSignal });
+    }
+    if (requestSignal.aborted) {
+      return await requestFetch(input, { ...init, signal: requestSignal });
+    }
+    if (operationSignal.aborted) {
+      return await requestFetch(input, { ...init, signal: operationSignal });
+    }
+
+    const controller = new AbortController();
+    let listening = true;
+    const cleanup = () => {
+      if (!listening) return;
+      listening = false;
+      requestSignal.removeEventListener("abort", abortFromRequest);
+      operationSignal.removeEventListener("abort", abortFromOperation);
+    };
+    const abortFromRequest = () => {
+      cleanup();
+      controller.abort(requestSignal.reason);
+    };
+    const abortFromOperation = () => {
+      cleanup();
+      controller.abort(operationSignal.reason);
+    };
+    requestSignal.addEventListener("abort", abortFromRequest, { once: true });
+    operationSignal.addEventListener("abort", abortFromOperation, { once: true });
+
+    try {
+      return await requestFetch(input, { ...init, signal: controller.signal });
+    } finally {
+      cleanup();
+    }
+  };
+}
+
 function getEndpointHost(endpoint?: string): string | undefined {
   if (!endpoint) return undefined;
   try {
@@ -655,6 +738,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
         "Content-Type": "application/json",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: req.signal,
     });
 
     if (!response.ok) {
@@ -974,6 +1058,7 @@ function createEvalAdapterConfig(input: {
   const environmentId = input.request.runtimeTargetEnvironmentId === undefined
     ? input.ctx.environmentId
     : input.request.runtimeTargetEnvironmentId ?? undefined;
+  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId });
 
   return {
     endpoint,
@@ -996,7 +1081,7 @@ function createEvalAdapterConfig(input: {
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
     maxSteps: getPositiveIntConfig(config, ["max_steps", "maxSteps"]),
-    fetch: createLocalEvalAgentFetch({ endpoint, agentId }),
+    fetch: bindFetchToRequestSignal(localFetch ?? fetch, input.req.signal),
   };
 }
 
@@ -1214,7 +1299,9 @@ async function finalizeReleaseAssetBuildTempDir(input: {
 
 /** @internal Deterministic lifecycle seams for focused handler tests. */
 export const projectRunExecuteHandlerInternals = Object.freeze({
+  createRuntimeWorkflowClient,
   finalizeReleaseAssetBuildTempDir,
+  uploadEvalReportToProjectFiles,
 });
 
 const DEFAULT_STYLESHEET_PATHS = [
@@ -1542,7 +1629,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   executeKnowledgeIngest: executeKnowledgeIngestRun,
   executeReleaseAssetBuild: executeReleaseAssetBuildRun,
   executeStyleArtifactBuild: executeStyleArtifactBuildRun,
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  sleep: abortableSleep,
   now: () => Date.now(),
 };
 
@@ -1604,7 +1691,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
             ? await executeTaskRun(request, ctx, req.signal, this.deps)
             : request.kind === "eval"
             ? await executeEvalRun(request, ctx, req, this.deps)
-            : await executeWorkflowRun(request, ctx, this.deps);
+            : await executeWorkflowRun(request, ctx, req.signal, this.deps);
           return this.respond(builder.json(response, 200));
         } catch (error) {
           return this.respond(

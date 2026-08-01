@@ -51,7 +51,7 @@ describe("CSS optimization engine boundary", () => {
       assertThrows(
         () => runConfiguredCSSOptimization(request),
         Error,
-        "deno add @veryfront/ext-css-lightning",
+        "deno add npm:@veryfront/ext-css-lightning",
       );
     } finally {
       if (previous !== undefined) {

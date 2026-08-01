@@ -1,3 +1,5 @@
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
+
 /** Pattern to match framework bundle imports: file://...framework/vfmod-... */
 const FRAMEWORK_BUNDLE_PATTERN = /file:\/\/[^"'\s]+\/framework\/vfmod-[^"'\s]+\.mjs/g;
 
@@ -30,6 +32,7 @@ export async function findMissingFrameworkBundlePaths(
         return await exists(path) ? undefined : path;
       } catch (error) {
         options.onError?.(path, error);
+        if (!isCanonicalNotFoundError(error)) throw error;
         return path;
       }
     }),

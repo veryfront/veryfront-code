@@ -28,6 +28,7 @@ import {
   writeTextFile,
 } from "./fs.ts";
 import { join } from "./path/index.ts";
+import { isCanonicalNotFoundError } from "./not-found-error.ts";
 
 describe("Filesystem Compat", () => {
   let testDir: string;
@@ -334,6 +335,11 @@ describe("Filesystem Compat", () => {
       assertEquals(isNotFoundError(error), true);
     });
 
+    it("does not classify a symbolic-link loop as a missing path", () => {
+      const error = Object.assign(new Error("ELOOP"), { code: "ELOOP" });
+      assertEquals(isNotFoundError(error), false);
+    });
+
     it("should return true for VeryfrontError with file-not-found slug", () => {
       const error = new Error("File not found") as Error & { slug: string; name: string };
       error.name = "VeryfrontError";
@@ -379,6 +385,168 @@ describe("Filesystem Compat", () => {
       assertEquals(isNotFoundError("string"), false);
       assertEquals(isNotFoundError(null), false);
       assertEquals(isNotFoundError(undefined), false);
+    });
+
+    it("offers a strict classifier for fail-closed absence boundaries", () => {
+      const nativeMissing = Object.assign(new Error("missing"), { code: "ENOENT" });
+      const nativeWrapped = new Error("wrapped", { cause: nativeMissing });
+      const shapedMissing = Object.freeze({ code: "ENOENT" });
+      const shapedWrapped = new Error("wrapped", { cause: shapedMissing });
+      const inheritedCode = Object.setPrototypeOf(
+        new Error("inherited code"),
+        Object.create(Error.prototype, {
+          code: { configurable: true, value: "ENOENT" },
+        }),
+      );
+      const inheritedCause = Object.setPrototypeOf(
+        new Error("inherited cause"),
+        Object.create(Error.prototype, {
+          cause: { configurable: true, value: nativeMissing },
+        }),
+      );
+      const inheritedModernName = Object.assign(
+        Object.setPrototypeOf(
+          new Error("inherited modern marker"),
+          Object.create(Error.prototype, {
+            name: { configurable: true, value: "VeryfrontError" },
+          }),
+        ),
+        { slug: "file-not-found" },
+      );
+      const inheritedLegacyName = Object.assign(
+        Object.setPrototypeOf(
+          new Error("inherited legacy marker"),
+          Object.create(Error.prototype, {
+            name: { configurable: true, value: "VeryfrontError[file]" },
+          }),
+        ),
+        { context: { type: "file", message: "File not found: example.ts" } },
+      );
+      const ownModernMarker = Object.assign(new Error("missing"), {
+        name: "VeryfrontError",
+        slug: "file-not-found",
+      });
+      const ownLegacyMarker = Object.assign(new Error("missing"), {
+        name: "VeryfrontError[file]",
+        context: { type: "file", message: "File not found: example.ts" },
+      });
+
+      assertEquals(isCanonicalNotFoundError(nativeMissing), true);
+      assertEquals(isCanonicalNotFoundError(nativeWrapped), true);
+      assertEquals(isCanonicalNotFoundError(shapedMissing), false);
+      assertEquals(isCanonicalNotFoundError(shapedWrapped), false);
+      assertEquals(isCanonicalNotFoundError(inheritedCode), false);
+      assertEquals(isCanonicalNotFoundError(inheritedCause), false);
+      assertEquals(isCanonicalNotFoundError(inheritedModernName), false);
+      assertEquals(isCanonicalNotFoundError(inheritedLegacyName), false);
+      assertEquals(isCanonicalNotFoundError(ownModernMarker), true);
+      assertEquals(isCanonicalNotFoundError(ownLegacyMarker), true);
+      assertEquals(isNotFoundError(shapedMissing), true);
+      assertEquals(isNotFoundError(inheritedCode), true);
+      assertEquals(isNotFoundError(inheritedCause), true);
+      assertEquals(isNotFoundError(inheritedModernName), true);
+      assertEquals(isNotFoundError(inheritedLegacyName), true);
+    });
+
+    it("treats hostile proxies and accessors as opaque without invoking hooks", () => {
+      let proxyTrapCalls = 0;
+      const hostileProxy = new Proxy(new Error("hostile"), {
+        get() {
+          proxyTrapCalls++;
+          throw new Error("get trap must not run");
+        },
+        getPrototypeOf() {
+          proxyTrapCalls++;
+          throw new Error("prototype trap must not run");
+        },
+      });
+
+      let causeGetterCalls = 0;
+      const accessorError = new Error("hostile cause");
+      Object.defineProperty(accessorError, "cause", {
+        get() {
+          causeGetterCalls++;
+          throw new Error("cause getter must not run");
+        },
+      });
+
+      assertEquals(isNotFoundError(hostileProxy), false);
+      assertEquals(isNotFoundError(accessorError), false);
+      assertEquals(proxyTrapCalls, 0);
+      assertEquals(causeGetterCalls, 0);
+    });
+
+    it("bounds deep cause traversal and terminates cyclic cause chains", () => {
+      const createCauseChain = (wrapperCount: number): Error => {
+        let current: Error = Object.assign(new Error("missing"), { code: "ENOENT" });
+        for (let index = 0; index < wrapperCount; index++) {
+          current = new Error(`wrapper ${index}`, { cause: current });
+        }
+        return current;
+      };
+
+      assertEquals(isNotFoundError(createCauseChain(63)), true);
+      assertEquals(isNotFoundError(createCauseChain(64)), false);
+
+      const first = new Error("first");
+      const second = new Error("second", { cause: first });
+      Object.defineProperty(first, "cause", { value: second });
+      assertEquals(isNotFoundError(first), false);
+    });
+
+    it("honors and updates the caller-provided seen set", () => {
+      const missing = Object.assign(new Error("missing"), { code: "ENOENT" });
+      const middle = new Error("middle", { cause: missing });
+      const outer = new Error("outer", { cause: middle });
+
+      const visited = new Set<unknown>();
+      assertEquals(isNotFoundError(outer, visited), true);
+      assertEquals(visited.size, 3);
+      assertEquals(visited.has(outer), true);
+      assertEquals(visited.has(middle), true);
+      assertEquals(visited.has(missing), true);
+
+      const previsited = new Set<unknown>([middle]);
+      assertEquals(isNotFoundError(outer, previsited), false);
+      assertEquals(previsited.size, 2);
+      assertEquals(previsited.has(outer), true);
+    });
+
+    it("does not invoke hostile prototype traps or inherited accessors", () => {
+      let proxyTrapCalls = 0;
+      const hostilePrototype = new Proxy(Error.prototype, {
+        getOwnPropertyDescriptor() {
+          proxyTrapCalls++;
+          throw new Error("prototype descriptor trap must not run");
+        },
+        getPrototypeOf() {
+          proxyTrapCalls++;
+          throw new Error("prototype traversal trap must not run");
+        },
+      });
+      const proxyPrototypeError = Object.setPrototypeOf(
+        new Error("hostile prototype"),
+        hostilePrototype,
+      );
+
+      let accessorCalls = 0;
+      const accessorPrototype = Object.create(Error.prototype, {
+        code: {
+          get() {
+            accessorCalls++;
+            return "ENOENT";
+          },
+        },
+      });
+      const accessorPrototypeError = Object.setPrototypeOf(
+        new Error("hostile inherited accessor"),
+        accessorPrototype,
+      );
+
+      assertEquals(isNotFoundError(proxyPrototypeError), false);
+      assertEquals(isNotFoundError(accessorPrototypeError), false);
+      assertEquals(proxyTrapCalls, 0);
+      assertEquals(accessorCalls, 0);
     });
   });
 

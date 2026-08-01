@@ -2,13 +2,8 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { renderSnippet } from "#veryfront/rendering/snippet-renderer.ts";
-import {
-  createErrorResponse,
-  FILE_NOT_FOUND,
-  getErrorMessage,
-  SECURITY_VIOLATION,
-  VeryfrontError,
-} from "#veryfront/errors";
+import { createErrorResponse, FILE_NOT_FOUND, SECURITY_VIOLATION } from "#veryfront/errors";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { validatePath } from "#veryfront/security";
 import {
   createHandlerDependencyPinningSource,
@@ -20,6 +15,10 @@ const logger = serverLogger.component("snippet-handler");
 const PRIORITY_SNIPPET = 450;
 
 export class SnippetHandler extends BaseHandler {
+  constructor(private readonly snippetRenderer: typeof renderSnippet = renderSnippet) {
+    super();
+  }
+
   metadata: HandlerMetadata = {
     name: "SnippetHandler",
     priority: PRIORITY_SNIPPET as HandlerPriority,
@@ -60,71 +59,56 @@ export class SnippetHandler extends BaseHandler {
     logger.debug("Resolved file path", { filePath: admittedPath });
 
     return await this.withProxyContext(ctx, async () => {
+      let content: string;
       try {
-        const content = await ctx.adapter.fs.readFile(admittedPath);
-
-        if (!content) {
-          logger.debug("File not found or empty", { filePath });
-          return this.respondNotFound(ctx, filePath);
-        }
-
-        const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
-        const pageId = url.searchParams.get("page_id") ?? undefined;
-        const isDev = !!ctx.isLocalProject;
-        const dependencyIdentity = getHandlerDependencyPinningIdentity(ctx);
-
-        const result = await renderSnippet(content, {
-          mode: isDev ? "development" : "production",
-          projectDir: ctx.projectDir,
-          adapter: ctx.adapter,
-          isLocalProject: ctx.isLocalProject,
-          projectId: dependencyIdentity.projectId,
-          contentSourceId: dependencyIdentity.contentSourceId,
-          dependencyPinningSource: createHandlerDependencyPinningSource(ctx),
-          filePath: admittedPath,
-          moduleServerUrl,
-          projectSlug: dependencyIdentity.projectSlug,
-          config: ctx.config,
-          pageId,
-        });
-
-        logger.debug("Snippet rendered", {
-          htmlLength: result.html.length,
-        });
-
-        const builder = this.createResponseBuilder(ctx);
-
-        return this.respond(
-          builder
-            .withCORS(req, ctx.securityConfig?.cors)
-            .withSecurity(ctx.securityConfig ?? undefined, req)
-            .withHeaders(
-              isDev
-                ? {
-                  "Cross-Origin-Opener-Policy": "unsafe-none",
-                  "Cross-Origin-Resource-Policy": "cross-origin",
-                }
-                : {},
-            )
-            .withCache("no-cache")
-            .withContentType("text/html; charset=utf-8", result.html, 200),
-        );
+        content = await ctx.adapter.fs.readFile(admittedPath);
       } catch (error) {
-        if (
-          error instanceof VeryfrontError && error.slug === "api-client-error" &&
-          error.status === 404
-        ) {
-          logger.debug("Snippet file not found", { filePath });
-        } else {
-          logger.error("Error rendering snippet", {
-            filePath,
-            error: getErrorMessage(error),
-            stack: error instanceof Error ? error.stack : undefined,
-          });
-        }
-
+        if (!isCanonicalNotFoundError(error)) throw error;
+        logger.debug("Snippet file not found", { filePath });
         return this.respondNotFound(ctx, filePath);
       }
+
+      const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
+      const pageId = url.searchParams.get("page_id") ?? undefined;
+      const isDev = !!ctx.isLocalProject;
+      const dependencyIdentity = getHandlerDependencyPinningIdentity(ctx);
+
+      const result = await this.snippetRenderer(content, {
+        mode: isDev ? "development" : "production",
+        projectDir: ctx.projectDir,
+        adapter: ctx.adapter,
+        isLocalProject: ctx.isLocalProject,
+        projectId: dependencyIdentity.projectId,
+        contentSourceId: dependencyIdentity.contentSourceId,
+        dependencyPinningSource: createHandlerDependencyPinningSource(ctx),
+        filePath: admittedPath,
+        moduleServerUrl,
+        projectSlug: dependencyIdentity.projectSlug,
+        config: ctx.config,
+        pageId,
+      });
+
+      logger.debug("Snippet rendered", {
+        htmlLength: result.html.length,
+      });
+
+      const builder = this.createResponseBuilder(ctx);
+
+      return this.respond(
+        builder
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
+          .withHeaders(
+            isDev
+              ? {
+                "Cross-Origin-Opener-Policy": "unsafe-none",
+                "Cross-Origin-Resource-Policy": "cross-origin",
+              }
+              : {},
+          )
+          .withCache("no-cache")
+          .withContentType("text/html; charset=utf-8", result.html, 200),
+      );
     });
   }
 

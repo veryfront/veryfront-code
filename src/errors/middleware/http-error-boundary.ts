@@ -18,7 +18,27 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
+const apply = Reflect.apply;
+const NativeRequest = Request;
 const NativeResponse = Response;
+const requestMethodGetter = getOwnPropertyDescriptor(
+  NativeRequest.prototype,
+  "method",
+)?.get;
+
+function isHeadRequestBestEffort(req: Request): boolean {
+  try {
+    if (isProxyWithoutHooks(req)) return false;
+    const ownDescriptor = getOwnPropertyDescriptor(req, "method");
+    if (ownDescriptor) {
+      return hasOwn(ownDescriptor, "value") && ownDescriptor.value === "HEAD";
+    }
+    return requestMethodGetter !== undefined &&
+      apply(requestMethodGetter, req, []) === "HEAD";
+  } catch {
+    return false;
+  }
+}
 
 function isLocalProjectBestEffort(ctx: HandlerContext): boolean {
   try {
@@ -118,10 +138,18 @@ export function errorToRFC9457Response(
     }
   }
 
-  return new NativeResponse(stringifySafeProblemDetails(body, isDev), {
-    status: body.status,
-    headers: {
+  const headers: HeadersInit = body.status >= 500
+    ? {
+      "Cache-Control": "no-store",
       "Content-Type": PROBLEM_JSON_CONTENT_TYPE,
+    }
+    : { "Content-Type": PROBLEM_JSON_CONTENT_TYPE };
+
+  return new NativeResponse(
+    isHeadRequestBestEffort(req) ? null : stringifySafeProblemDetails(body, isDev),
+    {
+      status: body.status,
+      headers,
     },
-  });
+  );
 }

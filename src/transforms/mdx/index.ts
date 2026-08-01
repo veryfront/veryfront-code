@@ -78,7 +78,8 @@ export class MDXRenderer {
   render(_compiledCode: string, _options: MDXRenderOptions = {}): React.ReactElement {
     logger.error(
       "[MDX] Synchronous render() called but string-based factories are disabled for security. " +
-        "Please use: await mdxRenderer.loadModuleESM(compiledCode) instead.",
+        "Load the compiled module asynchronously with its runtime adapter and project/source " +
+        "identity instead.",
     );
 
     return React.createElement(
@@ -95,8 +96,7 @@ export class MDXRenderer {
       React.createElement("strong", {}, "Migration Required: "),
       "Synchronous render() is no longer supported for security reasons. ",
       React.createElement("br"),
-      "Please update to: ",
-      React.createElement("code", {}, "await mdxRenderer.loadModuleESM(compiledCode)"),
+      "Load the compiled module asynchronously with its runtime adapter and project/source identity.",
     );
   }
 }

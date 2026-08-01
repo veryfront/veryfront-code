@@ -40,6 +40,7 @@ import {
   buildRenderCachePrefix,
   buildSSRModuleCacheKey,
 } from "./keys/index.ts";
+import { buildPreparedProjectCSSCacheKey, buildProjectCSSCacheKey } from "./keys/project-css.ts";
 
 interface FakeDistributedProviderOptions {
   readonly configured?: boolean;
@@ -750,7 +751,14 @@ describe("CacheRegistry", () => {
     const renderKey = "vf:cache:render:target-id:preview:branch-main:v1:page";
     const ssrKey = "vf:cache:ssr-module:" +
       buildSSRModuleCacheKey("test", "target-id", "preview-main:src/page.tsx");
-    const projectCssKey = "vf:cache:project-css:target-slug:preview:a:b:c";
+    const projectCssScope = "target-slug";
+    const projectCssKey = "vf:cache:project-css:" + buildProjectCSSCacheKey({
+      projectScope: projectCssScope,
+      environment: "preview",
+      stylesheetHash: "a".repeat(64),
+      candidatesHash: "b".repeat(64),
+      profileHash: "c".repeat(64),
+    });
     const opaqueKey = "vf:cache:module:v1:target-id:preview:opaque";
     const registry = new CacheRegistry(createDistributedProvider({
       keysByPrefix: new Map([
@@ -765,7 +773,7 @@ describe("CacheRegistry", () => {
     assertEquals(
       await registry.getDistributedKeysForProject({
         projectId: "target-id",
-        projectSlug: "target-slug",
+        projectSlug: projectCssScope,
       }),
       new Map([
         ["vf:cache:default", [fileKey]],
@@ -774,6 +782,157 @@ describe("CacheRegistry", () => {
         ["vf:cache:ssr-module", [ssrKey]],
       ]),
     );
+  });
+
+  it("associates a framed project CSS key with the exact raw arbitrary scope", async () => {
+    const projectCssScope = "target:slug*/Malmö-\ud800";
+    const projectCssKey = "vf:cache:project-css:" + buildProjectCSSCacheKey({
+      projectScope: projectCssScope,
+      environment: "production",
+      stylesheetHash: "a".repeat(64),
+      candidatesHash: "b".repeat(64),
+      profileHash: "c".repeat(64),
+    });
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([["vf:cache:project-css:", [projectCssKey]]]),
+    }));
+
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectSlug: projectCssScope }),
+      new Map([["vf:cache:project-css", [projectCssKey]]]),
+    );
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectSlug: "target" }),
+      new Map(),
+    );
+  });
+
+  it("classifies encoded project CSS environments without orphaning custom environments", async () => {
+    const projectScope = "environment:scope";
+    const buildKey = (environment: string) =>
+      "vf:cache:project-css:" + buildProjectCSSCacheKey({
+        projectScope,
+        environment,
+        stylesheetHash: "a".repeat(64),
+        candidatesHash: "b".repeat(64),
+        profileHash: "c".repeat(64),
+      });
+    const previewKey = buildKey("preview");
+    const productionKey = buildKey("production");
+    const customKey = buildKey("staging:blue");
+    const deletedKeys: string[] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        ["vf:cache:project-css:", [previewKey, productionKey, customKey]],
+      ]),
+      onDelete: (keys) => {
+        deletedKeys.push(...keys);
+        return keys.length;
+      },
+    }));
+
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectSlug: projectScope }),
+      new Map([["vf:cache:project-css", [previewKey, productionKey, customKey]]]),
+    );
+    assertEquals(
+      await registry.deleteDistributedKeysForProjectEnvironment(
+        { projectSlug: projectScope },
+        "preview",
+      ),
+      1,
+    );
+    assertEquals(deletedKeys, [previewKey]);
+  });
+
+  it("owns only exact framed prepared CSS scopes and classifies canonical environments", async () => {
+    const projectScope = "prepared:scope*/Malmö-\ud800";
+    const buildKey = (environment: string, identity: string) =>
+      "vf:cache:prepared-project-css:" + buildPreparedProjectCSSCacheKey({
+        projectScope,
+        environment,
+        identityHash: identity.repeat(64),
+      });
+    const previewKey = buildKey("preview", "a");
+    const productionKey = buildKey("production", "b");
+    const customKey = buildKey("staging:blue", "c");
+    const deletedKeys: string[] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([
+        ["vf:cache:prepared-project-css:", [previewKey, productionKey, customKey]],
+      ]),
+      onDelete: (keys) => {
+        deletedKeys.push(...keys);
+        return keys.length;
+      },
+    }));
+
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectSlug: projectScope }),
+      new Map([
+        ["vf:cache:prepared-project-css", [previewKey, productionKey, customKey]],
+      ]),
+    );
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectSlug: "prepared" }),
+      new Map(),
+    );
+    assertEquals(
+      await registry.deleteDistributedKeysForProjectEnvironment(
+        { projectSlug: projectScope },
+        "preview",
+      ),
+      1,
+    );
+    assertEquals(deletedKeys, [previewKey]);
+  });
+
+  it("neither lists nor deletes the exact retired v4 project CSS schema", async () => {
+    const legacyKey = `vf:cache:project-css:legacy-project:preview:v4:${"a".repeat(64)}:${
+      "b".repeat(64)
+    }:${"c".repeat(64)}`;
+    const deletedKeys: string[] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([["vf:cache:project-css:", [legacyKey]]]),
+      onDelete: (keys) => {
+        deletedKeys.push(...keys);
+        return keys.length;
+      },
+    }));
+
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectSlug: "legacy-project" }),
+      new Map(),
+    );
+    assertEquals(
+      await registry.deleteDistributedKeysForProject({ projectSlug: "legacy-project" }),
+      0,
+    );
+    assertEquals(deletedKeys, []);
+  });
+
+  it("neither lists nor deletes the retired prepared project CSS schema", async () => {
+    const legacyKey = `vf:cache:prepared-project-css:legacy-prepared:preview:prepared:v4:${
+      "a".repeat(64)
+    }:${"b".repeat(64)}:${"c".repeat(64)}:${"d".repeat(64)}:${"e".repeat(64)}`;
+    const deletedKeys: string[] = [];
+    const registry = new CacheRegistry(createDistributedProvider({
+      keysByPrefix: new Map([["vf:cache:prepared-project-css:", [legacyKey]]]),
+      onDelete: (keys) => {
+        deletedKeys.push(...keys);
+        return keys.length;
+      },
+    }));
+
+    assertEquals(
+      await registry.getDistributedKeysForProject({ projectSlug: "legacy-prepared" }),
+      new Map(),
+    );
+    assertEquals(
+      await registry.deleteDistributedKeysForProject({ projectSlug: "legacy-prepared" }),
+      0,
+    );
+    assertEquals(deletedKeys, []);
   });
 
   it("completes every bounded listing before deleting shared keys", async () => {

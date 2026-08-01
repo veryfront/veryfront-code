@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import {
@@ -28,6 +28,18 @@ import { formatCacheVersionSegment } from "#veryfront/utils/cache-version.ts";
 import { RUNTIME_VERSION } from "#veryfront/utils/version.ts";
 import { hashString } from "../utils/hash.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+
+function nonCanonicalNotFoundFailures(): ReadonlyArray<readonly [string, unknown]> {
+  return [
+    ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+    [
+      "a native Error with a plain ENOENT-shaped cause",
+      new Error("wrapped MDX cache failure", {
+        cause: Object.freeze({ code: "ENOENT" }),
+      }),
+    ],
+  ];
+}
 
 describe("MDX module path cache", () => {
   it("propagates operational index failures instead of treating them as a cache miss", async () => {
@@ -596,6 +608,110 @@ describe("lookupMdxEsmCache", () => {
       clearModulePathCache();
     }
   });
+
+  it("propagates dependency stat failures without invalidating the cached artifact", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-dependency-stat-error-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-dependency-stat-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const dependencyPath = join(projectDir, "runtime-dependency.mjs");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("dependency-stat"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const localFs = getLocalFs();
+    const originalStat = localFs.stat.bind(localFs);
+    const ioError = Object.assign(new Error("dependency stat failed"), { code: "EIO" });
+
+    try {
+      await writeTextFile(dependencyPath, "export default 1;");
+      await writeTextFile(
+        cachedPath,
+        `import value from "file://${dependencyPath}"; export default value;`,
+      );
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+      const pathCache = await getModulePathCache(cacheDir);
+
+      localFs.stat = (path: string) =>
+        path === dependencyPath ? Promise.reject(ioError) : originalStat(path);
+
+      const error = await assertRejects(() =>
+        lookupMdxEsmCache(
+          filePath,
+          cacheDir,
+          projectDir,
+          undefined,
+          undefined,
+          "19.1.1",
+        )
+      );
+
+      assertStrictEquals(error, ioError);
+      assertEquals(pathCache.get(key), cachedPath);
+      assertEquals(await exists(cachedPath), true);
+    } finally {
+      localFs.stat = originalStat;
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  for (const [label, failure] of nonCanonicalNotFoundFailures()) {
+    it(`propagates ${label} from dependency stat without invalidating the cached artifact`, async () => {
+      clearModulePathCache();
+
+      const cacheDir = await makeTempDir({ prefix: "vf-mdx-shaped-dependency-stat-error-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-shaped-dependency-project-" });
+      const filePath = join(projectDir, "app/page.tsx");
+      const dependencyPath = join(projectDir, "runtime-dependency.mjs");
+      const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("shaped-dependency-stat"));
+      const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+      const localFs = getLocalFs();
+      const originalStat = localFs.stat.bind(localFs);
+      let statCalls = 0;
+
+      try {
+        await writeTextFile(dependencyPath, "export default 1;");
+        await writeTextFile(
+          cachedPath,
+          `import value from "file://${dependencyPath}"; export default value;`,
+        );
+        await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+        const pathCache = await getModulePathCache(cacheDir);
+
+        localFs.stat = (path: string) => {
+          if (path !== dependencyPath) return originalStat(path);
+          statCalls++;
+          return Promise.reject(failure);
+        };
+
+        const error = await assertRejects(() =>
+          lookupMdxEsmCache(
+            filePath,
+            cacheDir,
+            projectDir,
+            undefined,
+            undefined,
+            "19.1.1",
+          )
+        );
+
+        assertStrictEquals(error, failure);
+        assertEquals(statCalls, 1);
+        assertEquals(pathCache.get(key), cachedPath);
+        assertEquals(await exists(cachedPath), true);
+      } finally {
+        localFs.stat = originalStat;
+        await Promise.all([
+          remove(cacheDir, { recursive: true }).catch(() => {}),
+          remove(projectDir, { recursive: true }).catch(() => {}),
+        ]);
+        clearModulePathCache();
+      }
+    });
+  }
 });
 
 describe("lookupMdxEsmCache — stale verified artifact (#2077)", () => {
@@ -673,6 +789,125 @@ describe("lookupMdxEsmCache — stale verified artifact (#2077)", () => {
       clearModulePathCache();
     }
   });
+
+  it("propagates verified-artifact stat failures without evicting the cache entry", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-verified-stat-error-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-verified-stat-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("verified-stat"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const verifyKey = `${cachedPath}:${key}`;
+    const localFs = getLocalFs();
+    const originalStat = localFs.stat.bind(localFs);
+    const permissionError = Object.assign(new Error("verified artifact stat denied"), {
+      code: "EACCES",
+    });
+
+    try {
+      await writeTextFile(cachedPath, "export default 1;");
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      const first = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+      assertEquals(first, { status: "hit", path: cachedPath });
+      assertEquals(verifiedModuleDeps.get(verifyKey), true);
+
+      localFs.stat = (path: string) =>
+        path === cachedPath ? Promise.reject(permissionError) : originalStat(path);
+
+      const error = await assertRejects(() =>
+        lookupMdxEsmCache(
+          filePath,
+          cacheDir,
+          projectDir,
+          undefined,
+          undefined,
+          "19.1.1",
+        )
+      );
+
+      assertStrictEquals(error, permissionError);
+      assertEquals(verifiedModuleDeps.get(verifyKey), true);
+      assertEquals((await getModulePathCache(cacheDir)).get(key), cachedPath);
+    } finally {
+      localFs.stat = originalStat;
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  for (const [label, failure] of nonCanonicalNotFoundFailures()) {
+    it(`propagates ${label} from verified-artifact stat without evicting cache state`, async () => {
+      clearModulePathCache();
+
+      const cacheDir = await makeTempDir({ prefix: "vf-mdx-shaped-verified-stat-error-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-shaped-verified-project-" });
+      const filePath = join(projectDir, "app/page.tsx");
+      const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("shaped-verified-stat"));
+      const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+      const verifyKey = `${cachedPath}:${key}`;
+      const localFs = getLocalFs();
+      const originalStat = localFs.stat.bind(localFs);
+      let statCalls = 0;
+
+      try {
+        await writeTextFile(cachedPath, "export default 1;");
+        await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+        const first = await lookupMdxEsmCache(
+          filePath,
+          cacheDir,
+          projectDir,
+          undefined,
+          undefined,
+          "19.1.1",
+        );
+        assertEquals(first, { status: "hit", path: cachedPath });
+        assertEquals(verifiedModuleDeps.get(verifyKey), true);
+
+        localFs.stat = (path: string) => {
+          if (path !== cachedPath) return originalStat(path);
+          statCalls++;
+          return Promise.reject(failure);
+        };
+
+        const error = await assertRejects(() =>
+          lookupMdxEsmCache(
+            filePath,
+            cacheDir,
+            projectDir,
+            undefined,
+            undefined,
+            "19.1.1",
+          )
+        );
+
+        assertStrictEquals(error, failure);
+        assertEquals(statCalls, 1);
+        assertEquals(verifiedModuleDeps.get(verifyKey), true);
+        assertEquals((await getModulePathCache(cacheDir)).get(key), cachedPath);
+      } finally {
+        localFs.stat = originalStat;
+        await waitForDiskCleanup();
+        await Promise.all([
+          remove(cacheDir, { recursive: true }).catch(() => {}),
+          remove(projectDir, { recursive: true }).catch(() => {}),
+        ]);
+        clearModulePathCache();
+      }
+    });
+  }
 });
 
 describe("invalidateMdxEsmModule (#2077 self-heal)", () => {

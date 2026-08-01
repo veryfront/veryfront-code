@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runInNewContext } from "node:vm";
-import { captureBoundedTextReader, copyFixedUint8ArrayWithinLimit } from "./bounded-text-reader.ts";
+import {
+  captureBoundedTextReader,
+  captureSnapshotTextReader,
+  copyFixedUint8ArrayWithinLimit,
+} from "./bounded-text-reader.ts";
 
 describe("platform/adapters/bounded-text-reader", () => {
   it("copies admitted byte views into a tight fixed buffer", () => {
@@ -111,6 +115,41 @@ describe("platform/adapters/bounded-text-reader", () => {
       byteLength: 4,
     });
     assertEquals(receivedLimit, 4);
+  });
+
+  it("captures and forwards one root-bound stable snapshot reader", async () => {
+    const calls: Array<[string, string, number]> = [];
+    let replacementCalls = 0;
+    const adapter = {
+      readFileSnapshotWithinLimit: (path: string, root: string, byteLimit: number) => {
+        calls.push([path, root, byteLimit]);
+        return Promise.resolve(new TextEncoder().encode("safe"));
+      },
+    };
+    const reader = captureSnapshotTextReader(adapter, "Project filesystem");
+    adapter.readFileSnapshotWithinLimit = () => {
+      replacementCalls++;
+      return Promise.resolve(new Uint8Array());
+    };
+
+    assertEquals(
+      await reader.readUtf8("/project/app.css", "/project", 4, "Project CSS"),
+      { content: "safe", byteLength: 4 },
+    );
+    assertEquals(calls, [["/project/app.css", "/project", 4]]);
+    assertEquals(replacementCalls, 0);
+  });
+
+  it("requires stable snapshot authority during capture", () => {
+    try {
+      captureSnapshotTextReader({
+        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+      });
+      throw new Error("expected missing snapshot authority to reject");
+    } catch (error) {
+      assertEquals(error instanceof TypeError, true);
+      assertEquals((error as Error).message.includes("stable snapshot"), true);
+    }
   });
 
   it("accounts bytes through the captured intrinsic getter", async () => {

@@ -25,6 +25,15 @@ import { runWithVerifiedCacheApiCredential } from "./verified-api-credential-con
 import { MAX_CACHE_TTL_SECONDS } from "./backends/ttl.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { buildQueryAwareCacheKey, isValidCacheKey } from "./keys.ts";
+import { compileCacheGlob } from "./backends/glob.ts";
+import {
+  buildPreparedProjectCSSCacheKey,
+  buildPreparedProjectCSSCacheScopePrefix,
+  buildProjectCSSCacheKey,
+  buildProjectCSSCacheScopePrefix,
+  PREPARED_PROJECT_CSS_CACHE_NAMESPACE,
+  PROJECT_CSS_CACHE_NAMESPACE,
+} from "./keys/project-css.ts";
 
 const API_CACHE_KEY_MAX_LENGTH = 512;
 const API_CACHE_KEY_PATTERN = /^[a-zA-Z0-9_:.\-/]+$/;
@@ -1505,6 +1514,139 @@ Deno.test("ApiCacheBackend bounds long keys and refuses malformed delete pattern
         assertEquals(requests.length, 1);
       },
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("ApiCacheBackend preserves framed CSS ownership through set, get, and invalidation", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const originalFetch = globalThis.fetch;
+  const stored = new Map<string, string>();
+  const concreteWrites: string[] = [];
+  const concretePatterns: string[] = [];
+
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+    if (url.pathname.endsWith("/set")) {
+      const key = body.key as string;
+      concreteWrites.push(key);
+      stored.set(key, body.value as string);
+      return Promise.resolve(new Response(null, { status: 204 }));
+    }
+    if (url.pathname.endsWith("/get")) {
+      const key = url.searchParams.get("key")!;
+      return Promise.resolve(Response.json({ value: stored.get(key) ?? null }));
+    }
+    if (url.pathname.endsWith("/del-pattern")) {
+      const pattern = body.pattern as string;
+      concretePatterns.push(pattern);
+      const glob = compileCacheGlob(pattern)!;
+      let deleted = 0;
+      for (const key of [...stored.keys()]) {
+        if (glob.test(key) && stored.delete(key)) deleted++;
+      }
+      return Promise.resolve(Response.json({ deleted }));
+    }
+    throw new Error(`Unexpected cache API request: ${url.pathname}`);
+  }) as typeof fetch;
+
+  const digest = "a".repeat(64);
+  const cases = [
+    {
+      namespace: PROJECT_CSS_CACHE_NAMESPACE,
+      scope: "scope-vf-sanitized",
+      key: buildProjectCSSCacheKey({
+        projectScope: "scope-vf-sanitized",
+        environment: "preview",
+        stylesheetHash: digest,
+        candidatesHash: digest,
+        profileHash: digest,
+      }),
+      prefix: buildProjectCSSCacheScopePrefix("scope-vf-sanitized"),
+    },
+    {
+      namespace: PROJECT_CSS_CACHE_NAMESPACE,
+      scope: "environment-suffix-project",
+      key: buildProjectCSSCacheKey({
+        projectScope: "environment-suffix-project",
+        environment: "preview-vf-sanitized",
+        stylesheetHash: digest,
+        candidatesHash: digest,
+        profileHash: digest,
+      }),
+      prefix: buildProjectCSSCacheScopePrefix("environment-suffix-project"),
+    },
+    ...[
+      "*api-scope",
+      "?api-scope",
+      "colon:api-scope",
+      "Malmö/東京-api-scope",
+      "lone-high-\ud800-api-scope",
+      "a".repeat(256),
+    ].map((projectScope) => ({
+      namespace: PROJECT_CSS_CACHE_NAMESPACE,
+      scope: projectScope,
+      key: buildProjectCSSCacheKey({
+        projectScope,
+        environment: "preview",
+        stylesheetHash: digest,
+        candidatesHash: digest,
+        profileHash: digest,
+      }),
+      prefix: buildProjectCSSCacheScopePrefix(projectScope),
+    })),
+    {
+      namespace: PREPARED_PROJECT_CSS_CACHE_NAMESPACE,
+      scope: "prepared-vf-sanitized",
+      key: buildPreparedProjectCSSCacheKey({
+        projectScope: "prepared-vf-sanitized",
+        environment: "preview",
+        identityHash: digest,
+      }),
+      prefix: buildPreparedProjectCSSCacheScopePrefix("prepared-vf-sanitized"),
+    },
+    {
+      namespace: PREPARED_PROJECT_CSS_CACHE_NAMESPACE,
+      scope: "environment-suffix-prepared",
+      key: buildPreparedProjectCSSCacheKey({
+        projectScope: "environment-suffix-prepared",
+        environment: "preview-vf-sanitized",
+        identityHash: digest,
+      }),
+      prefix: buildPreparedProjectCSSCacheScopePrefix("environment-suffix-prepared"),
+    },
+  ] as const;
+
+  try {
+    await runWithRequestContext(
+      {
+        token: "request-token",
+        projectSlug: "project-slug",
+        tokenProvenance: "project-bound",
+      },
+      async () => {
+        for (const [index, entry] of cases.entries()) {
+          const cache = new ApiCacheBackend({
+            apiBaseUrl: "https://api.example.test",
+            keyPrefix: entry.namespace,
+            circuitBreakerName: `api-cache-css-framing-${index}`,
+          });
+          const concreteKey = `${entry.namespace}:${entry.key}`;
+          const concretePattern = `${entry.namespace}:${entry.prefix}*`;
+
+          await cache.set(entry.key, entry.scope, 60);
+          assertEquals(await cache.get(entry.key), entry.scope);
+          assertEquals(await cache.delByPattern(`${entry.prefix}*`), 1);
+          assertEquals(await cache.get(entry.key), null);
+          assertEquals(concreteWrites.at(-1), concreteKey);
+          assertEquals(concretePatterns.at(-1), concretePattern);
+          assertEquals(concreteKey.includes("vf-sanitized:"), false);
+        }
+      },
+    );
+    assertEquals(stored.size, 0);
   } finally {
     globalThis.fetch = originalFetch;
   }

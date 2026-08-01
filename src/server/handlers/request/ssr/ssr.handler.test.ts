@@ -11,7 +11,7 @@ import {
   type ApplicationErrorContext,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
-import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { FSAdapterWrapper, NotSupportedError } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { FSAdapter } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 
 describe("server/handlers/request/ssr/ssr.handler", () => {
@@ -408,7 +408,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - contextual mode setup", () => {
-    function createContextualAdapter(shouldThrow = false) {
+    function createContextualAdapter() {
       const calls: Record<string, unknown[]> = {};
       const fs = {
         exists: () => Promise.resolve(false),
@@ -423,7 +423,6 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         isMultiProjectMode: () => false,
         isContextualMode: () => true,
         setRequestToken: (t: string) => {
-          if (shouldThrow) throw new Error("not supported");
           calls.setRequestToken = [t];
         },
         setRequestBranch: (b: string | null) => {
@@ -464,16 +463,184 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       assertEquals(calls.setProductionMode![1], "rel-5");
     });
 
-    it("silently catches errors from contextual setup", async () => {
-      const { fs } = createContextualAdapter(true);
+    it("continues with later context hints when request-token setup is unsupported", async () => {
+      const { fs, calls } = createContextualAdapter();
+      fs.setRequestToken = () => {
+        throw new NotSupportedError("setRequestToken", "test adapter");
+      };
       const adapter = { ...createMockAdapter(), fs } as unknown as RuntimeAdapter;
-      const mockService = createMockSSRService();
+      let renderCalls = 0;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>rendered</html>",
+            isStreaming: false,
+            cacheStrategy: "short",
+            slug: "test",
+          });
+        },
+      });
       const handler = new SSRHandler(mockService);
       const ctx = makeCtx({ adapter, proxyToken: "tok" });
 
       const result = await handler.handle(new Request("http://localhost/test"), ctx);
-      // Should not throw — continues to render
-      assertEquals(result.response instanceof Response, true);
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(calls.setRequestBranch, [null]);
+      assertEquals(calls.setProductionMode, [false, undefined]);
+      assertEquals(renderCalls, 1);
+    });
+
+    it("continues with production-mode setup when request-branch setup is unsupported", async () => {
+      const { fs, calls } = createContextualAdapter();
+      fs.setRequestBranch = () => {
+        throw new NotSupportedError("setRequestBranch", "test adapter");
+      };
+      const adapter = { ...createMockAdapter(), fs } as unknown as RuntimeAdapter;
+      let renderCalls = 0;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>rendered</html>",
+            isStreaming: false,
+            cacheStrategy: "short",
+            slug: "test",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+
+      const result = await handler.handle(
+        new Request("http://localhost/test"),
+        makeCtx({ adapter, resolvedEnvironment: "production", releaseId: "rel-7" }),
+      );
+
+      assertEquals(result.response?.status, 200);
+      assertEquals(calls.setProductionMode, [true, "rel-7"]);
+      assertEquals(renderCalls, 1);
+    });
+
+    for (const operation of ["request token", "request branch"] as const) {
+      it(`fails closed when ${operation} setup fails operationally`, async () => {
+        const setupFailure = new Error(`private ${operation} adapter detail`);
+        const { fs } = createContextualAdapter();
+        if (operation === "request token") {
+          fs.setRequestToken = () => {
+            throw setupFailure;
+          };
+        } else {
+          fs.setRequestBranch = () => {
+            throw setupFailure;
+          };
+        }
+        const adapter = { ...createMockAdapter(), fs } as unknown as RuntimeAdapter;
+        let renderCalls = 0;
+        const mockService = createMockSSRService({
+          renderPage: () => {
+            renderCalls++;
+            throw new Error("render must not run");
+          },
+        });
+        const handler = new SSRHandler(mockService);
+
+        const result = await handler.handle(
+          new Request("http://localhost/test"),
+          makeCtx({ adapter, proxyToken: "tok" }),
+        );
+
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 500);
+        assertEquals(
+          result.response?.headers.get("cache-control"),
+          "no-cache, no-store, must-revalidate",
+        );
+        assertEquals(renderCalls, 0);
+        const body = await result.response!.text();
+        assertStringIncludes(body, "Internal Server Error");
+        assertEquals(body.includes(setupFailure.message), false);
+      });
+    }
+
+    it("fails closed for NotSupportedError lookalikes without leaking diagnostics", async () => {
+      const causeMarker = "private nested adapter cause";
+      const pathMarker = "/private/project/path";
+      const tokenMarker = "vf_private_token";
+      const canonicalMessage = "Operation 'setRequestToken' is not supported by test adapter";
+      const namedError = Object.assign(
+        new Error(canonicalMessage, { cause: new Error(causeMarker) }),
+        {
+          name: "NotSupportedError",
+          path: pathMarker,
+          token: tokenMarker,
+        },
+      );
+      const cases: ReadonlyArray<{
+        label: string;
+        error: unknown;
+        method: "GET" | "HEAD";
+      }> = [
+        { label: "overwritten Error name", error: namedError, method: "GET" },
+        {
+          label: "canonical message",
+          error: new Error(canonicalMessage),
+          method: "GET",
+        },
+        {
+          label: "named DOMException",
+          error: new DOMException(canonicalMessage, "NotSupportedError"),
+          method: "HEAD",
+        },
+      ];
+
+      for (const testCase of cases) {
+        const { fs } = createContextualAdapter();
+        fs.setRequestToken = () => {
+          throw testCase.error;
+        };
+        const adapter = { ...createMockAdapter(), fs } as unknown as RuntimeAdapter;
+        let renderCalls = 0;
+        const handler = new SSRHandler(createMockSSRService({
+          renderPage: () => {
+            renderCalls++;
+            throw new Error("render must not run");
+          },
+        }));
+
+        const result = await handler.handle(
+          new Request("http://localhost/test", { method: testCase.method }),
+          makeCtx({ adapter, proxyToken: "tok" }),
+        );
+
+        assertEquals(result.continue, false, testCase.label);
+        assertEquals(result.response?.status, 500, testCase.label);
+        assertEquals(
+          result.response?.headers.get("cache-control"),
+          "no-cache, no-store, must-revalidate",
+          testCase.label,
+        );
+        assertEquals(renderCalls, 0, testCase.label);
+        if (testCase.method === "HEAD") {
+          assertEquals(result.response?.body, null, testCase.label);
+          assertEquals(await result.response!.text(), "", testCase.label);
+        } else {
+          const body = await result.response!.text();
+          assertStringIncludes(body, "Internal Server Error", testCase.label);
+          for (
+            const marker of [
+              canonicalMessage,
+              causeMarker,
+              pathMarker,
+              tokenMarker,
+            ]
+          ) {
+            assertEquals(body.includes(marker), false, `${testCase.label}: ${marker}`);
+          }
+        }
+      }
     });
 
     it("renders when a contextual adapter does not implement production-mode selection", async () => {
@@ -695,7 +862,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - context setup error", () => {
-    it("falls through to 404 when context setup throws", async () => {
+    it("fails closed when multi-project context setup throws synchronously", async () => {
+      const setupFailure = new Error("private synchronous context setup detail");
       const throwingFs = {
         exists: () => Promise.resolve(false),
         readFile: () => Promise.resolve(""),
@@ -708,16 +876,69 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
         getUnderlyingAdapter: () => ({}),
         isMultiProjectMode: () => true,
         runWithContext: () => {
-          throw new Error("context setup failed");
+          throw setupFailure;
         },
       };
       const adapter = { ...createMockAdapter(), fs: throwingFs } as unknown as RuntimeAdapter;
-      const mockService = createMockSSRService();
+      let renderCalls = 0;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          throw new Error("render must not run");
+        },
+      });
       const handler = new SSRHandler(mockService);
       const ctx = makeCtx({ adapter, projectSlug: "test" });
 
       const result = await handler.handle(new Request("http://localhost/page"), ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 500);
+      assertEquals(
+        result.response?.headers.get("cache-control"),
+        "no-cache, no-store, must-revalidate",
+      );
+      assertEquals(renderCalls, 0);
+      assertEquals((await result.response!.text()).includes(setupFailure.message), false);
+    });
+
+    it("fails closed when multi-project context setup rejects asynchronously", async () => {
+      const setupFailure = new Error("private asynchronous context setup detail");
+      const rejectingFs = {
+        exists: () => Promise.resolve(false),
+        readFile: () => Promise.resolve(""),
+        writeFile: () => Promise.resolve(),
+        readDir: () => Promise.resolve([]),
+        mkdir: () => Promise.resolve(),
+        remove: () => Promise.resolve(),
+        stat: () => Promise.resolve({ isFile: false, isDirectory: false, size: 0, mtime: null }),
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        runWithContext: () => Promise.reject(setupFailure),
+      };
+      const adapter = { ...createMockAdapter(), fs: rejectingFs } as unknown as RuntimeAdapter;
+      let renderCalls = 0;
+      const mockService = createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          throw new Error("render must not run");
+        },
+      });
+      const handler = new SSRHandler(mockService);
+
+      const result = await handler.handle(
+        new Request("http://localhost/page"),
+        makeCtx({ adapter, projectSlug: "test" }),
+      );
+
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 500);
+      assertEquals(
+        result.response?.headers.get("cache-control"),
+        "no-cache, no-store, must-revalidate",
+      );
+      assertEquals(renderCalls, 0);
+      assertEquals((await result.response!.text()).includes(setupFailure.message), false);
     });
   });
 

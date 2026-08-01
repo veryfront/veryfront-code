@@ -1837,6 +1837,7 @@ describe("Dashboard API - POST endpoints", () => {
     const started = Promise.withResolvers<void>();
     workflow({
       id: workflowId,
+      version: "1",
       steps: [
         toolStep(
           "start",

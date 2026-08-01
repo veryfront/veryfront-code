@@ -1,23 +1,70 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "./__tests__/css-processor-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdir, remove, writeTextFile } from "#veryfront/compat/fs.ts";
-import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type FileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createStyleScopeProfile } from "./style-scope-profile.ts";
 import {
+  buildPreparedCSSArtifactFromFiles,
   collectLocalProjectSourceFiles,
   findGlobalStylesheet,
   findStylesheetFromFiles,
   readLocalProjectStylesheet,
+  warmPreparedCSSArtifactFromFiles,
 } from "./css-pregeneration.ts";
+import { invalidatePreparedProjectCSSAsync } from "./prepared-project-css-cache.ts";
+import { clearCSSCache, invalidateCompiler, invalidateProjectCSS } from "./css-compiler.ts";
 import {
   MAX_CSS_FILE_BYTES,
   MAX_CSS_FILES,
   MAX_CSS_TOTAL_BYTES,
 } from "#veryfront/utils/constants/css.ts";
+import { FileSnapshotChangedError } from "#veryfront/platform/adapters/file-snapshot-error.ts";
 
 describe("styles-builder/css-pregeneration", () => {
+  it("shares candidate-bound identities between prepared writers and warm lookups", async () => {
+    const projectSlug = `prepared-writer-identity-${crypto.randomUUID()}`;
+    const styleProfile = createStyleScopeProfile({});
+    const baseOptions = {
+      projectSlug,
+      projectVersion: "branch:main",
+      projectDir: "/project",
+      styleProfile,
+      stylesheet: '@import "tailwindcss";',
+      minify: false,
+      environment: "preview",
+      buildMode: "production",
+    } as const;
+
+    try {
+      const stale = await buildPreparedCSSArtifactFromFiles({
+        ...baseOptions,
+        files: [{ path: "/project/app/page.tsx", content: '<main class="text-red-500" />' }],
+      });
+      const staleOptions = {
+        ...baseOptions,
+        files: [{ path: "/project/app/page.tsx", content: '<main class="text-red-500" />' }],
+      };
+      assertEquals(await warmPreparedCSSArtifactFromFiles(staleOptions), false);
+
+      const currentOptions = {
+        ...baseOptions,
+        files: [{ path: "/project/app/page.tsx", content: '<main class="text-blue-500" />' }],
+      };
+      const current = await buildPreparedCSSArtifactFromFiles(currentOptions);
+
+      assertEquals(stale.context.cacheKey !== current.context.cacheKey, true);
+      assertEquals(await warmPreparedCSSArtifactFromFiles(currentOptions), false);
+    } finally {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(projectSlug);
+      await invalidatePreparedProjectCSSAsync(projectSlug);
+    }
+  });
+
   describe("findGlobalStylesheet", () => {
     it("should return undefined when no files match", () => {
       assertEquals(
@@ -286,6 +333,184 @@ describe("styles-builder/css-pregeneration", () => {
   });
 
   describe("local project helpers", () => {
+    it("captures one root-bound snapshot reader for every selected local source", async () => {
+      const encoder = new TextEncoder();
+      const snapshotCalls: Array<[string, string, number]> = [];
+      let replacementCalls = 0;
+      let legacyReads = 0;
+      const replacement = () => {
+        replacementCalls++;
+        return Promise.resolve(encoder.encode("replacement"));
+      };
+      const fs = {
+        readDir: () =>
+          (async function* () {
+            for (const name of ["b.ts", "a.ts"]) {
+              yield { name, isFile: true, isDirectory: false, isSymlink: false };
+            }
+          })(),
+        readFileSnapshotWithinLimit: (path: string, root: string, byteLimit: number) => {
+          snapshotCalls.push([path, root, byteLimit]);
+          fs.readFileSnapshotWithinLimit = replacement;
+          return Promise.resolve(encoder.encode(path.endsWith("a.ts") ? "first" : "second"));
+        },
+        readFileBytesWithinLimit: () => {
+          legacyReads++;
+          return Promise.reject(new Error("legacy exact read must not run"));
+        },
+      } as unknown as FileSystem;
+
+      assertEquals(
+        await collectLocalProjectSourceFiles({
+          projectDir: "/project",
+          styleProfile: createStyleScopeProfile(),
+          fs,
+        }),
+        [
+          { path: "/project/a.ts", content: "first" },
+          { path: "/project/b.ts", content: "second" },
+        ],
+      );
+      assertEquals(snapshotCalls, [
+        ["/project/a.ts", "/project", MAX_CSS_FILE_BYTES],
+        ["/project/b.ts", "/project", MAX_CSS_FILE_BYTES],
+      ]);
+      assertEquals(replacementCalls, 0);
+      assertEquals(legacyReads, 0);
+    });
+
+    it("requires stable source snapshot authority before walking the project", async () => {
+      let walks = 0;
+      let legacyReads = 0;
+      const fs = {
+        readDir: () => {
+          walks++;
+          return (async function* () {})();
+        },
+        readFileBytesWithinLimit: () => {
+          legacyReads++;
+          return Promise.resolve(new Uint8Array());
+        },
+      } as unknown as FileSystem;
+
+      await assertRejects(
+        () =>
+          collectLocalProjectSourceFiles({
+            projectDir: "/project",
+            styleProfile: createStyleScopeProfile(),
+            fs,
+          }),
+        TypeError,
+        "stable snapshot",
+      );
+      assertEquals(walks, 0);
+      assertEquals(legacyReads, 0);
+    });
+
+    it("reads a configured stylesheet through the captured project-root snapshot", async () => {
+      const calls: Array<[string, string, number]> = [];
+      let legacyReads = 0;
+      const fs = {
+        readFileSnapshotWithinLimit: (path: string, root: string, byteLimit: number) => {
+          calls.push([path, root, byteLimit]);
+          return Promise.resolve(new TextEncoder().encode(".safe{}"));
+        },
+        readFileBytesWithinLimit: () => {
+          legacyReads++;
+          return Promise.reject(new Error("legacy exact read must not run"));
+        },
+      } as unknown as FileSystem;
+
+      assertEquals(
+        await readLocalProjectStylesheet("/project", "styles/site.css", fs),
+        ".safe{}",
+      );
+      assertEquals(calls, [["/project/styles/site.css", "/project", MAX_CSS_FILE_BYTES]]);
+      assertEquals(legacyReads, 0);
+    });
+
+    it("rejects invalid UTF-8 returned by the stable stylesheet snapshot", async () => {
+      const fs = {
+        readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array([0xc3, 0x28])),
+        readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode(".legacy{}")),
+      } as unknown as FileSystem;
+
+      await assertRejects(
+        () => readLocalProjectStylesheet("/project", "styles.css", fs),
+        TypeError,
+        "valid UTF-8",
+      );
+    });
+
+    it("normalizes stable stylesheet overflow without hiding operational failures", async () => {
+      const overflowFs = {
+        readFileSnapshotWithinLimit: () => Promise.reject(new RangeError("source grew")),
+        readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode(".legacy{}")),
+      } as unknown as FileSystem;
+      await assertRejects(
+        () => readLocalProjectStylesheet("/project", "styles.css", overflowFs),
+        TypeError,
+        `Project stylesheet exceeds ${MAX_CSS_FILE_BYTES} bytes`,
+      );
+
+      const operationalFailure = Object.assign(new Error("snapshot unavailable"), {
+        code: "EIO",
+      });
+      let lstatCalls = 0;
+      const failedFs = {
+        lstat: () => {
+          lstatCalls++;
+          return Promise.reject(new Error("pre-read lstat must not run"));
+        },
+        readFileSnapshotWithinLimit: () => Promise.reject(operationalFailure),
+        readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode(".legacy{}")),
+      } as unknown as FileSystem;
+      const error = await assertRejects(() =>
+        readLocalProjectStylesheet("/project", "styles.css", failedFs)
+      );
+      assertEquals(error, operationalFailure);
+      assertEquals(lstatCalls, 0);
+    });
+
+    it("skips only genuine missing default stylesheets", async () => {
+      const calls: string[] = [];
+      const fs = {
+        readFileSnapshotWithinLimit: (path: string) => {
+          calls.push(path);
+          if (path === "/project/global.css") {
+            return Promise.resolve(new TextEncoder().encode(".fallback{}"));
+          }
+          return Promise.reject(new Deno.errors.NotFound("default stylesheet absent"));
+        },
+      } as unknown as FileSystem;
+
+      assertEquals(
+        await readLocalProjectStylesheet("/project", undefined, fs),
+        ".fallback{}",
+      );
+      assertEquals(calls, ["/project/globals.css", "/project/global.css"]);
+    });
+
+    it("does not misclassify a snapshot race as an absent default stylesheet", async () => {
+      const changed = new FileSnapshotChangedError("stylesheet changed during snapshot");
+      Object.defineProperty(changed, "cause", {
+        value: new Deno.errors.NotFound("removed after discovery"),
+      });
+      let reads = 0;
+      const fs = {
+        readFileSnapshotWithinLimit: () => {
+          reads++;
+          return Promise.reject(changed);
+        },
+      } as unknown as FileSystem;
+
+      const error = await assertRejects(() =>
+        readLocalProjectStylesheet("/project", undefined, fs)
+      );
+      assertEquals(error, changed);
+      assertEquals(reads, 1);
+    });
+
     it("always excludes generated roots even when configuration protects them", async () => {
       const encoder = new TextEncoder();
       const fs = {
@@ -299,7 +524,7 @@ describe("styles-builder/css-pregeneration", () => {
             }
             yield { name: "page.tsx", isFile: true, isDirectory: false, isSymlink: false };
           })(),
-        readFileBytesWithinLimit: (path: string) =>
+        readFileSnapshotWithinLimit: (path: string) =>
           Promise.resolve(encoder.encode(`<main className="${path}" />`)),
       } as unknown as FileSystem;
 
@@ -331,7 +556,7 @@ describe("styles-builder/css-pregeneration", () => {
                 };
               }
             })(),
-          readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+          readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array()),
         }) as unknown as FileSystem;
 
       assertEquals(
@@ -365,7 +590,7 @@ describe("styles-builder/css-pregeneration", () => {
               };
             }
           })(),
-        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+        readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array()),
       } as unknown as FileSystem;
 
       await assertRejects(
@@ -393,7 +618,7 @@ describe("styles-builder/css-pregeneration", () => {
               };
             }
           })(),
-        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+        readFileSnapshotWithinLimit: () => Promise.resolve(new Uint8Array()),
       } as unknown as FileSystem;
 
       await assertRejects(
@@ -418,7 +643,7 @@ describe("styles-builder/css-pregeneration", () => {
               yield { name, isFile: true, isDirectory: false, isSymlink: false };
             }
           })(),
-        readFileBytesWithinLimit: (path: string, byteLimit: number) => {
+        readFileSnapshotWithinLimit: (path: string, _root: string, byteLimit: number) => {
           requestedLimits.push(byteLimit);
           return Promise.resolve(path.endsWith("z-empty.ts") ? new Uint8Array() : boundaryChunk);
         },
@@ -436,9 +661,10 @@ describe("styles-builder/css-pregeneration", () => {
       assertEquals(requestedLimits.at(-1), 1);
     });
 
-    it("collects source content only through the exact bounded reader", async () => {
+    it("collects source content only through the root-bound snapshot reader", async () => {
       let unboundedReads = 0;
       let receivedLimit = 0;
+      let receivedRoot = "";
       const content = `export default () => <div className="safe" />;`;
       const fs = {
         readDir: () =>
@@ -455,7 +681,8 @@ describe("styles-builder/css-pregeneration", () => {
           unboundedReads++;
           return Promise.reject(new Error("unbounded source read must not run"));
         },
-        readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+        readFileSnapshotWithinLimit: (_path: string, root: string, byteLimit: number) => {
+          receivedRoot = root;
           receivedLimit = byteLimit;
           return Promise.resolve(new TextEncoder().encode(content));
         },
@@ -469,11 +696,12 @@ describe("styles-builder/css-pregeneration", () => {
         }),
         [{ path: "/project/page.tsx", content }],
       );
+      assertEquals(receivedRoot, "/project");
       assertEquals(receivedLimit, Math.min(MAX_CSS_FILE_BYTES, MAX_CSS_TOTAL_BYTES));
       assertEquals(unboundedReads, 0);
     });
 
-    it("treats source growth past the exact per-file bound as an integrity failure", async () => {
+    it("treats source growth past the stable per-file bound as an integrity failure", async () => {
       let unboundedReads = 0;
       const fs = {
         readDir: () =>
@@ -497,7 +725,7 @@ describe("styles-builder/css-pregeneration", () => {
           unboundedReads++;
           return Promise.resolve("small-before-growth");
         },
-        readFileBytesWithinLimit: (_path: string, byteLimit: number) =>
+        readFileSnapshotWithinLimit: (_path: string, _root: string, byteLimit: number) =>
           Promise.reject(new RangeError(`File exceeds byte limit of ${byteLimit} bytes`)),
       } as unknown as FileSystem;
 
@@ -514,15 +742,17 @@ describe("styles-builder/css-pregeneration", () => {
       assertEquals(unboundedReads, 0);
     });
 
-    it("reads a configured stylesheet only through the exact bounded reader", async () => {
+    it("reads a configured stylesheet only through the root-bound snapshot reader", async () => {
       let receivedLimit = 0;
+      let receivedRoot = "";
       let unboundedReads = 0;
       const fs = {
         readTextFile: () => {
           unboundedReads++;
           return Promise.reject(new Error("unbounded stylesheet read must not run"));
         },
-        readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+        readFileSnapshotWithinLimit: (_path: string, root: string, byteLimit: number) => {
+          receivedRoot = root;
           receivedLimit = byteLimit;
           return Promise.resolve(new TextEncoder().encode(".safe{}"));
         },
@@ -532,6 +762,7 @@ describe("styles-builder/css-pregeneration", () => {
         await readLocalProjectStylesheet("/project", "styles.css", fs),
         ".safe{}",
       );
+      assertEquals(receivedRoot, "/project");
       assertEquals(receivedLimit, MAX_CSS_FILE_BYTES);
       assertEquals(unboundedReads, 0);
     });
@@ -548,7 +779,7 @@ describe("styles-builder/css-pregeneration", () => {
       await assertRejects(
         () => readLocalProjectStylesheet("/project", "styles.css", fs),
         TypeError,
-        "exact bounded byte reader",
+        "stable snapshot byte reader",
       );
       assertEquals(unboundedReads, 0);
     });
@@ -614,10 +845,10 @@ describe("styles-builder/css-pregeneration", () => {
 
       try {
         await writeTextFile(join(projectDir, "globals.css"), ".globals { color: blue; }");
-        await assertRejects(
-          () => readLocalProjectStylesheet(projectDir, "styles/missing.css"),
-          Deno.errors.NotFound,
+        const error = await assertRejects(() =>
+          readLocalProjectStylesheet(projectDir, "styles/missing.css")
         );
+        assertEquals(isNotFoundError(error), true);
       } finally {
         await remove(projectDir, { recursive: true });
       }
@@ -643,7 +874,7 @@ describe("styles-builder/css-pregeneration", () => {
             isSymlink: false,
             mtime: null,
           }),
-        readFileBytesWithinLimit: () => Promise.reject(readFailure),
+        readFileSnapshotWithinLimit: () => Promise.reject(readFailure),
       } as unknown as FileSystem;
 
       const error = await assertRejects(() =>
@@ -659,7 +890,7 @@ describe("styles-builder/css-pregeneration", () => {
     it("propagates operational default stylesheet read failures", async () => {
       const readFailure = Object.assign(new Error("stylesheet read failed"), { code: "EIO" });
       const fs = {
-        readFileBytesWithinLimit: () => Promise.reject(readFailure),
+        readFileSnapshotWithinLimit: () => Promise.reject(readFailure),
       } as unknown as FileSystem;
 
       const error = await assertRejects(() =>

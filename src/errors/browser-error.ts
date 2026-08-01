@@ -1,3 +1,5 @@
+import { sanitizeBoundedDiagnosticText } from "./diagnostic-policy.ts";
+
 export { createError, toError } from "./legacy-error-construction.ts";
 
 const apply = Reflect.apply;
@@ -77,4 +79,17 @@ export function ensureBrowserError(value: unknown): Error {
   return isBrowserError(value)
     ? detachBrowserError(value)
     : new NativeError(safeBrowserErrorMessage(value));
+}
+
+/** Snapshot one caught browser value without importing server-only runtime brands. */
+export function snapshotBrowserThrowableDiagnostic(value: unknown): string {
+  const normalized = ensureBrowserError(value);
+  return sanitizeBoundedDiagnosticText(
+    readOwnBrowserErrorString(normalized, "message") ?? "Unknown error",
+  );
+}
+
+/** Detach one caught browser value into a safe diagnostic Error for logging. */
+export function toBrowserDiagnosticError(value: unknown): Error {
+  return new NativeError(snapshotBrowserThrowableDiagnostic(value));
 }

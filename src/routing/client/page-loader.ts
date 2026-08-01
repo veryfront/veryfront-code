@@ -1,6 +1,9 @@
 import { rendererLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
-import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import {
+  snapshotBrowserThrowableDiagnostic,
+  toBrowserDiagnosticError,
+} from "#veryfront/errors/browser-error.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { parsePageDataFromHTML, parsePageDataFromHTMLStrict } from "./dom-utils.ts";
 
@@ -20,6 +23,9 @@ const MAX_CACHE_SIZE = 50;
 const MAX_NAVIGATION_PATH_LENGTH = 8_192;
 const MAX_PAGE_RESPONSE_BYTES = 4 * 1024 * 1024;
 const EXPLICIT_URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+const apply = Reflect.apply;
+const weakSetAdd = WeakSet.prototype.add;
+const weakSetHas = WeakSet.prototype.has;
 const UTF8_ENCODER = new TextEncoder();
 const HYDRATION_DATA_ID = "veryfront-hydration-data";
 const DEPENDENCY_PINNING_RESPONSE_HEADER = "x-veryfront-dependency-pins";
@@ -62,6 +68,7 @@ export class PageLoader {
     Promise<unknown>,
     Promise<unknown>
   >();
+  private readonly snapshotConflictErrors = new WeakSet<object>();
   private activeRequests = new Set<AbortController>();
   private cacheGeneration = 0;
   /**
@@ -185,7 +192,7 @@ export class PageLoader {
     } catch (cause) {
       throw NETWORK_ERROR.create({
         detail: `Page data for ${path} contains malformed JSON`,
-        cause: snapshotThrowableDiagnostic(cause),
+        cause: snapshotBrowserThrowableDiagnostic(cause),
       });
     }
     if (typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -235,7 +242,7 @@ export class PageLoader {
     } catch (cause) {
       throw NETWORK_ERROR.create({
         detail: `Navigation HTML for ${path} is malformed`,
-        cause: snapshotThrowableDiagnostic(cause),
+        cause: snapshotBrowserThrowableDiagnostic(cause),
       });
     }
     const { content, pageData } = parsed;
@@ -303,8 +310,8 @@ export class PageLoader {
       await this.loadPageWithSnapshotRecovery(path, false);
     } catch (error) {
       logger.warn(
-        `[Veryfront] Failed to prefetch ${path}`,
-        error instanceof Error ? error : new Error(snapshotThrowableDiagnostic(error)),
+        `[Veryfront] Failed to prefetch ${snapshotBrowserThrowableDiagnostic(path)}`,
+        toBrowserDiagnosticError(error),
       );
     }
   }
@@ -358,7 +365,7 @@ export class PageLoader {
       } catch (cause) {
         throw NETWORK_ERROR.create({
           detail: `SPA page data for ${path} contains malformed JSON`,
-          cause: snapshotThrowableDiagnostic(cause),
+          cause: snapshotBrowserThrowableDiagnostic(cause),
         });
       }
       if (typeof data !== "object" || data === null || Array.isArray(data)) {
@@ -432,8 +439,8 @@ export class PageLoader {
       await this.loadSpaPageDataWithSnapshotRecovery(path, false);
     } catch (error) {
       logger.warn(
-        `[Veryfront] Failed to prefetch SPA data for ${path}`,
-        error instanceof Error ? error : new Error(snapshotThrowableDiagnostic(error)),
+        `[Veryfront] Failed to prefetch SPA data for ${snapshotBrowserThrowableDiagnostic(path)}`,
+        toBrowserDiagnosticError(error),
       );
     }
   }
@@ -500,11 +507,13 @@ export class PageLoader {
   }
 
   private failDependencySnapshot(path: string, detail: string): never {
-    throw NETWORK_ERROR.create({
+    const error = NETWORK_ERROR.create({
       detail,
       status: 409,
       context: { path },
     });
+    apply(weakSetAdd, this.snapshotConflictErrors, [error]);
+    throw error;
   }
 
   private withSnapshotRecovery<T>(
@@ -534,7 +543,7 @@ export class PageLoader {
       !reloadOnSnapshotFailure ||
       typeof error !== "object" ||
       error === null ||
-      (error as { status?: unknown }).status !== 409
+      apply(weakSetHas, this.snapshotConflictErrors, [error]) !== true
     ) {
       return;
     }
@@ -548,8 +557,10 @@ export class PageLoader {
     } catch (reloadError) {
       this.snapshotRecoveryStarted = false;
       logger.warn(
-        `[Veryfront] Failed to reload after dependency snapshot conflict for ${path}`,
-        reloadError instanceof Error ? reloadError : new Error(String(reloadError)),
+        `[Veryfront] Failed to reload after dependency snapshot conflict for ${
+          snapshotBrowserThrowableDiagnostic(path)
+        }`,
+        toBrowserDiagnosticError(reloadError),
       );
     }
   }
@@ -636,7 +647,7 @@ async function readBoundedResponseText(
     if (signal?.aborted) signal.throwIfAborted();
     throw NETWORK_ERROR.create({
       detail: `Failed to read navigation response for ${path}`,
-      cause: snapshotThrowableDiagnostic(cause),
+      cause: snapshotBrowserThrowableDiagnostic(cause),
     });
   }
 

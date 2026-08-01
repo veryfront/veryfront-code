@@ -11,7 +11,11 @@ import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
 import { createFileWatcher } from "../shared/watcher-queue.ts";
 import { resolve, sep } from "../../../compat/path/index.ts";
 import { validateTempDirectoryPrefix } from "../../../compat/temp-directory-prefix.ts";
-import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
+import {
+  readBoundedFilePrefix,
+  readFileWithinLimit,
+  withFileHandle,
+} from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import {
   NodeCompatibleFileSystemAdapter,
@@ -49,19 +53,23 @@ async function createDenoFileBytesExclusive(
   path: string,
   content: Uint8Array,
 ): Promise<void> {
-  const file = await runtime.open(path, { write: true, createNew: true });
-  try {
-    let offset = 0;
-    while (offset < content.byteLength) {
-      const written = await file.write(content.subarray(offset));
-      if (!Number.isSafeInteger(written) || written <= 0 || written > content.byteLength - offset) {
-        throw new Error("Deno createNew write made no forward progress");
+  await withFileHandle(
+    () => runtime.open(path, { write: true, createNew: true }),
+    async (file) => {
+      let offset = 0;
+      while (offset < content.byteLength) {
+        const written = await file.write(content.subarray(offset));
+        if (
+          !Number.isSafeInteger(written) || written <= 0 ||
+          written > content.byteLength - offset
+        ) {
+          throw new Error("Deno createNew write made no forward progress");
+        }
+        offset += written;
       }
-      offset += written;
-    }
-  } finally {
-    file.close();
-  }
+    },
+    "Filesystem exclusive create and handle cleanup both failed",
+  );
 }
 
 function assertDenoRuntime(method: string): void {

@@ -5,6 +5,7 @@ import {
   extractImports,
   findBroadBarrelViolations,
   findCyclicEdges,
+  findForbiddenLayerImport,
   findRegressions,
   resolveLocalImport,
 } from "./check-module-boundaries.ts";
@@ -19,6 +20,8 @@ describe("check-module-boundaries", () => {
         'export { output } from "./output.ts";',
         'export type { OutputType } from "./output-types.ts";',
         'await import("./lazy.ts");',
+        'type Imported = import("./imported.ts").Imported;',
+        'type ImportedNamespace = typeof import("./namespace.ts");',
       ].join("\n"),
     );
 
@@ -30,6 +33,8 @@ describe("check-module-boundaries", () => {
         { specifier: "./output.ts", kind: "runtime" },
         { specifier: "./output-types.ts", kind: "type" },
         { specifier: "./lazy.ts", kind: "dynamic" },
+        { specifier: "./imported.ts", kind: "type" },
+        { specifier: "./namespace.ts", kind: "type" },
       ],
     );
   });
@@ -130,9 +135,40 @@ describe("check-module-boundaries", () => {
     assertEquals(discoveryCycleEdges, []);
   });
 
-  it("keeps the shared types runtime independent from higher layers", async () => {
+  it("keeps forbidden source-layer dependencies out of production", async () => {
     const analysis = await analyzeModules();
 
     assertEquals(analysis.forbiddenLayerImports, []);
+  });
+
+  it("forbids every source dependency from Transforms into Routing", () => {
+    for (const kind of ["runtime", "type", "dynamic"] as const) {
+      assertEquals(
+        findForbiddenLayerImport(
+          "src/transforms/import-rewriter/route-adapter.ts",
+          "src/routing/api/module-loader/loader-helpers.ts",
+          kind,
+        ),
+        "src/transforms/import-rewriter/route-adapter.ts -> " +
+          "src/routing/api/module-loader/loader-helpers.ts",
+      );
+    }
+
+    assertEquals(
+      findForbiddenLayerImport(
+        "src/routing/api/module-loader/loader-helpers.ts",
+        "src/transforms/import-rewriter/cjs-destructure-bindings.ts",
+        "runtime",
+      ),
+      null,
+    );
+    assertEquals(
+      findForbiddenLayerImport(
+        "src/transforms/import-rewriter/route-adapter.ts",
+        "src/security/path-validation.ts",
+        "runtime",
+      ),
+      null,
+    );
   });
 });

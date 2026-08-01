@@ -10,7 +10,7 @@ import type {
   ClaudeCodeEventPublisher,
   ClaudeCodeEventSubscriber,
 } from "./types.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, ORCHESTRATION_ERROR } from "#veryfront/errors";
 import { resolve as resolveExtensionContract } from "#veryfront/extensions/contracts.ts";
 import {
   captureDistributedRuntimeProvider,
@@ -18,6 +18,29 @@ import {
   type DistributedRuntimeProvider,
   DistributedRuntimeProviderName,
 } from "#veryfront/extensions/distributed/index.ts";
+
+function dispatchDeliveries<T>(
+  groups: Iterable<Iterable<T>>,
+  dispatch: (value: T) => void | Promise<void>,
+): void | Promise<void> {
+  const pending: Promise<void>[] = [];
+  try {
+    for (const group of groups) {
+      for (const value of group) {
+        const delivery = dispatch(value);
+        if (delivery !== undefined) pending.push(delivery);
+      }
+    }
+  } catch (error) {
+    if (pending.length === 0) throw error;
+    // Once asynchronous delivery has started, aggregate a later synchronous
+    // failure so every admitted promise remains observed by the caller.
+    pending.push(Promise.reject(error));
+  }
+
+  if (pending.length === 1) return pending[0];
+  if (pending.length > 1) return Promise.all(pending).then(() => undefined);
+}
 
 // =============================================================================
 // In-Memory Publisher (for testing/single-process)
@@ -31,21 +54,12 @@ export class MemoryEventPublisher implements ClaudeCodeEventPublisher, ClaudeCod
   private handlers = new Map<string, Set<ClaudeCodeEventHandler>>();
   private globalHandlers = new Set<ClaudeCodeEventHandler>();
 
-  publish(event: ClaudeCodeEvent): void {
-    // Notify run-specific handlers
-    if (event.runId) {
-      const handlers = this.handlers.get(event.runId);
-      if (handlers) {
-        for (const handler of handlers) {
-          handler(event);
-        }
-      }
-    }
-
-    // Notify global handlers
-    for (const handler of this.globalHandlers) {
-      handler(event);
-    }
+  publish(event: ClaudeCodeEvent): void | Promise<void> {
+    const runHandlers = event.runId === undefined ? undefined : this.handlers.get(event.runId);
+    return dispatchDeliveries(
+      runHandlers === undefined ? [this.globalHandlers] : [runHandlers, this.globalHandlers],
+      (handler) => handler(event),
+    );
   }
 
   subscribe(runId: string, handler: ClaudeCodeEventHandler): Promise<() => void> {
@@ -83,36 +97,75 @@ export class MemoryEventPublisher implements ClaudeCodeEventPublisher, ClaudeCod
 export class SSEEventPublisher implements ClaudeCodeEventPublisher {
   private encoder = new TextEncoder();
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
-  private closed = false;
+  private state: "idle" | "open" | "closed" = "idle";
 
   /**
    * Create an SSE publisher with an associated ReadableStream
    */
   createStream(): ReadableStream<Uint8Array> {
-    return new ReadableStream({
-      start: (controller) => {
-        this.controller = controller;
-      },
-      cancel: () => {
-        this.closed = true;
-        this.controller = null;
-      },
-    });
+    if (this.state === "closed") {
+      throw ORCHESTRATION_ERROR.create({ detail: "SSE event publisher is closed" });
+    }
+    if (this.state === "open") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher already has a stream",
+      });
+    }
+
+    this.state = "open";
+    try {
+      return new ReadableStream({
+        start: (controller) => {
+          this.controller = controller;
+        },
+        cancel: () => {
+          this.state = "closed";
+          this.controller = null;
+        },
+      });
+    } catch (error) {
+      this.state = "closed";
+      this.controller = null;
+      throw error;
+    }
   }
 
   publish(event: ClaudeCodeEvent): void {
-    if (this.closed || !this.controller) return;
+    if (this.state === "closed") {
+      throw ORCHESTRATION_ERROR.create({ detail: "SSE event publisher is closed" });
+    }
+    if (this.state === "idle") {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher does not have a stream",
+      });
+    }
+    const controller = this.controller;
+    if (controller === null) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher has no active stream controller",
+      });
+    }
 
     const data = `data: ${JSON.stringify(event)}\n\n`;
-    this.controller.enqueue(this.encoder.encode(data));
+    controller.enqueue(this.encoder.encode(data));
   }
 
   close(): void {
-    if (this.closed || !this.controller) return;
+    if (this.state === "closed") return;
+    if (this.state === "idle") {
+      this.state = "closed";
+      return;
+    }
 
-    this.closed = true;
-    this.controller.close();
+    const controller = this.controller;
+    this.state = "closed";
     this.controller = null;
+    if (controller === null) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "SSE event publisher has no active stream controller",
+      });
+    }
+    controller.close();
   }
 }
 
@@ -127,8 +180,8 @@ export class SSEEventPublisher implements ClaudeCodeEventPublisher {
 export class CallbackEventPublisher implements ClaudeCodeEventPublisher {
   constructor(private callback: ClaudeCodeEventHandler) {}
 
-  publish(event: ClaudeCodeEvent): void {
-    this.callback(event);
+  publish(event: ClaudeCodeEvent): void | Promise<void> {
+    return this.callback(event);
   }
 
   close(): void {
@@ -151,11 +204,17 @@ export class MultiEventPublisher implements ClaudeCodeEventPublisher {
   }
 
   async publish(event: ClaudeCodeEvent): Promise<void> {
-    await Promise.all(this.publishers.map((p) => p.publish(event)));
+    await dispatchDeliveries<ClaudeCodeEventPublisher>(
+      [this.publishers],
+      (publisher) => publisher.publish(event),
+    );
   }
 
   async close(): Promise<void> {
-    await Promise.all(this.publishers.map((p) => p.close()));
+    await dispatchDeliveries<ClaudeCodeEventPublisher>(
+      [this.publishers],
+      (publisher) => publisher.close(),
+    );
   }
 
   addPublisher(publisher: ClaudeCodeEventPublisher): void {

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { OpenAPIHandler } from "./openapi.handler.ts";
 import type { HandlerContext } from "../types.ts";
 
@@ -63,6 +64,11 @@ function createCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
 }
 
 describe("server/handlers/request/openapi.handler", () => {
+  afterAll(async () => {
+    const { stop } = await import("veryfront/extensions/bundler");
+    await stop();
+  });
+
   it("returns 503 before entering proxy context or reading remote route modules", async () => {
     const { fs, calls } = createMockFs({ needsContext: true, existsReturn: true });
     const handler = new OpenAPIHandler();
@@ -115,7 +121,10 @@ describe("server/handlers/request/openapi.handler", () => {
     const body = JSON.parse(await result.response!.text());
     assertEquals(typeof body.paths, "object");
     assertEquals(calls.includes("runWithContext"), false);
-    assertEquals(calls.filter((call) => call.startsWith("exists:")).length, 3);
+    assertEquals(calls.filter((call) => call.startsWith("exists:")), [
+      "exists:/project/pages/api",
+      "exists:/project/app",
+    ]);
   });
 
   it("allows approved standalone source without enabling local-development policy", async () => {
@@ -137,7 +146,49 @@ describe("server/handlers/request/openapi.handler", () => {
       result.response?.headers.get("cache-control"),
       "no-cache, no-store, must-revalidate",
     );
-    assertEquals(calls.filter((call) => call.startsWith("exists:")).length, 3);
+    assertEquals(calls.filter((call) => call.startsWith("exists:")), [
+      "exists:/project/pages/api",
+      "exists:/project/app",
+    ]);
+  });
+
+  it("discovers Pages and App API routes without traversing app/api twice", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(
+      "/project/pages/api/legacy.ts",
+      "export function POST() {}",
+    );
+    adapter.fs.files.set(
+      "/project/app/api/users/route.ts",
+      "export function GET() {}",
+    );
+    const readDirCalls: string[] = [];
+    const readDir = adapter.fs.readDir.bind(adapter.fs);
+    adapter.fs.readDir = async function* (path: string) {
+      readDirCalls.push(path);
+      yield* readDir(path);
+    };
+    const handler = new OpenAPIHandler();
+    const ctx = createCtx({ adapter, isLocalProject: true });
+
+    const result = await handler.handle(
+      new Request("https://example.com/_openapi.json"),
+      ctx,
+    );
+    const body = JSON.parse(await result.response!.text());
+
+    assertEquals(result.response?.status, 200);
+    assertEquals(Object.keys(body.paths).sort(), ["/api/legacy", "/api/users"]);
+    assertEquals(body.paths["/api/legacy"].post.summary, "POST /api/legacy");
+    assertEquals(body.paths["/api/users"].get.summary, "GET /api/users");
+    assertEquals(
+      readDirCalls.filter((path) => path === "/project/pages/api").length,
+      1,
+    );
+    assertEquals(
+      readDirCalls.filter((path) => path === "/project/app/api").length,
+      2,
+    );
   });
 
   it("treats omitted locality as remote without touching the filesystem", async () => {

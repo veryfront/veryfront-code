@@ -1,10 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import {
   findMissingFrameworkBundles,
   findVfModuleImports,
   initializeCacheDir,
+  processVfModuleImports,
   resolveProjectDir,
 } from "./loader-helpers.ts";
 import type { ESMLoaderContext } from "./types.ts";
@@ -167,6 +169,55 @@ import { bar } from "/_vf_modules/components/Button.js";
       const code = `const path = "_vf_modules/lib/utils.js";`;
       const result = findVfModuleImports(code);
       assertEquals(result.length, 0);
+    });
+  });
+
+  describe("processVfModuleImports", () => {
+    it("does not classify an operational module read as a missing-module stub", async () => {
+      const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-no-operational-stub-cache-" });
+      const projectDir = await makeTempDir({ prefix: "vf-mdx-no-operational-stub-project-" });
+      const permissionError = Object.assign(new Error("module source read denied"), {
+        code: "EACCES",
+      });
+      const adapter = {
+        env: { get: (_key: string) => undefined },
+        fs: {
+          resolveFile: () => Promise.resolve("/virtual/private/secret.ts"),
+          readFile: () => Promise.reject(permissionError),
+        },
+      } as unknown as NonNullable<ESMLoaderContext["adapter"]>;
+      const code =
+        `import { secret } from "/_vf_modules/private/secret.js";\nexport default secret;`;
+
+      try {
+        const context = makeContext({
+          esmCacheDir,
+          adapter,
+          projectId: "project-no-operational-stub",
+          projectDir,
+          projectSlug: "project-no-operational-stub",
+        });
+        let caught: unknown;
+        try {
+          await processVfModuleImports(
+            code,
+            findVfModuleImports(code),
+            context,
+            projectDir,
+            false,
+          );
+        } catch (error) {
+          caught = error;
+        }
+
+        const cacheEntries: string[] = [];
+        for await (const entry of Deno.readDir(esmCacheDir)) cacheEntries.push(entry.name);
+        assertEquals(cacheEntries.some((name) => name.startsWith("stub-")), false);
+        assertStrictEquals(caught, permissionError);
+      } finally {
+        await remove(esmCacheDir, { recursive: true });
+        await remove(projectDir, { recursive: true });
+      }
     });
   });
 

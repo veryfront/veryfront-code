@@ -13,7 +13,13 @@ import {
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import { build, type OnResolveArgs, type Plugin } from "veryfront/extensions/bundler";
+import {
+  build,
+  type ModuleLexer,
+  type OnResolveArgs,
+  type Plugin,
+} from "veryfront/extensions/bundler";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
@@ -38,10 +44,22 @@ const veryfrontInternalPrefix = "#veryfront/";
 const moduleExtensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".mts", ".cjs", ".cts"] as const;
 const externalSpecifier = /^(std\/|@std\/|node:|deno:|https?:)/;
 const relativeSpecifier = /^\.{1,2}(?:\/|$)/;
-const internalSourceSpecifiers = ["#veryfront/", "@vf-src/"] as const;
+const clientExternalSpecifiers = [
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react/jsx-runtime",
+  "react/jsx-dev-runtime",
+] as const;
+const clientExternalSpecifierSet = new Set<string>(clientExternalSpecifiers);
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
 let physicalPackageRootPromise: Promise<string> | undefined;
+
+type InspectedClientImport =
+  | { readonly kind: "import-meta" }
+  | { readonly kind: "computed" }
+  | { readonly kind: "specifier"; readonly specifier: string };
 
 const clientAliasPaths = new Map([
   ["#veryfront/config", "src/rendering/client/browser-stubs/config.ts"],
@@ -102,26 +120,26 @@ export async function generateClientModule(
   }
 }
 
-function loadClientScript(
+async function loadClientScript(
   preBundledScript: string | undefined,
   scriptName: string,
   sourceEntry: string,
   options?: ClientScriptGenerationOptions,
 ): Promise<string> {
   if (!options?.forceSourceBundle && preBundledScript !== undefined) {
-    assertUsableClientBundle(preBundledScript, scriptName, "embedded");
+    await assertUsableClientBundle(preBundledScript, scriptName, "embedded");
     logger.debug(`Using pre-bundled client ${scriptName} script`);
-    return Promise.resolve(preBundledScript);
+    return preBundledScript;
   }
 
-  return bundleClientEntry(sourceEntry);
+  return await bundleClientEntry(sourceEntry);
 }
 
-function assertUsableClientBundle(
+async function assertUsableClientBundle(
   script: string,
   scriptName: string,
   source: "embedded" | "generated",
-): void {
+): Promise<void> {
   if (script.trim().length === 0) {
     throw BUILD_FAILED.create({
       detail: `The ${source} client ${scriptName} bundle is empty`,
@@ -135,12 +153,146 @@ function assertUsableClientBundle(
     });
   }
 
-  if (internalSourceSpecifiers.some((specifier) => script.includes(specifier))) {
+  const lexer = tryResolve<ModuleLexer>("ModuleLexer");
+  if (lexer === undefined) {
     throw BUILD_FAILED.create({
-      detail: `The ${source} client ${scriptName} bundle contains unresolved internal imports; ` +
-        "regenerate the embedded client bundles",
+      detail: `The ${source} client ${scriptName} bundle requires a ModuleLexer extension ` +
+        "before it can be inspected for browser delivery",
     });
   }
+
+  let imports: readonly InspectedClientImport[];
+  try {
+    await lexer.init?.();
+    const parsed = lexer.parse(script) as unknown;
+    imports = inspectClientBundleImports(parsed, script.length);
+  } catch (cause) {
+    throw BUILD_FAILED.create({
+      detail:
+        `The ${source} client ${scriptName} bundle could not be inspected for browser delivery`,
+      cause,
+    });
+  }
+
+  for (const imported of imports) {
+    if (imported.kind === "import-meta") continue;
+    if (imported.kind === "computed") {
+      throw BUILD_FAILED.create({
+        detail: `The ${source} client ${scriptName} bundle contains a computed dynamic import`,
+      });
+    }
+    if (!clientExternalSpecifierSet.has(imported.specifier)) {
+      throw BUILD_FAILED.create({
+        detail: `The ${source} client ${scriptName} bundle contains unsupported external import ${
+          JSON.stringify(imported.specifier)
+        }`,
+      });
+    }
+  }
+}
+
+function inspectClientBundleImports(
+  parsed: unknown,
+  sourceLength: number,
+): readonly InspectedClientImport[] {
+  if (!Array.isArray(parsed)) {
+    throw new TypeError("ModuleLexer.parse() must return an array");
+  }
+
+  const declaredLength = parsed.length;
+  if (
+    !Number.isSafeInteger(declaredLength) || declaredLength < 0 ||
+    declaredLength > sourceLength
+  ) {
+    throw new TypeError("ModuleLexer.parse() returned an invalid record count");
+  }
+
+  const inspected: InspectedClientImport[] = [];
+  let consumed = 0;
+  for (const candidate of parsed) {
+    consumed++;
+    if (consumed > declaredLength) {
+      throw new TypeError("ModuleLexer.parse() yielded more records than its array length");
+    }
+    if (typeof candidate !== "object" || candidate === null) {
+      throw new TypeError("ModuleLexer.parse() returned a non-object import record");
+    }
+
+    const record = candidate as Record<string, unknown>;
+    const n = record.n;
+    const s = record.s;
+    const e = record.e;
+    const ss = record.ss;
+    const se = record.se;
+    const d = record.d;
+    const a = record.a;
+
+    if (n !== undefined && typeof n !== "string") {
+      throw new TypeError("ModuleLexer import record n must be a string or undefined");
+    }
+    if (
+      !Number.isSafeInteger(s) ||
+      !Number.isSafeInteger(e) ||
+      !Number.isSafeInteger(ss) ||
+      !Number.isSafeInteger(se) ||
+      !Number.isSafeInteger(d) ||
+      !Number.isSafeInteger(a)
+    ) {
+      throw new TypeError("ModuleLexer import positions must be finite safe integers");
+    }
+
+    const specifierStart = s as number;
+    const specifierEnd = e as number;
+    const statementStart = ss as number;
+    const statementEnd = se as number;
+    const dynamicImportIndex = d as number;
+    const attributesStart = a as number;
+    if (
+      specifierStart < 0 ||
+      specifierEnd < specifierStart ||
+      statementStart < 0 ||
+      statementStart > specifierStart ||
+      statementEnd < specifierEnd ||
+      statementEnd > sourceLength
+    ) {
+      throw new TypeError("ModuleLexer import positions are outside the source statement");
+    }
+    if (
+      dynamicImportIndex < -2 ||
+      dynamicImportIndex > sourceLength ||
+      (dynamicImportIndex >= 0 &&
+        (dynamicImportIndex < statementStart || dynamicImportIndex > specifierStart))
+    ) {
+      throw new TypeError("ModuleLexer dynamic import position is invalid");
+    }
+    if (
+      attributesStart < -1 ||
+      attributesStart > sourceLength ||
+      (attributesStart >= 0 &&
+        (attributesStart < specifierEnd || attributesStart >= statementEnd))
+    ) {
+      throw new TypeError("ModuleLexer import attributes position is invalid");
+    }
+
+    if (dynamicImportIndex === -2) {
+      if (n !== undefined || attributesStart !== -1) {
+        throw new TypeError("ModuleLexer import.meta record is contradictory");
+      }
+      inspected.push({ kind: "import-meta" });
+      continue;
+    }
+    if (dynamicImportIndex === -1 && n === undefined) {
+      throw new TypeError("ModuleLexer static import record has no resolved specifier");
+    }
+    inspected.push(
+      n === undefined ? { kind: "computed" } : { kind: "specifier", specifier: n },
+    );
+  }
+
+  if (consumed !== declaredLength) {
+    throw new TypeError("ModuleLexer.parse() yielded fewer records than its array length");
+  }
+  return inspected;
 }
 
 /**
@@ -489,13 +641,7 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
       ".tsx": "tsx",
       ".js": "js",
     },
-    external: [
-      "react",
-      "react-dom",
-      "react-dom/client",
-      "react/jsx-runtime",
-      "react/jsx-dev-runtime",
-    ],
+    external: [...clientExternalSpecifiers],
     plugins: [
       createClientShimPlugin(shimPath),
       createPathResolverPlugin(),
@@ -516,6 +662,6 @@ async function bundleClientEntry(entryRelative: string): Promise<string> {
   }
 
   const output = result.outputFiles[0]!.text;
-  assertUsableClientBundle(output, entryRelative, "generated");
+  await assertUsableClientBundle(output, entryRelative, "generated");
   return output;
 }

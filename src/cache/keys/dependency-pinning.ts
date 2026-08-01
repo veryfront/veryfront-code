@@ -1,8 +1,7 @@
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { hashString } from "../hash.ts";
+import { isCacheKeyPassThroughSafe } from "./api-policy.ts";
 
-const API_CACHE_KEY_MAX_LENGTH = 512;
-const API_SAFE_CACHE_KEY_RE = /^[a-zA-Z0-9_:.\-/]+$/;
 const MAX_INLINE_ORIGIN_IDENTITY_LENGTH = 192;
 const UINT64_BASE36_MAX = "3w5e11264sgsf";
 const PIN_HASH_RE = /^on:(0|[1-9a-z][0-9a-z]{0,12})$/;
@@ -45,8 +44,7 @@ function encodeOrigin(origin: string): string {
 }
 
 function isApiSafeCacheKey(cacheKey: string): boolean {
-  return cacheKey.length <= API_CACHE_KEY_MAX_LENGTH &&
-    API_SAFE_CACHE_KEY_RE.test(cacheKey);
+  return isCacheKeyPassThroughSafe(cacheKey);
 }
 
 function composeCompleteRenderCacheKey(

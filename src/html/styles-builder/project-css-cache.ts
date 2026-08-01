@@ -13,6 +13,11 @@ import {
   CacheBackends,
   readCacheValueWithinLimit,
 } from "#veryfront/cache/backend.ts";
+import {
+  buildProjectCSSCacheKey,
+  buildProjectCSSCacheScopePrefix,
+  PROJECT_CSS_CACHE_SCHEMA,
+} from "#veryfront/cache/keys/project-css.ts";
 import { assertCSSPipelineIdentity, serverLogger as logger } from "#veryfront/utils";
 import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
@@ -79,7 +84,6 @@ const PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
 const PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES = 16 * 1024 * 1024;
 const PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES = 160;
 const PROJECT_CSS_LOCAL_TTL_MS = PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
-const PROJECT_CSS_CACHE_SCHEMA = "v4";
 
 // ============================================================================
 // State
@@ -88,12 +92,51 @@ const PROJECT_CSS_CACHE_SCHEMA = "v4";
 let projectCSSBackend: CacheBackend | null = null;
 let projectCSSInitialized = false;
 let projectCSSInitPromise: Promise<void> | null = null;
+const projectCSSPendingWrites = new Map<string, Set<Promise<void>>>();
+const projectCSSInvalidations = new Map<string, Promise<void>>();
 
 const projectCSSLocalFallback = new ByteWeightedLRUCache<string, ProjectCSSLocalEntry>({
   maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
   maxEntrySizeBytes: PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES,
   maxSizeBytes: PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES,
 });
+
+function beginProjectCSSWrite(projectSlug: string): {
+  precedingInvalidation: Promise<void> | undefined;
+  finish: () => void;
+} {
+  const precedingInvalidation = projectCSSInvalidations.get(projectSlug);
+  const completion = Promise.withResolvers<void>();
+  let pending = projectCSSPendingWrites.get(projectSlug);
+  if (!pending) {
+    pending = new Set();
+    projectCSSPendingWrites.set(projectSlug, pending);
+  }
+  pending.add(completion.promise);
+  let finished = false;
+
+  return {
+    precedingInvalidation,
+    finish() {
+      if (finished) return;
+      finished = true;
+      completion.resolve();
+      pending.delete(completion.promise);
+      if (pending.size === 0 && projectCSSPendingWrites.get(projectSlug) === pending) {
+        projectCSSPendingWrites.delete(projectSlug);
+      }
+    },
+  };
+}
+
+function clearProjectCSSLocalFallback(projectSlug: string): void {
+  const projectPrefix = buildProjectCSSCacheScopePrefix(projectSlug);
+  for (const key of projectCSSLocalFallback.keys()) {
+    if (key.startsWith(projectPrefix)) {
+      projectCSSLocalFallback.delete(key);
+    }
+  }
+}
 
 registerCache("project-css-cache", () => ({
   name: "project-css-cache",
@@ -175,8 +218,13 @@ export function createProjectCSSRequestContext(
     candidatesHash,
     profileHash,
     environment,
-    cacheKey:
-      `${projectSlug}:${environment}:${PROJECT_CSS_CACHE_SCHEMA}:${stylesheetHash}:${candidatesHash}:${profileHash}`,
+    cacheKey: buildProjectCSSCacheKey({
+      projectScope: projectSlug,
+      environment,
+      stylesheetHash,
+      candidatesHash,
+      profileHash,
+    }),
   };
 }
 
@@ -325,6 +373,7 @@ export async function storeProjectCSS(
   candidates: Set<string>,
 ): Promise<void> {
   const cacheKey = context.cacheKey;
+  const projectSlug = context.projectSlug;
   const stylesheet = context.stylesheet;
   const contextCandidatesHash = context.candidatesHash;
   const capturedEntry = Object.freeze({
@@ -338,30 +387,43 @@ export async function storeProjectCSS(
     throw new TypeError("Project CSS candidate identity does not match the request context");
   }
 
-  if (projectCSSBackend) {
-    const backend = projectCSSBackend;
-    void Promise.resolve()
-      .then(() =>
-        backend.set(
-          cacheKey,
-          serializeCSSCacheValue(capturedEntry, MAX_PROJECT_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
-          PROJECT_CSS_CACHE_TTL_SECONDS,
+  const pendingWrite = beginProjectCSSWrite(projectSlug);
+  let backendWriteScheduled = false;
+  try {
+    if (pendingWrite.precedingInvalidation) {
+      await Promise.allSettled([pendingWrite.precedingInvalidation]);
+    }
+
+    if (projectCSSBackend) {
+      const backend = projectCSSBackend;
+      backendWriteScheduled = true;
+      const backendWrite = Promise.resolve()
+        .then(() =>
+          backend.set(
+            cacheKey,
+            serializeCSSCacheValue(capturedEntry, MAX_PROJECT_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
+            PROJECT_CSS_CACHE_TTL_SECONDS,
+          )
         )
-      )
-      .catch((error) => {
-        cssCacheLog.debug("Failed to store in project CSS cache", {
-          cacheKey,
-          error,
+        .catch((error) => {
+          cssCacheLog.debug("Failed to store in project CSS cache", {
+            cacheKey,
+            error,
+          });
         });
-      });
+      void backendWrite.then(pendingWrite.finish, pendingWrite.finish);
+    }
+
+    setProjectCSSLocalFallback(cacheKey, capturedEntry);
+    if (!backendWriteScheduled) pendingWrite.finish();
+
+    // Await the hash-level cache write so other pods can serve
+    // /_vf/css/{hash}.css immediately. Without awaiting, the browser's
+    // CSS request may hit a different pod before the write completes.
+    await cacheProjectCSSEntryByHash(capturedEntry, candidates, stylesheet);
+  } finally {
+    if (!backendWriteScheduled) pendingWrite.finish();
   }
-
-  setProjectCSSLocalFallback(cacheKey, capturedEntry);
-
-  // Await the hash-level cache write so other pods can serve
-  // /_vf/css/{hash}.css immediately. Without awaiting, the browser's
-  // CSS request may hit a different pod before the write completes.
-  await cacheProjectCSSEntryByHash(capturedEntry, candidates, stylesheet);
 }
 
 /**
@@ -389,14 +451,31 @@ export function invalidateProjectCSS(projectSlug: string): void {
  * propagated so freshness-sensitive callers can fail closed before reload.
  */
 export async function invalidateProjectCSSAsync(projectSlug: string): Promise<void> {
-  for (const key of projectCSSLocalFallback.keys()) {
-    if (key.startsWith(`${projectSlug}:`)) {
-      projectCSSLocalFallback.delete(key);
+  const precedingInvalidation = projectCSSInvalidations.get(projectSlug);
+  const precedingWrites = [...projectCSSPendingWrites.get(projectSlug) ?? []];
+  clearProjectCSSLocalFallback(projectSlug);
+
+  const invalidation = (async () => {
+    await Promise.allSettled([
+      ...(precedingInvalidation ? [precedingInvalidation] : []),
+      ...precedingWrites,
+    ]);
+    clearProjectCSSLocalFallback(projectSlug);
+
+    if (!projectCSSBackend?.delByPattern) return;
+
+    const deleted = await projectCSSBackend.delByPattern(
+      `${buildProjectCSSCacheScopePrefix(projectSlug)}*`,
+    );
+    cssCacheLog.debug("Cleared project CSS cache", { projectSlug, deleted });
+  })();
+  projectCSSInvalidations.set(projectSlug, invalidation);
+
+  const releaseInvalidation = () => {
+    if (projectCSSInvalidations.get(projectSlug) === invalidation) {
+      projectCSSInvalidations.delete(projectSlug);
     }
-  }
-
-  if (!projectCSSBackend?.delByPattern) return;
-
-  const deleted = await projectCSSBackend.delByPattern(`${projectSlug}:*`);
-  cssCacheLog.debug("Cleared project CSS cache", { projectSlug, deleted });
+  };
+  void invalidation.then(releaseInvalidation, releaseInvalidation);
+  return invalidation;
 }

@@ -16,6 +16,7 @@ import { isVirtualFilesystem } from "#veryfront/platform/adapters/fs/wrapper.ts"
 
 const logger = rendererLogger.component("package-registry");
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { DEPENDENCY_PINNING_ENV_FLAG } from "../../release-assets/constants.ts";
 import { isExactSemver } from "./npm-registry-client.ts";
 import { DEFAULT_REACT_VERSION } from "../import-rewriter/url-builder.ts";
@@ -37,6 +38,7 @@ export interface ReactVersionResolutionConfig {
 }
 
 export const MAX_PROJECT_PACKAGE_JSON_BYTES = 1024 * 1024;
+const INVALID_PROJECT_PACKAGE_MANIFEST = Symbol("invalid-project-package-manifest");
 const dependencyVersionCache = new Map<string, CachedDependencyVersions>();
 /**
  * The one dependency snapshot currently authoritative for each package source.
@@ -666,19 +668,16 @@ function getMtimeMs(mtime: Date | null | undefined): number | null {
   return mtime instanceof Date ? mtime.getTime() : null;
 }
 
-function parseDependencySection(
-  value: unknown,
-  field: "dependencies" | "devDependencies",
-): Record<string, string> {
+function parseDependencySection(value: unknown): Record<string, string> {
   if (value === undefined) return copyDependencyMap();
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`package.json ${field} must be an object`);
+    throw INVALID_PROJECT_PACKAGE_MANIFEST;
   }
 
   const result = copyDependencyMap();
   for (const [name, declaration] of Object.entries(value)) {
     if (typeof declaration !== "string") {
-      throw new Error(`package.json ${field}.${name} must be a string`);
+      throw INVALID_PROJECT_PACKAGE_MANIFEST;
     }
     result[name] = declaration;
   }
@@ -686,15 +685,35 @@ function parseDependencySection(
 }
 
 function parsePackageDependencyMap(content: string): Record<string, string> {
-  const parsed: unknown = JSON.parse(content);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw INVALID_PROJECT_PACKAGE_MANIFEST;
+  }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("package.json root must be an object");
+    throw INVALID_PROJECT_PACKAGE_MANIFEST;
   }
   const pkg = parsed as Record<string, unknown>;
   return copyDependencyMap(
-    parseDependencySection(pkg.dependencies, "dependencies"),
-    parseDependencySection(pkg.devDependencies, "devDependencies"),
+    parseDependencySection(pkg.dependencies),
+    parseDependencySection(pkg.devDependencies),
   );
+}
+
+function warnInvalidProjectPackageManifest(
+  packageJsonPath: string,
+  cacheNamespace: string,
+): void {
+  try {
+    logger.warn("Failed to read project dependency versions", {
+      packageJsonPath,
+      cacheNamespace,
+      error: "Invalid project package.json",
+    });
+  } catch {
+    // Diagnostics must never replace the authored-invalid manifest result.
+  }
 }
 
 export async function readProjectDependencyVersions(
@@ -743,9 +762,7 @@ async function readProjectDependencyVersionsUncoalesced(
 
     const beforeStat = await statPath(packageJsonPath);
     if (beforeStat.size > MAX_PROJECT_PACKAGE_JSON_BYTES) {
-      throw new RangeError(
-        `Project package.json exceeds ${MAX_PROJECT_PACKAGE_JSON_BYTES} bytes`,
-      );
+      throw INVALID_PROJECT_PACKAGE_MANIFEST;
     }
     let mtimeMs = getMtimeMs(beforeStat.mtime);
     let size = beforeStat.size;
@@ -767,9 +784,7 @@ async function readProjectDependencyVersionsUncoalesced(
 
     let content = await readPath(packageJsonPath);
     if (new TextEncoder().encode(content).byteLength > MAX_PROJECT_PACKAGE_JSON_BYTES) {
-      throw new RangeError(
-        `Project package.json exceeds ${MAX_PROJECT_PACKAGE_JSON_BYTES} bytes`,
-      );
+      throw INVALID_PROJECT_PACKAGE_MANIFEST;
     }
     // If package.json changes while being read, retry until the bytes are
     // paired with stable post-read metadata. This avoids caching state A under
@@ -777,9 +792,7 @@ async function readProjectDependencyVersionsUncoalesced(
     for (let attempt = 0; attempt < 3; attempt++) {
       const afterStat = await statPath(packageJsonPath);
       if (afterStat.size > MAX_PROJECT_PACKAGE_JSON_BYTES) {
-        throw new RangeError(
-          `Project package.json exceeds ${MAX_PROJECT_PACKAGE_JSON_BYTES} bytes`,
-        );
+        throw INVALID_PROJECT_PACKAGE_MANIFEST;
       }
       const afterMtimeMs = getMtimeMs(afterStat.mtime);
       if (mtimeMs === afterMtimeMs && size === afterStat.size) {
@@ -794,9 +807,7 @@ async function readProjectDependencyVersionsUncoalesced(
       size = afterStat.size;
       content = await readPath(packageJsonPath);
       if (new TextEncoder().encode(content).byteLength > MAX_PROJECT_PACKAGE_JSON_BYTES) {
-        throw new RangeError(
-          `Project package.json exceeds ${MAX_PROJECT_PACKAGE_JSON_BYTES} bytes`,
-        );
+        throw INVALID_PROJECT_PACKAGE_MANIFEST;
       }
     }
 
@@ -830,26 +841,14 @@ async function readProjectDependencyVersionsUncoalesced(
     // re-read because there is no stale mtime entry to short-circuit on.
     dependencyVersionCache.delete(source.cacheIdentity);
     currentDependencyPinningKeys.delete(source.cacheIdentity);
-    // ENOENT means there is no package.json in the project dir — expected for
-    // framework-only environments.  Any other error (permission denied, malformed
-    // JSON, etc.) is logged at warn so it is visible without crashing the server.
-    const errorRecord = error !== null && typeof error === "object"
-      ? error as { code?: unknown; name?: unknown; message?: unknown }
-      : undefined;
-    const errorMessage = String(errorRecord?.message ?? error);
-    const isNotFound = errorRecord?.code === "ENOENT" ||
-      errorRecord?.name === "NotFound" ||
-      /\b(?:file|path) not found\b/i.test(errorMessage) ||
-      /\bno such file or directory\b/i.test(errorMessage);
-    if (!isNotFound) {
-      logger.warn("Failed to read project dependency versions", {
-        packageJsonPath,
-        cacheNamespace: source.cacheIdentity,
-        error: String(error),
-      });
+    if (error === INVALID_PROJECT_PACKAGE_MANIFEST) {
+      warnInvalidProjectPackageManifest(packageJsonPath, source.cacheIdentity);
+      return pinningOn ? { dependencyState: "unknown" } : {};
     }
-    if (!pinningOn) return {};
-    return { dependencyState: isNotFound ? "absent" : "unknown" };
+    if (isCanonicalNotFoundError(error)) {
+      return pinningOn ? { dependencyState: "absent" } : {};
+    }
+    throw error;
   }
 }
 

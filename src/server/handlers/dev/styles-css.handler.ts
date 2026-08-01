@@ -18,7 +18,10 @@ import {
   getCSSByHashAsync,
   getProjectCSS,
 } from "#veryfront/html/styles-builder/css-compiler.ts";
-import { assertCSSContentIdentity } from "#veryfront/html/styles-builder/css-identity.ts";
+import {
+  assertCSSContentIdentity,
+  hashCandidates,
+} from "#veryfront/html/styles-builder/css-identity.ts";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
   createPreparedProjectCSSContext,
@@ -143,10 +146,19 @@ export class StylesCSSHandler extends BaseHandler {
           if (merged) rawCss = merged;
         }
         assertCSSOutputContent(rawCss, "Merged project stylesheet");
+        const candidates = await profilePhase(
+          "css.extract_candidates",
+          () =>
+            extractProjectCandidates(ctx, {
+              projectVersion,
+              developmentMode: artifactPlan.kind === "branch",
+            }, sourceSnapshot),
+        );
         const preparedContext = this.createPreparedCSSContext(
           projectScope,
           projectVersion,
           rawCss,
+          hashCandidates(candidates),
           styleProfile.hash,
           cssPipeline.cacheIdentity,
         );
@@ -192,14 +204,6 @@ export class StylesCSSHandler extends BaseHandler {
           );
         }
 
-        const candidates = await profilePhase(
-          "css.extract_candidates",
-          () =>
-            extractProjectCandidates(ctx, {
-              projectVersion,
-              developmentMode: artifactPlan.kind === "branch",
-            }, sourceSnapshot),
-        );
         let result: GeneratedStylesResult;
         try {
           result = await profilePhase(
@@ -328,6 +332,7 @@ export class StylesCSSHandler extends BaseHandler {
     projectScope: string | undefined,
     projectVersion: string,
     rawCss: string,
+    candidatesHash: string,
     styleProfileHash: string,
     cssPipelineIdentity: string,
   ) {
@@ -340,6 +345,7 @@ export class StylesCSSHandler extends BaseHandler {
       styleProfileHash,
       {
         cssPipelineIdentity,
+        candidatesHash,
         minify: true,
         environment: "preview",
         buildMode: "production",

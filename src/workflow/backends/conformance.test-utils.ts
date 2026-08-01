@@ -708,9 +708,7 @@ export function registerWorkflowBackendPersistenceContract(
         nested: { value: "created" },
       });
       assertEquals(
-        (await backend.listRunsAfterCursor({ status: "waiting", limit: 10 })).map((run) =>
-          run.id
-        ),
+        (await backend.listRunsAfterCursor({ status: "waiting", limit: 10 })).map((run) => run.id),
         ["cursor-new-head", "cursor-😀", "cursor-a", "cursor-old-tail"],
       );
 

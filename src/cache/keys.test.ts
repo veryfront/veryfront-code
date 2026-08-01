@@ -33,6 +33,7 @@ import {
   getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
+import { isCacheKeyPassThroughSafe } from "./keys/api-policy.ts";
 
 const CANONICAL_PIN_KEY = "on:z7bg3qnfgtcb";
 const API_CACHE_KEY_MAX_LENGTH = 512;
@@ -636,6 +637,15 @@ describe("cache/keys", () => {
       assertEquals(await sanitizeCacheKey(key), key);
     });
 
+    it("distinguishes structurally valid fallback keys from direct pass-through keys", async () => {
+      const reserved = "render:tenant:vf-sanitized:literal";
+
+      assertEquals(isValidCacheKey(reserved), true);
+      assertEquals(isCacheKeyPassThroughSafe(reserved), false);
+      assertNotEquals(await sanitizeCacheKey(reserved), reserved);
+      assertEquals(isCacheKeyPassThroughSafe("render:tenant:page"), true);
+    });
+
     it("treats `*` as a wildcard for patterns but not as a valid key character", () => {
       const pattern = "render:proj_123:production:rel-abc:*";
       // `*` is only valid in a del-pattern, never in a concrete key.
@@ -711,6 +721,15 @@ describe("cache/keys", () => {
     it("keeps the reserved fallback namespace distinct from raw valid keys", async () => {
       const sanitized = await sanitizeCacheKey("a b");
       assertNotEquals(await sanitizeCacheKey(sanitized), sanitized);
+    });
+
+    it("does not retain a trusted prefix that would create a reserved-marker alias", async () => {
+      const sanitized = await sanitizeCacheKey(
+        "unsafe key",
+        "tenant-vf-sanitized",
+      );
+
+      assertMatch(sanitized, /^vf-sanitized:[a-f0-9]{64}$/);
     });
 
     it("is deterministic so a get derives the same key as its set", async () => {

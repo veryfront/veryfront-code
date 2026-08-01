@@ -34,7 +34,6 @@ import {
 import {
   MAX_MDX_MODULE_GRAPH_ENTRIES,
   ModuleGraphLimitError,
-  ModuleImportLimitError,
   ModuleSourceLimitError,
 } from "./limits.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
@@ -90,20 +89,6 @@ export class CircularModuleDependencyError extends Error {
 /** Resolve the logger from context, falling back to global logger */
 function getLog(context?: { logger?: Logger }): Logger {
   return context?.logger ?? globalLogger;
-}
-
-function isFatalModuleFetchError(error: unknown): boolean {
-  try {
-    if (!(error instanceof Error)) return false;
-    return error.name === "MissingModuleError" ||
-      error instanceof TransformTreeTimeoutError ||
-      error instanceof CircularModuleDependencyError ||
-      error instanceof ModuleGraphLimitError ||
-      error instanceof ModuleImportLimitError ||
-      error instanceof ModuleSourceLimitError;
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -409,16 +394,11 @@ async function doFetchAndCacheModule(
     });
   } catch (error) {
     const strictMissingModules = context.strictMissingModules ?? true;
-    const fatal = isFatalModuleFetchError(error);
     log.warn(`${LOG_PREFIX_MDX_LOADER} Failed to process module`, {
       strictMissingModules,
-      fatal,
       errorName: classifyThrownValue(error),
     });
-    if (strictMissingModules || fatal) {
-      throw error;
-    }
-    return null;
+    throw error;
   }
 }
 

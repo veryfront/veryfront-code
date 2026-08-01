@@ -14,6 +14,7 @@ import {
   type TokenizingCacheGateway,
 } from "#veryfront/cache/backend.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import {
   assertPortableCode,
   detokenizeAllCachePaths,
@@ -1186,6 +1187,7 @@ async function executeTransformFlight(
           try {
             cacheEntryValid = await validateCachedEntry(cacheEntry);
           } catch (error) {
+            if (!isCanonicalNotFoundError(error)) throw error;
             cacheEntryValid = false;
             cacheValidationError = error instanceof Error ? error.message : String(error);
           }

@@ -4,6 +4,7 @@ import {
 } from "../compat/error-introspection.ts";
 import {
   captureFileSystemCapabilities,
+  captureSnapshotReadCapability,
   copyFixedUint8ArrayWithinLimit,
   getFixedUint8ArrayByteLength,
 } from "./file-system-capabilities.ts";
@@ -16,6 +17,7 @@ export {
 
 const apply = Reflect.apply;
 const numberIsSafeInteger = Number.isSafeInteger;
+const freezeObject = Object.freeze;
 const textDecoderDecode = TextDecoder.prototype.decode;
 const strictUtf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -27,12 +29,39 @@ export interface CapturedBoundedTextReader {
   ): Promise<{ content: string; byteLength: number }>;
 }
 
+export interface CapturedSnapshotTextReader {
+  readUtf8(
+    path: string,
+    containmentRoot: string,
+    maximumBytes: number,
+    label: string,
+  ): Promise<{ content: string; byteLength: number }>;
+}
+
 function decodeUtf8(bytes: Uint8Array, label: string): string {
   try {
     return apply(textDecoderDecode, strictUtf8Decoder, [bytes]) as string;
   } catch (cause) {
     throw new TypeError(`${label} must contain valid UTF-8`, { cause });
   }
+}
+
+function validateTextRead(
+  path: string,
+  maximumBytes: number,
+  label: string,
+): void {
+  if (typeof path !== "string" || path.length === 0) {
+    throw new TypeError(`${label} path must be a non-empty string`);
+  }
+  if (!numberIsSafeInteger(maximumBytes) || maximumBytes <= 0) {
+    throw new RangeError(`${label} maximum must be a positive safe integer`);
+  }
+}
+
+function isNativeRangeError(value: unknown): boolean {
+  return isNativeErrorWithoutHooks(value) &&
+    readNativeErrorNameWithoutHooks(value) === "RangeError";
 }
 
 /**
@@ -49,18 +78,13 @@ export function captureBoundedTextReader(
   const exactReader = capabilities.readFileBytesWithinLimit;
   const wholeFileReader = capabilities.wholeFileReader;
 
-  return Object.freeze({
+  return freezeObject({
     async readUtf8(
       path: string,
       maximumBytes: number,
       contentLabel: string,
     ): Promise<{ content: string; byteLength: number }> {
-      if (typeof path !== "string" || path.length === 0) {
-        throw new TypeError(`${contentLabel} path must be a non-empty string`);
-      }
-      if (!numberIsSafeInteger(maximumBytes) || maximumBytes <= 0) {
-        throw new RangeError(`${contentLabel} maximum must be a positive safe integer`);
-      }
+      validateTextRead(path, maximumBytes, contentLabel);
 
       let bytes: unknown;
       if (exactReader !== undefined) {
@@ -70,10 +94,7 @@ export function captureBoundedTextReader(
           // The exact-read contract reserves RangeError for source overflow.
           // Normalize it to the content-admission error used by CSS callers
           // while preserving operational filesystem failures unchanged.
-          if (
-            isNativeErrorWithoutHooks(cause) &&
-            readNativeErrorNameWithoutHooks(cause) === "RangeError"
-          ) {
+          if (isNativeRangeError(cause)) {
             throw new TypeError(`${contentLabel} exceeds ${maximumBytes} bytes`, {
               cause,
             });
@@ -103,6 +124,55 @@ export function captureBoundedTextReader(
 
       return {
         content: decodeUtf8(admittedBytes, contentLabel),
+        byteLength,
+      };
+    },
+  });
+}
+
+/**
+ * Capture and require a filesystem's root-bound stable snapshot capability.
+ * The returned reader keeps the original method authority, admits a fixed
+ * byte copy, and decodes strict UTF-8 without consulting mutable globals.
+ */
+export function captureSnapshotTextReader(
+  value: unknown,
+  label = "Snapshot text reader",
+): CapturedSnapshotTextReader {
+  const snapshotReader = captureSnapshotReadCapability(value, label);
+  if (snapshotReader === undefined) {
+    throw new TypeError(
+      `${label} requires a genuine root-bound stable snapshot byte reader`,
+    );
+  }
+
+  return freezeObject({
+    async readUtf8(
+      path: string,
+      containmentRoot: string,
+      maximumBytes: number,
+      contentLabel: string,
+    ): Promise<{ content: string; byteLength: number }> {
+      validateTextRead(path, maximumBytes, contentLabel);
+      if (typeof containmentRoot !== "string" || containmentRoot.length === 0) {
+        throw new TypeError(`${contentLabel} containment root must be a non-empty string`);
+      }
+
+      let bytes: Uint8Array;
+      try {
+        bytes = await snapshotReader.read(path, containmentRoot, maximumBytes);
+      } catch (cause) {
+        if (isNativeRangeError(cause)) {
+          throw new TypeError(`${contentLabel} exceeds ${maximumBytes} bytes`, {
+            cause,
+          });
+        }
+        throw cause;
+      }
+
+      const byteLength = getFixedUint8ArrayByteLength(bytes, contentLabel);
+      return {
+        content: decodeUtf8(bytes, contentLabel),
         byteLength,
       };
     },

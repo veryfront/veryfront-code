@@ -6,6 +6,7 @@
  */
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
 import {
@@ -40,7 +41,8 @@ export async function tryReadWithExtensions(
         const content = await fs.readTextFile(sourcePath);
         return { sourcePath, content };
       }
-    } catch (_) {
+    } catch (error) {
+      if (!isCanonicalNotFoundError(error)) throw error;
       /* expected: file may not exist at this extension */
     }
   }
@@ -156,13 +158,15 @@ export async function resolveVeryfrontSourcePath(
       try {
         const srcPath = basePath + ".src";
         if (await existsFn(srcPath)) return srcPath;
-      } catch (_) {
+      } catch (error) {
+        if (!isCanonicalNotFoundError(error)) throw error;
         /* expected: file may not exist at this path */
       }
       // Try exact path
       try {
         if (await existsFn(basePath)) return basePath;
-      } catch (_) {
+      } catch (error) {
+        if (!isCanonicalNotFoundError(error)) throw error;
         /* expected: file may not exist at this path */
       }
       continue;
@@ -179,7 +183,8 @@ export async function resolveVeryfrontSourcePath(
       const pathWithExt = basePath + ext;
       try {
         if (await existsFn(pathWithExt)) return pathWithExt;
-      } catch (_) {
+      } catch (error) {
+        if (!isCanonicalNotFoundError(error)) throw error;
         /* expected: file may not exist at this path */
       }
     }
@@ -189,7 +194,8 @@ export async function resolveVeryfrontSourcePath(
       const indexPath = join(basePath, "index" + ext);
       try {
         if (await existsFn(indexPath)) return indexPath;
-      } catch (_) {
+      } catch (error) {
+        if (!isCanonicalNotFoundError(error)) throw error;
         /* expected: file may not exist at this path */
       }
     }

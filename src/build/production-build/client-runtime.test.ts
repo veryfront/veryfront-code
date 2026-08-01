@@ -1,8 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import * as esbuild from "veryfront/extensions/bundler";
-import type { Bundler, BundleResult, BundlerPluginBuild } from "veryfront/extensions/bundler";
+import type {
+  Bundler,
+  BundleResult,
+  BundlerPluginBuild,
+  ImportSpecifier,
+  ModuleLexer,
+} from "veryfront/extensions/bundler";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 import {
@@ -22,6 +33,19 @@ function bundleResult(text: string): BundleResult {
   };
 }
 
+function importSpecifier(overrides: Partial<ImportSpecifier> = {}): ImportSpecifier {
+  return {
+    n: "react",
+    s: 8,
+    e: 13,
+    ss: 0,
+    se: 14,
+    d: -1,
+    a: -1,
+    ...overrides,
+  };
+}
+
 async function withBundler<T>(bundler: Bundler, operation: () => Promise<T>): Promise<T> {
   const previous = tryResolve<Bundler>("Bundler");
   register("Bundler", bundler);
@@ -31,6 +55,49 @@ async function withBundler<T>(bundler: Bundler, operation: () => Promise<T>): Pr
     unregister("Bundler");
     if (previous !== undefined) register("Bundler", previous);
   }
+}
+
+async function withModuleLexer<T>(
+  lexer: ModuleLexer | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const previous = tryResolve<ModuleLexer>("ModuleLexer");
+  unregister("ModuleLexer");
+  if (lexer !== undefined) register("ModuleLexer", lexer);
+  try {
+    return await operation();
+  } finally {
+    unregister("ModuleLexer");
+    if (previous !== undefined) register("ModuleLexer", previous);
+  }
+}
+
+const EXPECTED_CLIENT_EXTERNALS = new Set([
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react/jsx-runtime",
+  "react/jsx-dev-runtime",
+]);
+
+async function assertBrowserBundleImportsAreSupported(source: string): Promise<void> {
+  const lexer = tryResolve<ModuleLexer>("ModuleLexer");
+  if (!lexer) throw new Error("The test ModuleLexer contract is not registered");
+  await lexer.init?.();
+  const imports = lexer.parse(source);
+  assertEquals(
+    imports.filter((specifier) => specifier.d >= 0 && specifier.n === undefined).length,
+    0,
+    "client bundles must not defer an unauditable computed import to the browser",
+  );
+  assertEquals(
+    imports
+      .filter((specifier) => specifier.n !== undefined)
+      .map((specifier) => specifier.n!)
+      .filter((specifier) => !EXPECTED_CLIENT_EXTERNALS.has(specifier)),
+    [],
+    "client bundles must contain only the external modules provided by the generated import map",
+  );
 }
 
 describe(
@@ -115,16 +182,13 @@ describe(
           );
         });
 
-        it("should not emit unresolved internal aliases", () => {
-          assertEquals(
-            result.includes("#veryfront/"),
-            false,
-            "client runtime bundle should resolve internal aliases before browser delivery",
-          );
+        it("emits only browser-supported external imports", async () => {
+          await assertBrowserBundleImportsAreSupported(result);
         });
 
         it("should match a freshly generated source bundle", async () => {
           const sourceBundle = await generateClientModule({ forceSourceBundle: true });
+          await assertBrowserBundleImportsAreSupported(sourceBundle);
           assertEquals(
             result,
             sourceBundle,
@@ -135,6 +199,11 @@ describe(
     );
 
     describe("source bundle safety", () => {
+      it("bundles the real router graph without server-runtime imports", async () => {
+        const output = await generateClientModule({ forceSourceBundle: true });
+        await assertBrowserBundleImportsAreSupported(output);
+      });
+
       it("reads framework sources through the exact bounded reader", async () => {
         const originalReadFile = Deno.readFile;
         let wholeFileReads = 0;
@@ -326,8 +395,320 @@ describe(
             await assertRejects(
               () => generateClientModule({ forceSourceBundle: true }),
               Error,
-              "contains unresolved internal imports",
+              "unsupported external import",
             );
+          },
+        );
+      });
+
+      for (
+        const specifier of [
+          "node:fs",
+          "deno:land",
+          "bun:test",
+          "file:///tmp/runtime.mjs",
+          "npm:package",
+          "jsr:@scope/package",
+        ]
+      ) {
+        it(`rejects the browser-incompatible ${specifier} protocol`, async () => {
+          await withBundler(
+            {
+              bundle: () => Promise.resolve(bundleResult(`import ${JSON.stringify(specifier)};`)),
+              transform: () => Promise.resolve({ code: "", warnings: [] }),
+            },
+            async () => {
+              await assertRejects(
+                () => generateClientModule({ forceSourceBundle: true }),
+                Error,
+                "unsupported external import",
+              );
+            },
+          );
+        });
+      }
+
+      it("rejects an undeclared bare package import", async () => {
+        await withBundler(
+          {
+            bundle: () => Promise.resolve(bundleResult('import "left-pad";')),
+            transform: () => Promise.resolve({ code: "", warnings: [] }),
+          },
+          async () => {
+            await assertRejects(
+              () => generateClientModule({ forceSourceBundle: true }),
+              Error,
+              "unsupported external import",
+            );
+          },
+        );
+      });
+
+      it("rejects a computed dynamic import whose target cannot be audited", async () => {
+        await withBundler(
+          {
+            bundle: () =>
+              Promise.resolve(
+                bundleResult('const target = "node:fs"; export const pending = import(target);'),
+              ),
+            transform: () => Promise.resolve({ code: "", warnings: [] }),
+          },
+          async () => {
+            await assertRejects(
+              () => generateClientModule({ forceSourceBundle: true }),
+              Error,
+              "computed dynamic import",
+            );
+          },
+        );
+      });
+
+      it("accepts supported externals and import.meta", async () => {
+        const output = [
+          'import ReactDOM from "react-dom/client";',
+          "export const moduleUrl = import.meta.url;",
+          'export const lazyReact = import("react");',
+          "export { ReactDOM };",
+        ].join("\n");
+        await withBundler(
+          {
+            bundle: () => Promise.resolve(bundleResult(output)),
+            transform: () => Promise.resolve({ code: "", warnings: [] }),
+          },
+          async () => {
+            assertEquals(await generateClientModule({ forceSourceBundle: true }), output);
+          },
+        );
+      });
+
+      it("does not mistake protocol text in strings or comments for an import", async () => {
+        const output = [
+          '// import "node:fs" is documentation, not executable syntax',
+          'export const example = "deno:land";',
+        ].join("\n");
+        await withBundler(
+          {
+            bundle: () => Promise.resolve(bundleResult(output)),
+            transform: () => Promise.resolve({ code: "", warnings: [] }),
+          },
+          async () => {
+            assertEquals(await generateClientModule({ forceSourceBundle: true }), output);
+          },
+        );
+      });
+
+      it("fails closed when no ModuleLexer extension is registered", async () => {
+        await withModuleLexer(undefined, async () => {
+          await assertRejects(
+            () => generateClientModule(),
+            Error,
+            "ModuleLexer",
+          );
+        });
+      });
+
+      it("preserves a ModuleLexer initialization failure as the build cause", async () => {
+        const sentinel = new Error("module lexer initialization sentinel");
+        await withModuleLexer(
+          {
+            init: () => Promise.reject(sentinel),
+            parse: () => [],
+          },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            );
+            assertStrictEquals((error as Error & { cause?: unknown }).cause, sentinel);
+          },
+        );
+      });
+
+      it("preserves a ModuleLexer parse failure as the build cause", async () => {
+        const sentinel = new Error("module lexer parse sentinel");
+        await withModuleLexer(
+          {
+            parse(): never {
+              throw sentinel;
+            },
+          },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            );
+            assertStrictEquals((error as Error & { cause?: unknown }).cause, sentinel);
+          },
+        );
+      });
+
+      it("rejects a contradictory import.meta record as malformed lexer output", async () => {
+        await withModuleLexer(
+          {
+            parse: () => [
+              importSpecifier({
+                n: "node:fs",
+                s: 0,
+                e: 11,
+                ss: 0,
+                se: 11,
+                d: -2,
+              }),
+            ],
+          },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            ) as Error & { cause?: unknown; slug?: string };
+            assertEquals(error.slug, "build-failed");
+            assertEquals(error.cause instanceof TypeError, true);
+          },
+        );
+      });
+
+      it("wraps a non-array ModuleLexer result as a build failure", async () => {
+        await withModuleLexer(
+          {
+            parse: () => ({}) as never,
+          },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            ) as Error & { cause?: unknown; slug?: string };
+            assertEquals(error.slug, "build-failed");
+            assertEquals(error.cause instanceof TypeError, true);
+          },
+        );
+      });
+
+      it("preserves a ModuleLexer iterator failure as the build cause", async () => {
+        const sentinel = new Error("module lexer iterator sentinel");
+        const imports = [importSpecifier()];
+        Object.defineProperty(imports, Symbol.iterator, {
+          get(): never {
+            throw sentinel;
+          },
+        });
+
+        await withModuleLexer(
+          { parse: () => imports },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            ) as Error & { cause?: unknown; slug?: string };
+            assertEquals(error.slug, "build-failed");
+            assertStrictEquals(error.cause, sentinel);
+          },
+        );
+      });
+
+      it("preserves a ModuleLexer record failure as the build cause", async () => {
+        const sentinel = new Error("module lexer record sentinel");
+        const imported = Object.defineProperty(importSpecifier(), "d", {
+          get(): never {
+            throw sentinel;
+          },
+        });
+
+        await withModuleLexer(
+          { parse: () => [imported] },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            ) as Error & { cause?: unknown; slug?: string };
+            assertEquals(error.slug, "build-failed");
+            assertStrictEquals(error.cause, sentinel);
+          },
+        );
+      });
+
+      for (const field of ["s", "e", "ss", "se", "d", "a"] as const) {
+        it(`rejects a non-integer ${field} position in ModuleLexer output`, async () => {
+          await withModuleLexer(
+            {
+              parse: () => [importSpecifier({ [field]: Number.NaN })],
+            },
+            async () => {
+              const error = await assertRejects(
+                () => generateClientModule(),
+                Error,
+                "could not be inspected",
+              ) as Error & { cause?: unknown; slug?: string };
+              assertEquals(error.slug, "build-failed");
+              assertEquals(error.cause instanceof TypeError, true);
+            },
+          );
+        });
+      }
+
+      for (
+        const malformed of [
+          { name: "negative specifier start", record: { s: -1 } },
+          { name: "specifier end before its start", record: { e: 7 } },
+          { name: "statement start after the specifier start", record: { ss: 9 } },
+          { name: "statement end before the specifier end", record: { se: 12 } },
+          { name: "unknown negative dynamic-import marker", record: { d: -3 } },
+          { name: "attribute start before the specifier end", record: { a: 7 } },
+        ] as const
+      ) {
+        it(`rejects ${malformed.name} in ModuleLexer output`, async () => {
+          await withModuleLexer(
+            {
+              parse: () => [importSpecifier(malformed.record)],
+            },
+            async () => {
+              const error = await assertRejects(
+                () => generateClientModule(),
+                Error,
+                "could not be inspected",
+              ) as Error & { cause?: unknown; slug?: string };
+              assertEquals(error.slug, "build-failed");
+              assertEquals(error.cause instanceof TypeError, true);
+            },
+          );
+        });
+      }
+
+      it("rejects an unresolved static import record as malformed lexer output", async () => {
+        await withModuleLexer(
+          {
+            parse: () => [importSpecifier({ n: undefined, d: -1 })],
+          },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            ) as Error & { cause?: unknown; slug?: string };
+            assertEquals(error.slug, "build-failed");
+            assertEquals(error.cause instanceof TypeError, true);
+          },
+        );
+      });
+
+      it("rejects a non-string resolved specifier in ModuleLexer output", async () => {
+        await withModuleLexer(
+          {
+            parse: () => [importSpecifier({ n: 42 as unknown as string })],
+          },
+          async () => {
+            const error = await assertRejects(
+              () => generateClientModule(),
+              Error,
+              "could not be inspected",
+            ) as Error & { cause?: unknown; slug?: string };
+            assertEquals(error.slug, "build-failed");
+            assertEquals(error.cause instanceof TypeError, true);
           },
         );
       });
@@ -349,12 +730,8 @@ describe(
           assertEquals(result, clientResult);
         });
 
-        it("should not emit unresolved internal aliases", () => {
-          assertEquals(
-            result.includes("#veryfront/"),
-            false,
-            "router runtime bundle should resolve internal aliases before browser delivery",
-          );
+        it("emits only browser-supported external imports", async () => {
+          await assertBrowserBundleImportsAreSupported(result);
         });
       },
     );
@@ -391,6 +768,10 @@ describe(
           );
         });
 
+        it("emits only browser-supported external imports", async () => {
+          await assertBrowserBundleImportsAreSupported(result);
+        });
+
         it("should be different from the router bundle", async () => {
           const routerResult = await generateClientModule();
           assertEquals(
@@ -405,6 +786,7 @@ describe(
           const sourceBundle = await generatePrefetchScript(null as any, {
             forceSourceBundle: true,
           });
+          await assertBrowserBundleImportsAreSupported(sourceBundle);
           assertEquals(
             result,
             sourceBundle,

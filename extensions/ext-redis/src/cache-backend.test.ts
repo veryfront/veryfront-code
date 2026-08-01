@@ -16,6 +16,13 @@ import {
   REVISIONED_CACHE_KEY_PREFIX,
 } from "veryfront/extensions/distributed/cache-support";
 import { MAX_CACHE_TTL_SECONDS } from "#veryfront/cache/backends/ttl.ts";
+import { compileCacheGlob } from "#veryfront/cache/backends/glob.ts";
+import {
+  buildPreparedProjectCSSCacheKey,
+  buildPreparedProjectCSSCacheScopePrefix,
+  buildProjectCSSCacheKey,
+  buildProjectCSSCacheScopePrefix,
+} from "#veryfront/cache/keys/project-css.ts";
 import { RedisCacheBackend } from "./cache-backend.ts";
 import type { RedisClient, RedisClientManager } from "./redis-client-manager.ts";
 
@@ -757,6 +764,91 @@ describe("RedisCacheBackend pattern deletion", () => {
 
     assertEquals(await backend.delByPattern("project:*"), 0);
     assertEquals(match, "vf:cache:te\\*st\\?:project:*");
+  });
+
+  it("isolates framed CSS scopes containing Redis glob metacharacters", async () => {
+    const digest = "a".repeat(64);
+    const suffix = "scope-suffix";
+    const cases = [
+      {
+        targetKey: buildProjectCSSCacheKey({
+          projectScope: `*${suffix}`,
+          environment: "preview-vf-sanitized",
+          stylesheetHash: digest,
+          candidatesHash: digest,
+          profileHash: digest,
+        }),
+        unrelatedKey: buildProjectCSSCacheKey({
+          projectScope: `other-${suffix}`,
+          environment: "preview",
+          stylesheetHash: digest,
+          candidatesHash: digest,
+          profileHash: digest,
+        }),
+        pattern: `${buildProjectCSSCacheScopePrefix(`*${suffix}`)}*`,
+      },
+      ...[
+        [`colon:${suffix}`, `colon-parent-${suffix}`],
+        [`Malmö/東京-${suffix}`, `Malmö/大阪-${suffix}`],
+        [`lone-high-\ud800-${suffix}`, `replacement-�-${suffix}`],
+        ["a".repeat(256), `${"a".repeat(255)}b`],
+      ].map(([projectScope, unrelatedScope]) => ({
+        targetKey: buildProjectCSSCacheKey({
+          projectScope: projectScope!,
+          environment: "preview",
+          stylesheetHash: digest,
+          candidatesHash: digest,
+          profileHash: digest,
+        }),
+        unrelatedKey: buildProjectCSSCacheKey({
+          projectScope: unrelatedScope!,
+          environment: "preview",
+          stylesheetHash: digest,
+          candidatesHash: digest,
+          profileHash: digest,
+        }),
+        pattern: `${buildProjectCSSCacheScopePrefix(projectScope!)}*`,
+      })),
+      {
+        targetKey: buildPreparedProjectCSSCacheKey({
+          projectScope: `?${suffix}`,
+          environment: "preview-vf-sanitized",
+          identityHash: digest,
+        }),
+        unrelatedKey: buildPreparedProjectCSSCacheKey({
+          projectScope: `x${suffix}`,
+          environment: "preview",
+          identityHash: digest,
+        }),
+        pattern: `${buildPreparedProjectCSSCacheScopePrefix(`?${suffix}`)}*`,
+      },
+    ];
+
+    for (const entry of cases) {
+      const remaining = new Set([
+        `${TEST_PREFIX}${entry.targetKey}`,
+        `${TEST_PREFIX}${entry.unrelatedKey}`,
+      ]);
+      const { backend } = createBackend({
+        scan: (_cursor, options) => {
+          const glob = compileCacheGlob(options?.MATCH ?? "")!;
+          return Promise.resolve({
+            cursor: "0",
+            keys: [...remaining].filter((key) => glob.test(key)),
+          });
+        },
+        eval: (_script, options) => {
+          let deleted = 0;
+          for (const key of options.keys) {
+            if (remaining.delete(key)) deleted++;
+          }
+          return Promise.resolve(deleted);
+        },
+      });
+
+      assertEquals(await backend.delByPattern(entry.pattern), 1);
+      assertEquals(remaining, new Set([`${TEST_PREFIX}${entry.unrelatedKey}`]));
+    }
   });
 
   it("completes SCAN before bounded deletion and rejects repeated cursors", async () => {

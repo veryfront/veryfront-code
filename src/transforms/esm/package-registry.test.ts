@@ -20,6 +20,7 @@ import {
   getDependencyPinningCacheKey,
   getDependencyPinningSnapshot,
   getProjectDependenciesSync,
+  isCurrentDependencyPinningSnapshot,
   isValidReactVersion,
   MAX_PROJECT_PACKAGE_JSON_BYTES,
   normalizeReactVersion,
@@ -33,6 +34,8 @@ import {
   stripSemverRange,
 } from "./package-registry.ts";
 import { DEFAULT_REACT_VERSION } from "./react-cdn.ts";
+import type { Logger } from "#veryfront/utils/logger/logger.ts";
+import { runWithRequestContextAsync } from "#veryfront/utils/logger/request-context.ts";
 
 function cacheKeyForDependencies(
   dependencies: Readonly<Record<string, string>>,
@@ -41,6 +44,74 @@ function cacheKeyForDependencies(
     left.localeCompare(right)
   );
   return `on:${hashString(JSON.stringify(sortedEntries))}`;
+}
+
+interface MutableManifestSourceState {
+  content: string;
+  mtime: Date;
+  reportedSize?: number;
+  statFailure?: unknown;
+  readFailure?: unknown;
+}
+
+function mutableManifestSource(
+  cacheNamespace: string,
+  state: MutableManifestSourceState,
+): DependencyPinningSource {
+  return {
+    projectDir: `/virtual/${cacheNamespace}`,
+    cacheNamespace,
+    fs: {
+      stat: () => {
+        if ("statFailure" in state) return Promise.reject(state.statFailure);
+        return Promise.resolve({
+          size: state.reportedSize ?? new TextEncoder().encode(state.content).byteLength,
+          isFile: true,
+          isDirectory: false,
+          isSymlink: false,
+          mtime: state.mtime,
+        });
+      },
+      readFile: () => {
+        if ("readFailure" in state) return Promise.reject(state.readFailure);
+        return Promise.resolve(state.content);
+      },
+    },
+  };
+}
+
+async function rejectedValue(operation: Promise<unknown>): Promise<{ value: unknown }> {
+  try {
+    await operation;
+  } catch (error) {
+    return { value: error };
+  }
+  throw new Error("Expected operation to reject");
+}
+
+function loggerThatThrowsAt(
+  stage: "component" | "warn",
+  failure: unknown,
+): Logger {
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn() {
+      if (stage === "warn") throw failure;
+    },
+    error() {},
+    time<T>(_label: string, operation: () => Promise<T>): Promise<T> {
+      return operation();
+    },
+    child() {
+      return logger;
+    },
+    component() {
+      if (stage === "component") throw failure;
+      return logger;
+    },
+  };
+  return logger;
 }
 
 describe("package-registry", () => {
@@ -763,6 +834,316 @@ describe("package-registry adapter-backed snapshot sources", () => {
   });
 });
 
+describe("readProjectDependencyVersions failure classification", () => {
+  let originalFlag: string | undefined;
+
+  const flagModes = [
+    { label: "flag off", value: "" },
+    { label: "flag on", value: "1" },
+  ] as const;
+
+  beforeEach(() => {
+    originalFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
+    clearReactVersionCache();
+  });
+
+  afterEach(() => {
+    setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");
+    clearReactVersionCache();
+  });
+
+  for (const mode of flagModes) {
+    it(`keeps canonical absence distinct with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+      const missing = new Deno.errors.NotFound("package.json is absent");
+      const state: MutableManifestSourceState = {
+        content: "{}",
+        mtime: new Date(1_000),
+        statFailure: missing,
+      };
+
+      const result = await readProjectDependencyVersions(
+        mutableManifestSource(`missing-${mode.label}`, state),
+      );
+
+      assertEquals(
+        result,
+        mode.value === "1" ? { dependencyState: "absent" } : {},
+      );
+    });
+
+    it(`keeps authored manifest failures fail-closed with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+      const cases: ReadonlyArray<{
+        label: string;
+        content: string;
+        reportedSize?: number;
+      }> = [
+        { label: "malformed JSON", content: "{ malformed" },
+        {
+          label: "invalid dependency shape",
+          content: JSON.stringify({ dependencies: ["lodash@4.17.21"] }),
+        },
+        {
+          label: "invalid dependency declaration",
+          content: JSON.stringify({ dependencies: { react: 42 } }),
+        },
+        {
+          label: "oversized manifest",
+          content: "{}",
+          reportedSize: MAX_PROJECT_PACKAGE_JSON_BYTES + 1,
+        },
+      ];
+
+      for (const testCase of cases) {
+        const state: MutableManifestSourceState = {
+          content: testCase.content,
+          mtime: new Date(2_000),
+          reportedSize: testCase.reportedSize,
+        };
+        const result = await readProjectDependencyVersions(
+          mutableManifestSource(`${mode.label}-${testCase.label}`, state),
+        );
+
+        assertEquals(
+          result,
+          mode.value === "1" ? { dependencyState: "unknown" } : {},
+          testCase.label,
+        );
+      }
+    });
+
+    it(`keeps invalid-manifest diagnostics from changing results with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+
+      for (const stage of ["component", "warn"] as const) {
+        const loggerFailure = Object.freeze({ stage });
+        const source = mutableManifestSource(
+          `throwing-${stage}-${mode.label}`,
+          { content: "{ malformed", mtime: new Date(2_500) },
+        );
+
+        const result = await runWithRequestContextAsync(
+          {
+            logger: loggerThatThrowsAt(stage, loggerFailure),
+            requestId: `throwing-${stage}`,
+          },
+          () => readProjectDependencyVersions(source),
+        );
+
+        assertEquals(
+          result,
+          mode.value === "1" ? { dependencyState: "unknown" } : {},
+          stage,
+        );
+      }
+    });
+
+    it(`propagates operational stat and read failures by identity with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+      const cases: ReadonlyArray<{
+        label: string;
+        stage: "stat" | "read";
+        failure: unknown;
+      }> = [
+        {
+          label: "EACCES stat",
+          stage: "stat",
+          failure: Object.assign(new Error("permission denied"), { code: "EACCES" }),
+        },
+        {
+          label: "EIO read",
+          stage: "read",
+          failure: Object.assign(new Error("storage unavailable"), { code: "EIO" }),
+        },
+        {
+          label: "heuristic not-found lookalike",
+          stage: "read",
+          failure: Object.assign(new Error("File not found: upstream unavailable"), {
+            name: "NotFound",
+          }),
+        },
+        {
+          label: "arbitrary read rejection",
+          stage: "read",
+          failure: { outage: true },
+        },
+        {
+          label: "plain ENOENT-shaped rejection",
+          stage: "read",
+          failure: Object.freeze({ code: "ENOENT" }),
+        },
+      ];
+
+      for (const testCase of cases) {
+        const state: MutableManifestSourceState = {
+          content: "{}",
+          mtime: new Date(3_000),
+          ...(testCase.stage === "stat"
+            ? { statFailure: testCase.failure }
+            : { readFailure: testCase.failure }),
+        };
+        const source = mutableManifestSource(
+          `${mode.label}-${testCase.label}`,
+          state,
+        );
+
+        assertEquals(
+          (await rejectedValue(readProjectDependencyVersions(source))).value === testCase.failure,
+          true,
+          testCase.label,
+        );
+      }
+    });
+
+    it(`does not inspect a hostile filesystem rejection with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+      let trapCalls = 0;
+      const hostileFailure = new Proxy(Object.create(null), {
+        get() {
+          trapCalls++;
+          throw new Error("hostile get trap must not run");
+        },
+        getPrototypeOf() {
+          trapCalls++;
+          throw new Error("hostile prototype trap must not run");
+        },
+      });
+      const state: MutableManifestSourceState = {
+        content: "{}",
+        mtime: new Date(4_000),
+        readFailure: hostileFailure,
+      };
+
+      const rejection = await rejectedValue(
+        readProjectDependencyVersions(
+          mutableManifestSource(`hostile-${mode.label}`, state),
+        ),
+      );
+
+      assertEquals(rejection.value === hostileFailure, true);
+      assertEquals(trapCalls, 0);
+    });
+
+    it(`propagates a repeatedly unstable manifest snapshot with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+      const content = JSON.stringify({ dependencies: { react: "^19.1.1" } });
+      let statCalls = 0;
+      const source: DependencyPinningSource = {
+        projectDir: `/virtual/unstable-${mode.label}`,
+        cacheNamespace: `unstable-${mode.label}`,
+        fs: {
+          stat: () => {
+            statCalls++;
+            return Promise.resolve({
+              size: new TextEncoder().encode(content).byteLength,
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+              mtime: new Date(statCalls),
+            });
+          },
+          readFile: () => Promise.resolve(content),
+        },
+      };
+
+      const rejection = await rejectedValue(readProjectDependencyVersions(source));
+
+      assertEquals(rejection.value instanceof Error, true);
+      assertEquals(
+        (rejection.value as Error).message,
+        "package.json changed repeatedly while dependency pins were captured",
+      );
+      assertEquals(statCalls, 4);
+    });
+
+    it(`invalidates stale state and retries after operational rejection with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+      const state: MutableManifestSourceState = {
+        content: JSON.stringify({ dependencies: { react: "^18.3.1" } }),
+        mtime: new Date(5_000),
+      };
+      const source = mutableManifestSource(`retry-${mode.label}`, state);
+      const initialSnapshot = mode.value === "1"
+        ? await getDependencyPinningSnapshot(source)
+        : undefined;
+      if (mode.value === "1") {
+        assertEquals(initialSnapshot?.dependencies?.react, "^18.3.1");
+        assertEquals(
+          isCurrentDependencyPinningSnapshot(source, initialSnapshot!.cacheKey),
+          true,
+        );
+      } else {
+        assertEquals((await readProjectDependencyVersions(source)).react, "18.3.1");
+      }
+
+      const failure = Object.assign(new Error("temporary storage failure"), { code: "EIO" });
+      state.statFailure = failure;
+      const rejected = await rejectedValue(
+        mode.value === "1"
+          ? getDependencyPinningSnapshot(source)
+          : readProjectDependencyVersions(source),
+      );
+
+      assertEquals(rejected.value === failure, true);
+      assertEquals(getProjectDependenciesSync(source), undefined);
+      if (initialSnapshot) {
+        assertEquals(
+          isCurrentDependencyPinningSnapshot(source, initialSnapshot.cacheKey),
+          false,
+        );
+        assertEquals(
+          await resolveRequestedDependencyPinningSnapshot(
+            source,
+            initialSnapshot.cacheKey,
+          ),
+          initialSnapshot,
+        );
+      }
+
+      delete state.statFailure;
+      state.content = JSON.stringify({ dependencies: { react: "^19.1.1" } });
+      if (mode.value === "1") {
+        const recovered = await getDependencyPinningSnapshot(source);
+        assertEquals(recovered.dependencies?.react, "^19.1.1");
+        assertEquals(isCurrentDependencyPinningSnapshot(source, recovered.cacheKey), true);
+      } else {
+        assertEquals((await readProjectDependencyVersions(source)).react, "19.1.1");
+      }
+    });
+
+    it(`clears a coalesced rejection before retry with ${mode.label}`, async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, mode.value);
+      const failure = Object.assign(new Error("coalesced storage failure"), { code: "EIO" });
+      const state: MutableManifestSourceState = {
+        content: JSON.stringify({ dependencies: { react: "^19.1.1" } }),
+        mtime: new Date(6_000),
+        statFailure: failure,
+      };
+      const source = mutableManifestSource(`coalesced-${mode.label}`, state);
+      const before = _getDependencyVersionReadOperationsForTest();
+
+      const rejected = await Promise.allSettled(
+        Array.from({ length: 8 }, () => readProjectDependencyVersions(source)),
+      );
+
+      assertEquals(_getDependencyVersionReadOperationsForTest() - before, 1);
+      assertEquals(
+        rejected.every((result) => result.status === "rejected" && result.reason === failure),
+        true,
+      );
+
+      delete state.statFailure;
+      const recovered = await readProjectDependencyVersions(source);
+      assertEquals(_getDependencyVersionReadOperationsForTest() - before, 2);
+      assertEquals(
+        mode.value === "1" ? recovered.dependencies?.react : recovered.react,
+        mode.value === "1" ? "^19.1.1" : "19.1.1",
+      );
+    });
+  }
+});
+
 describe("readProjectDependencyVersions — flag-gated dependency materialization", () => {
   let tmpDir: string;
   let originalFlag: string | undefined;
@@ -1021,11 +1402,10 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
     }
   });
 
-  it("does not write back latest when package.json is unreadable", async () => {
+  it("propagates an unreadable package.json before import writeback", async () => {
     setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
     await Deno.remove(`${tmpDir}/package.json`);
     await Deno.mkdir(`${tmpDir}/package.json`);
-    const snapshot = await getDependencyPinningSnapshot(tmpDir);
     let posts = 0;
     _setDependencyResolutionPosterForTest(() => {
       posts++;
@@ -1033,15 +1413,11 @@ describe("readProjectDependencyVersions — flag-gated dependency materializatio
     });
 
     try {
-      rewriteSSRImportsCompat(`import value from "undeclared";`, {
-        projectDir: tmpDir,
-        projectId: "project-id",
-        dependencyPinningCacheKey: snapshot.cacheKey,
-        dependencyPinningDependencies: snapshot.dependencies,
-      });
+      await assertRejects(
+        () => getDependencyPinningSnapshot(tmpDir),
+        Deno.errors.IsADirectory,
+      );
       await _pendingResolutions();
-      assertEquals(snapshot.cacheKey, "on:unknown");
-      assertEquals(snapshot.dependencies, undefined);
       assertEquals(posts, 0);
     } finally {
       _setDependencyResolutionPosterForTest();

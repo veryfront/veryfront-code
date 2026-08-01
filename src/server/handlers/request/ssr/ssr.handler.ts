@@ -115,7 +115,7 @@ export class SSRHandler extends BaseHandler {
     );
   }
 
-  private setupContextAndRender(
+  private async setupContextAndRender(
     req: Request,
     ctx: HandlerContext,
     slug: string,
@@ -139,7 +139,7 @@ export class SSRHandler extends BaseHandler {
           slug,
         });
 
-        return fsAdapter.runWithContext(
+        return await fsAdapter.runWithContext(
           ctx.projectSlug,
           effectiveToken,
           () => this.handleWithContext(req, ctx, slug, requestId, url),
@@ -155,16 +155,30 @@ export class SSRHandler extends BaseHandler {
       }
 
       if (isExtended && fsAdapter.isContextualMode()) {
-        // setRequestToken and setRequestBranch are optional per-request context hints;
-        // some adapters may not support them. Swallow those errors gracefully.
+        if (ctx.proxyToken) {
+          try {
+            fsAdapter.setRequestToken(ctx.proxyToken);
+          } catch (e) {
+            if (e instanceof NotSupportedError) {
+              logger.debug("Adapter does not support request token selection", {
+                projectSlug: ctx.projectSlug,
+              });
+            } else {
+              return this.handleContextSetupFailure(req, ctx, slug, e, "request token");
+            }
+          }
+        }
+
         try {
-          if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
           fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
         } catch (e) {
-          logger.warn("Non-critical adapter context setup failed (token/branch)", {
-            error: e instanceof Error ? e.message : String(e),
-            projectSlug: ctx.projectSlug,
-          });
+          if (e instanceof NotSupportedError) {
+            logger.debug("Adapter does not support request branch selection", {
+              projectSlug: ctx.projectSlug,
+            });
+          } else {
+            return this.handleContextSetupFailure(req, ctx, slug, e, "request branch");
+          }
         }
 
         // Production-mode selection is part of request isolation. Rendering after
@@ -183,39 +197,31 @@ export class SSRHandler extends BaseHandler {
               projectSlug: ctx.projectSlug,
             });
           } else {
-            return this.handleProductionModeSetupFailure(req, ctx, slug, e);
+            return this.handleContextSetupFailure(req, ctx, slug, e, "production mode");
           }
         }
       }
 
       return this.handleWithContext(req, ctx, slug, requestId, url);
     } catch (error) {
-      logger.error("Context setup failed — request will fall through to 404", {
-        error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        releaseId: ctx.releaseId,
-        hasToken: !!ctx.proxyToken,
-        isLocalProject: ctx.isLocalProject,
-        slug,
-      });
-      return Promise.resolve(this.continue());
+      return this.handleContextSetupFailure(req, ctx, slug, error, "request context");
     }
   }
 
-  private handleProductionModeSetupFailure(
+  private handleContextSetupFailure(
     req: Request,
     ctx: HandlerContext,
     slug: string,
     error: unknown,
+    operation: string,
   ): Promise<HandlerResult> {
     captureApplicationError(error, {
       boundary: "ssr.context-setup",
       method: req.method,
     });
-    logger.error("Adapter production mode setup failed", {
+    logger.error("Adapter context setup failed", {
       error,
+      operation,
       projectSlug: ctx.projectSlug,
       projectId: ctx.projectId,
       releaseId: ctx.releaseId,
@@ -223,7 +229,7 @@ export class SSRHandler extends BaseHandler {
 
     const internalError = error instanceof Error
       ? error
-      : new Error("Adapter production mode setup failed", { cause: error });
+      : new Error(`Adapter ${operation} setup failed`, { cause: error });
     return this.buildResponse(
       req,
       ctx,

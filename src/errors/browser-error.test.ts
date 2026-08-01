@@ -1,9 +1,59 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createError, ensureBrowserError, toError } from "./browser-error.ts";
+import {
+  createError,
+  ensureBrowserError,
+  snapshotBrowserThrowableDiagnostic,
+  toError,
+} from "./browser-error.ts";
 
 describe("browser error normalization", () => {
+  it("snapshots primitive browser throwables through the bounded diagnostic policy", () => {
+    assertEquals(snapshotBrowserThrowableDiagnostic("failure"), "failure");
+    assertEquals(snapshotBrowserThrowableDiagnostic(42), "42");
+    assertEquals(
+      snapshotBrowserThrowableDiagnostic(
+        "postgres://admin:super-secret-value@db.internal/app",
+      ),
+      "postgres://admin:[REDACTED]@db.internal/app",
+    );
+
+    const bounded = snapshotBrowserThrowableDiagnostic("x".repeat(4_096));
+    assertEquals(bounded.length, 2_048);
+    assert(bounded.endsWith("...[truncated]"));
+  });
+
+  it("snapshots browser Errors only through the safe captured brand", () => {
+    assertEquals(
+      snapshotBrowserThrowableDiagnostic(new TypeError("invalid value")),
+      typeof Error.isError === "function" ? "invalid value" : "Unknown error",
+    );
+  });
+
+  it("does not invoke object hooks while snapshotting a browser throwable", () => {
+    let coercionCalls = 0;
+    let messageReads = 0;
+    const hostile = Object.defineProperties({}, {
+      message: {
+        get(): never {
+          messageReads += 1;
+          throw new Error("message getter must not run");
+        },
+      },
+      [Symbol.toPrimitive]: {
+        value(): never {
+          coercionCalls += 1;
+          throw new Error("conversion hook must not run");
+        },
+      },
+    });
+
+    assertEquals(snapshotBrowserThrowableDiagnostic(hostile), "Unknown error");
+    assertEquals(messageReads, 0);
+    assertEquals(coercionCalls, 0);
+  });
+
   it("detaches ordinary Errors and constructs legacy Veryfront errors", () => {
     const source = new TypeError("invalid value");
     const normalized = ensureBrowserError(source);

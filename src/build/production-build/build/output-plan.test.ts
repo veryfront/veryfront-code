@@ -102,6 +102,29 @@ describe("build/production-build/build/output-plan", () => {
         await Deno.remove(root, { recursive: true });
       }
     });
+
+    it("rejects a dangling symlink in a nested configured source path", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-output-plan-" });
+      const projectDir = `${root}/project`;
+      const missingTarget = `${root}/content-target`;
+      await Deno.mkdir(projectDir);
+      await Deno.symlink(missingTarget, `${projectDir}/content`);
+      try {
+        await assertRejects(
+          () =>
+            assertSafeBuildOutputDirectory(
+              projectDir,
+              `${missingTarget}/pages/dist`,
+              { directories: { pages: "content/pages" } },
+            ),
+          Error,
+          "must not contain dangling symbolic links",
+        );
+        await assertRejects(() => Deno.stat(missingTarget), Deno.errors.NotFound);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
   });
 
   describe("validateBuildOutputPlan", () => {

@@ -26,6 +26,7 @@ import {
   storePreparedProjectCSS,
   tryGetPreparedProjectCSS,
 } from "./prepared-project-css-cache.ts";
+import { hashCandidates } from "./css-identity.ts";
 import {
   shouldIncludeStylePath,
   shouldTraverseStyleDirectory,
@@ -39,7 +40,8 @@ import {
 } from "./stylesheet-path.ts";
 import { hasControlCharacters } from "../../build/utils/string-validation.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import { isFileSnapshotChangedError } from "#veryfront/platform/adapters/file-snapshot-error.ts";
+import { captureSnapshotTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 import {
   MAX_CSS_DIRECTORY_DEPTH,
@@ -93,6 +95,17 @@ export interface PreparedCSSArtifactBuildResult {
   context: ReturnType<typeof createPreparedProjectCSSContext>;
 }
 
+interface PreparedCSSArtifactBuildPlan {
+  readonly projectSlug: string;
+  readonly candidates: Set<string>;
+  readonly stylesheet: string;
+  readonly minify: boolean;
+  readonly environment: string;
+  readonly buildMode: "development" | "production";
+  readonly session: CSSGenerationSession;
+  readonly context: ReturnType<typeof createPreparedProjectCSSContext>;
+}
+
 interface LocalProjectSourceFilesOptions {
   projectDir: string;
   styleProfile: StyleScopeProfile;
@@ -115,9 +128,9 @@ async function resolveCSSGenerationSession(
   return resolved;
 }
 
-export async function buildPreparedCSSArtifactFromFiles(
+async function resolvePreparedCSSArtifactBuildPlan(
   options: CSSPregenerationOptions,
-): Promise<PreparedCSSArtifactBuildResult> {
+): Promise<PreparedCSSArtifactBuildPlan> {
   const {
     projectSlug,
     projectVersion,
@@ -154,12 +167,6 @@ export async function buildPreparedCSSArtifactFromFiles(
   );
   const resolvedStylesheet = discoveredStylesheet ??
     session.compilationSession.defaultStylesheet;
-
-  const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, {
-    minify,
-    environment,
-    buildMode,
-  }, { generationSession: session });
   const context = createPreparedProjectCSSContext(
     projectSlug,
     projectVersion,
@@ -167,21 +174,51 @@ export async function buildPreparedCSSArtifactFromFiles(
     styleProfile.hash,
     {
       cssPipelineIdentity: session.cacheIdentity,
+      candidatesHash: hashCandidates(candidates),
       minify,
       environment,
       buildMode,
     },
   );
 
-  await storePreparedProjectCSS(context, { css: result.css, hash: result.hash });
+  return Object.freeze({
+    projectSlug,
+    candidates,
+    stylesheet: resolvedStylesheet,
+    minify,
+    environment,
+    buildMode,
+    session,
+    context,
+  });
+}
+
+async function executePreparedCSSArtifactBuildPlan(
+  plan: PreparedCSSArtifactBuildPlan,
+): Promise<PreparedCSSArtifactBuildResult> {
+  const result = await getProjectCSS(plan.projectSlug, plan.stylesheet, plan.candidates, {
+    minify: plan.minify,
+    environment: plan.environment,
+    buildMode: plan.buildMode,
+  }, { generationSession: plan.session });
+
+  await storePreparedProjectCSS(plan.context, { css: result.css, hash: result.hash });
 
   return {
     css: result.css,
     hash: result.hash,
-    candidateCount: candidates.size,
+    candidateCount: plan.candidates.size,
     fromCache: result.fromCache,
-    context,
+    context: plan.context,
   };
+}
+
+export async function buildPreparedCSSArtifactFromFiles(
+  options: CSSPregenerationOptions,
+): Promise<PreparedCSSArtifactBuildResult> {
+  return await executePreparedCSSArtifactBuildPlan(
+    await resolvePreparedCSSArtifactBuildPlan(options),
+  );
 }
 
 export async function collectLocalProjectSourceFiles(
@@ -191,7 +228,7 @@ export async function collectLocalProjectSourceFiles(
     throw new TypeError("CSS source project directory must be absolute");
   }
   const fs = options.fs ?? createFileSystem();
-  const reader = captureBoundedTextReader(fs, "Local CSS source filesystem");
+  const reader = captureSnapshotTextReader(fs, "Local CSS source filesystem");
   const files: Array<{ path: string; content?: string }> = [];
   let visitedEntries = 0;
   let selectedFiles = 0;
@@ -249,10 +286,10 @@ export async function collectLocalProjectSourceFiles(
         throw new TypeError(`CSS source content exceeds ${MAX_CSS_FILES} files`);
       }
 
-      if (fs.lstat && (await fs.lstat(fullPath)).isSymlink) continue;
       const remainingBytes = MAX_CSS_TOTAL_BYTES - sourceBytes;
       const { content, byteLength } = await reader.readUtf8(
         fullPath,
+        options.projectDir,
         Math.max(1, Math.min(MAX_CSS_FILE_BYTES, remainingBytes)),
         "CSS source file",
       );
@@ -275,24 +312,6 @@ export async function collectLocalProjectSourceFiles(
   ];
 }
 
-async function assertNoStylesheetSymlink(
-  fs: FileSystem,
-  projectDir: string,
-  relativePath: string,
-): Promise<void> {
-  if (!fs.lstat) return;
-
-  let candidate = projectDir;
-  for (const segment of relativePath.split("/")) {
-    candidate = join(candidate, segment);
-    if ((await fs.lstat(candidate)).isSymlink) {
-      throw new TypeError(
-        `Stylesheet path cannot traverse a symbolic link: ${JSON.stringify(relativePath)}`,
-      );
-    }
-  }
-}
-
 export async function readLocalProjectStylesheet(
   projectDir: string,
   stylesheetPath?: string,
@@ -301,21 +320,27 @@ export async function readLocalProjectStylesheet(
   if (stylesheetPath !== undefined) {
     const canonicalPath = assertCanonicalStylesheetPath(stylesheetPath);
     const absolutePath = resolveProjectStylesheetPath(projectDir, canonicalPath);
-    await assertNoStylesheetSymlink(fs, projectDir, canonicalPath);
-    const reader = captureBoundedTextReader(fs, "Local stylesheet filesystem");
-    return (await reader.readUtf8(absolutePath, MAX_CSS_FILE_BYTES, "Project stylesheet"))
-      .content;
+    const reader = captureSnapshotTextReader(fs, "Local stylesheet filesystem");
+    return (await reader.readUtf8(
+      absolutePath,
+      projectDir,
+      MAX_CSS_FILE_BYTES,
+      "Project stylesheet",
+    )).content;
   }
 
-  const reader = captureBoundedTextReader(fs, "Local stylesheet filesystem");
+  const reader = captureSnapshotTextReader(fs, "Local stylesheet filesystem");
   for (const relativePath of DEFAULT_PROJECT_STYLESHEET_PATHS) {
     const absolutePath = resolveProjectStylesheetPath(projectDir, relativePath);
     try {
-      await assertNoStylesheetSymlink(fs, projectDir, relativePath);
-      return (await reader.readUtf8(absolutePath, MAX_CSS_FILE_BYTES, "Project stylesheet"))
-        .content;
+      return (await reader.readUtf8(
+        absolutePath,
+        projectDir,
+        MAX_CSS_FILE_BYTES,
+        "Project stylesheet",
+      )).content;
     } catch (error) {
-      if (!isNotFoundError(error)) throw error;
+      if (isFileSnapshotChangedError(error) || !isNotFoundError(error)) throw error;
     }
   }
 
@@ -329,57 +354,13 @@ export async function readLocalProjectStylesheet(
 export async function warmPreparedCSSArtifactFromFiles(
   options: CSSPregenerationOptions,
 ): Promise<boolean> {
-  const files = await admitProjectStyleSourceFiles(options.files, {
-    adapter: options.adapter,
-    projectDir: options.projectDir,
-    styleProfile: options.styleProfile,
-    includeStylesheets: true,
-  });
-  const discoveredStylesheet = options.stylesheet ??
-    findStylesheetFromFiles(files, options.stylesheetPath, options.projectDir);
-  if (options.stylesheetPath !== undefined && discoveredStylesheet === undefined) {
-    throw new TypeError(
-      `Configured stylesheet ${
-        JSON.stringify(options.stylesheetPath)
-      } was not available in project source`,
-    );
-  }
-  const minify = options.minify ?? true;
-  const session = await resolveCSSGenerationSession(
-    minify,
-    options.generationSession,
-  );
-  const stylesheet = discoveredStylesheet ?? session.compilationSession.defaultStylesheet;
-  const context = createPreparedProjectCSSContext(
-    options.projectSlug,
-    options.projectVersion,
-    stylesheet,
-    options.styleProfile.hash,
-    {
-      cssPipelineIdentity: session.cacheIdentity,
-      minify,
-      environment: options.environment ?? "preview",
-      buildMode: options.buildMode ?? "production",
-    },
-  );
+  const plan = await resolvePreparedCSSArtifactBuildPlan(options);
+  const context = plan.context;
 
   if (await tryGetPreparedProjectCSS(context)) return false;
   if (inFlightPreparedCSSBuilds.has(context.cacheKey)) return false;
 
-  const task = buildPreparedCSSArtifactFromFiles({
-    projectSlug: options.projectSlug,
-    projectVersion: options.projectVersion,
-    projectDir: options.projectDir,
-    adapter: options.adapter,
-    files,
-    styleProfile: options.styleProfile,
-    stylesheet,
-    stylesheetPath: options.stylesheetPath,
-    minify,
-    environment: options.environment,
-    buildMode: options.buildMode,
-    generationSession: session,
-  }).then(() => {
+  const task = executePreparedCSSArtifactBuildPlan(plan).then(() => {
     logger.debug("Warm prepared CSS complete", {
       projectSlug: options.projectSlug,
       projectVersion: options.projectVersion,

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
@@ -194,7 +199,9 @@ describe("NodeCompatibleFileSystemAdapter", () => {
   });
 
   it("wraps post-lstat open failure as snapshot identity uncertainty", async () => {
-    const openFailure = new Error("pathname removed before open");
+    const openFailure = Object.assign(new Error("pathname removed before open"), {
+      code: "ENOENT",
+    });
     const stat = {
       dev: 1n,
       ino: 2n,
@@ -225,8 +232,101 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     assertEquals(lstatCalls, 1);
   });
 
+  it("brands a no-follow open symlink race as snapshot identity uncertainty", async () => {
+    const symlinkRace = Object.assign(new Error("pathname replaced by a symlink"), {
+      code: "ELOOP",
+    });
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let lstatCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => {
+          lstatCalls++;
+          return Promise.resolve(stat);
+        },
+        open: () => Promise.reject(symlinkRace),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      FileSnapshotChangedError,
+    ) as FileSnapshotChangedError & { cause?: unknown };
+    assertStrictEquals(error.cause, symlinkRace);
+    assertEquals(lstatCalls, 1);
+  });
+
+  it("propagates operational post-lstat open failures with exact identity", async () => {
+    const permissionFailure = Object.assign(new Error("snapshot open denied"), {
+      code: "EACCES",
+    });
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(stat),
+        open: () => Promise.reject(permissionFailure),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      Error,
+      "snapshot open denied",
+    );
+    assertStrictEquals(error, permissionFailure);
+  });
+
+  it("propagates a plain ENOENT-shaped post-lstat open rejection unchanged", async () => {
+    const failure = Object.freeze({ code: "ENOENT" });
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(stat),
+        open: () => Promise.reject(failure),
+      },
+    });
+
+    const actual = await assertRejects(() =>
+      requireSnapshotReader(adapter)("/root/file.bin", "/root", 3)
+    );
+
+    assertStrictEquals(actual, failure);
+  });
+
   it("wraps the first handle metadata failure as snapshot identity uncertainty", async () => {
-    const statFailure = new Error("opened handle identity unavailable");
+    const statFailure = Object.assign(new Error("opened handle identity unavailable"), {
+      code: "ENOENT",
+    });
     const pathnameStat = {
       dev: 1n,
       ino: 2n,
@@ -258,6 +358,258 @@ describe("NodeCompatibleFileSystemAdapter", () => {
       FileSnapshotChangedError,
     ) as FileSnapshotChangedError & { cause?: unknown };
     assertEquals(error.cause, statFailure);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("propagates a first handle metadata ELOOP with exact identity", async () => {
+    const symlinkLoop = Object.assign(new Error("opened handle reported a symlink loop"), {
+      code: "ELOOP",
+    });
+    const pathnameStat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(pathnameStat),
+        open: () =>
+          Promise.resolve({
+            stat: () => Promise.reject(symlinkLoop),
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      Error,
+    );
+    assertStrictEquals(error, symlinkLoop);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("preserves snapshot verification and handle cleanup failures", async () => {
+    const statFailure = Object.assign(new Error("opened handle identity unavailable"), {
+      code: "EIO",
+    });
+    const closeFailure = new Error("snapshot handle close failed");
+    const pathnameStat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(pathnameStat),
+        open: () =>
+          Promise.resolve({
+            stat: () => Promise.reject(statFailure),
+            close: () => {
+              closeCalls++;
+              return Promise.reject(closeFailure);
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      AggregateError,
+    ) as AggregateError;
+    assertEquals(error.errors.length, 2);
+    assertStrictEquals(error.errors[0], statFailure);
+    assertEquals(error.errors[1], closeFailure);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("brands a pathname symlink race during verification as a snapshot change", async () => {
+    const symlinkRace = Object.assign(new Error("pathname became a symlink"), {
+      code: "ELOOP",
+    });
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let lstatCalls = 0;
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => {
+          lstatCalls++;
+          return lstatCalls === 1 ? Promise.resolve(stat) : Promise.reject(symlinkRace);
+        },
+        open: () =>
+          Promise.resolve({
+            stat: () => Promise.resolve(stat),
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      FileSnapshotChangedError,
+    ) as FileSnapshotChangedError & { cause?: unknown };
+    assertStrictEquals(error.cause, symlinkRace);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("propagates operational pathname verification failures with exact identity", async () => {
+    const permissionFailure = Object.assign(new Error("snapshot verification denied"), {
+      code: "EACCES",
+    });
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let lstatCalls = 0;
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => {
+          lstatCalls++;
+          return lstatCalls === 1 ? Promise.resolve(stat) : Promise.reject(permissionFailure);
+        },
+        open: () =>
+          Promise.resolve({
+            stat: () => Promise.resolve(stat),
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      Error,
+      "snapshot verification denied",
+    );
+    assertStrictEquals(error, permissionFailure);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("propagates operational post-read verification failures with exact identity", async () => {
+    const ioFailure = Object.assign(new Error("snapshot verification device failed"), {
+      code: "EIO",
+    });
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let handleStatCalls = 0;
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(stat),
+        open: () =>
+          Promise.resolve({
+            stat: () => handleStatCalls++ === 0 ? Promise.resolve(stat) : Promise.reject(ioFailure),
+            read: (buffer: Uint8Array) => {
+              buffer.set([1, 2, 3]);
+              return Promise.resolve({ bytesRead: 3 });
+            },
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      Error,
+      "snapshot verification device failed",
+    );
+    assertStrictEquals(error, ioFailure);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("propagates a post-read handle metadata ELOOP with exact identity", async () => {
+    const symlinkLoop = Object.assign(new Error("opened handle reported a symlink loop"), {
+      code: "ELOOP",
+    });
+    const stat = {
+      dev: 1n,
+      ino: 2n,
+      size: 3n,
+      mtimeNs: 4n,
+      ctimeNs: 5n,
+      isFile: () => true,
+      isSymbolicLink: () => false,
+    };
+    let handleStatCalls = 0;
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      noFollow: 1,
+      operations: {
+        realpath: (path: string) => Promise.resolve(path),
+        lstat: () => Promise.resolve(stat),
+        open: () =>
+          Promise.resolve({
+            stat: () =>
+              handleStatCalls++ === 0 ? Promise.resolve(stat) : Promise.reject(symlinkLoop),
+            read: (buffer: Uint8Array) => {
+              buffer.set([1, 2, 3]);
+              return Promise.resolve({ bytesRead: 3 });
+            },
+            close: () => {
+              closeCalls++;
+              return Promise.resolve();
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireSnapshotReader(adapter)("/root/file.bin", "/root", 3),
+      Error,
+    );
+    assertStrictEquals(error, symlinkLoop);
     assertEquals(closeCalls, 1);
   });
 
@@ -345,6 +697,60 @@ describe("NodeCompatibleFileSystemAdapter", () => {
     assertEquals(error, failure);
     assertEquals(closeCalls, 1);
     assertEquals(removeCalls, 0);
+  });
+
+  it("preserves exclusive-create write and handle cleanup failures", async () => {
+    const writeFailure = new Error("injected write failure");
+    const closeFailure = new Error("exclusive-create handle close failed");
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      operations: {
+        open: () =>
+          Promise.resolve({
+            writeFile: () => Promise.reject(writeFailure),
+            close: () => {
+              closeCalls++;
+              return Promise.reject(closeFailure);
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireExclusiveCreator(adapter)("/reserved.bin", new Uint8Array([1])),
+      AggregateError,
+    ) as AggregateError;
+    assertEquals(error.errors, [writeFailure, closeFailure]);
+    assertEquals(closeCalls, 1);
+  });
+
+  it("reports handle cleanup failure after a successful exclusive create", async () => {
+    const closeFailure = new Error("exclusive-create handle close failed");
+    let writeCalls = 0;
+    let closeCalls = 0;
+    const adapter = new TestableNodeCompatibleFileSystemAdapter(undefined, {
+      operations: {
+        open: () =>
+          Promise.resolve({
+            writeFile: () => {
+              writeCalls++;
+              return Promise.resolve();
+            },
+            close: () => {
+              closeCalls++;
+              return Promise.reject(closeFailure);
+            },
+          }),
+      },
+    });
+
+    const error = await assertRejects(
+      () => requireExclusiveCreator(adapter)("/reserved.bin", new Uint8Array([1])),
+      Error,
+    );
+    assertEquals(error, closeFailure);
+    assertEquals(writeCalls, 1);
+    assertEquals(closeCalls, 1);
   });
 
   it("marks only direct built-in instances as native", () => {

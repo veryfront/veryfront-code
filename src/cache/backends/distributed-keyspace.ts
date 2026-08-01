@@ -1,3 +1,9 @@
+import {
+  decodePreparedProjectCSSCacheKey,
+  decodeProjectCSSCacheKey,
+  PREPARED_PROJECT_CSS_CACHE_NAMESPACE,
+  PROJECT_CSS_CACHE_NAMESPACE,
+} from "../keys/project-css.ts";
 import { decodeCacheKeyPercentSegment, decodeCacheKeySegment } from "../keys/segment-codec.ts";
 
 /**
@@ -12,10 +18,10 @@ export const DistributedCacheNamespace = {
   RENDER: "render",
   HTTP_MODULE: "http-module",
   SSR_MODULE: "ssr-module",
-  PROJECT_CSS: "project-css",
+  PROJECT_CSS: PROJECT_CSS_CACHE_NAMESPACE,
   CSS: "css",
   CSS_INPUTS: "css-inputs",
-  PREPARED_PROJECT_CSS: "prepared-project-css",
+  PREPARED_PROJECT_CSS: PREPARED_PROJECT_CSS_CACHE_NAMESPACE,
   SNIPPET: "snippet",
 } as const;
 
@@ -119,24 +125,27 @@ export const matchRenderCacheProjectOwnership: DistributedCacheOwnershipMatcher 
 };
 
 function matchProjectCssOwnership(key: string): DistributedCacheKeyOwnership | null {
-  const parts = key.split(":");
-  if (
-    parts.length < 5 ||
-    !parts[0] ||
-    (parts[1] !== "production" && parts[1] !== "preview")
-  ) return null;
-  return { projectSlug: parts[0], environment: parts[1] };
+  const decoded = decodeProjectCSSCacheKey(key);
+  if (decoded === null) return null;
+
+  return {
+    projectSlug: decoded.projectScope,
+    environment: decoded.environment === "production" || decoded.environment === "preview"
+      ? decoded.environment
+      : undefined,
+  };
 }
 
 function matchPreparedProjectCssOwnership(key: string): DistributedCacheKeyOwnership | null {
-  const parts = key.split(":");
-  if (
-    parts.length < 7 ||
-    !parts[0] ||
-    (parts[1] !== "production" && parts[1] !== "preview") ||
-    parts[2] !== "prepared"
-  ) return null;
-  return { projectSlug: parts[0], environment: parts[1] };
+  const decoded = decodePreparedProjectCSSCacheKey(key);
+  if (decoded === null) return null;
+
+  return {
+    projectSlug: decoded.projectScope,
+    environment: decoded.environment === "production" || decoded.environment === "preview"
+      ? decoded.environment
+      : undefined,
+  };
 }
 
 const INITIAL_DESCRIPTORS: DistributedCacheNamespaceDescriptor[] = [
@@ -146,11 +155,14 @@ const INITIAL_DESCRIPTORS: DistributedCacheNamespaceDescriptor[] = [
   { prefix: "vf:cache:render:", matchProjectOwnership: matchRenderCacheProjectOwnership },
   { prefix: "vf:cache:http-module:" },
   { prefix: "vf:cache:ssr-module:", matchProjectOwnership: matchSsrModuleProjectOwnership },
-  { prefix: "vf:cache:project-css:", matchProjectOwnership: matchProjectCssOwnership },
+  {
+    prefix: `${DISTRIBUTED_CACHE_ROOT}${PROJECT_CSS_CACHE_NAMESPACE}:`,
+    matchProjectOwnership: matchProjectCssOwnership,
+  },
   { prefix: "vf:cache:css:" },
   { prefix: "vf:cache:css-inputs:" },
   {
-    prefix: "vf:cache:prepared-project-css:",
+    prefix: `${DISTRIBUTED_CACHE_ROOT}${PREPARED_PROJECT_CSS_CACHE_NAMESPACE}:`,
     matchProjectOwnership: matchPreparedProjectCssOwnership,
   },
   { prefix: "vf:cache:snippet:" },

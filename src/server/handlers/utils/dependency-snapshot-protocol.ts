@@ -153,6 +153,7 @@ export function snapshotConflictResponse(
     .withSecurity(securityConfig ?? undefined, req)
     .withCache("no-store");
   applySnapshotResponseHeaders(prepared.headers);
+  if (req.method === "HEAD") return prepared.build(null, 409);
   return prepared.text(SNAPSHOT_CONFLICT_BODY, 409);
 }
 

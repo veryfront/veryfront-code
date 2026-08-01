@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { defineSchema } from "#veryfront/schemas";
 import { tool } from "#veryfront/tool";
@@ -275,6 +275,196 @@ describe("workflow command", () => {
         "backend:destroy",
         "extensions:teardown",
       ]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("destroys an explicitly selected backend when client initialization fails", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-workflow-command-" });
+    const initializationError = new Error("distributed backend initialization failed");
+    const backend = new MemoryBackend();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      return Promise.reject(initializationError);
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      return Promise.resolve();
+    };
+    const candidate = workflow({
+      id: "distributed-initialization-failure",
+      description: "Exercise distributed workflow lifecycle ownership.",
+      steps: [],
+    });
+
+    try {
+      const failure = await assertRejects(
+        () =>
+          runWorkflowCommand(
+            {
+              action: "run",
+              name: candidate.id,
+              input: undefined,
+              backend: "distributed",
+              debug: false,
+              projectDir,
+            },
+            {
+              orchestrateExtensions: () =>
+                Promise.resolve({ teardownAll: () => Promise.resolve() }),
+              discoverProjectAgentRuntime: () => {
+                const discovery = createEmptyDiscoveryResult();
+                discovery.workflows.set(candidate.id, candidate);
+                return Promise.resolve(discovery);
+              },
+              createDistributedWorkflowBackend: () => backend,
+            },
+          ),
+        Error,
+        initializationError.message,
+      );
+      assertStrictEquals(failure, initializationError);
+      assertEquals(initializeCalls, 1);
+      assertEquals(destroyCalls, 1);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("destroys an explicitly selected backend when client construction fails before extension teardown", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-workflow-command-" });
+    const events: string[] = [];
+    const backend = new MemoryBackend();
+    let destroyCalls = 0;
+    Object.defineProperty(backend, "acquireLock", { value: undefined });
+    backend.destroy = () => {
+      destroyCalls++;
+      events.push("backend:destroy");
+      return Promise.resolve();
+    };
+    const candidate = workflow({
+      id: "distributed-construction-failure",
+      description: "Exercise backend cleanup after client construction failure.",
+      steps: [],
+    });
+
+    try {
+      await assertRejects(
+        () =>
+          runWorkflowCommand(
+            {
+              action: "run",
+              name: candidate.id,
+              input: undefined,
+              backend: "distributed",
+              debug: false,
+              projectDir,
+            },
+            {
+              orchestrateExtensions: () =>
+                Promise.resolve({
+                  teardownAll: () => {
+                    events.push("extensions:teardown");
+                    return Promise.resolve();
+                  },
+                }),
+              discoverProjectAgentRuntime: () => {
+                const discovery = createEmptyDiscoveryResult();
+                discovery.workflows.set(candidate.id, candidate);
+                return Promise.resolve(discovery);
+              },
+              createDistributedWorkflowBackend: () => backend,
+            },
+          ),
+        Error,
+        "locking requires backend acquireLock, extendLock, releaseLock, and lock-fenced update",
+      );
+
+      assertEquals(destroyCalls, 1);
+      assertEquals(events, ["backend:destroy", "extensions:teardown"]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("preserves initialization and backend cleanup failures while tearing down extensions afterward", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-workflow-command-" });
+    const events: string[] = [];
+    const initializationError = new Error("distributed backend initialization failed");
+    const destroyError = new Error("distributed backend cleanup failed");
+    const backend = new MemoryBackend();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      events.push("backend:initialize");
+      return Promise.reject(initializationError);
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      events.push("backend:destroy");
+      return Promise.reject(destroyError);
+    };
+    const candidate = workflow({
+      id: "distributed-initialization-and-cleanup-failure",
+      description: "Preserve lifecycle failure identities during command cleanup.",
+      steps: [],
+    });
+
+    try {
+      const failure = await assertRejects(
+        () =>
+          runWorkflowCommand(
+            {
+              action: "run",
+              name: candidate.id,
+              input: undefined,
+              backend: "distributed",
+              debug: false,
+              projectDir,
+            },
+            {
+              orchestrateExtensions: () =>
+                Promise.resolve({
+                  teardownAll: () => {
+                    events.push("extensions:teardown");
+                    return Promise.resolve();
+                  },
+                }),
+              discoverProjectAgentRuntime: () => {
+                const discovery = createEmptyDiscoveryResult();
+                discovery.workflows.set(candidate.id, candidate);
+                return Promise.resolve(discovery);
+              },
+              createDistributedWorkflowBackend: () => backend,
+            },
+          ),
+        AggregateError,
+        "Workflow execution and backend cleanup failed",
+      );
+
+      if (!(failure instanceof AggregateError)) {
+        throw new Error("Expected combined workflow lifecycle failure");
+      }
+      assertEquals(initializeCalls, 1);
+      assertEquals(destroyCalls, 1);
+      assertEquals(events, [
+        "backend:initialize",
+        "backend:destroy",
+        "extensions:teardown",
+      ]);
+      assertEquals(failure.errors.length, 2);
+      assertStrictEquals(failure.errors[0], initializationError);
+
+      const cleanupFailure = failure.errors[1];
+      if (!(cleanupFailure instanceof AggregateError)) {
+        throw new Error("Expected backend cleanup failure to be aggregated");
+      }
+      assertEquals(cleanupFailure.errors.length, 1);
+      assertStrictEquals(cleanupFailure.errors[0], destroyError);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }

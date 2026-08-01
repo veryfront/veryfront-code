@@ -26,27 +26,30 @@ Generated-only changes do not count as module review evidence.
 
 | Status                         | Count | Percentage | Meaning                                                       |
 | ------------------------------ | ----: | ---------: | ------------------------------------------------------------- |
-| Closed                         |    43 |      74.1% | Current formal closure evidence remains valid                 |
+| Closed                         |    48 |      82.8% | Current formal closure evidence remains valid                 |
 | Deep reviewed, fixes pending   |     0 |       0.0% | No unit is tracked solely in this intermediate state          |
-| Touched, revalidation required |    15 |      25.9% | Current work or later source changes require top-level review |
+| Touched, revalidation required |    10 |      17.2% | Current work or later source changes require top-level review |
 | Pending current review         |     0 |       0.0% | No unit remains wholly unaudited                              |
 | Total                          |    58 |     100.0% | All audit units                                               |
 
-All 58 units have received substantive current-cycle audit work. Fifteen units
+All 58 units have received substantive current-cycle audit work. Ten units
 still require top-level revalidation, so this coverage is not a substitute for
-the stricter 43-unit closure count.
+the stricter 48-unit closure count.
 
 ### Closed
 
 - `agent`
+- `cache`
 - `channels`
 - `chat`
 - `client`
+- `config`
 - `data`
 - `discovery`
 - `embedding`
 - `errors`
 - `eval`
+- `extensions`
 - `index.ts`
 - `internal-agents`
 - `integrations`
@@ -65,6 +68,7 @@ the stricter 43-unit closure count.
 - `proxy`
 - `registry`
 - `release-assets`
+- `repositories`
 - `resource`
 - `routing`
 - `runs`
@@ -79,6 +83,7 @@ the stricter 43-unit closure count.
 - `tool`
 - `trigger`
 - `types`
+- `utils`
 - `webhook`
 - `version.ts`
 
@@ -89,19 +94,14 @@ None.
 ### Touched, revalidation required
 
 - `build`
-- `cache`
-- `config`
-- `extensions`
 - `fs`
 - `html`
 - `platform`
 - `react`
 - `rendering`
-- `repositories`
 - `security`
 - `server`
 - `transforms`
-- `utils`
 - `workflow`
 
 ### Pending current review
@@ -122,10 +122,11 @@ every affected unit.
 
 ## Active review chain
 
-The current closed review chain is exactly the 43 units listed under Current
-status. Post-checkpoint source changes reopened `build`, `cache`, `config`,
-`extensions`, `fs`, `html`, `platform`, `rendering`, `repositories`, `security`,
-`transforms`, and `utils`. Earlier closure evidence for these units remains
+The current closed review chain is exactly the 48 units listed under Current
+status. Current-state revalidation restored `cache`, `config`, `extensions`,
+`repositories`, and `utils` after their post-checkpoint changes. Later source
+changes still leave `build`, `fs`, `html`, `platform`, `rendering`, `security`,
+and `transforms` open. Earlier closure evidence for those units remains
 useful, but it does not certify their current implementations. `react`,
 `server`, and `workflow` remain open for their existing remediation and
 top-level gates.
@@ -135,16 +136,17 @@ process-global test helpers, timing, documentation, and direct consumers were
 remediated and revalidated.
 The latest Chat findings and the independent adversarial knowledge, Markdown,
 MDX, provider, runs, runtime, and sandbox findings are remediated and
-revalidated. The last completed `repositories` review remediated its recorded
-findings; later Repositories changes require top-level revalidation. `prompt`
-is closed after its cross-cutting registry, discovery, HMR, request-lifecycle,
-and MCP findings were remediated and revalidated.
+revalidated. The current Repositories revalidation confirms its later
+snapshot-capability propagation is conditional, immutable, root-bound, and
+error-preserving; its recorded low-risk composition residual remains explicit.
+`prompt` is closed after its cross-cutting registry, discovery, HMR,
+request-lifecycle, and MCP findings were remediated and revalidated.
 `registry` is closed after its scope lifecycle, request-generation isolation,
 transaction invalidation, and cross-entry validation findings were remediated
-and revalidated. The last completed `cache` review covered its backend
-contracts, key identity and invalidation, portability, request lifecycle,
-multi-tier coordination, and dependency hashing; later Cache changes require
-top-level revalidation. `channels` is closed after its signed-envelope, proxy
+and revalidated. The current Cache revalidation confirms its later changes
+preserve backend contracts, key identity and invalidation, portability, request
+lifecycle, multi-tier coordination, and dependency hashing. `channels` is
+closed after its signed-envelope, proxy
 trust, route identity, invoke lifecycle, serialization, and consumer findings
 were remediated and revalidated. The last completed `fs` review covered its
 public facade, cross-runtime failure semantics, atomic temporary allocation,
@@ -187,8 +189,10 @@ transactions, source-module and package-resolution caches, production startup
 policy, documentation, and direct consumers were remediated and revalidated.
 At that checkpoint, the narrow shared configuration and trigger changes passed
 their complete affected suites and repository-boundary checks, so `config` and
-`trigger` remained closed. Later Config changes reopened `config`; `trigger`
-remains closed.
+`trigger` remained closed. The later Config change was documentation-only and
+the current-state Config revalidation passed its complete 50-suite/399-step
+portfolio plus formatting, lint, type, dependency, and documentation checks;
+`config` and `trigger` are closed.
 `agent` is closed after its runtime-state, cancellation-authority, hosted
 steering, project Skill I/O, child-resolution, tool lifecycle, public contract,
 documentation, and complete top-level regression findings were remediated and
@@ -239,18 +243,19 @@ resolution, component discovery and materialization, SSR dependency graphs,
 server request and cache boundaries, manifest and WebSocket lifecycle, public
 surfaces, migration documentation, and direct consumers were remediated and
 revalidated.
-The last completed `utils` review covered its shared runtime boundaries,
-future-lockfile compatibility, browser import-map ownership, bounded
-memoization, public contracts, documentation, and direct consumers; later
-Utils changes require top-level revalidation.
+The current Utils revalidation confirms its later changes preserve shared
+runtime boundaries, future-lockfile compatibility, browser import-map
+ownership, bounded memoization, public contracts, documentation, and direct
+consumers.
 The last completed `security` review covered its request-input, path,
 filesystem, CORS, response, configuration, worker-isolation,
 telemetry-redaction, and egress boundaries; runtime capability ownership;
 public surface; documentation; and direct consumers. At that checkpoint, the
 narrow Platform, Routing, Repositories, Release Assets, and Server consumer
 changes passed their complete affected portfolios. Later source changes
-reopened `platform`, `repositories`, and `security`; `routing` and
-`release-assets` remain closed, and `server` remains open.
+reopened `platform`, `repositories`, and `security`. The current Repositories
+revalidation restored `repositories`; `platform` and `security` remain open,
+`routing` and `release-assets` remain closed, and `server` remains open.
 `skill` is closed after its document-parser and script-executor extension
 contracts, untrusted document and filesystem boundaries, authorization policy,
 execution budgets, local and cloud lifecycle, explicit runtime composition,
@@ -260,7 +265,7 @@ core no longer names a third-party TypeScript runner or silently falls back to
 local execution.
 Cross-module consumers changed by a fix remain in revalidation; focused
 evidence for one boundary does not by itself close the consumer's top-level
-unit. The 15 units listed under Touched, revalidation required need current
+unit. The 10 units listed under Touched, revalidation required need current
 top-level revalidation before closure.
 
 ## Historical module checkpoints
@@ -268,6 +273,76 @@ top-level revalidation before closure.
 The module-specific checkpoints below preserve the evidence, status, and
 counts that were true when each checkpoint was recorded. They do not override
 Current status after later source changes.
+
+### Utils freshness revalidation checkpoint
+
+Independent current-state review initially found no new Utils production
+finding, but its freshness-only test selection exposed two failures in the
+unrestricted portfolio. The Redis extension extraction had already made every
+non-memory bundle-manifest backend unsupported while two tests still expected
+the obsolete “configured but not implemented” wording. The controller
+reproduced both failures, removed that dead private error distinction, and kept
+the initializer fail-closed for Redis, KV, and arbitrary unknown backends.
+
+An independent fix-delta review then APPROVED the exact implementation and test
+change with no finding. The public Config schema still admits only `memory`;
+the focused Utils and Config-schema suites pass, and the complete current Utils
+portfolio passes 80 suites and 1,159 nested steps with zero failures. Formatting,
+lint, typechecking, and diff checks also pass. With its implementation, tests,
+and public configuration contract aligned, `utils` is current-state closed.
+
+### Cache freshness revalidation checkpoint
+
+Independent current-state review of the post-checkpoint Cache delta found no
+new R1-R6 or production finding. The controller then reran the complete
+`src/cache` portfolio: 129 suites and 667 nested steps pass with zero failures.
+All 76 current Cache source and test files pass formatting and lint, the Cache
+entrypoint typechecks, and the repository's core-dependency and module-boundary
+gates remain green.
+
+No Cache source was changed during this revalidation. The current
+implementation preserves its previously verified backend, identity,
+invalidation, portability, request-lifecycle, multi-tier, dependency-graph,
+and credential-lifetime contracts, so `cache` is current-state closed.
+
+### Config, Extensions, and Repositories freshness revalidation checkpoint
+
+The post-checkpoint Config delta changes only the public schema documentation
+for the already-enforced distinction between CSRF and the required RSC Action
+authorization provider. Independent review found no current Config finding.
+The controller confirmed the exact one-file delta, formatting and lint across
+the module, the public entrypoint typecheck, and the complete 50-suite/399-step
+Config portfolio with zero failures.
+
+The post-checkpoint tracked Extensions delta adds the generation-owned RSC
+Action authorization contract and narrow distributed-support facade changes.
+Independent review found no current R1-R6 or production finding. The tracked
+97-suite/391-step Extensions portfolio, all 114 tracked-file format and type
+checks, focused RSC consumers, extension workspace typechecks, contract and
+capability audits, core-dependency policy, dependency boundaries, and module
+boundaries pass. The controller's local superset also passed 102 suites and 412
+steps; those extra five suites belong to the protected untracked scaffold and
+do not make that draft part of this closure.
+
+Both units are current-state closed. No Config or tracked Extensions source was
+changed during this revalidation, and `src/extensions/scaffold/` remains
+untracked and outside the certified surface.
+
+The post-checkpoint Repositories delta propagates independently captured,
+root-bound filesystem snapshot authority through the repository interfaces,
+`SecureFs`, and testing adapters. Independent review found no current Critical
+or Warning R1-R6 issue. The controller confirmed the exact four-file delta,
+formatting and lint across all 17 files, both entrypoint typechecks, and the
+complete eight-suite/78-step Repositories portfolio. Focused platform and
+consumer portfolios plus core-dependency, dependency-boundary, module-boundary,
+wildcard-export, and barrel-documentation gates also pass.
+
+Repositories retains one documented non-blocking R4 residual: its concrete
+factory and implementations are exercised by contract tests but lack a current
+production composition owner. Future work must either establish that owner
+with end-to-end evidence or remove the dormant concrete surface through public
+compatibility review; the current capability delta does not worsen this debt.
+`repositories` is current-state closed.
 
 ### OAuth closure checkpoint
 
@@ -6169,7 +6244,8 @@ No known unresolved critical or high-confidence Skill production risk remains.
 At this checkpoint, the `skill` unit raised the formal count to 55 of 58;
 `react`, `server`, and `workflow` were then the only open units. Later source
 changes reopened 12 previously closed units; Current status records the
-authoritative 43/15 split.
+authoritative split after subsequent current-state revalidations. The first
+freshness correction recorded 43/15; later checkpoints supersede that count.
 
 ### CSS extension-boundary follow-up checkpoint
 

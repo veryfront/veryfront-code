@@ -8,8 +8,13 @@ import type {
 } from "../../base.ts";
 import { createFileWatcher, createWatcherIterator, setupNodeFsWatcher } from "./shared-watcher.ts";
 import { makeNodeTempDir } from "./temp-dir.ts";
-import { isNotFoundError } from "../../../compat/not-found-error.ts";
-import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
+import { isProxyWithoutHooks } from "../../../compat/error-introspection.ts";
+import { isCanonicalNotFoundError } from "../../../compat/not-found-error.ts";
+import {
+  readBoundedFilePrefix,
+  readFileWithinLimit,
+  withFileHandle,
+} from "../../bounded-file-read.ts";
 import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { constants as nodeFsConstants } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "../../../compat/path/index.ts";
@@ -24,6 +29,9 @@ const silentLogger: NodeFileSystemLogger = {
   error: () => {},
   debug: () => {},
 };
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const reflectApply = Reflect.apply;
 
 interface NodeFileSnapshotStat {
   readonly dev: bigint;
@@ -138,6 +146,34 @@ function changed(message: string, cause?: unknown): FileSnapshotChangedError {
   return error;
 }
 
+function hasOwnDataErrorCode(error: unknown, expected: string): boolean {
+  if (typeof error !== "object" || error === null || isProxyWithoutHooks(error)) {
+    return false;
+  }
+  try {
+    const descriptor = getOwnPropertyDescriptor(error, "code");
+    return descriptor !== undefined &&
+      reflectApply(hasOwnProperty, descriptor, ["value"]) === true &&
+      descriptor.value === expected;
+  } catch {
+    return false;
+  }
+}
+
+function throwSnapshotChangeForMissingPath(message: string, cause: unknown): never {
+  if (isCanonicalNotFoundError(cause)) {
+    throw changed(message, cause);
+  }
+  throw cause;
+}
+
+function throwSnapshotChangeForPathRace(message: string, cause: unknown): never {
+  if (hasOwnDataErrorCode(cause, "ELOOP")) {
+    throw changed(message, cause);
+  }
+  throwSnapshotChangeForMissingPath(message, cause);
+}
+
 async function readNodeFileSnapshotWithinLimit(
   operations: NodeFileSystemOperations,
   noFollow: number,
@@ -161,93 +197,111 @@ async function readNodeFileSnapshotWithinLimit(
     throw new TypeError("Snapshot path must identify a regular file");
   }
 
-  let handle: NodeFileHandle;
-  try {
-    handle = await operations.open(candidate, nodeFsConstants.O_RDONLY | noFollow);
-  } catch (cause) {
-    throw changed("File identity became uncertain while opening the snapshot", cause);
-  }
-  try {
-    let handleBefore: NodeFileSnapshotStat;
-    try {
-      handleBefore = await handle.stat();
-    } catch (cause) {
-      throw changed("Opened file identity could not be verified", cause);
-    }
-    if (!handleBefore.isFile() || !sameGeneration(pathnameBefore, handleBefore)) {
-      throw changed("File identity changed while opening the snapshot");
-    }
-
-    let canonicalTarget: string;
-    let pathnameOpened: NodeFileSnapshotStat;
-    try {
-      [canonicalTarget, pathnameOpened] = await Promise.all([
-        operations.realpath(candidate),
-        operations.lstat(candidate),
-      ]);
-    } catch (cause) {
-      throw changed("File target became uncertain while opening the snapshot", cause);
-    }
-    if (
-      pathnameOpened.isSymbolicLink() ||
-      !pathnameOpened.isFile() ||
-      !sameGeneration(handleBefore, pathnameOpened)
-    ) {
-      throw changed("File identity changed while opening the snapshot");
-    }
-    if (!isContainedPath(canonicalTarget, canonicalRoot)) {
-      throw new TypeError("Snapshot target must be contained by the canonical root");
-    }
-
-    if (handleBefore.size < 0n) {
-      throw changed("File size became uncertain while opening the snapshot");
-    }
-    if (handleBefore.size > BigInt(byteLimit)) {
-      throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
-    }
-
-    const size = Number(handleBefore.size);
-    let bytes: Uint8Array;
-    try {
-      bytes = new Uint8Array(size);
-    } catch (cause) {
-      throw new Error("Unable to allocate the admitted snapshot buffer", { cause });
-    }
-    let offset = 0;
-    while (offset < size) {
-      const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
-      if (!Number.isSafeInteger(bytesRead) || bytesRead <= 0 || bytesRead > size - offset) {
-        throw changed("File size changed while reading the snapshot");
+  return await withFileHandle(
+    async () => {
+      try {
+        return await operations.open(candidate, nodeFsConstants.O_RDONLY | noFollow);
+      } catch (cause) {
+        throwSnapshotChangeForPathRace(
+          "File identity became uncertain while opening the snapshot",
+          cause,
+        );
       }
-      offset += bytesRead;
-    }
+    },
+    async (handle) => {
+      let handleBefore: NodeFileSnapshotStat;
+      try {
+        handleBefore = await handle.stat();
+      } catch (cause) {
+        throwSnapshotChangeForMissingPath("Opened file identity could not be verified", cause);
+      }
+      if (!handleBefore.isFile() || !sameGeneration(pathnameBefore, handleBefore)) {
+        throw changed("File identity changed while opening the snapshot");
+      }
 
-    let handleAfter: NodeFileSnapshotStat;
-    let pathnameAfter: NodeFileSnapshotStat;
-    let canonicalTargetAfter: string;
-    try {
-      [handleAfter, pathnameAfter, canonicalTargetAfter] = await Promise.all([
-        handle.stat(),
-        operations.lstat(candidate),
-        operations.realpath(candidate),
-      ]);
-    } catch (cause) {
-      throw changed("File identity became uncertain after reading the snapshot", cause);
-    }
-    if (
-      !pathnameAfter.isFile() ||
-      pathnameAfter.isSymbolicLink() ||
-      !sameGeneration(handleBefore, handleAfter) ||
-      !sameGeneration(handleBefore, pathnameAfter) ||
-      canonicalTargetAfter !== canonicalTarget ||
-      !isContainedPath(canonicalTargetAfter, canonicalRoot)
-    ) {
-      throw changed("File snapshot changed during the read");
-    }
-    return bytes;
-  } finally {
-    await handle.close();
-  }
+      let canonicalTarget: string;
+      let pathnameOpened: NodeFileSnapshotStat;
+      try {
+        [canonicalTarget, pathnameOpened] = await Promise.all([
+          operations.realpath(candidate),
+          operations.lstat(candidate),
+        ]);
+      } catch (cause) {
+        throwSnapshotChangeForPathRace(
+          "File target became uncertain while opening the snapshot",
+          cause,
+        );
+      }
+      if (
+        pathnameOpened.isSymbolicLink() ||
+        !pathnameOpened.isFile() ||
+        !sameGeneration(handleBefore, pathnameOpened)
+      ) {
+        throw changed("File identity changed while opening the snapshot");
+      }
+      if (!isContainedPath(canonicalTarget, canonicalRoot)) {
+        throw new TypeError("Snapshot target must be contained by the canonical root");
+      }
+
+      if (handleBefore.size < 0n) {
+        throw changed("File size became uncertain while opening the snapshot");
+      }
+      if (handleBefore.size > BigInt(byteLimit)) {
+        throw new RangeError(`File exceeds byte limit of ${byteLimit} bytes`);
+      }
+
+      const size = Number(handleBefore.size);
+      let bytes: Uint8Array;
+      try {
+        bytes = new Uint8Array(size);
+      } catch (cause) {
+        throw new Error("Unable to allocate the admitted snapshot buffer", { cause });
+      }
+      let offset = 0;
+      while (offset < size) {
+        const { bytesRead } = await handle.read(bytes, offset, size - offset, offset);
+        if (!Number.isSafeInteger(bytesRead) || bytesRead <= 0 || bytesRead > size - offset) {
+          throw changed("File size changed while reading the snapshot");
+        }
+        offset += bytesRead;
+      }
+
+      let handleAfter: NodeFileSnapshotStat;
+      let pathnameAfter: NodeFileSnapshotStat;
+      let canonicalTargetAfter: string;
+      try {
+        handleAfter = await handle.stat();
+      } catch (cause) {
+        throwSnapshotChangeForMissingPath(
+          "Opened file identity could not be verified after reading the snapshot",
+          cause,
+        );
+      }
+      try {
+        [pathnameAfter, canonicalTargetAfter] = await Promise.all([
+          operations.lstat(candidate),
+          operations.realpath(candidate),
+        ]);
+      } catch (cause) {
+        throwSnapshotChangeForPathRace(
+          "File identity became uncertain after reading the snapshot",
+          cause,
+        );
+      }
+      if (
+        !pathnameAfter.isFile() ||
+        pathnameAfter.isSymbolicLink() ||
+        !sameGeneration(handleBefore, handleAfter) ||
+        !sameGeneration(handleBefore, pathnameAfter) ||
+        canonicalTargetAfter !== canonicalTarget ||
+        !isContainedPath(canonicalTargetAfter, canonicalRoot)
+      ) {
+        throw changed("File snapshot changed during the read");
+      }
+      return bytes;
+    },
+    "Filesystem snapshot and handle cleanup both failed",
+  );
 }
 
 async function createNodeFileBytesExclusive(
@@ -255,12 +309,11 @@ async function createNodeFileBytesExclusive(
   path: string,
   content: Uint8Array,
 ): Promise<void> {
-  const handle = await operations.open(path, "wx");
-  try {
-    await handle.writeFile(content);
-  } finally {
-    await handle.close();
-  }
+  await withFileHandle(
+    () => operations.open(path, "wx"),
+    (handle) => handle.writeFile(content),
+    "Filesystem exclusive create and handle cleanup both failed",
+  );
 }
 
 /**
@@ -372,7 +425,7 @@ export class NodeCompatibleFileSystemAdapter implements FileSystemAdapter {
       await fs.access(path);
       return true;
     } catch (error) {
-      if (isNotFoundError(error)) return false;
+      if (isCanonicalNotFoundError(error)) return false;
       throw error;
     }
   }

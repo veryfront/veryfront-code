@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { FakeTime } from "#std/testing/time";
 import {
@@ -921,8 +926,11 @@ describe("transforms/esm/transform-cache", () => {
       assertEquals(cached.cacheHit, true);
     });
 
-    it("recomputes when cached-entry validation throws", async () => {
+    it("recomputes when cached-entry validation reports canonical not-found", async () => {
       await getOrComputeTransform("validator-error-key", async () => "stale-value");
+      const missingError = Object.assign(new Error("framework bundle missing"), {
+        code: "ENOENT",
+      });
 
       let computeCalls = 0;
       const result = await getOrComputeTransform(
@@ -935,12 +943,87 @@ describe("transforms/esm/transform-cache", () => {
         undefined,
         undefined,
         () => {
-          throw new Error("stat failed");
+          throw missingError;
         },
       );
 
       assertEquals(result, { code: "fresh-value", cacheHit: false });
       assertEquals(computeCalls, 1);
+    });
+
+    for (
+      const [label, failure] of [
+        ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+        [
+          "a native Error with a plain ENOENT-shaped cause",
+          new Error("wrapped transform validation failure", {
+            cause: Object.freeze({ code: "ENOENT" }),
+          }),
+        ],
+      ] as const
+    ) {
+      it(`propagates ${label} from cached-entry validation without recomputing`, async () => {
+        const key = "validator-untrusted-missing-shape-key";
+        await getOrComputeTransform(key, async () => "stale-value");
+        let computeCalls = 0;
+
+        const error = await assertRejects(() =>
+          getOrComputeTransform(
+            key,
+            async () => {
+              computeCalls++;
+              return "fresh-value";
+            },
+            300,
+            undefined,
+            undefined,
+            () => {
+              throw failure;
+            },
+          )
+        );
+
+        assertStrictEquals(error, failure);
+        assertEquals(computeCalls, 0);
+        let postFailureComputeCalls = 0;
+        const cached = await getOrComputeTransform(key, async () => {
+          postFailureComputeCalls++;
+          return "unexpected-value";
+        });
+        assertEquals(cached.code, "stale-value");
+        assertEquals(cached.cacheHit, true);
+        assertEquals(postFailureComputeCalls, 0);
+      });
+    }
+
+    it("propagates operational cached-entry validation failures without recomputing", async () => {
+      await getOrComputeTransform("validator-io-error-key", async () => "stale-value");
+      const ioError = Object.assign(new Error("framework cache device failed"), {
+        code: "EIO",
+      });
+
+      let computeCalls = 0;
+      const error = await assertRejects(
+        () =>
+          getOrComputeTransform(
+            "validator-io-error-key",
+            async () => {
+              computeCalls++;
+              return "fresh-value";
+            },
+            300,
+            undefined,
+            undefined,
+            () => {
+              throw ioError;
+            },
+          ),
+        Error,
+        "framework cache device failed",
+      );
+
+      assertStrictEquals(error, ioError);
+      assertEquals(computeCalls, 0);
     });
 
     it("shares cached-entry validation and repair across concurrent callers", async () => {

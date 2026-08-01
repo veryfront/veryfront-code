@@ -124,6 +124,34 @@ if (isDeno) {
       assertEquals(removes, 0);
     });
 
+    it("preserves createNew write and handle cleanup failures", async () => {
+      const writeFailure = new Error("injected Deno write failure");
+      const closeFailure = new Error("Deno createNew handle close failed");
+      let closeCalls = 0;
+      const TestableAdapter = DenoFileSystemAdapter as unknown as new (
+        options: Record<string, unknown>,
+      ) => DenoFileSystemAdapter;
+      const adapter = new TestableAdapter({
+        denoCreateRuntime: {
+          open: () =>
+            Promise.resolve({
+              write: () => Promise.reject(writeFailure),
+              close: () => {
+                closeCalls++;
+                throw closeFailure;
+              },
+            }),
+        },
+      });
+
+      const error = await assertRejects(
+        () => adapter.createFileBytesExclusive!("/reserved.bin", new Uint8Array([1])),
+        AggregateError,
+      ) as AggregateError;
+      assertEquals(error.errors, [writeFailure, closeFailure]);
+      assertEquals(closeCalls, 1);
+    });
+
     it("marks only direct built-in instances as native", () => {
       class DerivedAdapter extends DenoFileSystemAdapter {}
 

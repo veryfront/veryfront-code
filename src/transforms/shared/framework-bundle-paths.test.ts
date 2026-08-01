@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   extractFrameworkBundlePaths,
@@ -72,25 +72,97 @@ describe("transforms/shared/framework-bundle-paths", () => {
       assertEquals(result, [missingPath]);
     });
 
-    it("treats existence check failures as missing framework bundles", async () => {
-      const path = "/cache/framework/vfmod-stat-error.mjs";
-      const errors: Array<{ path: string; message: string }> = [];
+    it("treats canonical not-found failures as missing framework bundles", async () => {
+      const path = "/cache/framework/vfmod-missing-after-probe.mjs";
+      const missingError = Object.assign(new Error("bundle disappeared"), {
+        code: "ENOENT",
+      });
+      let observedPath: string | undefined;
+      let observedError: unknown;
 
       const result = await findMissingFrameworkBundlePaths(
         `import "file://${path}";`,
-        () => Promise.reject(new Error("stat failed")),
+        () => Promise.reject(missingError),
         {
           onError: (errorPath, error) => {
-            errors.push({
-              path: errorPath,
-              message: error instanceof Error ? error.message : String(error),
-            });
+            observedPath = errorPath;
+            observedError = error;
           },
         },
       );
 
       assertEquals(result, [path]);
-      assertEquals(errors, [{ path, message: "stat failed" }]);
+      assertEquals(observedPath, path);
+      assertStrictEquals(observedError, missingError);
+    });
+
+    for (
+      const [label, failure] of [
+        ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+        [
+          "a native Error with a plain ENOENT-shaped cause",
+          new Error("wrapped bundle lookup failure", {
+            cause: Object.freeze({ code: "ENOENT" }),
+          }),
+        ],
+      ] as const
+    ) {
+      it(`propagates ${label} instead of reporting a missing framework bundle`, async () => {
+        const path = "/cache/framework/vfmod-untrusted-missing-shape.mjs";
+        let probeCalls = 0;
+        let observedPath: string | undefined;
+        let observedError: unknown;
+
+        const error = await assertRejects(() =>
+          findMissingFrameworkBundlePaths(
+            `import "file://${path}";`,
+            () => {
+              probeCalls++;
+              return Promise.reject(failure);
+            },
+            {
+              onError: (errorPath, caughtError) => {
+                observedPath = errorPath;
+                observedError = caughtError;
+              },
+            },
+          )
+        );
+
+        assertStrictEquals(error, failure);
+        assertEquals(probeCalls, 1);
+        assertEquals(observedPath, path);
+        assertStrictEquals(observedError, failure);
+      });
+    }
+
+    it("propagates operational existence check failures with exact identity", async () => {
+      const path = "/cache/framework/vfmod-unreadable.mjs";
+      const permissionError = Object.assign(new Error("framework bundle lookup denied"), {
+        code: "EACCES",
+      });
+      let observedPath: string | undefined;
+      let observedError: unknown;
+
+      const error = await assertRejects(
+        () =>
+          findMissingFrameworkBundlePaths(
+            `import "file://${path}";`,
+            () => Promise.reject(permissionError),
+            {
+              onError: (errorPath, caughtError) => {
+                observedPath = errorPath;
+                observedError = caughtError;
+              },
+            },
+          ),
+        Error,
+        "framework bundle lookup denied",
+      );
+
+      assertStrictEquals(error, permissionError);
+      assertEquals(observedPath, path);
+      assertStrictEquals(observedError, permissionError);
     });
 
     it("checks independent framework bundle paths concurrently", async () => {

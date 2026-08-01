@@ -99,6 +99,7 @@ export {
   type AttachmentsPanelActionProps,
   type AttachmentsPanelContextValue,
   type AttachmentsPanelEmptyProps,
+  type AttachmentsPanelHeaderProps,
   type AttachmentsPanelItemProps,
   type AttachmentsPanelListProps,
   type AttachmentsPanelLoadingProps,

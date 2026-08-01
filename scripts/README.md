@@ -56,7 +56,7 @@ immutable artifact.
 | `ban-console.ts`                 | `lint:ban-console`               | Lints for inappropriate console usage                                                      |
 | `ban-deep-imports.ts`            | `lint:ban-deep-imports`          | Prevents deep imports from internal modules                                                |
 | `ban-internal-root-imports.ts`   | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules                                            |
-| `check-module-boundaries.ts`     | `lint:module-boundaries`         | Ratchets broad imports in sensitive layers and dependency edges that participate in cycles |
+| `check-module-boundaries.ts`     | `lint:module-boundaries`         | Ratchets broad imports, forbidden layer direction, and dependency edges in cycles           |
 | `check-unawaited-promises.ts`    | `lint:check-awaits`              | Detects unawaited async cleanup calls                                                      |
 | `find-duplicate-functions.ts`    | `dupes`                          | Finds exact and near-duplicate functions, plus semantic AST-based matches via `--semantic` |
 | `lint-platform-agnostic.ts`      | `lint:platform`                  | Checks platform-agnostic code boundaries                                                   |

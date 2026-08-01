@@ -65,16 +65,20 @@ const result = await transformToESM(source, {
 });
 ```
 
-MDX execution is an internal runtime path:
+MDX execution is an internal runtime path. Calls supply the active runtime
+adapter together with the project, directory, slug, and content-source
+identity:
 
 ```ts
 import { mdxRenderer } from "#veryfront/transforms";
 
 const module = await mdxRenderer.loadModuleESM(
   compiledCode,
-  undefined,
-  undefined,
+  adapter,
+  projectId,
   projectDir,
+  projectSlug,
+  contentSourceId,
 );
 ```
 

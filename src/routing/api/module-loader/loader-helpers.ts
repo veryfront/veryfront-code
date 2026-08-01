@@ -1,6 +1,9 @@
 import * as pathHelper from "#veryfront/compat/path";
 import { createError, toError } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
+export {
+  toCjsDestructureBindings,
+} from "#veryfront/transforms/import-rewriter/cjs-destructure-bindings.ts";
 
 const EXT_TO_LOADER: Record<string, "tsx" | "jsx" | "ts" | "js" | "json"> = {
   tsx: "tsx",
@@ -43,23 +46,6 @@ export function resolveExportEntry(entry: unknown): string | undefined {
     }
   }
   return undefined;
-}
-
-export function toCjsDestructureBindings(bindings: string): string {
-  const inner = bindings.trim().replace(/^\{\s*/, "").replace(/\s*\}$/, "");
-  if (!inner) return "{}";
-
-  const converted = inner
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => {
-      const aliasMatch = part.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (aliasMatch) return `${aliasMatch[1]}: ${aliasMatch[2]}`;
-      return part;
-    });
-
-  return `{ ${converted.join(", ")} }`;
 }
 
 export function getLoaderForFile(filePath: string): "tsx" | "jsx" | "ts" | "js" | "json" {

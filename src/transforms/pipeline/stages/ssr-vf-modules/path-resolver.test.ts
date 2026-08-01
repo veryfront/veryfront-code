@@ -1,10 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   resolveFrameworkFile,
   resolveRelativeFrameworkImport,
+  resolveVeryfrontSourcePath,
   tryReadWithExtensions,
 } from "./path-resolver.ts";
 import { EMBEDDED_SRC_DIR, FRAMEWORK_ROOT, getFrameworkLookups } from "./constants.ts";
@@ -20,6 +21,18 @@ function createMockFs(files: Record<string, string>) {
 
 function createExistsFn(files: Record<string, string>) {
   return async (path: string) => path in files;
+}
+
+function nonCanonicalNotFoundFailures(): ReadonlyArray<readonly [string, unknown]> {
+  return [
+    ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+    [
+      "a native Error with a plain ENOENT-shaped cause",
+      new Error("wrapped framework source failure", {
+        cause: Object.freeze({ code: "ENOENT" }),
+      }),
+    ],
+  ];
 }
 
 describe("tryReadWithExtensions", () => {
@@ -55,6 +68,110 @@ describe("tryReadWithExtensions", () => {
     const result = await tryReadWithExtensions(fs, "/src/utils", createExistsFn(files));
     assertEquals(result!.sourcePath, "/src/utils.ts.src");
   });
+
+  it("propagates a preferred embedded-source read failure without selecting a fallback", async () => {
+    const permissionError = new Deno.errors.PermissionDenied("preferred source is unreadable");
+    const fs = {
+      readTextFile: (path: string) => {
+        if (path === "/src/utils.ts.src") return Promise.reject(permissionError);
+        if (path === "/src/utils.ts") return Promise.resolve("regular source");
+        return Promise.reject(new Deno.errors.NotFound(path));
+      },
+    } as any;
+    const existsFn = async (path: string) =>
+      path === "/src/utils.ts.src" || path === "/src/utils.ts";
+
+    const error = await assertRejects(() => tryReadWithExtensions(fs, "/src/utils", existsFn));
+
+    assertStrictEquals(error, permissionError);
+  });
+
+  it("propagates operational extension-probe failures", async () => {
+    const ioError = Object.assign(new Error("framework source probe failed"), { code: "EIO" });
+
+    const error = await assertRejects(() =>
+      tryReadWithExtensions(createMockFs({}), "/src/utils", async () => {
+        throw ioError;
+      })
+    );
+
+    assertStrictEquals(error, ioError);
+  });
+
+  for (const [label, failure] of nonCanonicalNotFoundFailures()) {
+    it(`propagates ${label} from a preferred source read without selecting a fallback`, async () => {
+      let probeCalls = 0;
+      let readCalls = 0;
+      const fs = {
+        readTextFile: () => {
+          readCalls++;
+          return Promise.reject(failure);
+        },
+      } as any;
+
+      const error = await assertRejects(() =>
+        tryReadWithExtensions(fs, "/src/utils", () => {
+          probeCalls++;
+          return Promise.resolve(true);
+        })
+      );
+
+      assertStrictEquals(error, failure);
+      assertEquals(probeCalls, 1);
+      assertEquals(readCalls, 1);
+    });
+  }
+
+  it("continues after a positively probed source disappears before it is read", async () => {
+    const fs = {
+      readTextFile: (path: string) => {
+        if (path === "/src/utils.ts.src") {
+          return Promise.reject(new Deno.errors.NotFound("embedded source disappeared"));
+        }
+        if (path === "/src/utils.ts") return Promise.resolve("regular source");
+        return Promise.reject(new Deno.errors.NotFound(path));
+      },
+    } as any;
+    const existsFn = async (path: string) =>
+      path === "/src/utils.ts.src" || path === "/src/utils.ts";
+
+    const result = await tryReadWithExtensions(fs, "/src/utils", existsFn);
+
+    assertEquals(result, {
+      sourcePath: "/src/utils.ts",
+      content: "regular source",
+    });
+  });
+});
+
+describe("resolveVeryfrontSourcePath", () => {
+  it("propagates operational framework-source probe failures", async () => {
+    const ioError = Object.assign(new Error("framework source lookup failed"), { code: "EIO" });
+
+    const error = await assertRejects(() =>
+      resolveVeryfrontSourcePath("#veryfront/utils", async () => {
+        throw ioError;
+      })
+    );
+
+    assertStrictEquals(error, ioError);
+  });
+
+  for (const [label, failure] of nonCanonicalNotFoundFailures()) {
+    it(`propagates ${label} from the first framework-source probe without trying fallbacks`, async () => {
+      let probeCalls = 0;
+
+      const error = await assertRejects(() =>
+        resolveVeryfrontSourcePath("#veryfront/utils", () => {
+          probeCalls++;
+          return Promise.reject(failure);
+        })
+      );
+
+      assertStrictEquals(error, failure);
+      assertEquals(probeCalls, 1);
+    });
+  }
 });
 
 describe("resolveFrameworkFile", () => {

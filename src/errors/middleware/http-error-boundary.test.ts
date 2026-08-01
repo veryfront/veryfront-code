@@ -119,6 +119,96 @@ describe("http-error-boundary", () => {
       assertEquals(body.detail, "Something went wrong");
     });
 
+    it("should keep production HEAD failures safe after the global Headers constructor is poisoned", async () => {
+      const privateMarker = "postgres://admin:private-password@db.internal/app";
+      const request = new Request("http://example.com/private", { method: "HEAD" });
+      const context = createMockContext(false);
+      const headersDescriptor = Object.getOwnPropertyDescriptor(globalThis, "Headers");
+      assertExists(headersDescriptor);
+      let poisonedConstructorCalls = 0;
+      let boundaryFailure: unknown;
+      let response: Response | undefined;
+
+      try {
+        Object.defineProperty(globalThis, "Headers", {
+          configurable: true,
+          value: class PoisonedHeaders {
+            constructor() {
+              poisonedConstructorCalls++;
+              throw new Error("live Headers constructor must not run");
+            }
+          },
+          writable: true,
+        });
+
+        try {
+          response = errorToRFC9457Response(
+            new Error(privateMarker),
+            context,
+            request,
+          );
+        } catch (error) {
+          boundaryFailure = error;
+        }
+      } finally {
+        Object.defineProperty(globalThis, "Headers", headersDescriptor);
+      }
+
+      assertEquals(boundaryFailure, undefined);
+      assertEquals(poisonedConstructorCalls, 0);
+      assertExists(response);
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("content-type"), PROBLEM_JSON_CONTENT_TYPE);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(response.body, null);
+      const responseText = await response.text();
+      assertEquals(responseText, "");
+      assertEquals(responseText.includes(privateMarker), false);
+    });
+
+    it("should keep production HEAD failures safe after Request.prototype.method is poisoned", async () => {
+      const request = new Request("http://example.com/private", { method: "HEAD" });
+      const context = createMockContext(false);
+      const methodDescriptor = Object.getOwnPropertyDescriptor(
+        Request.prototype,
+        "method",
+      );
+      assertExists(methodDescriptor);
+      let poisonedGetterCalls = 0;
+      let boundaryFailure: unknown;
+      let response: Response | undefined;
+
+      try {
+        Object.defineProperty(Request.prototype, "method", {
+          configurable: true,
+          get(): never {
+            poisonedGetterCalls++;
+            throw new Error("live Request.method getter must not run");
+          },
+        });
+
+        try {
+          response = errorToRFC9457Response(
+            new Error("private failure"),
+            context,
+            request,
+          );
+        } catch (error) {
+          boundaryFailure = error;
+        }
+      } finally {
+        Object.defineProperty(Request.prototype, "method", methodDescriptor);
+      }
+
+      assertEquals(boundaryFailure, undefined);
+      assertEquals(poisonedGetterCalls, 0);
+      assertExists(response);
+      assertEquals(response.status, 500);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(response.body, null);
+      assertEquals(await response.text(), "");
+    });
+
     it("should return the intended response when metrics recording throws", async () => {
       const recorder = metricsManager.getRecorder();
       assertExists(recorder);

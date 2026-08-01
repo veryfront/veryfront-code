@@ -940,7 +940,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
     }
   });
 
-  it("serves prepared CSS without rescanning files after the first request", async () => {
+  it("serves prepared CSS for the same admitted candidate snapshot", async () => {
     const fetchMock = mockTailwindFetch();
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
@@ -970,7 +970,6 @@ describe("server/handlers/dev/styles-css.handler", () => {
       invalidateCompiler();
       invalidateProjectCSS(PROJECT_SLUG);
       invalidateProjectCandidateManifests(PROJECT_SLUG);
-      adapter.setFiles([]);
 
       const second = await handler.handle(req, ctx);
       const secondBody = await second.response!.text();
@@ -978,6 +977,57 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(second.response!.status, 200);
       assertEquals(secondBody, firstBody);
       assertEquals(fetchMock.getCallCount(), initialFetchCount);
+    } finally {
+      fetchMock.restore();
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+    }
+  });
+
+  it("does not reuse prepared branch CSS after the admitted candidate snapshot changes", async () => {
+    const fetchMock = mockTailwindFetch();
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="bg-[#123456]">Old</div>',
+      }],
+      { sourceType: "branch", projectSlug: PROJECT_SLUG, branch: "main" },
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const stale = await handler.handle(req, ctx);
+      const staleBody = await stale.response!.text();
+
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      adapter.setFiles([{
+        path: "/project/pages/index.tsx",
+        content: '<div className="bg-[#654321]">New</div>',
+      }]);
+
+      const current = await handler.handle(req, ctx);
+      const currentBody = await current.response!.text();
+
+      assertEquals(stale.response!.status, 200);
+      assertEquals(current.response!.status, 200);
+      assertEquals(staleBody.includes("#123456"), true);
+      assertEquals(currentBody.includes("#654321"), true);
+      assertEquals(currentBody.includes("#123456"), false);
+      assertEquals(currentBody !== staleBody, true);
     } finally {
       fetchMock.restore();
       clearCSSCache();

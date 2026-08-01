@@ -30,6 +30,80 @@ function isCanonicalEscapedCodeUnit(value: string): boolean {
   return true;
 }
 
+function isLowercaseHexCodeUnit(value: string): boolean {
+  if (value.length !== 4) return false;
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = getStringCodeUnit(value, index);
+    const isDigit = codeUnit >= 0x30 && codeUnit <= 0x39;
+    const isLowerHex = codeUnit >= 0x61 && codeUnit <= 0x66;
+    if (!isDigit && !isLowerHex) return false;
+  }
+  return true;
+}
+
+function isCacheLiteralCodeUnit(codeUnit: number): boolean {
+  return (
+    (codeUnit >= 0x30 && codeUnit <= 0x39) ||
+    (codeUnit >= 0x41 && codeUnit <= 0x5a) ||
+    (codeUnit >= 0x61 && codeUnit <= 0x7a) ||
+    codeUnit === 0x2d ||
+    codeUnit === 0x2e ||
+    codeUnit === 0x2f
+  );
+}
+
+/**
+ * Encode an exact JavaScript string as one delimiter- and glob-safe segment.
+ *
+ * Common API-safe ASCII stays compact. Every other UTF-16 code unit uses a
+ * lowercase `_xxxx` escape, so lone surrogates never collapse through UTF-8.
+ * The leading `s` marker makes the empty string representable. A terminal `_`
+ * sentinel prevents a literal `vf-sanitized` suffix from touching the following
+ * `:` delimiter and aliasing the API sanitizer's reserved namespace.
+ */
+export function encodeCacheKeyLiteralSegment(value: string): string {
+  let encoded = "s";
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = getStringCodeUnit(value, index);
+    if (isCacheLiteralCodeUnit(codeUnit)) {
+      encoded += ReflectApply(StringFromCharCode, String, [codeUnit]) as string;
+      continue;
+    }
+    const hex = ReflectApply(NumberPrototypeToString, codeUnit, [16]) as string;
+    encoded += `_${ReflectApply(StringPrototypePadStart, hex, [4, "0"]) as string}`;
+  }
+  return `${encoded}_`;
+}
+
+/** Decode only canonical values emitted by {@link encodeCacheKeyLiteralSegment}. */
+export function decodeCacheKeyLiteralSegment(encoded: string): string | null {
+  const terminalIndex = encoded.length - 1;
+  if (
+    terminalIndex < 1 ||
+    getStringCodeUnit(encoded, 0) !== 0x73 ||
+    getStringCodeUnit(encoded, terminalIndex) !== 0x5f
+  ) return null;
+
+  let decoded = "";
+  for (let index = 1; index < terminalIndex; index++) {
+    const codeUnit = getStringCodeUnit(encoded, index);
+    if (isCacheLiteralCodeUnit(codeUnit)) {
+      decoded += ReflectApply(StringFromCharCode, String, [codeUnit]) as string;
+      continue;
+    }
+    if (codeUnit !== 0x5f || index + 4 >= terminalIndex) return null;
+
+    const escaped = ReflectApply(StringPrototypeSlice, encoded, [index + 1, index + 5]) as string;
+    if (!isLowercaseHexCodeUnit(escaped)) return null;
+    const escapedCodeUnit = NumberParseInt(escaped, 16);
+    if (isCacheLiteralCodeUnit(escapedCodeUnit)) return null;
+    decoded += ReflectApply(StringFromCharCode, String, [escapedCodeUnit]) as string;
+    index += 4;
+  }
+
+  return encodeCacheKeyLiteralSegment(decoded) === encoded ? decoded : null;
+}
+
 /**
  * Percent-encode a delimiter-separated cache-key segment without rejecting or
  * collapsing lone UTF-16 surrogates.

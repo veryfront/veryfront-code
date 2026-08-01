@@ -526,7 +526,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
   });
 
   describe("strictMissingModules", () => {
-    it("rethrows an unknown failure unchanged without logging or coercing it", async () => {
+    it("rethrows an unknown failure unchanged while logging only safe metadata", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-strict-safe-log-" });
       const projectDir = await makeTempDir({ prefix: "vf-mdx-strict-safe-project-" });
       const coercionFailure = new Error("coercion hook must not run");
@@ -569,12 +569,11 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           caught = error;
         }
 
-        assertStrictEquals(caught, thrownValue);
+        assertEquals(caught === thrownValue, true);
         assertEquals(warnings, [{
           message: "[mdx-loader] Failed to process module",
           metadata: {
             strictMissingModules: true,
-            fatal: false,
             errorName: "object",
           },
         }]);
@@ -584,7 +583,7 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
       }
     });
 
-    it("returns the legacy non-strict fallback without coercing an unknown failure", async () => {
+    it("rethrows a non-Error failure unchanged without coercing it in non-strict mode", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-nonstrict-safe-log-" });
       const projectDir = await makeTempDir({ prefix: "vf-mdx-nonstrict-safe-project-" });
       let coercionCalls = 0;
@@ -622,16 +621,19 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
           { logger, strictMissingModules: false },
         );
 
-        assertEquals(
-          await fetchAndCacheModule("/_vf_modules/private/secret.js", context),
-          null,
-        );
+        let caught: unknown;
+        try {
+          await fetchAndCacheModule("/_vf_modules/private/secret.js", context);
+        } catch (error) {
+          caught = error;
+        }
+
+        assertEquals(caught === thrownValue, true);
         assertEquals(coercionCalls, 0);
         assertEquals(warnings, [{
           message: "[mdx-loader] Failed to process module",
           metadata: {
             strictMissingModules: false,
-            fatal: false,
             errorName: "object",
           },
         }]);
@@ -640,6 +642,53 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
         await remove(projectDir, { recursive: true });
       }
     });
+
+    for (const code of ["EACCES", "EIO"] as const) {
+      it(`rethrows a resolved-source ${code} read failure unchanged in non-strict mode`, async () => {
+        const esmCacheDir = await makeTempDir({ prefix: `vf-mdx-nonstrict-${code}-cache-` });
+        const projectDir = await makeTempDir({ prefix: `vf-mdx-nonstrict-${code}-project-` });
+        const operationalError = Object.assign(new Error(`${code}: module source read failed`), {
+          code,
+        });
+        const logger = {
+          debug: () => {},
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+          time: (_label: string, fn: () => unknown) => fn(),
+          child: () => logger,
+          component: () => logger,
+        } as unknown as Logger;
+        const adapter = {
+          env: { get: (_key: string) => undefined },
+          fs: {
+            resolveFile: () => Promise.resolve("/virtual/private/secret.ts"),
+            readFile: () => Promise.reject(operationalError),
+          },
+        } as unknown as RuntimeAdapter;
+
+        try {
+          const context = createModuleFetcherContext(
+            esmCacheDir,
+            adapter,
+            projectDir,
+            "proj-operational-read",
+            { logger, strictMissingModules: false },
+          );
+          let caught: unknown;
+          try {
+            await fetchAndCacheModule("/_vf_modules/private/secret.js", context);
+          } catch (error) {
+            caught = error;
+          }
+
+          assertStrictEquals(caught, operationalError);
+        } finally {
+          await remove(esmCacheDir, { recursive: true });
+          await remove(projectDir, { recursive: true });
+        }
+      });
+    }
 
     it("throws when module cannot be resolved", async () => {
       const esmCacheDir = await makeTempDir({ prefix: "vf-mdx-strict-cache-" });

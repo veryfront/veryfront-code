@@ -13,8 +13,21 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
 import { cacheRegistry } from "../registry.ts";
 
+import {
+  API_CACHE_KEY_MAX_LENGTH,
+  CACHE_KEY_ALLOWED_PATTERN,
+  isCacheKeyPassThroughSafe,
+  SANITIZED_CACHE_KEY_MARKER,
+} from "./api-policy.ts";
 import { DEFAULT_EXCLUDED_QUERY_PARAMS, type QueryParamCacheOptions } from "./prefixes.ts";
 import { decodeCacheKeyPercentSegment } from "./segment-codec.ts";
+
+export {
+  CACHE_KEY_ALLOWED_PATTERN,
+  CACHE_PATTERN_ALLOWED_PATTERN,
+  isValidCacheKey,
+  isValidCachePattern,
+} from "./api-policy.ts";
 
 const querySegmentEncoder = new TextEncoder();
 const pathHashEncoder = new TextEncoder();
@@ -221,36 +234,12 @@ function encodeCacheKeySegment(value: string): string {
   }).join("");
 }
 
-// Keep these constraints aligned with veryfront-api's shared cache schemas.
-const CACHE_KEY_MAX_LENGTH = 512;
-const SANITIZED_CACHE_KEY_MARKER = "vf-sanitized:";
+// Reserve enough of the API-safe key budget for the deterministic sanitizer frame.
 const SHA256_HEX_LENGTH = 64;
-const MAX_TRUSTED_PREFIX_LENGTH = CACHE_KEY_MAX_LENGTH -
+const MAX_TRUSTED_PREFIX_LENGTH = API_CACHE_KEY_MAX_LENGTH -
   1 -
   SANITIZED_CACHE_KEY_MARKER.length -
   SHA256_HEX_LENGTH;
-export const CACHE_KEY_ALLOWED_PATTERN = /^[a-zA-Z0-9_:./-]+$/;
-export const CACHE_PATTERN_ALLOWED_PATTERN = /^[a-zA-Z0-9_:.*/-]+$/;
-
-/**
- * True when a concrete cache key is valid for the API cache backend (non-empty
- * and within the key character set, with no `*`).
- */
-export function isValidCacheKey(key: string): boolean {
-  return key.length > 0 &&
-    key.length <= CACHE_KEY_MAX_LENGTH &&
-    CACHE_KEY_ALLOWED_PATTERN.test(key);
-}
-
-/**
- * True when a del-pattern is valid for the API cache backend (non-empty and
- * within the key character set plus the `*` glob wildcard).
- */
-export function isValidCachePattern(pattern: string): boolean {
-  return pattern.length > 0 &&
-    pattern.length <= CACHE_KEY_MAX_LENGTH &&
-    CACHE_PATTERN_ALLOWED_PATTERN.test(pattern);
-}
 
 /**
  * Guarantee a concrete cache key only contains characters the API cache backend
@@ -271,11 +260,12 @@ export function isValidCachePattern(pattern: string): boolean {
  * separately because rewriting a glob could broaden its deletion scope.
  */
 export async function sanitizeCacheKey(key: string, trustedPrefix = ""): Promise<string> {
-  if (isValidCacheKey(key) && !key.includes(SANITIZED_CACHE_KEY_MARKER)) return key;
+  if (isCacheKeyPassThroughSafe(key)) return key;
 
+  const retainedTrustedPrefix = trustedPrefix.slice(0, MAX_TRUSTED_PREFIX_LENGTH);
   const safePrefix = CACHE_KEY_ALLOWED_PATTERN.test(trustedPrefix) &&
-      !trustedPrefix.includes(SANITIZED_CACHE_KEY_MARKER)
-    ? `${trustedPrefix.slice(0, MAX_TRUSTED_PREFIX_LENGTH)}:`
+      isCacheKeyPassThroughSafe(`${retainedTrustedPrefix}:entry`)
+    ? `${retainedTrustedPrefix}:`
     : "";
   return `${safePrefix}${SANITIZED_CACHE_KEY_MARKER}${await computeHash(key)}`;
 }

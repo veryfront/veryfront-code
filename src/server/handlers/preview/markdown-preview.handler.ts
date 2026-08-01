@@ -13,8 +13,9 @@ import { serverLogger } from "#veryfront/utils";
 import { HTTP_OK } from "#veryfront/utils/constants/index.ts";
 import { compileMarkdownRuntime } from "#veryfront/transforms/md/compiler/md-compiler.ts";
 import { extract } from "#std/front-matter/yaml.ts";
-import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { isExtendedFSAdapter, NotSupportedError } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
 import { validatePath } from "#veryfront/security";
@@ -25,7 +26,23 @@ const logger = serverLogger.component("markdown-preview-handler");
 // Priority 900: between MEDIUM (600) and LOW/SSR (1000)
 const PRIORITY_MARKDOWN_PREVIEW = 900 as HandlerPriority;
 
+function isCanonicalNotSupportedError(error: unknown): boolean {
+  try {
+    return error instanceof NotSupportedError;
+  } catch {
+    return false;
+  }
+}
+
 export class MarkdownPreviewHandler extends BaseHandler {
+  constructor(
+    private readonly compileMarkdown: typeof compileMarkdownRuntime = compileMarkdownRuntime,
+    private readonly generateHtml: typeof generateMarkdownHtml = generateMarkdownHtml,
+    private readonly notFoundFallback: typeof tryNotFoundFallback = tryNotFoundFallback,
+  ) {
+    super();
+  }
+
   metadata: HandlerMetadata = {
     name: "MarkdownPreviewHandler",
     priority: PRIORITY_MARKDOWN_PREVIEW,
@@ -93,12 +110,24 @@ export class MarkdownPreviewHandler extends BaseHandler {
     }
 
     if (isExtendedFSAdapter(fsAdapter) && fsAdapter.isContextualMode()) {
+      if (ctx.proxyToken) {
+        try {
+          fsAdapter.setRequestToken(ctx.proxyToken);
+        } catch (error) {
+          if (!isCanonicalNotSupportedError(error)) throw error;
+        }
+      }
+
       try {
-        if (ctx.proxyToken) fsAdapter.setRequestToken(ctx.proxyToken);
         fsAdapter.setRequestBranch(ctx.parsedDomain?.branch ?? null);
+      } catch (error) {
+        if (!isCanonicalNotSupportedError(error)) throw error;
+      }
+
+      try {
         fsAdapter.setProductionMode(false);
-      } catch (_) {
-        /* expected: some FS adapter operations may not be supported */
+      } catch (error) {
+        if (!isCanonicalNotSupportedError(error)) throw error;
       }
     }
 
@@ -112,101 +141,106 @@ export class MarkdownPreviewHandler extends BaseHandler {
     admittedPath: string,
     url: URL,
   ): Promise<HandlerResult> {
-    try {
-      const resolveFile = ctx.adapter.fs.resolveFile;
-      const resolvedPath = resolveFile
-        ? await resolveFile.call(ctx.adapter.fs, admittedPath)
-        : null;
-
-      if (resolveFile) {
-        logger.debug("resolveFile result", { filePath: requestedPath, resolvedPath });
+    const resolveFile = ctx.adapter.fs.resolveFile;
+    let resolvedPath: string | null = null;
+    if (resolveFile) {
+      try {
+        resolvedPath = await resolveFile.call(ctx.adapter.fs, admittedPath);
+      } catch (error) {
+        if (!isCanonicalNotFoundError(error)) throw error;
+        return await this.handleMissingMarkdown(req, ctx, requestedPath, null);
       }
 
-      let readPath = admittedPath;
-      if (resolvedPath !== null) {
-        const resolvedValidation = await validatePath(resolvedPath, {
-          baseDir: ctx.projectDir,
-          adapter: ctx.adapter,
-          level: "strict",
-          allowAbsolute: true,
+      logger.debug("resolveFile result", { filePath: requestedPath, resolvedPath });
+    }
+
+    let readPath = admittedPath;
+    if (resolvedPath !== null) {
+      const resolvedValidation = await validatePath(resolvedPath, {
+        baseDir: ctx.projectDir,
+        adapter: ctx.adapter,
+        level: "strict",
+        allowAbsolute: true,
+      });
+      if (!resolvedValidation.valid || !resolvedValidation.canonicalPath) {
+        logger.warn("Resolved markdown path escaped the project", {
+          filePath: requestedPath,
         });
-        if (!resolvedValidation.valid || !resolvedValidation.canonicalPath) {
-          logger.warn("Resolved markdown path escaped the project", {
-            filePath: requestedPath,
-          });
-          return this.continue();
-        }
-        readPath = resolvedValidation.canonicalPath;
-      }
-
-      let content: string;
-      try {
-        content = await ctx.adapter.fs.readFile(readPath);
-      } catch (_) {
-        /* expected: markdown file may not exist */
-        logger.debug("File not found", { filePath: requestedPath, resolvedPath });
-
-        const builder = this.createResponseBuilder(ctx);
-        const notFoundResponse = await tryNotFoundFallback(req, requestedPath, ctx, builder);
-        if (notFoundResponse) return this.respond(notFoundResponse);
-
         return this.continue();
       }
+      readPath = resolvedValidation.canonicalPath;
+    }
 
-      let frontmatter: Record<string, unknown> = {};
-      let body = content;
-
-      try {
-        const extracted = extract(content);
-        frontmatter = extracted.attrs as Record<string, unknown>;
-        body = extracted.body;
-      } catch (_) {
-        /* expected: no frontmatter or malformed YAML */
-      }
-
-      if (frontmatter.prose === false) {
-        logger.debug("Skipping - prose: false", { filePath: requestedPath });
-        return this.continue();
-      }
-
-      const bundle = await compileMarkdownRuntime(
-        "development",
-        ctx.projectDir,
-        body,
-        frontmatter,
-        readPath,
-        "server",
-      );
-
-      const responseBuilder = this.createResponseBuilder(ctx);
-      const html = generateMarkdownHtml({
-        rawHtml: bundle.rawHtml || "",
-        title: frontmatter.title != null ? String(frontmatter.title) : requestedPath,
-        description: frontmatter.description != null ? String(frontmatter.description) : "",
-        request: req,
-        url,
-        projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
-        filePath: requestedPath,
-        nonce: responseBuilder.nonce,
-      });
-
-      responseBuilder
-        .withCache("no-cache")
-        .withSecurity(ctx.securityConfig ?? undefined, req);
-      const response = responseBuilder.withContentType("text/html; charset=utf-8", html, HTTP_OK);
-
-      logger.debug("Serving markdown preview", {
-        filePath: requestedPath,
-        htmlLength: html.length,
-      });
-
-      return this.respond(response);
+    let content: string;
+    try {
+      content = await ctx.adapter.fs.readFile(readPath);
     } catch (error) {
-      logger.error("Error rendering markdown", {
-        filePath: requestedPath,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (!isCanonicalNotFoundError(error)) throw error;
+      return await this.handleMissingMarkdown(req, ctx, requestedPath, resolvedPath);
+    }
+
+    let frontmatter: Record<string, unknown> = {};
+    let body = content;
+
+    try {
+      const extracted = extract(content);
+      frontmatter = extracted.attrs as Record<string, unknown>;
+      body = extracted.body;
+    } catch (_) {
+      /* expected: no frontmatter or malformed YAML */
+    }
+
+    if (frontmatter.prose === false) {
+      logger.debug("Skipping - prose: false", { filePath: requestedPath });
       return this.continue();
     }
+
+    const bundle = await this.compileMarkdown(
+      "development",
+      ctx.projectDir,
+      body,
+      frontmatter,
+      readPath,
+      "server",
+    );
+
+    const responseBuilder = this.createResponseBuilder(ctx);
+    const html = this.generateHtml({
+      rawHtml: bundle.rawHtml || "",
+      title: frontmatter.title != null ? String(frontmatter.title) : requestedPath,
+      description: frontmatter.description != null ? String(frontmatter.description) : "",
+      request: req,
+      url,
+      projectId: ctx.projectSlug || ctx.projectId || "markdown-preview",
+      filePath: requestedPath,
+      nonce: responseBuilder.nonce,
+    });
+
+    responseBuilder
+      .withCache("no-cache")
+      .withSecurity(ctx.securityConfig ?? undefined, req);
+    const response = responseBuilder.withContentType("text/html; charset=utf-8", html, HTTP_OK);
+
+    logger.debug("Serving markdown preview", {
+      filePath: requestedPath,
+      htmlLength: html.length,
+    });
+
+    return this.respond(response);
+  }
+
+  private async handleMissingMarkdown(
+    req: Request,
+    ctx: HandlerContext,
+    requestedPath: string,
+    resolvedPath: string | null,
+  ): Promise<HandlerResult> {
+    logger.debug("File not found", { filePath: requestedPath, resolvedPath });
+
+    const builder = this.createResponseBuilder(ctx);
+    const notFoundResponse = await this.notFoundFallback(req, requestedPath, ctx, builder);
+    if (notFoundResponse) return this.respond(notFoundResponse);
+
+    return this.continue();
   }
 }

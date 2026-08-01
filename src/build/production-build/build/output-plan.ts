@@ -6,7 +6,8 @@ import {
   relative,
   resolve,
 } from "#veryfront/compat/path/index.ts";
-import { createFileSystem, isNotFoundError, realPath } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, lstat, realPath } from "#veryfront/platform/compat/fs.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
@@ -15,6 +16,7 @@ import { getRouteOutputRelativePath } from "../output-paths.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
 
 const MAX_OUTPUT_PATH_LENGTH = 4_096;
+const MAX_ADDITIONAL_SOURCE_DIRECTORIES = 16;
 const RESERVED_OUTPUT_PREFIXES = new Set(["_veryfront", "_vf"]);
 const FIXED_OUTPUT_FILES = [
   "_veryfront/app.js",
@@ -46,9 +48,15 @@ function collisionKey(path: string): string {
 }
 
 function isPathInside(candidate: string, base: string): boolean {
-  const relativePath = relative(base, candidate);
+  const relativePath = relative(
+    resolve(base).normalize("NFC").toLocaleLowerCase("en-US"),
+    resolve(candidate).normalize("NFC").toLocaleLowerCase("en-US"),
+  );
   return relativePath === "" ||
-    (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+    (relativePath !== ".." &&
+      !relativePath.startsWith("../") &&
+      !relativePath.startsWith("..\\") &&
+      !isAbsolute(relativePath));
 }
 
 async function canonicalTargetPath(path: string): Promise<string> {
@@ -56,7 +64,7 @@ async function canonicalTargetPath(path: string): Promise<string> {
   try {
     return await realPath(absolutePath);
   } catch (error) {
-    if (!isNotFoundError(error)) throw error;
+    if (!isCanonicalNotFoundError(error)) throw error;
   }
 
   const suffix: string[] = [];
@@ -69,8 +77,53 @@ async function canonicalTargetPath(path: string): Promise<string> {
     try {
       return resolve(await realPath(parent), ...suffix);
     } catch (error) {
-      if (!isNotFoundError(error)) throw error;
+      if (!isCanonicalNotFoundError(error)) throw error;
       current = parent;
+    }
+  }
+}
+
+async function rejectDanglingSourceSymlinks(
+  projectDir: string,
+  sourceDir: string,
+): Promise<void> {
+  const canonicalProject = resolve(projectDir);
+  const resolvedSource = resolve(sourceDir);
+  if (
+    resolvedSource !== canonicalProject &&
+    !isPathInside(resolvedSource, canonicalProject)
+  ) {
+    throw buildError("Build source directories must remain inside the project");
+  }
+
+  const prefixes: string[] = [];
+  let current = resolvedSource;
+  while (current !== canonicalProject) {
+    const parent = dirname(current);
+    if (parent === current) {
+      throw buildError(`Cannot inspect build source directory: ${sourceDir}`);
+    }
+    prefixes.unshift(current);
+    current = parent;
+  }
+
+  for (const prefix of prefixes) {
+    let info;
+    try {
+      info = await lstat(prefix);
+    } catch (error) {
+      if (isCanonicalNotFoundError(error)) return;
+      throw error;
+    }
+    if (!info.isSymlink) continue;
+
+    try {
+      await realPath(prefix);
+    } catch (error) {
+      if (!isCanonicalNotFoundError(error)) throw error;
+      throw buildError(
+        `Build source directory must not contain dangling symbolic links: ${sourceDir}`,
+      );
     }
   }
 }
@@ -88,7 +141,7 @@ async function rejectUnsupportedExistingOutput(outputDir: string): Promise<void>
       throw buildError(`Build output path exists and is not a directory: ${outputDir}`);
     }
   } catch (error) {
-    if (isNotFoundError(error)) return;
+    if (isCanonicalNotFoundError(error)) return;
     throw error;
   }
 }
@@ -97,6 +150,7 @@ export async function assertSafeBuildOutputDirectory(
   projectDir: string,
   outputDir: string,
   config?: VeryfrontConfig,
+  additionalSourceDirectories: readonly string[] = [],
 ): Promise<void> {
   if (!outputDir || outputDir.length > MAX_OUTPUT_PATH_LENGTH) {
     throw buildError("Build output directory is empty or exceeds the supported path length");
@@ -120,12 +174,38 @@ export async function assertSafeBuildOutputDirectory(
     );
   }
 
+  if (
+    !Array.isArray(additionalSourceDirectories) ||
+    additionalSourceDirectories.length > MAX_ADDITIONAL_SOURCE_DIRECTORIES
+  ) {
+    throw buildError("Additional build source directories are invalid or exceed the limit");
+  }
+  const additionalSources = additionalSourceDirectories.map((directory) => {
+    if (
+      typeof directory !== "string" || directory.length === 0 ||
+      directory.length > MAX_OUTPUT_PATH_LENGTH || isAbsolute(directory) ||
+      hasControlCharacters(directory)
+    ) {
+      throw buildError("Additional build source directories must be safe relative paths");
+    }
+    const resolvedSource = resolve(canonicalProject, directory);
+    if (
+      resolvedSource === canonicalProject ||
+      !isPathInside(resolvedSource, canonicalProject)
+    ) {
+      throw buildError("Additional build source directories must remain inside the project");
+    }
+    return resolvedSource;
+  });
+
   const sourceDirectories = [
     join(canonicalProject, "public"),
     join(canonicalProject, config?.directories?.pages ?? "pages"),
     join(canonicalProject, config?.directories?.app ?? "app"),
+    ...additionalSources,
   ];
   for (const sourceDir of sourceDirectories) {
+    await rejectDanglingSourceSymlinks(canonicalProject, sourceDir);
     const canonicalSource = await canonicalTargetPath(sourceDir);
     if (
       isPathInside(canonicalOutput, canonicalSource) ||

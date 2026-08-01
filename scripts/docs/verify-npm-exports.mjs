@@ -125,6 +125,8 @@ const REQUIRED_EXPORTS = {
     "runWithVeryfrontCloudContextAsync",
   ],
   "./fs": [
+    "FileSnapshotChangedError",
+    "isFileSnapshotChangedError",
     "readTextFile",
     "writeTextFile",
     "join",

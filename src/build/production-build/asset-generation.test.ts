@@ -23,7 +23,9 @@ function createMockAdapter(): ReturnType<typeof createBaseMockAdapter> {
       adapter.fs.byteFiles.has(path) || adapter.fs.files.has(path) ||
       adapter.fs.directories.has(path)
     ) {
-      return Promise.reject(new Deno.errors.AlreadyExists(path));
+      const error = new Deno.errors.AlreadyExists(path) as Error & { code: string };
+      error.code = "EEXIST";
+      return Promise.reject(error);
     }
     adapter.fs.byteFiles.set(path, content.slice());
     return Promise.resolve();

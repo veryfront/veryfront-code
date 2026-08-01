@@ -1,7 +1,95 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { decodeCacheKeyPercentSegment, encodeCacheKeyPercentSegment } from "./segment-codec.ts";
+import {
+  decodeCacheKeyLiteralSegment,
+  decodeCacheKeyPercentSegment,
+  decodeCacheKeySegment,
+  encodeCacheKeyLiteralSegment,
+  encodeCacheKeyPercentSegment,
+  encodeCacheKeySegment,
+} from "./segment-codec.ts";
+
+describe("cache key literal segment codec", () => {
+  it("round-trips API-safe literals, metacharacters, Unicode, and lone surrogates", () => {
+    const values = [
+      "",
+      "plain/path-1.0",
+      "*?:_[]",
+      "Malmö/東京",
+      "\ud800",
+      "\udc00",
+      "�",
+      "\\ud800",
+      "tenant-vf-sanitized",
+    ];
+    const encodings = values.map(encodeCacheKeyLiteralSegment);
+
+    assertEquals(encodings.map(decodeCacheKeyLiteralSegment), values);
+    assertEquals(new Set(encodings).size, values.length);
+    assertEquals(encodings.every((value) => /^[A-Za-z0-9_./-]+$/.test(value)), true);
+    assertEquals(encodings.every((value) => value.endsWith("_")), true);
+    assertEquals(encodings.every((value) => !`${value}:`.includes("vf-sanitized:")), true);
+    assertEquals(encodeCacheKeyLiteralSegment(""), "s_");
+    assertEquals(encodeCacheKeyLiteralSegment("*"), "s_002a_");
+    assertEquals(encodeCacheKeyLiteralSegment(":"), "s_003a_");
+    assertEquals(encodeCacheKeyLiteralSegment("_"), "s_005f_");
+    assertNotEquals(
+      encodeCacheKeyLiteralSegment("\ud800"),
+      encodeCacheKeyLiteralSegment("�"),
+    );
+  });
+
+  it("preserves every UTF-16 code unit without aliases", () => {
+    const values = Array.from(
+      { length: 0x1_0000 },
+      (_, codeUnit) => String.fromCharCode(codeUnit),
+    );
+    const encodings = values.map(encodeCacheKeyLiteralSegment);
+
+    assertEquals(new Set(encodings).size, values.length);
+    assertEquals(encodings.map(decodeCacheKeyLiteralSegment), values);
+  });
+
+  it("rejects malformed and non-canonical literal encodings", () => {
+    for (
+      const encoded of [
+        "",
+        "plain",
+        "s",
+        "s__",
+        "s_123_",
+        "s_00F6_",
+        "s_zzzz_",
+        "s_0061_",
+        "splain",
+      ]
+    ) {
+      assertEquals(decodeCacheKeyLiteralSegment(encoded), null);
+    }
+  });
+});
+
+describe("cache key base64url segment codec", () => {
+  it("round-trips wildcard, Unicode, and lone-surrogate strings without aliases", () => {
+    const values = [
+      "*",
+      "?",
+      "tenant:branch",
+      "Malmö/東京",
+      "\ud800",
+      "\udc00",
+      "�",
+      "\\ud800",
+    ];
+    const encodings = values.map(encodeCacheKeySegment);
+
+    assertEquals(encodings.map(decodeCacheKeySegment), values);
+    assertEquals(new Set(encodings).size, values.length);
+    assertEquals(encodings.every((value) => /^[A-Za-z0-9_-]+$/.test(value)), true);
+    assertNotEquals(encodeCacheKeySegment("\ud800"), encodeCacheKeySegment("�"));
+  });
+});
 
 describe("cache key percent segment codec", () => {
   it("round-trips arbitrary JavaScript strings without aliases", () => {

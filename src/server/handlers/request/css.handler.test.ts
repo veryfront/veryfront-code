@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { CSSHandler } from "./css.handler.ts";
 import type { HandlerContext } from "../types.ts";
@@ -9,6 +9,7 @@ import {
   clearCSSCache,
   hashCSS,
 } from "#veryfront/html/styles-builder/css-compiler.ts";
+import { RouteRegistry } from "../../../routing/registry/registry.ts";
 
 function createMockAdapter(files: Record<string, string> = {}): RuntimeAdapter {
   return {
@@ -104,6 +105,29 @@ describe("server/handlers/request/css", () => {
     assertEquals(response.status, 200);
     assertEquals(response.headers.get("content-type"), "text/css; charset=utf-8");
     assertEquals(await response.text(), css);
+  });
+
+  it("returns bodyless HEAD responses for both present and missing CSS", async () => {
+    const presentCSS = ".present{display:block}";
+    const presentHash = hashCSS(presentCSS);
+    const missingHash = hashCSS(".missing{display:none}");
+    const ctx = makeCtx({
+      [`/project/dist/_vf/css/${presentHash}.css`]: presentCSS,
+    });
+
+    const present = await new CSSHandler().handle(
+      new Request(`http://localhost/_vf/css/${presentHash}.css`, { method: "HEAD" }),
+      ctx,
+    );
+    const missing = await new CSSHandler().handle(
+      new Request(`http://localhost/_vf/css/${missingHash}.css`, { method: "HEAD" }),
+      ctx,
+    );
+
+    assertEquals(present.response?.status, 200);
+    assertEquals(present.response?.body, null);
+    assertEquals(missing.response?.status, 404);
+    assertEquals(missing.response?.body, null);
   });
 
   it("loads built CSS through the exact reader without a stat or unbounded read", async () => {
@@ -241,5 +265,52 @@ describe("server/handlers/request/css", () => {
       Error,
       "built CSS permission denied",
     );
+  });
+
+  it("propagates a plain ENOENT-shaped built-CSS rejection unchanged", async () => {
+    const css = ".expected{color:green}";
+    const cssHash = hashCSS(css);
+    const failure = Object.freeze({ code: "ENOENT" });
+    const ctx = makeCtx({ [`/project/dist/_vf/css/${cssHash}.css`]: css });
+    ctx.adapter.fs.readFileBytesWithinLimit = () => Promise.reject(failure);
+
+    const actual = await assertRejects(() =>
+      new CSSHandler().handle(
+        new Request(`http://localhost/_vf/css/${cssHash}.css`),
+        ctx,
+      )
+    );
+
+    assertStrictEquals(actual, failure);
+  });
+
+  it("returns bodyless no-store HEAD errors through the shared route boundary", async () => {
+    const css = ".expected{color:green}";
+    const cssHash = hashCSS(css);
+    const marker = "private built CSS permission marker";
+    const ctx = makeCtx({ [`/project/dist/_vf/css/${cssHash}.css`]: css });
+    ctx.adapter.fs.readFileBytesWithinLimit = () =>
+      Promise.reject(Object.assign(new Error(marker), { code: "EACCES" }));
+    const registry = new RouteRegistry();
+    registry.register(new CSSHandler());
+    const url = `http://localhost/_vf/css/${cssHash}.css`;
+
+    const getResponse = await registry.execute(new Request(url), ctx);
+    const headResponse = await registry.execute(
+      new Request(url, { method: "HEAD" }),
+      ctx,
+    );
+
+    assertEquals(getResponse?.status, 500);
+    assertEquals(headResponse?.status, getResponse?.status);
+    assertEquals(
+      headResponse?.headers.get("content-type"),
+      getResponse?.headers.get("content-type"),
+    );
+    assertEquals(getResponse?.headers.get("cache-control"), "no-store");
+    assertEquals(headResponse?.headers.get("cache-control"), "no-store");
+    assertEquals((await getResponse!.text()).includes(marker), false);
+    assertEquals(headResponse?.body, null);
+    assertEquals(await headResponse!.text(), "");
   });
 });

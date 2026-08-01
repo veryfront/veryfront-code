@@ -70,6 +70,8 @@ class FakeWebSocket {
 class FakeTimers {
   private nextId = 1;
   private callbacks = new Map<number, () => void>();
+  private intervalCallbacks = new Map<number, () => void>();
+  private intervalDelays = new Map<number, number>();
 
   readonly setTimeout = (handler: TimerHandler): number => {
     if (typeof handler !== "function") throw new Error("tests schedule function callbacks");
@@ -82,8 +84,26 @@ class FakeTimers {
     if (id !== undefined) this.callbacks.delete(id);
   };
 
+  readonly setInterval = (handler: TimerHandler, delay?: number): number => {
+    if (typeof handler !== "function") throw new Error("tests schedule function callbacks");
+    const id = this.nextId++;
+    this.intervalCallbacks.set(id, () => handler());
+    this.intervalDelays.set(id, delay ?? 0);
+    return id;
+  };
+
+  readonly clearInterval = (id: number | undefined): void => {
+    if (id === undefined) return;
+    this.intervalCallbacks.delete(id);
+    this.intervalDelays.delete(id);
+  };
+
   get size(): number {
     return this.callbacks.size;
+  }
+
+  get activeIntervalDelays(): number[] {
+    return [...this.intervalDelays.values()];
   }
 
   runAll(): void {
@@ -109,6 +129,8 @@ function installBrowser(): { restore: () => void; timers: FakeTimers } {
     WebSocket: FakeWebSocket,
     setTimeout: timers.setTimeout,
     clearTimeout: timers.clearTimeout,
+    setInterval: timers.setInterval,
+    clearInterval: timers.clearInterval,
   };
   const previous = new Map<string, PropertyDescriptor | undefined>();
   for (const key of Object.keys(replacements)) {
@@ -272,6 +294,58 @@ describe("useClaudeCodeWebSocket transport ownership", () => {
     }
   });
 
+  it("replaces an open socket ping cadence when pingInterval changes", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 1_000,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      flushSync(() => socket.open());
+      assertEquals(browser.timers.activeIntervalDelays, [1_000]);
+
+      view.render({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 2_000,
+      });
+
+      assertEquals(browser.timers.activeIntervalDelays, [2_000]);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
+  it("disables an open socket ping when pingInterval becomes zero", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 1_000,
+      });
+      const socket = FakeWebSocket.instances[0]!;
+      flushSync(() => socket.open());
+      assertEquals(browser.timers.activeIntervalDelays, [1_000]);
+
+      view.render({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+      });
+
+      assertEquals(browser.timers.activeIntervalDelays, []);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
   it("keeps reconnect scheduling single-flight", () => {
     const browser = installBrowser();
     FakeWebSocket.instances = [];
@@ -287,6 +361,97 @@ describe("useClaudeCodeWebSocket transport ownership", () => {
       first.emitClose();
 
       assertEquals(browser.timers.size, 1);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
+  it("clears an owned transport error when a replacement socket opens", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+      });
+      const first = FakeWebSocket.instances[0]!;
+      flushSync(() => first.open());
+      flushSync(() => first.onerror?.({} as Event));
+      assertEquals(view.get().error, "WebSocket transport error");
+
+      flushSync(() => first.emitClose());
+      flushSync(() => browser.timers.runAll());
+      const replacement = FakeWebSocket.instances[1]!;
+      flushSync(() => replacement.open());
+
+      assertEquals(view.get().isConnected, true);
+      assertEquals(view.get().error, null);
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
+  it("preserves protocol ownership even when its text matches a transport error", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+      });
+      const first = FakeWebSocket.instances[0]!;
+      flushSync(() => first.open());
+      flushSync(() => first.onerror?.({} as Event));
+      flushSync(() =>
+        first.message({
+          type: "error",
+          timestamp: 1,
+          runId: "run-1",
+          message: "WebSocket transport error",
+          recoverable: true,
+        })
+      );
+
+      flushSync(() => first.emitClose());
+      flushSync(() => browser.timers.runAll());
+      const replacement = FakeWebSocket.instances[1]!;
+      flushSync(() => replacement.open());
+
+      assertEquals(view.get().isConnected, true);
+      assertEquals(view.get().error, "WebSocket transport error");
+      view.unmount();
+    } finally {
+      browser.restore();
+    }
+  });
+
+  it("preserves an onConnect callback error from the replacement socket", () => {
+    const browser = installBrowser();
+    FakeWebSocket.instances = [];
+    let connections = 0;
+    try {
+      const view = mount({
+        url: "wss://example.test/ws",
+        runId: "run-1",
+        pingInterval: 0,
+        onConnect: () => {
+          connections += 1;
+          if (connections === 2) throw new Error("consumer failed");
+        },
+      });
+      const first = FakeWebSocket.instances[0]!;
+      flushSync(() => first.open());
+      flushSync(() => first.emitClose());
+      flushSync(() => browser.timers.runAll());
+      const replacement = FakeWebSocket.instances[1]!;
+      flushSync(() => replacement.open());
+
+      assertEquals(view.get().isConnected, true);
+      assertEquals(view.get().error, "Claude Code onConnect callback failed");
       view.unmount();
     } finally {
       browser.restore();

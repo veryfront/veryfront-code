@@ -8,6 +8,7 @@
  */
 
 import type { Logger } from "#veryfront/utils";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import {
   extractAllFilePaths,
   extractAllFilePathsRecursive,
@@ -112,7 +113,8 @@ async function hasIncompatibleFrameworkPathsInCode(
         });
         return true;
       }
-    } catch (_) {
+    } catch (error) {
+      if (!isCanonicalNotFoundError(error)) throw error;
       /* expected: framework file may not exist in this environment */
       log.debug(`${LOG_PREFIX_MDX_LOADER} Framework path not accessible`, {
         path,
@@ -183,7 +185,8 @@ export async function findMissingFileDependenciesInCode(
         log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency does not exist`, { path: cleanPath });
         missing.push(cleanPath);
       }
-    } catch (_) {
+    } catch (error) {
+      if (!isCanonicalNotFoundError(error)) throw error;
       /* expected: file dependency may not exist on this pod */
       log.debug(`${LOG_PREFIX_MDX_LOADER} File dependency not accessible`, { path: cleanPath });
       missing.push(cleanPath);

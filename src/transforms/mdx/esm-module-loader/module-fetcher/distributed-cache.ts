@@ -462,11 +462,15 @@ export async function readDistributedCache(
 
     return { code: moduleCode, publicationPermit };
   } catch (error) {
-    log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache validation failed`, {
-      normalizedPath,
-      errorName: classifyThrownValue(error),
-    });
-    return { code: null, publicationPermit };
+    try {
+      log.debug(`${LOG_PREFIX_MDX_LOADER} Distributed cache validation failed`, {
+        normalizedPath,
+        errorName: classifyThrownValue(error),
+      });
+    } catch {
+      /* diagnostic logging must not replace the original validation failure */
+    }
+    throw error;
   }
 }
 

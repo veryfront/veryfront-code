@@ -31,7 +31,6 @@ interface ApprovalIdentity {
   readonly runId: string;
   readonly approvalId: string;
   active: boolean;
-  loadPromise: Promise<PendingApproval | null> | null;
   loadController: AbortController | null;
   submitControllers: Set<AbortController>;
   mutationTail: Promise<void>;
@@ -72,7 +71,6 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     runId,
     approvalId,
     active: false,
-    loadPromise: null,
     loadController: null,
     submitControllers: new Set(),
     mutationTail: Promise.resolve(),
@@ -93,7 +91,6 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
     setIsSubmitting(false);
 
     if (!identity.runId || !identity.approvalId) {
-      identity.loadPromise = Promise.resolve(null);
       setIsLoading(false);
       return () => {
         identity.active = false;
@@ -157,7 +154,7 @@ export function useApproval(options: UseApprovalOptions): UseApprovalResult {
       }
     }
 
-    identity.loadPromise = fetchApproval();
+    void fetchApproval();
 
     return () => {
       identity.active = false;

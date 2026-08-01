@@ -132,6 +132,14 @@ export function extractImports(
       return;
     }
 
+    if (node.type === "TSImportType") {
+      const specifier = stringValue(record.argument);
+      if (specifier) {
+        references.push({ specifier, kind: "type", line: getLine(node) });
+      }
+      return;
+    }
+
     if (node.type === "CallExpression") {
       const callee = asRecord(record.callee);
       const argument = Array.isArray(record.arguments)
@@ -260,6 +268,38 @@ export function resolveLocalImport(
     ];
 
   return candidates.find((path) => files.has(path)) ?? null;
+}
+
+/** Return a forbidden source-layer dependency, if this edge violates direction. */
+export function findForbiddenLayerImport(
+  file: string,
+  dependency: string,
+  kind: ImportKind,
+): string | null {
+  const fingerprint = `${file} -> ${dependency}`;
+
+  // Preserve the existing runtime-initialization rule for the shared Types
+  // foundation. Type-only imports remain erased and do not initialize a
+  // higher layer under this established contract.
+  if (
+    kind === "runtime" &&
+    file.startsWith("src/types/") &&
+    !dependency.startsWith("src/types/")
+  ) {
+    return fingerprint;
+  }
+
+  // Transforms is a lower-level source-processing domain consumed by Routing.
+  // Static, type-only, and dynamic references all invert that source-layer
+  // direction even when they do not create an eager file-level SCC.
+  if (
+    file.startsWith("src/transforms/") &&
+    dependency.startsWith("src/routing/")
+  ) {
+    return fingerprint;
+  }
+
+  return null;
 }
 
 /** Return each directed edge contained in a strongly connected component. */
@@ -405,9 +445,6 @@ export async function analyzeModules(): Promise<ModuleAnalysis> {
     broadBarrelImports.push(...findBroadBarrelViolations(file, references));
     const dependencies = new Set<string>();
     for (const reference of references) {
-      // Only eager runtime imports create module-initialization cycles. Type-only
-      // imports are erased and dynamic imports intentionally defer evaluation.
-      if (reference.kind !== "runtime") continue;
       const dependency = resolveLocalImport(
         file,
         reference.specifier,
@@ -415,15 +452,19 @@ export async function analyzeModules(): Promise<ModuleAnalysis> {
         fileSet,
       );
       if (!dependency) continue;
-      dependencies.add(dependency);
 
-      // Shared types are a foundation contract. Runtime behavior that depends
-      // on a higher layer belongs with that layer; otherwise importing a
-      // seemingly inert type path can initialize filesystem, telemetry, or
-      // server code and invert the documented dependency direction.
-      if (file.startsWith("src/types/") && !dependency.startsWith("src/types/")) {
-        forbiddenLayerImports.push(`${file} -> ${dependency}`);
+      const forbiddenLayerImport = findForbiddenLayerImport(
+        file,
+        dependency,
+        reference.kind,
+      );
+      if (forbiddenLayerImport !== null) {
+        forbiddenLayerImports.push(forbiddenLayerImport);
       }
+
+      // Only eager runtime imports create module-initialization cycles. Type-only
+      // imports are erased and dynamic imports intentionally defer evaluation.
+      if (reference.kind === "runtime") dependencies.add(dependency);
     }
     graph.set(file, dependencies);
   }
@@ -501,7 +542,7 @@ async function main(): Promise<void> {
     newCycleEdges,
   );
   printFindings(
-    "Runtime imports from shared types into higher layers:",
+    "Forbidden source-layer dependencies:",
     analysis.forbiddenLayerImports,
   );
 

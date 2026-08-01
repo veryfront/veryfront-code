@@ -242,6 +242,8 @@ Deno.test("root scope, extension formatting, and aggregate gates stay aligned", 
     "scripts/lint/core-production-roots.test.ts",
     "scripts/lint/source-import-collector.ts",
     "scripts/lint/source-import-collector.test.ts",
+    "scripts/lint/validate-architecture.ts",
+    "scripts/lint/validate-architecture.test.ts",
     "scripts/typecheck/check-extension-workspaces.ts",
     "scripts/typecheck/check-extension-workspaces.test.ts",
     "scripts/test-config-lock.test.ts",
@@ -304,6 +306,7 @@ Deno.test("every script regression has an explicit task owner", async () => {
 
   const dedicatedTasks: Record<string, string> = {
     "scripts/codemods/migrate-chat-composition.test.ts": "lint:chat-ratchets",
+    "scripts/codemods/migrate-esm-sh-imports.test.ts": "lint:esm-sh-codemod",
     "scripts/lint/audit-parser-extension-boundary.test.ts":
       "test:scripts:parser-extension-boundary",
     "scripts/postinstall-lib.test.js": "test:scripts:postinstall",

@@ -288,6 +288,26 @@ try {
   assertType(fs.resolve, "function", "resolve is function");
   assertType(fs.exists, "function", "exists is function");
   assertType(fs.mkdir, "function", "mkdir is function");
+  assertType(
+    fs.FileSnapshotChangedError,
+    "function",
+    "FileSnapshotChangedError is a constructor",
+  );
+  assertType(
+    fs.isFileSnapshotChangedError,
+    "function",
+    "isFileSnapshotChangedError is function",
+  );
+
+  const snapshotChanged = new fs.FileSnapshotChangedError();
+  assert(
+    fs.isFileSnapshotChangedError(snapshotChanged),
+    "snapshot change errors retain their public brand",
+  );
+  assert(
+    !fs.isFileSnapshotChangedError(new Error("unrelated")),
+    "unrelated errors do not acquire the snapshot change brand",
+  );
 
   // Sanity: join() should join paths
   const joined = fs.join("foo", "bar", "baz.ts");
@@ -338,7 +358,7 @@ try {
     await rm(collisionPath, { recursive: true, force: true });
   }
 
-  console.log("  OK    fs — 11 checks");
+  console.log("  OK    fs — 15 checks");
 } catch (err) {
   failed++;
   errors.push(`fs: ${err.message}`);

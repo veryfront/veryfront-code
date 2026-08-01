@@ -15,6 +15,7 @@ import {
 } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
@@ -135,7 +136,8 @@ async function findMissingFileDependencies(code: string): Promise<string[]> {
       if (!stat?.isFile) {
         missing.push(cleanPath);
       }
-    } catch (_) {
+    } catch (error) {
+      if (!isCanonicalNotFoundError(error)) throw error;
       /* expected: file dependency may not exist on disk */
       missing.push(cleanPath);
     }
@@ -962,7 +964,8 @@ export async function lookupMdxEsmCache(
         );
         return { status: "hit", path: cachedPath };
       }
-    } catch (_) {
+    } catch (error) {
+      if (!isCanonicalNotFoundError(error)) throw error;
       /* expected: verified artifact was evicted/rebuilt; fall through to invalidate */
     }
 
@@ -1097,7 +1100,8 @@ export async function lookupMdxEsmCache(
       `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache: ${filePath} -> ${cachedPath}`,
     );
     return { status: "hit", path: cachedPath };
-  } catch (_) {
+  } catch (error) {
+    if (!isCanonicalNotFoundError(error)) throw error;
     /* expected: cached file may be inaccessible or deleted between checks */
     cache.delete(cacheKey);
     return { status: "corrupted", reason: "Cached file inaccessible", filePath };

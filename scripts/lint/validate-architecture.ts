@@ -37,16 +37,54 @@ interface Violation {
 const HANDLERS_ROOT = "src/server/handlers";
 const MAX_DEPTH = 3; // Maximum depth from handlers/ to any file
 const MAX_HANDLER_LOC = 150; // Maximum lines of code for a handler file
-const HANDLER_PATTERN = /\.handler\.ts$/;
+const HANDLER_SUFFIX = ".handler.ts";
+const PHYSICAL_LINE_SEPARATOR_PATTERN = /\r\n|[\r\n\u2028\u2029]/;
+const NON_PRODUCTION_HANDLER_MARKERS = new Set([
+  "test",
+  "tests",
+  "spec",
+  "specs",
+  "bench",
+  "benchmark",
+  "benchmarks",
+  "helper",
+  "helpers",
+  "fixture",
+  "fixtures",
+]);
+const NON_PRODUCTION_HANDLER_DIRECTORIES = new Set([
+  ...NON_PRODUCTION_HANDLER_MARKERS,
+  "__fixtures__",
+]);
 
 // Layer definitions for dependency enforcement
-const LAYER_BOTTOM = ["platform", "utils", "errors", "http", "cache", "types"];
 const LAYER_MIDDLE = ["routing", "security", "middleware", "config", "data"];
 const LAYER_TOP = ["server", "cli", "build"];
 
 async function countLines(path: string): Promise<number> {
   const content = await Deno.readTextFile(path);
-  return content.split("\n").length;
+  if (content.length === 0) return 0;
+  const lines = content.split(PHYSICAL_LINE_SEPARATOR_PATTERN);
+  return lines.length - (lines.at(-1) === "" ? 1 : 0);
+}
+
+function isProductionHandler(path: string, name: string): boolean {
+  if (!name.endsWith(HANDLER_SUFFIX)) return false;
+
+  const normalizedPath = path.replaceAll("\\", "/");
+  const directorySegments = normalizedPath.split("/").slice(0, -1);
+  if (
+    directorySegments.some((segment) =>
+      NON_PRODUCTION_HANDLER_DIRECTORIES.has(segment.toLowerCase())
+    )
+  ) {
+    return false;
+  }
+
+  const handlerName = name.slice(0, -HANDLER_SUFFIX.length);
+  const dotMarker = handlerName.split(".").at(-1)?.toLowerCase();
+  return dotMarker === undefined ||
+    !NON_PRODUCTION_HANDLER_MARKERS.has(dotMarker);
 }
 
 async function checkMaxDepth(): Promise<Violation[]> {
@@ -65,7 +103,8 @@ async function checkMaxDepth(): Promise<Violation[]> {
         violations.push({
           rule: "max-depth",
           path: entry.path,
-          message: `File is ${depth} levels deep (max: ${MAX_DEPTH}). Path: ${relativePath}`,
+          message:
+            `File is ${depth} levels deep (max: ${MAX_DEPTH}). Path: ${relativePath}`,
           severity: "error",
         });
       }
@@ -115,25 +154,15 @@ async function checkHandlerLOC(): Promise<Violation[]> {
   try {
     for await (const entry of walk(HANDLERS_ROOT, { includeFiles: true })) {
       if (!entry.isFile) continue;
-      if (!entry.name.endsWith(".ts")) continue;
-
-      // Only check files that look like handlers (have "handler" in name or are in handlers dir)
-      const isHandler =
-        entry.name.includes("handler") ||
-        entry.name.includes("Handler") ||
-        HANDLER_PATTERN.test(entry.name);
-
-      if (!isHandler) continue;
-
-      // Skip test files
-      if (entry.name.includes(".test.")) continue;
+      if (!isProductionHandler(entry.path, entry.name)) continue;
 
       const loc = await countLines(entry.path);
       if (loc > MAX_HANDLER_LOC) {
         violations.push({
           rule: "max-handler-loc",
           path: entry.path,
-          message: `Handler has ${loc} lines (max: ${MAX_HANDLER_LOC}). Consider extracting to a service.`,
+          message:
+            `Handler has ${loc} lines (max: ${MAX_HANDLER_LOC}). Consider extracting to a service.`,
           severity: "warning",
         });
       }
@@ -169,11 +198,14 @@ async function checkLayerDependencies(): Promise<Violation[]> {
     // Top layer can import from anywhere (no restrictions)
   };
 
-  const importPattern = /import\s+(?:type\s+)?(?:\{[^}]*\}|[^;]+)\s+from\s+["']([^"']+)["']/g;
+  const importPattern =
+    /import\s+(?:type\s+)?(?:\{[^}]*\}|[^;]+)\s+from\s+["']([^"']+)["']/g;
   const vfImportPattern = /#veryfront\/(\w+)/;
 
   try {
-    for await (const entry of walk("src", { includeFiles: true, exts: [".ts"] })) {
+    for await (
+      const entry of walk("src", { includeFiles: true, exts: [".ts"] })
+    ) {
       if (!entry.isFile) continue;
       if (entry.name.includes(".test.")) continue;
 
@@ -198,7 +230,8 @@ async function checkLayerDependencies(): Promise<Violation[]> {
             violations.push({
               rule: "layer-dependencies",
               path: entry.path,
-              message: `${rules.name} layer (${fileLayer}/) cannot import from ${importedLayer}/`,
+              message:
+                `${rules.name} layer (${fileLayer}/) cannot import from ${importedLayer}/`,
               severity: "error",
             });
           }
@@ -227,7 +260,9 @@ async function checkNamingConvention(): Promise<Violation[]> {
 
   try {
     // Only check direct handler files (not deep nested ones)
-    for await (const entry of walk(HANDLERS_ROOT, { includeFiles: true, maxDepth: 3 })) {
+    for await (
+      const entry of walk(HANDLERS_ROOT, { includeFiles: true, maxDepth: 3 })
+    ) {
       if (!entry.isFile) continue;
       if (!entry.name.endsWith(".ts")) continue;
       if (entry.name.includes(".test.")) continue;
@@ -235,15 +270,17 @@ async function checkNamingConvention(): Promise<Violation[]> {
 
       // Check if file contains a handler class
       const content = await Deno.readTextFile(entry.path);
-      const hasHandlerClass = /export\s+class\s+\w+Handler\s+extends\s+BaseHandler/.test(
-        content
-      );
+      const hasHandlerClass =
+        /export\s+class\s+\w+Handler\s+extends\s+BaseHandler/.test(
+          content,
+        );
 
-      if (hasHandlerClass && !HANDLER_PATTERN.test(entry.name)) {
+      if (hasHandlerClass && !entry.name.endsWith(HANDLER_SUFFIX)) {
         violations.push({
           rule: "naming-convention",
           path: entry.path,
-          message: `Handler file should use .handler.ts suffix. Found: ${entry.name}`,
+          message:
+            `Handler file should use .handler.ts suffix. Found: ${entry.name}`,
           severity: "warning",
         });
       }

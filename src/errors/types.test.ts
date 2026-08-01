@@ -61,6 +61,77 @@ describe("errors/types", () => {
   });
 
   describe("VeryfrontError", () => {
+    it("constructs errors without consulting a replaced WeakSet.prototype.add", () => {
+      const addDescriptor = Object.getOwnPropertyDescriptor(WeakSet.prototype, "add");
+      assert(addDescriptor);
+      let replacementCalls = 0;
+      let constructionFailure: unknown;
+      let constructed: VeryfrontError | undefined;
+
+      try {
+        Object.defineProperty(WeakSet.prototype, "add", {
+          configurable: true,
+          value(): never {
+            replacementCalls++;
+            throw new Error("live WeakSet.prototype.add must not run");
+          },
+          writable: true,
+        });
+        try {
+          constructed = new VeryfrontError("test error", {
+            slug: "build-failed",
+            category: "BUILD",
+            status: 500,
+            title: "Build failed",
+          });
+        } catch (error) {
+          constructionFailure = error;
+        }
+      } finally {
+        Object.defineProperty(WeakSet.prototype, "add", addDescriptor);
+      }
+
+      assertEquals(constructionFailure, undefined);
+      assertEquals(replacementCalls, 0);
+      assertEquals(constructed?.slug, "build-failed");
+    });
+
+    it("recognizes errors without consulting a replaced WeakSet.prototype.has", () => {
+      const error = new VeryfrontError("test error", {
+        slug: "build-failed",
+        category: "BUILD",
+        status: 500,
+        title: "Build failed",
+      });
+      const hasDescriptor = Object.getOwnPropertyDescriptor(WeakSet.prototype, "has");
+      assert(hasDescriptor);
+      let replacementCalls = 0;
+      let snapshotFailure: unknown;
+      let snapshot: ReturnType<typeof snapshotVeryfrontError> | undefined;
+
+      try {
+        Object.defineProperty(WeakSet.prototype, "has", {
+          configurable: true,
+          value(): never {
+            replacementCalls++;
+            throw new Error("live WeakSet.prototype.has must not run");
+          },
+          writable: true,
+        });
+        try {
+          snapshot = snapshotVeryfrontError(error);
+        } catch (caught) {
+          snapshotFailure = caught;
+        }
+      } finally {
+        Object.defineProperty(WeakSet.prototype, "has", hasDescriptor);
+      }
+
+      assertEquals(snapshotFailure, undefined);
+      assertEquals(replacementCalls, 0);
+      assertEquals(snapshot?.slug, "build-failed");
+    });
+
     it("does not follow inherited descriptor values for accessor-backed fields", () => {
       const err = new VeryfrontError("test error", {
         slug: "build-failed",

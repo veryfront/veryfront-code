@@ -13,7 +13,7 @@ import {
   splitPackageSubpath,
 } from "./package-resolution.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
-import { toCjsDestructureBindings } from "#veryfront/routing/api/module-loader/loader-helpers.ts";
+import { toCjsDestructureBindings } from "./cjs-destructure-bindings.ts";
 
 const logger = serverLogger.component("api");
 const MAX_PACKAGE_JSON_BYTES = 1024 * 1024;

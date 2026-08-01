@@ -2,14 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type {
-  CSSOptimizationEngine,
-  CSSProcessor,
-} from "#veryfront/extensions/css/index.ts";
-import {
-  CSSOptimizationEngineName,
-  CSSProcessorName,
-} from "#veryfront/extensions/css/index.ts";
+import type { CSSOptimizationEngine, CSSProcessor } from "#veryfront/extensions/css/index.ts";
+import { CSSOptimizationEngineName, CSSProcessorName } from "#veryfront/extensions/css/index.ts";
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 import { createTestCSSOptimizationEngine } from "../../../tests/_helpers/css-optimization-engine.ts";

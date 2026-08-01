@@ -1,11 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import {
+  assert,
   assertEquals,
   assertRejects,
   assertStrictEquals,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { Logger } from "#veryfront/utils/logger/index.ts";
+import { runWithRequestContextAsync } from "#veryfront/utils/logger/request-context.ts";
 import { PageLoader } from "./page-loader.ts";
 import type { RouteData, SpaPageData } from "./types.ts";
 
@@ -38,6 +41,39 @@ function makeHydrationDocument(getJson: () => string): Document {
     getElementById: (id: string) =>
       id === "veryfront-hydration-data" ? { textContent: getJson() } : null,
   } as unknown as Document;
+}
+
+interface CapturedPageLoaderWarning {
+  message: string;
+  error: unknown;
+}
+
+async function capturePageLoaderWarning(
+  operation: () => Promise<void>,
+): Promise<CapturedPageLoaderWarning> {
+  const warnings: Array<{ message: string; args: unknown[] }> = [];
+  const logger: Logger = {
+    debug() {},
+    info() {},
+    warn(message, ...args) {
+      warnings.push({ message, args });
+    },
+    error() {},
+    time: (_label, fn) => fn(),
+    child: () => logger,
+    component: () => logger,
+  };
+
+  await runWithRequestContextAsync(
+    { logger, requestId: "page-loader-prefetch-diagnostic-test" },
+    operation,
+  );
+
+  assertEquals(warnings.length, 1);
+  return {
+    message: warnings[0]!.message,
+    error: warnings[0]!.args[0],
+  };
 }
 
 function installSnapshotDOMParser(): () => void {
@@ -310,6 +346,139 @@ describe("routing/client/page-loader", () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+
+    it("does not treat an inherited status getter as a dependency snapshot conflict", async () => {
+      const originalFetch = globalThis.fetch;
+      const previousStatus = Object.getOwnPropertyDescriptor(Object.prototype, "status");
+      const failure = new TypeError("ordinary network failure");
+      const reloads: string[] = [];
+      let inheritedStatusReads = 0;
+      let rejection: unknown;
+      globalThis.fetch = () => Promise.reject(failure);
+
+      try {
+        Object.defineProperty(Object.prototype, "status", {
+          configurable: true,
+          get(): never {
+            inheritedStatusReads++;
+            throw new Error("inherited status getter must not run");
+          },
+        });
+
+        const loader = new PageLoader(undefined, (url) => reloads.push(url));
+        try {
+          await loader.fetchPageData("/docs");
+        } catch (error) {
+          rejection = error;
+        }
+      } finally {
+        globalThis.fetch = originalFetch;
+        if (previousStatus) {
+          Object.defineProperty(Object.prototype, "status", previousStatus);
+        } else {
+          Reflect.deleteProperty(Object.prototype, "status");
+        }
+      }
+
+      assertStrictEquals(rejection, failure);
+      assertEquals(inheritedStatusReads, 0);
+      assertEquals(reloads, []);
+    });
+
+    for (const weakSetMethod of ["add", "has"] as const) {
+      it(`does not consult a replaced WeakSet.prototype.${weakSetMethod} while recovering a snapshot conflict`, async () => {
+        const originalFetch = globalThis.fetch;
+        const methodDescriptor = Object.getOwnPropertyDescriptor(
+          WeakSet.prototype,
+          weakSetMethod,
+        );
+        assert(methodDescriptor);
+        const reloads: string[] = [];
+        let replacementCalls = 0;
+        let rejection: unknown;
+        globalThis.fetch = () =>
+          Promise.resolve(new Response("Unknown dependency snapshot", { status: 409 }));
+
+        try {
+          Object.defineProperty(WeakSet.prototype, weakSetMethod, {
+            configurable: true,
+            value(): never {
+              replacementCalls++;
+              throw new Error(
+                `live WeakSet.prototype.${weakSetMethod} must not run`,
+              );
+            },
+            writable: true,
+          });
+
+          const loader = new PageLoader(undefined, (url) => reloads.push(url));
+          try {
+            await loader.fetchPageData("/docs");
+          } catch (error) {
+            rejection = error;
+          }
+        } finally {
+          globalThis.fetch = originalFetch;
+          Object.defineProperty(
+            WeakSet.prototype,
+            weakSetMethod,
+            methodDescriptor,
+          );
+        }
+
+        assert(rejection instanceof Error);
+        assertEquals(rejection.message, "Dependency snapshot is unavailable for /docs");
+        assertEquals(replacementCalls, 0);
+        assertEquals(reloads, ["/docs"]);
+      });
+    }
+
+    it("preserves the snapshot conflict when document reload throws a hostile value", async () => {
+      const originalFetch = globalThis.fetch;
+      let hookCalls = 0;
+      const hostileReloadFailure = new Proxy({}, {
+        get(): never {
+          hookCalls++;
+          throw new Error("reload failure property hook must not run");
+        },
+        getOwnPropertyDescriptor(): never {
+          hookCalls++;
+          throw new Error("reload failure descriptor hook must not run");
+        },
+        getPrototypeOf(): never {
+          hookCalls++;
+          throw new Error("reload failure prototype hook must not run");
+        },
+      });
+      globalThis.fetch = () =>
+        Promise.resolve(new Response("Unknown dependency snapshot", { status: 409 }));
+      const loader = new PageLoader(
+        makeHydrationDocument(() => JSON.stringify({ dependencyPinningCacheKey: "on:snapshot-a" })),
+        () => {
+          throw hostileReloadFailure;
+        },
+      );
+      let rejection: unknown;
+
+      try {
+        const warning = await capturePageLoaderWarning(async () => {
+          try {
+            await loader.fetchPageData("/docs");
+          } catch (error) {
+            rejection = error;
+          }
+        });
+
+        assert(rejection instanceof Error);
+        assertEquals(rejection.message, "Dependency snapshot is unavailable for /docs");
+        assert(warning.error instanceof Error);
+        assertEquals(warning.error.message, "Unknown error");
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+
+      assertEquals(hookCalls, 0);
     });
 
     it("rejects route data whose response identity does not match the loader", async () => {
@@ -652,6 +821,90 @@ describe("routing/client/page-loader", () => {
       const result = await loader.loadSpaPageData("/spa-cached");
       assertEquals(result, data);
     });
+  });
+
+  describe("prefetch diagnostics", () => {
+    const cases = [
+      {
+        name: "route",
+        run(loader: PageLoader, path: string) {
+          return loader.prefetch(path);
+        },
+      },
+      {
+        name: "SPA",
+        run(loader: PageLoader, path: string) {
+          return loader.prefetchSpaPageData(path);
+        },
+      },
+    ] as const;
+
+    for (const prefetchCase of cases) {
+      it(`redacts and bounds native Error messages at the ${prefetchCase.name} prefetch boundary`, async () => {
+        const loader = new PageLoader();
+        const secret = "native-prefetch-secret";
+        const failure = new Error(
+          `postgres://admin:${secret}@db.internal/app ${"x".repeat(4_096)}`,
+        );
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = () => Promise.reject(failure);
+
+        let warning: CapturedPageLoaderWarning | undefined;
+        try {
+          warning = await capturePageLoaderWarning(() =>
+            prefetchCase.run(loader, `/diagnostic?token=${secret}`)
+          );
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+
+        assert(warning);
+        assertEquals(warning.message.includes(secret), false);
+        assertEquals(warning.message.includes("[REDACTED]"), true);
+        assert(warning.error instanceof Error);
+        assertEquals(warning.error === failure, false);
+        assertEquals(warning.error.message.includes(secret), false);
+        assertEquals(
+          warning.error.message.includes("postgres://admin:[REDACTED]@db.internal/app"),
+          true,
+        );
+        assertEquals(warning.error.message.length, 2_048);
+        assertEquals(warning.error.message.endsWith("...[truncated]"), true);
+      });
+
+      it(`does not invoke hostile object hooks at the ${prefetchCase.name} prefetch boundary`, async () => {
+        const loader = new PageLoader();
+        let hookCalls = 0;
+        const failure = new Proxy({}, {
+          get(): never {
+            hookCalls++;
+            throw new Error("property hook must not run");
+          },
+          getOwnPropertyDescriptor(): never {
+            hookCalls++;
+            throw new Error("descriptor hook must not run");
+          },
+          getPrototypeOf(): never {
+            hookCalls++;
+            throw new Error("prototype hook must not run");
+          },
+        });
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = () => Promise.reject(failure);
+
+        let warning: CapturedPageLoaderWarning | undefined;
+        try {
+          warning = await capturePageLoaderWarning(() => prefetchCase.run(loader, "/diagnostic"));
+        } finally {
+          globalThis.fetch = originalFetch;
+        }
+
+        assert(warning);
+        assert(warning.error instanceof Error);
+        assertEquals(warning.error.message, "Unknown error");
+        assertEquals(hookCalls, 0);
+      });
+    }
   });
 
   describe("request deduplication", () => {

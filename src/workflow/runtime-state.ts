@@ -26,6 +26,7 @@ export const INTERNAL_WORKFLOW_INPUT_KIND_FIELD = "_workflowInputKind";
 export const SUBWORKFLOW_INPUT_KIND = "subWorkflowInput";
 
 import { isDeepStrictEqual } from "node:util";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import type { WorkflowContext } from "./types.ts";
 
 /** Internal run/checkpoint sidecar carrying public projection ownership. */
@@ -151,14 +152,6 @@ function defineProjectionRoot(
   });
 }
 
-function pathStartsWith(
-  candidate: readonly (string | number)[],
-  prefix: readonly (string | number)[],
-): boolean {
-  return prefix.length <= candidate.length &&
-    prefix.every((part, index) => candidate[index] === part);
-}
-
 interface ProjectionTargetSnapshot {
   readonly root: string;
   readonly index: number;
@@ -171,13 +164,21 @@ function getOwnPathValue(
   root: string,
   path: readonly (string | number)[],
 ): { exists: boolean; value: unknown } {
-  if (!Object.hasOwn(context, root)) return { exists: false, value: undefined };
-  let value: unknown = context[root];
-  for (const part of path) {
-    if (typeof value !== "object" || value === null || !Object.hasOwn(value, part)) {
+  let value: unknown = context;
+  for (const part of [root, ...path]) {
+    if (typeof value !== "object" || value === null || isProxyWithoutHooks(value)) {
       return { exists: false, value: undefined };
     }
-    value = (value as Record<PropertyKey, unknown>)[part];
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, part);
+    } catch {
+      return { exists: false, value: undefined };
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      return { exists: false, value: undefined };
+    }
+    value = descriptor.value;
   }
   return { exists: true, value };
 }
@@ -207,7 +208,7 @@ function reconcileProjectionTargets(
       snapshot.root,
       projection[snapshot.root]?.[snapshot.index]?.path ?? [],
     );
-    if (snapshot.exists !== current.exists || !Object.is(snapshot.value, current.value)) {
+    if (!snapshot.exists || !current.exists || !Object.is(snapshot.value, current.value)) {
       const indexes = invalid.get(snapshot.root) ?? new Set<number>();
       indexes.add(snapshot.index);
       invalid.set(snapshot.root, indexes);

@@ -22,8 +22,8 @@ import { BUNDLE_MANIFEST_DEV_TTL_MS, BUNDLE_MANIFEST_PROD_TTL_MS } from "./const
 const logger = serverLogger.component("bundle-manifest");
 
 class UnsupportedBundleManifestStoreError extends Error {
-  constructor(storeType: string, reason = "is configured but is not implemented") {
-    super(`Bundle manifest store type "${storeType}" ${reason}`);
+  constructor(storeType: string) {
+    super(`Bundle manifest store type "${storeType}" is not supported`);
     this.name = "UnsupportedBundleManifestStoreError";
   }
 }
@@ -59,7 +59,7 @@ export async function initializeBundleManifest(
 
 function createStore(storeType: string): BundleManifestStore {
   if (storeType !== "memory") {
-    throw new UnsupportedBundleManifestStoreError(storeType, "is not supported");
+    throw new UnsupportedBundleManifestStoreError(storeType);
   }
 
   logger.debug("In-memory store initialized");

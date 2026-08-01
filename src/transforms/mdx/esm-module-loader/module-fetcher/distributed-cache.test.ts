@@ -38,6 +38,8 @@ import {
 } from "./distributed-cache.ts";
 import { parseMdxModuleRecoveryPayload } from "./recovery-payload.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import { getLocalFs } from "../cache/index.ts";
+import { FRAMEWORK_ROOT } from "../constants.ts";
 
 interface LogEntry {
   level: "debug" | "warn" | "info" | "error";
@@ -396,6 +398,122 @@ describe("module-fetcher/distributed-cache", () => {
         entries.some((entry) => entry.message.includes("Distributed transform cache HIT")),
         true,
       );
+    });
+  });
+
+  it("propagates framework stat failures without converting them into a distributed miss", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeRevisionedCache();
+      const { log } = createCapturingLogger();
+      const transformKey = "transform:framework-stat-failure";
+      const key = await primaryKey(transformKey);
+      const frameworkPath = join(
+        FRAMEWORK_ROOT,
+        "src",
+        `distributed-stat-${crypto.randomUUID()}.ts`,
+      );
+      cache.seed(
+        key,
+        await createTrustedEnvelope(`import value from "file://${frameworkPath}";`),
+      );
+      const localFs = getLocalFs();
+      const originalStat = localFs.stat.bind(localFs);
+      const permissionError = Object.assign(new Error("distributed framework stat denied"), {
+        code: "EACCES",
+      });
+
+      try {
+        localFs.stat = (path: string) =>
+          path === frameworkPath ? Promise.reject(permissionError) : originalStat(path);
+
+        const error = await assertRejects(() => readCache(cache, transformKey, projectDir, log));
+
+        assertStrictEquals(error, permissionError);
+        assertEquals(cache.revisionReads, [key]);
+        assertEquals(cache.exchanges, []);
+      } finally {
+        localFs.stat = originalStat;
+      }
+    });
+  });
+
+  it("propagates dependency stat failures without attempting distributed recovery", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeRevisionedCache();
+      const { log } = createCapturingLogger();
+      const transformKey = "transform:dependency-stat-failure";
+      const key = await primaryKey(transformKey);
+      const dependencyPath = join(projectDir, `dependency-${crypto.randomUUID()}.mjs`);
+      cache.seed(
+        key,
+        await createTrustedEnvelope(`import value from "file://${dependencyPath}";`),
+      );
+      const localFs = getLocalFs();
+      const originalStat = localFs.stat.bind(localFs);
+      const ioError = Object.assign(new Error("distributed dependency stat failed"), {
+        code: "EIO",
+      });
+
+      try {
+        localFs.stat = (path: string) =>
+          path === dependencyPath ? Promise.reject(ioError) : originalStat(path);
+
+        const error = await assertRejects(() => readCache(cache, transformKey, projectDir, log));
+
+        assertStrictEquals(error, ioError);
+        assertEquals(cache.revisionReads, [key]);
+        assertEquals(cache.exchanges, []);
+      } finally {
+        localFs.stat = originalStat;
+      }
+    });
+  });
+
+  it("preserves the original validation failure when diagnostic logging throws", async () => {
+    await withTempDir(async (projectDir) => {
+      const cache = new FakeRevisionedCache();
+      const { log, entries } = createCapturingLogger();
+      const transformKey = "transform:throwing-validation-logger";
+      const key = await primaryKey(transformKey);
+      const frameworkPath = join(
+        FRAMEWORK_ROOT,
+        "src",
+        `throwing-logger-${crypto.randomUUID()}.ts`,
+      );
+      cache.seed(
+        key,
+        await createTrustedEnvelope(`import value from "file://${frameworkPath}";`),
+      );
+      const originalDebug = log.debug.bind(log);
+      const diagnosticFailure = new Error("diagnostic logger failed");
+      log.debug = (message: string, ...args: unknown[]) => {
+        if (message.includes("Distributed cache validation failed")) {
+          throw diagnosticFailure;
+        }
+        originalDebug(message, ...args);
+      };
+      const localFs = getLocalFs();
+      const originalStat = localFs.stat.bind(localFs);
+      const permissionError = Object.assign(new Error("framework validation denied"), {
+        code: "EACCES",
+      });
+
+      try {
+        localFs.stat = (path: string) =>
+          path === frameworkPath ? Promise.reject(permissionError) : originalStat(path);
+
+        const error = await assertRejects(() => readCache(cache, transformKey, projectDir, log));
+
+        assertStrictEquals(error, permissionError);
+        assertEquals(
+          entries.some((entry) => entry.message.includes("Distributed transform cache HIT")),
+          true,
+        );
+        assertEquals(cache.revisionReads, [key]);
+        assertEquals(cache.exchanges, []);
+      } finally {
+        localFs.stat = originalStat;
+      }
     });
   });
 

@@ -260,6 +260,7 @@ export function useClaudeCodeWebSocket(
   const pendingCommandsRef = useRef<Map<string, PendingCommand>>(new Map());
   const retainedCommandIdsRef = useRef<Set<string>>(new Set());
   const deliveryErrorRef = useRef<string | null>(null);
+  const transportErrorRef = useRef<string | null>(null);
   const optionsRef = useRef({
     autoReconnect,
     maxReconnectAttempts: normalizedMaxReconnectAttempts,
@@ -331,6 +332,7 @@ export function useClaudeCodeWebSocket(
   const reportError = useCallback((error: Error, stateMessage: string): void => {
     if (!mountedRef.current) return;
     deliveryErrorRef.current = null;
+    transportErrorRef.current = null;
     setState((prev) => ({ ...prev, error: stateMessage }));
     try {
       optionsRef.current.onError?.(error);
@@ -341,6 +343,7 @@ export function useClaudeCodeWebSocket(
 
   const reportDeliveryError = useCallback((detail: string): void => {
     if (!mountedRef.current) return;
+    transportErrorRef.current = null;
     deliveryErrorRef.current = detail;
     setState((prev) => ({ ...prev, error: detail }));
     try {
@@ -357,10 +360,30 @@ export function useClaudeCodeWebSocket(
     setState((prev) => prev.error === deliveryError ? { ...prev, error: null } : prev);
   }, []);
 
+  const reportTransportError = useCallback((error: Error, detail: string): void => {
+    if (!mountedRef.current) return;
+    deliveryErrorRef.current = null;
+    transportErrorRef.current = detail;
+    setState((prev) => ({ ...prev, error: detail }));
+    try {
+      optionsRef.current.onError?.(error);
+    } catch {
+      // Consumer callbacks cannot interrupt transport ownership or cleanup.
+    }
+  }, []);
+
+  const recoverTransportError = useCallback((): void => {
+    const transportError = transportErrorRef.current;
+    if (transportError === null) return;
+    transportErrorRef.current = null;
+    setState((prev) => prev.error === transportError ? { ...prev, error: null } : prev);
+  }, []);
+
   // Process incoming event
   const processEvent = useCallback(
     (event: ClaudeCodeEventExtended, generation: number, socket: WebSocket) => {
       if (!ownsSocket(generation, socket)) return;
+      if (event.type === "error") transportErrorRef.current = null;
 
       const callbacks = optionsRef.current;
       const terminal = event.type === "complete" || event.type === "cancelled" ||
@@ -639,6 +662,30 @@ export function useClaudeCodeWebSocket(
     return sendSerializedCommand(encoding.data);
   }, [reportError, sendSerializedCommand]);
 
+  const startPingInterval = useCallback((
+    generation: number,
+    socket: WebSocket,
+    interval: number,
+  ): void => {
+    clearPingInterval();
+    if (
+      interval <= 0 || socket.readyState !== WebSocket.OPEN ||
+      !ownsSocket(generation, socket)
+    ) return;
+    pingIntervalRef.current = globalThis.setInterval(() => {
+      if (ownsSocket(generation, socket)) sendLegacyCommand({ type: "ping" });
+    }, interval);
+  }, [clearPingInterval, ownsSocket, sendLegacyCommand]);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket) {
+      clearPingInterval();
+      return;
+    }
+    startPingInterval(generationRef.current, socket, normalizedPingInterval);
+  }, [clearPingInterval, normalizedPingInterval, startPingInterval]);
+
   const stopTransport = useCallback((updateState: boolean): void => {
     intentionalStopRef.current = true;
     generationRef.current += 1;
@@ -704,6 +751,7 @@ export function useClaudeCodeWebSocket(
 
     socket.onopen = () => {
       if (!ownsSocket(generation, socket)) return;
+      recoverTransportError();
       setState((prev) => ({ ...prev, isConnected: true }));
       try {
         optionsRef.current.onConnect?.();
@@ -716,14 +764,7 @@ export function useClaudeCodeWebSocket(
         if (!sendSerializedCommand(pending.serialized)) break;
       }
 
-      // Start ping interval
-      const currentPingInterval = optionsRef.current.pingInterval;
-      if (currentPingInterval > 0) {
-        clearPingInterval();
-        pingIntervalRef.current = globalThis.setInterval(() => {
-          if (ownsSocket(generation, socket)) sendLegacyCommand({ type: "ping" });
-        }, currentPingInterval);
-      }
+      startPingInterval(generation, socket, optionsRef.current.pingInterval);
     };
 
     socket.onmessage = (e) => {
@@ -789,7 +830,7 @@ export function useClaudeCodeWebSocket(
     socket.onerror = () => {
       if (!ownsSocket(generation, socket)) return;
       const detail = "WebSocket transport error";
-      reportError(NETWORK_ERROR.create({ detail }), detail);
+      reportTransportError(NETWORK_ERROR.create({ detail }), detail);
     };
   };
 
@@ -937,6 +978,7 @@ export function useClaudeCodeWebSocket(
     pendingCommandsRef.current.clear();
     retainedCommandIdsRef.current.clear();
     deliveryErrorRef.current = null;
+    transportErrorRef.current = null;
     setState(createWebSocketState());
 
     return () => {

@@ -130,22 +130,7 @@ async function createSelectedWorkflowBackend(
   const createBackend = dependencies.createDistributedWorkflowBackend ??
     (await import("../../../src/workflow/backends/distributed.ts"))
       .createDistributedWorkflowBackend;
-  const backend = createBackend({ debug });
-
-  try {
-    await backend.initialize?.();
-    return backend;
-  } catch (initializationError) {
-    try {
-      await backend.destroy();
-    } catch (cleanupError) {
-      throw new AggregateError(
-        [initializationError, cleanupError],
-        "Distributed workflow backend initialization and cleanup failed",
-      );
-    }
-    throw initializationError;
-  }
+  return createBackend({ debug });
 }
 
 async function waitForWorkflowExit(
@@ -304,6 +289,7 @@ export async function runWorkflowCommand(
                 ...(backend ? { backend } : {}),
               });
               client = activeClient;
+              await activeClient.initialize();
               activeClient.register(workflow.definition);
               cliLogger.info(`Running workflow: ${workflow.id}`);
               cliLogger.info("");

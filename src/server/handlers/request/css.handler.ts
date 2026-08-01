@@ -10,7 +10,7 @@ import {
   runWithCacheKeyContext,
 } from "#veryfront/cache/cache-key-builder.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { join } from "#veryfront/compat/path/index.ts";
@@ -52,7 +52,7 @@ async function getBuiltCSSFallback(
   } catch (error) {
     // Absence remains an ordinary cache miss; permission, transport, and
     // integrity failures must surface.
-    if (isNotFoundError(error)) return undefined;
+    if (isCanonicalNotFoundError(error)) return undefined;
     throw error;
   }
 
@@ -126,7 +126,7 @@ export class CSSHandler extends BaseHandler {
         .withCache("no-cache")
         .withContentType(
           "text/css; charset=utf-8",
-          `/* CSS ${cssHash} not found - reload page to regenerate */`,
+          method === "HEAD" ? null : `/* CSS ${cssHash} not found - reload page to regenerate */`,
           404,
         );
 

@@ -23,6 +23,14 @@ import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type DistributedRuntimeProvider,
+  DistributedRuntimeProviderName,
+} from "#veryfront/extensions/distributed/index.ts";
+import type { WorkflowClientConfig } from "#veryfront/workflow";
+import { MemoryBackend } from "#veryfront/workflow/backends/memory.ts";
+import type { WorkflowBackend } from "#veryfront/workflow/backends/types.ts";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -384,6 +392,58 @@ async function withEnvValue<T>(
   }
 }
 
+function createWorkflowBackendProvider(backend: WorkflowBackend): DistributedRuntimeProvider {
+  const unavailable = () => {
+    throw new Error("not used by this test");
+  };
+  return {
+    id: "project-run-workflow-lifecycle-test",
+    createCacheBackend: unavailable,
+    createRenderCacheStore: unavailable,
+    createWorkflowBackend: () => backend,
+    getWorkflowWorkerEnvironment: () => ({}),
+    createRateLimitStore: unavailable,
+    createAgentMemory: unavailable,
+    createEventPublisher: unavailable,
+    startRoutingInvalidationBus: unavailable,
+    getCacheAdministration: unavailable,
+  } as unknown as DistributedRuntimeProvider;
+}
+
+async function withDistributedWorkflowBackend<T>(
+  backend: WorkflowBackend,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = tryResolve<DistributedRuntimeProvider>(DistributedRuntimeProviderName);
+  register(DistributedRuntimeProviderName, createWorkflowBackendProvider(backend));
+  try {
+    return await withEnvValue("VERYFRONT_WORKFLOW_PERSISTENCE", "distributed", run);
+  } finally {
+    unregister(DistributedRuntimeProviderName);
+    if (previous !== undefined) register(DistributedRuntimeProviderName, previous);
+  }
+}
+
+async function captureRejection(run: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("Expected operation to reject");
+}
+
+function createThrowingApprovalConfig(error: unknown): WorkflowClientConfig["approval"] {
+  const config = {};
+  Object.defineProperty(config, "expirationCheckInterval", {
+    enumerable: true,
+    get() {
+      throw error;
+    },
+  });
+  return config;
+}
+
 describe("server/handlers/request/project-run-execute.handler", () => {
   afterAll(async () => {
     await stopEsbuild();
@@ -422,6 +482,213 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       logs: "Temporary release build cleanup failed",
       duration_ms: 45,
     });
+  });
+
+  it("initializes a distributed workflow backend once before returning a ready client", async () => {
+    const backend = new MemoryBackend();
+    const originalDestroy = backend.destroy.bind(backend);
+    const initialization = Promise.withResolvers<void>();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      return initialization.promise;
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      return originalDestroy();
+    };
+
+    await withDistributedWorkflowBackend(backend, async () => {
+      let factorySettled = false;
+      const clientPromise = projectRunExecuteHandlerInternals.createRuntimeWorkflowClient();
+      void clientPromise.then(
+        () => {
+          factorySettled = true;
+        },
+        () => {
+          factorySettled = true;
+        },
+      );
+
+      assertEquals(initializeCalls, 1);
+      await Promise.resolve();
+      assertEquals(factorySettled, false);
+
+      initialization.resolve();
+      const client = await clientPromise;
+      try {
+        assertEquals(client.statePersistence, "durable");
+        assertEquals(initializeCalls, 1);
+        assertEquals(await client.getRun("missing"), null);
+        assertEquals(initializeCalls, 1);
+      } finally {
+        await client.destroy();
+      }
+    });
+
+    assertEquals(destroyCalls, 1);
+  });
+
+  it("destroys the raw distributed backend when workflow client construction fails", async () => {
+    const constructionError = new Error("workflow client construction failed");
+    const backend = new MemoryBackend();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      return Promise.resolve();
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      return Promise.resolve();
+    };
+
+    const failure = await withDistributedWorkflowBackend(
+      backend,
+      () =>
+        captureRejection(() =>
+          projectRunExecuteHandlerInternals.createRuntimeWorkflowClient({
+            approval: createThrowingApprovalConfig(constructionError),
+          })
+        ),
+    );
+
+    assertStrictEquals(failure, constructionError);
+    assertEquals(initializeCalls, 0);
+    assertEquals(destroyCalls, 1);
+  });
+
+  it("preserves workflow client construction and raw-backend cleanup failures", async () => {
+    const constructionError = new Error("workflow client construction failed");
+    const cleanupError = new Error("raw workflow backend cleanup failed");
+    const backend = new MemoryBackend();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      return Promise.resolve();
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      return Promise.reject(cleanupError);
+    };
+
+    const failure = await withDistributedWorkflowBackend(
+      backend,
+      () =>
+        captureRejection(() =>
+          projectRunExecuteHandlerInternals.createRuntimeWorkflowClient({
+            approval: createThrowingApprovalConfig(constructionError),
+          })
+        ),
+    );
+
+    assertEquals(failure instanceof AggregateError, true);
+    if (!(failure instanceof AggregateError)) {
+      throw new Error("Expected construction and cleanup failures to be aggregated");
+    }
+    assertEquals(
+      failure.message,
+      "Distributed workflow client construction and backend cleanup failed",
+    );
+    assertEquals(failure.errors.length, 2);
+    assertStrictEquals(failure.errors[0], constructionError);
+    assertStrictEquals(failure.errors[1], cleanupError);
+    assertEquals(initializeCalls, 0);
+    assertEquals(destroyCalls, 1);
+  });
+
+  it("destroys the owned workflow client when distributed initialization fails", async () => {
+    const initializationError = new Error("distributed workflow initialization failed");
+    const backend = new MemoryBackend();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      return Promise.reject(initializationError);
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      return Promise.resolve();
+    };
+
+    const failure = await withDistributedWorkflowBackend(
+      backend,
+      () => captureRejection(() => projectRunExecuteHandlerInternals.createRuntimeWorkflowClient()),
+    );
+
+    assertStrictEquals(failure, initializationError);
+    assertEquals(initializeCalls, 1);
+    assertEquals(destroyCalls, 1);
+  });
+
+  it("preserves distributed initialization and client cleanup failures", async () => {
+    const initializationError = new Error("distributed workflow initialization failed");
+    const cleanupError = new Error("owned workflow backend cleanup failed");
+    const backend = new MemoryBackend();
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      return Promise.reject(initializationError);
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      return Promise.reject(cleanupError);
+    };
+
+    const failure = await withDistributedWorkflowBackend(
+      backend,
+      () => captureRejection(() => projectRunExecuteHandlerInternals.createRuntimeWorkflowClient()),
+    );
+
+    assertEquals(failure instanceof AggregateError, true);
+    if (!(failure instanceof AggregateError)) {
+      throw new Error("Expected initialization and cleanup failures to be aggregated");
+    }
+    assertEquals(
+      failure.message,
+      "Distributed workflow client initialization and cleanup failed",
+    );
+    assertEquals(failure.errors.length, 2);
+    assertStrictEquals(failure.errors[0], initializationError);
+    const clientCleanupFailure = failure.errors[1];
+    assertEquals(clientCleanupFailure instanceof AggregateError, true);
+    if (!(clientCleanupFailure instanceof AggregateError)) {
+      throw new Error("Expected WorkflowClient cleanup failure to retain its aggregate");
+    }
+    assertEquals(clientCleanupFailure.errors.length, 1);
+    assertStrictEquals(clientCleanupFailure.errors[0], cleanupError);
+    assertEquals(initializeCalls, 1);
+    assertEquals(destroyCalls, 1);
+  });
+
+  it("retains ownership of a handler-created backend when config requests borrowing", async () => {
+    const backend = new MemoryBackend();
+    const originalInitialize = backend.initialize.bind(backend);
+    const originalDestroy = backend.destroy.bind(backend);
+    let initializeCalls = 0;
+    let destroyCalls = 0;
+    backend.initialize = () => {
+      initializeCalls++;
+      return originalInitialize();
+    };
+    backend.destroy = () => {
+      destroyCalls++;
+      return originalDestroy();
+    };
+
+    await withDistributedWorkflowBackend(backend, async () => {
+      const client = await projectRunExecuteHandlerInternals.createRuntimeWorkflowClient({
+        backendOwnership: "borrowed",
+      });
+      assertEquals(client.statePersistence, "durable");
+      await client.destroy();
+    });
+
+    assertEquals(initializeCalls, 1);
+    assertEquals(destroyCalls, 1);
   });
 
   it("runs a discovered task and returns canonical runtime execution output", async () => {
@@ -1051,6 +1318,216 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
+  it("does not poll a workflow when the request aborts before waiting", async () => {
+    const abortController = new AbortController();
+    const abortReason = new Error("workflow request cancelled before polling");
+    let pollCalls = 0;
+    let destroyCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      findWorkflowById: async () => {
+        abortController.abort(abortReason);
+        return {
+          id: "publish",
+          filePath: "workflows/publish.ts",
+          exportName: "default",
+          definition: { id: "publish", steps: [] },
+        };
+      },
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => {
+          pollCalls++;
+          return { status: "completed" };
+        },
+        destroy: async () => {
+          destroyCalls++;
+        },
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_abort_before_poll",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_abort_before_poll/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: abortController.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "workflow request cancelled before polling",
+      logs: null,
+      duration_ms: 0,
+    });
+    assertEquals(pollCalls, 0);
+    assertEquals(destroyCalls, 1);
+  });
+
+  it("stops workflow polling when getRun aborts the request", async () => {
+    const abortController = new AbortController();
+    const abortReason = new Error("workflow request cancelled during poll");
+    let pollCalls = 0;
+    let sleepCalls = 0;
+    let destroyCalls = 0;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => {
+          pollCalls++;
+          abortController.abort(abortReason);
+          return { status: "running" };
+        },
+        destroy: async () => {
+          destroyCalls++;
+        },
+      }),
+      sleep: async () => {
+        sleepCalls++;
+        throw new Error("workflow poll sleep must not run after cancellation");
+      },
+    }));
+    const body = {
+      runId: "run_workflow_abort_during_poll",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_abort_during_poll/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: abortController.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "workflow request cancelled during poll",
+      logs: null,
+      duration_ms: 0,
+    });
+    assertEquals(pollCalls, 1);
+    assertEquals(sleepCalls, 0);
+    assertEquals(destroyCalls, 1);
+  });
+
+  it("passes the exact request signal to workflow sleep and does not cancel the durable run", async () => {
+    const abortController = new AbortController();
+    const abortReason = new Error("workflow request cancelled during sleep");
+    let pollCalls = 0;
+    let sleepCalls = 0;
+    let destroyCalls = 0;
+    let cancelCalls = 0;
+    let receivedSignal: AbortSignal | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+          cancel: () => {
+            cancelCalls++;
+          },
+        }),
+        getRun: async () => {
+          pollCalls++;
+          return { status: "running" };
+        },
+        destroy: async () => {
+          destroyCalls++;
+        },
+      }),
+      sleep: async (_ms, signal?: AbortSignal) => {
+        sleepCalls++;
+        receivedSignal = signal;
+        if (!signal) throw new Error("workflow sleep missing request signal");
+        abortController.abort(abortReason);
+        signal.throwIfAborted();
+      },
+    }));
+    const body = {
+      runId: "run_workflow_abort_during_sleep",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_workflow_abort_during_sleep/execute",
+      body,
+    );
+    const request = new Request(signed.request, { signal: abortController.signal });
+
+    const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "workflow request cancelled during sleep",
+      logs: null,
+      duration_ms: 0,
+    });
+    assertStrictEquals(receivedSignal, request.signal);
+    assertEquals(pollCalls, 1);
+    assertEquals(sleepCalls, 1);
+    assertEquals(destroyCalls, 1);
+    assertEquals(cancelCalls, 0);
+  });
+
+  it("caps workflow poll sleep to the remaining workflow deadline", async () => {
+    let currentTime = 0;
+    let sleepMs: number | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => {
+          currentTime = 15 * 60 * 1_000 - 50;
+          return { status: "running" };
+        },
+        destroy: async () => {},
+      }),
+      sleep: async (ms) => {
+        sleepMs = ms;
+        throw new Error("stop after capped workflow poll sleep");
+      },
+      now: () => currentTime,
+    }));
+    const body = {
+      runId: "run_workflow_near_deadline",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_near_deadline/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(sleepMs, 50);
+  });
+
   it("runs a discovered eval with the canonical run id and local routed AG-UI adapter endpoint", async () => {
     const report: EvalReport = {
       kind: "eval-report",
@@ -1143,6 +1620,265 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEnvironmentId, undefined);
     assertEquals(receivedProjectIdHeader, "proj-1");
     assertEquals(receivedBranchName, undefined);
+  });
+
+  it("binds eval adapter fetches to the exact request signal", async () => {
+    let receivedConfig: AgentServiceEvalAdapterConfig | undefined;
+    let nativeFetchSignal: AbortSignal | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedConfig = config;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_request_signal",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_eval_request_signal/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+    const requestAbort = new AbortController();
+    const request = new Request(signed.request, { signal: requestAbort.signal });
+
+    await withMockFetch(
+      async (input, init) => {
+        const requestInit = init as globalThis.RequestInit | undefined;
+        nativeFetchSignal = requestInit?.signal ??
+          (input instanceof Request ? input.signal : undefined) ?? undefined;
+        return new Response(null, { status: 204 });
+      },
+      async () => {
+        const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        await result.response.body?.cancel();
+
+        const config = receivedConfig;
+        assertExists(config);
+        const evalFetch = config.fetch;
+        assertExists(evalFetch);
+        assertExists(config.endpoint);
+        await evalFetch(config.endpoint, { method: "POST" });
+      },
+    );
+
+    assertStrictEquals(nativeFetchSignal, request.signal);
+  });
+
+  it("aborts composed eval fetches from either the request or adapter signal", async () => {
+    for (const abortSource of ["request", "adapter"] as const) {
+      let receivedConfig: AgentServiceEvalAdapterConfig | undefined;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        createEvalAgentAdapter: (config) => {
+          receivedConfig = config;
+          return async () => ({ text: "Paris" });
+        },
+      }));
+      const body = {
+        runId: `run_eval_composed_${abortSource}_abort`,
+        kind: "eval",
+        target: "eval:deep-research",
+        projectId: "proj-1",
+      };
+      const signed = await signedRequest(
+        `/api/control-plane/runs/run_eval_composed_${abortSource}_abort/execute`,
+        body,
+        { "x-token": "runtime-token" },
+      );
+      const requestAbort = new AbortController();
+      const adapterAbort = new AbortController();
+      const request = new Request(signed.request, { signal: requestAbort.signal });
+      const fetchStarted = Promise.withResolvers<AbortSignal | undefined>();
+
+      await withMockFetch(
+        async (input, init) => {
+          const requestInit = init as globalThis.RequestInit | undefined;
+          const signal = requestInit?.signal ??
+            (input instanceof Request ? input.signal : undefined) ?? undefined;
+          fetchStarted.resolve(signal);
+          if (!signal) throw new Error("eval fetch missing composed signal");
+          return await new Promise<Response>((_resolve, reject) => {
+            const rejectForAbort = () => reject(signal.reason);
+            if (signal.aborted) rejectForAbort();
+            else signal.addEventListener("abort", rejectForAbort, { once: true });
+          });
+        },
+        async () => {
+          const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+          assertExists(result.response);
+          assertEquals(result.response.status, 200);
+          await result.response.body?.cancel();
+
+          const config = receivedConfig;
+          assertExists(config);
+          const evalFetch = config.fetch;
+          assertExists(evalFetch);
+          assertExists(config.endpoint);
+          const fetchPromise = evalFetch(config.endpoint, {
+            method: "POST",
+            signal: adapterAbort.signal,
+          });
+          const composedSignal = await fetchStarted.promise;
+          if (!composedSignal) {
+            await fetchPromise.catch(() => undefined);
+          }
+          assertExists(composedSignal);
+          assertEquals(composedSignal === request.signal, false);
+          assertEquals(composedSignal === adapterAbort.signal, false);
+          assertEquals(composedSignal.aborted, false);
+
+          const abortReason = new Error(`${abortSource} eval fetch cancelled`);
+          if (abortSource === "request") requestAbort.abort(abortReason);
+          else adapterAbort.abort(abortReason);
+
+          let rejection: unknown;
+          try {
+            await fetchPromise;
+          } catch (error) {
+            rejection = error;
+          }
+          assertStrictEquals(rejection, abortReason);
+          assertEquals(composedSignal.aborted, true);
+        },
+      );
+    }
+  });
+
+  it("composes a Request input signal when init omits signal", async () => {
+    let receivedConfig: AgentServiceEvalAdapterConfig | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedConfig = config;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_request_input_signal",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_eval_request_input_signal/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+    const requestAbort = new AbortController();
+    const adapterAbort = new AbortController();
+    const request = new Request(signed.request, { signal: requestAbort.signal });
+    const fetchStarted = Promise.withResolvers<AbortSignal | undefined>();
+
+    await withMockFetch(
+      async (input, init) => {
+        const requestInit = init as globalThis.RequestInit | undefined;
+        const signal = requestInit?.signal ??
+          (input instanceof Request ? input.signal : undefined) ?? undefined;
+        fetchStarted.resolve(signal);
+        if (!signal) throw new Error("eval fetch missing composed signal");
+        return await new Promise<Response>((_resolve, reject) => {
+          const rejectForAbort = () => reject(signal.reason);
+          if (signal.aborted) rejectForAbort();
+          else signal.addEventListener("abort", rejectForAbort, { once: true });
+        });
+      },
+      async () => {
+        const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        await result.response.body?.cancel();
+
+        const config = receivedConfig;
+        assertExists(config);
+        const evalFetch = config.fetch;
+        assertExists(evalFetch);
+        assertExists(config.endpoint);
+        const fetchPromise = evalFetch(
+          new Request(config.endpoint, { signal: adapterAbort.signal }),
+        );
+        const composedSignal = await fetchStarted.promise;
+        if (!composedSignal) {
+          await fetchPromise.catch(() => undefined);
+        }
+        assertExists(composedSignal);
+        assertEquals(composedSignal === request.signal, false);
+        assertEquals(composedSignal === adapterAbort.signal, false);
+        assertEquals(composedSignal.aborted, false);
+
+        const abortReason = new Error("adapter Request input cancelled");
+        adapterAbort.abort(abortReason);
+
+        let rejection: unknown;
+        try {
+          await fetchPromise;
+        } catch (error) {
+          rejection = error;
+        }
+        assertStrictEquals(rejection, abortReason);
+        assertEquals(composedSignal.aborted, true);
+        assertStrictEquals(composedSignal.reason, abortReason);
+      },
+    );
+  });
+
+  it("lets an explicit null init signal replace a Request input signal", async () => {
+    let receivedConfig: AgentServiceEvalAdapterConfig | undefined;
+    let nativeFetchSignal: AbortSignal | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedConfig = config;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_null_init_signal",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+    };
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_eval_null_init_signal/execute",
+      body,
+      { "x-token": "runtime-token" },
+    );
+    const requestAbort = new AbortController();
+    const adapterAbort = new AbortController();
+    const adapterAbortReason = new Error("ignored Request input cancellation");
+    adapterAbort.abort(adapterAbortReason);
+    const request = new Request(signed.request, { signal: requestAbort.signal });
+
+    await withMockFetch(
+      async (input, init) => {
+        const requestInit = init as globalThis.RequestInit | undefined;
+        nativeFetchSignal = requestInit?.signal ??
+          (input instanceof Request ? input.signal : undefined) ?? undefined;
+        return new Response(null, { status: 204 });
+      },
+      async () => {
+        const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals(result.response.status, 200);
+        await result.response.body?.cancel();
+
+        const config = receivedConfig;
+        assertExists(config);
+        const evalFetch = config.fetch;
+        assertExists(evalFetch);
+        assertExists(config.endpoint);
+        await evalFetch(
+          new Request(config.endpoint, { signal: adapterAbort.signal }),
+          { signal: null },
+        );
+      },
+    );
+
+    assertExists(nativeFetchSignal);
+    assertStrictEquals(nativeFetchSignal, request.signal);
+    assertEquals(nativeFetchSignal.aborted, false);
   });
 
   it("derives eval source routing from signed body and resolved context, not unsigned headers", async () => {
@@ -1302,6 +2038,52 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedReport, report);
     assertEquals(receivedProjectReference, "demo-project");
     assertEquals(receivedReportPath, reportPath);
+  });
+
+  it("binds runtime eval report uploads to the exact request signal", async () => {
+    const report: EvalReport = {
+      kind: "eval-report",
+      runId: "run_eval_runtime_upload_signal",
+      definitionId: "eval:deep-research",
+      targetKind: "agent",
+      target: "agent:researcher",
+      startedAt: "2026-06-20T10:00:00.000Z",
+      endedAt: "2026-06-20T10:00:01.000Z",
+      summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+      records: [],
+    };
+    const abortController = new AbortController();
+    const request = new Request("https://runtime.example/api/control-plane/runs/run_1/execute", {
+      headers: { "x-token": "runtime-token" },
+      signal: abortController.signal,
+    });
+    let nativeFetchSignal: AbortSignal | undefined;
+
+    const reportPath = await withMockFetch(
+      async (input, init) => {
+        const requestInit = init as globalThis.RequestInit | undefined;
+        nativeFetchSignal = requestInit?.signal ??
+          (input instanceof Request ? input.signal : undefined) ?? undefined;
+        return Response.json({ path: "evals/reports/deep-research/run_1.json" });
+      },
+      async () =>
+        await projectRunExecuteHandlerInternals.uploadEvalReportToProjectFiles({
+          request: {
+            runId: "run_eval_runtime_upload_signal",
+            kind: "eval",
+            target: "eval:deep-research",
+            projectId: "proj-1",
+          },
+          ctx: createCtx("unused-public-key"),
+          req: request,
+          report,
+          projectReference: "demo-project",
+          reportPath: "evals/reports/deep-research/run_1.json",
+        }),
+    );
+
+    assertEquals(reportPath, "evals/reports/deep-research/run_1.json");
+    assertStrictEquals(nativeFetchSignal, request.signal);
   });
 
   it("uses the local AG-UI adapter endpoint when the runtime endpoint is local", async () => {

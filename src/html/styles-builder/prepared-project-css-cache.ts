@@ -3,6 +3,12 @@ import {
   createCacheBackend,
   readCacheValueWithinLimit,
 } from "#veryfront/cache/backend.ts";
+import {
+  buildPreparedProjectCSSCacheKey,
+  buildPreparedProjectCSSCacheScopePrefix,
+  PREPARED_PROJECT_CSS_CACHE_NAMESPACE,
+  PREPARED_PROJECT_CSS_CACHE_SCHEMA,
+} from "#veryfront/cache/keys/project-css.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { assertCSSPipelineIdentity, assertStyleProfileHash, serverLogger } from "#veryfront/utils";
 import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
@@ -30,6 +36,7 @@ interface PreparedProjectCSSLocalEntry extends PreparedProjectCSSCacheEntry {
 
 interface PreparedProjectCSSProfile {
   cssPipelineIdentity: string;
+  candidatesHash: string;
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
@@ -40,6 +47,7 @@ export interface PreparedProjectCSSRequestContext {
   projectVersion: string;
   stylesheet: string;
   stylesheetHash: string;
+  candidatesHash: string;
   styleProfileHash: string;
   environment: string;
   profileHash: string;
@@ -52,17 +60,57 @@ const PREPARED_PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
 const PREPARED_PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES = 16 * 1024 * 1024;
 const PREPARED_PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES = 144;
 const PREPARED_PROJECT_CSS_LOCAL_TTL_MS = PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
-const PREPARED_PROJECT_CSS_CACHE_SCHEMA = "v3";
+const PREPARED_PROJECT_CSS_IDENTITY_DOMAIN =
+  `veryfront.prepared-project-css.identity.${PREPARED_PROJECT_CSS_CACHE_SCHEMA}`;
 
 let preparedProjectCSSBackend: CacheBackend | null = null;
 let preparedProjectCSSInitialized = false;
 let preparedProjectCSSInitPromise: Promise<void> | null = null;
+const preparedProjectCSSPendingWrites = new Map<string, Set<Promise<void>>>();
+const preparedProjectCSSInvalidations = new Map<string, Promise<void>>();
 
 const localPreparedProjectCSS = new ByteWeightedLRUCache<string, PreparedProjectCSSLocalEntry>({
   maxEntries: PREPARED_PROJECT_CSS_LOCAL_MAX,
   maxEntrySizeBytes: PREPARED_PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES,
   maxSizeBytes: PREPARED_PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES,
 });
+
+function beginPreparedProjectCSSWrite(projectSlug: string): {
+  precedingInvalidation: Promise<void> | undefined;
+  finish: () => void;
+} {
+  const precedingInvalidation = preparedProjectCSSInvalidations.get(projectSlug);
+  const completion = Promise.withResolvers<void>();
+  let pending = preparedProjectCSSPendingWrites.get(projectSlug);
+  if (!pending) {
+    pending = new Set();
+    preparedProjectCSSPendingWrites.set(projectSlug, pending);
+  }
+  pending.add(completion.promise);
+  let finished = false;
+
+  return {
+    precedingInvalidation,
+    finish() {
+      if (finished) return;
+      finished = true;
+      completion.resolve();
+      pending.delete(completion.promise);
+      if (pending.size === 0 && preparedProjectCSSPendingWrites.get(projectSlug) === pending) {
+        preparedProjectCSSPendingWrites.delete(projectSlug);
+      }
+    },
+  };
+}
+
+function clearLocalPreparedProjectCSS(projectSlug: string): void {
+  const projectPrefix = buildPreparedProjectCSSCacheScopePrefix(projectSlug);
+  for (const key of localPreparedProjectCSS.keys()) {
+    if (key.startsWith(projectPrefix)) {
+      localPreparedProjectCSS.delete(key);
+    }
+  }
+}
 
 registerCache("prepared-project-css-cache", () => ({
   name: "prepared-project-css-cache",
@@ -121,7 +169,7 @@ export async function initializePreparedProjectCSSCache(): Promise<boolean> {
   if (!preparedProjectCSSInitPromise) {
     preparedProjectCSSInitPromise = (async () => {
       preparedProjectCSSBackend = await createCacheBackend({
-        keyPrefix: "prepared-project-css",
+        keyPrefix: PREPARED_PROJECT_CSS_CACHE_NAMESPACE,
       });
       preparedProjectCSSInitialized = true;
       logger.debug("Initialized", { backend: preparedProjectCSSBackend.type });
@@ -147,6 +195,12 @@ export function createPreparedProjectCSSContext(
 ): PreparedProjectCSSRequestContext {
   const capturedStyleProfileHash = assertStyleProfileHash(styleProfileHash);
   const cssPipelineIdentity = assertCSSPipelineIdentity(profile.cssPipelineIdentity);
+  if (!isCSSContentHash(profile.candidatesHash)) {
+    throw new TypeError(
+      "Prepared CSS candidate identity must be a full lowercase SHA-256 digest",
+    );
+  }
+  const candidatesHash = profile.candidatesHash;
   if (typeof stylesheet !== "string") {
     throw new TypeError("Prepared CSS request context requires a resolved stylesheet");
   }
@@ -157,24 +211,34 @@ export function createPreparedProjectCSSContext(
   const environment = profile.environment ?? "preview";
   const profileHash = hashString(
     JSON.stringify({
-      cacheSchema: PREPARED_PROJECT_CSS_CACHE_SCHEMA,
       cssPipelineIdentity,
       minify: profile.minify ?? false,
       buildMode: profile.buildMode ?? "production",
-      environment,
     }),
   );
+  const identityHash = hashString(JSON.stringify([
+    PREPARED_PROJECT_CSS_IDENTITY_DOMAIN,
+    projectVersionHash,
+    stylesheetHash,
+    candidatesHash,
+    capturedStyleProfileHash,
+    profileHash,
+  ]));
 
   return {
     projectSlug,
     projectVersion,
     stylesheet,
     stylesheetHash,
+    candidatesHash,
     styleProfileHash: capturedStyleProfileHash,
     environment,
     profileHash,
-    cacheKey:
-      `${projectSlug}:${environment}:prepared:${PREPARED_PROJECT_CSS_CACHE_SCHEMA}:${projectVersionHash}:${stylesheetHash}:${capturedStyleProfileHash}:${profileHash}`,
+    cacheKey: buildPreparedProjectCSSCacheKey({
+      projectScope: projectSlug,
+      environment,
+      identityHash,
+    }),
   };
 }
 
@@ -225,6 +289,7 @@ export async function storePreparedProjectCSS(
   entry: PreparedProjectCSSCacheEntry,
 ): Promise<void> {
   const cacheKey = context.cacheKey;
+  const projectSlug = context.projectSlug;
   const capturedEntry = Object.freeze({
     css: entry.css,
     hash: entry.hash,
@@ -232,29 +297,41 @@ export async function storePreparedProjectCSS(
   assertCSSOutputContent(capturedEntry.css, "Cached prepared CSS output");
   assertCSSContentIdentity(capturedEntry.css, capturedEntry.hash);
 
-  if (!preparedProjectCSSInitialized) {
-    await initializePreparedProjectCSSCache();
-  }
+  const pendingWrite = beginPreparedProjectCSSWrite(projectSlug);
+  let backendWriteScheduled = false;
+  try {
+    if (pendingWrite.precedingInvalidation) {
+      await Promise.allSettled([pendingWrite.precedingInvalidation]);
+    }
 
-  setLocalEntry(cacheKey, capturedEntry);
+    if (!preparedProjectCSSInitialized) {
+      await initializePreparedProjectCSSCache();
+    }
 
-  if (!preparedProjectCSSBackend) return;
+    setLocalEntry(cacheKey, capturedEntry);
 
-  const backend = preparedProjectCSSBackend;
-  void Promise.resolve()
-    .then(() =>
-      backend.set(
-        cacheKey,
-        serializeCSSCacheValue(capturedEntry, MAX_PREPARED_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
-        PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS,
+    if (!preparedProjectCSSBackend) return;
+
+    const backend = preparedProjectCSSBackend;
+    backendWriteScheduled = true;
+    const backendWrite = Promise.resolve()
+      .then(() =>
+        backend.set(
+          cacheKey,
+          serializeCSSCacheValue(capturedEntry, MAX_PREPARED_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
+          PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS,
+        )
       )
-    )
-    .catch((error) => {
-      logger.debug("Failed to store prepared project CSS", {
-        cacheKey,
-        error,
+      .catch((error) => {
+        logger.debug("Failed to store prepared project CSS", {
+          cacheKey,
+          error,
+        });
       });
-    });
+    void backendWrite.then(pendingWrite.finish, pendingWrite.finish);
+  } finally {
+    if (!backendWriteScheduled) pendingWrite.finish();
+  }
 }
 
 export function invalidatePreparedProjectCSS(projectSlug: string): void {
@@ -265,12 +342,29 @@ export function invalidatePreparedProjectCSS(projectSlug: string): void {
 
 /** Clear local and distributed prepared CSS, propagating backend failures. */
 export async function invalidatePreparedProjectCSSAsync(projectSlug: string): Promise<void> {
-  for (const key of localPreparedProjectCSS.keys()) {
-    if (key.startsWith(`${projectSlug}:`)) {
-      localPreparedProjectCSS.delete(key);
-    }
-  }
+  const precedingInvalidation = preparedProjectCSSInvalidations.get(projectSlug);
+  const precedingWrites = [...preparedProjectCSSPendingWrites.get(projectSlug) ?? []];
+  clearLocalPreparedProjectCSS(projectSlug);
 
-  if (!preparedProjectCSSBackend?.delByPattern) return;
-  await preparedProjectCSSBackend.delByPattern(`${projectSlug}:*`);
+  const invalidation = (async () => {
+    await Promise.allSettled([
+      ...(precedingInvalidation ? [precedingInvalidation] : []),
+      ...precedingWrites,
+    ]);
+    clearLocalPreparedProjectCSS(projectSlug);
+
+    if (!preparedProjectCSSBackend?.delByPattern) return;
+    await preparedProjectCSSBackend.delByPattern(
+      `${buildPreparedProjectCSSCacheScopePrefix(projectSlug)}*`,
+    );
+  })();
+  preparedProjectCSSInvalidations.set(projectSlug, invalidation);
+
+  const releaseInvalidation = () => {
+    if (preparedProjectCSSInvalidations.get(projectSlug) === invalidation) {
+      preparedProjectCSSInvalidations.delete(projectSlug);
+    }
+  };
+  void invalidation.then(releaseInvalidation, releaseInvalidation);
+  return invalidation;
 }

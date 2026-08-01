@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { getCacheBaseDir, getMdxEsmCacheDir, runWithCacheDir } from "#veryfront/utils/cache-dir.ts";
@@ -8,6 +8,8 @@ import {
   findMissingFileDependenciesInCode,
   hasIncompatibleFrameworkPaths,
 } from "./framework-validator.ts";
+import { getLocalFs } from "../cache/index.ts";
+import { FRAMEWORK_ROOT } from "../constants.ts";
 
 // Minimal logger stub
 const noopLog = {
@@ -17,6 +19,18 @@ const noopLog = {
   error: () => {},
   child: () => noopLog,
 } as never;
+
+function nonCanonicalNotFoundFailures(): ReadonlyArray<readonly [string, unknown]> {
+  return [
+    ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+    [
+      "a native Error with a plain ENOENT-shaped cause",
+      new Error("wrapped framework validation failure", {
+        cause: Object.freeze({ code: "ENOENT" }),
+      }),
+    ],
+  ];
+}
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", () => {
   describe("hasIncompatibleFrameworkPaths", () => {
@@ -68,6 +82,68 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
       const result = await hasIncompatibleFrameworkPaths(code, noopLog);
       assertEquals(result, false);
     });
+
+    it("propagates framework stat failures unchanged", async () => {
+      const frameworkPath = join(
+        FRAMEWORK_ROOT,
+        "src",
+        `framework-stat-${crypto.randomUUID()}.ts`,
+      );
+      const localFs = getLocalFs();
+      const originalStat = localFs.stat.bind(localFs);
+      const permissionError = Object.assign(new Error("framework stat denied"), {
+        code: "EACCES",
+      });
+
+      try {
+        localFs.stat = (path: string) =>
+          path === frameworkPath ? Promise.reject(permissionError) : originalStat(path);
+
+        const error = await assertRejects(() =>
+          hasIncompatibleFrameworkPaths(
+            `import value from "file://${frameworkPath}";`,
+            noopLog,
+          )
+        );
+
+        assertStrictEquals(error, permissionError);
+      } finally {
+        localFs.stat = originalStat;
+      }
+    });
+
+    for (const [label, failure] of nonCanonicalNotFoundFailures()) {
+      it(`propagates ${label} from framework stat instead of invalidating`, async () => {
+        const frameworkPath = join(
+          FRAMEWORK_ROOT,
+          "src",
+          `framework-shaped-stat-${crypto.randomUUID()}.ts`,
+        );
+        const localFs = getLocalFs();
+        const originalStat = localFs.stat.bind(localFs);
+        let statCalls = 0;
+
+        try {
+          localFs.stat = (path: string) => {
+            if (path !== frameworkPath) return originalStat(path);
+            statCalls++;
+            return Promise.reject(failure);
+          };
+
+          const error = await assertRejects(() =>
+            hasIncompatibleFrameworkPaths(
+              `import value from "file://${frameworkPath}";`,
+              noopLog,
+            )
+          );
+
+          assertStrictEquals(error, failure);
+          assertEquals(statCalls, 1);
+        } finally {
+          localFs.stat = originalStat;
+        }
+      });
+    }
 
     it("returns true for nested vf modules with esm.sh/_vf_modules URLs", async () => {
       const tempDir = await makeTempDir({ prefix: "vf-framework-validator-" });
@@ -129,6 +205,64 @@ describe("transforms/mdx/esm-module-loader/module-fetcher/framework-validator", 
       assertEquals(result.length, 1);
       assertEquals(result[0]!.includes("nonexistent-12345-test.mjs"), true);
     });
+
+    it("propagates file dependency stat failures unchanged", async () => {
+      const dependencyPath = join(
+        getCacheBaseDir(),
+        `dependency-stat-${crypto.randomUUID()}.mjs`,
+      );
+      const localFs = getLocalFs();
+      const originalStat = localFs.stat.bind(localFs);
+      const ioError = Object.assign(new Error("dependency stat failed"), { code: "EIO" });
+
+      try {
+        localFs.stat = (path: string) =>
+          path === dependencyPath ? Promise.reject(ioError) : originalStat(path);
+
+        const error = await assertRejects(() =>
+          findMissingFileDependenciesInCode(
+            `import value from "file://${dependencyPath}";`,
+            noopLog,
+          )
+        );
+
+        assertStrictEquals(error, ioError);
+      } finally {
+        localFs.stat = originalStat;
+      }
+    });
+
+    for (const [label, failure] of nonCanonicalNotFoundFailures()) {
+      it(`propagates ${label} from dependency stat instead of reporting it missing`, async () => {
+        const dependencyPath = join(
+          getCacheBaseDir(),
+          `dependency-shaped-stat-${crypto.randomUUID()}.mjs`,
+        );
+        const localFs = getLocalFs();
+        const originalStat = localFs.stat.bind(localFs);
+        let statCalls = 0;
+
+        try {
+          localFs.stat = (path: string) => {
+            if (path !== dependencyPath) return originalStat(path);
+            statCalls++;
+            return Promise.reject(failure);
+          };
+
+          const error = await assertRejects(() =>
+            findMissingFileDependenciesInCode(
+              `import value from "file://${dependencyPath}";`,
+              noopLog,
+            )
+          );
+
+          assertStrictEquals(error, failure);
+          assertEquals(statCalls, 1);
+        } finally {
+          localFs.stat = originalStat;
+        }
+      });
+    }
 
     it("deduplicates paths", async () => {
       const code = `

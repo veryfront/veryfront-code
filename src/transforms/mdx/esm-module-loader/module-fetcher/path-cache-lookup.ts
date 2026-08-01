@@ -5,6 +5,7 @@
  */
 
 import type { Logger } from "#veryfront/utils";
+import { isCanonicalNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { getLocalFs, isSafeModuleArtifactPath } from "../cache/index.ts";
 import { validateCachedModule } from "./framework-validator.ts";
 import { recordModuleToSession } from "./render-sessions.ts";
@@ -67,7 +68,8 @@ export async function readValidCachedModulePath(
       recordModuleToSession(input.normalizedPath);
       return cachedPath;
     }
-  } catch (_) {
+  } catch (error) {
+    if (!isCanonicalNotFoundError(error)) throw error;
     /* expected: cached file may no longer exist on disk */
     input.pathCache.delete(input.versionedKey);
   }

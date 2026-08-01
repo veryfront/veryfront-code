@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { WorkflowContext } from "./types.ts";
 import {
@@ -98,6 +98,125 @@ describe("workflow/runtime-state", () => {
       callbackContext.nested = structuredClone(callbackContext.nested);
     });
 
+    assertEquals(getWorkflowContextRootProjection(projection, "nested"), []);
+  });
+
+  it("invalidates a projected root accessor without invoking its getter", async () => {
+    const context: WorkflowContext = {
+      input: {},
+      nested: { input: { secret: true } },
+    };
+    const projection: WorkflowContextProjection = {
+      nested: [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: [] }],
+    };
+    let getterCalls = 0;
+
+    const result = await runWithWorkflowContextProjectionTracking(
+      context,
+      projection,
+      (callbackContext) => {
+        Object.defineProperty(callbackContext, "nested", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            getterCalls++;
+            throw new Error("projected root getter must not execute");
+          },
+        });
+        return "callback succeeded";
+      },
+    );
+
+    assertEquals(result, "callback succeeded");
+    assertEquals(getterCalls, 0);
+    assertEquals(getWorkflowContextRootProjection(projection, "nested"), []);
+  });
+
+  it("invalidates a nested setter-only accessor even when its read value stays undefined", async () => {
+    const context: WorkflowContext = {
+      input: {},
+      nested: { child: undefined },
+    };
+    const projection: WorkflowContextProjection = {
+      nested: [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: ["child"] }],
+    };
+    let setterCalls = 0;
+
+    const result = await runWithWorkflowContextProjectionTracking(
+      context,
+      projection,
+      (callbackContext) => {
+        Object.defineProperty(callbackContext.nested as Record<string, unknown>, "child", {
+          configurable: true,
+          enumerable: true,
+          set(_value: unknown) {
+            setterCalls++;
+          },
+        });
+        return "callback succeeded";
+      },
+    );
+
+    assertEquals(result, "callback succeeded");
+    assertEquals(setterCalls, 0);
+    assertEquals(getWorkflowContextRootProjection(projection, "nested"), []);
+  });
+
+  it("treats a live Proxy path as opaque to projection reconciliation", async () => {
+    const child = { secret: true };
+    let descriptorHookCalls = 0;
+    const handler = Object.create(null);
+    Object.defineProperty(handler, "getOwnPropertyDescriptor", {
+      configurable: true,
+      get() {
+        descriptorHookCalls++;
+        return Reflect.getOwnPropertyDescriptor;
+      },
+    });
+    const proxy = new Proxy({ child }, handler);
+    const context: WorkflowContext = {
+      input: {},
+      nested: { child },
+    };
+    const projection: WorkflowContextProjection = {
+      nested: [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: ["child"] }],
+    };
+    const callbackResult = { status: "callback succeeded" };
+
+    const result = await runWithWorkflowContextProjectionTracking(
+      context,
+      projection,
+      (callbackContext) => {
+        callbackContext.nested = proxy;
+        return callbackResult;
+      },
+    );
+
+    assertStrictEquals(result, callbackResult);
+    assertEquals(descriptorHookCalls, 0);
+    assertEquals(getWorkflowContextRootProjection(projection, "nested"), []);
+  });
+
+  it("invalidates a projected path when descriptor inspection fails", async () => {
+    const { proxy, revoke } = Proxy.revocable({ child: { secret: true } }, {});
+    const context: WorkflowContext = {
+      input: {},
+      nested: proxy,
+    };
+    const projection: WorkflowContextProjection = {
+      nested: [{ kind: FRAMEWORK_CONTEXT_PROJECTION_KIND, path: ["child"] }],
+    };
+
+    const result = await runWithWorkflowContextProjectionTracking(
+      context,
+      projection,
+      () => {
+        revoke();
+        return "callback succeeded";
+      },
+    );
+
+    assertEquals(result, "callback succeeded");
     assertEquals(getWorkflowContextRootProjection(projection, "nested"), []);
   });
 

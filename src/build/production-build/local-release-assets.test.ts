@@ -29,9 +29,9 @@ import {
   clearReactVersionCache,
   createDependencyPinningSource,
   type DependencyPinningSnapshot,
-  getReactImportMap,
   resolveDependencyPinningSnapshot,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import { getReactImportMap } from "#veryfront/transforms/esm/react-cdn.ts";
 import { toFileUrl } from "#veryfront/compat/path/index.ts";
 
 function makeAdapter() {

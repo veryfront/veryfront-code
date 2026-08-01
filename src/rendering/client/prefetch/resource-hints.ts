@@ -1,5 +1,5 @@
 import { prefetchLogger } from "../browser-logger.ts";
-import { escapeHtml } from "#veryfront/html/html-escape.ts";
+import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 
 export interface ResourceHint {
   type: "prefetch" | "preload" | "preconnect" | "dns-prefetch";

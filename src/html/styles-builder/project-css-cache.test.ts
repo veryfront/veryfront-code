@@ -5,6 +5,7 @@ import { register, tryResolve, unregister } from "#veryfront/extensions/contract
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
+import { API_CACHE_KEY_MAX_LENGTH } from "#veryfront/cache/keys/api-policy.ts";
 import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 import {
@@ -23,12 +24,68 @@ import {
 import {
   createProjectCSSRequestContext,
   initializeProjectCSSCache,
+  invalidateProjectCSSAsync,
   storeProjectCSS,
+  tryGetProjectCSSFromDistributedCache,
   tryGetProjectCSSFromLocalFallback,
 } from "./project-css-cache.ts";
 
 // Simple stylesheet without plugins — avoids loading @tailwindcss/typography from esm.sh in tests
 const TEST_STYLESHEET = `@import "tailwindcss";`;
+
+async function assertProjectCSSInvalidationIsolation(
+  targetSlug: string,
+  unrelatedSlug: string,
+  candidate: string,
+): Promise<void> {
+  const candidates = new Set([candidate]);
+  const target = createProjectCSSRequestContext(targetSlug, TEST_STYLESHEET, candidates, {
+    cssPipelineIdentity: "test-css-pipeline@scope-isolation",
+  });
+  const unrelated = createProjectCSSRequestContext(
+    unrelatedSlug,
+    TEST_STYLESHEET,
+    candidates,
+    { cssPipelineIdentity: "test-css-pipeline@scope-isolation" },
+  );
+  const targetCss = ".target{color:red}";
+  const unrelatedCss = ".unrelated{color:green}";
+
+  try {
+    await initializeProjectCSSCache();
+    await Promise.all([
+      storeProjectCSS(target, {
+        css: targetCss,
+        hash: hashCSS(targetCss),
+        candidatesHash: target.candidatesHash,
+      }, candidates),
+      storeProjectCSS(unrelated, {
+        css: unrelatedCss,
+        hash: hashCSS(unrelatedCss),
+        candidatesHash: unrelated.candidatesHash,
+      }, candidates),
+    ]);
+
+    await invalidateProjectCSSAsync(targetSlug);
+
+    assertEquals(await tryGetProjectCSSFromLocalFallback(target, candidates), undefined);
+    assertEquals(
+      (await tryGetProjectCSSFromLocalFallback(unrelated, candidates))?.css,
+      unrelatedCss,
+    );
+    assertEquals(await tryGetProjectCSSFromDistributedCache(target, candidates), undefined);
+    assertEquals(
+      (await tryGetProjectCSSFromDistributedCache(unrelated, candidates))?.css,
+      unrelatedCss,
+    );
+  } finally {
+    clearCSSCache();
+    await Promise.allSettled([
+      invalidateProjectCSSAsync(targetSlug),
+      invalidateProjectCSSAsync(unrelatedSlug),
+    ]);
+  }
+}
 
 describe("styles-builder/project-css-cache", () => {
   it("builds versioned, collision-resistant identities isolated by project and candidate tuple", () => {
@@ -72,9 +129,53 @@ describe("styles-builder/project-css-cache", () => {
     assertEquals(first.cacheKey !== differentCandidates.cacheKey, true);
     assertEquals(first.cacheKey !== differentProject.cacheKey, true);
     assertEquals(first.cacheKey !== differentCompiler.cacheKey, true);
-    assertEquals(first.cacheKey.includes(":v4:"), true);
+    assertEquals(first.cacheKey.startsWith("v5:"), true);
+    assertEquals(first.cacheKey.split(":").length, 6);
     assertEquals(first.candidatesHash.match(/^[a-f0-9]{64}$/)?.[0], first.candidatesHash);
     assertEquals(first.profileHash.match(/^[a-f0-9]{64}$/)?.[0], first.profileHash);
+  });
+
+  it("fences arbitrary project scopes in one bounded injective cache-key segment", () => {
+    const profile = {
+      environment: "preview",
+      cssPipelineIdentity: "test-css-pipeline@scope-fencing",
+    } as const;
+    const scopes = [
+      "*",
+      "?",
+      "tenant:branch",
+      "Malmö/東京",
+      "lone-high-\ud800",
+      "replacement-�",
+      "literal-\\ud800",
+    ];
+    const contexts = scopes.map((scope) =>
+      createProjectCSSRequestContext(scope, TEST_STYLESHEET, new Set(["scope-fencing"]), profile)
+    );
+
+    for (const context of contexts) {
+      const segments = context.cacheKey.split(":");
+      assertEquals(segments.length, 6);
+      assertEquals(segments[0], "v5");
+      assertEquals(/^[A-Za-z0-9_./-]+$/.test(segments[1]!), true);
+      assertEquals(/^[A-Za-z0-9_./-]+$/.test(segments[2]!), true);
+      assertEquals(`project-css:${context.cacheKey}`.length <= API_CACHE_KEY_MAX_LENGTH, true);
+    }
+    assertEquals(new Set(contexts.map(({ cacheKey }) => cacheKey)).size, scopes.length);
+  });
+
+  it("rejects a project scope whose encoded cache identity exceeds the shared key bound", () => {
+    assertThrows(
+      () =>
+        createProjectCSSRequestContext(
+          "x".repeat(API_CACHE_KEY_MAX_LENGTH),
+          TEST_STYLESHEET,
+          new Set(["oversized-scope"]),
+          { cssPipelineIdentity: "test-css-pipeline@oversized-scope" },
+        ),
+      RangeError,
+      `${API_CACHE_KEY_MAX_LENGTH} characters`,
+    );
   });
 
   it("rejects non-canonical pipeline identities before deriving cache keys", () => {
@@ -141,6 +242,163 @@ describe("styles-builder/project-css-cache", () => {
       MemoryCacheBackend.prototype.set = originalSet;
       clearCSSCache();
       invalidateProjectCSS(projectSlug);
+    }
+  });
+
+  it("invalidates a wildcard-bearing project scope without deleting another project", async () => {
+    const suffix = crypto.randomUUID();
+    await assertProjectCSSInvalidationIsolation(
+      `*${suffix}`,
+      `unrelated-${suffix}`,
+      `star-wildcard-${suffix}`,
+    );
+    await assertProjectCSSInvalidationIsolation(
+      `?${suffix}`,
+      `x${suffix}`,
+      `question-wildcard-${suffix}`,
+    );
+  });
+
+  it("invalidates a project without deleting a colon-delimited neighboring scope", async () => {
+    const parentSlug = `project-${crypto.randomUUID()}`;
+    await assertProjectCSSInvalidationIsolation(parentSlug, `${parentSlug}:child`, "colon-scope");
+  });
+
+  it("isolates Unicode, lone-surrogate, and maximum-length project scopes", async () => {
+    const suffix = crypto.randomUUID();
+    await assertProjectCSSInvalidationIsolation(
+      `Malmö/東京-${suffix}`,
+      `Malmö/大阪-${suffix}`,
+      "unicode-scope",
+    );
+    await assertProjectCSSInvalidationIsolation(
+      `lone-high-\ud800-${suffix}`,
+      `replacement-�-${suffix}`,
+      "lone-surrogate-scope",
+    );
+    await assertProjectCSSInvalidationIsolation(
+      "a".repeat(256),
+      `${"a".repeat(255)}b`,
+      "maximum-scope",
+    );
+  });
+
+  it("preserves the exact distributed invalidation failure", async () => {
+    const projectSlug = `invalidation-failure-${crypto.randomUUID()}`;
+    const failure = Object.freeze({ kind: "project-css-invalidation-failure" });
+    const originalDelByPattern = MemoryCacheBackend.prototype.delByPattern;
+    let received: unknown;
+
+    MemoryCacheBackend.prototype.delByPattern = function () {
+      return Promise.reject(failure);
+    };
+
+    try {
+      await initializeProjectCSSCache();
+      try {
+        await invalidateProjectCSSAsync(projectSlug);
+      } catch (error) {
+        received = error;
+      }
+      assertEquals(received, failure);
+    } finally {
+      MemoryCacheBackend.prototype.delByPattern = originalDelByPattern;
+      clearCSSCache();
+      await invalidateProjectCSSAsync(projectSlug);
+    }
+  });
+
+  it("retains the prior v4 24-hour distributed expiry contract after framing", async () => {
+    const projectSlug = `project-css-ttl-${crypto.randomUUID()}`;
+    const candidates = new Set(["ttl-contract"]);
+    const context = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "test-css-pipeline@ttl-contract" },
+    );
+    const css = ".ttl{}";
+    const originalSet = MemoryCacheBackend.prototype.set;
+    const ttl = Promise.withResolvers<number | undefined>();
+    MemoryCacheBackend.prototype.set = function (key, value, ttlSeconds) {
+      if (key === context.cacheKey) ttl.resolve(ttlSeconds);
+      return originalSet.call(this, key, value, ttlSeconds);
+    };
+
+    try {
+      await initializeProjectCSSCache();
+      await storeProjectCSS(
+        context,
+        { css, hash: hashCSS(css), candidatesHash: context.candidatesHash },
+        candidates,
+      );
+      assertEquals(await ttl.promise, 24 * 3600);
+    } finally {
+      MemoryCacheBackend.prototype.set = originalSet;
+      clearCSSCache();
+      await invalidateProjectCSSAsync(projectSlug);
+    }
+  });
+
+  it("fences a project CSS write that started before awaited invalidation", async () => {
+    const projectSlug = `project-invalidation-fence-${crypto.randomUUID()}`;
+    const candidates = new Set(["invalidation-fence"]);
+    const context = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "test-css-pipeline@invalidation-fence" },
+    );
+    const css = ".stale{}";
+    const entry = {
+      css,
+      hash: hashCSS(css),
+      candidatesHash: context.candidatesHash,
+    };
+    const originalSet = MemoryCacheBackend.prototype.set;
+    const setStarted = Promise.withResolvers<void>();
+    const releaseSet = Promise.withResolvers<void>();
+    const setFinished = Promise.withResolvers<void>();
+    let storing: Promise<void> | undefined;
+    let invalidating: Promise<void> | undefined;
+
+    MemoryCacheBackend.prototype.set = async function (key, value, ttlSeconds) {
+      if (key !== context.cacheKey) {
+        await originalSet.call(this, key, value, ttlSeconds);
+        return;
+      }
+      setStarted.resolve();
+      await releaseSet.promise;
+      await originalSet.call(this, key, value, ttlSeconds);
+      setFinished.resolve();
+    };
+
+    try {
+      await initializeProjectCSSCache();
+      storing = storeProjectCSS(context, entry, candidates);
+      await setStarted.promise;
+
+      invalidating = invalidateProjectCSSAsync(projectSlug);
+      // Let an unfenced invalidation reach its delete before the older set is released.
+      await Promise.resolve();
+      await Promise.resolve();
+      releaseSet.resolve();
+
+      await Promise.all([storing, setFinished.promise, invalidating]);
+      assertEquals(
+        await tryGetProjectCSSFromDistributedCache(context, candidates),
+        undefined,
+      );
+    } finally {
+      releaseSet.resolve();
+      await Promise.allSettled([
+        storing ?? Promise.resolve(),
+        invalidating ?? Promise.resolve(),
+        setFinished.promise,
+      ]);
+      MemoryCacheBackend.prototype.set = originalSet;
+      clearCSSCache();
+      await invalidateProjectCSSAsync(projectSlug);
     }
   });
 

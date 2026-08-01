@@ -171,4 +171,13 @@ describe("dependency pinning cache variant", () => {
     );
     assertEquals(`render:page:${key}`.length, 512);
   });
+
+  it("does not emit a readable key that aliases the sanitizer fallback namespace", () => {
+    const key = buildDependencyPinnedRenderCacheKey(
+      "page:vf-sanitized",
+      "on:1",
+    );
+
+    assertMatch(key, /^page:pins:hash-[0-9a-z]+-[0-9a-z]+$/);
+  });
 });

@@ -11,6 +11,9 @@ import {
   createBuildPublication,
   resolveBuildOutputOwnership,
 } from "../../production-build/build/build-publication.ts";
+import { assertSafeBuildOutputDirectory } from "../../production-build/build/output-plan.ts";
+
+const ADDITIONAL_MDX_SOURCE_DIRECTORIES = ["layouts", "providers"] as const;
 
 export interface CompileAllMDXDependencies {
   readonly fs?: ReturnType<typeof createFileSystem>;
@@ -24,6 +27,13 @@ export async function compileAllMDX(
   options.signal?.throwIfAborted();
 
   const fs = dependencies.fs ?? createFileSystem();
+  await assertSafeBuildOutputDirectory(
+    options.projectDir,
+    options.outputDir,
+    undefined,
+    ADDITIONAL_MDX_SOURCE_DIRECTORIES,
+  );
+  options.signal?.throwIfAborted();
   const publication = await createBuildPublication(options.outputDir, false, { fs });
   if (publication.dryRun) {
     throw new TypeError("MDX publication unexpectedly entered dry-run mode");

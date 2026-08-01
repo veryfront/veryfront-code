@@ -97,7 +97,7 @@ describe("initializeBundleManifest", () => {
           "production",
         ),
       Error,
-      'Bundle manifest store type "redis" is configured but is not implemented',
+      'Bundle manifest store type "redis" is not supported',
     );
   });
 
@@ -109,7 +109,7 @@ describe("initializeBundleManifest", () => {
           "production",
         ),
       Error,
-      'Bundle manifest store type "kv" is configured but is not implemented',
+      'Bundle manifest store type "kv" is not supported',
     );
   });
 

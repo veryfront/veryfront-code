@@ -122,11 +122,6 @@ export class OpenAPIHandler extends BaseHandler {
           await discoverPagesRoutes(router, apiDir, "/api", ctx.adapter);
         }
 
-        const appApiDir = join(ctx.projectDir, appDirName, "api");
-        if (await ctx.adapter.fs.exists(appApiDir)) {
-          await discoverAppRoutes(router, appApiDir, "/api", ctx.adapter);
-        }
-
         const appDir = join(ctx.projectDir, appDirName);
         if (await ctx.adapter.fs.exists(appDir)) {
           await discoverAppRoutes(router, appDir, "", ctx.adapter);
