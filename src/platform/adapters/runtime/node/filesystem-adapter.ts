@@ -11,9 +11,14 @@ import {
   createWatcherIterator,
   setupNodeFsWatcher,
 } from "../shared/shared-watcher.ts";
-import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
 import { makeNodeTempDir } from "../shared/temp-dir.ts";
 import { serverLogger } from "#veryfront/utils";
+import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
+import {
+  createNodeFileBytesExclusive,
+  readNodeFileSnapshotWithinLimit,
+} from "../shared/native-file-capabilities.ts";
 
 export class NodeFileSystemAdapter implements FileSystemAdapter {
   async readFile(path: string): Promise<string> {
@@ -27,9 +32,54 @@ export class NodeFileSystemAdapter implements FileSystemAdapter {
     return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
   }
 
+  async readFileBytesBounded(path: string, byteLimit: number): Promise<Uint8Array> {
+    const fs = await import("node:fs/promises");
+    return await readBoundedFilePrefix(async () => {
+      const handle = await fs.open(path, "r");
+      return {
+        close: () => handle.close(),
+        read: async (buffer: Uint8Array) => {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+          return bytesRead === 0 ? null : bytesRead;
+        },
+      };
+    }, byteLimit);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const fs = await import("node:fs/promises");
+    return await readFileWithinLimit(async () => {
+      const handle = await fs.open(path, "r");
+      return {
+        close: () => handle.close(),
+        read: async (buffer: Uint8Array) => {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+          return bytesRead === 0 ? null : bytesRead;
+        },
+      };
+    }, byteLimit);
+  }
+
+  readFileSnapshotWithinLimit(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array> {
+    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
+  }
+
   async writeFile(path: string, content: string): Promise<void> {
     const fs = await import("node:fs/promises");
     await fs.writeFile(path, content, "utf-8");
+  }
+
+  async writeFileBytes(path: string, content: Uint8Array): Promise<void> {
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(path, content);
+  }
+
+  createFileBytesExclusive(path: string, content: Uint8Array): Promise<void> {
+    return createNodeFileBytesExclusive(path, content);
   }
 
   async rename(from: string, to: string): Promise<void> {

@@ -1,6 +1,10 @@
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
+import { readFileWithinLimit } from "../adapters/bounded-file-read.ts";
+import { readNodeFileSnapshotWithinLimit } from "../adapters/runtime/shared/native-file-capabilities.ts";
+
+export { isNotFoundError } from "./not-found-error.ts";
 
 /**
  * Typed accessor for the Deno global.
@@ -18,9 +22,16 @@ function denoGlobal(): typeof Deno {
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
   readFile(path: string): Promise<Uint8Array>;
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
   /** Atomically replace a path when same-filesystem rename is supported. */
+  createFileBytesExclusive?(path: string, data: Uint8Array): Promise<void>;
   rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
@@ -35,6 +46,15 @@ export interface FileSystem {
 }
 
 interface NodeFsPromises {
+  open(path: string, flags: "r"): Promise<{
+    read(
+      buffer: Uint8Array,
+      offset: number,
+      length: number,
+      position: number | null,
+    ): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
   readFile(
     path: string,
     options?: { encoding?: string; flag?: string } | string,
@@ -71,6 +91,7 @@ interface NodeFsPromises {
   >;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
   chmod(path: string, mode: number): Promise<void>;
+  rename(from: string, to: string): Promise<void>;
 }
 
 class NodeFileSystem implements FileSystem {
@@ -129,6 +150,28 @@ class NodeFileSystem implements FileSystem {
     return this.getFs().readFile(path) as Promise<Uint8Array>;
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    await this.ensureInitialized();
+    return await readFileWithinLimit(async () => {
+      const handle = await this.getFs().open(path, "r");
+      return {
+        close: () => handle.close(),
+        read: async (buffer: Uint8Array) => {
+          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+          return bytesRead === 0 ? null : bytesRead;
+        },
+      };
+    }, byteLimit);
+  }
+
+  readFileSnapshotWithinLimit(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array> {
+    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
+  }
+
   async writeTextFile(path: string, data: string): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().writeFile(path, data, { encoding: "utf8" });
@@ -137,6 +180,11 @@ class NodeFileSystem implements FileSystem {
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await this.ensureInitialized();
     await this.getFs().writeFile(path, data);
+  }
+
+  async createFileBytesExclusive(path: string, data: Uint8Array): Promise<void> {
+    await this.ensureInitialized();
+    await this.getFs().writeFile(path, data, { flag: "wx" });
   }
 
   async rename(from: string, to: string): Promise<void> {
@@ -241,12 +289,43 @@ class DenoFileSystem implements FileSystem {
     return denoGlobal().readFile(path);
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    return await readFileWithinLimit(async () => {
+      const file = await denoGlobal().open(path, { read: true });
+      return { close: () => file.close(), read: (buffer) => file.read(buffer) };
+    }, byteLimit);
+  }
+
+  readFileSnapshotWithinLimit(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array> {
+    return readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit);
+  }
+
   async writeTextFile(path: string, data: string): Promise<void> {
     await denoGlobal().writeTextFile(path, data);
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     await denoGlobal().writeFile(path, data);
+  }
+
+  async createFileBytesExclusive(path: string, data: Uint8Array): Promise<void> {
+    const file = await denoGlobal().open(path, { write: true, createNew: true });
+    let offset = 0;
+    try {
+      while (offset < data.byteLength) {
+        const written = await file.write(data.subarray(offset));
+        if (!Number.isSafeInteger(written) || written <= 0 || written > data.byteLength - offset) {
+          throw new Error("Deno exclusive create write made no forward progress");
+        }
+        offset += written;
+      }
+    } finally {
+      file.close();
+    }
   }
 
   async rename(from: string, to: string): Promise<void> {
@@ -449,33 +528,10 @@ export async function realPath(path: string): Promise<string> {
 type DenoGlobal = typeof globalThis & {
   Deno?: {
     errors?: {
-      NotFound?: new (...args: unknown[]) => Error;
       AlreadyExists?: new (...args: unknown[]) => Error;
     };
   };
 };
-
-/** Error shape for is not found. */
-export function isNotFoundError(error: unknown, seen: Set<unknown> = new Set()): boolean {
-  if (seen.has(error)) return false;
-  seen.add(error);
-
-  const NotFound = (globalThis as DenoGlobal).Deno?.errors?.NotFound;
-  if (isDeno && NotFound && error instanceof NotFound) return true;
-  if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return true;
-  if (
-    error instanceof Error && error.name === "VeryfrontError" &&
-    (error as { slug?: string }).slug === "file-not-found"
-  ) {
-    return true;
-  }
-
-  if (error instanceof Error && "cause" in error) {
-    return isNotFoundError(error.cause, seen);
-  }
-
-  return false;
-}
 
 /** Error shape for is already exists. */
 export function isAlreadyExistsError(error: unknown): boolean {

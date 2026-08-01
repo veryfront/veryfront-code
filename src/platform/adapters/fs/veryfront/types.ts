@@ -6,7 +6,17 @@ import type { DirectoryEntry } from "../shared-types.ts";
 export type { DirectoryEntry };
 
 export interface FSAdapter {
+  readonly symlinkSemantics?: "none";
   readFile(path: string): Promise<Uint8Array | string>;
+  readFileBytes?(path: string): Promise<Uint8Array>;
+  readonly maxWholeFileReadBytes?: number;
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   readTextFile?(path: string): Promise<string>;
   readOptionalTextFile?(path: string): Promise<string>;
   exists(path: string): Promise<boolean>;
@@ -22,6 +32,9 @@ export interface FSAdapter {
   readdir?(path: string): AsyncIterable<DirectoryEntry> | Promise<DirectoryEntry[]>;
 
   writeFile?(path: string, content: string): Promise<void>;
+  writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
+  createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
+  rename?(from: string, to: string): Promise<void>;
   mkdir?(path: string, options?: { recursive?: boolean }): Promise<void>;
   remove?(path: string, options?: { recursive?: boolean }): Promise<void>;
 

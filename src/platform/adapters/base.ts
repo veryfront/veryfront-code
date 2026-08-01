@@ -222,10 +222,28 @@ export interface Server {
 }
 
 export interface FileSystemAdapter {
+  /** Explicit marker for virtual filesystems that never resolve symbolic links. */
+  readonly symlinkSemantics?: "none";
   readFile(path: string): Promise<string>;
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;
+  /** Fixed upstream whole-object ceiling, valid only with `readFileBytes`. */
+  readonly maxWholeFileReadBytes?: number;
+  /** Read at most a caller-selected byte prefix without materializing the whole source. */
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /** Read a complete file only when it fits within the caller-selected limit. */
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /** Read one verified native snapshot beneath `containmentRoot`. */
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
+  /** Write raw bytes when binary-safe output is required. */
+  writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
+  /** Create a new file atomically, refusing to replace an existing path. */
+  createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
   /** Atomically replace a path when the runtime supports same-filesystem rename. */
   rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
@@ -266,6 +284,14 @@ export interface FileSystemAdapter {
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
 }
+
+export type BoundedFileSystemAdapter =
+  & FileSystemAdapter
+  & Required<Pick<FileSystemAdapter, "readFileBytesBounded">>;
+
+export type ExactBoundedFileSystemAdapter =
+  & FileSystemAdapter
+  & Required<Pick<FileSystemAdapter, "readFileBytesWithinLimit">>;
 
 export interface ResolveFileOptions {
   allowPagesPrefix?: boolean;

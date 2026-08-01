@@ -50,3 +50,8 @@ export {
 } from "#veryfront/platform/compat/path/index.ts";
 
 export { cwd } from "#veryfront/platform/compat/process.ts";
+
+export {
+  FileSnapshotChangedError,
+  isFileSnapshotChangedError,
+} from "#veryfront/platform/adapters/file-snapshot-error.ts";
