@@ -15,7 +15,7 @@ function encodePath(path: string): string {
 
 function parseUncPath(path: string): { host: string; pathname: string } | null {
   const portable = path.replaceAll("\\", "/");
-  const match = portable.match(/^\/\/+([^/]+)(\/.*)$/);
+  const match = portable.match(/^\/\/([^/]+)(\/.*)$/);
   if (!match?.[1] || !match[2]) return null;
   return { host: match[1], pathname: match[2] };
 }

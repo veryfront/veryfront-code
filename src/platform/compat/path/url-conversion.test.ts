@@ -82,6 +82,12 @@ describe("url-conversion", () => {
       }
     });
 
+    it("keeps redundant POSIX root separators local", () => {
+      assertEquals(toFileUrl("//").href, "file:///");
+      assertEquals(toFileUrl("///tmp/file.ts").href, "file:///tmp/file.ts");
+      assertEquals(toFileUrl("////tmp/file.ts").href, "file:///tmp/file.ts");
+    });
+
     it("preserves literal backslashes in POSIX paths", () => {
       if (Deno.build.os === "windows") return;
       const path = String.raw`/tmp/literal\backslash.ts`;
