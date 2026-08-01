@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RedisClient } from "veryfront/extensions/distributed";
 import { openRedisClient } from "./redis-client-manager.ts";
@@ -55,6 +55,18 @@ function createClient(
 }
 
 describe("Redis runtime provider owned clients", () => {
+  it("invalidates a previously loaded module when the provider closes", async () => {
+    const provider = createRedisRuntimeProvider();
+    const module = await provider.loadModule();
+    await provider.close();
+
+    assertThrows(
+      () => module.createClient({}),
+      Error,
+      "provider is closed",
+    );
+  });
+
   it("keeps shared-client disconnect idempotent after provider close", async () => {
     const provider = createRedisRuntimeProvider();
 
