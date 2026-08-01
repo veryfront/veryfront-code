@@ -81,6 +81,11 @@ export const SENSITIVE_DEPENDENCY_BOUNDARIES = [
     sourceLocation: "extensions/ext-node-websocket-ws/deno.json",
     expectedComponents: ["@types/ws", "ws"],
   },
+  {
+    label: "Redis distributed runtime",
+    sourceLocation: "extensions/ext-redis/deno.json",
+    expectedComponents: ["@redis/client", "redis"],
+  },
 ] as const;
 
 const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;

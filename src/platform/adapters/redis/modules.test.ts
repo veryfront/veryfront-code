@@ -1,10 +1,30 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { createRedisRuntimeProvider } from "@veryfront/ext-redis";
+import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type RedisRuntimeProvider,
+  RedisRuntimeProviderName,
+} from "#veryfront/extensions/distributed";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { clearModuleCache, getRedisModule } from "./modules.ts";
 
 describe("platform/adapters/redis/modules", () => {
+  let provider: RedisRuntimeProvider;
+
+  beforeEach(() => {
+    provider = createRedisRuntimeProvider();
+    register(RedisRuntimeProviderName, provider);
+    clearModuleCache();
+  });
+
+  afterEach(async () => {
+    clearModuleCache();
+    unregister(RedisRuntimeProviderName);
+    await provider.close();
+  });
+
   describe("clearModuleCache", () => {
     it("should not throw", () => {
       clearModuleCache();

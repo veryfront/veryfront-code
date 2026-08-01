@@ -20,6 +20,14 @@ Deno.test("SBOM sensitivity ratchet owns the explicit Node WebSocket dependencie
   assertEquals(boundary?.expectedComponents, ["@types/ws", "ws"]);
 });
 
+Deno.test("SBOM sensitivity ratchet owns the explicit Redis runtime dependencies", () => {
+  const boundary = SENSITIVE_DEPENDENCY_BOUNDARIES.find((candidate) =>
+    candidate.sourceLocation === "extensions/ext-redis/deno.json"
+  );
+  assertEquals(boundary?.label, "Redis distributed runtime");
+  assertEquals(boundary?.expectedComponents, ["@redis/client", "redis"]);
+});
+
 describe("componentsFromLock", () => {
   it("emits a CycloneDX library component per npm package, deduplicated", () => {
     const lock = JSON.stringify({

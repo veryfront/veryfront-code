@@ -39,6 +39,17 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       ],
     },
     {
+      label: "Redis distributed runtime",
+      manifestPath: "extensions/ext-redis/deno.json",
+      requiredCapabilities: [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: ["NODE_ENV", "REDIS_PASSWORD", "REDIS_URL", "REDIS_USERNAME"],
+        },
+      ],
+    },
+    {
       label: "native SQLite storage",
       manifestPath: "extensions/ext-db-sqlite/deno.json",
       requiredCapabilities: [

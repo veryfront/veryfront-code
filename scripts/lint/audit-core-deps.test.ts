@@ -7,7 +7,7 @@ import {
 } from "./audit-core-deps.ts";
 
 describe("findCoreThirdPartyImports", () => {
-  it("flags npm and remote imports without a built-in React allowlist", () => {
+  it("flags npm, remote, and non-standard JSR imports", () => {
     const issues = findCoreThirdPartyImports(
       {
         imports: {
@@ -15,6 +15,8 @@ describe("findCoreThirdPartyImports", () => {
           "@std/path": "jsr:@std/path",
           "bash-tool": "npm:bash-tool@1.3.16",
           "react": "https://esm.sh/react@19.2.4",
+          "remote-http": "http://packages.example.test/runtime.ts",
+          "jsr-third-party": "jsr:@acme/package@1.0.0",
         },
       },
     );
@@ -22,6 +24,14 @@ describe("findCoreThirdPartyImports", () => {
     assertEquals(issues, [
       { specifier: "bash-tool", target: "npm:bash-tool@1.3.16" },
       { specifier: "react", target: "https://esm.sh/react@19.2.4" },
+      {
+        specifier: "remote-http",
+        target: "http://packages.example.test/runtime.ts",
+      },
+      {
+        specifier: "jsr-third-party",
+        target: "jsr:@acme/package@1.0.0",
+      },
     ]);
   });
 
@@ -211,13 +221,18 @@ describe("findCoreThirdPartySourceImports", () => {
       {
         path: "src/cache/hidden-imports.ts",
         content: [
-          'const redisClient = ["npm:@redis/client", "@1.5.8"].join("");',
+          "const redisClient = [",
+          '  "npm:@redis/client",',
+          '  "@1.5.8",',
+          '].join("");',
           "await import(redisClient);",
           'await import("npm:" + "redis@5.11.0");',
           'await import(["https://esm.sh/", "zod@4.3.6"].join(""));',
           'const local = ["./", "local.ts"].join("");',
           "await import(local);",
           '// import("npm:comment-only@1.0.0");',
+          'const pattern = /import\\("npm:regex-only@1.0.0"\\)/;',
+          "const sourceText = 'import(\"npm:string-only@1.0.0\")';",
         ].join("\n"),
       },
     ]);
@@ -225,18 +240,188 @@ describe("findCoreThirdPartySourceImports", () => {
     assertEquals(issues, [
       {
         path: "src/cache/hidden-imports.ts",
-        line: 2,
+        line: 5,
         specifier: "npm:@redis/client@1.5.8",
       },
       {
         path: "src/cache/hidden-imports.ts",
-        line: 3,
+        line: 6,
         specifier: "npm:redis@5.11.0",
       },
       {
         path: "src/cache/hidden-imports.ts",
-        line: 4,
+        line: 7,
         specifier: "https://esm.sh/zod@4.3.6",
+      },
+    ]);
+  });
+
+  it("resolves lexical constants without confusing shadowed local imports", () => {
+    const issues = findCoreThirdPartySourceImports([
+      {
+        path: "src/cache/scoped-imports.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "{",
+          '  const dependency = "./local.ts";',
+          "  await import(dependency);",
+          "}",
+          "await import(dependency);",
+        ].join("\n"),
+      },
+    ]);
+
+    assertEquals(issues, [
+      {
+        path: "src/cache/scoped-imports.ts",
+        line: 6,
+        specifier: "npm:redis@5.11.0",
+      },
+    ]);
+  });
+
+  it("models parameter patterns, loop scopes, and function-scoped var bindings", () => {
+    const issues = findCoreThirdPartySourceImports([
+      {
+        path: "src/cache/default-parameter.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "function load(value = dependency) {",
+          "  return import(dependency);",
+          "}",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/destructured-parameter.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "function load({ dependency: local }) {",
+          "  return import(dependency);",
+          "}",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/loop-scope.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          'for (const dependency of ["./local.ts"]) {',
+          "  await import(dependency);",
+          "}",
+          "await import(dependency);",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/var-scope.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "function load() {",
+          "  { var dependency = './local.ts'; }",
+          "  return import(dependency);",
+          "}",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/parameter-var-scope.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "function load(value = import(dependency)) {",
+          "  var dependency = './local.ts';",
+          "}",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/static-block-scope.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "class Cache {",
+          "  static {",
+          "    var dependency = './local.ts';",
+          "    void import(dependency);",
+          "  }",
+          "}",
+          "void import(dependency);",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/named-class-expression.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "const Cache = class dependency {",
+          "  static { void import(dependency); }",
+          "};",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/computed-class-method.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "class Cache {",
+          "  [import(dependency)](dependency: string) {}",
+          "}",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/computed-object-method.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "const cache = {",
+          "  [import(dependency)](dependency: string) {}",
+          "};",
+        ].join("\n"),
+      },
+      {
+        path: "src/cache/namespace-scope.ts",
+        content: [
+          'const dependency = "npm:redis@5.11.0";',
+          "namespace Cache {",
+          '  const dependency = "./local.ts";',
+          "  void import(dependency);",
+          "}",
+          "void import(dependency);",
+        ].join("\n"),
+      },
+    ]);
+
+    assertEquals(issues, [
+      {
+        path: "src/cache/default-parameter.ts",
+        line: 3,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/destructured-parameter.ts",
+        line: 3,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/loop-scope.ts",
+        line: 5,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/parameter-var-scope.ts",
+        line: 2,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/static-block-scope.ts",
+        line: 8,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/computed-class-method.ts",
+        line: 3,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/computed-object-method.ts",
+        line: 3,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/namespace-scope.ts",
+        line: 6,
+        specifier: "npm:redis@5.11.0",
       },
     ]);
   });

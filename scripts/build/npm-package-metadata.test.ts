@@ -429,11 +429,9 @@ describe("normalizeNpmPackageMetadata", () => {
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.peerDependencies, {
       "@huggingface/transformers": "^4.2.0",
-      redis: "^5.11.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
       "@huggingface/transformers": { optional: true },
-      redis: { optional: true },
     });
   });
 

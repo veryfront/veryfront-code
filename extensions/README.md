@@ -174,7 +174,7 @@ level.
 | `BlobStorage`                | S3 or GCS object persistence is configured      | Explicitly configured extension       |
 | `AuthProvider`               | Auth signing or verification is configured      | User-installed extension              |
 | `TokenCacheStore`            | Redis-backed token cache is configured          | User-installed extension              |
-| `RedisRuntimeProvider`       | A core Redis facade or Pub/Sub is used          | Lazy first-party extension            |
+| `RedisRuntimeProvider`       | A core Redis facade or Pub/Sub is used          | Explicitly configured extension       |
 | `EvalReportExporterRegistry` | Eval report exporters are registered            | Auto-enabled core extension           |
 | `TracingExporter`            | OTLP tracing export is configured               | User-installed extension              |
 | `NodeTelemetryProvider`      | Node agent service telemetry is enabled         | Auto-enabled agent service extension  |
