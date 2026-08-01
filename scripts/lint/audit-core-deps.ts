@@ -1,4 +1,6 @@
 import { walk } from "#std/fs";
+import { parseSource } from "./style-conventions/ast.ts";
+import type { AstNodeLike } from "./style-conventions/types.ts";
 
 export interface CoreDependencyIssue {
   specifier: string;
@@ -21,7 +23,8 @@ const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set<string>();
 function isThirdPartyImportTarget(target: string): boolean {
   if (target.startsWith("./") || target.startsWith("../")) return false;
   if (target.startsWith("jsr:@std/")) return false;
-  return target.startsWith("npm:") || target.startsWith("https://");
+  return target.startsWith("npm:") || target.startsWith("jsr:") ||
+    target.startsWith("http://") || target.startsWith("https://");
 }
 
 function importMapTargetForSpecifier(
@@ -83,303 +86,408 @@ function isAllowedCoreSourceSpecifier(
   return allowedSpecifiers.has(specifier);
 }
 
-const STATIC_IMPORT_EXPORT_START_RE = /^\s*(?:import|export)\b/;
-const FROM_SPECIFIER_RE = /\bfrom\s+["']([^"']+)["']/;
-const SIDE_EFFECT_IMPORT_RE = /^\s*import\s+["']([^"']+)["']/;
-const IDENTIFIER_RE = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+interface StaticBinding {
+  initializer: AstNodeLike;
+  scope: LexicalScope;
+}
 
-function readImportExportStatement(
-  lines: string[],
-  startIndex: number,
-): string {
-  let statement = lines[startIndex];
-  for (let i = startIndex + 1; i < lines.length; i++) {
-    if (statement.includes(";")) break;
-    statement += `\n${lines[i]}`;
+interface LexicalScope {
+  parent?: LexicalScope;
+  bindings: Map<string, StaticBinding | null>;
+  variableScope: LexicalScope;
+}
+
+interface SourceImport {
+  expression: AstNodeLike;
+  line: number;
+  scope: LexicalScope;
+}
+
+const FUNCTION_NODE_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "ClassMethod",
+  "ClassPrivateMethod",
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ObjectMethod",
+]);
+const EXPRESSION_WRAPPER_TYPES = new Set([
+  "ParenthesizedExpression",
+  "TSAsExpression",
+  "TSInstantiationExpression",
+  "TSNonNullExpression",
+  "TSSatisfiesExpression",
+  "TSTypeAssertion",
+  "TypeCastExpression",
+]);
+
+function isAstNode(value: unknown): value is AstNodeLike {
+  return typeof value === "object" && value !== null &&
+    typeof (value as AstNodeLike).type === "string";
+}
+
+function childNodes(node: AstNodeLike): AstNodeLike[] {
+  const children: AstNodeLike[] = [];
+  for (const [key, value] of Object.entries(node)) {
     if (
-      FROM_SPECIFIER_RE.test(statement) || SIDE_EFFECT_IMPORT_RE.test(statement)
-    ) break;
-  }
-  return statement;
-}
-
-function extractStaticSpecifier(statement: string): string | undefined {
-  return FROM_SPECIFIER_RE.exec(statement)?.[1] ??
-    SIDE_EFFECT_IMPORT_RE.exec(statement)?.[1];
-}
-
-function findMatchingDelimiter(
-  source: string,
-  start: number,
-  opening: string,
-  closing: string,
-): number {
-  let depth = 0;
-  let quote: string | undefined;
-  let escaped = false;
-  for (let index = start; index < source.length; index++) {
-    const character = source[index];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === "\\") {
-        escaped = true;
-      } else if (character === quote) {
-        quote = undefined;
-      }
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-      continue;
-    }
-    if (character === opening) depth++;
-    if (character === closing && --depth === 0) return index;
-  }
-  return -1;
-}
-
-function splitTopLevel(source: string, separator: string): string[] | undefined {
-  const parts: string[] = [];
-  let start = 0;
-  let parentheses = 0;
-  let brackets = 0;
-  let braces = 0;
-  let quote: string | undefined;
-  let escaped = false;
-
-  for (let index = 0; index < source.length; index++) {
-    const character = source[index];
-    if (quote) {
-      if (escaped) {
-        escaped = false;
-      } else if (character === "\\") {
-        escaped = true;
-      } else if (character === quote) {
-        quote = undefined;
-      }
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      quote = character;
-      continue;
-    }
-    if (character === "(") parentheses++;
-    if (character === ")") parentheses--;
-    if (character === "[") brackets++;
-    if (character === "]") brackets--;
-    if (character === "{") braces++;
-    if (character === "}") braces--;
-    if (parentheses < 0 || brackets < 0 || braces < 0) return undefined;
-    if (
-      character === separator && parentheses === 0 && brackets === 0 &&
-      braces === 0
-    ) {
-      parts.push(source.slice(start, index));
-      start = index + 1;
+      key === "loc" || key === "start" || key === "end" || key === "extra" ||
+      key.endsWith("Comments")
+    ) continue;
+    if (Array.isArray(value)) {
+      for (const entry of value) if (isAstNode(entry)) children.push(entry);
+    } else if (isAstNode(value)) {
+      children.push(value);
     }
   }
-  if (quote || parentheses !== 0 || brackets !== 0 || braces !== 0) return undefined;
-  parts.push(source.slice(start));
-  return parts;
+  return children;
 }
 
-function decodeStringLiteral(expression: string): string | undefined {
-  const quote = expression[0];
-  if (
-    expression.length < 2 || (quote !== '"' && quote !== "'" && quote !== "`") ||
-    expression.at(-1) !== quote
-  ) return undefined;
-  const body = expression.slice(1, -1);
-  if (quote === "`" && body.includes("${")) return undefined;
-
-  let result = "";
-  for (let index = 0; index < body.length; index++) {
-    const character = body[index];
-    if (character !== "\\") {
-      if (character === quote) return undefined;
-      result += character;
-      continue;
-    }
-    const escaped = body[++index];
-    if (escaped === undefined) return undefined;
-    const simpleEscapes: Record<string, string> = {
-      "0": "\0",
-      b: "\b",
-      f: "\f",
-      n: "\n",
-      r: "\r",
-      t: "\t",
-      v: "\v",
-    };
-    if (escaped in simpleEscapes) {
-      result += simpleEscapes[escaped];
-      continue;
-    }
-    if (escaped === "x") {
-      const digits = body.slice(index + 1, index + 3);
-      if (!/^[0-9A-Fa-f]{2}$/.test(digits)) return undefined;
-      result += String.fromCodePoint(Number.parseInt(digits, 16));
-      index += 2;
-      continue;
-    }
-    if (escaped === "u") {
-      const braced = body[index + 1] === "{";
-      const end = braced ? body.indexOf("}", index + 2) : index + 5;
-      const digits = braced
-        ? body.slice(index + 2, end)
-        : body.slice(index + 1, end + 1);
-      if (
-        end < 0 || !/^[0-9A-Fa-f]+$/.test(digits) ||
-        (!braced && digits.length !== 4)
-      ) return undefined;
-      const codePoint = Number.parseInt(digits, 16);
-      if (codePoint > 0x10FFFF) return undefined;
-      result += String.fromCodePoint(codePoint);
-      index = end;
-      continue;
-    }
-    if (escaped === "\n") continue;
-    if (escaped === "\r") {
-      if (body[index + 1] === "\n") index++;
-      continue;
-    }
-    result += escaped;
+function bindPattern(scope: LexicalScope, pattern: unknown): void {
+  if (!isAstNode(pattern)) return;
+  if (pattern.type === "Identifier" && typeof pattern.name === "string") {
+    scope.bindings.set(pattern.name, null);
+    return;
   }
-  return result;
-}
-
-function stripOuterParentheses(expression: string): string {
-  let result = expression.trim();
-  while (result.startsWith("(")) {
-    const closing = findMatchingDelimiter(result, 0, "(", ")");
-    if (closing !== result.length - 1) break;
-    result = result.slice(1, -1).trim();
-  }
-  return result;
-}
-
-function evaluateStaticString(
-  source: string,
-  constants: ReadonlyMap<string, string>,
-  depth = 0,
-): string | undefined {
-  if (depth > 16) return undefined;
-  const expression = stripOuterParentheses(source);
-  const literal = decodeStringLiteral(expression);
-  if (literal !== undefined) return literal;
-  if (IDENTIFIER_RE.test(expression)) return constants.get(expression);
-
-  const additions = splitTopLevel(expression, "+");
-  if (additions && additions.length > 1) {
-    const values = additions.map((part) =>
-      evaluateStaticString(part, constants, depth + 1)
+  if (pattern.type === "AssignmentPattern" || pattern.type === "RestElement") {
+    bindPattern(
+      scope,
+      pattern.type === "AssignmentPattern" ? pattern.left : pattern.argument,
     );
-    if (values.every((value): value is string => value !== undefined)) {
-      return values.join("");
+    return;
+  }
+  if (pattern.type === "ArrayPattern" && Array.isArray(pattern.elements)) {
+    for (const element of pattern.elements) bindPattern(scope, element);
+    return;
+  }
+  if (pattern.type === "ObjectPattern" && Array.isArray(pattern.properties)) {
+    for (const property of pattern.properties) {
+      if (!isAstNode(property)) continue;
+      bindPattern(
+        scope,
+        property.type === "ObjectProperty" ? property.value : property.argument,
+      );
+    }
+    return;
+  }
+  if (pattern.type === "TSParameterProperty") {
+    bindPattern(scope, pattern.parameter);
+  }
+}
+
+function createScope(
+  parent?: LexicalScope,
+  ownsVariables = false,
+): LexicalScope {
+  const scope = {
+    parent,
+    bindings: new Map<string, StaticBinding | null>(),
+  } as LexicalScope;
+  scope.variableScope = ownsVariables ? scope : parent?.variableScope ?? scope;
+  return scope;
+}
+
+function collectScopes(
+  node: AstNodeLike,
+  scope: LexicalScope,
+  nodeScopes: WeakMap<object, LexicalScope>,
+): void {
+  nodeScopes.set(node, scope);
+
+  if (
+    (node.type === "FunctionDeclaration" || node.type === "ClassDeclaration") &&
+    isAstNode(node.id) && node.id.type === "Identifier" &&
+    typeof node.id.name === "string"
+  ) {
+    scope.bindings.set(node.id.name, null);
+  }
+
+  if (FUNCTION_NODE_TYPES.has(node.type ?? "")) {
+    const parameterScope = createScope(scope);
+    const bodyScope = createScope(parameterScope, true);
+    if (node.type === "FunctionExpression") {
+      bindPattern(parameterScope, node.id);
+    }
+    const parameters = Array.isArray(node.params)
+      ? node.params.filter(isAstNode)
+      : [];
+    for (const parameter of parameters) {
+      bindPattern(parameterScope, parameter);
+    }
+    const decorators = Array.isArray(node.decorators)
+      ? node.decorators.filter(isAstNode)
+      : [];
+    const isMethod = node.type === "ClassMethod" ||
+      node.type === "ClassPrivateMethod" || node.type === "ObjectMethod";
+    for (const child of childNodes(node)) {
+      if (child === node.id) continue;
+      const evaluatedOutsideFunction = isMethod &&
+        (child === node.key || decorators.includes(child));
+      collectScopes(
+        child,
+        child === node.body
+          ? bodyScope
+          : evaluatedOutsideFunction
+          ? scope
+          : parameterScope,
+        nodeScopes,
+      );
+    }
+    return;
+  }
+
+  if (node.type === "ClassDeclaration" || node.type === "ClassExpression") {
+    const classScope = createScope(scope);
+    bindPattern(classScope, node.id);
+    for (const child of childNodes(node)) {
+      if (child !== node.id) collectScopes(child, classScope, nodeScopes);
+    }
+    return;
+  }
+
+  if (
+    node.type === "BlockStatement" || node.type === "CatchClause" ||
+    node.type === "ClassBody" || node.type === "StaticBlock" ||
+    node.type === "SwitchStatement" || node.type === "TSModuleBlock"
+  ) {
+    const blockScope = createScope(
+      scope,
+      node.type === "StaticBlock" || node.type === "TSModuleBlock",
+    );
+    if (node.type === "CatchClause") bindPattern(blockScope, node.param);
+    for (const child of childNodes(node)) {
+      if (child !== node.param) collectScopes(child, blockScope, nodeScopes);
+    }
+    return;
+  }
+
+  if (
+    node.type === "ForStatement" || node.type === "ForInStatement" ||
+    node.type === "ForOfStatement"
+  ) {
+    const loopScope = createScope(scope);
+    for (const child of childNodes(node)) {
+      collectScopes(child, loopScope, nodeScopes);
+    }
+    return;
+  }
+
+  if (node.type === "VariableDeclaration" && Array.isArray(node.declarations)) {
+    const declarationScope = node.kind === "var" ? scope.variableScope : scope;
+    for (const declaration of node.declarations) {
+      if (!isAstNode(declaration)) continue;
+      const id = declaration.id;
+      const initializer = declaration.init;
+      if (
+        node.kind === "const" && isAstNode(id) && id.type === "Identifier" &&
+        typeof id.name === "string" && isAstNode(initializer)
+      ) {
+        declarationScope.bindings.set(id.name, {
+          initializer,
+          scope: declarationScope,
+        });
+      } else {
+        bindPattern(declarationScope, id);
+      }
     }
   }
 
-  if (expression.startsWith("[")) {
-    const arrayEnd = findMatchingDelimiter(expression, 0, "[", "]");
-    if (arrayEnd > 0) {
-      const suffix = expression.slice(arrayEnd + 1).trim();
-      const joinMatch = /^\.join\s*\(([\s\S]*)\)$/.exec(suffix);
-      if (joinMatch) {
-        const separator = evaluateStaticString(joinMatch[1], constants, depth + 1);
-        const entries = splitTopLevel(expression.slice(1, arrayEnd), ",");
-        if (separator !== undefined && entries) {
-          const values = entries.map((entry) =>
-            evaluateStaticString(entry, constants, depth + 1)
-          );
-          if (values.every((value): value is string => value !== undefined)) {
-            return values.join(separator);
-          }
-        }
-      }
+  if (node.type === "ImportDeclaration" && Array.isArray(node.specifiers)) {
+    for (const specifier of node.specifiers) {
+      if (isAstNode(specifier)) bindPattern(scope, specifier.local);
     }
+  }
+
+  for (const child of childNodes(node)) collectScopes(child, scope, nodeScopes);
+}
+
+function resolveBinding(
+  scope: LexicalScope,
+  name: string,
+): StaticBinding | null | undefined {
+  for (
+    let current: LexicalScope | undefined = scope;
+    current;
+    current = current.parent
+  ) {
+    if (current.bindings.has(name)) return current.bindings.get(name);
   }
   return undefined;
 }
 
-function collectStaticStringConstants(content: string): Map<string, string> {
-  const constants = new Map<string, string>();
-  for (const line of content.split("\n")) {
-    const declaration = /^\s*const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(.+?)\s*;?\s*$/.exec(
-      line,
-    );
-    if (!declaration) continue;
-    const value = evaluateStaticString(
-      declaration[2].replace(/;\s*$/, ""),
-      constants,
-    );
-    if (value !== undefined) constants.set(declaration[1], value);
+function propertyName(node: unknown): string | undefined {
+  if (!isAstNode(node)) return undefined;
+  if (node.type === "Identifier" && typeof node.name === "string") {
+    return node.name;
   }
-  return constants;
+  if (node.type === "StringLiteral" && typeof node.value === "string") {
+    return node.value;
+  }
+  return undefined;
 }
 
-function findDynamicImportExpressions(
-  content: string,
-): Array<{ expression: string; line: number }> {
-  const imports: Array<{ expression: string; line: number }> = [];
-  let index = 0;
-  let line = 1;
-
-  while (index < content.length) {
-    const character = content[index];
-    if (character === "\n") {
-      line++;
-      index++;
-      continue;
-    }
-    if (character === "/" && content[index + 1] === "/") {
-      const nextLine = content.indexOf("\n", index + 2);
-      if (nextLine < 0) break;
-      index = nextLine;
-      continue;
-    }
-    if (character === "/" && content[index + 1] === "*") {
-      const end = content.indexOf("*/", index + 2);
-      const stop = end < 0 ? content.length : end + 2;
-      line += content.slice(index, stop).split("\n").length - 1;
-      index = stop;
-      continue;
-    }
-    if (character === '"' || character === "'" || character === "`") {
-      const quote = character;
-      index++;
-      while (index < content.length) {
-        if (content[index] === "\n") line++;
-        if (content[index] === "\\") {
-          index += 2;
-          continue;
-        }
-        if (content[index++] === quote) break;
-      }
-      continue;
-    }
-    if (
-      content.startsWith("import", index) &&
-      !/[A-Za-z0-9_$]/.test(content[index - 1] ?? "") &&
-      !/[A-Za-z0-9_$]/.test(content[index + 6] ?? "")
-    ) {
-      let opening = index + 6;
-      while (/\s/.test(content[opening] ?? "")) opening++;
-      if (content[opening] === "(") {
-        const closing = findMatchingDelimiter(content, opening, "(", ")");
-        if (closing > opening) {
-          imports.push({
-            expression: content.slice(opening + 1, closing),
-            line,
-          });
-          line += content.slice(index, closing + 1).split("\n").length - 1;
-          index = closing + 1;
-          continue;
-        }
-      }
-    }
-    index++;
+function evaluateStaticString(
+  node: AstNodeLike,
+  scope: LexicalScope,
+  resolving = new Set<StaticBinding>(),
+  depth = 0,
+): string | undefined {
+  if (depth > 32) return undefined;
+  if (node.type === "StringLiteral" && typeof node.value === "string") {
+    return node.value;
   }
+  if (node.type === "TemplateLiteral") {
+    const expressions = Array.isArray(node.expressions) ? node.expressions : [];
+    const quasis = Array.isArray(node.quasis) ? node.quasis : [];
+    if (quasis.length !== expressions.length + 1) return undefined;
+    let result = "";
+    for (let index = 0; index < quasis.length; index++) {
+      const quasi = quasis[index];
+      if (
+        !isAstNode(quasi) || !quasi.value || typeof quasi.value !== "object"
+      ) {
+        return undefined;
+      }
+      const value = quasi.value as Record<string, unknown>;
+      const text = typeof value.cooked === "string"
+        ? value.cooked
+        : typeof value.raw === "string"
+        ? value.raw
+        : undefined;
+      if (text === undefined) return undefined;
+      result += text;
+      if (index < expressions.length) {
+        const expression = expressions[index];
+        if (!isAstNode(expression)) return undefined;
+        const evaluated = evaluateStaticString(
+          expression,
+          scope,
+          resolving,
+          depth + 1,
+        );
+        if (evaluated === undefined) return undefined;
+        result += evaluated;
+      }
+    }
+    return result;
+  }
+  if (node.type === "Identifier" && typeof node.name === "string") {
+    const binding = resolveBinding(scope, node.name);
+    if (!binding || resolving.has(binding)) return undefined;
+    resolving.add(binding);
+    const value = evaluateStaticString(
+      binding.initializer,
+      binding.scope,
+      resolving,
+      depth + 1,
+    );
+    resolving.delete(binding);
+    return value;
+  }
+  if (
+    EXPRESSION_WRAPPER_TYPES.has(node.type ?? "") && isAstNode(node.expression)
+  ) {
+    return evaluateStaticString(node.expression, scope, resolving, depth + 1);
+  }
+  if (
+    node.type === "BinaryExpression" && node.operator === "+" &&
+    isAstNode(node.left) && isAstNode(node.right)
+  ) {
+    const left = evaluateStaticString(node.left, scope, resolving, depth + 1);
+    const right = evaluateStaticString(node.right, scope, resolving, depth + 1);
+    return left === undefined || right === undefined ? undefined : left + right;
+  }
+  if (node.type !== "CallExpression" || !isAstNode(node.callee)) {
+    return undefined;
+  }
+  const callee = node.callee;
+  if (
+    callee.type !== "MemberExpression" || !isAstNode(callee.object) ||
+    (callee.computed === true &&
+      (!isAstNode(callee.property) ||
+        callee.property.type !== "StringLiteral")) ||
+    propertyName(callee.property) !== "join" ||
+    callee.object.type !== "ArrayExpression"
+  ) return undefined;
+  const args = Array.isArray(node.arguments) ? node.arguments : [];
+  if (args.length > 1) return undefined;
+  let separator = ",";
+  if (args.length === 1) {
+    const argument = args[0];
+    if (!isAstNode(argument)) return undefined;
+    const evaluated = evaluateStaticString(
+      argument,
+      scope,
+      resolving,
+      depth + 1,
+    );
+    if (evaluated === undefined) return undefined;
+    separator = evaluated;
+  }
+  const elements = Array.isArray(callee.object.elements)
+    ? callee.object.elements
+    : [];
+  const values: string[] = [];
+  for (const element of elements) {
+    if (element === null) {
+      values.push("");
+      continue;
+    }
+    if (!isAstNode(element) || element.type === "SpreadElement") {
+      return undefined;
+    }
+    const evaluated = evaluateStaticString(
+      element,
+      scope,
+      resolving,
+      depth + 1,
+    );
+    if (evaluated === undefined) return undefined;
+    values.push(evaluated);
+  }
+  return values.join(separator);
+}
+
+function importExpression(node: AstNodeLike): AstNodeLike | undefined {
+  if (
+    (node.type === "ImportDeclaration" ||
+      node.type === "ExportAllDeclaration" ||
+      node.type === "ExportNamedDeclaration") && isAstNode(node.source)
+  ) return node.source;
+  if (node.type === "ImportExpression" && isAstNode(node.source)) {
+    return node.source;
+  }
+  if (node.type === "TSImportType" && isAstNode(node.argument)) {
+    return node.argument;
+  }
+  if (node.type === "TSExternalModuleReference" && isAstNode(node.expression)) {
+    return node.expression;
+  }
+  if (
+    node.type === "CallExpression" && isAstNode(node.callee) &&
+    node.callee.type === "Import" && Array.isArray(node.arguments) &&
+    isAstNode(node.arguments[0])
+  ) return node.arguments[0];
+  return undefined;
+}
+
+function findSourceImports(path: string, content: string): SourceImport[] {
+  const ast = parseSource(path, content);
+  const rootScope = createScope(undefined, true);
+  const nodeScopes = new WeakMap<object, LexicalScope>();
+  collectScopes(ast, rootScope, nodeScopes);
+  const imports: SourceImport[] = [];
+  const visit = (node: AstNodeLike): void => {
+    const expression = importExpression(node);
+    if (expression) {
+      imports.push({
+        expression,
+        line: node.loc?.start?.line ?? 1,
+        scope: nodeScopes.get(expression) ?? rootScope,
+      });
+    }
+    for (const child of childNodes(node)) visit(child);
+  };
+  visit(ast);
   return imports;
 }
 
@@ -461,27 +569,11 @@ export function findCoreThirdPartySourceImports(
     const path = normalizePath(file.path);
     if (!shouldCheckCoreSourceImportPath(path)) continue;
 
-    const lines = file.content.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (STATIC_IMPORT_EXPORT_START_RE.test(line)) {
-        const specifier = extractStaticSpecifier(
-          readImportExportStatement(lines, i),
-        );
-        if (
-          specifier &&
-          !isAllowedCoreSourceSpecifier(specifier, allowedSpecifiers, importMap)
-        ) {
-          issues.push({ path, line: i + 1, specifier });
-        }
-      }
-    }
-
-    const constants = collectStaticStringConstants(file.content);
-    for (const dynamicImport of findDynamicImportExpressions(file.content)) {
+    const seen = new Set<string>();
+    for (const sourceImport of findSourceImports(path, file.content)) {
       const dynamicSpecifier = evaluateStaticString(
-        dynamicImport.expression,
-        constants,
+        sourceImport.expression,
+        sourceImport.scope,
       );
       if (
         dynamicSpecifier &&
@@ -491,11 +583,15 @@ export function findCoreThirdPartySourceImports(
           importMap,
         )
       ) {
-        issues.push({
-          path,
-          line: dynamicImport.line,
-          specifier: dynamicSpecifier,
-        });
+        const key = `${sourceImport.line}\0${dynamicSpecifier}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          issues.push({
+            path,
+            line: sourceImport.line,
+            specifier: dynamicSpecifier,
+          });
+        }
       }
     }
   }

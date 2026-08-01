@@ -1,6 +1,6 @@
 # @veryfront/ext-redis
 
-> **Category:** Distributed runtime | **Contract:** `RedisRuntimeProvider` | **Lazy**
+> **Category:** Distributed runtime | **Contract:** `RedisRuntimeProvider` | **Explicit**
 
 Owns the third-party Redis clients used by Veryfront's distributed cache
 facades, platform Redis adapter, and Claude Code Pub/Sub publisher. Core keeps
@@ -16,9 +16,21 @@ runtime features:
 deno add jsr:@veryfront/veryfront npm:@veryfront/ext-redis
 ```
 
-Workspace and compiled-binary builds load the first-party source package on
-first Redis use. npm consumers load the separately installed extension package.
-There is no in-memory fallback when a Redis feature was explicitly selected.
+Installing the package does not activate it. Import its factory and compose it
+explicitly in `veryfront.config.ts`:
+
+```ts
+import { defineConfig } from "veryfront";
+import extRedis from "@veryfront/ext-redis";
+
+export default defineConfig({
+  extensions: [extRedis()],
+});
+```
+
+Core Redis facades fail closed with an actionable install recommendation until
+extension orchestration registers the provider. Workspace and compiled-binary
+availability do not bypass that activation boundary.
 
 ## Configuration
 

@@ -1,7 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { register, unregister } from "../contracts.ts";
-import { importFirstPartyExtensionModule } from "../first-party-import.ts";
 import { ensureRedisRuntimeProvider } from "./defaults.ts";
 import {
   captureRedisRuntimeProvider,
@@ -240,7 +239,7 @@ describe("RedisRuntimeProvider", () => {
     assertEquals(closeCalls, 1);
   });
 
-  it("prefers an explicitly registered provider without loading a default", async () => {
+  it("resolves a provider registered through explicit orchestration", async () => {
     const provider = createProvider();
     register(RedisRuntimeProviderName, provider);
     try {
@@ -251,18 +250,12 @@ describe("RedisRuntimeProvider", () => {
     }
   });
 
-  it("loads the first-party provider from workspace source", async () => {
+  it("fails closed with an install recommendation when no provider is registered", async () => {
     unregister(RedisRuntimeProviderName);
-    const module = await importFirstPartyExtensionModule<{
-      createRedisRuntimeProvider: () => RedisRuntimeProvider;
-    }>("ext-redis", "@veryfront/ext-redis");
-    assertEquals(typeof module.createRedisRuntimeProvider, "function");
-    const provider = await ensureRedisRuntimeProvider();
-    try {
-      assertEquals(provider.id, "redis@5.11.0");
-    } finally {
-      await provider.close();
-      unregister(RedisRuntimeProviderName);
-    }
+    await assertRejects(
+      () => ensureRedisRuntimeProvider(),
+      Error,
+      "Install it with: deno add @veryfront/ext-redis",
+    );
   });
 });
