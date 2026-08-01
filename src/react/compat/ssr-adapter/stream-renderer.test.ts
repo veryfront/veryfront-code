@@ -122,22 +122,30 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
     assertEquals(await readStream(result.stream!), "<div>streamed</div>");
   });
 
-  it("falls back to string rendering when readable stream setup fails", async () => {
+  it("does not re-render when readable stream setup fails", async () => {
     const errors: string[] = [];
+    let stringRenderCalls = 0;
     __injectReactDOMServerForTests(
       createMockServer({
         renderToReadableStream: async () => {
           throw new Error("readable failed");
         },
-        renderToString: () => "<div>fallback</div>",
+        renderToString: () => {
+          stringRenderCalls += 1;
+          return "<div>must not render</div>";
+        },
       }),
     );
 
-    const result = await renderToStreamAdapter(React.createElement("div"), {
-      onError: (error) => errors.push(error.message),
-    });
-
-    assertEquals(result.html, "<div>fallback</div>");
+    await assertRejects(
+      () =>
+        renderToStreamAdapter(React.createElement("div"), {
+          onError: (error) => errors.push(error.message),
+        }),
+      Error,
+      "readable failed",
+    );
+    assertEquals(stringRenderCalls, 0);
     assertEquals(errors, ["readable failed"]);
   });
 
@@ -190,23 +198,31 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
     assertEquals(await readPipe(result.pipe!), "<div>pipeable</div>");
   });
 
-  it("falls back to string rendering when pipeable stream setup fails", async () => {
+  it("does not re-render when pipeable stream setup fails", async () => {
     const errors: string[] = [];
+    let stringRenderCalls = 0;
     __injectReactDOMServerForTests(
       createMockServer({
         renderToReadableStream: undefined,
         renderToPipeableStream: () => {
           throw new Error("pipe failed");
         },
-        renderToString: () => "<div>pipe-fallback</div>",
+        renderToString: () => {
+          stringRenderCalls += 1;
+          return "<div>must not render</div>";
+        },
       }),
     );
 
-    const result = await renderToStreamAdapter(React.createElement("div"), {
-      onError: (error) => errors.push(error.message),
-    });
-
-    assertEquals(result.html, "<div>pipe-fallback</div>");
+    await assertRejects(
+      () =>
+        renderToStreamAdapter(React.createElement("div"), {
+          onError: (error) => errors.push(error.message),
+        }),
+      Error,
+      "pipe failed",
+    );
+    assertEquals(stringRenderCalls, 0);
     assertEquals(errors, ["pipe failed"]);
   });
 
@@ -286,7 +302,8 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
     assertEquals(await readPipe(result.pipe!), "<div>ready</div>");
   });
 
-  it("continues failure handling when the shell-error observer throws", async () => {
+  it("preserves a shell failure when its observer throws without re-rendering", async () => {
+    let stringRenderCalls = 0;
     __injectReactDOMServerForTests(
       createMockServer({
         renderToReadableStream: undefined,
@@ -294,18 +311,25 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
           queueMicrotask(() => options?.onShellError?.(new Error("shell failed")));
           return createPipeableSSRStream(() => {});
         },
-        renderToString: () => "<div>fallback</div>",
-      }),
-    );
-
-    const result = await withDeadline(
-      renderToStreamAdapter(React.createElement("div"), {
-        onShellError: () => {
-          throw new Error("shell-error observer failed");
+        renderToString: () => {
+          stringRenderCalls += 1;
+          return "<div>must not render</div>";
         },
       }),
     );
 
-    assertEquals(result.html, "<div>fallback</div>");
+    await assertRejects(
+      () =>
+        withDeadline(
+          renderToStreamAdapter(React.createElement("div"), {
+            onShellError: () => {
+              throw new Error("shell-error observer failed");
+            },
+          }),
+        ),
+      Error,
+      "shell failed",
+    );
+    assertEquals(stringRenderCalls, 0);
   });
 });

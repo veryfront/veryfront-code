@@ -112,11 +112,41 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
     );
   });
 
+  it("does not invoke the string renderer after readable setup fails", async () => {
+    const observed: string[] = [];
+    let stringRenderCalls = 0;
+    __injectReactDOMServerForTests({
+      renderToString: () => {
+        stringRenderCalls += 1;
+        return "<div>must not render</div>";
+      },
+      renderToStaticMarkup: () => "<div>unused</div>",
+      renderToReadableStream: async () => {
+        throw new Error("readable setup failed");
+      },
+    });
+
+    await assertRejects(
+      () =>
+        renderToStringAdapter(React.createElement("div"), {
+          onError: (error) => observed.push(error.message),
+        }),
+      Error,
+      "readable setup failed",
+    );
+    assertEquals(stringRenderCalls, 0);
+    assertEquals(observed, ["readable setup failed"]);
+  });
+
   it("cancels a buffered stream that stops making progress", async () => {
     let cancelled = false;
+    let stringRenderCalls = 0;
     setSSRAdapterTimeoutForTests(5);
     __injectReactDOMServerForTests({
-      renderToString: () => "<div>fallback</div>",
+      renderToString: () => {
+        stringRenderCalls += 1;
+        return "<div>must not render</div>";
+      },
       renderToStaticMarkup: () => "<div>unused</div>",
       renderToReadableStream: async () =>
         new ReadableStream<Uint8Array>({
@@ -128,17 +158,24 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
         >,
     });
 
-    const html = await renderToStringAdapter(React.createElement("div"));
-
-    assertEquals(html, "<div>fallback</div>");
+    await assertRejects(
+      () => renderToStringAdapter(React.createElement("div")),
+      Error,
+      "SSR timeout",
+    );
+    assertEquals(stringRenderCalls, 0);
     assertEquals(cancelled, true);
   });
 
   it("bounds stream setup even when the renderer ignores its abort signal", async () => {
     let signal: AbortSignal | undefined;
+    let stringRenderCalls = 0;
     setSSRAdapterTimeoutForTests(5);
     __injectReactDOMServerForTests({
-      renderToString: () => "<div>fallback</div>",
+      renderToString: () => {
+        stringRenderCalls += 1;
+        return "<div>must not render</div>";
+      },
       renderToStaticMarkup: () => "<div>unused</div>",
       renderToReadableStream: (_element, options) => {
         signal = options?.signal as AbortSignal | undefined;
@@ -146,9 +183,12 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
       },
     });
 
-    const html = await renderToStringAdapter(React.createElement("div"));
-
-    assertEquals(html, "<div>fallback</div>");
+    await assertRejects(
+      () => renderToStringAdapter(React.createElement("div")),
+      Error,
+      "SSR timeout",
+    );
+    assertEquals(stringRenderCalls, 0);
     assertEquals(signal?.aborted, true);
   });
 });
