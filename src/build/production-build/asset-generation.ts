@@ -11,6 +11,15 @@ import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { BUILD_FAILED } from "#veryfront/errors";
 import { hasControlCharacters } from "../utils/string-validation.ts";
 import { STATIC_ASSET_MAX_BYTES } from "#veryfront/utils/constants/static-assets.ts";
+import { captureFileSystemCapabilities } from "#veryfront/platform/adapters/file-system-capabilities.ts";
+import {
+  copyFixedUint8ArrayWithinLimit,
+  getFixedUint8ArrayByteLength,
+} from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import {
+  isNativeErrorWithoutHooks,
+  readNativeErrorNameWithoutHooks,
+} from "#veryfront/platform/compat/error-introspection.ts";
 
 const logger = serverLogger.component("build");
 const MAX_STATIC_ASSET_PATH_LENGTH = 4_096;
@@ -18,6 +27,9 @@ const MAX_STATIC_ASSET_DEPTH = 64;
 const MAX_STATIC_ASSET_ENTRIES = 100_000;
 const RESERVED_PUBLIC_ROOTS = new Set(["_veryfront", "_vf"]);
 const RESERVED_PUBLIC_FILES = new Set(["sw.js", "_redirects"]);
+const apply = Reflect.apply;
+const dateGetTime = Date.prototype.getTime;
+const numberIsFinite = Number.isFinite;
 
 export interface AssetStats {
   assets: number;
@@ -149,6 +161,26 @@ function assertExpectedInfo(
         `Public asset exceeds the ${STATIC_ASSET_MAX_BYTES}-byte static output limit: ${relativePath}`,
     });
   }
+}
+
+function readAssetMtimeMilliseconds(info: FileInfo, relativePath: string): number | null {
+  if (info.mtime === null) return null;
+
+  let timestamp: unknown;
+  try {
+    timestamp = apply(dateGetTime, info.mtime, []);
+  } catch (cause) {
+    throw BUILD_FAILED.create({
+      detail: `Public asset has an invalid modification time: ${relativePath}`,
+      cause,
+    });
+  }
+  if (typeof timestamp !== "number" || !numberIsFinite(timestamp)) {
+    throw BUILD_FAILED.create({
+      detail: `Public asset has an invalid modification time: ${relativePath}`,
+    });
+  }
+  return timestamp;
 }
 
 function assertSafeBuildOutputPath(relativePath: string): void {
@@ -369,27 +401,30 @@ export async function copyStaticAssets(
     return stats;
   }
 
-  const readFileBytes = adapter.fs.readFileBytes?.bind(adapter.fs);
-  const readFileBytesBounded = adapter.fs.readFileBytesBounded?.bind(adapter.fs);
-  const maxWholeFileReadBytes = adapter.fs.maxWholeFileReadBytes;
-  const writeFileBytes = adapter.fs.writeFileBytes?.bind(adapter.fs);
-  const hasAdmittedWholeReader = readFileBytes !== undefined &&
-    Number.isSafeInteger(maxWholeFileReadBytes) &&
-    (maxWholeFileReadBytes as number) > 0 &&
-    (maxWholeFileReadBytes as number) <= STATIC_ASSET_MAX_BYTES;
+  const fileCapabilities = fileEntries.length === 0
+    ? undefined
+    : captureFileSystemCapabilities(adapter.fs, "Public asset filesystem");
+  const readFileBytesWithinLimit = fileCapabilities?.readFileBytesWithinLimit;
+  const writeFileBytes = fileCapabilities?.writeFileBytes;
+  const wholeFileReader = fileCapabilities?.wholeFileReader;
+  const admittedWholeReader = wholeFileReader !== undefined &&
+      wholeFileReader.maximumBytes <= STATIC_ASSET_MAX_BYTES
+    ? wholeFileReader
+    : undefined;
   if (
     fileEntries.length > 0 &&
-    (!writeFileBytes || (!readFileBytesBounded && !hasAdmittedWholeReader))
+    (writeFileBytes === undefined ||
+      (readFileBytesWithinLimit === undefined && admittedWholeReader === undefined))
   ) {
     throw BUILD_FAILED.create({
       detail:
-        "The selected runtime adapter does not support bounded or fixed-ceiling binary-safe public asset copying",
+        "The selected runtime adapter does not support exact or fixed-ceiling binary-safe public asset copying",
     });
   }
   if (
-    !readFileBytesBounded &&
-    hasAdmittedWholeReader &&
-    fileEntries.some((entry) => entry.size > (maxWholeFileReadBytes as number))
+    readFileBytesWithinLimit === undefined &&
+    admittedWholeReader !== undefined &&
+    fileEntries.some((entry) => entry.size > admittedWholeReader.maximumBytes)
   ) {
     throw BUILD_FAILED.create({
       detail: "A public asset exceeds the adapter's fixed whole-file read ceiling",
@@ -449,12 +484,60 @@ export async function copyStaticAssets(
           detail: `Public asset changed size while being copied: ${entry.relativePath}`,
         });
       }
-      const content = readFileBytesBounded
-        ? await readFileBytesBounded(entry.sourcePath, entry.size + 1)
-        : await readFileBytes!(entry.sourcePath);
-      if (content.byteLength !== entry.size) {
+      const sourceMtimeMilliseconds = readAssetMtimeMilliseconds(
+        sourceInfo,
+        entry.relativePath,
+      );
+      const readLimit = entry.size === 0 ? 1 : entry.size;
+      let rawContent: unknown;
+      if (readFileBytesWithinLimit === undefined) {
+        rawContent = await admittedWholeReader!.read(entry.sourcePath);
+      } else {
+        try {
+          rawContent = await readFileBytesWithinLimit(entry.sourcePath, readLimit);
+        } catch (cause) {
+          if (
+            isNativeErrorWithoutHooks(cause) &&
+            readNativeErrorNameWithoutHooks(cause) === "RangeError"
+          ) {
+            throw BUILD_FAILED.create({
+              detail: `Public asset changed size while being read: ${entry.relativePath}`,
+              cause,
+            });
+          }
+          throw cause;
+        }
+      }
+      const content = copyFixedUint8ArrayWithinLimit(
+        rawContent,
+        readFileBytesWithinLimit === undefined ? admittedWholeReader!.maximumBytes : readLimit,
+        `Public asset ${entry.relativePath}`,
+      );
+      const contentByteLength = getFixedUint8ArrayByteLength(
+        content,
+        `Public asset ${entry.relativePath}`,
+      );
+      if (contentByteLength !== entry.size) {
         throw BUILD_FAILED.create({
           detail: `Public asset changed size while being read: ${entry.relativePath}`,
+        });
+      }
+      const sourceInfoAfterRead = await statPath(adapter, entry.sourcePath);
+      assertExpectedInfo(sourceInfoAfterRead, "file", entry.relativePath);
+      if (sourceInfoAfterRead.size !== entry.size) {
+        throw BUILD_FAILED.create({
+          detail: `Public asset changed size while being read: ${entry.relativePath}`,
+        });
+      }
+      const sourceMtimeAfterReadMilliseconds = readAssetMtimeMilliseconds(
+        sourceInfoAfterRead,
+        entry.relativePath,
+      );
+      if (
+        sourceMtimeAfterReadMilliseconds !== sourceMtimeMilliseconds
+      ) {
+        throw BUILD_FAILED.create({
+          detail: `Public asset changed generation while being read: ${entry.relativePath}`,
         });
       }
       const destinationPath = join(outputDir, entry.relativePath);

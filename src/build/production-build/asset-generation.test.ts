@@ -9,8 +9,18 @@ import {
 } from "./asset-generation.ts";
 import type { AssetStats } from "./asset-generation.ts";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
-import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import { createMockAdapter as createBaseMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { STATIC_ASSET_MAX_BYTES } from "#veryfront/utils/constants/static-assets.ts";
+
+function createMockAdapter(): ReturnType<typeof createBaseMockAdapter> {
+  const adapter = createBaseMockAdapter();
+  const stat = adapter.fs.stat.bind(adapter.fs);
+  adapter.fs.stat = async (path) => ({
+    ...await stat(path),
+    mtime: new Date(1),
+  });
+  return adapter;
+}
 
 describe("build/production-build/asset-generation", () => {
   describe("loadClientStyles", () => {
@@ -211,6 +221,100 @@ describe("build/production-build/asset-generation", () => {
       );
     });
 
+    it("uses an exact read at the declared size without invoking prefix or whole readers", async () => {
+      const adapter = createMockAdapter();
+      const bytes = new Uint8Array([1, 2, 3]);
+      adapter.fs.byteFiles.set("/project/public/asset.bin", bytes);
+      const exactLimits: number[] = [];
+      adapter.fs.readFileBytesWithinLimit = (_path, byteLimit) => {
+        exactLimits.push(byteLimit);
+        return Promise.resolve(bytes);
+      };
+      adapter.fs.readFileBytesBounded = () => {
+        throw new Error("prefix reader must not run");
+      };
+      Object.defineProperty(adapter.fs, "maxWholeFileReadBytes", { value: 3 });
+      adapter.fs.readFileBytes = () => {
+        throw new Error("whole reader must not run");
+      };
+
+      const stats = await copyStaticAssets(adapter, "/project", "/output");
+
+      assertEquals(stats, { assets: 1, totalSize: 3 });
+      assertEquals(exactLimits, [3]);
+      assertEquals([...(adapter.fs.byteFiles.get("/output/asset.bin") ?? [])], [1, 2, 3]);
+    });
+
+    it("uses the smallest valid exact-read limit for an empty asset", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/empty.bin", new Uint8Array());
+      const exactLimits: number[] = [];
+      adapter.fs.readFileBytesWithinLimit = (_path, byteLimit) => {
+        exactLimits.push(byteLimit);
+        assertEquals(byteLimit, 1);
+        return Promise.resolve(new Uint8Array());
+      };
+
+      const stats = await copyStaticAssets(adapter, "/project", "/output");
+
+      assertEquals(stats, { assets: 1, totalSize: 0 });
+      assertEquals(exactLimits, [1]);
+      assertEquals(
+        adapter.fs.byteFiles.get("/output/empty.bin")?.byteLength,
+        0,
+      );
+    });
+
+    it("copies admitted reader bytes before handing them to the output writer", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1, 2, 3]));
+      const readerBytes = new Uint8Array([1, 2, 3]);
+      adapter.fs.readFileBytesWithinLimit = () => Promise.resolve(readerBytes);
+      const writeFileBytes = adapter.fs.writeFileBytes!.bind(adapter.fs);
+      adapter.fs.writeFileBytes = (path, content) => {
+        readerBytes.fill(9);
+        return writeFileBytes(path, content);
+      };
+
+      await copyStaticAssets(adapter, "/project", "/output");
+
+      assertEquals([...(adapter.fs.byteFiles.get("/output/asset.bin") ?? [])], [1, 2, 3]);
+    });
+
+    it("rejects a short exact result when the ambient byte-length getter is poisoned", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1, 2, 3]));
+      const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
+      const byteLengthDescriptor = Object.getOwnPropertyDescriptor(
+        typedArrayPrototype,
+        "byteLength",
+      )!;
+      adapter.fs.readFileBytesWithinLimit = () => {
+        Object.defineProperty(typedArrayPrototype, "byteLength", {
+          configurable: true,
+          get: () => 3,
+        });
+        return Promise.resolve(new Uint8Array([9]));
+      };
+
+      try {
+        await assertRejects(
+          () => copyStaticAssets(adapter, "/project", "/output"),
+          Error,
+          "changed size while being read",
+        );
+      } finally {
+        Object.defineProperty(
+          typedArrayPrototype,
+          "byteLength",
+          byteLengthDescriptor,
+        );
+      }
+
+      assertEquals(adapter.fs.byteFiles.has("/output/asset.bin"), false);
+      assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
     it("fails before writing when the selected adapter lacks binary output", async () => {
       const adapter = createMockAdapter();
       adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1, 2, 3]));
@@ -219,7 +323,7 @@ describe("build/production-build/asset-generation", () => {
       await assertRejects(
         () => copyStaticAssets(adapter, "/project", "/output"),
         Error,
-        "does not support bounded or fixed-ceiling",
+        "does not support exact or fixed-ceiling",
       );
 
       assertEquals(adapter.fs.directories.has("/output"), false);
@@ -251,19 +355,24 @@ describe("build/production-build/asset-generation", () => {
       assertEquals(adapter.fs.directories.has("/output"), false);
     });
 
-    it("uses bounded reads when a public asset grows after its final stat", async () => {
+    it("uses an exact read to reject growth before asset bytes are returned", async () => {
       const adapter = createMockAdapter();
       adapter.fs.byteFiles.set("/project/public/growing.bin", new Uint8Array([1]));
-      let boundedReads = 0;
+      let exactReads = 0;
+      let prefixReads = 0;
       let wholeReads = 0;
-      adapter.fs.readFileBytesBounded = (_path, byteLimit) => {
-        boundedReads++;
-        assertEquals(byteLimit, 2);
-        return Promise.resolve(new Uint8Array([1, 2]));
+      adapter.fs.readFileBytesWithinLimit = (_path, byteLimit) => {
+        exactReads++;
+        assertEquals(byteLimit, 1);
+        return Promise.reject(new RangeError("source grew past the exact limit"));
+      };
+      adapter.fs.readFileBytesBounded = () => {
+        prefixReads++;
+        throw new Error("prefix reader must not run");
       };
       adapter.fs.readFileBytes = () => {
         wholeReads++;
-        throw new Error("unbounded whole reader must not run");
+        throw new Error("whole reader must not run");
       };
 
       await assertRejects(
@@ -271,15 +380,112 @@ describe("build/production-build/asset-generation", () => {
         Error,
         "changed size while being read",
       );
-      assertEquals(boundedReads, 1);
+      assertEquals(exactReads, 1);
+      assertEquals(prefixReads, 0);
       assertEquals(wholeReads, 0);
       assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
+    it("re-stats the source generation after reading and before writing", async () => {
+      const adapter = createMockAdapter();
+      const sourcePath = "/project/public/replaced.bin";
+      adapter.fs.byteFiles.set(sourcePath, new Uint8Array([1, 2, 3]));
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      let sourceStats = 0;
+      adapter.fs.stat = async (path) => {
+        const info = await stat(path);
+        if (path !== sourcePath) return info;
+        sourceStats++;
+        return { ...info, mtime: new Date(sourceStats < 3 ? 1 : 2) };
+      };
+      let writes = 0;
+      adapter.fs.writeFileBytes = () => {
+        writes++;
+        return Promise.resolve();
+      };
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "changed generation while being read: replaced.bin",
+      );
+
+      assertEquals(sourceStats, 3);
+      assertEquals(writes, 0);
+      assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
+    it("rejects a one-sided modification time across the read", async () => {
+      const adapter = createMockAdapter();
+      const sourcePath = "/project/public/identified-late.bin";
+      adapter.fs.byteFiles.set(sourcePath, new Uint8Array([1]));
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      let sourceStats = 0;
+      adapter.fs.stat = async (path) => {
+        const info = await stat(path);
+        if (path !== sourcePath) return info;
+        sourceStats++;
+        return { ...info, mtime: sourceStats < 3 ? null : new Date(1) };
+      };
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "changed generation while being read: identified-late.bin",
+      );
+
+      assertEquals(sourceStats, 3);
+      assertEquals(adapter.fs.byteFiles.has("/output/identified-late.bin"), false);
+    });
+
+    it("rejects a non-finite source modification time before reading", async () => {
+      const adapter = createMockAdapter();
+      const sourcePath = "/project/public/invalid-time.bin";
+      adapter.fs.byteFiles.set(sourcePath, new Uint8Array([1]));
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      adapter.fs.stat = async (path) => {
+        const info = await stat(path);
+        return path === sourcePath ? { ...info, mtime: new Date(Number.NaN) } : info;
+      };
+      let exactReads = 0;
+      adapter.fs.readFileBytesWithinLimit = () => {
+        exactReads++;
+        return Promise.resolve(new Uint8Array([1]));
+      };
+
+      await assertRejects(
+        () => copyStaticAssets(adapter, "/project", "/output"),
+        Error,
+        "invalid modification time: invalid-time.bin",
+      );
+
+      assertEquals(exactReads, 0);
+      assertEquals(adapter.fs.directories.has("/output"), false);
+    });
+
+    it("supports backends whose source modification time is consistently unavailable", async () => {
+      const adapter = createMockAdapter();
+      const sourcePath = "/project/public/no-time.bin";
+      adapter.fs.byteFiles.set(sourcePath, new Uint8Array([1, 2]));
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      adapter.fs.stat = async (path) => {
+        const info = await stat(path);
+        return path === sourcePath ? { ...info, mtime: null } : info;
+      };
+
+      const stats = await copyStaticAssets(adapter, "/project", "/output");
+
+      assertEquals(stats, { assets: 1, totalSize: 2 });
+      assertEquals([...(adapter.fs.byteFiles.get("/output/no-time.bin") ?? [])], [1, 2]);
     });
 
     it("permits whole reads only under a fixed ceiling within the shared limit", async () => {
       const adapter = createMockAdapter();
       adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1, 2, 3]));
-      adapter.fs.readFileBytesBounded = undefined;
+      adapter.fs.readFileBytesWithinLimit = undefined;
+      adapter.fs.readFileBytesBounded = () => {
+        throw new Error("prefix reader must not run");
+      };
       Object.defineProperty(adapter.fs, "maxWholeFileReadBytes", { value: 3 });
 
       const stats = await copyStaticAssets(adapter, "/project", "/output");
@@ -291,7 +497,10 @@ describe("build/production-build/asset-generation", () => {
     it("rejects an oversized advertised whole-read ceiling before reading", async () => {
       const adapter = createMockAdapter();
       adapter.fs.byteFiles.set("/project/public/asset.bin", new Uint8Array([1]));
-      adapter.fs.readFileBytesBounded = undefined;
+      adapter.fs.readFileBytesWithinLimit = undefined;
+      adapter.fs.readFileBytesBounded = () => {
+        throw new Error("prefix reader must not run");
+      };
       Object.defineProperty(adapter.fs, "maxWholeFileReadBytes", {
         value: STATIC_ASSET_MAX_BYTES + 1,
       });
@@ -304,7 +513,7 @@ describe("build/production-build/asset-generation", () => {
       await assertRejects(
         () => copyStaticAssets(adapter, "/project", "/output"),
         Error,
-        "does not support bounded or fixed-ceiling",
+        "does not support exact or fixed-ceiling",
       );
       assertEquals(wholeReads, 0);
       assertEquals(adapter.fs.directories.has("/output"), false);
