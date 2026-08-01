@@ -2,8 +2,8 @@ import type {
   RedisEventPublisherConfig,
   RedisEventPublisherImplementation,
 } from "veryfront/extensions/distributed";
-import { logger as baseLogger } from "veryfront/utils";
-import type { ClaudeCodeEvent, ClaudeCodeEventHandler } from "veryfront/workflow/claude-code";
+import { logger as baseLogger } from "veryfront/utils/logger";
+import type { ClaudeCodeEvent, ClaudeCodeEventHandler } from "veryfront/workflow/claude-code/types";
 import { requireRedisUrl } from "./connection-config.ts";
 
 const logger = baseLogger.component("redis-event-publisher");

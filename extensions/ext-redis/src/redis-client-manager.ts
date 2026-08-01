@@ -1,7 +1,8 @@
-import { DEPENDENCY_MISSING, INITIALIZATION_ERROR } from "veryfront/errors";
+import { INITIALIZATION_ERROR } from "veryfront/errors/general";
+import { DEPENDENCY_MISSING } from "veryfront/errors/module";
 import type { RedisClient, RedisClientOptions } from "veryfront/extensions/distributed";
-import { logger as baseLogger } from "veryfront/utils";
-import { getEnv } from "veryfront/platform";
+import { getEnv } from "veryfront/platform/env";
+import { logger as baseLogger } from "veryfront/utils/logger";
 import { requireRedisUrl } from "./connection-config.ts";
 
 const logger = baseLogger.component("redis");

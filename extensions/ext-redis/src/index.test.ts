@@ -1,6 +1,6 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ExtensionContext } from "veryfront/extensions";
+import type { ExtensionContext } from "veryfront/extensions/types";
 import {
   type RedisRuntimeProvider,
   RedisRuntimeProviderName,
