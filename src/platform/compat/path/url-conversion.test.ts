@@ -92,6 +92,9 @@ describe("url-conversion", () => {
 
     it("keeps redundant POSIX root separators local", () => {
       assertEquals(toFileUrl("//").href, "file:///");
+      if (Deno.build.os !== "windows") {
+        assertEquals(toFileUrl("//tmp/file.ts").href, "file:///tmp/file.ts");
+      }
       assertEquals(toFileUrl("///tmp/file.ts").href, "file:///tmp/file.ts");
       assertEquals(toFileUrl("////tmp/file.ts").href, "file:///tmp/file.ts");
     });

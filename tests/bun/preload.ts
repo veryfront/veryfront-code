@@ -10,10 +10,10 @@
 
 import { plugin } from "bun";
 import { existsSync, readFileSync, statSync } from "fs";
-import { dirname, extname, resolve } from "path";
+import { extname, resolve } from "path";
 import { fileURLToPath } from "url";
 
-const projectRoot = resolve(dirname(import.meta.dir), "../..");
+const projectRoot = resolve(import.meta.dir, "../..");
 
 const denoConfig = JSON.parse(
   readFileSync(resolve(projectRoot, "deno.json"), "utf-8"),

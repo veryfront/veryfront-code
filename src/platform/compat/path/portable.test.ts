@@ -17,7 +17,8 @@ import {
 
 describe("platform/compat/path/portable", () => {
   it("distinguishes UNC paths from redundant POSIX roots", () => {
-    assertEquals(hasWindowsLikePath("//server/share/file.ts"), true);
+    assertEquals(hasWindowsLikePath("//server/share/file.ts"), false);
+    assertEquals(hasWindowsLikePath(String.raw`\\server\share\file.ts`), true);
     assertEquals(hasWindowsLikePath("///tmp/file.ts"), false);
     assertEquals(hasWindowsLikePath("////tmp/file.ts"), false);
     assertEquals(portableNormalize("///tmp/file.ts", true), "/tmp/file.ts");

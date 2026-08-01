@@ -50,7 +50,10 @@ describe("platform/compat/path/resolution", () => {
     });
 
     it("preserves UNC roots", () => {
-      assertEquals(resolve("//server/share/project", ".."), "//server/share/");
+      assertEquals(
+        resolve(String.raw`\\server\share\project`, ".."),
+        "//server/share/",
+      );
     });
   });
 
@@ -101,6 +104,7 @@ describe("platform/compat/path/resolution", () => {
     });
 
     it("keeps redundant POSIX roots local", () => {
+      assertEquals(normalize("//tmp/file.ts"), "/tmp/file.ts");
       assertEquals(normalize("///tmp/file.ts"), "/tmp/file.ts");
       assertEquals(normalize("////tmp/file.ts"), "/tmp/file.ts");
     });

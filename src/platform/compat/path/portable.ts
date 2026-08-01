@@ -9,8 +9,7 @@ interface RootInfo {
 
 export function hasWindowsLikePath(path: string): boolean {
   return path.includes("\\") ||
-    /^[A-Za-z]:/.test(path) ||
-    /^\/\/[^/]+\/[^/]+(?:\/|$)/.test(path);
+    /^[A-Za-z]:/.test(path);
 }
 
 export function toPortableSeparators(path: string): string {

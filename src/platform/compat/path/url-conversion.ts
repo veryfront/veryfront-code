@@ -21,6 +21,7 @@ function encodePath(path: string): string {
 }
 
 function parseUncPath(path: string): { host: string; pathname: string } | null {
+  if (!runtimeUsesWindowsPaths() && !path.startsWith("\\\\")) return null;
   const portable = path.replaceAll("\\", "/");
   const match = portable.match(/^\/\/([^/]+)(\/.*)$/);
   if (!match?.[1] || !match[2]) return null;

@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/module-fetcher/index.test */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, remove } from "#veryfront/testing/deno-compat.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -198,6 +198,37 @@ describe("module-fetcher", { sanitizeResources: false, sanitizeOps: false }, () 
     it("resolves ../ relative import against parent", () => {
       const result = normalizePath("../lib/helper.js", "_vf_modules/pages/index.js");
       assertEquals(result, "_vf_modules/lib/helper.js");
+    });
+
+    it("allows relative imports that reach but do not escape the virtual root", () => {
+      const result = normalizePath("../../shared.js", "_vf_modules/a/b/page.js");
+      assertEquals(result, "_vf_modules/shared.js");
+    });
+
+    it("rejects relative imports that escape the virtual root", () => {
+      assertThrows(
+        () => normalizePath("../../secret.js", "_vf_modules/pages/index.js"),
+        TypeError,
+        "project module root",
+      );
+      assertThrows(
+        () => normalizePath("../../../secret.js", "_vf_modules/pages/index.js"),
+        TypeError,
+        "project module root",
+      );
+    });
+
+    it("rejects pre-normalized paths that escape the virtual root", () => {
+      assertThrows(
+        () => normalizePath("_vf_modules/../secret.js"),
+        TypeError,
+        "project module root",
+      );
+      assertThrows(
+        () => normalizePath("../secret.js"),
+        TypeError,
+        "project module root",
+      );
     });
 
     it("adds _vf_modules/ prefix if missing after resolution", () => {
