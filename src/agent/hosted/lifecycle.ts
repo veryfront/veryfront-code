@@ -14,6 +14,7 @@ export interface HostedLifecycleTerminalState {
       cacheCreationInputTokens?: number;
       cacheReadInputTokens?: number;
       reasoningTokens?: number;
+      usageCaptureStatus?: "complete" | "partial" | "missing";
     };
   };
   terminalErrorCode?: string | null;

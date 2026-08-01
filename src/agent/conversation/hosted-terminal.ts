@@ -143,6 +143,9 @@ function buildConversationHostedLifecycleUsage(
     ...(usage.cachedInputTokens !== undefined
       ? { cachedInputTokens: usage.cachedInputTokens }
       : {}),
+    ...(usage.usageCaptureStatus !== undefined
+      ? { usageCaptureStatus: usage.usageCaptureStatus }
+      : {}),
   };
 }
 
@@ -160,6 +163,9 @@ function buildConversationAgentRunUsage(
     inputTokens,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
+    ...(usage.usageCaptureStatus !== undefined
+      ? { usageCaptureStatus: usage.usageCaptureStatus }
+      : {}),
   };
 }
 

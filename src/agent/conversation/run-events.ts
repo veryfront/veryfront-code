@@ -12,6 +12,8 @@ export const conversationRunEventTypes = {
   reasoningMessageStart: "REASONING_MESSAGE_START",
   reasoningMessageContent: "REASONING_MESSAGE_CONTENT",
   reasoningMessageEnd: "REASONING_MESSAGE_END",
+  stepStarted: "STEP_STARTED",
+  stepFinished: "STEP_FINISHED",
   toolCallStart: "TOOL_CALL_START",
   toolCallArgs: "TOOL_CALL_ARGS",
   toolCallEnd: "TOOL_CALL_END",
@@ -265,13 +267,17 @@ export class ConversationRunEventEncoder {
           value: chunk,
         }];
 
+      case "start-step":
+        return [{ type: conversationRunEventTypes.stepStarted }];
+
+      case "finish-step":
+        return [{ type: conversationRunEventTypes.stepFinished }];
+
       case "error":
       case "finish":
       case "abort":
       case "message-metadata":
       case "tool-approval-request":
-      case "start-step":
-      case "finish-step":
         return [];
 
       default:

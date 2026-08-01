@@ -54,7 +54,12 @@ describe("agent/conversation-hosted-terminal", () => {
           terminalErrorCode: "ERR",
           terminalErrorMessage: "boom",
           metadata: {
-            usage: { inputTokens: 1, outputTokens: 2, cachedInputTokens: 3 },
+            usage: {
+              inputTokens: 1,
+              outputTokens: 2,
+              cachedInputTokens: 3,
+              usageCaptureStatus: "complete",
+            },
           },
         },
       }),
@@ -64,7 +69,12 @@ describe("agent/conversation-hosted-terminal", () => {
         terminalErrorMessage: "boom",
         metadata: {
           modelId: "fallback-model",
-          usage: { inputTokens: 1, outputTokens: 2, cachedInputTokens: 3 },
+          usage: {
+            inputTokens: 1,
+            outputTokens: 2,
+            cachedInputTokens: 3,
+            usageCaptureStatus: "complete",
+          },
         },
       },
     );
@@ -95,7 +105,12 @@ describe("agent/conversation-hosted-terminal", () => {
       await adapter.finalizeRun({
         status: "completed",
         metadata: {
-          usage: { inputTokens: 4, outputTokens: 6, cachedInputTokens: 2 },
+          usage: {
+            inputTokens: 4,
+            outputTokens: 6,
+            cachedInputTokens: 2,
+            usageCaptureStatus: "complete",
+          },
         },
       });
 
@@ -107,6 +122,7 @@ describe("agent/conversation-hosted-terminal", () => {
           model: "fallback-model",
           inputTokens: 4,
           outputTokens: 6,
+          usageCaptureStatus: "complete",
           finishReason: "stop",
         },
         terminal_error_code: null,
