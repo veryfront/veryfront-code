@@ -3,6 +3,12 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CSSOptimizer, loadCSSManifest, optimizeCSS } from "./css-optimizer/index.ts";
+import { LightningCSSOptimizationEngine } from "../../../extensions/ext-css-lightning/src/index.ts";
+
+const optimizationEngine = new LightningCSSOptimizationEngine();
+const legacyOptimizationEngine = new LightningCSSOptimizationEngine({
+  browserQueries: ["ie 11"],
+});
 
 async function withProject(
   callback: (projectDir: string) => Promise<void>,
@@ -36,11 +42,19 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
   it("initializes the required compiler and honors disabled mode", async () => {
     await withProject(async (projectDir) => {
       assertEquals(
-        await new CSSOptimizer({ projectDir, enabled: true }).init(),
+        await new CSSOptimizer(
+          { projectDir, enabled: true },
+          undefined,
+          { optimizationEngine },
+        ).init(),
         true,
       );
       assertEquals(
-        (await new CSSOptimizer({ projectDir, enabled: false }).optimize()).size,
+        (await new CSSOptimizer(
+          { projectDir, enabled: false },
+          undefined,
+          { optimizationEngine },
+        ).optimize()).size,
         0,
       );
     });
@@ -50,11 +64,15 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
     await withProject(async (projectDir) => {
       const input = "/* comment */ .button { color: red; padding: 1rem; }";
       await Deno.writeTextFile(join(projectDir, "styles/main.css"), input);
-      const optimizer = new CSSOptimizer({
-        projectDir,
-        inputDir: "styles",
-        outputDir: ".veryfront/css",
-      });
+      const optimizer = new CSSOptimizer(
+        {
+          projectDir,
+          inputDir: "styles",
+          outputDir: ".veryfront/css",
+        },
+        undefined,
+        { optimizationEngine },
+      );
 
       const bundle = (await optimizer.optimize()).get("main.css")!;
       assertEquals(bundle.content, ".button{color:red;padding:1rem}");
@@ -67,7 +85,7 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
     });
   });
 
-  it("uses Browserslist targets only when prefixing is enabled", async () => {
+  it("takes browser compatibility from the explicit provider", async () => {
     await withProject(async (projectDir) => {
       await Deno.writeTextFile(
         join(projectDir, "styles/main.css"),
@@ -77,24 +95,20 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
         projectDir,
         inputDir: "styles",
         outputDir: ".veryfront/prefixed",
-        browsers: ["ie 11"],
-        autoprefixer: true,
-      });
-      const unprefixed = await optimizeCSS({
-        projectDir,
-        inputDir: "styles",
-        outputDir: ".veryfront/unprefixed",
-        browsers: ["ie 11"],
-        autoprefixer: false,
-      });
+      }, { optimizationEngine: legacyOptimizationEngine });
 
       assertEquals(
         prefixed.get("main.css")!.content.includes("-ms-user-select"),
         true,
       );
-      assertEquals(
-        unprefixed.get("main.css")!.content.includes("-ms-user-select"),
-        false,
+      assertThrows(
+        () =>
+          new CSSOptimizer({
+            projectDir,
+            browsers: ["ie 11"],
+          }),
+        TypeError,
+        "moved to the optimization extension",
       );
     });
   });
@@ -105,12 +119,16 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
         join(projectDir, "styles/main.css"),
         ".main { color: red; }",
       );
-      const optimizer = new CSSOptimizer({
-        projectDir,
-        inputDir: "styles",
-        outputDir: ".veryfront/css",
-        sourceMap: true,
-      });
+      const optimizer = new CSSOptimizer(
+        {
+          projectDir,
+          inputDir: "styles",
+          outputDir: ".veryfront/css",
+          sourceMap: true,
+        },
+        undefined,
+        { optimizationEngine },
+      );
       const bundle = (await optimizer.optimize()).get("main.css")!;
       assertEquals(
         bundle.content.includes("sourceMappingURL=main.min.css.map"),
@@ -139,7 +157,11 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
           ".footer { color: blue; } " +
           "@media (min-width: 40rem) { .header { display: flex; } .aside { display: block; } }",
       );
-      const optimizer = new CSSOptimizer({ projectDir, minify: true });
+      const optimizer = new CSSOptimizer(
+        { projectDir, minify: true },
+        undefined,
+        { optimizationEngine },
+      );
       const result = await optimizer.extractCriticalCSS(
         cssPath,
         '<header class="header">Title</header>',
@@ -167,7 +189,7 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
         inputDir: "styles",
         inputFiles: ["standalone.css"],
         outputDir: ".veryfront/css",
-      });
+      }, { optimizationEngine });
 
       assertEquals(bundles.has("standalone.css"), true);
       assertEquals(
@@ -189,7 +211,7 @@ describe("build/asset-pipeline/CSSOptimizer", () => {
         projectDir,
         inputDir: "styles",
         outputDir: ".veryfront/css",
-      });
+      }, { optimizationEngine });
 
       const manifest = await loadCSSManifest(
         join(projectDir, ".veryfront/css"),

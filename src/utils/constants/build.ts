@@ -13,8 +13,6 @@ export const IMAGE_OPTIMIZATION = {
 /** Shared CSS optimization resource bounds. */
 export const CSS_OPTIMIZATION = {
   MAX_FILES: 10_000,
-  MAX_BROWSER_QUERIES: 64,
-  MAX_BROWSER_QUERY_CHARACTERS: 512,
   MAX_PURGE_PATTERNS: 128,
   MAX_PURGE_SAFELIST_ENTRIES: 1_024,
 } as const;

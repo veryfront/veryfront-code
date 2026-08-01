@@ -16,8 +16,8 @@ publication:
 2. Discover regular `.css` inputs deterministically within configured bounds.
 3. If enabled, remove unused rules with PurgeCSS using validated project
    content.
-4. Transform every stylesheet with Lightning CSS, including browser-target
-   compilation, minification, and optional source maps.
+4. Transform every stylesheet through one captured `CSSOptimizationEngine`
+   session, including minification and optional source maps.
 5. Write all CSS files, maps, and the complete manifest into an isolated
    staging directory.
 6. Atomically replace the prior output only after every file and the manifest
@@ -31,15 +31,22 @@ published output and in-memory cache unchanged.
 
 Purging and CSS compilation are complementary transformations rather than
 alternative strategies. PurgeCSS must see the uncompiled rule structure and
-content evidence first. Lightning CSS then parses and emits the final syntax.
-The service therefore uses a fixed `purge -> compile` pipeline; strategy
-priority values remain exported only for compatibility with callers that
-instantiate the strategy classes directly.
+content evidence first. The configured optimization provider then parses and
+emits the final syntax. The service therefore uses a fixed `purge -> compile`
+pipeline; strategy priority values remain exported only for compatibility with
+callers that instantiate the strategy classes directly.
 
-Lightning CSS and Browserslist are required for batch optimization. PurgeCSS is
-required when purging or critical-CSS extraction is requested. Missing,
-malformed, or failing dependencies reject the operation. There is no CDN
-import, regex minifier, or partial-success fallback.
+Core owns the dependency-free `CSSOptimizationEngine` boundary. Parser,
+minifier, browser-target, and vendor details belong to an explicitly composed
+extension such as `@veryfront/ext-css-lightning`. The provider is captured once
+per optimization operation, so registry replacement cannot change semantics
+mid-publication. Its immutable `cacheIdentity` is captured with the runner so
+derived caches never need to reread mutable provider state.
+
+Requested optimization rejects when the provider is missing, malformed, or
+fails. PurgeCSS is independently required when purging or critical-CSS
+extraction is requested. There is no CDN import, regex minifier, no-op, or
+partial-success fallback.
 
 ## Filesystem and publication safety
 
@@ -77,11 +84,12 @@ structurally valid.
 
 ## Failure model
 
-Configuration errors, unsafe paths, missing inputs, invalid CSS, dependency
-failures, malformed source maps, exhausted resource bounds, write failures, and
-manifest failures all reject the run. Work already written during that run is
-confined to staging and cleaned up. Cleanup failures are reported together with
-the original failure instead of masking it.
+Configuration errors, unsafe paths, missing inputs, invalid CSS, provider
+failures, malformed or unrequested source maps, exhausted resource bounds,
+write failures, and manifest failures all reject the run. Provider requests and
+results cross a descriptor-safe boundary and are snapshotted before use. Work
+already written during that run is confined to staging and cleaned up. Cleanup
+failures are reported together with the original failure instead of masking it.
 
 Disabled optimization is the only successful no-op. An enabled batch with no
 CSS inputs rejects because publishing an apparently successful empty result

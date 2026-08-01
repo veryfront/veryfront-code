@@ -21,7 +21,6 @@ describe("configSchema", () => {
       enabled: true,
       projectDir,
       inputFiles: ["styles/main.css"],
-      browsers: ["defaults", "not IE 11"],
       purge: true,
       purgeContent: ["app/**/*.tsx"],
       purgeSafelist: ["dynamic"],
@@ -34,7 +33,8 @@ describe("configSchema", () => {
     for (
       const invalid of [
         { projectDir: "relative/project" },
-        { browsers: [] },
+        { autoprefixer: true },
+        { browsers: ["defaults"] },
         {
           purgeSafelist: Array.from(
             { length: CSS_OPTIMIZATION.MAX_PURGE_SAFELIST_ENTRIES + 1 },

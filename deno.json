@@ -48,6 +48,7 @@
     "./extensions/ext-blob-s3",
     "./extensions/ext-bundler-esbuild",
     "./extensions/ext-cache-redis",
+    "./extensions/ext-css-lightning",
     "./extensions/ext-css-tailwind",
     "./extensions/ext-node-websocket-ws",
     "./extensions/ext-document-kreuzberg",

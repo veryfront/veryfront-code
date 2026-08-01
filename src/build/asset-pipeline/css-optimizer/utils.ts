@@ -13,21 +13,11 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import { isContainedAssetPath } from "../../utils/asset-utils.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
-import {
-  MAX_CSS_BROWSER_QUERIES,
-  MAX_CSS_BROWSER_QUERY_CHARACTERS,
-  MAX_CSS_DIRECTORY_DEPTH,
-  MAX_CSS_DIRECTORY_ENTRIES,
-  MAX_CSS_FILE_BYTES,
-  MAX_CSS_FILES,
-  MAX_CSS_OUTPUT_FILE_BYTES,
-  MAX_CSS_SELECTOR_TOKEN_CHARACTERS,
-  MAX_CSS_SELECTOR_TOKENS,
-} from "./constants.ts";
-import type { BrowserTargets } from "./types/index.ts";
+import { MAX_CSS_DIRECTORY_DEPTH, MAX_CSS_DIRECTORY_ENTRIES, MAX_CSS_FILES } from "./constants.ts";
+import { runConfiguredCSSOptimization } from "./optimization-engine.ts";
+import { isSafeCSSRelativePath } from "./path-validation.ts";
 
-import browserslist from "npm:browserslist@4.28.7";
-import { browserslistToTargets, transform as transformCSS } from "npm:lightningcss@1.29.2";
+export { isSafeCSSRelativePath } from "./path-validation.ts";
 
 interface DirectoryReader {
   readDir(
@@ -49,8 +39,6 @@ interface GlobOptions extends DiscoveryOptions {
   baseDir?: string;
 }
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder("utf-8", { fatal: true });
 const GLOB_MAGIC = /[*?{\[]/;
 
 function comparePaths(left: string, right: string): number {
@@ -251,27 +239,6 @@ export function matchPattern(path: string, pattern: string): boolean {
   }).test(portablePath(path));
 }
 
-export function isSafeCSSRelativePath(value: unknown): value is string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.length > MAX_PATH_LENGTH_CHARS ||
-    value !== value.normalize("NFC") ||
-    hasControlCharacters(value) ||
-    isAbsolute(value) ||
-    value.startsWith("/") ||
-    value.startsWith("\\") ||
-    /^[A-Za-z]:[\\/]/.test(value) ||
-    value.includes("\\")
-  ) {
-    return false;
-  }
-
-  return !value.split("/").some((segment) =>
-    segment.length === 0 || segment === "." || segment === ".."
-  );
-}
-
 export function getOutputPath(inputPath: string, outputDir: string): string {
   const portableInput = portablePath(inputPath).normalize("NFC");
   if (!isSafeCSSRelativePath(portableInput)) {
@@ -362,22 +329,12 @@ export function shouldKeepSelector(
  * rewritten by regular expressions.
  */
 export function basicMinify(css: string): string {
-  if (typeof css !== "string") {
-    throw new TypeError("CSS input must be a string");
-  }
-  const code = encoder.encode(css);
-  if (code.length > MAX_CSS_FILE_BYTES) {
-    throw new TypeError(
-      `CSS input exceeds ${MAX_CSS_FILE_BYTES} bytes`,
-    );
-  }
-  const result = transformCSS({
-    filename: "inline.css",
-    code,
+  return runConfiguredCSSOptimization({
+    css,
+    sourcePath: "inline.css",
     minify: true,
-    analyzeDependencies: false,
-  });
-  return decoder.decode(result.code);
+    sourceMap: false,
+  }).css;
 }
 
 export function calculateSavings(
@@ -394,120 +351,4 @@ export function calculateSavings(
   }
   if (originalSize === 0) return 0;
   return Math.round(((originalSize - minifiedSize) / originalSize) * 100);
-}
-
-function validateBrowserTargets(targets: BrowserTargets): BrowserTargets {
-  const validated: BrowserTargets = {};
-  for (const [browser, version] of Object.entries(targets)) {
-    if (
-      !/^[a-z][a-z_]*$/.test(browser) ||
-      typeof version !== "number" ||
-      !Number.isSafeInteger(version) ||
-      version < 0
-    ) {
-      throw new TypeError(`Invalid CSS browser target: ${browser}`);
-    }
-    validated[browser] = version;
-  }
-  return validated;
-}
-
-export function parseBrowserTargets(
-  targets: string | string[] | BrowserTargets | undefined,
-): BrowserTargets | undefined {
-  if (targets === undefined) return undefined;
-  if (
-    typeof targets === "object" &&
-    targets !== null &&
-    !Array.isArray(targets)
-  ) {
-    return validateBrowserTargets(targets);
-  }
-
-  if (typeof targets !== "string" && !Array.isArray(targets)) {
-    throw new TypeError("CSS browser targets must be queries or a target object");
-  }
-  const queries = typeof targets === "string" ? [targets] : Array.from(targets);
-  if (
-    queries.length === 0 ||
-    queries.length > MAX_CSS_BROWSER_QUERIES ||
-    queries.some((query) =>
-      typeof query !== "string" ||
-      query.length === 0 ||
-      query.length > MAX_CSS_BROWSER_QUERY_CHARACTERS ||
-      hasControlCharacters(query)
-    )
-  ) {
-    throw new TypeError("CSS browser queries must be a bounded non-empty list");
-  }
-
-  return browserslistToTargets(browserslist(queries)) as BrowserTargets;
-}
-
-export function validateCSSSourceMap(
-  sourceMap: string,
-  logicalPath: string,
-): void {
-  if (
-    typeof sourceMap !== "string" ||
-    encoder.encode(sourceMap).length > MAX_CSS_OUTPUT_FILE_BYTES
-  ) {
-    throw new TypeError(
-      `CSS source map exceeds ${MAX_CSS_OUTPUT_FILE_BYTES} bytes for ${logicalPath}`,
-    );
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(sourceMap);
-  } catch (error) {
-    throw new TypeError(`CSS source map is malformed for ${logicalPath}`, {
-      cause: error,
-    });
-  }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed) ||
-    (parsed as { version?: unknown }).version !== 3
-  ) {
-    throw new TypeError(`CSS source map is invalid for ${logicalPath}`);
-  }
-
-  const map = parsed as Record<string, unknown>;
-  const sources = map.sources;
-  const names = map.names;
-  const mappings = map.mappings;
-  if (
-    !Array.isArray(sources) ||
-    sources.length === 0 ||
-    sources.length > MAX_CSS_FILES ||
-    sources.some((source) => !isSafeCSSRelativePath(source)) ||
-    !Array.isArray(names) ||
-    names.length > MAX_CSS_SELECTOR_TOKENS ||
-    names.some((name) =>
-      typeof name !== "string" ||
-      name.length > MAX_CSS_SELECTOR_TOKEN_CHARACTERS ||
-      hasControlCharacters(name)
-    ) ||
-    typeof mappings !== "string" ||
-    !/^[A-Za-z0-9+/,;]*$/.test(mappings) ||
-    (map.file !== undefined && !isSafeCSSRelativePath(map.file))
-  ) {
-    throw new TypeError(`CSS source map is invalid for ${logicalPath}`);
-  }
-
-  if (map.sourcesContent !== undefined) {
-    if (
-      !Array.isArray(map.sourcesContent) ||
-      map.sourcesContent.length !== sources.length ||
-      map.sourcesContent.some((content) =>
-        content !== null &&
-        (typeof content !== "string" ||
-          encoder.encode(content).length > MAX_CSS_FILE_BYTES)
-      )
-    ) {
-      throw new TypeError(`CSS source map is invalid for ${logicalPath}`);
-    }
-  }
 }

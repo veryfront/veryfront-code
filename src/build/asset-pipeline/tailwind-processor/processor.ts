@@ -1,11 +1,12 @@
-import { dirname } from "#veryfront/compat/path/index.ts";
+import { dirname, relative } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { autoDetectContentPaths, isTailwindV4File } from "./detector.ts";
 import { countUtilities } from "./css-utils.ts";
-import { processWithLightningCSS } from "./lightning-processor.ts";
+import { processWithCSSOptimization } from "./optimization-processor.ts";
 import { createSecureFs } from "#veryfront/security";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { isSafeCSSRelativePath } from "../css-optimizer/path-validation.ts";
 
 export class TailwindProcessor {
   private options: TailwindProcessorOptions;
@@ -15,7 +16,6 @@ export class TailwindProcessor {
       content: autoDetectContentPaths(options.projectDir),
       minify: true,
       sourceMap: false,
-      browserslist: ["defaults", "not IE 11"],
       ...options,
     };
   }
@@ -30,7 +30,7 @@ export class TailwindProcessor {
           content,
           minify,
           sourceMap,
-          browserslist,
+          optimizationEngine,
           projectDir,
           adapter,
         } = this.options;
@@ -53,17 +53,25 @@ export class TailwindProcessor {
           });
         }
 
-        const processedCSS = await processWithLightningCSS(inputCSS, {
-          filename: inputFile,
+        const sourcePath = relative(projectDir, inputFile).replaceAll("\\", "/")
+          .normalize("NFC");
+        if (!isSafeCSSRelativePath(sourcePath)) {
+          throw new TypeError(
+            "Tailwind batch input must have a safe project-relative path",
+          );
+        }
+        const optimized = processWithCSSOptimization(inputCSS, {
+          sourcePath,
           minify,
           sourceMap,
-          browserslist,
-        });
+        }, optimizationEngine);
+        const processedCSS = optimized.css;
 
         const detectedUtilities = countUtilities(processedCSS);
 
         const result: TailwindProcessResult = {
           css: processedCSS,
+          ...(optimized.sourceMap === undefined ? {} : { sourceMap: optimized.sourceMap }),
           processedFiles: [inputFile, ...(content ?? [])],
           detectedUtilities,
         };

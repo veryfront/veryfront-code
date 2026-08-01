@@ -10,7 +10,7 @@ The build module is Veryfront's comprehensive build system, responsible for tran
 
 - MDX compilation to React components
 - JavaScript/TypeScript bundling and code splitting
-- CSS optimization with Lightning CSS
+- CSS optimization through an explicitly composed provider
 - Image optimization with Sharp
 - Tailwind CSS processing
 - Static site generation (SSG)
@@ -29,7 +29,7 @@ The build module is Veryfront's comprehensive build system, responsible for tran
 build/
 ├── asset-pipeline/          # Image/CSS optimization
 │   ├── image-optimizer/    # Sharp integration
-│   ├── css-optimizer/      # Lightning CSS
+│   ├── css-optimizer/      # Provider-neutral CSS optimization
 │   └── tailwind-processor/ # Tailwind processing
 ├── compiler/               # MDX → React compilation
 │   ├── mdx-compiler/      # MDX processor
@@ -78,7 +78,7 @@ DX(source, options)` - MDX compilation
 
 - `esbuild` - JavaScript bundling
 - `sharp` (optional) - Image optimization
-- `lightningcss` (optional) - CSS optimization
+- `@veryfront/ext-css-lightning` (optional) - Explicit Lightning CSS provider
 - `@mdx-js/mdx` - MDX compilation
 
 ## Usage Examples
@@ -117,6 +117,12 @@ console.log(`Generated ${result.staticPages.length} static pages`)
 
 ### Asset Optimization
 
+Compose the provider extensions for every enabled stage during application
+setup. For CSS, see
+[`@veryfront/ext-css-lightning`](../../extensions/ext-css-lightning/README.md).
+Absent stages are skipped; a requested stage fails the build if its provider or
+processing fails.
+
 ```typescript
 import { runAssetPipeline } from "./build/asset-pipeline";
 
@@ -129,7 +135,6 @@ const result = await runAssetPipeline({
   css: {
     enabled: true,
     minify: true,
-    autoprefixer: true,
   },
   tailwind: {
     enabled: true,
@@ -177,7 +182,6 @@ export default {
       },
       css: {
         minify: true,
-        autoprefixer: true,
       },
     },
     splitting: {
@@ -189,6 +193,11 @@ export default {
   },
 };
 ```
+
+Browser targets belong to the explicit Lightning CSS extension, not the core
+asset-pipeline configuration. Configure `browserQueries` when composing
+`@veryfront/ext-css-lightning`; requested optimization fails closed when no
+`CSSOptimizationEngine` provider is registered.
 
 ## Performance
 
@@ -248,7 +257,7 @@ NODE_OPTIONS="--max-old-space-size=4096" deno task build
 ### Asset Optimization Failures
 
 - Check Sharp installation: `npm ls sharp`
-- Check Lightning CSS: `npm ls lightningcss`
+- Ensure `@veryfront/ext-css-lightning` is installed and explicitly composed
 - Disable optional optimizers if needed
 
 ## References
