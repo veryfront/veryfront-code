@@ -13,6 +13,13 @@ export type {
   RevisionedCacheBackend,
 } from "../types.ts";
 export {
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
+  CacheValueTooLargeError,
+  captureBoundedCacheRead,
+  readCacheValueWithinLimit,
+} from "../bounded-read.ts";
+export {
   buildRevisionedCacheKey,
   isRevisionedCacheBackend,
   isRevisionedCacheKey,

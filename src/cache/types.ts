@@ -47,6 +47,13 @@ export interface CacheBackend {
   get(key: string): Promise<string | null>;
 
   /**
+   * Read one value while enforcing an exact UTF-8 payload-byte ceiling before
+   * an untrusted backend can materialize an oversized value. Overflow rejects
+   * with CacheValueTooLargeError; it is never reported as a cache miss.
+   */
+  getWithinLimit?(key: string, maximumBytes: number): Promise<string | null>;
+
+  /**
    * Atomically observe a raw serialized value and its provider-owned revision.
    * An absent value is null and still has a revision. This method is usable
    * only when compareExchange is also callable.

@@ -3,6 +3,7 @@ import {
   MEMORY_CACHE_MAX_SIZE_BYTES,
 } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "../types.ts";
+import { assertCacheReadMaximumBytes, assertCacheValueWithinLimit } from "../bounded-read.ts";
 import { buildBatchResults } from "../batch-results.ts";
 import { assertCacheBatchSize } from "../batch-policy.ts";
 import { type CacheGlob, compileCacheGlob } from "./glob.ts";
@@ -65,6 +66,20 @@ export class MemoryCacheBackend implements CacheBackend {
     }
 
     return Promise.resolve(entry.value);
+  }
+
+  async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
+    const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
+    const entry = this.store.get(key);
+    if (!entry) return null;
+
+    if (Date.now() >= entry.expiresAt) {
+      this.deleteStoredEntry(key);
+      return null;
+    }
+
+    assertCacheValueWithinLimit(entry.value, admittedMaximum);
+    return entry.value;
   }
 
   getRemainingTtlSeconds(key: string): Promise<number | null> {

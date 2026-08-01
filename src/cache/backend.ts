@@ -30,6 +30,14 @@ export {
 } from "./backends/index.ts";
 
 export {
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
+  CacheValueTooLargeError,
+  captureBoundedCacheRead,
+  readCacheValueWithinLimit,
+} from "./bounded-read.ts";
+
+export {
   buildRevisionedCacheKey,
   isRevisionedCacheBackend,
   isRevisionedCacheKey,
