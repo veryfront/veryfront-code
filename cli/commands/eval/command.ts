@@ -2,7 +2,7 @@
  * Eval command - Discover and run eval definitions from the evals/ directory.
  */
 
-import { dirname, isAbsolute, relative, resolve } from "@std/path";
+import { dirname, isAbsolute, relative, resolve } from "veryfront/platform/path";
 import type { Agent, AgentResponse } from "veryfront/agent";
 import type { VeryfrontConfig } from "veryfront/config";
 import {

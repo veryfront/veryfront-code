@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { cwd } from "../process.ts";
 import { isAbsolute, normalize, relative, resolve } from "./resolution.ts";
 
 describe("platform/compat/path/resolution", () => {
@@ -21,6 +22,15 @@ describe("platform/compat/path/resolution", () => {
       assertEquals(resolve("/first", "/second"), "/second");
     });
 
+    it("uses the runtime working directory for relative paths", () => {
+      const workingDirectory = cwd().replaceAll("\\", "/");
+      assertEquals(resolve("."), workingDirectory);
+      assertEquals(
+        resolve("relative", "file.ts"),
+        `${workingDirectory}/relative/file.ts`,
+      );
+    });
+
     it("should handle Windows drive-letter paths", () => {
       assertEquals(
         resolve("D:/a/project/src/build", "..", "..", ".."),
@@ -37,6 +47,13 @@ describe("platform/compat/path/resolution", () => {
 
     it("should preserve drive letter when resolving to root", () => {
       assertEquals(resolve("D:/a", ".."), "D:/");
+    });
+
+    it("preserves UNC roots", () => {
+      assertEquals(
+        resolve(String.raw`\\server\share\project`, ".."),
+        "//server/share/",
+      );
     });
   });
 
@@ -86,12 +103,24 @@ describe("platform/compat/path/resolution", () => {
       assertEquals(normalize("/home//user"), "/home/user");
     });
 
+    it("keeps redundant POSIX roots local", () => {
+      assertEquals(normalize("//tmp/file.ts"), "/tmp/file.ts");
+      assertEquals(normalize("///tmp/file.ts"), "/tmp/file.ts");
+      assertEquals(normalize("////tmp/file.ts"), "/tmp/file.ts");
+    });
+
     it("should return . for empty string", () => {
       assertEquals(normalize(""), ".");
     });
 
     it("should preserve absolute path root", () => {
       assertEquals(normalize("/"), "/");
+    });
+
+    it("should remove trailing separators from non-root paths", () => {
+      assertEquals(normalize("uploads/"), "uploads");
+      assertEquals(normalize("./"), ".");
+      assertEquals(normalize("D:/project/"), "D:/project");
     });
 
     it("should handle relative parent traversal", () => {
@@ -104,6 +133,14 @@ describe("platform/compat/path/resolution", () => {
 
     it("should preserve Windows drive letter", () => {
       assertEquals(normalize("D:/"), "D:/");
+    });
+
+    it("preserves UNC roots while normalizing traversal", () => {
+      assertEquals(
+        normalize("\\\\server\\share\\project\\..\\src"),
+        "//server/share/src",
+      );
+      assertEquals(normalize("\\\\server\\share\\"), "//server/share/");
     });
   });
 });

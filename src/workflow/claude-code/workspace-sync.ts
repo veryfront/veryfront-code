@@ -13,7 +13,7 @@
 import { computeHash, logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
-import { dirname, join, relative, resolve } from "@std/path";
+import { dirname, isAbsolute, join, relative, resolve } from "#veryfront/compat/path";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 
@@ -499,7 +499,7 @@ export class WorkspaceSync {
     if (/^[A-Za-z]:[\\/]/.test(path)) {
       throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
     }
-    if (path.startsWith("//")) {
+    if (path.startsWith("//") || path.startsWith("\\\\")) {
       throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
     }
 
@@ -515,13 +515,20 @@ export class WorkspaceSync {
     // Resolve the full path lexically first (catches literal "..").
     const fullPath = resolve(join(this.workspaceDir, normalizedPath));
     const relativePath = relative(this.workspaceDir, fullPath);
-    if (!relativePath || relativePath.startsWith("..") || relativePath === "..") {
+    if (
+      !relativePath ||
+      relativePath === "." ||
+      relativePath === ".." ||
+      isAbsolute(relativePath) ||
+      relativePath.startsWith("../") ||
+      relativePath.startsWith("..\\")
+    ) {
       throw SECURITY_VIOLATION.create({ detail: `Path traversal detected: ${path}` });
     }
 
     // Walk each segment and reject any existing symlink along the way.
     // A segment that does not yet exist is fine — it will be created later.
-    const relSegments = relativePath === "" ? [] : relativePath.split(/[\\/]/).filter(Boolean);
+    const relSegments = relativePath.split(/[\\/]/).filter(Boolean);
     let cursor = this.workspaceDir;
     for (const seg of relSegments) {
       cursor = join(cursor, seg);

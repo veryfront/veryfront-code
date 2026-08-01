@@ -92,6 +92,22 @@ describe("resolveModuleFile", () => {
     assertEquals(wasCalled(), true, "Should call adapter.fs.resolveFile for project paths");
   });
 
+  it("rejects traversal paths before consulting the filesystem adapter", async () => {
+    for (
+      const path of [
+        "_vf_modules/../secret.js",
+        "_vf_modules/../../secret.js",
+        "../secret.js",
+        "_vf_modules\\..\\secret.js",
+        "C:/secret.js",
+      ]
+    ) {
+      const { adapter, wasCalled } = createResolveFileTrackingAdapter();
+      assertEquals(await resolveModuleFile(path, adapter as any, "/project"), null);
+      assertEquals(wasCalled(), false);
+    }
+  });
+
   it("resolves framework react/* files", async () => {
     await assertResolvedModuleFile(
       "_vf_modules/_veryfront/react/router/index.js",

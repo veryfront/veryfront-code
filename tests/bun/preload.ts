@@ -13,7 +13,18 @@ import { existsSync, readFileSync, statSync } from "fs";
 import { dirname, extname, resolve } from "path";
 import { fileURLToPath } from "url";
 
-const projectRoot = resolve(dirname(import.meta.dir), "../..");
+const projectRoot = resolve(import.meta.dir, "../..");
+
+const denoConfig = JSON.parse(
+  readFileSync(resolve(projectRoot, "deno.json"), "utf-8"),
+) as { imports?: Record<string, unknown> };
+const localProjectImportMap = Object.fromEntries(
+  Object.entries(denoConfig.imports ?? {}).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === "string" &&
+      (entry[1].startsWith("./") || entry[1].startsWith("../")),
+  ),
+);
 
 const stdImportMap: Record<string, string> = {
   "#std/assert": "./src/testing/assert.ts",
@@ -54,6 +65,7 @@ const reactImportMap: Record<string, string> = {
 
 const importMap: Record<string, string> = {
   "#deno-config": "./deno.json",
+  ...localProjectImportMap,
   ...stdImportMap,
   ...reactImportMap,
 };

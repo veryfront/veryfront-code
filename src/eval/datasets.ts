@@ -1,4 +1,4 @@
-import { isAbsolute, join } from "@std/path";
+import { isAbsolute, join } from "#veryfront/compat/path";
 import type { EvalDataset, EvalExampleInput } from "./types.ts";
 import { createEvalValidationError, normalizeEvalExamples } from "./validation.ts";
 

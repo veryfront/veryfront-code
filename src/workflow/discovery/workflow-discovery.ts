@@ -22,7 +22,7 @@
  * ```
  */
 
-import { join } from "@std/path";
+import { join } from "#veryfront/compat/path";
 import { logger as baseLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";

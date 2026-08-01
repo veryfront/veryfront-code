@@ -8,7 +8,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { createSuccessEnvelope, isJsonMode, outputJson } from "../../shared/json-output.ts";
 import { exitProcess, logError, logSuccess, logWarning } from "#cli/utils";
 import { createFileSystem } from "veryfront/platform";
-import { basename, resolve } from "#std/path.ts";
+import { basename, resolve } from "veryfront/platform/path";
 import { parseSkillFrontmatter, SKILL_NAME_REGEX, validateSkillMetadata } from "veryfront/skill";
 
 interface ValidationIssue {

@@ -8,6 +8,7 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { DIRECTORY_PREFIXES, LOG_PREFIX_MDX_LOADER, MODULE_EXTENSIONS } from "../constants.ts";
 import { getLocalFs } from "../cache/index.ts";
+import { canonicalizeContainedModulePath } from "./module-path.ts";
 
 const logger = rendererLogger.component("file-finder");
 
@@ -51,7 +52,11 @@ export async function resolveModuleFile(
   adapter: RuntimeAdapter,
   projectDir?: string,
 ): Promise<FileResolutionResult | null> {
-  const normalized = normalizedPath.replace(/^\/+/, "");
+  const normalized = canonicalizeContainedModulePath(normalizedPath);
+  if (!normalized) {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Rejected module path outside project root`);
+    return null;
+  }
   const withoutVfModules = normalized.replace(/^_vf_modules\//, "");
   const isFramework = withoutVfModules.startsWith(FRAMEWORK_PREFIX);
   const rawPath = isFramework ? withoutVfModules.slice(FRAMEWORK_PREFIX.length) : withoutVfModules;

@@ -6,7 +6,7 @@ export interface PathObject {
   name?: string;
 }
 
-export interface NodePathModule {
+export interface PathImplementation {
   sep: string;
   delimiter: string;
   join(...paths: string[]): string;
@@ -19,4 +19,9 @@ export interface NodePathModule {
   normalize(path: string): string;
   parse(path: string): PathObject;
   format(pathObject: PathObject): string;
+}
+
+export interface NodePathModule extends PathImplementation {
+  posix: PathImplementation;
+  win32: PathImplementation;
 }
