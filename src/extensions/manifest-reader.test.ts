@@ -84,7 +84,9 @@ function createFakeFileSystem(
         options.chunkSize ?? buffer.length,
         data.length - offset,
       );
-      buffer.set(data.subarray(offset, offset + chunkSize));
+      for (let index = 0; index < chunkSize; index++) {
+        buffer[index] = data[offset + index] as number;
+      }
       offset += chunkSize;
       return chunkSize;
     },
@@ -433,12 +435,13 @@ describe("readExtensionManifest() cleanup and errors", () => {
     assertEquals(state.closeCalls, 1);
   });
 
-  it("uses captured typed-array length when its prototype changes in flight", async () => {
+  it("uses captured typed-array slots when accessors and species change in flight", async () => {
     const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
     const originalByteLength = Object.getOwnPropertyDescriptor(
       typedArrayPrototype,
       "byteLength",
     );
+    const originalSpecies = Object.getOwnPropertyDescriptor(Uint8Array, Symbol.species);
     assert(originalByteLength);
     const { fileSystem, state } = createFakeFileSystem({
       onLstat(call) {
@@ -446,6 +449,12 @@ describe("readExtensionManifest() cleanup and errors", () => {
         Object.defineProperty(typedArrayPrototype, "byteLength", {
           configurable: true,
           get: () => 0,
+        });
+        Object.defineProperty(Uint8Array, Symbol.species, {
+          configurable: true,
+          get() {
+            throw new Error("mutated typed-array species was read");
+          },
         });
       },
     });
@@ -455,6 +464,11 @@ describe("readExtensionManifest() cleanup and errors", () => {
       result = await readExtensionManifest("manifest.json", { syntax: "json", fileSystem });
     } finally {
       Object.defineProperty(typedArrayPrototype, "byteLength", originalByteLength);
+      if (originalSpecies) {
+        Object.defineProperty(Uint8Array, Symbol.species, originalSpecies);
+      } else {
+        Reflect.deleteProperty(Uint8Array, Symbol.species);
+      }
     }
 
     assertEquals(result, { kind: "found", manifest: {}, bytesRead: 2 });
