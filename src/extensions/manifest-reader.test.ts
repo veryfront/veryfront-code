@@ -409,6 +409,90 @@ describe("readExtensionManifest() cleanup and errors", () => {
     assertEquals(state.closeCalls, 1);
   });
 
+  it("ignores a poisoned AggregateError has-instance hook", async () => {
+    const originalHasInstance = Object.getOwnPropertyDescriptor(
+      AggregateError,
+      Symbol.hasInstance,
+    );
+    const denied = new Error("denied");
+    const { fileSystem } = createFakeFileSystem({
+      initialError: denied,
+      onLstat(call) {
+        if (call !== 0) return;
+        Object.defineProperty(AggregateError, Symbol.hasInstance, {
+          configurable: true,
+          value() {
+            throw new Error("poisoned has-instance hook ran");
+          },
+        });
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await readExtensionManifest("manifest.json", { syntax: "json", fileSystem });
+    } catch (error) {
+      caught = error;
+    } finally {
+      if (originalHasInstance) {
+        Object.defineProperty(AggregateError, Symbol.hasInstance, originalHasInstance);
+      } else {
+        Reflect.deleteProperty(AggregateError, Symbol.hasInstance);
+      }
+    }
+
+    assertInstanceOf(caught, VeryfrontError);
+    assertEquals(caught.slug, "extension-manifest-read-failed");
+  });
+
+  it("does not consume a poisoned array iterator when operation and close fail", async () => {
+    const originalIterator = Object.getOwnPropertyDescriptor(
+      Array.prototype,
+      Symbol.iterator,
+    );
+    assert(originalIterator);
+    const { fileSystem, state } = createFakeFileSystem({
+      data: encoder.encode("{"),
+      closeError: new Error("close failed"),
+      onLstat(call) {
+        if (call !== 0) return;
+        Object.defineProperty(Array.prototype, Symbol.iterator, {
+          configurable: true,
+          value() {
+            throw new Error("poisoned array iterator ran");
+          },
+        });
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await readExtensionManifest("manifest.json", { syntax: "json", fileSystem });
+    } catch (error) {
+      caught = error;
+    } finally {
+      Object.defineProperty(Array.prototype, Symbol.iterator, originalIterator);
+    }
+
+    assertInstanceOf(caught, VeryfrontError);
+    assertEquals(caught.slug, "extension-manifest-read-failed");
+    assertEquals(state.closeCalls, 1);
+  });
+
+  it("sanitizes cyclic aggregate causes without recursion", async () => {
+    const cyclic = new AggregateError([], "cyclic failure");
+    cyclic.errors.push(cyclic);
+    const { fileSystem } = createFakeFileSystem({ initialError: cyclic });
+
+    const error = await captureManifestError(() =>
+      readExtensionManifest("manifest.json", { syntax: "json", fileSystem })
+    );
+
+    assertEquals(error.slug, "extension-manifest-read-failed");
+    assertInstanceOf(error.cause, Error);
+    assertStringIncludes((error.cause as Error).message, "cyclic failure");
+  });
+
   it("uses captured JSON intrinsics when globals change during inspection", async () => {
     const originalJson = Object.getOwnPropertyDescriptor(globalThis, "JSON");
     assert(originalJson);
