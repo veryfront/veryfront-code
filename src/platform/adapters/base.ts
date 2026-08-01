@@ -266,9 +266,20 @@ export interface FileSystemAdapter {
    * Oversized sources reject with `RangeError`; other I/O failures propagate.
    */
   readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /**
+   * Read one stable file snapshot beneath `containmentRoot` without following
+   * links and only when its complete contents fit within `byteLimit`.
+   */
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
   /** Write raw bytes when binary-safe output is required. */
   writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
+  /** Create a new byte file without replacing an existing path. */
+  createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
   /** Atomically replace a path when the runtime supports same-filesystem rename. */
   rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;

@@ -71,6 +71,32 @@ describe("platform/adapters/bounded-text-reader", () => {
     );
   });
 
+  it("captures only bounded-text read fields", async () => {
+    let unrelatedReads = 0;
+    const adapter = {
+      readFileBytesWithinLimit: () => Promise.resolve(new TextEncoder().encode("safe")),
+    };
+    Object.defineProperty(adapter, "writeFileBytes", {
+      get() {
+        unrelatedReads++;
+        throw new Error("must not run");
+      },
+    });
+    Object.defineProperty(adapter, "createFileBytesExclusive", {
+      get() {
+        unrelatedReads++;
+        throw new Error("must not run");
+      },
+    });
+    const reader = captureBoundedTextReader(adapter);
+
+    assertEquals(await reader.readUtf8("safe.css", 4, "CSS input"), {
+      content: "safe",
+      byteLength: 4,
+    });
+    assertEquals(unrelatedReads, 0);
+  });
+
   it("passes the accepted maximum directly to an exact bounded reader", async () => {
     let receivedLimit = 0;
     const reader = captureBoundedTextReader({

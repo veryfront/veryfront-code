@@ -15,7 +15,9 @@ const expectedRuntimeExports = [
   "dirname",
   "exists",
   "extname",
+  "FileSnapshotChangedError",
   "isNotFoundError",
+  "isFileSnapshotChangedError",
   "join",
   "lstat",
   "mkdir",
@@ -70,5 +72,16 @@ describe("fs/index.ts exports", () => {
     assertEquals(typeof fileSystem.makeTempDir, "function");
     assertEquals(typeof fileSystem.chmod, "function");
     assertEquals(typeof fileSystem.remove, "function");
+
+    const changed = new publicFsModule.FileSnapshotChangedError("changed");
+    assertEquals(publicFsModule.isFileSnapshotChangedError(changed), true);
+    assertEquals(fsModule.isFileSnapshotChangedError(changed), true);
+    assertEquals(
+      publicFsModule.isFileSnapshotChangedError({
+        name: "FileSnapshotChangedError",
+        message: "changed",
+      }),
+      false,
+    );
   });
 });

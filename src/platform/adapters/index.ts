@@ -29,6 +29,7 @@ export type {
   WebSocketUpgradeResponse,
 } from "./base.ts";
 export { createWebSocketUpgradeResponse, isWebSocketUpgradeResponse } from "./base.ts";
+export { FileSnapshotChangedError, isFileSnapshotChangedError } from "./file-snapshot-error.ts";
 
 // Detection & registry
 export { getAdapter } from "./detect.ts";

@@ -17,6 +17,24 @@ async function assertExport(
 }
 
 describe("adapters/index.ts exports", () => {
+  describe("filesystem snapshot errors", () => {
+    it("should export the source-change error class and predicate", async () => {
+      const mod = await import("./index.ts");
+      await assertExport("FileSnapshotChangedError", "function");
+      await assertExport("isFileSnapshotChangedError", "function");
+
+      const error = new mod.FileSnapshotChangedError();
+      assertEquals(mod.isFileSnapshotChangedError(error), true);
+      assertEquals(
+        mod.isFileSnapshotChangedError({
+          name: "FileSnapshotChangedError",
+          message: error.message,
+        }),
+        false,
+      );
+    });
+  });
+
   describe("runtime detection", () => {
     it("should export runtime", async () => {
       await assertExport("runtime");
