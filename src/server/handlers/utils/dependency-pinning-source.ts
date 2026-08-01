@@ -52,5 +52,6 @@ export function createHandlerDependencyPinningSource(
     config: ctx.config,
     ...identity,
     dependencyWritebackTarget,
+    dependencyWritebackToken: dependencyWritebackTarget ? ctx.proxyToken : undefined,
   });
 }

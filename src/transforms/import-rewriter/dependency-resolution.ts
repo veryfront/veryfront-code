@@ -129,12 +129,17 @@ export function resolveDependencyPinForImport(
       writebackSource !== null
     ? writebackSource.dependencyWritebackTarget
     : undefined;
+  const writebackToken = typeof writebackSource === "object" &&
+      writebackSource !== null
+    ? writebackSource.dependencyWritebackToken
+    : undefined;
   const writebackAuthorization = writebackSource &&
       writebackTarget &&
       cacheKey?.startsWith("on:") &&
       cacheKey !== "on:unknown"
     ? {
       target: writebackTarget,
+      authToken: writebackToken,
       isEligible: () => isCurrentDependencyPinningSnapshot(writebackSource, cacheKey),
     }
     : undefined;

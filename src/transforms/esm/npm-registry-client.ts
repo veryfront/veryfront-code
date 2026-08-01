@@ -32,6 +32,7 @@ const pendingPlatformResolutionPromises = new Set<Promise<void>>();
 export type DependencyResolutionEligibility = () => boolean;
 export interface DependencyResolutionScheduleOptions {
   target: DependencyWritebackTarget;
+  authToken?: string;
   isEligible?: DependencyResolutionEligibility;
 }
 interface QueuedPlatformResolution {
@@ -44,6 +45,7 @@ interface QueuedPlatformResolution {
 interface QueuedPlatformResolutionBatch {
   projectId: string;
   target: DependencyWritebackTarget;
+  authToken?: string;
   resolutions: Map<string, QueuedPlatformResolution>;
 }
 const queuedPlatformResolutions = new Map<string, QueuedPlatformResolutionBatch>();
@@ -58,6 +60,7 @@ type DependencyResolutionPoster = (
   specifiers: string[],
   target: DependencyWritebackTarget,
   expectedDeclarations: Readonly<Record<string, string | null>>,
+  authToken?: string,
 ) => Promise<void>;
 let postDependencyResolutionImpl: DependencyResolutionPoster = postDependencyResolution;
 const ALWAYS_ELIGIBLE: DependencyResolutionEligibility = () => true;
@@ -247,9 +250,12 @@ export function schedulePlatformDependencyResolution(
     queuedBatch = {
       projectId,
       target,
+      authToken: options.authToken,
       resolutions: new Map(),
     };
     queuedPlatformResolutions.set(queueKey, queuedBatch);
+  } else if (options.authToken) {
+    queuedBatch.authToken = options.authToken;
   }
   queuedBatch.resolutions.set(packageName, {
     packageName,
@@ -324,6 +330,7 @@ function schedulePlatformResolutionFlush(queueKey: string): void {
                     resolution.expectedDeclaration,
                   ]),
                 ),
+                queued.authToken,
               );
             },
           );
@@ -375,12 +382,14 @@ export function _setDependencyResolutionPosterForTest(
  *                     "pkg", "pkg@^1", "pkg@next", or "pkg@1.2.3"
  * @param expectedDeclarations - package declarations observed in the immutable
  *                               caller snapshot; null means the package was absent
+ * @param authToken - request-scoped bearer token; the runtime token remains the fallback
  */
 export async function postDependencyResolution(
   projectId: string,
   specifiers: string[],
   target: DependencyWritebackTarget,
   expectedDeclarations: Readonly<Record<string, string | null>>,
+  authToken?: string,
 ): Promise<void> {
   if (!isCanonicalDependencyWritebackTarget(target)) return;
 
@@ -389,7 +398,7 @@ export async function postDependencyResolution(
   );
   const config = getEnvironmentConfig();
   const apiBaseUrl = config.apiBaseUrl;
-  const apiToken = config.apiToken;
+  const apiToken = authToken || config.apiToken;
 
   if (!apiBaseUrl || !apiToken) {
     logger.debug("Skipping dependency resolution write-back: no API config", { projectId });
