@@ -394,15 +394,20 @@ export function UserProfile({ userId }: { userId: string }) {
 
 ### Server Actions
 
+Server Actions require a generation-owned authorization provider. Configure it
+as described in the Extensions guide before exposing an action. Action
+arguments use the JSON-compatible transport contract; convert browser-only
+objects such as `FormData` before invoking the action.
+
 ```tsx
 // app/actions.ts
 "use server";
 
-export async function createPost(formData: FormData) {
-  const title = formData.get("title") as string;
-  const content = formData.get("content") as string;
-
-  const post = await db.posts.create({ title, content });
+export async function createPost(input: { title: string; content: string }) {
+  const post = await db.posts.create({
+    title: input.title,
+    content: input.content,
+  });
   revalidatePath("/posts");
 
   return { success: true, id: post.id };
@@ -415,7 +420,16 @@ import { createPost } from "../app/actions";
 
 export function PostForm() {
   return (
-    <form action={createPost}>
+    <form
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const fields = new FormData(event.currentTarget);
+        await createPost({
+          title: String(fields.get("title") ?? ""),
+          content: String(fields.get("content") ?? ""),
+        });
+      }}
+    >
       <input name="title" placeholder="Title" />
       <textarea name="content" placeholder="Content" />
       <button type="submit">Create Post</button>

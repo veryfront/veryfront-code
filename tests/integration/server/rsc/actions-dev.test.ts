@@ -5,6 +5,7 @@ import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import "../../../_helpers/log-guard.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { installTestRscActionAuthorization } from "./action-authorization-fixture.ts";
 
 describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false }, () => {
   afterAll(async () => {
@@ -45,6 +46,7 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
           security: { cors: true, csrf: false }
         };`,
       );
+      await installTestRscActionAuthorization(context.projectDir);
 
       await mkdir(join(context.projectDir, "app", "actions"), { recursive: true });
       await writeTextFile(

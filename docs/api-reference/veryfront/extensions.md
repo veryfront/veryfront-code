@@ -165,21 +165,53 @@ These import paths group focused functionality under this module. Each is a sepa
 
 ### `veryfront/extensions/auth`
 
-Auth category barrel - AuthProvider contract and token shapes.
+Auth contracts, including the required generation-owned, fail-closed React Server Action authorization provider.
 
 ```ts
-import "veryfront/extensions/auth";
+import { createRscActionAuthorizationProvider, snapshotRscActionAuthorizationProvider, RscActionAuthorizationProviderName } from "veryfront/extensions/auth";
 ```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `RscActionAuthorizationProviderName` | Generation-owned contract name registered by an application-selected authorization extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L29) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `createRscActionAuthorizationProvider` | Create immutable provider registration metadata from a standalone authorizer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L186) |
+| `snapshotRscActionAuthorizationProvider` | Capture an exact `{ authorize }` extension registration without invoking accessors or retaining mutable provider metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L136) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `AuthProvider` | AuthProvider contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L60) |
+| `RscActionAuthorizationArray` | Immutable dense data-only array with stable index and iteration semantics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L59) |
+| `RscActionAuthorizationContext` | Detached immutable action metadata and bounded JSON-compatible arguments. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L70) |
+| `RscActionAuthorizationHeaders` | Immutable null-prototype lowercase header snapshot; it contains no request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L83) |
+| `RscActionAuthorizationProvider` | Required generation-owned Server Action authorization contract. An absent, malformed, retiring, failed, or non-cooperative provider returns 503 with `Cache-Control: no-store`; core has no allow-all fallback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L117) |
+| `RscActionAuthorizationRecord` | Immutable null-prototype data-only record; absent properties resolve to `undefined`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L65) |
+| `RscActionAuthorizationRequest` | Immutable, bodyless request metadata detached from the mutable request object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L89) |
+| `RscActionAuthorizationValue` | JSON-compatible, data-only value domain; numbers are always finite. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L50) |
+| `RscActionAuthorize` | Decide one Server Action invocation. `true` invokes the action and `false` returns 403. Throwing, rejecting, timing out, or returning a non-boolean fails closed with 503; the action is never loaded before authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L107) |
 | `SignOptions` | Options for signing a token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L22) |
 | `TokenHeader` | The parsed, unverified header of a JWT. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L46) |
 | `TokenPayload` | Payload data stored within a signed token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L10) |
 | `VerifyOptions` | Options for verifying a token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L32) |
+
+#### Constants
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_ARRAY_LENGTH` | Maximum length of any one dense argument array: 50,000. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L47) |
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_DEPTH` | Maximum nested container depth in the detached authorization argument graph: 64. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L38) |
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_NODES` | Maximum values in the complete detached authorization argument graph: 50,000. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L41) |
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_PROPERTIES` | Maximum aggregate array elements and record properties in the argument graph: 100,000. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L44) |
+| `RSC_ACTION_AUTHORIZATION_TERMINATION_GRACE_MS` | Cooperative-cancellation grace: 1,000 ms before a non-settling generation is quarantined. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L35) |
+| `RSC_ACTION_AUTHORIZATION_TIMEOUT_MS` | Default deadline for one asynchronous authorization decision: 30 seconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L32) |
 
 ### `veryfront/extensions/bundler`
 
@@ -517,7 +549,7 @@ import { estimateTokens } from "veryfront/extensions/distributed/agent-memory-su
 Provider-neutral cache helpers shared with distributed store extensions.
 
 ```ts
-import { assertCacheBatchSize, buildBatchResults, buildRevisionedCacheKey } from "veryfront/extensions/distributed/cache-support";
+import { assertCacheBatchSize, assertCacheReadMaximumBytes, assertCacheValueWithinLimit } from "veryfront/extensions/distributed/cache-support";
 ```
 
 #### Functions
@@ -525,6 +557,8 @@ import { assertCacheBatchSize, buildBatchResults, buildRevisionedCacheKey } from
 | Name | Description | Source |
 |------|-------------|--------|
 | `assertCacheBatchSize` | Enforce the cache subsystem's shared per-operation batch bound. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/batch-policy.ts#L9) |
+| `assertCacheReadMaximumBytes` | Validate one caller-supplied cache payload byte ceiling. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/bounded-read.ts#L26) |
+| `assertCacheValueWithinLimit` | Verify a string payload without allocating an encoded copy. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/bounded-read.ts#L34) |
 | `buildBatchResults` | Build a `Map` of batch results by resolving each key in order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/batch-results.ts#L21) |
 | `buildRevisionedCacheKey` | Add the reserved versioned namespace to one valid source key. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L156) |
 | `escapeCacheGlobLiteral` | Escape the wildcard syntax shared by cache backend pattern operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L304) |
@@ -542,6 +576,12 @@ import { assertCacheBatchSize, buildBatchResults, buildRevisionedCacheKey } from
 | `stripOwnedDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L308) |
 | `validateDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L166) |
 
+#### Classes
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `CacheValueTooLargeError` | Deterministic overflow from an exact bounded cache read. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/bounded-read.ts#L15) |
+
 #### Types
 
 | Name | Description | Source |
@@ -552,7 +592,7 @@ import { assertCacheBatchSize, buildBatchResults, buildRevisionedCacheKey } from
 | `CacheRevisionSnapshot` | Serialized logical value and the revision that observed it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L20) |
 | `CacheStoreStats` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L12) |
 | `RenderCacheStore` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/types.ts#L16) |
-| `RevisionedCacheBackend` | Cache backend with the complete atomic revision capability. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L121) |
+| `RevisionedCacheBackend` | Cache backend with the complete atomic revision capability. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/types.ts#L128) |
 
 #### Constants
 
@@ -620,45 +660,55 @@ import { hasProjectIdentityControlCharacters, isCanonicalOpaqueProjectIdentifier
 Provider-neutral workflow helpers shared with backend extensions.
 
 ```ts
-import { assertWorkflowLockId, assertWorkflowRunUpdate, assertWorkflowWorkerId } from "veryfront/extensions/distributed/workflow-support";
+import { assertWorkflowIdentity, assertWorkflowLockId, assertWorkflowRunUpdate } from "veryfront/extensions/distributed/workflow-support";
 ```
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `assertWorkflowLockId` | Reject missing or whitespace-only opaque workflow lock tokens. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L71) |
-| `assertWorkflowRunUpdate` | Reject untyped callers that attempt to rewrite immutable run state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L57) |
-| `assertWorkflowWorkerId` | Reject missing or whitespace-padded durable workflow owner identities. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L78) |
-| `captureApprovalDecisionTiming` | Validate and detach caller-owned approval decision timing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L125) |
-| `capturePendingApprovalMetadataUpdate` | Capture the only approval metadata update allowed outside the decision CAS. Accessors and inherited properties are rejected before user code can run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L187) |
+| `assertWorkflowIdentity` | Reject identities that cannot round-trip exactly through UTF-8 storage backends. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L40) |
+| `assertWorkflowLockId` | Reject missing or whitespace-only opaque workflow lock tokens. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L109) |
+| `assertWorkflowRunUpdate` | Reject untyped callers that attempt to rewrite immutable run state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L94) |
+| `assertWorkflowWorkerId` | Reject missing or whitespace-padded durable workflow owner identities. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L119) |
+| `captureApprovalDecisionTiming` | Validate and detach caller-owned approval decision timing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L166) |
+| `capturePendingApprovalMetadataUpdate` | Capture the only approval metadata update allowed outside the decision CAS. Accessors and inherited properties are rejected before user code can run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L228) |
+| `getTimedWorkflowWaits` | Return active timed waits ordered by deadline and stable node identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/runtime/timed-wait-reconciliation.ts#L133) |
+| `isCanonicalWorkflowIdentity` | Whether a persisted workflow identity has one transport-stable Unicode representation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L33) |
 | `requeueRun` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/shared/requeue-run.ts#L8) |
 | `requireWorkflowSourceIntegrationPolicy` | Require the policy snapshot that belongs to the source which created this run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/source-integration-policy.ts#L21) |
-| `resolveRunDateBounds` | Validate optional date filters without invoking caller-provided methods. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L54) |
-| `resolveRunListPage` | Validate and resolve the shared built-in backend pagination contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L66) |
+| `resolveRunDateBounds` | Validate optional date filters without invoking caller-provided methods. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L63) |
+| `resolveRunListPage` | Validate and resolve the shared built-in backend pagination contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L75) |
+| `resolveWorkflowRunCursorPage` | Validate the bounded exclusive cursor contract shared by managed backends. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/run-filter.ts#L104) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `ApprovalDecision` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L279) |
-| `ApprovalDecisionTiming` | Canonical time and expiry predicate for one approval decision attempt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L119) |
-| `ApprovalExpiryCondition` | Expiry predicate evaluated in the same transaction as an approval decision. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L110) |
-| `BackendConfig` | Configuration used by backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L90) |
-| `Checkpoint` | Checkpoint - defined locally to use WorkflowContext interface (Zod inference doesn't handle index signatures with required properties well) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L64) |
+| `ApprovalDecisionTiming` | Canonical time and expiry predicate for one approval decision attempt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L160) |
+| `ApprovalExpiryCondition` | Expiry predicate evaluated in the same transaction as an approval decision. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L151) |
+| `BackendConfig` | Configuration used by backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L131) |
+| `Checkpoint` | Checkpoint - defined locally to use WorkflowContext interface (Zod inference doesn't handle index signatures with required properties well) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L65) |
 | `PendingApproval` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L277) |
-| `PendingApprovalMetadataUpdate` | Metadata that may be attached without changing an approval decision. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L105) |
+| `PendingApprovalMetadataUpdate` | Metadata that may be attached without changing an approval decision. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L146) |
 | `RunFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L281) |
-| `WorkflowBackend` | Public API contract for workflow backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L223) |
+| `TimedWaitClaim` | One deadline row leased under an opaque, monotonically fenced claim. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L483) |
+| `TimedWaitClaimRequest` | Bounded request for backend-atomic timed-wait deadline claims. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L469) |
+| `WorkflowBackend` | Public API contract for workflow backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L264) |
 | `WorkflowQueueItem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L280) |
-| `WorkflowRun` | Workflow run state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L262) |
-| `WorkflowRunUpdate` | Run state that may change after the immutable run snapshot is created. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L27) |
+| `WorkflowRun` | Workflow run state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L331) |
+| `WorkflowRunCursor` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L457) |
+| `WorkflowRunCursorFilter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L462) |
+| `WorkflowRunUpdate` | Run state that may change after the immutable run snapshot is created. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/types.ts#L62) |
 | `WorkflowStatus` | Public API contract for workflow status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/schemas/workflow.schema.ts#L266) |
 
 #### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
+| `MAX_WORKFLOW_CHECKPOINT_HISTORY_ENTRIES` | Maximum checkpoint history retained and accepted in one read. Built-in backends evict the oldest entries by append order once this bound is reached. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/limits.ts#L35) |
+| `MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS` | Maximum code-unit length for workflow and node identities. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/limits.ts#L11) |
 | `MAX_WORKFLOW_RUN_LIST_LIMIT` | Maximum workflow-run page size accepted by built-in backends and schemas. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/limits.ts#L5) |
 
 ### `veryfront/extensions/eval`

@@ -5,6 +5,7 @@ import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/compat/process.ts";
 import { withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { installTestRscActionAuthorization } from "./action-authorization-fixture.ts";
 
 function withCacheAllowClose<T>(fn: () => Promise<T>): Promise<T> {
   const originalAllowClose = getEnv("VF_CACHE_ALLOW_CLOSE");
@@ -39,6 +40,7 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
     await withCacheAllowClose(async () => {
       await withTestContext("rsc-actions", async (context) => {
         await enableRsc(context);
+        await installTestRscActionAuthorization(context.projectDir);
 
         await mkdir(join(context.projectDir, "app", "actions"), { recursive: true });
         await writeTextFile(
@@ -94,6 +96,7 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
     await withCacheAllowClose(async () => {
       await withTestContext("rsc-not-found", async (context) => {
         await enableRsc(context);
+        await installTestRscActionAuthorization(context.projectDir);
         await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
 
         const server = await context.createProductionServer();
@@ -107,6 +110,29 @@ describe("RSC Actions Tests", { sanitizeOps: false, sanitizeResources: false }, 
         assertEquals(response.status, 404, "Should return 404 for non-existent action");
         const errorText = await response.text();
         assertEquals(typeof errorText, "string", "Should return error message");
+      });
+    });
+  });
+
+  it("RSC - action endpoint fails closed without an authorization extension", async () => {
+    await withCacheAllowClose(async () => {
+      await withTestContext("rsc-auth-missing", async (context) => {
+        await enableRsc(context);
+        await writeTextFile(join(context.projectDir, "pages", "index.mdx"), "# Home");
+
+        const server = await context.createProductionServer();
+        const response = await fetch(
+          `http://127.0.0.1:${server.port}/_veryfront/rsc/action`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "missing", args: [] }),
+          },
+        );
+
+        assertEquals(response.status, 503);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        await response.body?.cancel();
       });
     });
   });

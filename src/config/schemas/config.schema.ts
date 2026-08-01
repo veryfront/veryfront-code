@@ -534,7 +534,9 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
            * trailing slashes.
            *
            * Server Actions (`/_veryfront/rsc/action`) are CSRF-protected;
-           * client code must forward the cookie value as the header.
+           * client code must forward the cookie value as the header. CSRF is
+           * separate from the required `RscActionAuthorizationProvider`
+           * extension contract and does not replace action authorization.
            */
           csrf: getCsrfSchema().optional(),
           coop: v.enum(["same-origin", "same-origin-allow-popups", "unsafe-none"]).optional(),
