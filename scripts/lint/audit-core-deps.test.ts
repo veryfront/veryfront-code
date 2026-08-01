@@ -205,4 +205,39 @@ describe("findCoreThirdPartySourceImports", () => {
       { path: "src/config/example.ts", line: 4, specifier: "@mdx-js/mdx" },
     ]);
   });
+
+  it("flags statically assembled dynamic npm and remote specifiers", () => {
+    const issues = findCoreThirdPartySourceImports([
+      {
+        path: "src/cache/hidden-imports.ts",
+        content: [
+          'const redisClient = ["npm:@redis/client", "@1.5.8"].join("");',
+          "await import(redisClient);",
+          'await import("npm:" + "redis@5.11.0");',
+          'await import(["https://esm.sh/", "zod@4.3.6"].join(""));',
+          'const local = ["./", "local.ts"].join("");',
+          "await import(local);",
+          '// import("npm:comment-only@1.0.0");',
+        ].join("\n"),
+      },
+    ]);
+
+    assertEquals(issues, [
+      {
+        path: "src/cache/hidden-imports.ts",
+        line: 2,
+        specifier: "npm:@redis/client@1.5.8",
+      },
+      {
+        path: "src/cache/hidden-imports.ts",
+        line: 3,
+        specifier: "npm:redis@5.11.0",
+      },
+      {
+        path: "src/cache/hidden-imports.ts",
+        line: 4,
+        specifier: "https://esm.sh/zod@4.3.6",
+      },
+    ]);
+  });
 });

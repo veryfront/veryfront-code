@@ -15,6 +15,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-auth-jwt/src/index.ts",
   "extensions/ext-bundler-esbuild/src/index.ts",
   "extensions/ext-cache-redis/src/index.ts",
+  "extensions/ext-redis/src/index.ts",
   "extensions/ext-content-mdx/src/index.ts",
   "extensions/ext-css-tailwind/src/index.ts",
   "extensions/ext-db-sqlite/src/index.ts",

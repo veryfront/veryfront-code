@@ -65,6 +65,13 @@ export { auditCapabilities, formatCapabilities, mapToDenoPermissions } from "./c
 // Recommendations
 export { getRecommendation } from "./recommendations.ts";
 
+// Provider-neutral Redis runtime
+export {
+  captureRedisRuntimeProvider,
+  type RedisRuntimeProvider,
+  RedisRuntimeProviderName,
+} from "./distributed/index.ts";
+
 // Errors
 export {
   CIRCULAR_DEPENDENCY_ERROR,
