@@ -119,7 +119,7 @@ records its byte length through captured intrinsic accessors. A dishonest or
 malformed result is a capability failure.
 
 `FileSnapshotChangedError` uses a private runtime brand but is exported from
-the supported `veryfront/platform` adapter-author surface. External adapters
+the supported public `veryfront/fs` adapter-author surface. External adapters
 construct that error when their object/release generation changes; consumers
 classify it through the exported predicate rather than a structural field.
 
@@ -269,9 +269,13 @@ capability; an ordinary bounded read is not a fallback. Stat/snapshot/stat
 mismatch fails as source-changed without recursive retry.
 
 An identical identity coalesces onto one load and does not consume another
-concurrency slot. A known safe stat size reserves that wire weight before the
-read. Missing size reserves the full 32 MiB. A request that cannot reserve after
-settled LRU eviction fails immediately; it does not join an unbounded queue.
+concurrency slot. A known safe nonzero stat size reserves that wire weight
+before the read and is also the snapshot read limit; a known zero size reserves
+and reads with a one-byte limit, then must return exactly zero bytes. Missing
+size reserves and reads with the full 32 MiB. Returned bytes and post-stat
+metadata must exactly match known pre-stat size, so growth can never retain more
+than its reservation. A request that cannot reserve after settled LRU eviction
+fails immediately; it does not join an unbounded queue.
 
 Before `JSON.parse`, a dependency-free linear JSON lexical preflight enforces a
 maximum depth of 64, a maximum of 250,000 aggregate object-member and array-item
@@ -293,9 +297,18 @@ publish an unaccounted index.
 Capacity eviction selects settled LRU records only. Explicit invalidation or
 identity replacement may retire an in-flight record by invalidating its
 publication token. That operation may finish local work, but it cannot publish
-after retirement. Reservations are released exactly once on success, failure,
-or retirement. Capacity, parser, reader, and publication-token transitions are
-covered under concurrent tests.
+after retirement. Retirement does not release its byte reservation or active
+slot while the underlying reader/parser can still retain work; both resource
+leases release exactly once only when that work actually settles. An awaited
+cancellation may count as settlement only after its finalizer proves the local
+buffers are no longer retained. Capacity, parser, reader, and publication-token
+transitions are covered under concurrent tests.
+
+The process-wide clear operation drops settled entries and retires every
+in-flight publication token, but it is not allowed to release an in-flight byte
+reservation or active slot before the underlying work settles. Thus cache
+invalidation remains a stale-publication barrier without becoming an
+accounting bypass.
 
 ## Error model
 

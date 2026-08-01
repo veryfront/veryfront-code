@@ -89,8 +89,8 @@ export type StaticAssetUnavailableReason =
 
 - Modify src/platform/adapters/base.ts: raw semantic filesystem contracts.
 - Modify src/platform/adapters/index.ts, src/platform/adapters/index.test.ts,
-  src/platform/index.ts, and src/platform/index.test.ts: supported public
-  source-change error surface for adapter authors.
+  src/fs/index.ts, and src/fs/index.test.ts: internal adapter barrel plus the
+  supported public source-change error surface for adapter authors.
 - Modify src/platform/adapters/file-system-capabilities.ts: purpose-specific
   safe capture.
 - Create src/platform/adapters/file-system-capabilities.test.ts: hostile
@@ -120,7 +120,8 @@ export type StaticAssetUnavailableReason =
   src/repositories/filesystem/filesystem-repository.ts,
   src/repositories/testing/index.ts, and src/repositories/repositories.test.ts:
   rooted repository snapshot contract and coverage.
-- Modify src/platform/adapters/veryfront-api-transport.ts,
+- Modify src/platform/adapters/veryfront-api-transport.ts and its test,
+  src/platform/adapters/veryfront-api-client/client.ts and its test,
   src/platform/adapters/veryfront-api-client/operations.ts and its test, plus
   the Veryfront filesystem adapter/read operations/types/tests only if a
   bounded version-bearing response and immutable release lifecycle fence
@@ -282,7 +283,7 @@ deno test --frozen --no-check --allow-all \
   src/platform/adapters/file-system-capabilities.test.ts \
   src/platform/adapters/bounded-text-reader.test.ts \
   src/platform/adapters/index.test.ts \
-  src/platform/index.test.ts
+  src/fs/index.test.ts
 ~~~
 
 Expected: broad capture inspects unrelated fields, and the new semantic
@@ -322,11 +323,12 @@ export function isFileSnapshotChangedError(
 }
 ~~~
 
-Export the class and predicate from `src/platform/adapters/index.ts` and
-`src/platform/index.ts`, with an export-surface test proving the supported
-adapter-author import `veryfront/platform`. The WeakSet remains private; the
-constructor is the only supported way for an external adapter to create a
-classifiable source-change failure.
+Export the class and predicate from `src/platform/adapters/index.ts` and the
+public `src/fs/index.ts`, with export-surface tests proving the supported
+adapter-author import `veryfront/fs`. Do not add a `./platform` package export;
+that infrastructure barrel deliberately remains package-private. The WeakSet
+remains private; the constructor is the only supported way for an external
+adapter to create a classifiable source-change failure.
 
 - [ ] **Step 7: Run GREEN and migrate the bounded-text consumer**
 
@@ -342,7 +344,7 @@ deno test --frozen --no-check --allow-all \
   src/platform/adapters/file-system-capabilities.test.ts \
   src/platform/adapters/bounded-text-reader.test.ts \
   src/platform/adapters/index.test.ts \
-  src/platform/index.test.ts \
+  src/fs/index.test.ts \
   src/platform/adapters/fs/wrapper.test.ts \
   src/security/secure-fs.test.ts
 ~~~
@@ -353,8 +355,8 @@ deno test --frozen --no-check --allow-all \
 git add src/platform/adapters/base.ts \
   src/platform/adapters/index.ts \
   src/platform/adapters/index.test.ts \
-  src/platform/index.ts \
-  src/platform/index.test.ts \
+  src/fs/index.ts \
+  src/fs/index.test.ts \
   src/platform/adapters/file-system-capabilities.ts \
   src/platform/adapters/file-system-capabilities.test.ts \
   src/platform/adapters/file-snapshot-error.ts \
@@ -367,13 +369,14 @@ git commit -m "feat(platform): add purpose-specific filesystem capabilities"
 
 **Interfaces:**
 
-Node and Bun implement both raw capabilities through a proven native
-no-follow/create-new primitive. Deno implements exclusive create directly. On
-POSIX, Deno implements snapshot reads through its supported `node:fs/promises`
-compatibility layer with a nonzero `O_NOFOLLOW`; on an active runtime/OS where
-that exact primitive is unavailable, the optional method is absent from the
-constructed adapter and an omission test is mandatory. `Deno.open` is never
-used as snapshot authority. A
+Node, Bun, and Deno advertise each raw capability only when the active
+runtime/OS exposes the exact primitive and its real-runtime test proves it.
+Snapshot reads use the supported `node:fs/promises` compatibility layer with a
+nonzero `O_NOFOLLOW`; on Windows or any host where that exact primitive is
+absent/zero, the optional method is absent from the constructed Node, Bun, or
+Deno adapter and an omission/build-failure test is mandatory. Exclusive create
+is installed independently when create-new semantics are proven; Deno may use
+`createNew`. `Deno.open` is never used as snapshot authority. A
 successful snapshot proves canonical containment, non-symlink terminal entry,
 one regular file handle, stable identity/generation, and a complete value no
 larger than byteLimit. RangeError means only byte-limit overflow; a generation
@@ -381,10 +384,12 @@ mismatch uses FileSnapshotChangedError.
 
 - [ ] **Step 1: Add exact-bound RED tests**
 
-For Node-compatible and Deno adapters, cover an empty file, a file exactly at
-the requested limit, a file one byte over, zero/unsafe limits, directory input,
-and a terminal symlink. Verify the oversized path rejects before a complete
-oversized buffer is retained.
+For the shared Node-compatible implementation and each Node, Bun, and Deno
+adapter factory, cover an empty file, a file exactly at the requested limit, a
+file one byte over, zero/unsafe limits, directory input, and a terminal symlink.
+Verify the oversized path rejects before a complete oversized buffer is
+retained. Inject absent and zero `O_NOFOLLOW` values and assert every factory
+omits the own snapshot data method instead of exposing a call-time failure.
 
 - [ ] **Step 2: Add deterministic replacement RED tests**
 
@@ -398,18 +403,20 @@ races reject as FileSnapshotChangedError.
 ~~~bash
 deno test --frozen --no-check --allow-all \
   src/platform/adapters/runtime/shared/node-filesystem-adapter.test.ts \
-  src/platform/adapters/runtime/deno/filesystem-adapter.test.ts
+  src/platform/adapters/runtime/node/filesystem-adapter.test.ts \
+  src/platform/adapters/runtime/deno/filesystem-adapter.test.ts \
+  src/platform/adapters/runtime/bun/filesystem-adapter.test.ts
 ~~~
 
 - [ ] **Step 4: Implement handle-bound snapshot reads**
 
-Node uses node:fs/promises open with O_RDONLY | O_NOFOLLOW and FileHandle.read.
-Deno delegates to that same built-in compatibility primitive only when
-`O_NOFOLLOW` is nonzero and the real-runtime tests prove the semantics. The
-Deno adapter factory conditionally installs an own data-property method; the
-class prototype must not advertise a method that will fail only when invoked.
-On unsupported hosts it omits the method, and tests prove the affected build
-path fails closed. In either implementation:
+The shared implementation uses node:fs/promises open with
+O_RDONLY | O_NOFOLLOW and FileHandle.read. Each Node, Bun, and Deno adapter
+factory delegates to it only when `O_NOFOLLOW` is nonzero and its real-runtime
+tests prove the semantics. Every factory conditionally installs an own
+data-property method; no class prototype may advertise a method that will fail
+only when invoked. On unsupported hosts it omits the method, and tests prove
+the affected build path fails closed. In the shared implementation:
 
 1. Canonicalize the containment root.
 2. Lexically reject a candidate outside the root.
@@ -433,10 +440,10 @@ never truncated and no automatic per-path deletion guesses ownership.
 - [ ] **Step 6: Implement exclusive create**
 
 Node-compatible uses open with wx, writes through that handle, and closes it.
-Deno uses createNew. Bun inherits the Node-compatible semantic implementation
-only when its runtime genuinely supports node:fs create-new behavior; its real
-Bun suite proves it. Partial failure remains inside the private build stage for
-whole-stage cleanup.
+Deno uses createNew. Node, Bun, and Deno install the own method only when their
+real runtime proves create-new collision behavior; absence is independent from
+snapshot-read absence. Partial failure remains inside the private build stage
+for whole-stage cleanup.
 
 - [ ] **Step 7: Run GREEN in all available runtimes**
 
@@ -548,10 +555,15 @@ deno test --frozen --no-check --allow-all \
   src/security/secure-fs.test.ts \
   src/repositories/repositories.test.ts \
   src/platform/adapters/mock.test.ts \
+  src/platform/compat/fs.test.ts \
+  src/platform/adapters/veryfront-api-transport.test.ts \
+  src/platform/adapters/veryfront-api-client/client.test.ts \
+  src/platform/adapters/veryfront-api-client/operations.test.ts \
   src/platform/adapters/fs/veryfront/read-operations.test.ts \
   src/platform/adapters/fs/veryfront/adapter.test.ts \
   src/platform/adapters/fs/veryfront/multi-project-adapter.test.ts \
-  src/platform/adapters/runtime/cloudflare/filesystem.test.ts
+  src/platform/adapters/runtime/cloudflare/filesystem.test.ts \
+  src/platform/adapters/fs/github/adapter.test.ts
 ~~~
 
 - [ ] **Step 7: Commit**
@@ -570,6 +582,9 @@ git add src/platform/adapters/fs/wrapper.ts \
   src/platform/compat/fs.ts \
   src/platform/compat/fs.test.ts \
   src/platform/adapters/veryfront-api-transport.ts \
+  src/platform/adapters/veryfront-api-transport.test.ts \
+  src/platform/adapters/veryfront-api-client/client.ts \
+  src/platform/adapters/veryfront-api-client/client.test.ts \
   src/platform/adapters/veryfront-api-client/operations.ts \
   src/platform/adapters/veryfront-api-client/operations.test.ts \
   src/platform/adapters/fs/veryfront/types.ts \
@@ -952,7 +967,9 @@ Assert GET admits exactly 64 MiB and rejects 64 MiB + 1 without requesting
 the same positive safe integer after the body. HEAD captures the same GET plan,
 admits metadata between those generation checks, and never calls the body
 reader. Non-HTML HEAD exposes only a safe known content length; HTML HEAD omits
-it.
+it only when a request nonce would transform the representation. Reusable HTML
+and non-HTML HEAD may expose an admitted safe stat content length; neither emits
+a digest-derived ETag without reading the body.
 
 - [ ] **Step 3: Add final-body and poisoning RED tests**
 
@@ -1103,6 +1120,8 @@ git add src/utils/base64url.ts src/utils/base64url.test.ts \
   src/server/handlers/utils/etag.test.ts \
   src/server/services/static/static-file.service.ts \
   src/server/services/static/static-file.service.test.ts \
+  src/server/handlers/request/static.handler.ts \
+  src/server/handlers/request/static.handler.test.ts \
   src/server/handlers/request/module/page-module-handler.ts \
   src/server/handlers/request/module/page-module-handler.test.ts \
   src/server/handlers/request/module/page-data-endpoint-handler.ts \
@@ -1271,10 +1290,14 @@ export function createManifestCacheCoordinator(
 export const processManifestCacheCoordinator: ManifestCacheCoordinator;
 ~~~
 
-Known safe size reserves that wire weight. Unknown size reserves 33,554,432.
-Active-slot and byte-reservation tokens are separate: retirement releases byte
-weight and publication authority exactly once, while the active slot remains
-occupied until the local work actually settles.
+Known safe nonzero size reserves that wire weight and becomes the snapshot read
+limit. Known zero size reserves one byte and must return exactly zero. Unknown
+size reserves and reads with 33,554,432.
+Publication authority is separate from the active-slot and byte-reservation
+leases. Retirement invalidates publication immediately, but both resource
+leases remain charged until the underlying reader/parser actually settles. An
+awaited cancellation may release them only after its finalizer proves local
+buffers are no longer retained. Every lease releases exactly once.
 
 The production singleton is internal to the static-service implementation and
 is not re-exported from the public Server barrel. A WeakMap maps each stable
@@ -1301,8 +1324,14 @@ Cover 128 small settled identities distributed across at least three owners,
 global deterministic least-recently-used eviction, same textual identity kept
 separate between owners, wire versus retained weight, failed settled-weight
 expansion, explicit in-flight retirement, stale completion unable to publish,
-and release exactly once on success/failure/retirement. Assert capacity eviction
-selects settled records only.
+and release exactly once on success/failure/settled retirement. Add the
+critical case: keep 32 MiB settled, start and retire a 32 MiB load without
+settling it, then assert another 32 MiB load still fails capacity until the
+retired work settles. Assert capacity eviction selects settled records only.
+Call `clear()` with settled and in-flight records across multiple owners:
+settled entries and weight disappear immediately, every publication token
+retires, stale completions cannot publish, and each in-flight reservation/slot
+remains charged until its underlying work settles.
 
 - [ ] **Step 3: Run RED**
 
@@ -1326,16 +1355,34 @@ reservations/publication. Before starting a unique load:
 
 On completion, evict settled LRU as needed to exchange the reservation for
 max(wireBytes, retainedWeightBytes). If exchange cannot fit, reject and publish
-nothing.
+nothing. Invalidation changes only the publication token. Release the active
+slot and reservation together in the underlying work's single settlement
+finalizer, including for a retired record; never make its weight reusable merely
+because its result can no longer publish.
+
+Implement `clear()` as a process-wide barrier: retire every in-flight
+publication token and drop every settled LRU record, but do not release an
+in-flight resource lease early. Preserve `StaticFileService.clearCache()` by
+delegating it to the production coordinator. Tests that inject a private
+coordinator call that coordinator's clear method and never mutate the
+production singleton.
 
 - [ ] **Step 5: Add generation-bound manifest-read RED tests**
 
-Require the rooted `readFileSnapshotWithinLimit(manifestPath, 33_554_432)`
-capability for manifest bytes. Missing, accessor-backed, Proxy, dishonest,
+Require the rooted `readFileSnapshotWithinLimit` capability for manifest bytes.
+For admitted known size `s > 0`, reserve `s` and call the snapshot with exactly
+`s`; for known zero, reserve/call with one and require a zero-byte result; for
+unknown size, reserve/call with exactly 33,554,432. Reserve before invoking the
+reader. Returned wire bytes and post-stat size must exactly match a known
+pre-stat size. If a known size below the global maximum raises RangeError or
+returns a different length, classify source-changed; at the global/unknown
+limit RangeError is byte-limit. A known size above 33,554,432 fails byte-limit
+before reservation or reading. Missing, accessor-backed, Proxy, dishonest,
 oversized, and source-changing readers map respectively to the exact approved
-read-capability/invalid-capability/invalid-result/byte-limit/source-changed
-branches. An ordinary bounded reader is not a fallback. Capture admitted stat
-metadata once before the snapshot and once after; mismatch is source-changed,
+`read-capability-unavailable`, `invalid-capability`, `invalid-reader-result`,
+`byte-limit`, and `source-changed` branches. An ordinary bounded reader is not a
+fallback. Capture admitted stat metadata once before the snapshot and once
+after; mismatch is source-changed,
 not a recursive retry. A not-found manifest remains the existing candidate
 fallback.
 
@@ -1386,7 +1433,9 @@ git add src/server/services/static/manifest-cache.ts \
   src/server/services/static/manifest-cache.test.ts \
   src/server/services/static/static-file.service.ts \
   src/server/services/static/static-file.service.test.ts \
-  src/server/services/static/index.ts
+  src/server/services/static/index.ts \
+  src/server/handlers/request/static.handler.ts \
+  src/server/handlers/request/static.handler.test.ts
 git commit -m "feat(server): bound static manifest residency and concurrency"
 git push origin codex/module-reconcile-20260723
 ~~~
@@ -1641,7 +1690,7 @@ Document both raw semantic signatures, positive-safe-integer limits,
 RangeError/source-change behavior, immutable virtual generation proof,
 purpose-specific capture, and deliberate omission when proof is unavailable.
 Include before/after adapter examples without suggesting an ordinary-read
-fallback. Name `veryfront/platform` as the supported import for
+fallback. Name `veryfront/fs` as the supported public import for
 `FileSnapshotChangedError` and its predicate. Update both platform READMEs and
 the runtime-adapters architecture document.
 
@@ -1731,7 +1780,10 @@ merged tree.
 ~~~bash
 deno test --frozen --no-check --allow-all \
   src/platform/adapters/file-system-capabilities.test.ts \
+  src/platform/adapters/index.test.ts \
+  src/fs/index.test.ts \
   src/platform/adapters/runtime/shared/node-filesystem-adapter.test.ts \
+  src/platform/adapters/runtime/node/filesystem-adapter.test.ts \
   src/platform/adapters/runtime/deno/filesystem-adapter.test.ts \
   src/platform/adapters/runtime/bun/filesystem-adapter.test.ts \
   src/platform/compat/fs.test.ts \
@@ -1787,14 +1839,13 @@ deno task typecheck:extensions
 git diff --check
 ~~~
 
-- [ ] **Step 10: Run cross-runtime, script, and broad repository gates**
+- [ ] **Step 10: Run the canonical, cross-runtime, and browser gates**
 
 ~~~bash
+deno task verify
 deno task test:cross-runtime
 deno task test:node
 deno task test:bun
-deno task test:scripts
-deno task test
 deno task test:e2e:rsc-browser
 ~~~
 
