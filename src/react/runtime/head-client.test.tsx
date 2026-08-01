@@ -122,4 +122,47 @@ describe("Head client management", () => {
       restore();
     }
   });
+
+  it("does not materialize lowercase event attributes or invoke raw-content accessors", async () => {
+    const restore = installDom();
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement);
+      const root = createRoot(rootElement);
+      let accessorCalls = 0;
+      const rawHTML = Object.create(null) as { __html?: string };
+      Object.defineProperty(rawHTML, "__html", {
+        configurable: true,
+        get() {
+          accessorCalls += 1;
+          return "globalThis.__unexpected = true";
+        },
+      });
+
+      flushSync(() => {
+        root.render(
+          <Head>
+            <meta
+              name="head-event-probe"
+              content="safe"
+              {...({ onclick: "globalThis.__unexpected = true" } as Record<string, string>)}
+            />
+            <script dangerouslySetInnerHTML={rawHTML as { __html: string }} />
+          </Head>,
+        );
+      });
+      await nextTask();
+
+      const meta = document.head.querySelector<HTMLMetaElement>(
+        'meta[name="head-event-probe"]',
+      );
+      assert(meta);
+      assertEquals(meta.hasAttribute("onclick"), false);
+      assertEquals(accessorCalls, 0);
+
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
 });
