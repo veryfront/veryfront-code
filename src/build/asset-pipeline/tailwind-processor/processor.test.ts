@@ -3,6 +3,9 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { TailwindProcessor } from "./processor.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
+
+const optimizationEngine = createTestCSSOptimizationEngine();
 
 function createMockAdapter(_baseDir: string): RuntimeAdapter {
   return {
@@ -37,6 +40,7 @@ describe("build/asset-pipeline/tailwind-processor/processor", () => {
         projectDir: tmpDir,
         adapter,
         inputFile: `${tmpDir}/styles/main.css`,
+        optimizationEngine,
       });
       assertExists(processor);
     });
@@ -53,6 +57,7 @@ describe("build/asset-pipeline/tailwind-processor/processor", () => {
           adapter,
           inputFile: cssFile,
           minify: false,
+          optimizationEngine,
         });
         const result = await processor.process();
         assertExists(result.css);
@@ -77,6 +82,7 @@ describe("build/asset-pipeline/tailwind-processor/processor", () => {
           inputFile: cssFile,
           outputFile,
           minify: false,
+          optimizationEngine,
         });
         const result = await processor.process();
         assertExists(result.css);

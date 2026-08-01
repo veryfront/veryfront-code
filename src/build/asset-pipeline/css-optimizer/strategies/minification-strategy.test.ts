@@ -2,10 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MinificationStrategy } from "./minification-strategy.ts";
+import { createTestCSSOptimizationEngine } from "../../../../../tests/_helpers/css-optimization-engine.ts";
 
 describe("build/asset-pipeline/css-optimizer/strategies/minification-strategy", () => {
   describe("MinificationStrategy", () => {
-    const strategy = new MinificationStrategy();
+    const strategy = new MinificationStrategy(
+      createTestCSSOptimizationEngine((request) => ({
+        css: request.css.replaceAll(/\s+/g, ""),
+      })),
+    );
 
     it("should have correct name and priority", () => {
       assertEquals(strategy.name, "basic-minification");

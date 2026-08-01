@@ -14,12 +14,8 @@ import {
   MAX_CSS_TOTAL_OUTPUT_BYTES,
 } from "./constants.ts";
 import type { CSSBundle, CSSOptimizerStats } from "./types/index.ts";
-import {
-  calculateSavings,
-  getOutputPath,
-  isSafeCSSRelativePath,
-  validateCSSSourceMap,
-} from "./utils.ts";
+import { validateCSSSourceMap } from "./optimization-engine.ts";
+import { calculateSavings, getOutputPath, isSafeCSSRelativePath } from "./utils.ts";
 
 const encoder = new TextEncoder();
 

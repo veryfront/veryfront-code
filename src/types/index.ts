@@ -194,16 +194,12 @@ export interface RenderResult {
 }
 
 export type {
-  BrowserTargets,
   CriticalCSSResult,
   CSSBundle,
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
   CSSOptimizerStats,
   CSSProcessingResult,
-  LightningCSSModule,
-  LightningCSSTransformOptions,
-  LightningCSSTransformResult,
   SelectorExtractionResult,
 } from "#veryfront/build/asset-pipeline/css-optimizer/types/index.ts";
 

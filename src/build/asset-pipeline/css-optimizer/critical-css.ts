@@ -1,4 +1,5 @@
 import { DEPENDENCY_MISSING } from "#veryfront/errors";
+import type { CSSOptimizationEngine } from "#veryfront/extensions/css/index.ts";
 import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { logger } from "#veryfront/utils";
@@ -13,7 +14,10 @@ import {
   PURGE_CSS_MODULE_SPECIFIER,
 } from "./constants.ts";
 import type { CriticalCSSResult, CSSOptimizationOptions } from "./types/index.ts";
-import { basicMinify } from "./utils.ts";
+import {
+  acquireConfiguredCSSOptimization,
+  createCSSOptimizationSession,
+} from "./optimization-engine.ts";
 
 interface CriticalPurgeResult {
   css: string;
@@ -62,6 +66,7 @@ export function extractCriticalCSS(
   cssPath: string,
   htmlContent: string,
   options: CSSOptimizationOptions,
+  optimizationEngine?: CSSOptimizationEngine,
 ): Promise<CriticalCSSResult> {
   if (
     typeof options !== "object" ||
@@ -82,6 +87,11 @@ export function extractCriticalCSS(
     throw new TypeError("Critical CSS minify must be a boolean");
   }
   const shouldMinify = options.minify ?? true;
+  const optimizationSession = shouldMinify
+    ? (optimizationEngine === undefined
+      ? acquireConfiguredCSSOptimization()
+      : createCSSOptimizationSession(optimizationEngine))
+    : undefined;
 
   return withSpan(
     "build.asset.extractCriticalCSS",
@@ -176,8 +186,20 @@ export function extractCriticalCSS(
         throw new TypeError("PurgeCSS returned an invalid critical CSS result");
       }
 
-      const critical = shouldMinify ? basicMinify(result.css) : result.css;
-      const remaining = shouldMinify ? basicMinify(result.rejectedCss) : result.rejectedCss;
+      const critical = optimizationSession === undefined ? result.css : optimizationSession.run({
+        css: result.css,
+        sourcePath: "critical.css",
+        minify: true,
+        sourceMap: false,
+      }).css;
+      const remaining = optimizationSession === undefined
+        ? result.rejectedCss
+        : optimizationSession.run({
+          css: result.rejectedCss,
+          sourcePath: "remaining.css",
+          minify: true,
+          sourceMap: false,
+        }).css;
       const criticalSize = encoder.encode(critical).length;
       const remainingSize = encoder.encode(remaining).length;
       if (
