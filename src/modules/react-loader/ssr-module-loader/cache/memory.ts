@@ -48,6 +48,8 @@ export const globalCrossProjectCache = new LRUCache<string, ModuleCacheEntry>({
 
 export const globalCrossProjectInProgress = new Map<string, Promise<string>>();
 
+// Each singleflight completion carries its immutable output so requests that
+// started before an invalidation can finish without republishing stale state.
 export const globalInProgress = new Map<string, Promise<ModuleCacheEntry>>();
 
 export const globalTmpDirs = new LRUCache<string, string>({

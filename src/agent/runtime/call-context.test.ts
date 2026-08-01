@@ -143,8 +143,9 @@ describe("agent/runtime/call-context", () => {
       assertStringIncludes(content, "<available_skills>");
       assertStringIncludes(
         content,
-        '- {"skillId":"deploy","name":"Deploy","displayName":"Deploy Skill","description":"Deployment guidance","allowedTools":["create_file"],"model":"openai/gpt-5.4","thinking":512,"maxSteps":4}',
+        '- {"skillId":"deploy","name":"Deploy","displayName":"Deploy Skill","description":"Deployment guidance","allowedTools":[],"model":"openai/gpt-5.4","thinking":512,"maxSteps":4}',
       );
+      assertEquals(content.includes("create_file"), false);
       assertStringIncludes(
         content,
         '- {"skillId":"review","name":"Review","description":"Review guidance"}',

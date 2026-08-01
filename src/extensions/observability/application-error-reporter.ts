@@ -1,18 +1,9 @@
-/** Correlation context attached to an unexpected application failure. */
-export type ApplicationErrorContext = {
-  boundary: string;
-  method?: string;
-  requestId?: string;
-  spanId?: string;
-  traceId?: string;
-  attributes?: Record<string, string | number | boolean>;
-};
+import type { ApplicationErrorReporter } from "#veryfront/observability/application-error-contract.ts";
 
-/** Vendor-neutral application error capture and delivery contract. */
-export type ApplicationErrorReporter = {
-  capture(error: unknown, context: ApplicationErrorContext): string | undefined;
-  flush(timeoutMs?: number): Promise<boolean>;
-};
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+} from "#veryfront/observability/application-error-contract.ts";
 
 /** Runtime context passed to an explicitly selected reporter initializer. */
 export type ApplicationErrorReporterInitializationContext = {

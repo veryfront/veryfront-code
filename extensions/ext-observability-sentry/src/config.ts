@@ -1,3 +1,5 @@
+import type { ApplicationErrorReporter } from "#veryfront/observability/application-error-contract.ts";
+
 const MAX_CONFIG_TEXT_LENGTH = 4_096;
 const MAX_SERVICE_NAME_LENGTH = 255;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
@@ -17,6 +19,18 @@ export type SentryApplicationErrorInitializerOptions = {
   config?: SentryConfig;
   readEnvironment?: SentryEnvironmentReader;
   disposeTimeoutMs?: number;
+};
+
+export type SentryApplicationErrorReporterSession = {
+  reporter: ApplicationErrorReporter;
+  dispose(): void | Promise<void>;
+};
+
+export type SentryApplicationErrorReporterInitializer = {
+  initialize(context: { serviceName: string }):
+    | SentryApplicationErrorReporterSession
+    | undefined
+    | Promise<SentryApplicationErrorReporterSession | undefined>;
 };
 
 type InspectedRecord = Record<string, unknown>;

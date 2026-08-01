@@ -57,44 +57,44 @@ describe("math", () => {
 | `assertThrows` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L383) |
 | `beforeAll` | Register a hook before all BDD tests in a group. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L714) |
 | `beforeEach` | Register a hook before each BDD test. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L695) |
-| `chmod` | Change file permissions, rejecting operational failures. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L519) |
-| `createFileSystem` | Create the runtime-native filesystem implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L410) |
+| `chmod` | Change file permissions, rejecting operational failures. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L577) |
+| `createFileSystem` | Create the runtime-native filesystem implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L440) |
 | `cwd` | Return the current working directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L26) |
 | `deepEquals` | Compare values with the same value semantics used by `@std/assert`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/utils.ts#L15) |
 | `delay` | Wait for a duration in milliseconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L159) |
 | `deleteEnv` | Delete a process environment variable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L205) |
 | `describe` | Group related BDD tests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L581) |
 | `env` | Read and write process environment variables. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L33) |
-| `exists` | Return false for a missing path and propagate every other filesystem error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L442) |
+| `exists` | Return false for a missing path and propagate every other filesystem error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L500) |
 | `exit` | Exit the current process. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L164) |
 | `fail` | Fail the current assertion immediately. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L423) |
 | `getArgs` | Get command-line arguments (cross-runtime: Deno.args or process.argv). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L10) |
 | `getEnv` | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L106) |
 | `getTestTimeScale` | Return test time scale. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts#L4) |
-| `isAlreadyExistsError` | Error shape for is already exists. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L603) |
-| `isNotFoundError` | Return whether an error or its cause chain represents a path that cannot be resolved. ENOTDIR is included because a missing candidate beneath a file is just as absent as an ENOENT candidate during filesystem lookup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L561) |
+| `isAlreadyExistsError` | Error shape for is already exists. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L606) |
+| `isNotFoundError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/not-found-error.ts#L210) |
 | `it` | Define a BDD test case. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L637) |
-| `makeTempDir` | Atomically create a unique directory beneath the operating-system temp root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L514) |
+| `makeTempDir` | Atomically create a unique directory beneath the operating-system temp root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L572) |
 | `makeTempDirWithOptions` | Atomically create a uniquely named temporary directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L99) |
 | `makeTempFile` | Atomically create a uniquely named temporary file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L49) |
-| `mkdir` | Create a directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L492) |
-| `readDir` | Read directory entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L502) |
-| `readFile` | Read a file as bytes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L427) |
-| `readTextFile` | Read a file as text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L422) |
+| `mkdir` | Create a directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L550) |
+| `readDir` | Read directory entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L560) |
+| `readFile` | Read a file as bytes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L485) |
+| `readTextFile` | Read a file as text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L480) |
 | `registerTestCleanup` | Register one cleanup invocation for the next comprehensive state reset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/isolation.ts#L26) |
-| `remove` | Remove a file or directory, rejecting when the path does not exist. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L497) |
+| `remove` | Remove a file or directory, rejecting when the path does not exist. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L555) |
 | `resetAllTestState` | Comprehensive reset of ALL test state across the application. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/isolation.ts#L69) |
 | `safeStringify` | Serialize unknown values safely for test output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/utils.ts#L241) |
 | `scaleMs` | Scale a duration for the current test runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts#L9) |
 | `setEnv` | Sets env. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L185) |
-| `stat` | Read file metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L447) |
+| `stat` | Read file metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L505) |
 | `testDelay` | Wait for a test-scaled duration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/timing.ts#L15) |
 | `waitFor` | Poll a condition immediately and at intervals until it succeeds or the monotonic deadline expires. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L128) |
 | `withEnv` | Run a callback with an async-context-isolated environment overlay. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L253) |
 | `withTempDir` | Run a callback with a temporary directory and reliably remove it afterward. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L174) |
 | `withTempFile` | Run a callback with a temporary file and reliably remove it afterward. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/deno-compat.ts#L195) |
-| `writeFile` | Write bytes to a file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L437) |
-| `writeTextFile` | Write text to a file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L432) |
+| `writeFile` | Write bytes to a file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L495) |
+| `writeTextFile` | Write text to a file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L490) |
 
 ### Types
 

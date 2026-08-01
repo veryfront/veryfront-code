@@ -155,16 +155,58 @@ function basename(path: string, suffix?: string): string {
   assertPath(path);
   if (suffix !== undefined) assertPath(suffix);
 
-  let end = path.length;
-  while (end > 0 && path[end - 1] === "/") end--;
-  if (end === 0) return "";
+  let start = 0;
+  let end = -1;
+  let matchedSeparator = true;
 
-  const start = path.lastIndexOf("/", end - 1) + 1;
-  const base = path.slice(start, end);
-  if (suffix && suffix.length <= base.length && base.endsWith(suffix)) {
-    return base.slice(0, -suffix.length);
+  if (suffix !== undefined && suffix.length > 0 && suffix.length <= path.length) {
+    if (suffix === path) return "";
+
+    let suffixIndex = suffix.length - 1;
+    let firstNonSeparatorEnd = -1;
+    for (let index = path.length - 1; index >= 0; index--) {
+      const character = path[index];
+      if (character === "/") {
+        if (!matchedSeparator) {
+          start = index + 1;
+          break;
+        }
+        continue;
+      }
+
+      if (firstNonSeparatorEnd === -1) {
+        matchedSeparator = false;
+        firstNonSeparatorEnd = index + 1;
+      }
+      if (suffixIndex < 0) continue;
+
+      if (character === suffix[suffixIndex]) {
+        suffixIndex--;
+        if (suffixIndex === -1) end = index;
+      } else {
+        suffixIndex = -1;
+        end = firstNonSeparatorEnd;
+      }
+    }
+
+    if (start === end) end = firstNonSeparatorEnd;
+    else if (end === -1) end = path.length;
+    return path.slice(start, end);
   }
-  return base;
+
+  for (let index = path.length - 1; index >= 0; index--) {
+    if (path[index] === "/") {
+      if (!matchedSeparator) {
+        start = index + 1;
+        break;
+      }
+    } else if (end === -1) {
+      matchedSeparator = false;
+      end = index + 1;
+    }
+  }
+
+  return end === -1 ? "" : path.slice(start, end);
 }
 
 function extname(path: string): string {

@@ -11,6 +11,7 @@ import {
   hasHostedStyleConfigCapability,
   isExtendedFSAdapter,
   isVirtualFilesystem,
+  markDerivedVirtualFileSystemAdapter,
   NotSupportedError,
   wrapFSAdapter,
 } from "./wrapper.ts";
@@ -232,6 +233,29 @@ describe("isVirtualFilesystem", () => {
     });
 
     assertEquals(isVirtualFilesystem(extendedFs), true);
+  });
+
+  it("preserves explicitly derived Proxy provenance by exact identity only", () => {
+    let proxyTraps = 0;
+    const derived = new Proxy({} as FileSystemAdapter, {
+      get() {
+        proxyTraps++;
+        throw new Error("virtual provenance must not invoke Proxy traps");
+      },
+    });
+    const unmarked = new Proxy({} as FileSystemAdapter, {
+      get() {
+        proxyTraps++;
+        throw new Error("unmarked Proxy classification must not invoke traps");
+      },
+    });
+
+    markDerivedVirtualFileSystemAdapter(derived);
+
+    assertEquals(isVirtualFilesystem(derived), true);
+    assertEquals(isVirtualFilesystem(unmarked), false);
+    assertEquals(isVirtualFilesystem(Object.create(derived)), false);
+    assertEquals(proxyTraps, 0);
   });
 
   it("should classify an ordinary local filesystem as non-virtual", () => {

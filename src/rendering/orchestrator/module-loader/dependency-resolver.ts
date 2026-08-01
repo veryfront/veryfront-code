@@ -1,4 +1,4 @@
-import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
+import { dirname, join, normalize, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { parallelMap, rendererLogger } from "#veryfront/utils";
 import {
@@ -192,13 +192,16 @@ export function rewriteResolvedDependencyImports(
   fileContent: string,
   transformedDeps: TransformedModuleDependency[],
 ): string {
-  const replacements: SourceSpanReplacement[] = transformedDeps.map((dep) => ({
-    start: dep.start,
-    end: dep.end,
-    expected: dep.full,
-    // A dynamic span covers only the quoted specifier; a static one covers the
-    // whole `from "…"` clause.
-    replacement: dep.isDynamic ? `"file://${dep.depTempPath}"` : `from "file://${dep.depTempPath}"`,
-  }));
+  const replacements: SourceSpanReplacement[] = transformedDeps.map((dep) => {
+    const moduleUrl = toFileUrl(dep.depTempPath).href;
+    return {
+      start: dep.start,
+      end: dep.end,
+      expected: dep.full,
+      // A dynamic span covers only the quoted specifier; a static one covers the
+      // whole `from "…"` clause.
+      replacement: dep.isDynamic ? `"${moduleUrl}"` : `from "${moduleUrl}"`,
+    };
+  });
   return replaceSourceSpans(fileContent, replacements);
 }

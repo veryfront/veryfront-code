@@ -4,6 +4,8 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { registerSkill, skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { tool } from "#veryfront/tool";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "./index.ts";
 import { agentRegistryInternal } from "./composition/composition.ts";
 import type { AgentConfig } from "./types.ts";
@@ -116,8 +118,39 @@ describe("agent/factory call context", () => {
     assertStringIncludes(prompt, "<available_skills>");
     assertStringIncludes(
       prompt,
+      '- {"skillId":"support-triage","description":"Triage incoming support requests","allowedTools":[]}',
+    );
+    assertEquals(prompt.includes("create_file"), false);
+    assertStringIncludes(prompt, "execute_skill_script: Call with");
+  });
+
+  it("preserves skill tool metadata when the direct factory selects that tool", async () => {
+    registerSkill("support-triage", {
+      id: "support-triage",
+      metadata: {
+        name: "support-triage",
+        description: "Triage incoming support requests",
+        allowedTools: ["create_file"],
+      },
+      rootPath: "/test/skills/support-triage",
+    });
+
+    const prompt = await captureFactorySystemPrompt({
+      id: "skill-agent",
+      system: "You are a support agent.",
+      tools: {
+        create_file: tool({
+          id: "create_file",
+          description: "Create a file",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({ ok: true }),
+        }),
+      },
+    });
+
+    assertStringIncludes(
+      prompt,
       '- {"skillId":"support-triage","description":"Triage incoming support requests","allowedTools":["create_file"]}',
     );
-    assertStringIncludes(prompt, "execute_skill_script: Call with");
   });
 });

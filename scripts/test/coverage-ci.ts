@@ -1,4 +1,10 @@
 import { walk } from "#std/fs/walk";
+import {
+  collectUnitTestFiles,
+  partitionUnitTestFiles,
+  type UnitTestFilePartition,
+  type UnitTestLane,
+} from "./unit-test-runner.ts";
 
 export interface ShardSpec {
   index: number;
@@ -8,6 +14,7 @@ export interface ShardSpec {
 export interface DenoTestCommandOptions {
   coverageDir: string;
   files: string[];
+  mode: UnitTestLane;
 }
 
 interface LcovLineRecord {
@@ -15,8 +22,8 @@ interface LcovLineRecord {
   line: number;
 }
 
-const UNIT_COVERAGE_ROOTS = ["src", "cli"];
 const UNIT_COVERAGE_ENV = {
+  DENO_TESTING: "1",
   VF_DISABLE_LRU_INTERVAL: "1",
   SSR_TRANSFORM_PER_PROJECT_LIMIT: "0",
   REVALIDATION_PER_PROJECT_LIMIT: "0",
@@ -48,24 +55,34 @@ export function selectShardFiles(files: string[], shard: ShardSpec): string[] {
 }
 
 export async function collectUnitCoverageTestFiles(): Promise<string[]> {
-  const files: string[] = [];
+  return await collectUnitTestFiles();
+}
 
-  for (const root of UNIT_COVERAGE_ROOTS) {
-    if (!(await exists(root))) continue;
+export function selectShardTestLanes(
+  files: string[],
+  partition: UnitTestFilePartition,
+  shard: ShardSpec,
+): UnitTestFilePartition {
+  const selected = selectShardFiles(files, shard);
+  const parallelFiles = new Set(partition.parallelFiles);
+  const serialCwdFiles = new Set(partition.serialCwdFiles);
+  const lanes: UnitTestFilePartition = {
+    parallelFiles: [],
+    serialCwdFiles: [],
+  };
 
-    for await (
-      const entry of walk(root, {
-        includeDirs: false,
-        exts: [".ts"],
-      })
-    ) {
-      const normalizedPath = entry.path.replaceAll("\\", "/");
-      if (!isUnitCoverageTestFile(normalizedPath)) continue;
-      files.push(normalizedPath);
+  for (const path of selected) {
+    const isParallel = parallelFiles.has(path);
+    const isSerialCwd = serialCwdFiles.has(path);
+    if (isParallel === isSerialCwd) {
+      throw new Error(
+        `Selected coverage test must belong to exactly one unit-test lane: ${path}`,
+      );
     }
+    (isSerialCwd ? lanes.serialCwdFiles : lanes.parallelFiles).push(path);
   }
 
-  return files.sort((a, b) => a.localeCompare(b));
+  return lanes;
 }
 
 export function buildDenoTestCommandArgs(
@@ -74,8 +91,10 @@ export function buildDenoTestCommandArgs(
   return [
     "test",
     "--preload=src/schemas/_test-setup.ts",
+    ...(options.mode === "parallel"
+      ? ["--preload=scripts/test/forbid-parallel-cwd-mutation.ts", "--parallel"]
+      : []),
     "--no-check",
-    "--parallel",
     "--fail-fast",
     "--allow-all",
     "--v8-flags=--max-old-space-size=8192",
@@ -155,22 +174,51 @@ async function runShard(args: string[]): Promise<void> {
   await removeIfExists(coverageDir);
   await runDeno(["task", "generate"]);
 
-  const files = selectShardFiles(await collectUnitCoverageTestFiles(), shard);
-  if (files.length === 0) {
+  const files = await collectUnitCoverageTestFiles();
+  const partition = await partitionUnitTestFiles(files);
+  const lanes = selectShardTestLanes(files, partition, shard);
+  if (lanes.parallelFiles.length + lanes.serialCwdFiles.length === 0) {
     throw new Error(
       `Coverage shard ${shard.index}/${shard.total} selected no test files.`,
     );
   }
 
-  await runDeno(
-    buildDenoTestCommandArgs({ coverageDir, files }),
-    UNIT_COVERAGE_ENV,
-  );
+  await runCoverageTestLanes(coverageDir, lanes);
 
   await clearEmptyCoverageProfileJson(coverageDir);
   const lcov = await captureDeno(buildCoverageCommandArgs([coverageDir]));
   await clearCoverageProfileJson(coverageDir);
   await Deno.writeTextFile(`${coverageDir}/lcov.info`, lcov);
+}
+
+async function runUnitCoverage(args: string[]): Promise<void> {
+  const coverageDir = readOption(args, "--coverage-dir") ?? "coverage";
+
+  await removeIfExists(coverageDir);
+  await runDeno(["task", "generate"]);
+
+  const files = await collectUnitCoverageTestFiles();
+  const partition = await partitionUnitTestFiles(files);
+  await runCoverageTestLanes(coverageDir, partition);
+  await clearEmptyCoverageProfileJson(coverageDir);
+}
+
+async function runCoverageTestLanes(
+  coverageDir: string,
+  partition: UnitTestFilePartition,
+): Promise<void> {
+  const lanes: readonly [UnitTestLane, string[]][] = [
+    ["parallel", partition.parallelFiles],
+    ["serial-cwd", partition.serialCwdFiles],
+  ];
+
+  for (const [mode, files] of lanes) {
+    if (files.length === 0) continue;
+    await runDeno(
+      buildDenoTestCommandArgs({ coverageDir, files, mode }),
+      UNIT_COVERAGE_ENV,
+    );
+  }
 }
 
 async function runMerge(args: string[]): Promise<void> {
@@ -217,12 +265,6 @@ function parseLcovLine(line: string): LcovLineRecord | undefined {
   return { line: lineNumber, covered };
 }
 
-function isUnitCoverageTestFile(path: string): boolean {
-  return path.endsWith(".test.ts") &&
-    !path.endsWith(".integration.test.ts") &&
-    !path.startsWith("src/workflow/__tests__/");
-}
-
 function readOption(args: string[], name: string): string | undefined {
   const prefix = `${name}=`;
   const inline = args.find((arg) => arg.startsWith(prefix));
@@ -231,16 +273,6 @@ function readOption(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index >= 0) return args[index + 1];
   return undefined;
-}
-
-async function exists(path: string): Promise<boolean> {
-  try {
-    await Deno.stat(path);
-    return true;
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) return false;
-    throw error;
-  }
 }
 
 async function collectLcovFiles(paths: string[]): Promise<string[]> {
@@ -333,9 +365,11 @@ if (import.meta.main) {
   const [mode, ...rawArgs] = Deno.args.filter((arg) => arg !== "--");
   if (mode === "shard") {
     await runShard(rawArgs);
+  } else if (mode === "unit") {
+    await runUnitCoverage(rawArgs);
   } else if (mode === "merge") {
     await runMerge(rawArgs);
   } else {
-    throw new Error("Usage: coverage-ci.ts <shard|merge> [options]");
+    throw new Error("Usage: coverage-ci.ts <shard|unit|merge> [options]");
   }
 }

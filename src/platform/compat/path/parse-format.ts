@@ -3,12 +3,13 @@ import {
   hasWindowsLikePath,
   portableFormat,
   portableParse,
+  runtimeUsesWindowsPaths,
   toPortableSeparators,
 } from "./portable.ts";
 import { getNativePathImplementation } from "./runtime.ts";
 
 export function parse(path: string): PathObject {
-  const windows = hasWindowsLikePath(path);
+  const windows = runtimeUsesWindowsPaths() || hasWindowsLikePath(path);
   const pathApi = getNativePathImplementation(windows);
   if (!pathApi) return portableParse(path, windows);
 
@@ -23,7 +24,8 @@ export function parse(path: string): PathObject {
 }
 
 export function format(pathObject: PathObject): string {
-  const windows = hasWindowsLikePath(pathObject.root ?? "") ||
+  const windows = runtimeUsesWindowsPaths() ||
+    hasWindowsLikePath(pathObject.root ?? "") ||
     hasWindowsLikePath(pathObject.dir ?? "");
   const pathApi = getNativePathImplementation(windows);
   if (!pathApi) return portableFormat(pathObject, windows);

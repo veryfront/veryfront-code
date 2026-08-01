@@ -2,10 +2,12 @@ import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import {
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
+  collectUnitCoverageTestFiles,
   mergeLcovReports,
   parseShardSpec,
   selectShardFiles,
-} from "../../scripts/test/coverage-ci.ts";
+  selectShardTestLanes,
+} from "./coverage-ci.ts";
 
 Deno.test("parseShardSpec accepts one-based shard coordinates", () => {
   assertEquals(parseShardSpec("3/8"), { index: 3, total: 8 });
@@ -44,16 +46,63 @@ Deno.test("selectShardFiles splits files deterministically by sorted order", () 
   ]);
 });
 
-Deno.test("buildDenoTestCommandArgs keeps coverage profiles isolated per shard", () => {
-  const args = buildDenoTestCommandArgs({
+Deno.test("selectShardTestLanes preserves global shard assignment and canonical lanes", () => {
+  const files = [
+    "src/d.test.ts",
+    "src/a.test.ts",
+    "src/c.test.ts",
+    "src/b.test.ts",
+  ];
+
+  assertEquals(
+    selectShardTestLanes(
+      files,
+      {
+        parallelFiles: ["src/a.test.ts", "src/c.test.ts"],
+        serialCwdFiles: ["src/b.test.ts", "src/d.test.ts"],
+      },
+      { index: 2, total: 2 },
+    ),
+    {
+      parallelFiles: [],
+      serialCwdFiles: ["src/b.test.ts", "src/d.test.ts"],
+    },
+  );
+});
+
+Deno.test("coverage collection reuses unit collection including TSX tests", async () => {
+  const files = await collectUnitCoverageTestFiles();
+  assertEquals(files.includes("src/react/fonts/index.test.tsx"), true);
+});
+
+Deno.test("buildDenoTestCommandArgs guards only the parallel coverage lane", () => {
+  const parallel = buildDenoTestCommandArgs({
     coverageDir: "coverage-shard-3",
     files: ["src/example.test.ts"],
+    mode: "parallel",
+  });
+  const serial = buildDenoTestCommandArgs({
+    coverageDir: "coverage-shard-3",
+    files: ["src/serial.test.ts"],
+    mode: "serial-cwd",
   });
 
-  assertEquals(args.includes("--coverage=coverage-shard-3"), true);
-  assertEquals(args.includes("--coverage-raw-data-only"), true);
-  assertEquals(args.includes("--parallel"), true);
-  assertEquals(args.includes("src/example.test.ts"), true);
+  assertEquals(parallel.includes("--coverage=coverage-shard-3"), true);
+  assertEquals(parallel.includes("--coverage-raw-data-only"), true);
+  assertEquals(parallel.includes("--parallel"), true);
+  assertEquals(
+    parallel.includes(
+      "--preload=scripts/test/forbid-parallel-cwd-mutation.ts",
+    ),
+    true,
+  );
+  assertEquals(parallel.includes("src/example.test.ts"), true);
+  assertEquals(serial.includes("--coverage=coverage-shard-3"), true);
+  assertEquals(serial.includes("--parallel"), false);
+  assertEquals(
+    serial.includes("--preload=scripts/test/forbid-parallel-cwd-mutation.ts"),
+    false,
+  );
 });
 
 Deno.test("buildCoverageCommandArgs converts a shard profile dir to an lcov stream", () => {

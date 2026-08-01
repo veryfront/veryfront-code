@@ -9,8 +9,7 @@ interface RootInfo {
 
 export function hasWindowsLikePath(path: string): boolean {
   return path.includes("\\") ||
-    /^[A-Za-z]:/.test(path) ||
-    path.startsWith("//");
+    /^[A-Za-z]:/.test(path);
 }
 
 export function toPortableSeparators(path: string): string {
@@ -22,7 +21,7 @@ function analyzeRoot(path: string, windows: boolean): RootInfo {
 
   if (windows) {
     const unc = portable.match(
-      /^\/\/+([^/]+)\/+([^/]+)(\/+(.*))?$/,
+      /^\/\/([^/]+)\/+([^/]+)(\/+(.*))?$/,
     );
     if (unc?.[1] && unc[2]) {
       const device = `//${unc[1]}/${unc[2]}`;
@@ -98,9 +97,35 @@ function canonicalPath(path: string, windows: boolean): string {
   return windows ? toPortableSeparators(path) : path;
 }
 
+export function removeTrailingSeparatorsExceptRoot(
+  path: string,
+  windows: boolean,
+): string {
+  const root = analyzeRoot(path, windows);
+  let canonical = canonicalPath(path, windows);
+  while (
+    canonical.endsWith("/") &&
+    canonical.length > root.root.length
+  ) {
+    canonical = canonical.slice(0, -1);
+  }
+  return canonical;
+}
+
 function rootKey(root: RootInfo, windows: boolean): string {
   const value = root.device || root.root;
   return windows ? value.toLowerCase() : value;
+}
+
+export function runtimeUsesWindowsPaths(): boolean {
+  const runtime = globalThis as typeof globalThis & {
+    Deno?: { build?: { os?: string } };
+    process?: { platform?: string };
+  };
+  if (typeof runtime.Deno?.build?.os === "string") {
+    return runtime.Deno.build.os === "windows";
+  }
+  return runtime.process?.platform === "win32";
 }
 
 function runtimeCwd(): string {
@@ -184,6 +209,8 @@ export function portableBasename(
 
   const root = analyzeRoot(path, windows);
   let canonical = canonicalPath(path, windows);
+  const originalPath = canonical;
+  if (ext !== undefined && ext !== "" && ext === originalPath) return "";
   while (
     canonical.endsWith("/") &&
     canonical.length > root.root.length
@@ -213,7 +240,7 @@ export function portableBasename(
   }
 
   if (ext !== undefined && ext !== "" && base.endsWith(ext)) {
-    return base.slice(0, -ext.length);
+    if (ext.length < base.length) return base.slice(0, -ext.length);
   }
   return base;
 }

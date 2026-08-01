@@ -10,8 +10,8 @@
 
 import { load } from "#std/dotenv.ts";
 import { cliLogger } from "../../cli/utils/index.ts";
-import { cwd } from "veryfront/platform";
-import { createFileSystem } from "veryfront/platform";
+import { createFileSystem, cwd } from "veryfront/platform";
+import { fromFileUrl, join } from "veryfront/platform/path";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import type { ApiClient } from "../../cli/shared/config.ts";
 
@@ -72,8 +72,8 @@ export async function createVCRClient(
 ): Promise<{ client: ApiClient; save: () => Promise<void>; projectSlug: string }> {
   const fs = createFileSystem();
   const recording = env.vcr === "record";
-  const fixturesDir = new URL("../../cli/test-fixtures", import.meta.url).pathname;
-  const cassettePath = `${fixturesDir}/${cassetteName}.json`;
+  const fixturesDir = fromFileUrl(new URL("../../cli/test-fixtures/", import.meta.url));
+  const cassettePath = join(fixturesDir, `${cassetteName}.json`);
 
   let cassette: VCRCassette = {
     meta: { projectSlug: projectSlug ?? "", recordedAt: "" },

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { cwd } from "../process.ts";
 import { isAbsolute, normalize, relative, resolve } from "./resolution.ts";
 
 describe("platform/compat/path/resolution", () => {
@@ -19,6 +20,15 @@ describe("platform/compat/path/resolution", () => {
 
     it("should use last absolute path", () => {
       assertEquals(resolve("/first", "/second"), "/second");
+    });
+
+    it("uses the runtime working directory for relative paths", () => {
+      const workingDirectory = cwd().replaceAll("\\", "/");
+      assertEquals(resolve("."), workingDirectory);
+      assertEquals(
+        resolve("relative", "file.ts"),
+        `${workingDirectory}/relative/file.ts`,
+      );
     });
 
     it("should handle Windows drive-letter paths", () => {
@@ -41,7 +51,7 @@ describe("platform/compat/path/resolution", () => {
 
     it("preserves UNC roots", () => {
       assertEquals(
-        resolve("//server/share/project", ".."),
+        resolve(String.raw`\\server\share\project`, ".."),
         "//server/share/",
       );
     });
@@ -78,10 +88,6 @@ describe("platform/compat/path/resolution", () => {
     it("should return . for same path", () => {
       assertEquals(relative("/home/user", "/home/user"), ".");
     });
-
-    it("returns an absolute portable path across Windows drives", () => {
-      assertEquals(relative("C:/workspace", "D:/project"), "D:/project");
-    });
   });
 
   describe("normalize", () => {
@@ -97,12 +103,24 @@ describe("platform/compat/path/resolution", () => {
       assertEquals(normalize("/home//user"), "/home/user");
     });
 
+    it("keeps redundant POSIX roots local", () => {
+      assertEquals(normalize("//tmp/file.ts"), "/tmp/file.ts");
+      assertEquals(normalize("///tmp/file.ts"), "/tmp/file.ts");
+      assertEquals(normalize("////tmp/file.ts"), "/tmp/file.ts");
+    });
+
     it("should return . for empty string", () => {
       assertEquals(normalize(""), ".");
     });
 
     it("should preserve absolute path root", () => {
       assertEquals(normalize("/"), "/");
+    });
+
+    it("should remove trailing separators from non-root paths", () => {
+      assertEquals(normalize("uploads/"), "uploads");
+      assertEquals(normalize("./"), ".");
+      assertEquals(normalize("D:/project/"), "D:/project");
     });
 
     it("should handle relative parent traversal", () => {
@@ -122,6 +140,7 @@ describe("platform/compat/path/resolution", () => {
         normalize("\\\\server\\share\\project\\..\\src"),
         "//server/share/src",
       );
+      assertEquals(normalize("\\\\server\\share\\"), "//server/share/");
     });
   });
 });

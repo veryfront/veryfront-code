@@ -11,7 +11,7 @@
  */
 
 import { computeHash, logger as baseLogger } from "#veryfront/utils";
-import { dirname, join, resolve } from "veryfront/platform/path";
+import { dirname, join, resolve } from "#veryfront/compat/path";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
 import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";

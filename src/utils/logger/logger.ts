@@ -75,6 +75,7 @@ export interface LogEntry {
   request_url?: string;
   domain?: string;
   project_id?: string;
+  process_role?: string;
   release_id?: string;
   branch_id?: string;
   branch_name?: string;
@@ -94,6 +95,8 @@ export interface LogEntry {
   user_id?: string;
   conversation_id?: string;
   environment?: string;
+  /** @deprecated Use `process_role` instead. Kept for dashboard transition. */
+  processRole?: string;
   /** @deprecated Use `user_id` instead. Kept for Grafana dashboard transition. */
   userId?: string;
   /** @deprecated Use `conversation_id` instead. Kept for Grafana dashboard transition. */

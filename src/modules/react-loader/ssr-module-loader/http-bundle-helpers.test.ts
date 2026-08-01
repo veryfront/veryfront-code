@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 import {
   extractAllFilePaths,
@@ -178,6 +178,13 @@ describe("extractAllFilePaths", () => {
     assertEquals(extractAllFilePaths(code), ["/tmp/project/Button.tsx"]);
   });
 
+  it("decodes encoded file URL paths before filesystem validation", () => {
+    const path = "/tmp/_pins/on%3Asnapshot/Button.tsx";
+    const code = `import a from ${JSON.stringify(toFileUrl(path).href)};`;
+
+    assertEquals(extractAllFilePaths(code), [path]);
+  });
+
   it("deduplicates identical paths", () => {
     const code = [
       `import a from "file:///tmp/shared.js";`,
@@ -298,6 +305,32 @@ describe("recursive cache path extraction", () => {
       assertEquals(visits, 0);
     } finally {
       await remove(outsideDir, { recursive: true });
+    }
+  });
+
+  it("visits nested modules through encoded file URL paths", async () => {
+    const tempDir = join(
+      getMdxEsmCacheDir(),
+      `vf-encoded-file-path-helper-${crypto.randomUUID()}`,
+    );
+    const childDir = join(tempDir, "veryfront-mdx-esm", "_pins", "on%3Asnapshot");
+    const childPath = join(childDir, "vfmod-child.mjs");
+
+    try {
+      await mkdir(childDir, { recursive: true });
+      await writeTextFile(
+        childPath,
+        `import markdown from "file:///app/.cache/markdown.tsx"; export default markdown;`,
+      );
+
+      const paths = await extractAllFilePathsRecursive(
+        `import child from ${JSON.stringify(toFileUrl(childPath).href)}; export default child;`,
+      );
+
+      assertEquals(paths.includes(childPath), true);
+      assertEquals(paths.includes("/app/.cache/markdown.tsx"), true);
+    } finally {
+      await remove(tempDir, { recursive: true });
     }
   });
 });

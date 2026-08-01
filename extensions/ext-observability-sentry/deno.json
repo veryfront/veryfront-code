@@ -11,6 +11,29 @@
     "contracts": {
       "provides": ["ApplicationErrorReporterInitializer"]
     },
+    "npm": {
+      "stagedSources": [
+        {
+          "specifier": "#veryfront/observability/application-error-contract.ts",
+          "source": "src/observability/application-error-contract.ts",
+          "target": "src/application-error-contract.ts"
+        }
+      ],
+      "runtimePackages": [
+        {
+          "name": "@veryfront/ext-observability-sentry-node",
+          "export": "./node",
+          "dependencies": ["@sentry/node"],
+          "peerVeryfront": false
+        },
+        {
+          "name": "@veryfront/ext-observability-sentry-deno",
+          "export": "./deno",
+          "dependencies": ["@sentry/deno"],
+          "peerVeryfront": false
+        }
+      ]
+    },
     "capabilities": [
       { "type": "net:outbound", "hosts": ["*"] },
       {
@@ -40,6 +63,7 @@
     "@sentry/deno": "npm:@sentry/deno@10.68.0",
     "@sentry/node": "npm:@sentry/node@10.68.0",
     "@std/assert": "jsr:@std/assert@1.0.19",
+    "#veryfront/": "../../src/",
     "veryfront/extensions": "../../src/extensions/index.ts",
     "veryfront/extensions/observability": "../../src/extensions/observability/index.ts"
   },

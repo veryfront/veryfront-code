@@ -103,6 +103,7 @@ describe("agent/service/node-application-errors", () => {
         span_id: "span-1",
         project_id: "project-1",
         project_slug: "test-project",
+        process_role: "api",
         run_id: "run-1",
         agent_id: "agent-1",
         conversation_id: "conversation-1",
@@ -116,6 +117,7 @@ describe("agent/service/node-application-errors", () => {
       assertEquals(captured.error instanceof Error ? captured.error.message : "", "boom");
       assertEquals(captured.context, {
         boundary: "agent.framework-log",
+        processRole: "api",
         requestId: "req-1",
         traceId: "trace-1",
         spanId: "span-1",

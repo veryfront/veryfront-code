@@ -336,6 +336,23 @@ jobs:
       - name: Clean-room install/import smoke
         run: bash scripts/test/npm-install-smoke.sh
 
+  tests-sentry-runtime-packages:
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    name: tests (sentry runtime packages)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-deno
+        with:
+          warm-cache: "true"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Check Sentry runtime package variants
+        run: deno task test:sentry-runtime-packages
+
   # ============================================
   # CI: Split Mode Test
   # ============================================
@@ -493,6 +510,7 @@ jobs:
       coverage,
       tests-binary-e2e,
       tests-npm-install-smoke,
+      tests-sentry-runtime-packages,
       build-binaries,
       version-check,
     ]
@@ -621,6 +639,7 @@ jobs:
       coverage,
       tests-binary-e2e,
       tests-npm-install-smoke,
+      tests-sentry-runtime-packages,
       build-binaries,
       version-check,
     ]

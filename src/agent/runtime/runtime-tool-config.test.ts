@@ -8,7 +8,9 @@ import {
   getRuntimeProviderTools,
   getRuntimeSourceIntegrationPolicy,
   getRuntimeSourceIntegrationPolicyFromContext,
+  getRuntimeToolExposureCheckpoint,
   resolveRuntimeToolExecutionContext,
+  resolveRuntimeToolLoading,
 } from "./runtime-tool-config.ts";
 
 function runtimeConfig(extra: Record<string, unknown> = {}): AgentConfig {
@@ -93,6 +95,69 @@ describe("agent/runtime-tool-config", () => {
       assertEquals(Object.hasOwn(explicitlyInvalid, "projectId"), false);
       assertEquals(Object.hasOwn(explicitlyInvalid, "projectSlug"), false);
     });
+  });
+
+  it("derives tool loading from the public tools selector", () => {
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig()), {
+      mode: "eager",
+      provenance: "tools-selector",
+    });
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ tools: true })), {
+      mode: "deferred",
+      provenance: "tools-selector",
+    });
+    assertEquals(resolveRuntimeToolLoading(runtimeConfig({ tools: { get_release: true } })), {
+      mode: "eager",
+      provenance: "tools-selector",
+    });
+  });
+
+  it("keeps host bindings internal and gives the eager rollback override precedence", () => {
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        __vfToolLoadingMode: "eager",
+      })),
+      {
+        mode: "eager",
+        provenance: "host-runtime-binding",
+      },
+    );
+    assertEquals(
+      resolveRuntimeToolLoading(runtimeConfig({
+        tools: true,
+        __vfToolLoadingMode: "deferred",
+        __vfOperationalToolLoadingOverride: "eager",
+      })),
+      {
+        mode: "eager",
+        provenance: "host-operational-override",
+      },
+    );
+  });
+
+  it("accepts only supported private checkpoint state from internal config", () => {
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 1,
+          loadedToolNames: ["get_release"],
+        },
+      })),
+      {
+        version: 1,
+        loadedToolNames: ["get_release"],
+      },
+    );
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 2,
+          loadedToolNames: ["get_release"],
+        },
+      })),
+      undefined,
+    );
   });
 
   describe("getRuntimeAllowedRemoteTools", () => {

@@ -27,6 +27,34 @@ import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bou
 const universalObjectPrototype = Object.prototype;
 const defineProperty = Object.defineProperty;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const intrinsicWeakSet = WeakSet;
+const reflectApply = Reflect.apply;
+const weakSetAdd = intrinsicWeakSet.prototype.add;
+const weakSetHas = intrinsicWeakSet.prototype.has;
+const derivedVirtualFileSystemAdapters = new intrinsicWeakSet<FileSystemAdapter>();
+
+/**
+ * Preserve virtual provenance for a trusted derived adapter view.
+ *
+ * Exact-object registration allows path-translating Proxy facades to retain
+ * their source classification without treating arbitrary or inherited proxies
+ * as virtual filesystems.
+ */
+export function markDerivedVirtualFileSystemAdapter(
+  adapter: FileSystemAdapter,
+): void {
+  reflectApply(weakSetAdd, derivedVirtualFileSystemAdapters, [adapter]);
+}
+
+function isDerivedVirtualFileSystemAdapter(
+  adapter: FileSystemAdapter,
+): boolean {
+  return reflectApply(
+    weakSetHas,
+    derivedVirtualFileSystemAdapters,
+    [adapter],
+  ) as boolean;
+}
 
 const WRAPPER_PUBLISHED_CAPABILITY_KEYS = [
   "symlinkSemantics",
@@ -237,7 +265,7 @@ export function hasHostedStyleConfigCapability(
  */
 export function isVirtualFilesystem(fs: FileSystemAdapter): boolean {
   if (!fs || typeof fs !== "object") return false;
-  return isExtendedFSAdapter(fs);
+  return isDerivedVirtualFileSystemAdapter(fs) || isExtendedFSAdapter(fs);
 }
 
 export class NotSupportedError extends Error {

@@ -17,7 +17,7 @@ import {
   type ModuleLoaderConfig,
   transformModuleWithDeps,
 } from "./index.ts";
-import { getModuleCacheKey } from "./module-cache-lookup.ts";
+import { buildModuleTransformCacheVariant, getModuleCacheKey } from "./module-cache-lookup.ts";
 import { isBuildFailure } from "./build-failure.ts";
 import {
   fingerprintPipelineImportMap,
@@ -419,6 +419,57 @@ describe("module-loader/loadModule build-failure tagging", () => {
 });
 
 describe("module-loader/loadModule", () => {
+  it("loads a module from an encoded dependency-pin cache directory", async () => {
+    await withModuleLoaderFixture(
+      { "app/page.ts": `export const value = "pinned";` },
+      async ({ projectDir, tmpDir, config }) => {
+        const filePath = join(projectDir, "app/page.ts");
+        const dependencyPinningCacheKey = "on:3m96ohlm0kf87";
+        const dependencyPinningDependencies = Object.freeze({ lodash: "1.0.0" });
+        const moduleServerOrigin = "https://preview.example.test";
+        const pinnedConfig = await withCanonicalImportMap({
+          ...config,
+          dependencyPinningCacheKey,
+          dependencyPinningDependencies,
+          moduleServerOrigin,
+        });
+        const cacheVariant = buildModuleTransformCacheVariant(
+          dependencyPinningCacheKey,
+          moduleServerOrigin,
+        );
+        assert(cacheVariant);
+        const artifactPath = join(
+          tmpDir,
+          "_pins",
+          encodeURIComponent(cacheVariant),
+          "app/page.pinned.mjs",
+        );
+        await Deno.mkdir(dirname(artifactPath), { recursive: true });
+        await Deno.writeTextFile(artifactPath, `export const value = "pinned";`);
+        pinnedConfig.moduleCache.set(
+          getModuleCacheKey(
+            filePath,
+            undefined,
+            projectDir,
+            undefined,
+            undefined,
+            "development",
+            pinnedConfig.importMapFingerprint,
+            dependencyPinningCacheKey,
+            moduleServerOrigin,
+          ),
+          artifactPath,
+        );
+
+        await runWithCacheDir(tmpDir, async () => {
+          const loaded = await loadModule(filePath, pinnedConfig);
+
+          assertEquals(loaded.value, "pinned");
+        });
+      },
+    );
+  });
+
   it("reuses the content-addressed module identity across repeated loads", async () => {
     await withModuleLoaderFixture(
       { "app/page.ts": `export const value = "stable";` },

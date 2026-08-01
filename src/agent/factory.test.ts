@@ -444,6 +444,34 @@ description: Excluded skill
     );
   });
 
+  it("does not disclose deferred tool names through direct skill metadata", async () => {
+    registerSkill("release-manager", {
+      id: "release-manager",
+      metadata: {
+        name: "release-manager",
+        description: "Manage releases",
+        allowedTools: ["create_release"],
+      },
+      rootPath: "/test/skills/release-manager",
+    });
+
+    const assistant = agent({
+      id: "deferred-skill-metadata",
+      tools: true,
+      skills: ["release-manager"],
+    } as AgentConfig);
+    const effectiveSystem = getEffectiveAgentSystem(assistant);
+    const prompt = typeof effectiveSystem === "function"
+      ? await effectiveSystem()
+      : effectiveSystem ?? "";
+
+    assertStringIncludes(prompt, "release-manager");
+    assertEquals(prompt.includes("create_release"), false);
+    assertEquals(prompt.includes("load_skill_reference"), false);
+    assertEquals(prompt.includes("execute_skill_script"), false);
+    assertStringIncludes(prompt, "- load_skill: Call with");
+  });
+
   it("keeps Unicode separators confined in the agent skill catalog", async () => {
     registerSkill(
       "separator-safe",

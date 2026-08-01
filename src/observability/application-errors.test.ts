@@ -1,12 +1,20 @@
-import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
 import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
+import {
+  type ApplicationErrorContext,
   captureApplicationError,
   flushApplicationErrors,
   initializeApplicationErrorReporter,
   setApplicationErrorReporter,
 } from "./application-errors.ts";
+import type { ApplicationErrorContext as SharedApplicationErrorContext } from "./application-error-contract.ts";
 
-Deno.test("application error reporter is optional", async () => {
+it("application error reporter is optional", async () => {
   setApplicationErrorReporter(undefined);
 
   assertEquals(
@@ -16,12 +24,22 @@ Deno.test("application error reporter is optional", async () => {
   assertEquals(await flushApplicationErrors(), true);
 });
 
-Deno.test("application error reporter receives unexpected failures and correlation context", async () => {
-  const captures: Array<{ error: unknown; boundary: string; traceId?: string }> = [];
+it("application error reporter receives unexpected failures and correlation context", async () => {
+  const captures: Array<{
+    error: unknown;
+    boundary: string;
+    processRole?: string;
+    traceId?: string;
+  }> = [];
   let flushTimeout: number | undefined;
   setApplicationErrorReporter({
     capture(error, context) {
-      captures.push({ error, boundary: context.boundary, traceId: context.traceId });
+      captures.push({
+        error,
+        boundary: context.boundary,
+        processRole: context.processRole,
+        traceId: context.traceId,
+      });
       return "event-id";
     },
     flush(timeoutMs) {
@@ -34,16 +52,32 @@ Deno.test("application error reporter receives unexpected failures and correlati
   assertEquals(
     captureApplicationError(error, {
       boundary: "renderer.request",
+      processRole: "renderer",
       traceId: "trace-1",
     }),
     "event-id",
   );
-  assertEquals(captures, [{ error, boundary: "renderer.request", traceId: "trace-1" }]);
+  assertEquals(captures, [{
+    error,
+    boundary: "renderer.request",
+    processRole: "renderer",
+    traceId: "trace-1",
+  }]);
   assertEquals(await flushApplicationErrors(1_500), true);
   assertEquals(flushTimeout, 1_500);
 });
 
-Deno.test("application error reporter ignores expected cancellation", () => {
+it("application error context exports process role from the shared contract", () => {
+  const context: ApplicationErrorContext = {
+    boundary: "renderer.request",
+    processRole: "api",
+  };
+  const sharedContext: SharedApplicationErrorContext = context;
+
+  assertEquals(sharedContext.processRole, "api");
+});
+
+it("application error reporter ignores expected cancellation", () => {
   let captured = false;
   setApplicationErrorReporter({
     capture() {
@@ -62,7 +96,7 @@ Deno.test("application error reporter ignores expected cancellation", () => {
   assertEquals(captured, false);
 });
 
-Deno.test("application error capture failures never replace application control flow", () => {
+it("application error capture failures never replace application control flow", () => {
   const hostile = new Proxy({}, {
     getPrototypeOf() {
       throw new Error("prototype unavailable");
@@ -81,7 +115,7 @@ Deno.test("application error capture failures never replace application control 
   );
 });
 
-Deno.test("application error flush is strictly bounded and fail-open", async () => {
+it("application error flush is strictly bounded and fail-open", async () => {
   setApplicationErrorReporter({
     capture: () => undefined,
     flush: () => new Promise<boolean>(() => {}),
@@ -97,7 +131,7 @@ Deno.test("application error flush is strictly bounded and fail-open", async () 
   assertEquals(await flushApplicationErrors(-1), false);
 });
 
-Deno.test("application error initialization is explicitly disabled without a selected initializer", async () => {
+it("application error initialization is explicitly disabled without a selected initializer", async () => {
   const lifecycle = await initializeApplicationErrorReporter({
     serviceName: "test-service",
   });
@@ -107,7 +141,7 @@ Deno.test("application error initialization is explicitly disabled without a sel
   await lifecycle.dispose();
 });
 
-Deno.test("selected application error initializer failures propagate unchanged", async () => {
+it("selected application error initializer failures propagate unchanged", async () => {
   const initializationError = new Error("reporter initialization failed");
   const thrown = await assertRejects(() =>
     initializeApplicationErrorReporter({
@@ -121,7 +155,7 @@ Deno.test("selected application error initializer failures propagate unchanged",
   assertStrictEquals(thrown, initializationError);
 });
 
-Deno.test("application error initialization rejects invalid service identities and direct replacement races", async () => {
+it("application error initialization rejects invalid service identities and direct replacement races", async () => {
   await assertRejects(
     () =>
       initializeApplicationErrorReporter({
@@ -156,7 +190,7 @@ Deno.test("application error initialization rejects invalid service identities a
   await pending;
 });
 
-Deno.test("application error lifecycle publishes, flushes, and disposes one owned reporter", async () => {
+it("application error lifecycle publishes, flushes, and disposes one owned reporter", async () => {
   const captures: unknown[] = [];
   const flushTimeouts: Array<number | undefined> = [];
   let disposeCalls = 0;
@@ -196,7 +230,7 @@ Deno.test("application error lifecycle publishes, flushes, and disposes one owne
   assertEquals(lifecycle.capture(new Error("stale"), { boundary: "test" }), undefined);
 });
 
-Deno.test("superseded application error initialization disposes stale state before starting its replacement", async () => {
+it("superseded application error initialization disposes stale state before starting its replacement", async () => {
   let resolveFirst:
     | ((value: {
       reporter: { capture(): string; flush(): Promise<boolean> };

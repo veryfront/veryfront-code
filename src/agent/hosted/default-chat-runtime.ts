@@ -31,10 +31,12 @@ import type {
 } from "./chat-runtime-contract.ts";
 import {
   type HostedChatRuntimeToolAssemblyResult,
+  type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./chat-runtime-tool-assembly.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -132,6 +134,8 @@ export type DefaultHostedChatRuntimeProjectSwitchInput = {
 /** Options accepted by create default hosted chat runtime. */
 export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
+  /** Service-owned authorization ceiling applied to Framework host tools. */
+  hostToolPolicy?: HostedHostToolPolicy;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
   buildLocalTools: (
@@ -193,10 +197,24 @@ async function buildToolAssembly(
     taskContext: DefaultHostedChatRuntimeTaskContext;
   },
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
+  const liveProjectSteering = input.options.liveProjectSteering;
   return prepareHostedChatRuntimeToolAssembly({
     taskContext: input.taskContext,
     instructions: input.options.instructions,
+    ...(liveProjectSteering === undefined ? {} : {
+      renderInstructions: (modelVisibleToolNames: readonly string[]) =>
+        buildVeryfrontCloudRuntimeInstructions({
+          agentConfig: liveProjectSteering.agent,
+          projectId: input.taskContext.projectId,
+          branchId: input.taskContext.branchId,
+          environmentContext: liveProjectSteering.environmentContext,
+          instructions: liveProjectSteering.initialProjectInstructions ?? "",
+          skills: liveProjectSteering.initialSkills ?? [],
+          availableToolNames: modelVisibleToolNames,
+        }),
+    }),
     localTools: await input.buildLocalTools(input.taskContext),
+    hostToolPolicy: input.hostToolPolicy,
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
     studioMcpUrl: input.config.studioMcpUrl,
@@ -285,11 +303,16 @@ function createRuntimeAgentConfig(input: {
     model: input.modelId,
     system: input.toolAssembly.systemInstructions,
     tools: runtimeTools,
+    __vfToolLoadingMode: input.toolAssembly.toolLoadingMode,
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
     __vfResolveToolExecutionContext: () => resolveHostedToolExecutionIdentity(input.taskContext),
+    __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
+    __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
+    __vfToolExposureCheckpointPersistenceRequired:
+      input.options.requireToolExposureCheckpointPersistence === true,
     temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {

@@ -23,6 +23,7 @@ export interface DurableRunCanaryApiConfig {
   agentId: string;
   projectId: string | null;
   branchId?: string | null;
+  model?: string | null;
   requestTimeoutMs: number;
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
@@ -301,6 +302,16 @@ function buildStartRunBody(
           run_id: runId,
           message_id: messageId,
         },
+        forwarded_props: {
+          ...(config.model ? { model: config.model } : {}),
+          veryfront: {
+            client: {
+              id: "veryfront-studio",
+              type: "web",
+              platform: "durable-canary",
+            },
+          },
+        },
       },
     },
   };
@@ -426,6 +437,12 @@ export function createDurableRunCanaryApiClient(
   };
 }
 
+/** Execution metadata retained for each durable run canary prompt. */
+export interface DurableRunCanaryExecution {
+  runId: string;
+  run: DurableRunCanaryRunSummary;
+}
+
 /** Result returned from durable run canary. */
 export interface DurableRunCanaryResult {
   id: string;
@@ -435,6 +452,7 @@ export interface DurableRunCanaryResult {
   durationMs: number;
   conversationId: string;
   runId: string;
+  runIds: string[];
   artifactPaths?: string[];
 }
 
@@ -450,6 +468,7 @@ export interface DurableRunCanaryPreparedCase {
   validate: (input: {
     messages: DurableRunCanaryMessage[];
     run: DurableRunCanaryRunSummary;
+    executions: DurableRunCanaryExecution[];
   }) => Promise<void> | void;
 }
 
@@ -478,12 +497,8 @@ interface WaitForRunInput extends RunSummaryLocator {
 interface ExecuteDurableRunPromptInput {
   conversationId: string;
   onRunId: (runId: string) => void;
+  createdRunIds: string[];
   prompt: string;
-}
-
-interface ExecuteDurableRunPromptResult {
-  run: DurableRunCanaryRunSummary;
-  runId: string;
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -669,7 +684,7 @@ export function createDurableRunCanaryRunner(
 
   async function executeDurableRunPrompt(
     input: ExecuteDurableRunPromptInput,
-  ): Promise<ExecuteDurableRunPromptResult> {
+  ): Promise<DurableRunCanaryExecution> {
     const userMessage = await apiClient.sendUserMessageForCanary({
       conversationId: input.conversationId,
       prompt: input.prompt,
@@ -681,6 +696,7 @@ export function createDurableRunCanaryRunner(
       conversationId: input.conversationId,
       runId: currentRunId,
     });
+    input.createdRunIds.push(currentRunId);
     const visibleRun = await waitForRunSummaryVisibility({
       conversationId: input.conversationId,
       getRunSummary,
@@ -713,6 +729,8 @@ export function createDurableRunCanaryRunner(
     const startedAt = Date.now();
     let prepared: DurableRunCanaryPreparedCase | null = null;
     let runId = "unknown";
+    const runIds: string[] = [];
+    const executions: DurableRunCanaryExecution[] = [];
     let stopSidecar: (() => Promise<void>) | undefined;
     let completedSuccessfully = false;
     let result: DurableRunCanaryResult;
@@ -731,27 +749,34 @@ export function createDurableRunCanaryRunner(
       stopSidecar = typeof startedSidecarCleanup === "function" ? startedSidecarCleanup : undefined;
       const initialRun = await executeDurableRunPrompt({
         conversationId: prepared.conversationId,
+        createdRunIds: runIds,
         onRunId: (currentRunId) => {
           runId = currentRunId;
         },
         prompt: prepared.prompt,
       });
+      executions.push(initialRun);
+      runId = initialRun.runId;
       if (prepared.followUpPrompt) {
         assertCompletedSetupRunBeforeFollowUp(initialRun.run);
       }
-      const terminalRun = prepared.followUpPrompt
-        ? await executeDurableRunPrompt({
+      let terminalRun = initialRun;
+      if (prepared.followUpPrompt) {
+        terminalRun = await executeDurableRunPrompt({
           conversationId: prepared.conversationId,
+          createdRunIds: runIds,
           onRunId: (currentRunId) => {
             runId = currentRunId;
           },
           prompt: prepared.followUpPrompt,
-        })
-        : initialRun;
+        });
+        executions.push(terminalRun);
+      }
       runId = terminalRun.runId;
       const messages = await listMessagesWithReferencedChildren(prepared.conversationId);
 
       await prepared.validate({
+        executions,
         messages,
         run: terminalRun.run,
       });
@@ -769,6 +794,7 @@ export function createDurableRunCanaryRunner(
         durationMs: Date.now() - startedAt,
         conversationId: prepared.conversationId,
         runId,
+        runIds,
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
     } catch (error) {
@@ -789,6 +815,7 @@ export function createDurableRunCanaryRunner(
         durationMs: Date.now() - startedAt,
         conversationId: prepared?.conversationId ?? "unknown",
         runId,
+        runIds,
         ...(artifactPaths?.length ? { artifactPaths } : {}),
       };
     }

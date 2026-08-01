@@ -1,22 +1,26 @@
 import * as Sentry from "@sentry/node";
 import { env as nodeEnvironment } from "node:process";
-import type {
-  ApplicationErrorReporter,
-  ApplicationErrorReporterInitializer,
-  ApplicationErrorReporterSession,
-} from "veryfront/extensions/observability";
 import {
   resolveSentryConfig,
   type SentryApplicationErrorInitializerOptions,
+  type SentryApplicationErrorReporterInitializer,
+  type SentryApplicationErrorReporterSession,
   type SentryConfig,
   snapshotSentryInitializerOptions,
 } from "./config.ts";
+import type { ApplicationErrorReporter } from "#veryfront/observability/application-error-contract.ts";
 import {
   captureWithSentryPolicy,
   flushWithSentryPolicy,
   prepareSentryEvent,
   type SentryPolicySdk,
 } from "./policy.ts";
+
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+} from "#veryfront/observability/application-error-contract.ts";
+export type { SentryConfig } from "./config.ts";
 
 type NodeSentrySdk = SentryPolicySdk & {
   init(options: Parameters<typeof Sentry.init>[0]): unknown;
@@ -69,13 +73,13 @@ function readNodeEnvironment(name: string): string | undefined {
 export function createNodeSentryApplicationErrorReporterInitializer(
   options: SentryApplicationErrorInitializerOptions = {},
   sdk: NodeSentryLifecycleSdk = Sentry,
-): ApplicationErrorReporterInitializer {
+): SentryApplicationErrorReporterInitializer {
   const configuredOptions = snapshotSentryInitializerOptions(options);
   const disposeTimeoutMs = configuredOptions.disposeTimeoutMs;
   const configured = configuredOptions.config;
   const readEnvironment = configuredOptions.readEnvironment ?? readNodeEnvironment;
   return {
-    async initialize({ serviceName }): Promise<ApplicationErrorReporterSession | undefined> {
+    async initialize({ serviceName }): Promise<SentryApplicationErrorReporterSession | undefined> {
       const resolvedConfig = resolveSentryConfig({
         config: configured,
         defaultEnvironment: "production",
@@ -103,4 +107,8 @@ export function createNodeSentryApplicationErrorReporterInitializer(
   };
 }
 
-export type { SentryApplicationErrorInitializerOptions, SentryConfig } from "./config.ts";
+export type {
+  SentryApplicationErrorInitializerOptions,
+  SentryApplicationErrorReporterInitializer,
+  SentryApplicationErrorReporterSession,
+} from "./config.ts";

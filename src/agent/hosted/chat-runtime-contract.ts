@@ -8,6 +8,7 @@ import type {
 import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
+import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
 
@@ -147,4 +148,12 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   clientProfile?: RuntimeClientProfile | null;
   liveProjectSteering?: HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>;
   submittedFormInputResult?: HostedSubmittedFormInputResult;
+  /** @internal Latest private checkpoint loaded from trusted run state. */
+  serverResolvedToolExposureCheckpoint?: ToolExposureCheckpoint;
+  /** @internal Persists private checkpoint state outside model messages. */
+  persistToolExposureCheckpoint?: (
+    checkpoint: ToolExposureCheckpoint,
+  ) => void | Promise<void>;
+  /** @internal Fail closed when a trusted hosted durable run cannot persist exposure state. */
+  requireToolExposureCheckpointPersistence?: true;
 };

@@ -105,8 +105,7 @@ describe("platform/compat/path/parse-format", () => {
     });
 
     it("parses Windows paths into portable components", () => {
-      const parsed = parse("D:\\workspace\\src\\file.ts");
-      assertEquals(parsed, {
+      assertEquals(parse("D:\\workspace\\src\\file.ts"), {
         root: "D:/",
         dir: "D:/workspace/src",
         base: "file.ts",

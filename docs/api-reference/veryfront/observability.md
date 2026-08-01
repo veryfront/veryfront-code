@@ -33,7 +33,7 @@ const result = await withSpan("load-data", async () => {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApplicationErrorReporterInitializerName` | Contract name used when an application composes a reporter through extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L39) |
+| `ApplicationErrorReporterInitializerName` | Contract name used when an application composes a reporter through extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L30) |
 | `SpanKind` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L121) |
 | `SpanNames` | Render span names. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/span-names.ts#L2) |
 | `SpanStatusCode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L131) |
@@ -43,13 +43,13 @@ const result = await withSpan("load-data", async () => {
 | Name | Description | Source |
 |------|-------------|--------|
 | `addSpanEvent` | Event emitted for add span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L70) |
-| `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L206) |
+| `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L211) |
 | `createChildSpan` | Create child span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L79) |
 | `createFileLogSubscriber` | Create file log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/file-log-subscriber.ts#L501) |
 | `createOpenTelemetryServiceTracer` | Create open telemetry service tracer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/service-tracer.ts#L370) |
 | `endSpan` | End an active tracing span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L57) |
 | `extractContext` | Context for extract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L88) |
-| `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L224) |
+| `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L229) |
 | `getActiveContext` | Context for get active. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L98) |
 | `getErrorCollector` | Return error collector. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L406) |
 | `getGlobalMetricsAPI` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L669) |
@@ -58,7 +58,7 @@ const result = await withSpan("load-data", async () => {
 | `getMetricsState` | State for get metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L38) |
 | `getTraceContext` | Context for get trace. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L500) |
 | `initAutoInstrumentation` | Initialize automatic instrumentation wrappers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/orchestrator.ts#L15) |
-| `initializeApplicationErrorReporter` | Activate an explicitly selected reporter initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L131) |
+| `initializeApplicationErrorReporter` | Activate an explicitly selected reporter initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L136) |
 | `initializeOTLP` | Initialize OTLP tracing export. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L113) |
 | `initMetrics` | Initialize metrics collection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L20) |
 | `initTracing` | Initialize tracing for the current runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L18) |
@@ -130,12 +130,12 @@ const result = await withSpan("load-data", async () => {
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApplicationErrorContext` | Correlation context attached to an unexpected application failure. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L2) |
-| `ApplicationErrorReporter` | Vendor-neutral application error capture and delivery contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L12) |
-| `ApplicationErrorReporterInitializationContext` | Runtime context passed to an explicitly selected reporter initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L18) |
-| `ApplicationErrorReporterInitializer` | Application-composition contract for an error-reporting implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L29) |
-| `ApplicationErrorReporterLifecycle` | Active application-error reporter ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L22) |
-| `ApplicationErrorReporterSession` | Reporter and cleanup ownership returned by an application-selected initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L23) |
+| `ApplicationErrorContext` | Sanitized context attached when a runtime reports an application error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L5) |
+| `ApplicationErrorReporter` | Provider-neutral application error capture and flush interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L23) |
+| `ApplicationErrorReporterInitializationContext` | Runtime context passed to an explicitly selected reporter initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L9) |
+| `ApplicationErrorReporterInitializer` | Application-composition contract for an error-reporting implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L20) |
+| `ApplicationErrorReporterLifecycle` | Active application-error reporter ownership. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L27) |
+| `ApplicationErrorReporterSession` | Reporter and cleanup ownership returned by an application-selected initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L14) |
 | `AttributeValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L32) |
 | `AutoInstrumentConfig` | Configuration used by auto instrument. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/types.ts#L24) |
 | `Context` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L85) |

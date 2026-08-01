@@ -18,6 +18,21 @@ export interface VeryfrontConfigFile {
 
 export type ConfigFileExists = (path: string) => boolean | Promise<boolean>;
 
+function joinConfigFilePath(
+  projectDir: string,
+  fileName: VeryfrontConfigFileName,
+): string {
+  const normalizedProjectDir = projectDir.replaceAll("\\", "/");
+  if (/^\/\/[^/]+\/+[^/]+(?:\/|$)/.test(normalizedProjectDir)) {
+    // The general path facade follows host POSIX semantics and therefore
+    // collapses a leading double slash. At this configuration boundary both
+    // accepted UNC spellings identify the same remote share, so preserve that
+    // namespace explicitly while still normalizing the remaining segments.
+    return `//${join(normalizedProjectDir.slice(2), fileName)}`;
+  }
+  return join(projectDir, fileName);
+}
+
 /**
  * Find the first project config file using the loader's canonical precedence.
  *
@@ -29,7 +44,7 @@ export async function findVeryfrontConfigFile(
   exists: ConfigFileExists,
 ): Promise<VeryfrontConfigFile | null> {
   for (const fileName of VERYFRONT_CONFIG_FILES) {
-    const path = join(projectDir, fileName);
+    const path = joinConfigFilePath(projectDir, fileName);
     if (await exists(path)) return { fileName, path };
   }
 

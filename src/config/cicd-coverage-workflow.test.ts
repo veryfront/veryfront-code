@@ -47,12 +47,16 @@ Deno.test("CI keeps the required coverage gate as a fast merge job", () => {
 
 Deno.test("deno tasks expose shard and merge coverage entrypoints", () => {
   assertEquals(
+    denoJson.tasks["test:coverage:unit"],
+    "deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts unit --coverage-dir=coverage",
+  );
+  assertEquals(
     denoJson.tasks["coverage:ci:shard"],
-    "deno run --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts shard",
+    "deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts shard",
   );
   assertEquals(
     denoJson.tasks["coverage:ci:merge"],
-    "deno run --no-npm --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
+    "deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run --allow-env scripts/test/coverage-ci.ts merge",
   );
 });
 

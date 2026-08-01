@@ -30,5 +30,22 @@ For a Node agent host, import
 `@veryfront/ext-observability-sentry/node` and pass the returned initializer as
 the host's `applicationErrorReporterInitializer` option.
 
-Both runtime adapters capture application errors only. They disable Sentry
-tracing, logs, request data, user data, and OpenTelemetry provider setup.
+- `@veryfront/ext-observability-sentry` keeps the V1 Deno-compatible root
+  reporter export and the compatible `./deno` and `./node` subpaths. This
+  package still depends on both Sentry SDKs for existing consumers.
+- `@veryfront/ext-observability-sentry-deno` exports the Deno reporter with only
+  `@sentry/deno`.
+- `@veryfront/ext-observability-sentry-node` exports the Node reporter with only
+  `@sentry/node`.
+
+The Node and Deno reporters share the same privacy policy, service tags,
+`veryfront.boundary` tagging, Grafana trace correlation, fingerprinting, and
+bounded flush behavior. They only use Sentry for error capture; tracing, logs,
+request bodies, user data, and OpenTelemetry provider setup remain disabled.
+
+The runtime-specific packages do not require the `veryfront` package at runtime
+or type-resolution time. They export the shared application-error declarations
+(`ApplicationErrorContext` and `ApplicationErrorReporter`) from the same source
+used by the framework reporter. Set `context.processRole` to preserve the
+`process_role` Sentry tag used by dashboards and alerts. Host and server names
+are not captured by default because they identify deployment infrastructure.

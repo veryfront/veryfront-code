@@ -99,6 +99,25 @@ describe("module-loader/dependency-resolver", () => {
     assertStringIncludes(rewritten, `from "file:///tmp/lib/value.def.js"`);
   });
 
+  it("preserves encoded dependency-pin directory names in file URLs", () => {
+    const source = `import { value } from "../lib/value";`;
+    const rewritten = rewriteResolvedDependencyImports(source, [
+      withStaticSpan(source, {
+        full: `from "../lib/value"`,
+        path: "../lib/value",
+        relativePath: "../lib/value",
+        depFilePath: "/project/lib/value.ts",
+        depTempPath: "/tmp/_pins/on%3Asnapshot/lib/value.abc.js",
+        isLocalLib: false,
+      }),
+    ]);
+
+    assertStringIncludes(
+      rewritten,
+      `from "file:///tmp/_pins/on%253Asnapshot/lib/value.abc.js"`,
+    );
+  });
+
   it("rewrites the matched import instead of the same text in an earlier comment", async () => {
     await withDependencyFixture(
       {

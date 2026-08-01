@@ -28,7 +28,7 @@
 // public server-oriented barrels would eagerly instantiate every sibling
 // module in a browser, even though this entry point only exposes a small
 // compatibility surface.
-export { defineConfig, defineConfigWithEnv, mergeConfigs } from "./config/define-config.ts";
+export { defineConfig, defineConfigWithEnv, mergeConfigs } from "./config/define-config.client.ts";
 export type { VeryfrontConfig } from "./config/schemas/index.ts";
 
 export { getEnv } from "./platform/compat/process/env.ts";
@@ -50,7 +50,7 @@ export {
 } from "./platform/compat/http/responses.ts";
 export type { APIContext, APIHandler, APIResponse, APIRoute } from "./routing/api/handler.ts";
 
-export { notFound, redirect } from "./data/helpers.ts";
+export { notFound, redirect } from "./data/control-results.ts";
 export type {
   DataContext,
   InferGetServerDataProps,

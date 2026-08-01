@@ -3,6 +3,11 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { defineConfig, defineConfigWithEnv, mergeConfigs } from "./define-config.ts";
 import {
+  defineConfig as clientDefineConfig,
+  defineConfigWithEnv as clientDefineConfigWithEnv,
+  mergeConfigs as clientMergeConfigs,
+} from "./define-config.client.ts";
+import {
   defineConfig as publicDefineConfig,
   defineConfigWithEnv as publicDefineConfigWithEnv,
   mergeConfigs as publicMergeConfigs,
@@ -109,6 +114,21 @@ describe("define-config", () => {
       expect(canonical.integrations).toEqual({
         allow: { gmail: { allowedTools: ["list_emails"] } },
       });
+    });
+  });
+
+  describe("client-safe exports", () => {
+    it("shares pure helpers and preserves the environment factory contract", () => {
+      const compatibleHelper: typeof defineConfigWithEnv = clientDefineConfigWithEnv;
+
+      expect(clientDefineConfig).toBe(defineConfig);
+      expect(clientMergeConfigs).toBe(mergeConfigs);
+      expect(
+        compatibleHelper(
+          (nodeEnv) => clientMergeConfigs({ title: "Client" }, { description: nodeEnv }),
+          { nodeEnv: "production" },
+        ),
+      ).toEqual({ title: "Client", description: "production" });
     });
   });
 

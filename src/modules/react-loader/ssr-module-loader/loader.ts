@@ -1063,6 +1063,8 @@ export class SSRModuleLoader {
               file: filePath.slice(-40),
             });
           }
+          // A revoked leader must not update shared caches, but its immutable
+          // output remains valid for requests that joined this singleflight.
           return entry;
         },
       );

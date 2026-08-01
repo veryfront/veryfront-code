@@ -179,6 +179,8 @@ export interface DependencyPinningSource {
   readonly branch?: string | null;
   /** Explicit writable platform target; absent for release/production sources. */
   readonly dependencyWritebackTarget?: DependencyWritebackTarget;
+  /** Request-scoped bearer token used only by the platform write-back transport. */
+  readonly dependencyWritebackToken?: string;
 }
 
 export type DependencyPinningSourceInput =
@@ -198,6 +200,7 @@ export interface CreateDependencyPinningSourceOptions {
   isLocalProject?: boolean;
   config?: ReactVersionResolutionConfig | null;
   dependencyWritebackTarget?: DependencyWritebackTarget;
+  dependencyWritebackToken?: string;
 }
 
 /**
@@ -233,6 +236,7 @@ export function createDependencyPinningSource(
     dependencyWritebackTarget: options.dependencyWritebackTarget
       ? Object.freeze({ ...options.dependencyWritebackTarget })
       : undefined,
+    dependencyWritebackToken: options.dependencyWritebackToken,
     ...(adapterFs
       ? {
         fs: adapterFs,

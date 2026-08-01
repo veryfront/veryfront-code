@@ -21,20 +21,19 @@ describe("platform/compat/path/basic-operations", () => {
       assertEquals(join("a", ".", "b", "..", "c"), "a/c");
     });
 
-    it("preserves UNC roots while normalizing interior separators", () => {
-      assertEquals(
-        join("//server/share/project", "veryfront.config.ts"),
-        "//server/share/project/veryfront.config.ts",
-      );
-      assertEquals(
-        join("\\\\server\\share\\project", "veryfront.config.ts"),
-        "//server/share/project/veryfront.config.ts",
-      );
-      assertEquals(join("//server//share/", "/project"), "//server/share/project");
-    });
-
     it("should skip empty strings", () => {
       assertEquals(join("a", "", "b"), "a/b");
+    });
+
+    it("removes trailing separators from non-root paths", () => {
+      assertEquals(join("uploads/"), "uploads");
+      assertEquals(join("a", "b/"), "a/b");
+    });
+
+    it("preserves filesystem roots", () => {
+      assertEquals(join("/"), "/");
+      assertEquals(join("D:\\"), "D:/");
+      assertEquals(join("\\\\server\\share\\"), "//server/share/");
     });
 
     it("should return / for no valid segments", () => {

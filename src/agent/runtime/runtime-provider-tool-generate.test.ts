@@ -171,8 +171,8 @@ describe("agent runtime provider tools in generate mode", () => {
     assertEquals(result.toolCalls.length, 1);
     assertEquals(result.toolCalls[0]?.status, "error");
     assertEquals(
-      result.toolCalls[0]?.error?.includes("not allowed by the active skill policy"),
-      true,
+      result.toolCalls[0]?.error,
+      'Tool "web_search" is not available in the current model step',
     );
   });
 

@@ -1,4 +1,6 @@
-import type { ApplicationErrorContext } from "veryfront/extensions/observability";
+import type {
+  ApplicationErrorContext,
+} from "#veryfront/observability/application-error-contract.ts";
 
 export const DEFAULT_FINGERPRINT = "{{ default }}";
 
@@ -83,6 +85,7 @@ export function applySentryScopePolicy(
 ): void {
   scope.setFingerprint([serviceName, DEFAULT_FINGERPRINT]);
   scope.setTag("service.name", serviceName);
+  if (context.processRole) scope.setTag("process_role", context.processRole);
   scope.setTag("veryfront.boundary", context.boundary);
   if (context.method) scope.setTag("http.request.method", context.method);
   if (context.requestId) scope.setTag("veryfront.request_id", context.requestId);

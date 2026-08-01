@@ -9,6 +9,7 @@ export interface DurableRunCanaryEnvironment {
   apiUrl: string;
   authToken: string;
   projectId: string;
+  model: string | undefined;
   requestTimeoutMs: number;
   keepSuccessfulEvidence: boolean;
 }
@@ -40,6 +41,7 @@ export function resolveDurableRunCanaryEnvironment(
       }).VERYFRONT_API_URL,
     authToken: readTrimmedEnvironmentString(env.VERYFRONT_TOKEN) ?? "",
     projectId: readTrimmedEnvironmentString(env.AG_UI_EVAL_PROJECT_ID) ?? "",
+    model: readTrimmedEnvironmentString(env.AG_UI_EVAL_MODEL),
     requestTimeoutMs,
     keepSuccessfulEvidence: env.DURABLE_CANARY_KEEP_SUCCESS === "1",
   };

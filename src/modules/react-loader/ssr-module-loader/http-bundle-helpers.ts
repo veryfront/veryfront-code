@@ -33,6 +33,14 @@ function isPathWithin(candidatePath: string, basePath: string): boolean {
   return !escapesBase && !isAbsolute(relativePath);
 }
 
+function decodeFileUrlPath(path: string): string | null {
+  try {
+    return fromFileUrl(`file://${path}`);
+  } catch (_) {
+    return null;
+  }
+}
+
 /**
  * Extract VF module paths (veryfront-mdx-esm/*.mjs) from code.
  * These are user project modules that may import HTTP bundles.
@@ -46,7 +54,6 @@ async function extractVfModulePaths(
   const imports = await parseImports(code);
   const paths: string[] = [];
   const seen = new Set<string>();
-
   for (const imported of imports) {
     const specifier = imported.n;
     if (!specifier) continue;
@@ -207,7 +214,7 @@ export function extractHttpBundlePaths(code: string): Array<{ path: string; hash
   const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
   let match: RegExpExecArray | null;
   while ((match = absolutePattern.exec(code)) !== null) {
-    const path = match[1];
+    const path = match[1] ? decodeFileUrlPath(match[1]) : null;
     const hash = match[2];
     if (!path || !hash || seen.has(hash)) continue;
     seen.add(hash);
@@ -244,7 +251,7 @@ export function extractAllFilePaths(code: string): string[] {
 
   let match: RegExpExecArray | null;
   while ((match = allFilePathsPattern.exec(code)) !== null) {
-    const path = match[1]?.replace(/[?#].*$/, "");
+    const path = match[1] ? decodeFileUrlPath(match[1]) : null;
 
     if (!path || !supportedPathPattern.test(path) || seen.has(path)) continue;
 

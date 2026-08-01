@@ -44,6 +44,27 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("encodes model step lifecycle events for durable replay", () => {
+    const encoder = new ConversationRunEventEncoder();
+
+    assertEquals(encoder.encode({ type: "start-step" }), [{
+      type: conversationRunEventTypes.stepStarted,
+      stepName: "step-1",
+    }]);
+    assertEquals(encoder.encode({ type: "finish-step" }), [{
+      type: conversationRunEventTypes.stepFinished,
+      stepName: "step-1",
+    }]);
+    assertEquals(encoder.encode({ type: "start-step" }), [{
+      type: conversationRunEventTypes.stepStarted,
+      stepName: "step-2",
+    }]);
+    assertEquals(encoder.encode({ type: "finish-step" }), [{
+      type: conversationRunEventTypes.stepFinished,
+      stepName: "step-2",
+    }]);
+  });
+
   it("encodes text block ids as content ids when a durable message id is active", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);

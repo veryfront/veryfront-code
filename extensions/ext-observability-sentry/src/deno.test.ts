@@ -1,4 +1,10 @@
-import { assertEquals, assertRejects, assertStrictEquals, assertThrows } from "@std/assert";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { it } from "#veryfront/testing/bdd.ts";
 import {
   createDenoSentryApplicationErrorReporter,
   createDenoSentryApplicationErrorReporterInitializer,
@@ -51,7 +57,7 @@ function createDenoSentrySdk(behavior: {
   return { sdk, state };
 }
 
-Deno.test("Deno adapter uses V1 error-only privacy-preserving configuration", async () => {
+it("Deno adapter uses V1 error-only privacy-preserving configuration", async () => {
   const { sdk, state } = createDenoSentrySdk();
   createDenoSentryApplicationErrorReporter(
     {
@@ -90,7 +96,7 @@ Deno.test("Deno adapter uses V1 error-only privacy-preserving configuration", as
   assertEquals(event.tags, { "service.name": "veryfront-server" });
 });
 
-Deno.test("Deno adapter captures with policy tags and bounded flush", async () => {
+it("Deno adapter captures with policy tags and bounded flush", async () => {
   const { sdk, state } = createDenoSentrySdk();
   const reporter = createDenoSentryApplicationErrorReporter(
     {
@@ -117,7 +123,30 @@ Deno.test("Deno adapter captures with policy tags and bounded flush", async () =
   assertEquals(state.flushTimeouts, [1_500]);
 });
 
-Deno.test("Deno adapter isolates SDK capture and flush failures", async () => {
+it("Deno adapter propagates process role to native Sentry tag", () => {
+  const { sdk, state } = createDenoSentrySdk();
+  const reporter = createDenoSentryApplicationErrorReporter(
+    {
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "",
+      release: "",
+      serviceName: "veryfront-server",
+    },
+    sdk,
+  );
+
+  reporter.capture(new Error("request failed"), {
+    boundary: "server.request",
+    processRole: "server",
+  });
+
+  assertEquals(
+    state.tags.some(([key, value]) => key === "process_role" && value === "server"),
+    true,
+  );
+});
+
+it("Deno adapter isolates SDK capture and flush failures", async () => {
   const captureReporter = createDenoSentryApplicationErrorReporter(
     {
       dsn: "https://public@example.ingest.sentry.io/1",
@@ -146,7 +175,7 @@ Deno.test("Deno adapter isolates SDK capture and flush failures", async () => {
   assertEquals(await flushReporter.flush(1_500), false);
 });
 
-Deno.test("Deno initializer owns environment resolution and SDK cleanup", async () => {
+it("Deno initializer owns environment resolution and SDK cleanup", async () => {
   const { sdk, state } = createDenoSentrySdk();
   const env: Record<string, string | undefined> = {
     SENTRY_DSN: " https://public@example.ingest.sentry.io/1 ",
@@ -168,7 +197,7 @@ Deno.test("Deno initializer owns environment resolution and SDK cleanup", async 
   assertEquals(state.closeTimeouts, [25]);
 });
 
-Deno.test("Deno initializer treats missing config as disabled and propagates SDK init errors", async () => {
+it("Deno initializer treats missing config as disabled and propagates SDK init errors", async () => {
   const disabledSdk = createDenoSentrySdk();
   const disabled = createDenoSentryApplicationErrorReporterInitializer({
     readEnvironment: () => undefined,
@@ -193,7 +222,7 @@ Deno.test("Deno initializer treats missing config as disabled and propagates SDK
   assertEquals(thrown, initializationError);
 });
 
-Deno.test("Deno initializer rejects non-canonical config and hostile environment values", async () => {
+it("Deno initializer rejects non-canonical config and hostile environment values", async () => {
   assertThrows(
     () =>
       createDenoSentryApplicationErrorReporterInitializer({
@@ -214,7 +243,7 @@ Deno.test("Deno initializer rejects non-canonical config and hostile environment
   );
 });
 
-Deno.test("Deno initializer snapshots explicit config and preserves one cleanup failure", async () => {
+it("Deno initializer snapshots explicit config and preserves one cleanup failure", async () => {
   const config = { dsn: "https://public@example.ingest.sentry.io/1" };
   const cleanupError = new Error("close failed");
   const { sdk, state } = createDenoSentrySdk({ closeError: cleanupError });

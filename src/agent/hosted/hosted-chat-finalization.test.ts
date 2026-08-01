@@ -1,6 +1,8 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
+import { createConversationHostedTerminalAdapter } from "../conversation/hosted-terminal.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
@@ -210,6 +212,86 @@ describe("agent/hosted-chat-finalization", () => {
         },
       },
     ]);
+  });
+
+  it("posts canonical root usage capture status when finalizing a durable response", async () => {
+    const requestBodies: unknown[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async (_input: string | URL | Request, init?: RequestInit) => {
+      requestBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+      return new Response(
+        JSON.stringify({
+          completed: true,
+          run: { runId: "run-1", status: "completed" },
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    };
+
+    try {
+      const terminal = createConversationHostedTerminalAdapter({
+        authToken: "token",
+        apiUrl: "https://api.example.com",
+        run: {
+          conversationId: "conversation-1",
+          runId: "run-1",
+          messageId: "assistant-message-1",
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          waitingToolCallId: null,
+          waitingToolName: null,
+          streamProtocolVersion: 2,
+          status: "running",
+        },
+        fallbackModelId: "fallback-model",
+        resolveProvider: () => "test-provider",
+      });
+
+      await finalizeHostedChatRun({
+        kind: "response",
+        responseMessage: createResponseMessage({
+          parts: [{ type: "text", text: "done" }],
+          metadata: {
+            modelId: "test-model",
+            usage: { inputTokens: 2, outputTokens: 3 },
+            usageCaptureStatus: "complete",
+          },
+        }),
+        isAborted: false,
+        streamResult: createStreamResult({}),
+        lifecycleAdapter: {
+          durableRootRun: { runId: "run-1", messageId: "assistant-message-1" },
+          durableRunMirror: null,
+          terminal,
+        },
+        mirroredToolChunkState: createMirroredToolChunkState(),
+        capturedMessageId: "assistant-message-1",
+        incompleteToolCallsPartErrorText: "Tool call did not complete",
+        cleanup: async () => {},
+        streamError: null,
+      });
+
+      assertEquals(requestBodies, [
+        {
+          status: "completed",
+          metadata: {
+            provider: "test-provider",
+            model: "test-model",
+            inputTokens: 2,
+            outputTokens: 3,
+            usageCaptureStatus: "complete",
+            finishReason: "stop",
+          },
+          terminal_error_code: null,
+          terminal_error_message: null,
+        },
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   it("treats provider-owned input-available tool parts as completed", async () => {

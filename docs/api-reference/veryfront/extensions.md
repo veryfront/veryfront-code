@@ -561,20 +561,20 @@ import { assertCacheBatchSize, assertCacheReadMaximumBytes, assertCacheValueWith
 | `assertCacheValueWithinLimit` | Verify a string payload without allocating an encoded copy. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/bounded-read.ts#L34) |
 | `buildBatchResults` | Build a `Map` of batch results by resolving each key in order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/batch-results.ts#L21) |
 | `buildRevisionedCacheKey` | Add the reserved versioned namespace to one valid source key. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L156) |
-| `escapeCacheGlobLiteral` | Escape the wildcard syntax shared by cache backend pattern operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L304) |
+| `escapeCacheGlobLiteral` | Escape the wildcard syntax shared by cache backend pattern operations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L316) |
 | `expiresImmediately` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L45) |
 | `isRevisionedCacheBackend` | Test whether a backend exposes the complete atomic revision capability. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L81) |
 | `isRevisionedCacheKey` | Test whether a key belongs to the valid revisioned-key builder image. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L172) |
 | `parseSerializedCachePayload` | Reject oversized or malformed JSON before constructing an untrusted object graph. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/cache-payload.ts#L950) |
-| `registerOwnedDistributedCacheKeyPrefix` | Register an opaque namespace without making it eligible for project invalidation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L288) |
-| `registerRenderDistributedCacheNamespace` | Register a namespace containing render-cache keys. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L276) |
+| `registerOwnedDistributedCacheKeyPrefix` | Register an opaque namespace without making it eligible for project invalidation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L300) |
+| `registerRenderDistributedCacheNamespace` | Register a namespace containing render-cache keys. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L288) |
 | `requireCacheExchangeResult` | Validate a provider-returned compare-exchange result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L140) |
 | `requirePositiveIntegerCacheTtlSeconds` | Validate a constructor-level TTL for whole-second cache protocols. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L68) |
 | `resolveIntegerCacheTtlSeconds` | Resolve a TTL for protocols that accept only whole seconds. Positive fractions round up so integer conversion never expires an entry earlier than requested; non-positive values retain their immediate-expiry meaning. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/ttl.ts#L37) |
 | `serializeCachePayload` | Serialize using the origin-compatible payload shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/rendering/cache/cache-payload.ts#L884) |
 | `snapshotCacheRevisionResult` | Validate and detach a provider-returned revision snapshot. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/capabilities.ts#L101) |
-| `stripOwnedDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L308) |
-| `validateDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L166) |
+| `stripOwnedDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L320) |
+| `validateDistributedCacheKeyPrefix` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/cache/backends/distributed-keyspace.ts#L178) |
 
 #### Classes
 
@@ -812,18 +812,18 @@ import { ApplicationErrorReporterInitializerName, NodeTelemetryProviderName } fr
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApplicationErrorReporterInitializerName` | Contract name used when an application composes a reporter through extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L39) |
+| `ApplicationErrorReporterInitializerName` | Contract name used when an application composes a reporter through extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L30) |
 | `NodeTelemetryProviderName` | Contract interface for Node.js OpenTelemetry runtime bootstrap. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L9) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApplicationErrorContext` | Correlation context attached to an unexpected application failure. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L2) |
-| `ApplicationErrorReporter` | Vendor-neutral application error capture and delivery contract. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L12) |
-| `ApplicationErrorReporterInitializationContext` | Runtime context passed to an explicitly selected reporter initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L18) |
-| `ApplicationErrorReporterInitializer` | Application-composition contract for an error-reporting implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L29) |
-| `ApplicationErrorReporterSession` | Reporter and cleanup ownership returned by an application-selected initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L23) |
+| `ApplicationErrorContext` | Sanitized context attached when a runtime reports an application error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L5) |
+| `ApplicationErrorReporter` | Provider-neutral application error capture and flush interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-error-contract.ts#L23) |
+| `ApplicationErrorReporterInitializationContext` | Runtime context passed to an explicitly selected reporter initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L9) |
+| `ApplicationErrorReporterInitializer` | Application-composition contract for an error-reporting implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L20) |
+| `ApplicationErrorReporterSession` | Reporter and cleanup ownership returned by an application-selected initializer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/application-error-reporter.ts#L14) |
 | `NodeTelemetryInitializeOptions` | Options accepted by node telemetry initialize. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L53) |
 | `NodeTelemetryInstrumentationConfig` | Configuration used by node telemetry instrumentation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L12) |
 | `NodeTelemetryLogger` | Public API contract for node telemetry logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L19) |

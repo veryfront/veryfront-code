@@ -6,7 +6,12 @@ import { FakeTime } from "#std/testing/time";
 import { join } from "#veryfront/compat/path";
 import { denoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
-import { clearSSRModuleCache, createSSRImportMapIdentity, SSRModuleLoader } from "./index.ts";
+import {
+  clearSSRModuleCache,
+  clearSSRModuleCacheForProject,
+  createSSRImportMapIdentity,
+  SSRModuleLoader,
+} from "./index.ts";
 import type { SSRImportMapIdentity } from "./import-map-identity.ts";
 import { __ssrModuleLoaderInternals } from "./loader.ts";
 import { globalInProgress, globalModuleCache } from "./cache/memory.ts";
@@ -39,6 +44,7 @@ import {
   buildMdxEsmPathCacheKey,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache-format.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ModuleCacheEntry } from "./types.ts";
 import {
   clearModulePathCache,
   getMdxEsmSsrCacheDir,
@@ -1177,6 +1183,70 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     assertEquals(component.name, "RootLayout");
   });
 
+  it("finishes an in-flight load when project invalidation revokes cache publication", async () => {
+    clearSSRModuleCache();
+
+    const projectDir = "/app";
+    const filePath = "/app/app/page.tsx";
+    const projectId = "project-invalidated-transform";
+    const baseAdapter = createProxyProjectAdapter({
+      "app/dependency.ts": `export const dependencyValue = "ready";`,
+    });
+    let releaseDependencyRead!: () => void;
+    const dependencyReadReleased = new Promise<void>((resolve) => {
+      releaseDependencyRead = resolve;
+    });
+    let signalDependencyRead!: () => void;
+    const dependencyReadStarted = new Promise<void>((resolve) => {
+      signalDependencyRead = resolve;
+    });
+    let blockedDependencyRead = false;
+    const adapter: RuntimeAdapter = {
+      ...baseAdapter,
+      fs: {
+        ...baseAdapter.fs,
+        async readFile(path: string): Promise<string> {
+          if (path.endsWith("/dependency.ts") && !blockedDependencyRead) {
+            blockedDependencyRead = true;
+            signalDependencyRead();
+            await dependencyReadReleased;
+          }
+          return await baseAdapter.fs.readFile(path);
+        },
+      },
+    };
+    const source = [
+      `import { dependencyValue } from "./dependency.ts";`,
+      `export default function Page() {`,
+      `  return dependencyValue;`,
+      `}`,
+    ].join("\n");
+    const loader = new SSRModuleLoader({
+      projectDir,
+      projectId,
+      contentSourceId: "release-1",
+      adapter,
+      dev: true,
+    });
+
+    try {
+      const leaderLoad = loader.loadRawModule(filePath, source);
+      await dependencyReadStarted;
+      const followerLoad = loader.loadRawModule(filePath, source);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      clearSSRModuleCacheForProject(projectId);
+      releaseDependencyRead();
+
+      const modules = await Promise.all([leaderLoad, followerLoad]);
+      for (const module of modules) {
+        assertEquals((module.default as () => string)(), "ready");
+      }
+    } finally {
+      releaseDependencyRead();
+      clearSSRModuleCache();
+    }
+  });
+
   it("invalidates stale cache entries with unresolved _vf_modules imports and retransforms", async () => {
     clearSSRModuleCache();
 
@@ -1295,7 +1365,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
   it("bounds a caller wait without evicting the shared transform", async () => {
     using time = new FakeTime();
     const key = "test:shared-transform-wait";
-    const pending = new Promise<never>(() => {});
+    const pending = new Promise<ModuleCacheEntry>(() => {});
     globalInProgress.set(key, pending);
 
     try {
@@ -1319,8 +1389,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
   it("evicts only the exact transform that exceeds the stale safety window", async () => {
     using time = new FakeTime();
     const key = "test:stale-transform-eviction";
-    const stale = new Promise<never>(() => {});
-    const replacement = new Promise<never>(() => {});
+    const stale = new Promise<ModuleCacheEntry>(() => {});
+    const replacement = new Promise<ModuleCacheEntry>(() => {});
     globalInProgress.set(key, stale);
     const timer = __ssrModuleLoaderInternals.scheduleStaleInProgressTransformEviction(
       key,
@@ -1344,7 +1414,7 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
   it("allows retry after the current transform exceeds the stale safety window", async () => {
     using time = new FakeTime();
     const key = "test:current-stale-transform-eviction";
-    const stale = new Promise<never>(() => {});
+    const stale = new Promise<ModuleCacheEntry>(() => {});
     globalInProgress.set(key, stale);
     const timer = __ssrModuleLoaderInternals.scheduleStaleInProgressTransformEviction(
       key,
@@ -1365,8 +1435,8 @@ describe("SSRModuleLoader", { sanitizeResources: false, sanitizeOps: false }, ()
     const inProgressKey = "test:late-loader-publication";
     const contentCacheKey = "test:late-loader-content";
     const filePathCacheKey = "test:late-loader-path";
-    const oldLeader = new Promise<never>(() => {});
-    const replacementLeader = new Promise<never>(() => {});
+    const oldLeader = new Promise<ModuleCacheEntry>(() => {});
+    const replacementLeader = new Promise<ModuleCacheEntry>(() => {});
     const replacementEntry = { tempPath: "/cache/replacement.mjs", contentHash: "replacement" };
     const oldEntry = { tempPath: "/cache/old.mjs", contentHash: "old" };
     const timer = setTimeout(() => {}, 60_000);

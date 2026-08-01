@@ -136,7 +136,10 @@ function getOwnData(value: object, key: PropertyKey): unknown {
 }
 
 function extractBoundedBundleHashes(code: string): string[] | null {
-  const paths = extractHttpBundlePaths(code);
+  // Portable cache code uses the reserved cache token in the file-URL host
+  // position. Restore the local cache root before parsing URLs so the strict
+  // file-URL decoder can validate them without weakening host confinement.
+  const paths = extractHttpBundlePaths(detokenizeAllCachePaths(code));
   if (paths.length > MAX_HTTP_BUNDLE_GRAPH_ENTRIES) return null;
   const hashes = [...new Set(paths.map(({ hash }) => hash.toLowerCase()))].sort();
   if (

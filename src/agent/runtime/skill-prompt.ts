@@ -332,6 +332,21 @@ function includesExactString(values: readonly string[], expected: string): boole
   return false;
 }
 
+function filterRuntimeSkillAllowedTools(
+  allowedTools: readonly string[],
+  availableToolNames: readonly string[] | undefined,
+): readonly string[] {
+  if (availableToolNames === undefined) return allowedTools;
+  const filtered: string[] = [];
+  for (let index = 0; index < allowedTools.length; index += 1) {
+    const toolName = allowedTools[index]!;
+    if (includesExactString(availableToolNames, toolName)) {
+      appendOwnArrayElement(filtered, toolName);
+    }
+  }
+  return freeze(filtered);
+}
+
 function buildStrictRuntimeSkillDelegationGuidance(
   availableToolNames?: readonly string[],
 ): string {
@@ -363,11 +378,62 @@ function buildStrictRuntimeSkillDelegationGuidance(
  * by the `agent()` factory have carried them in the prompt since the factory
  * rendered its own skill manifest.
  */
-const SKILL_TOOL_USAGE = `Skill tools (call these as tools, never write them as text):
+const SKILL_TOOL_USAGE = new Map([
+  [
+    "load_skill",
+    "Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
+  ],
+  [
+    "load_skill_reference",
+    "Call with { skillId, reference } only after load_skill lists reference files for that skill",
+  ],
+  [
+    "execute_skill_script",
+    "Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill",
+  ],
+]);
 
-- load_skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts
-- load_skill_reference: Call with { skillId, reference } only after load_skill lists reference files for that skill
-- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill`;
+function buildSkillToolUsage(availableToolNames?: readonly string[]): string {
+  const availableToolNameSet = availableToolNames === undefined
+    ? undefined
+    : new Set(availableToolNames);
+  const entries = [...SKILL_TOOL_USAGE].filter(([toolName]) =>
+    availableToolNameSet?.has(toolName) ?? true
+  );
+  return entries.length === 0
+    ? ""
+    : `Skill tools (call these as tools, never write them as text):\n\n${
+      entries.map(([toolName, usage]) => `- ${toolName}: ${usage}`).join("\n")
+    }`;
+}
+
+function buildStrictSkillToolUsage(availableToolNames?: readonly string[]): string {
+  const normalizedToolNames = snapshotAvailableToolNames(availableToolNames);
+  const lines: string[] = [];
+  const appendIfAvailable = (toolName: string, usage: string): void => {
+    if (
+      normalizedToolNames === undefined ||
+      includesExactString(normalizedToolNames, toolName)
+    ) {
+      appendOwnArrayElement(lines, `- ${toolName}: ${usage}`);
+    }
+  };
+  appendIfAvailable(
+    "load_skill",
+    "Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
+  );
+  appendIfAvailable(
+    "load_skill_reference",
+    "Call with { skillId, reference } only after load_skill lists reference files for that skill",
+  );
+  appendIfAvailable(
+    "execute_skill_script",
+    "Call with { skillId, script, args?, env?, timeoutMs? } only after load_skill lists scripts for that skill",
+  );
+  return lines.length === 0
+    ? ""
+    : `Skill tools (call these as tools, never write them as text):\n\n${joinStrings(lines, "\n")}`;
+}
 
 function getScopedDelegateToolNames(availableToolNames?: readonly string[]): string[] {
   return (availableToolNames ?? [])
@@ -425,10 +491,16 @@ export function formatUnsafeLegacyRuntimeSkillMetadata(skill: RuntimeSkillDefini
 }
 
 /** Formats bounded runtime skill metadata for prompt use. */
-export function formatStrictRuntimeSkillMetadata(skill: RuntimeSkillDefinition): string {
+export function formatStrictRuntimeSkillMetadata(
+  skill: RuntimeSkillDefinition,
+  availableToolNames?: readonly string[],
+): string {
   skill = snapshotRuntimeSkillPromptDefinition(skill);
   const details: string[] = [];
-  const allowedTools = snapshotAllowedToolPatterns(skill.allowedTools);
+  const allowedTools = filterRuntimeSkillAllowedTools(
+    snapshotAllowedToolPatterns(skill.allowedTools),
+    snapshotAvailableToolNames(availableToolNames),
+  );
 
   if (allowedTools.length > 0) {
     const encodedAllowedTools: string[] = [];
@@ -477,8 +549,11 @@ export function formatStrictRuntimeSkillMetadata(skill: RuntimeSkillDefinition):
 }
 
 /** Formats bounded runtime skill metadata for prompt use. */
-export function formatRuntimeSkillMetadata(skill: RuntimeSkillDefinition): string {
-  return formatStrictRuntimeSkillMetadata(skill);
+export function formatRuntimeSkillMetadata(
+  skill: RuntimeSkillDefinition,
+  availableToolNames?: readonly string[],
+): string {
+  return formatStrictRuntimeSkillMetadata(skill, availableToolNames);
 }
 
 function formatRuntimeSkillLabel(skill: RuntimeSkillDefinition): string {
@@ -514,7 +589,10 @@ export function buildUnsafeLegacyRuntimeAvailableSkillsPromptBlock(
     : "";
   const delegationGuidance = buildRuntimeSkillDelegationGuidance(options.availableToolNames);
   const delegationSentence = delegationGuidance ? ` ${delegationGuidance}` : "";
-  const toolUsage = options.includeSkillToolUsage ? `\n\n${SKILL_TOOL_USAGE}` : "";
+  const skillToolUsage = options.includeSkillToolUsage
+    ? buildSkillToolUsage(options.availableToolNames)
+    : "";
+  const toolUsage = skillToolUsage ? `\n\n${skillToolUsage}` : "";
 
   return createRuntimePromptBlock({
     name: "available_skills",
@@ -527,7 +605,10 @@ ${skillsList}${truncationNote}${toolUsage}`,
   });
 }
 
-function encodeRuntimeSkillCatalogRecord(skill: RuntimeSkillDefinition): string {
+function encodeRuntimeSkillCatalogRecord(
+  skill: RuntimeSkillDefinition,
+  availableToolNames: readonly string[] | undefined,
+): string {
   skill = snapshotRuntimeSkillPromptDefinition(skill);
   const skillId = requireBoundedPromptString(skill.id, "id", SKILL_ID_MAX_LENGTH);
   const name = requireBoundedPromptString(
@@ -545,7 +626,10 @@ function encodeRuntimeSkillCatalogRecord(skill: RuntimeSkillDefinition): string 
     "description",
     SKILL_DESCRIPTION_MAX_LENGTH,
   );
-  const allowedTools = snapshotAllowedToolPatterns(skill.allowedTools);
+  const allowedTools = filterRuntimeSkillAllowedTools(
+    snapshotAllowedToolPatterns(skill.allowedTools),
+    availableToolNames,
+  );
   const hasAllowedToolsPolicy = hasRuntimeSkillAllowedToolsPolicy(skill);
   const model = skill.model === undefined ? undefined : requireRuntimeSkillModel(skill.model);
   if (
@@ -613,12 +697,18 @@ export function buildStrictRuntimeAvailableSkillsPromptBlock(
       "Runtime skill prompt options.includeSkillToolUsage must be a boolean data property",
     );
   }
+  const normalizedAvailableToolNames = snapshotAvailableToolNames(availableToolNames);
   const { displaySkills, total } = snapshotRuntimeSkillPromptCatalog(skills);
   const skillLines: string[] = [];
   for (let index = 0; index < displaySkills.length; index += 1) {
     appendOwnArrayElement(
       skillLines,
-      `- ${encodeRuntimeSkillCatalogRecord(displaySkills[index]!)}`,
+      `- ${
+        encodeRuntimeSkillCatalogRecord(
+          displaySkills[index]!,
+          normalizedAvailableToolNames,
+        )
+      }`,
     );
   }
   const skillsList = joinStrings(skillLines, "\n");
@@ -629,10 +719,13 @@ export function buildStrictRuntimeAvailableSkillsPromptBlock(
     } more skill summaries omitted from this prompt; use an ID from the load_skill tool schema)`
     : "";
   const delegationGuidance = buildStrictRuntimeSkillDelegationGuidance(
-    availableToolNames,
+    normalizedAvailableToolNames,
   );
   const delegationSentence = delegationGuidance ? ` ${delegationGuidance}` : "";
-  const toolUsage = includeSkillToolUsage ? `\n\n${SKILL_TOOL_USAGE}` : "";
+  const skillToolUsage = includeSkillToolUsage
+    ? buildStrictSkillToolUsage(normalizedAvailableToolNames)
+    : "";
+  const toolUsage = skillToolUsage ? `\n\n${skillToolUsage}` : "";
 
   return createStrictRuntimeSkillPromptBlock(
     `You have access to these skills. Use load_skill to load full instructions when needed. load_skill only loads instructions plus metadata. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${KEEP_ROOT_ASSISTANT_VISIBLE_OWNER} If a skill specifies allowed tools, you MUST stay within the current-run intersection of those tools.${delegationSentence} ${NO_DELEGATION_NARRATION_UNLESS_ASKED}

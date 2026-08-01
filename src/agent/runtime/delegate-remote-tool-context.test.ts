@@ -10,6 +10,10 @@ import {
   VERYFRONT_STUDIO_MCP_SOURCE_ID,
 } from "./mcp-server-tool-sources.ts";
 
+function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
+  return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
+}
+
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
     start(controller) {
@@ -111,7 +115,7 @@ Deno.test("local delegates inherit the trusted request-scoped MCP source", async
     },
   };
 
-  agent({
+  eagerAgent({
     id: childId,
     model: "test/delegate-child",
     system: "Use the project tool.",
@@ -119,7 +123,7 @@ Deno.test("local delegates inherit the trusted request-scoped MCP source", async
     mcpServers: [{ kind: "veryfront-studio" }],
     resolveModelTransport: () => ({ model: childModel }),
   });
-  const root = agent(
+  const root = eagerAgent(
     {
       id: rootId,
       model: "test/delegate-root",
@@ -239,7 +243,7 @@ Deno.test("local delegates execute inherited MCP tools with the parent credentia
     },
   };
 
-  agent({
+  eagerAgent({
     id: childId,
     model: "test/delegate-auth-child",
     system: "Use the project tool.",
@@ -247,7 +251,7 @@ Deno.test("local delegates execute inherited MCP tools with the parent credentia
     mcpServers: [{ kind: "veryfront-studio" }],
     resolveModelTransport: () => ({ model: childModel }),
   });
-  const root = agent(
+  const root = eagerAgent(
     {
       id: rootId,
       model: "test/delegate-auth-root",
@@ -396,7 +400,7 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
     },
   };
 
-  agent({
+  eagerAgent({
     id: grandchildId,
     model: "test/delegate-grandchild",
     system: "Use the project tool.",
@@ -407,14 +411,14 @@ Deno.test("local-only delegates preserve the trusted MCP source for a grandchild
     }],
     resolveModelTransport: () => ({ model: grandchildModel }),
   });
-  agent({
+  eagerAgent({
     id: childId,
     model: "test/delegate-intermediate",
     system: "Delegate once.",
     delegates: [grandchildId],
     resolveModelTransport: () => ({ model: childModel }),
   });
-  const root = agent(
+  const root = eagerAgent(
     {
       id: rootId,
       model: "test/delegate-nested-root",

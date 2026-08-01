@@ -13,7 +13,16 @@ export {
   createDenoSentryApplicationErrorReporter,
   createDenoSentryApplicationErrorReporterInitializer,
 } from "./deno.ts";
-export type { SentryApplicationErrorInitializerOptions, SentryConfig } from "./deno.ts";
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+} from "#veryfront/observability/application-error-contract.ts";
+export type {
+  SentryApplicationErrorInitializerOptions,
+  SentryApplicationErrorReporterInitializer,
+  SentryApplicationErrorReporterSession,
+  SentryConfig,
+} from "./deno.ts";
 
 function resolveExtensionConfig(config: unknown): SentryApplicationErrorInitializerOptions {
   if (config === undefined) return {};

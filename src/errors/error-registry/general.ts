@@ -1,4 +1,4 @@
-import { defineError } from "../types.ts";
+import { defineError } from "../error-core.ts";
 
 export const UNKNOWN_ERROR = defineError({
   slug: "unknown-error",

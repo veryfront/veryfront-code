@@ -49,6 +49,25 @@ Deno.test("script tooling uses an isolated lockfile", async () => {
       "test:scripts must enforce its lockfile isolation contract",
     );
   }
+  for (
+    const taskName of [
+      "test:coverage:unit",
+      "coverage:ci:shard",
+      "coverage:ci:merge",
+    ]
+  ) {
+    const task = rootConfig.tasks?.[taskName] ?? "";
+    if (
+      !task.includes("--config=scripts/test.deno.json") ||
+      !task.includes("--frozen") ||
+      !task.includes("scripts/test/coverage-ci.ts") ||
+      task.includes("--no-npm")
+    ) {
+      throw new Error(
+        `${taskName} must use the frozen scripts dependency boundary`,
+      );
+    }
+  }
   if (!scriptsTask.includes("scripts/build/framework-candidates.test.ts")) {
     throw new Error(
       "test:scripts must run the framework candidate regression suite",
@@ -305,6 +324,10 @@ Deno.test("every script regression has an explicit task owner", async () => {
   }
 
   const dedicatedTasks: Record<string, string> = {
+    "scripts/build/sentry-runtime-packages.test.ts":
+      "test:sentry-runtime-packages",
+    "scripts/build/npm-extension-package-metadata.test.ts":
+      "test:scripts:npm-extension-packages",
     "scripts/codemods/migrate-chat-composition.test.ts": "lint:chat-ratchets",
     "scripts/codemods/migrate-esm-sh-imports.test.ts": "lint:esm-sh-codemod",
     "scripts/lint/audit-parser-extension-boundary.test.ts":
@@ -330,6 +353,11 @@ Deno.test("every script regression has an explicit task owner", async () => {
   if (!scriptsTask.includes("deno task test:scripts:postinstall")) {
     throw new Error(
       "test:scripts must invoke the Node-native postinstall suite",
+    );
+  }
+  if (!scriptsTask.includes("deno task test:scripts:npm-extension-packages")) {
+    throw new Error(
+      "test:scripts must invoke the environment-scoped extension package suite",
     );
   }
 });

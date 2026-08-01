@@ -29,6 +29,7 @@ function memorySource(
     | "branch"
     | "contentSourceId"
     | "dependencyWritebackTarget"
+    | "dependencyWritebackToken"
     | "releaseId"
   > = {},
 ): DependencyPinningSource {
@@ -232,6 +233,37 @@ describe("dependency resolution write-back authority", () => {
       { specifiers: ["zod@^4"], target: "branch:feature" },
       { specifiers: ["zod@^4"], target: "main" },
     ]);
+  });
+
+  it("forwards request-scoped authorization from the current source", async () => {
+    const state: MemoryPackageState = {
+      content: JSON.stringify({ dependencies: { zod: "^3" } }),
+      mtime: new Date(1_000),
+    };
+    const source = memorySource('["project-a","branch-feature"]', state, {
+      branch: "feature",
+      dependencyWritebackTarget: { kind: "branch", branch: "feature" },
+      dependencyWritebackToken: "request-scoped-token",
+    });
+    let requestToken: string | undefined;
+    _setDependencyResolutionPosterForTest(
+      (_projectId, _specifiers, _target, _expected, token) => {
+        requestToken = token;
+        return Promise.resolve();
+      },
+    );
+    const snapshot = await getDependencyPinningSnapshot(source);
+
+    resolveDependencyPinForImport("zod", {
+      projectDir: source.projectDir,
+      projectId: "project-a",
+      dependencyPinningSource: source,
+      dependencyPinningCacheKey: snapshot.cacheKey,
+      dependencyPinningDependencies: snapshot.dependencies,
+    });
+    await _pendingResolutions();
+
+    assertEquals(requestToken, "request-scoped-token");
   });
 
   it("resolves an own constructor declaration without prototype interference", async () => {

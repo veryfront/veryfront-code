@@ -101,6 +101,11 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
       error: { errorCode: string; message: string; statusCode: number };
     }
   >;
+  verifyRunEventAppendToken?: (input: {
+    token: string;
+    projectId: string;
+    runId: string;
+  }) => Promise<boolean>;
   tracker: DetachedRunTracker<AgUiResumeValue>;
   prepareExecution: (req: ParsedHostedChatRequest) => Promise<TExecution>;
   streamExecutionToAgUiResponse: (
@@ -316,6 +321,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
           options.verifyProjectAccess(projectId, authToken),
+        verifyRunEventAppendToken: options.verifyRunEventAppendToken,
       });
       if (req instanceof Response) {
         return req;
@@ -339,6 +345,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
           options.verifyProjectAccess(projectId, authToken),
+        verifyRunEventAppendToken: options.verifyRunEventAppendToken,
         runtimeSource,
       });
       if (req instanceof Response) {

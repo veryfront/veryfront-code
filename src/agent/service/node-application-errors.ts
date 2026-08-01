@@ -42,6 +42,12 @@ function getStatusCode(entry: LogEntry): number | undefined {
   return typeof status === "number" && Number.isInteger(status) ? status : undefined;
 }
 
+function getProcessRole(entry: LogEntry): string | undefined {
+  const role = entry.process_role ?? entry.processRole ?? entry.context?.process_role ??
+    entry.context?.processRole;
+  return typeof role === "string" && role.trim() ? role.trim() : undefined;
+}
+
 function isExpectedAgentErrorLog(entry: LogEntry): boolean {
   if (entry.error?.name === "AbortError") return true;
   const errorCode = getExpectedErrorCode(entry);
@@ -103,8 +109,10 @@ function errorFromLogEntry(entry: LogEntry): Error {
 }
 
 function contextFromLogEntry(entry: LogEntry): ApplicationErrorContext {
+  const processRole = getProcessRole(entry);
   return {
     boundary: "agent.framework-log",
+    ...(processRole ? { processRole } : {}),
     requestId: entry.request_id ?? entry.requestId,
     spanId: entry.span_id ?? entry.spanId,
     traceId: entry.trace_id ?? entry.traceId,

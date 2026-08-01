@@ -1,4 +1,5 @@
 import type { DataContext, DataResult } from "./types.ts";
+import { DATA_CONTROL_RESULT } from "./control-results.ts";
 import {
   MAX_DATA_PARAM_ARRAY_SEGMENTS,
   MAX_DATA_PARAM_KEY_CHARACTERS,
@@ -9,6 +10,8 @@ import {
   MAX_DATA_URL_CHARACTERS,
 } from "./data-limits.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
+export { notFound, redirect } from "./control-results.ts";
 
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ReflectApply = Reflect.apply;
@@ -22,52 +25,6 @@ const RequestSignalGetter = Object.getOwnPropertyDescriptor(
   "signal",
 )?.get;
 const RequestClone = Request.prototype.clone;
-
-/**
- * Brand marking an object as produced by {@link notFound} or {@link redirect}.
- *
- * A registered symbol, so a result built by one copy of this module is
- * recognised by another. Project code and the framework do not always share a
- * module instance, and isolated data fetching crosses a realm boundary.
- *
- * Symbols are dropped by `structuredClone`, so the brand does not survive
- * `postMessage`. Worker-side code normalises a thrown control result before it
- * is posted back, while the object is still in-realm.
- */
-const DATA_CONTROL_RESULT = Symbol.for("veryfront.dataControlResult");
-
-/**
- * Mark a result as framework-produced control flow.
- *
- * The brand is non-enumerable, so it stays out of `Object.keys`,
- * `JSON.stringify`, and the `DataResult` schema. A returned control result
- * behaves exactly as it did before the brand existed.
- */
-function brandDataControlResult(result: DataResult): DataResult {
-  Object.defineProperty(result, DATA_CONTROL_RESULT, { value: true });
-  return result;
-}
-
-/**
- * Redirect the request from a data loader.
- *
- * Return it or throw it. `throw redirect("/login")` behaves exactly like
- * `return redirect("/login")`.
- */
-export function redirect(destination: string, permanent = false): DataResult {
-  return brandDataControlResult({ redirect: { destination, permanent } });
-}
-
-/**
- * Render the 404 page from a data loader.
- *
- * Return it or throw it. `throw notFound()` behaves exactly like
- * `return notFound()`, which is useful deep inside a helper that has no clean
- * way to return to the loader.
- */
-export function notFound(): DataResult {
-  return brandDataControlResult({ notFound: true });
-}
 
 /**
  * True when `value` is a control-flow result produced by {@link notFound} or

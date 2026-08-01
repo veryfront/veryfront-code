@@ -1,22 +1,26 @@
-import * as importedNodePath from "node:path";
-import { isDeno } from "../runtime.ts";
 import type { NodePathModule, PathImplementation } from "./types.ts";
 
-const candidate = importedNodePath as unknown as NodePathModule;
+const globalProcess = (globalThis as { process?: { versions?: { node?: string } } }).process;
+const hasNodeApis = !!globalProcess?.versions?.node || "Bun" in globalThis;
 
-/**
- * Native path implementation when the host provides the Node-compatible API.
- * Browser transforms replace `node:path` with the noop module, leaving this
- * value null so path operations use the portable implementation.
- */
-export const nodePath: NodePathModule | null = typeof candidate.join === "function" &&
-    typeof candidate.resolve === "function" &&
-    typeof candidate.posix?.join === "function" &&
-    typeof candidate.win32?.join === "function"
-  ? candidate
-  : null;
+export const isDeno = typeof Deno !== "undefined";
 
-export { isDeno };
+let nodePath: NodePathModule | null = null;
+
+if (hasNodeApis) {
+  try {
+    const nodeRequire = (globalThis as {
+      require?: (specifier: string) => unknown;
+    }).require;
+    if (nodeRequire) {
+      nodePath = nodeRequire("node:path") as NodePathModule;
+    }
+  } catch (_) {
+    /* expected: node:path require may fail in non-Node runtimes */
+  }
+}
+
+export { nodePath };
 
 export const sep = nodePath?.sep ?? "/";
 export const delimiter = nodePath?.delimiter ?? ":";

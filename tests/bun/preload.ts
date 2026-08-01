@@ -2,18 +2,29 @@
  * Simplified Bun preload script for import aliasing.
  *
  * This plugin handles:
- * 1. #std/* and @std/* aliases → compat shims
- * 2. npm: protocol stripping (for Deno compat)
- *
- * Bun reads the repository's deno.json import map natively. Project and
- * workspace aliases deliberately remain under that single resolver.
+ * 1. #veryfront/* aliases → ./src/* paths
+ * 2. #std/* and @std/* aliases → compat shims
+ * 3. npm: protocol stripping (for Deno compat)
+ * 4. file:// URLs with query params (cache busting)
  */
 
 import { plugin } from "bun";
-import { existsSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readFileSync, statSync } from "fs";
+import { dirname, extname, resolve } from "path";
+import { fileURLToPath } from "url";
 
 const projectRoot = resolve(import.meta.dir, "../..");
+
+const denoConfig = JSON.parse(
+  readFileSync(resolve(projectRoot, "deno.json"), "utf-8"),
+) as { imports?: Record<string, unknown> };
+const localProjectImportMap = Object.fromEntries(
+  Object.entries(denoConfig.imports ?? {}).filter(
+    (entry): entry is [string, string] =>
+      typeof entry[1] === "string" &&
+      (entry[1].startsWith("./") || entry[1].startsWith("../")),
+  ),
+);
 
 const stdImportMap: Record<string, string> = {
   "#std/assert": "./src/testing/assert.ts",
@@ -54,6 +65,7 @@ const reactImportMap: Record<string, string> = {
 
 const importMap: Record<string, string> = {
   "#deno-config": "./deno.json",
+  ...localProjectImportMap,
   ...stdImportMap,
   ...reactImportMap,
 };
@@ -94,12 +106,53 @@ function resolveImport(specifier: string): string | null {
     return findProjectModule(mapped);
   }
 
+  if (specifier === "#veryfront" || specifier === "veryfront") {
+    return findProjectModule("./src/index.ts");
+  }
+
+  if (specifier.startsWith("#veryfront/")) {
+    return findProjectModule(`./src/${specifier.slice("#veryfront/".length)}`);
+  }
+
+  if (specifier.startsWith("veryfront/")) {
+    return findProjectModule(`./src/${specifier.slice("veryfront/".length)}`);
+  }
+
   return null;
 }
 
 plugin({
   name: "veryfront-resolver",
   setup(build) {
+    // Handle file:// URLs with query params (cache busting)
+    build.onResolve({ filter: /^file:.*\?.+/ }, (args) => ({
+      path: args.path,
+      namespace: "vf-file-cache",
+    }));
+
+    build.onLoad({ filter: /.*/, namespace: "vf-file-cache" }, (args) => {
+      const url = new URL(args.path);
+      url.search = "";
+      url.hash = "";
+      const filePath = fileURLToPath(url);
+      const extension = extname(filePath).toLowerCase();
+      const loader = extension === ".ts"
+        ? "ts"
+        : extension === ".tsx"
+        ? "tsx"
+        : extension === ".jsx"
+        ? "jsx"
+        : extension === ".json"
+        ? "json"
+        : "js";
+
+      return {
+        contents: readFileSync(filePath, "utf-8"),
+        loader,
+        resolveDir: dirname(filePath),
+      };
+    });
+
     // Handle npm: protocol (Deno-style) by stripping to local package name
     build.onResolve({ filter: /^npm:/ }, (args) => {
       const packageSpec = args.path.slice(4);
@@ -110,7 +163,7 @@ plugin({
 
     build.onResolve({
       filter:
-        /^(#deno-config|@std\/|#std\/|std\/|react(?:$|\/jsx-runtime$|\/jsx-dev-runtime$)|react-dom(?:$|\/client$|\/server$|\/static$))/,
+        /^(#deno-config|@std\/|#std\/|std\/|#veryfront(?:\/|$)|veryfront(?:\/|$)|react(?:$|\/jsx-runtime$|\/jsx-dev-runtime$)|react-dom(?:$|\/client$|\/server$|\/static$))/,
     }, (args) => {
       const resolved = resolveImport(args.path);
       if (resolved) {

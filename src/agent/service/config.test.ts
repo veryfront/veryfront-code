@@ -55,6 +55,7 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGISTRATION, "auto");
     assertEquals(config.VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS, 30000);
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGION, undefined);
+    assertEquals(config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID, undefined);
     assertEquals(config.VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT, false);
     assertEquals(config.VERYFRONT_ENABLE_DURABLE_TASK, false);
     assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_ENABLED, true);
@@ -86,6 +87,7 @@ describe("agent/agent-service-config", () => {
       VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
       VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: "45000",
       VERYFRONT_AGENT_SERVICE_REGION: "iad",
+      SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: "00000000-0000-0000-0000-000000000001",
       POD_NAME: "veryfront-agent-7dd7b6f4d8-a1b2c",
       POD_UID: "11111111-1111-4111-a111-111111111111",
       POD_IP: "10.192.4.10",
@@ -117,6 +119,10 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGISTRATION, "enabled");
     assertEquals(config.VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS, 45000);
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGION, "iad");
+    assertEquals(
+      config.SERVICE_ACCOUNT_VERYFRONT_SERVER_ID,
+      "00000000-0000-0000-0000-000000000001",
+    );
     assertEquals(config.POD_NAME, "veryfront-agent-7dd7b6f4d8-a1b2c");
     assertEquals(config.POD_UID, "11111111-1111-4111-a111-111111111111");
     assertEquals(config.POD_IP, "10.192.4.10");

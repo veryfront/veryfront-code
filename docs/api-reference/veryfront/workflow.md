@@ -158,7 +158,7 @@ Options accepted by parallel.
 |------|-------------|--------|
 | `MemoryBackend` | Implement memory backend. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/backends/memory.ts#L139) |
 | `WorkflowClient` | Implement workflow client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L185) |
-| `WorkflowExecutor` | Workflow Executor class | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L352) |
+| `WorkflowExecutor` | Workflow Executor class | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L348) |
 
 ### Types
 
@@ -186,8 +186,8 @@ Options accepted by parallel.
 | `WorkflowClientConfig` | Configuration used by workflow client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/api/workflow-client.ts#L171) |
 | `WorkflowContext` | Workflow context containing structured-cloneable input and node outputs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L54) |
 | `WorkflowDefinition` | Workflow definition | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L283) |
-| `WorkflowExecutorConfig` | Workflow executor configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L130) |
-| `WorkflowHandle` | Controller for a running workflow. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L162) |
+| `WorkflowExecutorConfig` | Workflow executor configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L126) |
+| `WorkflowHandle` | Controller for a running workflow. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/executor/workflow-executor.ts#L158) |
 | `WorkflowNode` | Workflow node | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L274) |
 | `WorkflowNodeConfig` | Union of all workflow node configurations | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/types.ts#L262) |
 | `WorkflowOptions` | Options accepted by workflow. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L22) |
@@ -275,9 +275,9 @@ import { createAgent, createClaudeCodeTool, createDistributedEventPublisher } fr
 |------|-------------|--------|
 | `createAgent` | Create a reusable agent with snapshotted defaults. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/agent.ts#L293) |
 | `createClaudeCodeTool` | Create a customized Claude Code tool | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/tool.ts#L163) |
-| `createDistributedEventPublisher` | Create an event publisher from an already-activated distributed provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L178) |
-| `createEventPublisher` | Create an event publisher based on environment | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L199) |
-| `createWebSocketHandler` | Create a WebSocket handler for HTTP upgrade requests | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L930) |
+| `createDistributedEventPublisher` | Create an event publisher from an already-activated distributed provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L237) |
+| `createEventPublisher` | Create an event publisher based on environment | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L258) |
+| `createWebSocketHandler` | Create a WebSocket handler for HTTP upgrade requests | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L647) |
 | `createWorkspaceSync` | Create a workspace sync for a Claude Code run | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L1866) |
 | `executeAgent` | Execute a task through the configured Claude Code agent runtime extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/agent.ts#L250) |
 | `withWorkspace` | Execute a function with a synchronized workspace | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L1891) |
@@ -286,12 +286,12 @@ import { createAgent, createClaudeCodeTool, createDistributedEventPublisher } fr
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AgentControllerRegistry` | Retains one controller generation per run independently of transient publisher connections. Replacements synchronously retire the old publisher; only an exact publisher token can detach, and only an exact run token can terminally release the controller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L1514) |
-| `CallbackEventPublisher` | Simple callback-based publisher Calls a function for each event | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L127) |
-| `MemoryEventPublisher` | In-memory event publisher using EventTarget Useful for testing or single-process deployments | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L30) |
-| `MultiEventPublisher` | Publishes events to multiple publishers | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L146) |
-| `SSEEventPublisher` | Server-Sent Events publisher Writes events directly to a ReadableStream controller | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L83) |
-| `WebSocketPublisher` | WebSocket-based bidirectional publisher | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L469) |
+| `AgentControllerRegistry` | Retains one controller generation per run independently of transient publisher connections. Replacements synchronously retire the old publisher; only an exact publisher token can detach, and only an exact run token can terminally release the controller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L1267) |
+| `CallbackEventPublisher` | Simple callback-based publisher Calls a function for each event | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L180) |
+| `MemoryEventPublisher` | In-memory event publisher using EventTarget Useful for testing or single-process deployments | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L53) |
+| `MultiEventPublisher` | Publishes events to multiple publishers | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L199) |
+| `SSEEventPublisher` | Server-Sent Events publisher Writes events directly to a ReadableStream controller | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L97) |
+| `WebSocketPublisher` | WebSocket-based bidirectional publisher | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L186) |
 | `WorkspaceSync` | Workspace manager for Claude Code execution | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L630) |
 | `WorkspaceUploadAbortError` | Cancellation observed after a persistence batch may already have committed callbacks. The immutable progress and remaining changes make retry decisions explicit instead of disguising committed work as a failed callback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L194) |
 
@@ -300,11 +300,11 @@ import { createAgent, createClaudeCodeTool, createDistributedEventPublisher } fr
 | Name | Description | Source |
 |------|-------------|--------|
 | `AgentConfig` | Caller-facing agent configuration. Omitted mode defaults to read-only analysis. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/agent.ts#L21) |
-| `AgentController` | **Deprecated:** Use `AgentControllerHandle`; lifecycle is registry-owned. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L1060) |
-| `AgentControllerConfig` | Run-scoped controller policy. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L412) |
-| `AgentControllerHandle` | Run-scoped command surface without transport lifecycle authority. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L422) |
-| `AgentControllerRegistration` | Opaque ownership token for one run publisher generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L449) |
-| `AgentControllerRunRegistration` | Opaque ownership token for one run controller generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L439) |
+| `AgentController` | **Deprecated:** Use `AgentControllerHandle`; lifecycle is registry-owned. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L804) |
+| `AgentControllerConfig` | Run-scoped controller policy. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L129) |
+| `AgentControllerHandle` | Run-scoped command surface without transport lifecycle authority. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L139) |
+| `AgentControllerRegistration` | Opaque ownership token for one run publisher generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L166) |
+| `AgentControllerRunRegistration` | Opaque ownership token for one run controller generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L156) |
 | `ApprovalRequestEvent` | Approval request event (sent to client when tool needs approval) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L397) |
 | `ApproveCommand` | Approve a pending tool call | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L311) |
 | `BidirectionalPublisher` | Bidirectional publisher interface (WebSocket) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L472) |
@@ -352,7 +352,7 @@ import { createAgent, createClaudeCodeTool, createDistributedEventPublisher } fr
 | `ToolCallStartEvent` | Tool call start event | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L147) |
 | `ToolResultEvent` | Tool result event | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/types.ts#L175) |
 | `UploadResult` | Upload result | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L164) |
-| `WebSocketPublisherConfig` | WebSocket publisher configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L394) |
+| `WebSocketPublisherConfig` | WebSocket publisher configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L111) |
 | `WorkspaceConfig` | Workspace configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L53) |
 | `WorkspaceFileSource` | Minimal source contract needed to materialize a project workspace. Implementations must bind `listAll` and every `read` in one initialization to the same immutable source snapshot. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L99) |
 | `WorkspacePersistenceContext` | Immutable detected change and cancellation state passed to persistence. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L125) |
@@ -392,19 +392,19 @@ import { useClaudeCodeStream, useClaudeCodeText, useClaudeCodeWebSocket } from "
 |------|-------------|--------|
 | `useClaudeCodeStream` | React hook for streaming Claude Code execution | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-stream.ts#L136) |
 | `useClaudeCodeText` | Simplified hook that returns just the streaming text | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-stream.ts#L472) |
-| `useClaudeCodeWebSocket` | React hook for bidirectional Claude Code streaming | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L222) |
+| `useClaudeCodeWebSocket` | React hook for bidirectional Claude Code streaming | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L223) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `PendingApproval` | Pending approval state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L86) |
-| `PendingInput` | Pending input request state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L100) |
+| `PendingApproval` | Pending approval state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L87) |
+| `PendingInput` | Pending input request state | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L101) |
 | `UseClaudeCodeStreamOptions` | Options for useClaudeCodeStream hook | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-stream.ts#L68) |
 | `UseClaudeCodeStreamState` | State for Claude Code streaming | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-stream.ts#L54) |
-| `UseClaudeCodeWebSocketActions` | Actions returned by the hook | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L163) |
-| `UseClaudeCodeWebSocketOptions` | Options for useClaudeCodeWebSocket hook | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L128) |
-| `UseClaudeCodeWebSocketState` | State for Claude Code WebSocket | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L111) |
+| `UseClaudeCodeWebSocketActions` | Actions returned by the hook | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L164) |
+| `UseClaudeCodeWebSocketOptions` | Options for useClaudeCodeWebSocket hook | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L129) |
+| `UseClaudeCodeWebSocketState` | State for Claude Code WebSocket | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/claude-code/use-claude-code-websocket.ts#L112) |
 
 ### `veryfront/workflow/claude-code/runtime`
 
@@ -465,7 +465,7 @@ import { useApproval, useWorkflow, useWorkflowList } from "veryfront/workflow/re
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `useApproval` | Manage workflow approval interactions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/use-approval.ts#L54) |
+| `useApproval` | Manage workflow approval interactions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/use-approval.ts#L53) |
 | `useWorkflow` | React hook for workflow. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/use-workflow.ts#L68) |
 | `useWorkflowList` | List and filter workflow runs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/use-workflow-list.ts#L47) |
 | `useWorkflowStart` | React hook for workflow start. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/workflow/use-workflow-start.ts#L38) |

@@ -89,6 +89,7 @@ describe("server/handlers/utils/dependency-pinning-source", () => {
     const source = createHandlerDependencyPinningSource(
       makeCtx({
         isLocalProject: false,
+        proxyToken: "request-scoped-token",
         requestContext: {
           token: "",
           slug: "project",
@@ -105,6 +106,7 @@ describe("server/handlers/utils/dependency-pinning-source", () => {
 
     assertEquals(source.contentSourceId, "preview-main-source");
     assertEquals(source.dependencyWritebackTarget, { kind: "main" });
+    assertEquals(source.dependencyWritebackToken, "request-scoped-token");
   });
 
   it("targets preview branches and denies release, production, or unproven sources", () => {

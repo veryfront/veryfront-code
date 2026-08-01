@@ -1,4 +1,4 @@
-import { join } from "veryfront/platform/path";
+import { join } from "#veryfront/compat/path";
 import { computeHash, computeHashBytes } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version-constant.ts";
 import type { EvalRunProvenance } from "./types.ts";

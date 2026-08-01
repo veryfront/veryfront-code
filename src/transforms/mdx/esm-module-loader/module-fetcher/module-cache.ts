@@ -20,37 +20,38 @@ import { ensureFilenameDefaultExport } from "#veryfront/modules/loader-shared/fi
 import { tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
 import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
 import { getMdxModuleCacheVariant } from "./cache-keys.ts";
+import { canonicalizeContainedModulePath, isVfModulePath } from "../resolution/module-path.ts";
+
+const MAX_MODULE_PATH_LENGTH = 4096;
+
+function invalidModulePath(): never {
+  throw new TypeError("Module path must remain within the project module root");
+}
+
+function canonicalizeBoundedModulePath(value: string): string | null {
+  if (value.length === 0 || value.length > MAX_MODULE_PATH_LENGTH) return null;
+  return canonicalizeContainedModulePath(value);
+}
 
 /**
  * Normalize a module path, resolving relative paths if a parent is provided.
  */
 export function normalizePath(modulePath: string, parentModulePath?: string): string {
-  // Strip query parameters (e.g., ?ssr=true) as they're not part of the file path
-  // and cause issues with cache key validation (? is not an allowed character)
-  let normalizedPath = modulePath.replace(/\?.*$/, "").replace(/^\//, "");
-
-  if (!parentModulePath) return assertSafeModulePath(normalizedPath);
-  if (!modulePath.startsWith("./") && !modulePath.startsWith("../")) {
-    return assertSafeModulePath(normalizedPath);
+  const relativeImport = modulePath.startsWith("./") || modulePath.startsWith("../");
+  if (!parentModulePath || !relativeImport) {
+    return canonicalizeBoundedModulePath(modulePath) ?? invalidModulePath();
   }
 
-  const parentDir = parentModulePath.replace(/\/[^/]+$/, "");
-  normalizedPath = posix.normalize(posix.join(parentDir, modulePath));
+  const normalizedParent = canonicalizeBoundedModulePath(parentModulePath) ??
+    invalidModulePath();
+  const parentDir = posix.dirname(normalizedParent);
+  const resolvedPath = canonicalizeBoundedModulePath(posix.join(parentDir, modulePath)) ??
+    invalidModulePath();
 
-  if (!normalizedPath.startsWith("_vf_modules/")) normalizedPath = `_vf_modules/${normalizedPath}`;
-  return assertSafeModulePath(normalizedPath);
-}
-
-function assertSafeModulePath(normalizedPath: string): string {
-  if (
-    normalizedPath.length === 0 ||
-    normalizedPath.length > 4096 ||
-    normalizedPath.includes("\0") ||
-    normalizedPath.split("/").some((segment) => segment === "." || segment === "..")
-  ) {
-    throw new TypeError(`Unsafe module path: ${normalizedPath.slice(0, 120)}`);
+  if (isVfModulePath(normalizedParent) && !isVfModulePath(resolvedPath)) {
+    return invalidModulePath();
   }
-  return normalizedPath;
+  return isVfModulePath(resolvedPath) ? resolvedPath : `_vf_modules/${resolvedPath}`;
 }
 
 /**

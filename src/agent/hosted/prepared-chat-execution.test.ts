@@ -22,6 +22,7 @@ function createRootRunContext(): HostedConversationRootRunContext {
   return {
     durableRootRun: null,
     durableRunMirror: null,
+    privateDurableRunMirror: null,
   };
 }
 

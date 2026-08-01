@@ -70,19 +70,19 @@ export function getServerData(ctx: DataContext) {
 | `createHandler` | Create a Veryfront request handler for development or production. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L226) |
 | `createValidatedHandler` | Create a validated API handler with bounded body/query validation. Bodies without a schema are preflighted through a clone, leaving the original request body available to the handler after its size is verified. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L163) |
 | `createValidationError` | Create an input validation error. Convenience wrapper around INPUT_VALIDATION_FAILED.create(). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/errors.ts#L12) |
-| `defineConfig` | Define a Veryfront project configuration object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L5) |
-| `defineConfigWithEnv` | Define a Veryfront project configuration from the current environment name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L10) |
+| `defineConfig` | Define a Veryfront project configuration object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config-core.ts#L4) |
+| `defineConfigWithEnv` | Define a Veryfront project configuration from the current environment name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L8) |
 | `forbidden` | Create a 403 Forbidden response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L134) |
 | `getEnv` | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L106) |
 | `json` | Create a JSON response with the correct content type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L67) |
-| `mergeConfigs` | Merge multiple partial Veryfront configuration objects into one config object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L18) |
-| `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L19) |
-| `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L20) |
-| `notFound` | Render the 404 page from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L68) |
+| `mergeConfigs` | Merge multiple partial Veryfront configuration objects into one config object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config-core.ts#L17) |
+| `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config-core.ts#L18) |
+| `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config-core.ts#L19) |
+| `notFound` | Render the 404 page from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/control-results.ts#L35) |
 | `parseFormData` | Parse and validate multipart or URL-encoded form data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L133) |
 | `parseJsonBody` | Parse and validate a JSON request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L67) |
 | `parseQueryParams` | Parse and validate query parameters from a bounded request URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L189) |
-| `redirect` | Redirect the request from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L57) |
+| `redirect` | Redirect the request from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/control-results.ts#L24) |
 | `serverError` | Create a 500 Internal Server Error response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L139) |
 | `startServer` | Start a Veryfront server in development or production mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L585) |
 | `toNodeHandler` | Convert a Web API request handler into a Node.js HTTP listener. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/node-handler.ts#L4) |

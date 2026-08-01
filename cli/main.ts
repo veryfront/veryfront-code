@@ -15,10 +15,14 @@ setLoggerPreset("cli");
 
 // Extract the esbuild binary before importing feature modules that may load esbuild.
 await import("veryfront/platform/esbuild-init");
-await import("veryfront/discovery/runtime-modules-bootstrap");
 
 // All imports below must be dynamic to ensure esbuild init completes first
-const { exit, getArgs, getEnv } = await import("veryfront/platform");
+// Import only the process compatibility seam during bootstrap. The broad
+// platform barrel initializes filesystem and cache consumers, which can emit
+// debug output before malformed environment files have been contained.
+const { exit, getArgs, getEnv } = await import(
+  "veryfront/platform/process"
+);
 const args = getArgs();
 const {
   isCliStartupDebugEnabled,
@@ -48,6 +52,7 @@ try {
   reportCliEnvironmentStartupFailure(args, { debug: startupDebugEnabled });
   exit(1);
 }
+await import("veryfront/discovery/runtime-modules-bootstrap");
 const { parseCliArgs } = await import("./shared/args.ts");
 const { routeCommand } = await import("./router.ts");
 await routeCommand(parseCliArgs(args));

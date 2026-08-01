@@ -7,7 +7,7 @@
  * @module extensions/discovery
  */
 
-import { join } from "veryfront/platform/path";
+import { join } from "#veryfront/compat/path";
 import type { Capability, PackageContractMetadata, ResolvedExtension } from "./types.ts";
 import { EXTENSION_CONFLICT_ERROR } from "./errors.ts";
 import { SOURCE_PRIORITY } from "./validation.ts";

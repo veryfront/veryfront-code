@@ -311,6 +311,31 @@ describe("BareStrategy", () => {
       assertEquals(after.specifier, before.specifier);
     });
 
+    it("keeps an unchanged draft byte-identical with exact dependency pins", async () => {
+      const context = makeCtx({
+        target: "browser",
+        dependencyPinningCacheKey: "on:snapshot-exact",
+        dependencyPinningDependencies: { lodash: "4.17.21" },
+      });
+      const source = [
+        `import lodash from "lodash";`,
+        `import debounce from "lodash/debounce";`,
+      ].join("\n");
+
+      const first = await rewriteImports(source, context);
+      const second = await rewriteImports(source, context);
+
+      assertEquals(second, first);
+      assertEquals(
+        first,
+        [
+          `import lodash from "https://esm.sh/lodash@4.17.21?external=react,react-dom&target=es2022";`,
+          `import debounce from "https://esm.sh/lodash@4.17.21/debounce?external=react,react-dom&target=es2022";`,
+        ].join("\n"),
+      );
+      assertEquals(first.includes("https://esm.sh/lodash?"), false);
+    });
+
     it("falls back to unversioned URL when both caches are cold", async () => {
       // No package.json cache, no npm registry cache — must behave like flag-off.
       const result = bareStrategy.rewrite(makeInfo("lodash"), makeCtx({ target: "browser" }));

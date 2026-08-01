@@ -50,7 +50,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `cors` | Create CORS middleware. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/middleware.ts#L10) |
 | `corsSimple` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/middleware.ts#L39) |
 | `createResponseBuilder` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/builder.ts#L60) |
-| `createSecureFs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L993) |
+| `createSecureFs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L1073) |
 | `createValidatedHandler` | Create a validated API handler with bounded body/query validation. Bodies without a schema are preflighted through a clone, leaving the original request body available to the handler after its size is verified. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L163) |
 | `createValidationError` | Create an input validation error. Convenience wrapper around INPUT_VALIDATION_FAILED.create(). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/errors.ts#L12) |
 | `createValidator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L421) |
@@ -74,7 +74,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `validateOriginSync` | Synchronous origin validation. Promise-returning values still fail closed at runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/validators.ts#L408) |
 | `validatePath` | Admit a path against the physical semantics of a runtime filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L329) |
 | `validateRequestLimits` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/limits.ts#L106) |
-| `wrapAdapterWithSecurity` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L997) |
+| `wrapAdapterWithSecurity` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L1132) |
 
 ### Classes
 
@@ -84,7 +84,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `BaseHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/base-handler.ts#L45) |
 | `CsrfHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/csrf/csrf-handler.ts#L55) |
 | `ResponseBuilder` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/builder.ts#L9) |
-| `SecureFs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L610) |
+| `SecureFs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L643) |
 | `SecurityConfigLoader` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/config.ts#L238) |
 
 ### Types
@@ -109,10 +109,10 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `PathValidationPolicyOptions` | Filesystem-independent policy fields shared by physical path presets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L18) |
 | `RequestLimits` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L8) |
 | `ResponseBuilderConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/types.ts#L27) |
-| `SecureFsConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L51) |
+| `SecureFsConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L54) |
 | `SecurityConfig` | HTTP security controls resolved for a project runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/server.ts#L10) |
-| `SecurityContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L34) |
-| `SecurityEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L60) |
+| `SecurityContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L37) |
+| `SecurityEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L63) |
 | `SyncCORSConfig` | CORS policy accepted by synchronous response-building APIs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L17) |
 | `SyncCORSHeaderOptions` | Header options accepted by synchronous CORS response helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L42) |
 | `SyncOriginValidator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L1) |

@@ -2,20 +2,25 @@ import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import { sanitizeTelemetryAttributes, sanitizeTelemetryText } from "./telemetry-error.ts";
 import { MAX_APPLICATION_ERROR_CONTEXT_VALUE_LENGTH } from "./limits.ts";
 import {
-  type ApplicationErrorContext,
-  type ApplicationErrorReporter,
   type ApplicationErrorReporterInitializer,
   ApplicationErrorReporterInitializerName,
   type ApplicationErrorReporterSession,
 } from "#veryfront/extensions/observability/application-error-reporter.ts";
-
-export type {
+import type {
   ApplicationErrorContext,
   ApplicationErrorReporter,
+} from "./application-error-contract.ts";
+
+export type {
   ApplicationErrorReporterInitializationContext,
   ApplicationErrorReporterInitializer,
   ApplicationErrorReporterSession,
 } from "#veryfront/extensions/observability/application-error-reporter.ts";
+export type {
+  ApplicationErrorAttributeValue,
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+} from "./application-error-contract.ts";
 export { ApplicationErrorReporterInitializerName };
 
 /** Active application-error reporter ownership. */
@@ -262,7 +267,7 @@ function snapshotApplicationErrorContext(
   if (!boundary) return null;
 
   const snapshot: ApplicationErrorContext = { boundary };
-  for (const key of ["method", "requestId", "spanId", "traceId"] as const) {
+  for (const key of ["method", "processRole", "requestId", "spanId", "traceId"] as const) {
     const value = context[key];
     if (value === undefined) continue;
     const normalized = normalizeContextValue(value);

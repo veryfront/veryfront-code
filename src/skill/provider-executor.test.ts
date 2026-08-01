@@ -310,6 +310,10 @@ Deno.test("skill provider execution forwards active cancellation once and drains
 Deno.test("skill provider timeout bounds uncooperative cleanup after its grace", async () => {
   let reporter!: Readonly<SkillScriptExecutionReporter>;
   let terminationCalls = 0;
+  let reportTerminationStarted!: () => void;
+  const terminationStarted = new Promise<void>((resolve) => {
+    reportTerminationStarted = resolve;
+  });
   const provider = snapshotSkillScriptExecutorProvider({
     prepare(_input: unknown, candidate: Readonly<SkillScriptExecutionReporter>) {
       reporter = candidate;
@@ -318,6 +322,7 @@ Deno.test("skill provider timeout bounds uncooperative cleanup after its grace",
         terminate(reason?: unknown) {
           terminationCalls += 1;
           reporter.rejectResult(reason);
+          reportTerminationStarted();
         },
       };
     },
@@ -330,6 +335,11 @@ Deno.test("skill provider timeout bounds uncooperative cleanup after its grace",
     10,
   );
 
+  // Start the observation bound only after termination has installed its grace
+  // timer. Under a saturated parallel runner, an earlier wall-clock watchdog
+  // can otherwise become due before the delayed timeout callback gets to
+  // schedule cleanup grace, producing a false pending result.
+  await terminationStarted;
   const settlement = await settleWithin(execution, 50);
   assertEquals(settlement.kind, "rejected");
   assertEquals(
@@ -346,6 +356,10 @@ Deno.test("skill provider abort bounds uncooperative cleanup after its grace", a
   const cancellation = new Error("cancel uncooperative execution");
   let reporter!: Readonly<SkillScriptExecutionReporter>;
   let terminationCalls = 0;
+  let reportTerminationStarted!: () => void;
+  const terminationStarted = new Promise<void>((resolve) => {
+    reportTerminationStarted = resolve;
+  });
   const provider = snapshotSkillScriptExecutorProvider({
     prepare(_input: unknown, candidate: Readonly<SkillScriptExecutionReporter>) {
       reporter = candidate;
@@ -356,6 +370,7 @@ Deno.test("skill provider abort bounds uncooperative cleanup after its grace", a
         terminate(reason?: unknown) {
           terminationCalls += 1;
           reporter.rejectResult(reason);
+          reportTerminationStarted();
         },
       };
     },
@@ -374,6 +389,7 @@ Deno.test("skill provider abort bounds uncooperative cleanup after its grace", a
     10,
   );
 
+  await terminationStarted;
   const settlement = await settleWithin(execution, 50);
   assertEquals(settlement.kind, "rejected");
   assertEquals(

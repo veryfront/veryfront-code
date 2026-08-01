@@ -61,6 +61,7 @@ package_names_from_workspace() {
         continue
       fi
       jq -r '.name' "${MANIFEST_PATH}"
+      jq -r '.veryfront.npm.runtimePackages[]?.name' "${MANIFEST_PATH}"
     done \
     | sort
 }

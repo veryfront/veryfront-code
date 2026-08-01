@@ -51,10 +51,10 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `createErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/factory.ts#L11) |
 | `createProblemResponse` | Create an RFC 9457 error Response from raw parameters | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L70) |
 | `createSimpleError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/factory.ts#L29) |
-| `defineError` | Define an error in the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L104) |
+| `defineError` | Define an error in the registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L91) |
 | `ensureError` | Ensure a value is an Error while preserving the established identity contract for ordinary Error instances. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L788) |
 | `errorToResponse` | Convert any error to an RFC 9457 Response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L106) |
-| `errorToRFC9457Response` | Convert any error to an RFC 9457 Response with environment-aware filtering | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L99) |
+| `errorToRFC9457Response` | Convert any error to an RFC 9457 Response with environment-aware filtering | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L119) |
 | `formatCLIError` | Format any error for CLI output | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/cli-error-boundary.ts#L101) |
 | `formatErrorLog` | Log format for errors (matches the plan's log format spec) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L142) |
 | `formatUserError` | Format error with plain text (existing behavior) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-formatter.ts#L85) |
@@ -66,7 +66,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `getErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/index.ts#L44) |
 | `handleErrorWithFallback` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L41) |
 | `handleErrorWithFallbackSync` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L54) |
-| `httpErrorBoundary` | Wrap a handler with error boundary that catches all errors and converts them to RFC 9457 Problem Details responses. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L56) |
+| `httpErrorBoundary` | Wrap a handler with error boundary that catches all errors and converts them to RFC 9457 Problem Details responses. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L76) |
 | `identifyError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-identifier.ts#L26) |
 | `isVeryfrontError` | Check if an error is a VeryfrontError with slug-based identity | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/http-error.ts#L96) |
 | `logError` | Log a VeryfrontError with structured formatting | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/logging.ts#L77) |
@@ -82,7 +82,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 | `withErrorContext` | Execute async operation with error logging and fallback | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L109) |
 | `withErrorContextSync` | Execute sync operation with error logging and fallback | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L123) |
 | `wrapErrorHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-wrapper.ts#L26) |
-| `wrapHandlerWithErrorBoundary` | Wrap a complete Handler object with error boundary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L86) |
+| `wrapHandlerWithErrorBoundary` | Wrap a complete Handler object with error boundary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/http-error-boundary.ts#L106) |
 | `wrapUnknownError` | Wrap any unknown error as a VeryfrontError with unknown-error slug | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/wrap-unknown.ts#L50) |
 | `wrapWithContext` | Wrap an error with additional context | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/middleware/wrap-unknown.ts#L100) |
 
@@ -90,7 +90,7 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `VeryfrontError` | Veryfront Error class with slug-based error identity | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L167) |
+| `VeryfrontError` | Veryfront Error class with slug-based error identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L152) |
 
 ### Types
 
@@ -98,22 +98,22 @@ throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
 |------|-------------|--------|
 | `ConfigContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L66) |
 | `ErrorCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L14) |
-| `ErrorCategory` | Error categories for domain-based grouping and handling | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L20) |
+| `ErrorCategory` | Error categories for domain-based grouping and handling. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L17) |
 | `ErrorContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L16) |
-| `ErrorCreateOptions` | Options for creating an error instance | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L63) |
-| `ErrorDefinition` | Error definition for the registry | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L50) |
+| `ErrorCreateOptions` | Options for creating an error instance. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L54) |
+| `ErrorDefinition` | Error definition for the registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L43) |
 | `ErrorHandlingOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L25) |
 | `ErrorLogEntry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/logging.ts#L23) |
 | `ErrorSlug` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry.ts#L53) |
 | `ErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L3) |
 | `LogLevel` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-context.ts#L23) |
 | `PartialErrorCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/catalog/types.ts#L15) |
-| `RegisteredError` | Registered error with factory method | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L77) |
+| `RegisteredError` | Registered error with factory method. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L66) |
 | `RetryWithBackoffOptions` | Options for `retryWithBackoff`. Every `attempt` value passed to `fn` and the hooks below is 0-based (first try = 0), including `wrapFinalError`'s `lastAttempt`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-handlers.ts#L72) |
-| `RFC9457Response` | RFC 9457 Problem Details response shape | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L36) |
+| `RFC9457Response` | RFC 9457 Problem Details response shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L31) |
 | `UserFriendlyErrorSolution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/user-friendly/error-catalog.ts#L3) |
 | `VeryfrontErrorData` | Discriminated union for serializable error data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/veryfront-error.ts#L97) |
-| `VeryfrontErrorOptions` | Options for VeryfrontError constructor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/types.ts#L138) |
+| `VeryfrontErrorOptions` | Options for the `VeryfrontError` constructor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-core.ts#L123) |
 
 ### Constants
 

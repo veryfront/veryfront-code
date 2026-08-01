@@ -13,6 +13,10 @@ import type {
 } from "#veryfront/platform/adapters/base.ts";
 import { readBoundedFileHandlePrefix } from "#veryfront/platform/adapters/bounded-file-read.ts";
 import { isNativeFileSystemAdapter } from "#veryfront/platform/adapters/native-file-system-provenance.ts";
+import {
+  isVirtualFilesystem,
+  markDerivedVirtualFileSystemAdapter,
+} from "#veryfront/platform/adapters/fs/wrapper.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 
 const MAX_DISCOVERY_DEPTH = 64;
@@ -125,7 +129,7 @@ function createRootRebasingAdapter(
   const viewTarget = Object.create(
     Reflect.getPrototypeOf(source),
   ) as FileSystemAdapter;
-  return new Proxy(viewTarget, {
+  const view = new Proxy(viewTarget, {
     has(_target, property) {
       return Reflect.has(source, property);
     },
@@ -187,6 +191,10 @@ function createRootRebasingAdapter(
       );
     },
   });
+  if (isVirtualFilesystem(source)) {
+    markDerivedVirtualFileSystemAdapter(view);
+  }
+  return view;
 }
 
 export interface RuntimeDiscoveryRoot {

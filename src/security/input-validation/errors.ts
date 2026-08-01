@@ -1,5 +1,5 @@
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/general.ts";
-import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { VeryfrontError } from "#veryfront/errors/error-core.ts";
 
 export { INPUT_VALIDATION_FAILED, VeryfrontError };
 

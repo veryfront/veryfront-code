@@ -12,7 +12,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
 import { getProjectTmpDir } from "#veryfront/modules/react-loader/index.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import { invalidateMdxEsmModule } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
 import {
   resolveModuleDependencies,
@@ -377,7 +377,7 @@ export async function loadModule(
     throw markBuildFailure(error);
   }
 
-  const moduleUrl = `file://${tempFilePath}`;
+  const moduleUrl = toFileUrl(tempFilePath).href;
   markModuleLoadProgress(config, "module:import-start", filePath);
 
   try {
@@ -406,7 +406,7 @@ export async function loadModule(
 
       if (recovered) {
         logger.info("HTTP bundle recovered, retrying import", { hash });
-        return await import(`file://${tempFilePath}?t=${Date.now()}&retry=1`);
+        return await import(`${toFileUrl(tempFilePath).href}?t=${Date.now()}&retry=1`);
       }
     }
 
@@ -457,7 +457,7 @@ export async function loadModule(
         throw markBuildFailure(rebuildError);
       }
 
-      return await import(`file://${rebuiltPath}?t=${Date.now()}&rebuilt=1`);
+      return await import(`${toFileUrl(rebuiltPath).href}?t=${Date.now()}&rebuilt=1`);
     }
 
     logger.error("Failed to import module:", {

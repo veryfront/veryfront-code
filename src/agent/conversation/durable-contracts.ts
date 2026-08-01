@@ -406,6 +406,7 @@ export interface ConversationAgentRunUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  usageCaptureStatus?: "complete" | "partial" | "missing";
 }
 
 /** Input payload for create conversation agent run. */
