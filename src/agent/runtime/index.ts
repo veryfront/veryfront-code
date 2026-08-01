@@ -375,6 +375,11 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
   return toolName === "create_agent" || toolName === "update_agent";
 }
 
+const AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES = new Set([
+  "create_agent",
+  "update_agent",
+]);
+
 function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
   const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
   return {
@@ -1114,6 +1119,9 @@ export class AgentRuntime {
           allowedRemoteToolNames,
           config: runtimeStepConfig,
           effectiveModel,
+          excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+            ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
+            : undefined,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
           isLocalModel: isLocal,
@@ -1708,6 +1716,9 @@ export class AgentRuntime {
         allowedRemoteToolNames,
         config: runtimeStepConfig,
         effectiveModel,
+        excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+          ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
+          : undefined,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
         isLocalModel: isLocalStreaming,

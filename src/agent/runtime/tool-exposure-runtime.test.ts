@@ -1133,6 +1133,121 @@ it("deferred search cannot spend provider capacity on an already-visible bootstr
   assertEquals(response.text, "done");
 });
 
+it("deferred final-response guard frees loaded capacity before a later search", async () => {
+  const catalogTools: ToolDefinition[] = Array.from(
+    { length: 126 },
+    (_, index): ToolDefinition => ({
+      name: `catalog_tool_${String(index).padStart(3, "0")}`,
+      description: "Catalog tool",
+      parameters: { type: "object", properties: {} },
+    }),
+  );
+  const remoteTools: ToolDefinition[] = [
+    ...catalogTools,
+    {
+      name: "create_agent",
+      description: "Create an agent",
+      parameters: { type: "object", properties: {} },
+    },
+  ];
+  const allowedRemoteToolNames = remoteTools.map((tool) => tool.name);
+  const observedTools: string[][] = [];
+  let step = 0;
+  let createAgentExecutions = 0;
+  const model: ModelRuntime = {
+    provider: "openai",
+    modelId: "gpt-5.5",
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      step++;
+      if (step === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "create-agent-1",
+            toolName: "create_agent",
+            input: "{}",
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      if (step === 2) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "search-catalog-124",
+            toolName: "tool_search",
+            input: JSON.stringify({ query: "catalog_tool_124" }),
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const remoteSource: RemoteToolSource = {
+    id: "veryfront-platform-mcp",
+    listTools: () => Promise.resolve(remoteTools),
+    executeTool: (toolName) => {
+      assertEquals(toolName, "create_agent");
+      createAgentExecutions++;
+      return Promise.resolve({ id: "created-agent" });
+    },
+  };
+  const assistant = agent(
+    {
+      id: "deferred-final-response-guard-budget",
+      model: "openai/gpt-5.5",
+      system: "Create the agent, then finish.",
+      skills: true,
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+      },
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+      __vfRemoteToolSources: [remoteSource],
+      __vfAllowedRemoteTools: allowedRemoteToolNames,
+      __vfToolExposureCheckpoint: {
+        version: 1,
+        loadedToolNames: [
+          ...catalogTools.slice(0, 124).map((tool) => tool.name),
+          "create_agent",
+        ],
+      },
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  const response = await assistant.generate({ input: "Create an agent" });
+
+  assertEquals(observedTools.length, 3);
+  assertEquals(observedTools[0]?.includes("create_agent"), true);
+  assertEquals(observedTools[2]?.length, 128);
+  assertEquals(observedTools[2]?.includes("create_agent"), false);
+  assertEquals(observedTools[2]?.includes("catalog_tool_000"), true);
+  assertEquals(observedTools[2]?.includes("catalog_tool_124"), true);
+  assertEquals(observedTools[2]?.includes("tool_search"), true);
+  assertEquals(createAgentExecutions, 1);
+  assertEquals(response.text, "done");
+});
+
 it(
   "framework fallback preserves configured provider tools for generate, stream, and respond",
   async () => {
