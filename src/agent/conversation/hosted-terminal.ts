@@ -143,14 +143,12 @@ function buildConversationHostedLifecycleUsage(
     ...(usage.cachedInputTokens !== undefined
       ? { cachedInputTokens: usage.cachedInputTokens }
       : {}),
-    ...(usage.usageCaptureStatus !== undefined
-      ? { usageCaptureStatus: usage.usageCaptureStatus }
-      : {}),
   };
 }
 
 function buildConversationAgentRunUsage(
   usage: HostedLifecycleUsage | undefined,
+  usageCaptureStatus: NonNullable<HostedLifecycleTerminalState["metadata"]>["usageCaptureStatus"],
 ): ConversationAgentRunUsage | undefined {
   if (!usage) {
     return undefined;
@@ -163,9 +161,7 @@ function buildConversationAgentRunUsage(
     inputTokens,
     outputTokens,
     totalTokens: inputTokens + outputTokens,
-    ...(usage.usageCaptureStatus !== undefined
-      ? { usageCaptureStatus: usage.usageCaptureStatus }
-      : {}),
+    ...(usageCaptureStatus !== undefined ? { usageCaptureStatus } : {}),
   };
 }
 
@@ -176,14 +172,16 @@ export function toConversationHostedTerminalState(input: {
 }): HostedLifecycleTerminalState {
   const modelId = input.state.metadata?.modelId ?? input.fallbackModelId;
   const usage = buildConversationHostedLifecycleUsage(input.state.metadata?.usage);
+  const usageCaptureStatus = input.state.metadata?.usageCaptureStatus;
 
   return {
     status: input.state.status,
-    ...(modelId || usage
+    ...(modelId || usage || usageCaptureStatus
       ? {
         metadata: {
           ...(modelId ? { modelId } : {}),
           ...(usage ? { usage } : {}),
+          ...(usageCaptureStatus ? { usageCaptureStatus } : {}),
         },
       }
       : {}),
@@ -222,7 +220,10 @@ export function createConversationHostedTerminalAdapter(
         status,
         model: modelId,
         provider: options.resolveProvider(modelId),
-        usage: buildConversationAgentRunUsage(terminalState.metadata?.usage),
+        usage: buildConversationAgentRunUsage(
+          terminalState.metadata?.usage,
+          terminalState.metadata?.usageCaptureStatus,
+        ),
         terminalErrorCode: terminalState.terminalErrorCode,
         terminalErrorMessage: terminalState.terminalErrorMessage,
       });

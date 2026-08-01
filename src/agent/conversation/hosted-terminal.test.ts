@@ -58,8 +58,8 @@ describe("agent/conversation-hosted-terminal", () => {
               inputTokens: 1,
               outputTokens: 2,
               cachedInputTokens: 3,
-              usageCaptureStatus: "complete",
             },
+            usageCaptureStatus: "complete",
           },
         },
       }),
@@ -73,8 +73,8 @@ describe("agent/conversation-hosted-terminal", () => {
             inputTokens: 1,
             outputTokens: 2,
             cachedInputTokens: 3,
-            usageCaptureStatus: "complete",
           },
+          usageCaptureStatus: "complete",
         },
       },
     );
@@ -109,8 +109,8 @@ describe("agent/conversation-hosted-terminal", () => {
             inputTokens: 4,
             outputTokens: 6,
             cachedInputTokens: 2,
-            usageCaptureStatus: "complete",
           },
+          usageCaptureStatus: "complete",
         },
       });
 
