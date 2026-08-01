@@ -2,8 +2,9 @@
 
 This document explains the design and operating contract of the CSS optimizer.
 Public option and result shapes remain defined in
-[`types/index.ts`](./types/index.ts); resource bounds and pinned dependencies
-remain defined in [`constants.ts`](./constants.ts).
+[`types/index.ts`](./types/index.ts), while core resource bounds remain defined
+in [`constants.ts`](./constants.ts). Third-party implementation versions belong
+to their independently published extension manifests.
 
 ## Contract
 
@@ -14,8 +15,8 @@ publication:
 1. Validate the project boundary, configuration, and required filesystem
    capabilities.
 2. Discover regular `.css` inputs deterministically within configured bounds.
-3. If enabled, remove unused rules with PurgeCSS using validated project
-   content.
+3. If enabled, remove unused rules through one captured `CSSPurgingEngine`
+   session using validated project content.
 4. Transform every stylesheet with Lightning CSS, including browser-target
    compilation, minification, and optional source maps.
 5. Write all CSS files, maps, and the complete manifest into an isolated
@@ -30,16 +31,18 @@ published output and in-memory cache unchanged.
 ## Why the stages have a fixed order
 
 Purging and CSS compilation are complementary transformations rather than
-alternative strategies. PurgeCSS must see the uncompiled rule structure and
-content evidence first. Lightning CSS then parses and emits the final syntax.
-The service therefore uses a fixed `purge -> compile` pipeline; strategy
-priority values remain exported only for compatibility with callers that
-instantiate the strategy classes directly.
+alternative strategies. The purging engine must see the uncompiled rule
+structure and content evidence first. CSS compilation then parses and emits the
+final syntax. The service therefore uses a fixed `purge -> compile` pipeline;
+strategy priority values remain exported only for compatibility with callers
+that instantiate the strategy classes directly.
 
-Lightning CSS and Browserslist are required for batch optimization. PurgeCSS is
-required when purging or critical-CSS extraction is requested. Missing,
-malformed, or failing dependencies reject the operation. There is no CDN
-import, regex minifier, or partial-success fallback.
+Lightning CSS and Browserslist are required for batch optimization. A
+`CSSPurgingEngine` is required only when purging or critical-CSS extraction is
+requested; `@veryfront/ext-css-purgecss` is the recommended implementation.
+Core never imports or probes that package. Missing, malformed, or failing
+providers reject the operation with no CDN import, regex, no-op, network, or
+workspace fallback.
 
 ## Filesystem and publication safety
 
@@ -72,8 +75,8 @@ Purge output cannot currently be composed with a trustworthy source map, so
 Critical CSS depends on a specific HTML document and is therefore exposed only
 through `CSSOptimizer.extractCriticalCSS(cssPath, html)`. Setting the legacy
 `criticalCSS` batch option rejects with migration guidance. The extraction API
-uses PurgeCSS's parsed retained/rejected outputs so nested at-rules stay
-structurally valid.
+requires the purging engine to return both retained and rejected parser-backed
+outputs so nested at-rules stay structurally valid.
 
 ## Failure model
 

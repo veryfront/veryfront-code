@@ -73,6 +73,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"just-bash",
 	"mdast-util-to-string",
 	"protobufjs",
+	"purgecss",
 	"rehype-highlight",
 	"rehype-raw",
 	"rehype-sanitize",

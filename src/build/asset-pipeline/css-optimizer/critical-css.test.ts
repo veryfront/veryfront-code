@@ -1,7 +1,20 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
 import { extractCriticalCSS } from "./critical-css.ts";
+import { createCSSPurgingSession } from "./purging-engine.ts";
+
+function purgingSession(critical?: string, remaining = "") {
+  return createCSSPurgingSession(
+    createTestCSSPurgingEngine((request) =>
+      Promise.resolve({
+        css: critical ?? request.css,
+        rejectedCSS: remaining,
+      })
+    ),
+  );
+}
 
 describe("build/asset-pipeline/css-optimizer/critical-css", () => {
   describe("extractCriticalCSS", () => {
@@ -15,7 +28,15 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
 
       try {
         const html = `<div class="header"><p>Hello</p></div>`;
-        const result = await extractCriticalCSS(cssPath, html, { minify: false });
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          { minify: false },
+          purgingSession(
+            ".header { color: red; }",
+            ".footer { color: blue; } .sidebar { color: green; }",
+          ),
+        );
 
         assertExists(result.critical);
         assertExists(result.remaining);
@@ -34,7 +55,12 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
 
       try {
         const html = `<div class="header">Hi</div>`;
-        const result = await extractCriticalCSS(cssPath, html, { minify: true });
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          { minify: true },
+          purgingSession(),
+        );
 
         // Minified result should have less whitespace
         assertExists(result.critical);
@@ -52,7 +78,12 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
 
       try {
         const html = `<div class="a">Test</div>`;
-        const result = await extractCriticalCSS(cssPath, html, {});
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          {},
+          purgingSession(),
+        );
 
         // Should not throw, minify defaults to true
         assertExists(result.critical);
@@ -67,7 +98,12 @@ describe("build/asset-pipeline/css-optimizer/critical-css", () => {
       await Deno.writeTextFile(cssPath, "");
 
       try {
-        const result = await extractCriticalCSS(cssPath, "<div>hi</div>", { minify: false });
+        const result = await extractCriticalCSS(
+          cssPath,
+          "<div>hi</div>",
+          { minify: false },
+          purgingSession(),
+        );
         assertEquals(result.criticalSize, 0);
         assertEquals(result.remainingSize, 0);
       } finally {
@@ -86,7 +122,12 @@ h1 { font-size: 32px; }`,
 
       try {
         const html = `<div><p>Hello</p></div>`;
-        const result = await extractCriticalCSS(cssPath, html, { minify: false });
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          { minify: false },
+          purgingSession(),
+        );
         assertEquals(result.critical.includes("p"), true);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
@@ -101,12 +142,43 @@ h1 { font-size: 32px; }`,
 
       try {
         const html = `<div class="crit">test</div>`;
-        const result = await extractCriticalCSS(cssPath, html, { minify: false });
+        const result = await extractCriticalCSS(
+          cssPath,
+          html,
+          { minify: false },
+          purgingSession(
+            ".crit { color: red; }",
+            ".noncrit { color: blue; }",
+          ),
+        );
         assertEquals(result.criticalSize > 0, true);
         assertEquals(result.remainingSize > 0, true);
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
+    });
+
+    it("does not invoke custom safelist iterators", async () => {
+      let iteratorCalls = 0;
+      const safelist = ["dynamic"];
+      Object.defineProperty(safelist, Symbol.iterator, {
+        get() {
+          iteratorCalls++;
+          return Array.prototype[Symbol.iterator];
+        },
+      });
+      await assertRejects(
+        () =>
+          extractCriticalCSS(
+            "style.css",
+            "<div></div>",
+            { purgeSafelist: safelist },
+            purgingSession(),
+          ),
+        TypeError,
+        "dense data-property array",
+      );
+      assertEquals(iteratorCalls, 0);
     });
   });
 });

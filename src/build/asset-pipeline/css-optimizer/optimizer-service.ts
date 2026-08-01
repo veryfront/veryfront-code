@@ -30,6 +30,7 @@ import {
   MAX_CSS_TOTAL_OUTPUT_BYTES,
 } from "./constants.ts";
 import { CacheManager } from "./css-bundle-cache.ts";
+import type { CSSPurgingSession } from "./purging-engine.ts";
 import { LightningCSSStrategy } from "./strategies/lightning-strategy.ts";
 import { type PurgeContentSource, PurgeStrategy } from "./strategies/purge-strategy.ts";
 import type { CSSBundle, CSSOptimizationOptions, CSSOptimizerStats } from "./types/index.ts";
@@ -151,7 +152,8 @@ export class CSSOptimizerService {
         dependencies.purgeStrategy === null ||
         typeof dependencies.purgeStrategy.analyzeContent !== "function" ||
         typeof dependencies.purgeStrategy.process !== "function" ||
-        typeof dependencies.purgeStrategy.clearCache !== "function")
+        typeof dependencies.purgeStrategy.clearCache !== "function" ||
+        typeof dependencies.purgeStrategy.createOperationSession !== "function")
     ) {
       throw new TypeError("CSS purge strategy dependency is invalid");
     }
@@ -360,6 +362,9 @@ export class CSSOptimizerService {
             "CSS source maps cannot be composed safely with purge output",
           );
         }
+        const purgingSession = this.options.purge
+          ? this.purgeStrategy.createOperationSession()
+          : undefined;
         await this.validateFilesystemCapabilities();
         await this.init();
 
@@ -405,7 +410,13 @@ export class CSSOptimizerService {
           ) {
             const settled = await Promise.allSettled(
               plans.slice(start, start + DEFAULT_BUILD_CONCURRENCY)
-                .map((plan) => this.optimizeFile(plan, publication.buildDir)),
+                .map((plan) =>
+                  this.optimizeFile(
+                    plan,
+                    publication.buildDir,
+                    purgingSession,
+                  )
+                ),
             );
             const errors = settled.flatMap((result) =>
               result.status === "rejected" ? [result.reason] : []
@@ -598,6 +609,7 @@ export class CSSOptimizerService {
   private async optimizeFile(
     plan: PlannedCSSFile,
     stagingDir: string,
+    purgingSession?: CSSPurgingSession,
   ): Promise<CSSBundle> {
     const content = await this.secureFs.readFile(plan.sourcePath);
     const originalSize = encoder.encode(content).length;
@@ -609,6 +621,7 @@ export class CSSOptimizerService {
     const { optimized, sourceMap } = await this.processContent(
       content,
       plan.logicalPath,
+      purgingSession,
     );
 
     let outputContent = optimized;
@@ -658,12 +671,14 @@ export class CSSOptimizerService {
   private async processContent(
     content: string,
     logicalPath: string,
+    purgingSession?: CSSPurgingSession,
   ): Promise<{ optimized: string; sourceMap?: string }> {
     const purged = this.options.purge
       ? (await this.purgeStrategy.process(
         content,
         logicalPath,
         this.options,
+        purgingSession,
       )).code
       : content;
     const result = await this.lightningStrategy.process(
