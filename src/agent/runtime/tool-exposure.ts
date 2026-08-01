@@ -23,7 +23,8 @@ export type ToolExposurePlan = {
 
 /** Private versioned state persisted by the framework between resumed steps. */
 export type ToolExposureCheckpoint = {
-  version: 1;
+  /** v1 names were lexicographically sorted; v2 preserves oldest-to-newest recency. */
+  version: 1 | 2;
   loadedToolNames: string[];
 };
 
@@ -68,6 +69,13 @@ function compareAscii(left: string, right: string): number {
 /** Return whether a persisted name matches the existing non-empty tool id contract. */
 export function isValidToolExposureCheckpointName(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+/** Return whether a checkpoint version can be restored by this runtime. */
+export function isSupportedToolExposureCheckpointVersion(
+  value: unknown,
+): value is ToolExposureCheckpoint["version"] {
+  return value === 1 || value === 2;
 }
 
 function collectSchemaDescriptions(value: unknown, output: string[]): void {
@@ -327,7 +335,7 @@ export function createToolExposureCheckpoint(
 ): ToolExposureCheckpoint {
   const authorizedNames = new Set(authorized.map((tool) => tool.name));
   return {
-    version: 1,
+    version: 2,
     loadedToolNames: [...state.loadedToolNames]
       .filter((name) => authorizedNames.has(name)),
   };
@@ -355,7 +363,7 @@ export function restoreToolExposureState(
   authorized: readonly ToolDefinition[],
 ): ToolExposureState {
   if (
-    checkpoint?.version !== 1 ||
+    !isSupportedToolExposureCheckpointVersion(checkpoint?.version) ||
     !Array.isArray(checkpoint.loadedToolNames) ||
     !checkpoint.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {
@@ -363,7 +371,7 @@ export function restoreToolExposureState(
   }
 
   const authorizedNames = new Set(authorized.map((tool) => tool.name));
-  return createToolExposureState(
-    checkpoint.loadedToolNames.filter((name) => authorizedNames.has(name)),
-  );
+  const loadedToolNames = checkpoint.loadedToolNames.filter((name) => authorizedNames.has(name));
+  if (checkpoint.version === 1) loadedToolNames.sort(compareAscii);
+  return createToolExposureState(loadedToolNames);
 }

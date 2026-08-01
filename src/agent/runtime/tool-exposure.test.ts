@@ -453,7 +453,7 @@ it("tool exposure checkpoints are private, ordered, and restore only currently a
   const authorized = catalog.slice(0, 3);
   const state = createToolExposureState(["get_release", "create_release", "get_release"]);
   const checkpoint = createToolExposureCheckpoint(authorized, state);
-  assertEquals(checkpoint.version, 1);
+  assertEquals(checkpoint.version, 2);
   assertEquals(checkpoint.loadedToolNames, ["get_release", "create_release"]);
 
   assertEquals(
@@ -465,8 +465,25 @@ it("tool exposure checkpoints are private, ordered, and restore only currently a
     ["get_release"],
   );
   assertEquals(
-    [...restoreToolExposureState({ ...checkpoint, version: 2 }, authorized).loadedToolNames],
+    [...restoreToolExposureState({ ...checkpoint, version: 3 }, authorized).loadedToolNames],
     [],
+  );
+});
+
+it("tool exposure checkpoint restoration upgrades legacy v1 order deterministically", () => {
+  const authorized = [
+    definition("a_legacy_oldest", "Legacy sorted first"),
+    definition("z_legacy_newer", "Legacy sorted last"),
+  ];
+
+  assertEquals(
+    [
+      ...restoreToolExposureState({
+        version: 1,
+        loadedToolNames: ["z_legacy_newer", "a_legacy_oldest"],
+      }, authorized).loadedToolNames,
+    ],
+    ["a_legacy_oldest", "z_legacy_newer"],
   );
 });
 
@@ -506,7 +523,7 @@ it("tool exposure checkpoints canonicalize authorized loaded names", () => {
   ]);
 
   assertEquals(createToolExposureCheckpoint(authorized, state), {
-    version: 1,
+    version: 2,
     loadedToolNames: ["list_projects", "get_release"],
   });
 });
@@ -537,7 +554,7 @@ it("tool exposure checkpoint restoration fails closed and reauthorizes names", (
 
   assertEquals(
     restore({
-      version: 2,
+      version: 3,
       loadedToolNames: ["still_authorized"],
     }),
     [],

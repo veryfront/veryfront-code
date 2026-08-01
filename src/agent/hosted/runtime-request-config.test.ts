@@ -27,6 +27,18 @@ it("server-resolved tool exposure checkpoint parses strictly and fails closed", 
         version: 2,
       },
     }, true),
+    {
+      version: 2,
+      loadedToolNames: ["get_release"],
+    },
+  );
+  assertEquals(
+    getServerResolvedToolExposureCheckpoint({
+      serverResolvedToolExposureCheckpoint: {
+        ...checkpoint,
+        version: 3,
+      },
+    }, true),
     undefined,
   );
   assertEquals(
