@@ -97,6 +97,21 @@ function canonicalPath(path: string, windows: boolean): string {
   return windows ? toPortableSeparators(path) : path;
 }
 
+export function removeTrailingSeparatorsExceptRoot(
+  path: string,
+  windows: boolean,
+): string {
+  const root = analyzeRoot(path, windows);
+  let canonical = canonicalPath(path, windows);
+  while (
+    canonical.endsWith("/") &&
+    canonical.length > root.root.length
+  ) {
+    canonical = canonical.slice(0, -1);
+  }
+  return canonical;
+}
+
 function rootKey(root: RootInfo, windows: boolean): string {
   const value = root.device || root.root;
   return windows ? value.toLowerCase() : value;

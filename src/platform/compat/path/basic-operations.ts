@@ -4,6 +4,7 @@ import {
   portableDirname,
   portableExtname,
   portableJoin,
+  removeTrailingSeparatorsExceptRoot,
   runtimeUsesWindowsPaths,
   toPortableSeparators,
 } from "./portable.ts";
@@ -18,7 +19,10 @@ export function join(...paths: string[]): string {
   if (paths.every((path) => path.length === 0)) return "/";
   const windows = usesWindowsFlavor(paths);
   const pathApi = getNativePathImplementation(windows);
-  return pathApi ? toPortableSeparators(pathApi.join(...paths)) : portableJoin(paths, windows);
+  const joined = pathApi
+    ? toPortableSeparators(pathApi.join(...paths))
+    : portableJoin(paths, windows);
+  return removeTrailingSeparatorsExceptRoot(joined, windows);
 }
 
 /** Return the parent directory path. */

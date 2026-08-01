@@ -4,6 +4,7 @@ import {
   portableNormalize,
   portableRelative,
   portableResolve,
+  removeTrailingSeparatorsExceptRoot,
   runtimeUsesWindowsPaths,
   toPortableSeparators,
 } from "./portable.ts";
@@ -47,13 +48,5 @@ export function normalize(path: string): string {
   // The established Veryfront facade contract returns canonical paths without
   // a trailing separator, except for filesystem roots. Enforce that
   // postcondition independently of whether the runtime supplies node:path.
-  if (
-    normalized === "/" ||
-    /^[A-Za-z]:\/$/.test(normalized) ||
-    /^\/\/[^/]+\/[^/]+\/$/.test(normalized)
-  ) {
-    return normalized;
-  }
-  if (normalized === "./") return ".";
-  return normalized.endsWith("/") ? normalized.slice(0, -1) : normalized;
+  return removeTrailingSeparatorsExceptRoot(normalized, windows);
 }
