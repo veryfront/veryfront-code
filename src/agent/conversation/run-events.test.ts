@@ -49,9 +49,19 @@ describe("agent/conversation-run-events", () => {
 
     assertEquals(encoder.encode({ type: "start-step" }), [{
       type: conversationRunEventTypes.stepStarted,
+      stepName: "step-1",
     }]);
     assertEquals(encoder.encode({ type: "finish-step" }), [{
       type: conversationRunEventTypes.stepFinished,
+      stepName: "step-1",
+    }]);
+    assertEquals(encoder.encode({ type: "start-step" }), [{
+      type: conversationRunEventTypes.stepStarted,
+      stepName: "step-2",
+    }]);
+    assertEquals(encoder.encode({ type: "finish-step" }), [{
+      type: conversationRunEventTypes.stepFinished,
+      stepName: "step-2",
     }]);
   });
 
