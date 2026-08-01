@@ -3,6 +3,18 @@
  * details, error boundaries for HTTP and CLI, and user-friendly formatting.
  *
  * @module errors
+ * @example Define and create a structured framework error
+ * ```ts
+ * import { defineError } from "veryfront/errors";
+ *
+ * const INVALID_WIDGET = defineError({
+ *   slug: "invalid-widget",
+ *   category: "GENERAL",
+ *   title: "Invalid widget",
+ *   status: 400,
+ * });
+ * throw INVALID_WIDGET.create({ detail: "The widget id is malformed." });
+ * ```
  */
 
 export { defineError, VeryfrontError } from "./types.ts";

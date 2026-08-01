@@ -323,6 +323,52 @@ export class ProjectScopedRegistryManager<T> {
   }
 
   /**
+   * Register an item and return an idempotent disposer bound to this exact
+   * registration generation.
+   *
+   * The disposer captures the canonical scope at registration time, so
+   * lifecycle teardown does not depend on whichever request context happens to
+   * be active later. It removes the entry only while the registered value is
+   * still current; a subsequent replacement therefore remains owned by its
+   * own lifecycle.
+   */
+  registerOwned(id: string, item: T): () => void {
+    const scopeId = this.getCurrentScopeId();
+    this.register(id, item);
+    let disposed = false;
+
+    return () => {
+      if (disposed) return;
+
+      const transaction = registryTransactionStorage.getStore();
+      if (
+        transaction?.state === "active" &&
+        transaction.targetScopeId === scopeId
+      ) {
+        const stage = this.getTransactionStage(scopeId);
+        if (stage?.registry.get(id) !== item) return;
+        stage.registry.delete(id);
+        stage.record({ type: "delete", id });
+        return;
+      }
+
+      const registry = this.registriesByScope.get(scopeId);
+      if (registry?.get(id) !== item) {
+        disposed = true;
+        return;
+      }
+
+      registry.delete(id);
+      disposed = true;
+      this.recordLiveMutation(scopeId, { type: "delete", id });
+      if (registry.size === 0) this.registriesByScope.delete(scopeId);
+      agentLogger.debug(
+        `[${this.registryName}] Disposed owned registration "${id}" from scope ${scopeId}`,
+      );
+    };
+  }
+
+  /**
    * Register a shared item available to all projects.
    * Use for framework-provided tools, not user-defined ones.
    */

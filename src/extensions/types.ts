@@ -28,6 +28,8 @@ export interface ExtensionContext {
   get<T>(contract: string): T | undefined;
   require<T>(contract: string): T;
   provide<T>(contract: string, impl: T): void;
+  /** Optional lifecycle cancellation supplied by coordinating loaders. */
+  readonly signal?: AbortSignal;
   config: Record<string, unknown>;
   logger: ExtensionLogger;
 }
