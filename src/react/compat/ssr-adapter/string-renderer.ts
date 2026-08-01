@@ -3,29 +3,50 @@ import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getReactDOMServer } from "./server-loader.ts";
-import { getSSRAdapterTimeoutMs } from "./timeout.ts";
+import { getSSRAdapterTimeoutMs, getSSRBufferLimitBytes } from "./timeout.ts";
 import type { SSROptions } from "./types.ts";
 
+const STREAM_YIELD_INTERVAL_BYTES = 256 * 1024;
+
 interface RenderDeadline {
+  readonly error: Error;
+  readonly expiresAt: number;
   readonly promise: Promise<never>;
   readonly signal: AbortSignal;
+  throwIfExpired(): void;
   dispose(): void;
 }
 
 function createRenderDeadline(timeoutMs: number): RenderDeadline {
   const controller = new AbortController();
+  const error = new Error(`SSR timeout: buffered React render exceeded ${timeoutMs}ms`);
+  const expiresAt = performance.now() + timeoutMs;
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let expired = false;
+  let rejectTimeout!: (error: Error) => void;
   const promise = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      const error = new Error(`SSR timeout: buffered React render exceeded ${timeoutMs}ms`);
-      controller.abort(error);
-      reject(error);
-    }, timeoutMs);
+    rejectTimeout = reject;
   });
+  const expire = () => {
+    if (expired) return;
+    expired = true;
+    if (!controller.signal.aborted) {
+      controller.abort(error);
+    }
+    rejectTimeout(error);
+  };
+  timeoutId = setTimeout(expire, timeoutMs);
 
   return {
+    error,
+    expiresAt,
     promise,
     signal: controller.signal,
+    throwIfExpired() {
+      if (!expired && performance.now() < expiresAt) return;
+      expire();
+      throw error;
+    },
     dispose() {
       if (timeoutId !== undefined) clearTimeout(timeoutId);
       timeoutId = undefined;
@@ -35,40 +56,66 @@ function createRenderDeadline(timeoutMs: number): RenderDeadline {
 
 async function streamToString(
   stream: ReadableStream<Uint8Array>,
-  signal: AbortSignal,
+  deadline: RenderDeadline,
+  maxBytes: number,
 ): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   const chunks: string[] = [];
   let completed = false;
+  let totalBytes = 0;
+  let bytesSinceYield = 0;
+  let failure: unknown;
   let rejectAbort!: (reason: unknown) => void;
   const abortPromise = new Promise<never>((_, reject) => {
     rejectAbort = reject;
   });
   const abort = () => {
-    rejectAbort(signal.reason ?? new DOMException("The render was aborted", "AbortError"));
+    rejectAbort(
+      deadline.signal.reason ?? new DOMException("The render was aborted", "AbortError"),
+    );
   };
 
   try {
-    if (signal.aborted) abort();
-    else signal.addEventListener("abort", abort, { once: true });
+    if (deadline.signal.aborted) abort();
+    else deadline.signal.addEventListener("abort", abort, { once: true });
 
     while (true) {
+      // Timers cannot run while an always-ready stream continuously schedules
+      // microtasks, so enforce the same absolute deadline inside the loop.
+      deadline.throwIfExpired();
       const { done, value } = await Promise.race([reader.read(), abortPromise]);
+      deadline.throwIfExpired();
       if (done) {
         completed = true;
         break;
       }
+
+      if (value.byteLength > maxBytes - totalBytes) {
+        throw new RangeError(
+          `SSR buffered output exceeded ${maxBytes} bytes`,
+        );
+      }
+      totalBytes += value.byteLength;
+      bytesSinceYield += value.byteLength;
       chunks.push(decoder.decode(value, { stream: true }));
+      if (bytesSinceYield >= STREAM_YIELD_INTERVAL_BYTES) {
+        bytesSinceYield = 0;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        deadline.throwIfExpired();
+      }
     }
 
     chunks.push(decoder.decode());
     return chunks.join("");
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    signal.removeEventListener("abort", abort);
+    deadline.signal.removeEventListener("abort", abort);
     if (!completed) {
       try {
-        reader.cancel(signal.reason).catch(() => {
+        reader.cancel(failure ?? deadline.signal.reason).catch(() => {
           /* expected: the stream may already be errored or cancelled */
         });
       } catch {
@@ -95,6 +142,7 @@ export async function renderToStringAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
+  const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
   const server = await getReactDOMServer(options.reactVersion);
   const canUseReadableStream = server.renderToReadableStream && !isCompiledBinary();
 
@@ -129,9 +177,13 @@ export async function renderToStringAdapter(
       setupPromise.then(
         (lateStream) => {
           if (deadline.signal.aborted) {
-            lateStream.cancel(deadline.signal.reason).catch(() => {
-              /* expected: a late stream may already be closed */
-            });
+            try {
+              lateStream.cancel(deadline.signal.reason).catch(() => {
+                /* expected: a late stream may already be closed */
+              });
+            } catch {
+              /* expected: a non-conforming stream may throw during cancellation */
+            }
           }
         },
         () => {
@@ -142,7 +194,7 @@ export async function renderToStringAdapter(
       const stream = await Promise.race([setupPromise, deadline.promise]);
 
       return await Promise.race([
-        streamToString(stream, deadline.signal),
+        streamToString(stream, deadline, maxBufferedBytes),
         deadline.promise,
       ]);
     } catch (error) {
@@ -155,7 +207,7 @@ export async function renderToStringAdapter(
   }
 
   try {
-    return (await withSpan(
+    const html = (await withSpan(
       SpanNames.SSR_REACT_RENDER_TO_STRING,
       () =>
         Promise.resolve(
@@ -165,6 +217,8 @@ export async function renderToStringAdapter(
         ),
       { "ssr.method": "renderToString" },
     )) as string;
+    assertBufferedOutputWithinLimit(html, maxBufferedBytes);
+    return html;
   } catch (error) {
     logger.error("SSR renderToString failed", error);
     notifyErrorObserver(options.onError, error);
@@ -176,15 +230,47 @@ export async function renderToStaticMarkupAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
+  const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
   const { renderToStaticMarkup } = await getReactDOMServer(options.reactVersion);
 
   try {
-    return renderToStaticMarkup(element, {
+    const html = renderToStaticMarkup(element, {
       identifierPrefix: options.identifierPrefix,
     });
+    assertBufferedOutputWithinLimit(html, maxBufferedBytes);
+    return html;
   } catch (error) {
     logger.error("SSR renderToStaticMarkup failed", error);
     notifyErrorObserver(options.onError, error);
     throw error;
+  }
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit < 0x80) {
+      bytes += 1;
+    } else if (codeUnit < 0x800) {
+      bytes += 2;
+    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index += 1;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
+}
+
+function assertBufferedOutputWithinLimit(html: string, maxBytes: number): void {
+  if (utf8ByteLength(html) > maxBytes) {
+    throw new RangeError(`SSR buffered output exceeded ${maxBytes} bytes`);
   }
 }

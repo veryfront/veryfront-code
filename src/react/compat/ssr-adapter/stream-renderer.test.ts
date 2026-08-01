@@ -201,6 +201,38 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
     assertEquals(aborted, true);
   });
 
+  it("bounds setup and cancels a late stream when the renderer ignores abort", async () => {
+    let resolveStream!: (stream: ReadableSSRStream) => void;
+    let cancelled = false;
+    __setSSRStreamTimeoutForTests(5);
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: () =>
+          new Promise((resolve) => {
+            resolveStream = resolve;
+          }),
+      }),
+    );
+
+    await assertRejects(
+      () => withDeadline(renderToStreamAdapter(React.createElement("div"))),
+      Error,
+      "SSR timeout",
+    );
+
+    const lateStream = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    }) as ReadableStream<Uint8Array> & { allReady: Promise<void> };
+    lateStream.allReady = Promise.resolve();
+    resolveStream(lateStream as ReadableSSRStream);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    assertEquals(cancelled, true);
+  });
+
   it("returns a pipeable stream result when renderToPipeableStream is ready", async () => {
     __injectReactDOMServerForTests(
       createMockServer({

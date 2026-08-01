@@ -75,16 +75,22 @@ async function renderToReadableStreamImpl(
   // Track whether the abort was triggered by our own timeout so we can detect
   // it reliably in the catch block without string-matching error messages.
   let timedOut = false;
+  let rejectTimeout!: (error: Error) => void;
+  const timeoutPromise = new Promise<never>((_resolve, reject) => {
+    rejectTimeout = reject;
+  });
   const timeoutId = setTimeout(() => {
     timedOut = true;
     logger.error("SSR_TIMEOUT aborting React render", { timeoutMs });
-    controller.abort(new Error(`SSR timeout: React render exceeded ${timeoutMs}ms`));
+    const error = new Error(`SSR timeout: React render exceeded ${timeoutMs}ms`);
+    controller.abort(error);
+    rejectTimeout(error);
   }, timeoutMs);
 
   try {
     if (debug) logger.info("SSR renderToReadableStream started");
 
-    const stream = await server.renderToReadableStream(element, {
+    const setupPromise = server.renderToReadableStream(element, {
       signal: controller.signal,
       bootstrapScripts: options.bootstrapScripts,
       bootstrapModules: options.bootstrapModules,
@@ -102,6 +108,27 @@ async function renderToReadableStreamImpl(
       },
       progressiveChunkSize: options.progressiveChunkSize,
     });
+
+    // AbortSignal is cooperative. If an implementation ignores it and settles
+    // after the deadline, cancel the detached stream rather than leaking its
+    // rendering work into the request lifecycle.
+    setupPromise.then(
+      (lateStream) => {
+        if (!timedOut) return;
+        try {
+          lateStream.cancel(controller.signal.reason).catch(() => {
+            /* expected: the late stream may already be closed or locked */
+          });
+        } catch {
+          /* expected: a non-conforming stream may throw during cancellation */
+        }
+      },
+      () => {
+        /* the race below owns setup failures */
+      },
+    );
+
+    const stream = await Promise.race([setupPromise, timeoutPromise]);
 
     clearTimeout(timeoutId);
 
