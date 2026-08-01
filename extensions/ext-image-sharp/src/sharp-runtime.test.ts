@@ -21,6 +21,8 @@ interface FakeSharpOptions {
   readonly outputSizeOffset?: number;
   readonly metadata?: unknown;
   readonly metadataPromise?: Promise<unknown>;
+  readonly outputPromise?: Promise<unknown>;
+  readonly onToBuffer?: () => void;
 }
 
 interface FakeSharpFixture {
@@ -130,6 +132,8 @@ function fakeSharpFixture(options: FakeSharpOptions = {}): FakeSharpFixture {
     value: function (this: object): unknown {
       const current = state(this);
       encoded.push([current.width, current.format]);
+      options.onToBuffer?.();
+      if (options.outputPromise) return options.outputPromise;
       const outputBytes = options.outputBytes ?? 2;
       const data = new Uint8Array(outputBytes);
       data.fill(current.width);
@@ -473,16 +477,44 @@ describe("BoundSharpImageOptimizationEngine", () => {
     );
   });
 
-  it("rejects promptly when a deadline signal aborts native work", async () => {
-    const pending = new Promise<never>(() => {});
-    const value = engine(fakeSharpFixture({ metadataPromise: pending }));
+  it("does not settle after abort until started native work finishes", async () => {
+    let markNativeStarted!: () => void;
+    const nativeStarted = new Promise<void>((resolve) => {
+      markNativeStarted = resolve;
+    });
+    let finishNative!: (value: unknown) => void;
+    const nativeOperation = new Promise<unknown>((resolve) => {
+      finishNative = resolve;
+    });
+    const value = engine(fakeSharpFixture({
+      outputPromise: nativeOperation,
+      onToBuffer: markNativeStarted,
+    }));
     const controller = new AbortController();
     const operation = value.engine.optimize(request({ signal: controller.signal }));
+    const providerSettlement = operation.then(
+      () => true,
+      () => true,
+    );
+
+    await nativeStarted;
     controller.abort();
+    const settledBeforeNative = await Promise.race([
+      providerSettlement,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 0)),
+    ]);
+    if (settledBeforeNative) {
+      finishNative(undefined);
+      await operation.catch(() => undefined);
+    }
+    assertEquals(settledBeforeNative, false);
+
+    finishNative(undefined);
     await assertRejects(
       () => operation,
       Error,
       "cancelled or exceeded its deadline",
     );
+    assertEquals(await providerSettlement, true);
   });
 });
