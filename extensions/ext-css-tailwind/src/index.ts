@@ -2,6 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { isProxy as isProxyWithoutHooks } from "node:util/types";
 import type { ExtensionFactory } from "veryfront/extensions";
 import { type CSSCompiler, type CSSProcessor, CSSProcessorName } from "veryfront/extensions/css";
@@ -22,6 +23,7 @@ const getPrototypeOf = Object.getPrototypeOf;
 const isArray = Array.isArray;
 const objectPrototype = Object.prototype;
 const ownKeys = Reflect.ownKeys;
+const requireFromExtension = createRequire(import.meta.url);
 const tailwindVersion = exactTailwindVersion(extensionPackage.imports.tailwindcss);
 export const TAILWIND_DEFAULT_STYLESHEET = `@import "tailwindcss";
 @plugin "@tailwindcss/typography";
@@ -31,9 +33,17 @@ function sha256(value: string): string {
 }
 
 function loadTailwindBaseStylesheet(): string {
-  const resolved = import.meta.resolve("tailwindcss/index.css");
+  let resolved: string;
   try {
-    return readFileSync(new URL(resolved), "utf8");
+    resolved = requireFromExtension.resolve("tailwindcss/index.css");
+  } catch (cause) {
+    throw IMPORT_RESOLUTION_ERROR.create({
+      detail: "ext-css-tailwind could not resolve its pinned base stylesheet",
+      cause,
+    });
+  }
+  try {
+    return readFileSync(resolved, "utf8");
   } catch (cause) {
     throw IMPORT_RESOLUTION_ERROR.create({
       detail: `ext-css-tailwind could not read its pinned base stylesheet: ${resolved}`,

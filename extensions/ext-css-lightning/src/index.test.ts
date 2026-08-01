@@ -22,6 +22,37 @@ const noopLogger = {
 };
 
 describe("ext-css-lightning", () => {
+  it("does not require String.prototype.isWellFormed on Node 18", async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(
+      String.prototype,
+      "isWellFormed",
+    );
+    Object.defineProperty(String.prototype, "isWellFormed", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      const node18Module = await import("./index.ts?node18-compat");
+      const result = new node18Module.LightningCSSOptimizationEngine({
+        browserQueries: ["ie 11"],
+      }).optimize({
+        css: ".field { user-select: none; }",
+        sourcePath: "styles/field.css",
+        minify: true,
+        sourceMap: false,
+      });
+      assertStringIncludes(result.css, "-ms-user-select:none");
+    } finally {
+      if (descriptor === undefined) {
+        delete (String.prototype as { isWellFormed?: unknown }).isWellFormed;
+      } else {
+        Object.defineProperty(String.prototype, "isWellFormed", descriptor);
+      }
+    }
+  });
+
   it("declares and registers only the explicit optimization contract", async () => {
     const provided = new Map<string, unknown>();
     const extension = factory({ browserQueries: ["ie 11"] });

@@ -1,8 +1,8 @@
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
+import { isWellFormedString } from "#veryfront/utils/is-well-formed-string.ts";
 
 const apply = Reflect.apply;
 const charCodeAtString = String.prototype.charCodeAt;
-const isWellFormedString = String.prototype.isWellFormed;
 const normalizeString = String.prototype.normalize;
 const indexOfString = String.prototype.indexOf;
 const sliceString = String.prototype.slice;
@@ -45,7 +45,7 @@ export function isSafeCSSRelativePath(value: unknown): value is string {
     typeof value !== "string" ||
     value.length === 0 ||
     value.length > MAX_PATH_LENGTH_CHARS ||
-    !apply(isWellFormedString, value, []) ||
+    !isWellFormedString(value) ||
     value !== apply(normalizeString, value, ["NFC"]) ||
     hasControlOrLineSeparator(value) ||
     value[0] === "/" ||
