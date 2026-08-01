@@ -105,6 +105,41 @@ describe("npm-registry-client dependency contracts", () => {
     }
   });
 
+  it("uses request-scoped authorization when the runtime has no API token", async () => {
+    const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
+    const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
+    const originalFetch = globalThis.fetch;
+    setEnv("VERYFRONT_API_BASE_URL", "https://api.example.test");
+    setEnv("VERYFRONT_API_TOKEN", "");
+    refreshEnvironmentConfig();
+
+    let authorization = "";
+    globalThis.fetch = (_input, init) => {
+      authorization = new Headers(init?.headers).get("authorization") ?? "";
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    };
+
+    try {
+      schedulePlatformDependencyResolution(
+        "project-ref",
+        "zod",
+        "^3",
+        {
+          target: { kind: "main" },
+          authToken: "request-scoped-token",
+        },
+      );
+      await _pendingResolutions();
+
+      assertEquals(authorization, "Bearer request-scoped-token");
+    } finally {
+      globalThis.fetch = originalFetch;
+      setEnv("VERYFRONT_API_BASE_URL", originalBaseUrl ?? "");
+      setEnv("VERYFRONT_API_TOKEN", originalToken ?? "");
+      refreshEnvironmentConfig();
+    }
+  });
+
   it("posts branch and caller-observed declarations, including absence", async () => {
     const originalBaseUrl = getHostEnv("VERYFRONT_API_BASE_URL");
     const originalToken = getHostEnv("VERYFRONT_API_TOKEN");
