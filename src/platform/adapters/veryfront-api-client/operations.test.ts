@@ -416,6 +416,96 @@ describe("VeryfrontAPIOperations", () => {
     });
   });
 
+  describe("bounded file content", () => {
+    it("returns exact UTF-8 bytes through the normal branch file endpoint", async () => {
+      let requestedUrl = "";
+      globalThis.fetch = ((input: RequestInfo | URL) => {
+        requestedUrl = String(input);
+        return Promise.resolve(
+          new Response(JSON.stringify({ ignored: [1, 2, 3], content: "é" }), {
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+
+      const bytes = await createOps().getBranchFileContentBytesWithinLimit(
+        "project-slug",
+        "main",
+        "styles/manifest.json",
+        2,
+      );
+
+      assertEquals([...bytes], [0xc3, 0xa9]);
+      assertStringIncludes(requestedUrl, "/projects/project-slug/files/styles%2Fmanifest.json?");
+      assertStringIncludes(requestedUrl, "branch=main");
+      assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+
+    it("rejects oversized content before JSON.parse and without retries", async () => {
+      let fetchCalls = 0;
+      let parseCalls = 0;
+      const originalJsonParse = JSON.parse;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response(JSON.stringify({ content: "xx" })));
+      }) as typeof fetch;
+      JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+        parseCalls++;
+        return Reflect.apply(originalJsonParse, JSON, args);
+      }) as typeof JSON.parse;
+
+      try {
+        await assertRejects(
+          () =>
+            createOps().getBranchFileContentBytesWithinLimit(
+              "project-slug",
+              "main",
+              "styles/manifest.json",
+              1,
+            ),
+          RangeError,
+          "1 UTF-8 bytes",
+        );
+      } finally {
+        JSON.parse = originalJsonParse;
+      }
+
+      assertEquals(fetchCalls, 1);
+      assertEquals(parseCalls, 0);
+    });
+
+    it("defensively copies and post-validates custom transport bytes", async () => {
+      const operations = createOps();
+      const mutable = operations as unknown as {
+        transport: { request(): Promise<unknown> };
+      };
+      const source = new Uint8Array([1, 2]);
+      mutable.transport = { request: () => Promise.resolve(source) };
+
+      const bytes = await operations.getBranchFileContentBytesWithinLimit(
+        "project-slug",
+        "main",
+        "manifest.json",
+        2,
+      );
+      source[0] = 9;
+      assertEquals([...bytes], [1, 2]);
+
+      mutable.transport = { request: () => Promise.resolve(new Uint8Array([1, 2, 3])) };
+      await assertRejects(
+        () =>
+          operations.getBranchFileContentBytesWithinLimit(
+            "project-slug",
+            "main",
+            "manifest.json",
+            2,
+          ),
+        RangeError,
+        "exceeds 2 bytes",
+      );
+    });
+  });
+
   describe("release asset manifest operations", () => {
     it("begins a build at the builds endpoint", async () => {
       let requestedUrl = "";

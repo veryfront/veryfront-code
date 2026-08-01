@@ -122,6 +122,50 @@ describe("CircuitBreaker", () => {
 
     assertEquals(cb.getState(), "CLOSED");
   });
+
+  it("does not count caller-classified neutral errors as dependency failures", async () => {
+    const cb = new CircuitBreaker({ failureThreshold: 1, name: "test-neutral-closed" });
+    const neutralError = new RangeError("caller limit exceeded");
+
+    await assertRejects(
+      () =>
+        cb.execute(
+          () => Promise.reject(neutralError),
+          { isNeutralError: (error) => error === neutralError },
+        ),
+      RangeError,
+      "caller limit exceeded",
+    );
+
+    assertEquals(cb.getState(), "CLOSED");
+    assertEquals(await cb.execute(() => Promise.resolve("healthy")), "healthy");
+  });
+
+  it("releases a HALF_OPEN attempt after a neutral error", async () => {
+    const cb = new CircuitBreaker({
+      failureThreshold: 1,
+      resetTimeoutMs: 1,
+      successThreshold: 1,
+      name: "test-neutral-half-open",
+    });
+    await ignoreRejection(cb.execute(() => Promise.reject(new Error("dependency failure"))));
+    await sleep(10);
+
+    const neutralError = new RangeError("caller limit exceeded");
+    await assertRejects(
+      () =>
+        cb.execute(
+          () => Promise.reject(neutralError),
+          { isNeutralError: (error) => error === neutralError },
+        ),
+      RangeError,
+      "caller limit exceeded",
+    );
+
+    assertEquals(cb.getState(), "HALF_OPEN");
+    assertEquals(await cb.execute(() => Promise.resolve("recovered")), "recovered");
+    assertEquals(cb.getState(), "CLOSED");
+  });
 });
 
 describe("CircuitBreakerOpen", () => {

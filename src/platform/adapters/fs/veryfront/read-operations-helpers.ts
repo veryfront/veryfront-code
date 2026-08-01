@@ -102,6 +102,12 @@ export function splitKnownFileExtension(
 }
 
 export function isNotFoundLikeError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null) {
+    const status = Object.getOwnPropertyDescriptor(error, "status");
+    if (status && "value" in status && status.value === 404) return true;
+    const code = Object.getOwnPropertyDescriptor(error, "code");
+    if (code && "value" in code && code.value === "ENOENT") return true;
+  }
   const errorMessage = error instanceof Error ? error.message : String(error);
   return errorMessage.includes("404") || errorMessage.includes("Not Found");
 }

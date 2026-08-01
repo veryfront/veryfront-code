@@ -59,6 +59,24 @@ interface ContextOptions {
   allowedImportDirs?: string[];
 }
 
+function snapshotContextOptions(options?: ContextOptions): ContextOptions {
+  return {
+    allowedImportDirs: options?.allowedImportDirs === undefined
+      ? undefined
+      : [...options.allowedImportDirs],
+  };
+}
+
+function snapshotValidationOptions(
+  options?: Partial<ValidationOptions>,
+): Partial<ValidationOptions> {
+  if (options === undefined) return {};
+  return {
+    ...options,
+    allowedDirs: options.allowedDirs === undefined ? undefined : [...options.allowedDirs],
+  };
+}
+
 type FileSystemMethod = (...args: never[]) => unknown;
 
 function captureFileSystemMethod(
@@ -75,10 +93,12 @@ function captureFileSystemMethod(
     const descriptor = Object.getOwnPropertyDescriptor(owner, key);
     if (descriptor !== undefined) {
       if (!("value" in descriptor)) {
+        if (!required) return undefined;
         throw new TypeError(`SecureFs filesystem ${key} must be a data-property method`);
       }
       if (descriptor.value === undefined && !required) return undefined;
       if (typeof descriptor.value !== "function") {
+        if (!required) return undefined;
         throw new TypeError(`SecureFs filesystem ${key} must be a function`);
       }
       return descriptor.value as FileSystemMethod;
@@ -148,10 +168,11 @@ function snapshotFileSystemAuthority(fileSystem: RuntimeAdapter["fs"]): RuntimeA
     }
   }
   const ceiling = Object.getOwnPropertyDescriptor(fileSystem, "maxWholeFileReadBytes");
-  if (ceiling && "value" in ceiling && ceiling.value !== undefined) {
-    if (!Number.isSafeInteger(ceiling.value) || ceiling.value <= 0) {
-      throw new TypeError("SecureFs maxWholeFileReadBytes must be a positive safe integer");
-    }
+  if (
+    ceiling && "value" in ceiling &&
+    Number.isSafeInteger(ceiling.value) && ceiling.value > 0 &&
+    snapshot.readFileBytes !== undefined
+  ) {
     Object.defineProperty(snapshot, "maxWholeFileReadBytes", {
       enumerable: true,
       value: ceiling.value,
@@ -199,6 +220,7 @@ export class SecureFs {
   private validationOptions: ValidationOptions;
   private readonly fileSystem: RuntimeAdapter["fs"];
   private readonly validationAdapter: RuntimeAdapter;
+  private readonly unboundedFileReader?: (path: string) => Promise<Uint8Array>;
   private readonly wholeFileReader?: CapturedWholeFileReader;
   readonly maxWholeFileReadBytes?: number;
   readonly readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
@@ -212,11 +234,11 @@ export class SecureFs {
   constructor(config: SecureFsConfig) {
     this.config = {
       context: "internal",
-      contextOptions: {},
       throwOnError: true,
       onSecurityEvent: () => {},
-      validationOptions: {},
       ...config,
+      contextOptions: snapshotContextOptions(config.contextOptions),
+      validationOptions: snapshotValidationOptions(config.validationOptions),
     };
     this.fileSystem = snapshotFileSystemAuthority(this.config.adapter.fs);
     this.validationAdapter = Object.freeze({ ...this.config.adapter, fs: this.fileSystem });
@@ -235,6 +257,7 @@ export class SecureFs {
       if (staticReaders.snapshot === undefined) throw error;
       byteReaders = Object.freeze({}) as CapturedByteReaders;
     }
+    this.unboundedFileReader = byteReaders.unbounded;
     if (byteReaders.whole !== undefined) {
       this.wholeFileReader = byteReaders.whole;
       this.maxWholeFileReadBytes = byteReaders.whole.maximumBytes;
@@ -332,11 +355,17 @@ export class SecureFs {
       contextOptions,
     );
 
-    return {
+    const validationOptions = {
       ...contextValidationOptions,
       ...this.config.validationOptions,
       baseDir: this.config.baseDir,
       adapter,
+    };
+    return {
+      ...validationOptions,
+      allowedDirs: validationOptions.allowedDirs === undefined
+        ? undefined
+        : [...validationOptions.allowedDirs],
     };
   }
 
@@ -416,11 +445,8 @@ export class SecureFs {
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
 
     if (this.wholeFileReader) return await this.wholeFileReader.read(canonicalPath);
-    const reader = this.fileSystem.readFileBytes;
-    if (reader) return await reader.call(this.fileSystem, canonicalPath);
-
-    const content = await this.fileSystem.readFile(canonicalPath);
-    return new TextEncoder().encode(content);
+    if (this.unboundedFileReader) return await this.unboundedFileReader(canonicalPath);
+    throw new TypeError("SecureFs filesystem does not provide binary-safe file reads");
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -516,13 +542,19 @@ export class SecureFs {
   }
 
   updateValidationOptions(options: Partial<ValidationOptions>): void {
-    this.validationOptions = { ...this.validationOptions, ...options };
+    const update = snapshotValidationOptions(options);
+    this.validationOptions = {
+      ...this.validationOptions,
+      ...update,
+      baseDir: this.config.baseDir,
+      adapter: this.validationAdapter,
+    };
   }
 
   setContext(context: SecurityContext): void {
     this.validationOptions = this.buildValidationOptions(
       context,
-      undefined,
+      this.config.contextOptions,
       this.validationAdapter,
     );
     this.config.context = context;

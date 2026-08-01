@@ -4,6 +4,7 @@ const freezeObject = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const getPrototypeOf = Object.getPrototypeOf;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
+const isArray = Array.isArray;
 const numberIsSafeInteger = Number.isSafeInteger;
 const NativeUint8Array = Uint8Array;
 const typedArrayPrototype = getPrototypeOf(NativeUint8Array.prototype);
@@ -66,6 +67,7 @@ export interface CapturedWholeFileReader {
 }
 
 export interface CapturedByteReaders {
+  readonly unbounded?: (path: string) => Promise<Uint8Array>;
   readonly whole?: CapturedWholeFileReader;
   readonly prefix?: LimitedByteReader;
   readonly exact?: LimitedByteReader;
@@ -106,7 +108,7 @@ function requireIntrinsicGetter(
 }
 
 function requireCapabilityObject(value: unknown, label: string): asserts value is object {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (typeof value !== "object" || value === null || isArray(value)) {
     throw new TypeError(`${label} must be a non-array object`);
   }
 }
@@ -181,6 +183,13 @@ function optionalMethod<T>(candidate: unknown, label: string, key: string): T | 
 function positiveSafeInteger(value: unknown, label: string): number {
   if (!numberIsSafeInteger(value) || (value as number) <= 0) {
     throw new RangeError(`${label} must be a positive safe integer`);
+  }
+  return value as number;
+}
+
+function nonNegativeSafeInteger(value: unknown, label: string): number {
+  if (!numberIsSafeInteger(value) || (value as number) < 0) {
+    throw new RangeError(`${label} must be a non-negative safe integer`);
   }
   return value as number;
 }
@@ -268,20 +277,32 @@ export function captureByteReadCapabilities(
   }
 
   const captured = createObject(null) as {
+    unbounded?: ByteReader;
     whole?: CapturedWholeFileReader;
     prefix?: LimitedByteReader;
     exact?: LimitedByteReader;
   };
+  if (rawWhole !== undefined) {
+    captured.unbounded = async (path: string) =>
+      copyFixedUint8ArrayWithinLimit(
+        await apply(rawWhole, value, [path]),
+        Number.MAX_SAFE_INTEGER,
+        `${label} whole-file read`,
+      );
+  }
   if (rawWhole !== undefined && ceiling !== undefined) {
-    captured.whole = freezeObject({
-      maximumBytes: ceiling,
-      read: async (path: string) =>
-        copyFixedUint8ArrayWithinLimit(
-          await apply(rawWhole, value, [path]),
-          ceiling,
-          `${label} whole-file read`,
-        ),
-    });
+    const whole = createObject(null) as {
+      maximumBytes: number;
+      read(path: string): Promise<Uint8Array>;
+    };
+    whole.maximumBytes = ceiling;
+    whole.read = async (path: string) =>
+      copyFixedUint8ArrayWithinLimit(
+        await apply(rawWhole, value, [path]),
+        ceiling,
+        `${label} whole-file read`,
+      );
+    captured.whole = freezeObject(whole);
   }
   if (rawPrefix !== undefined) {
     captured.prefix = async (path: string, byteLimit: number) => {
@@ -318,16 +339,16 @@ export function captureSnapshotReadCapability(
     "readFileSnapshotWithinLimit",
   );
   if (raw === undefined) return undefined;
-  return freezeObject({
-    read: async (path: string, containmentRoot: string, byteLimit: number) => {
-      const limit = positiveSafeInteger(byteLimit, `${label} snapshot byte limit`);
-      return copyFixedUint8ArrayWithinLimit(
-        await apply(raw, value, [path, containmentRoot, limit]),
-        limit,
-        `${label} snapshot read`,
-      );
-    },
-  });
+  const captured = createObject(null) as CapturedSnapshotReader;
+  captured.read = async (path: string, containmentRoot: string, byteLimit: number) => {
+    const limit = positiveSafeInteger(byteLimit, `${label} snapshot byte limit`);
+    return copyFixedUint8ArrayWithinLimit(
+      await apply(raw, value, [path, containmentRoot, limit]),
+      limit,
+      `${label} snapshot read`,
+    );
+  };
+  return freezeObject(captured);
 }
 
 export function captureExclusiveCreateCapability(
@@ -342,18 +363,18 @@ export function captureExclusiveCreateCapability(
     "createFileBytesExclusive",
   );
   if (raw === undefined) return undefined;
-  return freezeObject({
-    create: (path: string, content: Uint8Array) => {
-      const length = uint8ArrayByteLength(content);
-      if (length === undefined) throw new TypeError(`${label} create content must be Uint8Array`);
-      const copy = copyFixedUint8ArrayWithinLimit(
-        content,
-        length === 0 ? 1 : length,
-        `${label} create content`,
-      );
-      return apply(raw, value, [path, copy]) as Promise<void>;
-    },
-  });
+  const captured = createObject(null) as CapturedExclusiveCreator;
+  captured.create = (path: string, content: Uint8Array) => {
+    const length = uint8ArrayByteLength(content);
+    if (length === undefined) throw new TypeError(`${label} create content must be Uint8Array`);
+    const copy = copyFixedUint8ArrayWithinLimit(
+      content,
+      length === 0 ? 1 : length,
+      `${label} create content`,
+    );
+    return apply(raw, value, [path, copy]) as Promise<void>;
+  };
+  return freezeObject(captured);
 }
 
 /**
@@ -408,7 +429,7 @@ export function captureStaticReadCapabilities(
     whole?: CapturedWholeFileReader;
   };
   virtual.generation = async () =>
-    positiveSafeInteger(
+    nonNegativeSafeInteger(
       await apply(rawGeneration, value, []),
       `${label} source snapshot generation`,
     );

@@ -119,6 +119,14 @@ describe("read-operations helpers", () => {
     it("detects not-found-like errors", () => {
       assertEquals(isNotFoundLikeError(new Error("404 Not Found")), true);
       assertEquals(isNotFoundLikeError("Not Found"), true);
+      assertEquals(
+        isNotFoundLikeError(Object.assign(new Error("not found"), { status: 404 })),
+        true,
+      );
+      assertEquals(
+        isNotFoundLikeError(Object.assign(new Error("missing"), { code: "ENOENT" })),
+        true,
+      );
       assertEquals(isNotFoundLikeError(new Error("500 Internal Server Error")), false);
     });
   });

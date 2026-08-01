@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as fsModule from "./index.ts";
 import * as publicFsModule from "veryfront/fs";
 import * as compatFsModule from "#veryfront/platform/compat/fs.ts";
+import * as snapshotErrorModule from "#veryfront/platform/adapters/file-snapshot-error.ts";
 import * as pathModule from "#veryfront/platform/compat/path/index.ts";
 import * as processModule from "#veryfront/platform/compat/process.ts";
 
@@ -14,7 +15,9 @@ const expectedRuntimeExports = [
   "dirname",
   "exists",
   "extname",
+  "FileSnapshotChangedError",
   "isNotFoundError",
+  "isFileSnapshotChangedError",
   "join",
   "lstat",
   "mkdir",
@@ -48,6 +51,14 @@ describe("fs/index.ts exports", () => {
     assertEquals(fsModule.join, pathModule.join);
     assertEquals(fsModule.resolve, pathModule.resolve);
     assertEquals(fsModule.cwd, processModule.cwd);
+    assertEquals(
+      fsModule.FileSnapshotChangedError,
+      snapshotErrorModule.FileSnapshotChangedError,
+    );
+    assertEquals(
+      fsModule.isFileSnapshotChangedError,
+      snapshotErrorModule.isFileSnapshotChangedError,
+    );
   });
 
   it("keeps the public barrel intentionally slim", () => {
@@ -64,5 +75,6 @@ describe("fs/index.ts exports", () => {
     assertEquals(publicFsModule.readTextFile, fsModule.readTextFile);
     assertEquals(publicFsModule.resolve, fsModule.resolve);
     assertEquals(publicFsModule.cwd, fsModule.cwd);
+    assertEquals(publicFsModule.FileSnapshotChangedError, fsModule.FileSnapshotChangedError);
   });
 });

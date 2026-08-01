@@ -12,7 +12,8 @@ import {
   type CapturedByteReaders,
   type CapturedWholeFileReader,
   captureExclusiveCreateCapability,
-  captureStaticReadCapabilities,
+  captureSnapshotReadCapability,
+  copyFixedUint8ArrayWithinLimit,
 } from "../file-system-capabilities.ts";
 
 type CapturedMethod = (...args: never[]) => unknown;
@@ -131,6 +132,7 @@ function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter
 
 export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _fsAdapter: FSAdapter;
+  private readonly _unboundedFileReader?: (path: string) => Promise<Uint8Array>;
   private readonly _wholeFileReader?: CapturedWholeFileReader;
   readonly symlinkSemantics: "none" | undefined;
   readonly maxWholeFileReadBytes?: number;
@@ -153,25 +155,31 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       ? "none"
       : undefined;
 
-    const staticReaders = captureStaticReadCapabilities(fsAdapter, "FSAdapter");
+    const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter");
     let byteReaders: CapturedByteReaders;
     try {
       byteReaders = captureByteReadCapabilities(fsAdapter, "FSAdapter");
     } catch (error) {
-      if (staticReaders.snapshot === undefined) throw error;
+      if (snapshotReader === undefined) throw error;
       byteReaders = Object.freeze({}) as CapturedByteReaders;
     }
+    this._unboundedFileReader = byteReaders.unbounded;
     if (byteReaders.whole !== undefined) {
       this._wholeFileReader = byteReaders.whole;
       this.maxWholeFileReadBytes = byteReaders.whole.maximumBytes;
     }
     if (byteReaders.prefix !== undefined) this.readFileBytesBounded = byteReaders.prefix;
     if (byteReaders.exact !== undefined) this.readFileBytesWithinLimit = byteReaders.exact;
-    if (staticReaders.snapshot !== undefined) {
+    if (snapshotReader !== undefined) {
       this.readFileSnapshotWithinLimit = (path, containmentRoot, byteLimit) =>
-        staticReaders.snapshot!.read(path, containmentRoot, byteLimit);
+        snapshotReader.read(path, containmentRoot, byteLimit);
     }
-    const exclusiveCreator = captureExclusiveCreateCapability(fsAdapter, "FSAdapter");
+    let exclusiveCreator;
+    try {
+      exclusiveCreator = captureExclusiveCreateCapability(fsAdapter, "FSAdapter");
+    } catch {
+      exclusiveCreator = undefined;
+    }
     if (exclusiveCreator !== undefined) {
       this.createFileBytesExclusive = (path, content) => exclusiveCreator.create(path, content);
     }
@@ -319,8 +327,14 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
 
   async readFileBytes(path: string): Promise<Uint8Array> {
     if (this._wholeFileReader !== undefined) return await this._wholeFileReader.read(path);
+    if (this._unboundedFileReader !== undefined) return await this._unboundedFileReader(path);
     const result = await this._fsAdapter.readFile(path);
-    return typeof result === "string" ? new TextEncoder().encode(result) : result;
+    if (typeof result === "string") return new TextEncoder().encode(result);
+    return copyFixedUint8ArrayWithinLimit(
+      result,
+      Number.MAX_SAFE_INTEGER,
+      "FSAdapter readFile fallback",
+    );
   }
 
   async writeFile(path: string, content: string): Promise<void> {
