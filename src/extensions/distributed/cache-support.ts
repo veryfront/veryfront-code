@@ -8,6 +8,11 @@ export type {
   RevisionedCacheBackend,
 } from "#veryfront/cache/types.ts";
 export {
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
+  CacheValueTooLargeError,
+} from "#veryfront/cache/bounded-read.ts";
+export {
   buildRevisionedCacheKey,
   isRevisionedCacheBackend,
   isRevisionedCacheKey,

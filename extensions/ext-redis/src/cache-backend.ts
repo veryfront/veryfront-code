@@ -1,6 +1,7 @@
 import { logger as baseLogger } from "veryfront/utils";
 import { type Span, SpanNames } from "veryfront/observability";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { isProxy as isProxyWithoutHooks } from "node:util/types";
 import {
   disconnectRedisClient,
   getRedisClient,
@@ -11,10 +12,13 @@ import {
 } from "./redis-client-manager.ts";
 import {
   assertCacheBatchSize,
+  assertCacheReadMaximumBytes,
+  assertCacheValueWithinLimit,
   buildBatchResults,
   type CacheBackend,
   type CacheRevisionMutation,
   type CacheRevisionSnapshot,
+  CacheValueTooLargeError,
   DEFAULT_CACHE_TTL_SECONDS,
   escapeCacheGlobLiteral,
   expiresImmediately,
@@ -38,6 +42,65 @@ const MAX_REDIS_SCAN_ITERATIONS = 1_000_000;
 const ATOMIC_COUNTER_KEY_PREFIX = "\0vf:cache:atomic:v1:counter:";
 const ATOMIC_TOMBSTONE_TTL_MS = 300_000;
 const MAX_SIGNED_REDIS_INTEGER = "9223372036854775807";
+
+const REDIS_BOUNDED_GET_SCRIPT = String.raw`
+if #KEYS ~= 1 or #ARGV ~= 2 then
+  error('Veryfront bounded cache read received invalid inputs', 0)
+end
+local limit = tonumber(ARGV[1])
+if limit == nil or limit < 0 or limit ~= math.floor(limit) then
+  error('Veryfront bounded cache read limit is invalid', 0)
+end
+local mode = ARGV[2]
+if mode ~= 'ordinary' and mode ~= 'revisioned' then
+  error('Veryfront bounded cache read mode is invalid', 0)
+end
+local size = redis.call('STRLEN', KEYS[1])
+if size == 0 and redis.call('EXISTS', KEYS[1]) == 0 then return {0} end
+if mode == 'ordinary' then
+  if size > limit then return {2, tostring(size)} end
+  return {1, redis.call('GET', KEYS[1])}
+end
+
+local nul = string.char(0)
+local frame_prefix = nul .. 'VFCAS1' .. nul
+local max_revision = '9223372036854775807'
+local header = redis.call(
+  'GETRANGE',
+  KEYS[1],
+  0,
+  #frame_prefix + 2 + #max_revision
+)
+if string.sub(header, 1, #frame_prefix) ~= frame_prefix then
+  error('Veryfront revisioned cache record is malformed', 0)
+end
+local state_index = #frame_prefix + 1
+local state = string.sub(header, state_index, state_index)
+if (state ~= 'p' and state ~= 'a') or
+  string.sub(header, state_index + 1, state_index + 1) ~= nul then
+  error('Veryfront revisioned cache record state is malformed', 0)
+end
+local revision_start = state_index + 2
+local revision_end = string.find(header, nul, revision_start, true)
+if revision_end == nil then
+  error('Veryfront revisioned cache record revision is malformed', 0)
+end
+local revision = string.sub(header, revision_start, revision_end - 1)
+if string.match(revision, '^[1-9][0-9]*$') == nil or
+  #revision > #max_revision or
+  (#revision == #max_revision and revision > max_revision) then
+  error('Veryfront revisioned cache record revision is invalid', 0)
+end
+local payload_size = size - revision_end
+if state == 'a' then
+  if payload_size ~= 0 then
+    error('Veryfront absent revisioned cache record contains a payload', 0)
+  end
+  return {0}
+end
+if payload_size > limit then return {2, tostring(payload_size)} end
+return {1, redis.call('GETRANGE', KEYS[1], revision_end, -1)}
+`;
 
 const LUA_RECORD_LIBRARY = String.raw`
 local nul = string.char(0)
@@ -242,6 +305,53 @@ function isCanonicalCounter(value: unknown): value is string {
 
 function isRevisionedCachePrefixOwned(key: string): boolean {
   return key.startsWith(REVISIONED_CACHE_KEY_PREFIX);
+}
+
+function parseRedisBoundedReadResult(
+  value: unknown,
+  maximumBytes: number,
+): { kind: "missing" } | { kind: "present"; value: string } | { kind: "oversized" } {
+  if (!Array.isArray(value) || isProxyWithoutHooks(value)) {
+    throw new TypeError("Redis bounded cache read returned an invalid result");
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  const firstDescriptor = Object.getOwnPropertyDescriptor(value, "0");
+  const secondDescriptor = Object.getOwnPropertyDescriptor(value, "1");
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  const tag = firstDescriptor && "value" in firstDescriptor ? firstDescriptor.value : undefined;
+  if (!Number.isSafeInteger(length) || (length !== 1 && length !== 2)) {
+    throw new TypeError("Redis bounded cache read returned an invalid result");
+  }
+  const expectedKeys = length === 1 ? ["0", "length"] : ["0", "1", "length"];
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== expectedKeys.length || !expectedKeys.every((key) => keys.includes(key))) {
+    throw new TypeError("Redis bounded cache read returned an invalid result");
+  }
+  if (tag === 0 && length === 1) return { kind: "missing" };
+  if (
+    tag === 1 &&
+    length === 2 &&
+    secondDescriptor &&
+    "value" in secondDescriptor &&
+    typeof secondDescriptor.value === "string"
+  ) {
+    return { kind: "present", value: secondDescriptor.value };
+  }
+  if (
+    tag === 2 &&
+    length === 2 &&
+    secondDescriptor &&
+    "value" in secondDescriptor &&
+    typeof secondDescriptor.value === "string" &&
+    /^[1-9]\d*$/.test(secondDescriptor.value) &&
+    Number.isSafeInteger(Number(secondDescriptor.value)) &&
+    Number(secondDescriptor.value) > maximumBytes
+  ) {
+    return { kind: "oversized" };
+  }
+  throw new TypeError("Redis bounded cache read returned an invalid result");
 }
 
 function requireRedisRevisionMutation(value: unknown): CacheRevisionMutation {
@@ -458,6 +568,40 @@ export class RedisCacheBackend implements CacheBackend {
     } catch (error) {
       await this.resetAfterFailure(error);
       logger.debug("Get failed", {
+        keyLength: key.length,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      return null;
+    }
+  }
+
+  async getWithinLimit(key: string, maximumBytes: number): Promise<string | null> {
+    const admittedMaximum = assertCacheReadMaximumBytes(maximumBytes);
+    const client = await this.getClientForRead();
+    if (!client) return null;
+    const mode = isRevisionedCachePrefixOwned(key) ? "revisioned" : "ordinary";
+
+    try {
+      const result = parseRedisBoundedReadResult(
+        await client.eval(
+          REDIS_BOUNDED_GET_SCRIPT,
+          {
+            keys: [this.prefixKey(key)],
+            arguments: [String(admittedMaximum), mode],
+          },
+        ),
+        admittedMaximum,
+      );
+      if (result.kind === "missing") return null;
+      if (result.kind === "oversized") {
+        throw new CacheValueTooLargeError(admittedMaximum);
+      }
+      assertCacheValueWithinLimit(result.value, admittedMaximum);
+      return result.value;
+    } catch (error) {
+      if (error instanceof CacheValueTooLargeError) throw error;
+      await this.resetAfterFailure(error);
+      logger.debug("Bounded GET failed", {
         keyLength: key.length,
         errorName: error instanceof Error ? error.name : typeof error,
       });

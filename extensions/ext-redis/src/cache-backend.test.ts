@@ -9,6 +9,7 @@ import {
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildRevisionedCacheKey,
+  CacheValueTooLargeError,
   isRevisionedCacheBackend,
   MAX_CACHE_REVISION_LENGTH,
   MAX_REVISIONED_CACHE_SOURCE_KEY_LENGTH,
@@ -310,6 +311,128 @@ describe("RedisCacheBackend ordinary cache behavior", () => {
     await assertRejects(() => backend.set("key", "value"), Error, "not configured");
     await assertRejects(() => backend.del("key"), Error, "not configured");
     await assertRejects(() => backend.delByPattern("*"), Error, "not configured");
+  });
+
+  it("uses one atomic STRLEN and GET script for ordinary bounded reads", async () => {
+    const evalCalls: Array<{ script: string; keys: string[]; arguments: string[] }> = [];
+    let ordinaryGets = 0;
+    const { backend } = createBackend({
+      get: () => {
+        ordinaryGets++;
+        return Promise.resolve("must-not-read");
+      },
+      eval: (script, options) => {
+        evalCalls.push({
+          script,
+          keys: [...options.keys],
+          arguments: [...options.arguments],
+        });
+        if (options.keys[0]?.endsWith(":missing")) return Promise.resolve([0]);
+        if (options.keys[0]?.endsWith(":empty")) return Promise.resolve([1, ""]);
+        return Promise.resolve(options.arguments[0] === "1" ? [2, "2"] : [1, "é"]);
+      },
+    });
+
+    assertEquals(await backend.getWithinLimit("missing", 0), null);
+    assertEquals(await backend.getWithinLimit("empty", 0), "");
+    assertEquals(await backend.getWithinLimit("unicode", 2), "é");
+    const overflow = await assertRejects(
+      () => backend.getWithinLimit("unicode", 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+    assertEquals(
+      overflow instanceof CacheValueTooLargeError ? overflow.maximumBytes : null,
+      1,
+    );
+    assertEquals(ordinaryGets, 0);
+    assertEquals(evalCalls.length, 4);
+    assertEquals(evalCalls[2]?.keys, [`${TEST_PREFIX}unicode`]);
+    assertEquals(evalCalls.map(({ arguments: args }) => args), [
+      ["0", "ordinary"],
+      ["0", "ordinary"],
+      ["2", "ordinary"],
+      ["1", "ordinary"],
+    ]);
+    assertEquals(evalCalls[0]?.script.includes("STRLEN"), true);
+    assertEquals(evalCalls[0]?.script.includes("GET"), true);
+  });
+
+  it("returns only an admitted logical payload for bounded revisioned reads", async () => {
+    const evalCalls: Array<{ script: string; keys: string[]; arguments: string[] }> = [];
+    const key = buildRevisionedCacheKey("unicode");
+    const { backend } = createBackend({
+      eval: (script, options) => {
+        evalCalls.push({
+          script,
+          keys: [...options.keys],
+          arguments: [...options.arguments],
+        });
+        return Promise.resolve(options.arguments[0] === "1" ? [2, "2"] : [1, "é"]);
+      },
+    });
+
+    assertEquals(await backend.getWithinLimit(key, 2), "é");
+    await assertRejects(
+      () => backend.getWithinLimit(key, 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+    assertEquals(evalCalls.map(({ arguments: args }) => args), [
+      ["2", "revisioned"],
+      ["1", "revisioned"],
+    ]);
+    assertEquals(evalCalls[0]?.keys, [`${TEST_PREFIX}${key}`]);
+    assertEquals(evalCalls[0]?.script.includes("GETRANGE"), true);
+  });
+
+  it("post-verifies UTF-8 boundaries including lone surrogates", async () => {
+    const value = "\ud800x\udc00y😀";
+    let evalCalls = 0;
+    let ordinaryGets = 0;
+    let disconnects = 0;
+    const { backend } = createBackend({
+      get: () => {
+        ordinaryGets++;
+        return Promise.resolve("must-not-read");
+      },
+      eval: () => {
+        evalCalls++;
+        return Promise.resolve([1, value]);
+      },
+    }, { onDisconnect: () => disconnects++ });
+
+    assertEquals(await backend.getWithinLimit("surrogates", 12), value);
+    await assertRejects(
+      () => backend.getWithinLimit("surrogates", 11),
+      CacheValueTooLargeError,
+      "11 UTF-8 bytes",
+    );
+    assertEquals(evalCalls, 2);
+    assertEquals(ordinaryGets, 0);
+    assertEquals(disconnects, 0);
+  });
+
+  it("resets malformed overflow responses without classifying them as typed overflow", async () => {
+    for (const response of [[2, "1"], [2, "02"], [2, ""]]) {
+      let disconnects = 0;
+      const { backend } = createBackend({
+        eval: () => Promise.resolve(response),
+      }, { onDisconnect: () => disconnects++ });
+
+      assertEquals(await backend.getWithinLimit("oversized", 1), null);
+      assertEquals(disconnects, 1);
+    }
+
+    let disconnects = 0;
+    const { backend } = createBackend({
+      eval: () => Promise.resolve([2, "2"]),
+    }, { onDisconnect: () => disconnects++ });
+    await assertRejects(
+      () => backend.getWithinLimit("oversized", 1),
+      CacheValueTooLargeError,
+    );
+    assertEquals(disconnects, 0);
   });
 
   it("translates Redis TTL sentinel values", async () => {
