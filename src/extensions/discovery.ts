@@ -10,9 +10,13 @@
 import { join } from "#veryfront/compat/path";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
-  canonicalizeExtensionEntrypoint,
+  bindExtensionEntrypoint,
+  type BoundExtensionEntrypoint,
+  captureExtensionOwner,
+  ExtensionEntrypointIdentityError,
   selectPackageImportEntrypoint,
 } from "./entrypoint-identity.ts";
+import { quoteDiagnosticString } from "./diagnostic-string.ts";
 import { type ExtensionManifestSyntax, readExtensionManifest } from "./manifest-reader.ts";
 import type { Capability, PackageContractMetadata, ResolvedExtension } from "./types.ts";
 
@@ -41,6 +45,17 @@ export interface DiscoveredPackageExtension {
   metadata: PackageMetadata;
 }
 
+/** @internal Package discovery result retaining volatile filesystem identity. */
+export interface BoundDiscoveredPackageExtension extends DiscoveredPackageExtension {
+  binding: BoundExtensionEntrypoint;
+}
+
+/** @internal Project discovery result retaining volatile filesystem identity. */
+export interface BoundDiscoveredProjectExtension {
+  extensionName: string;
+  binding: BoundExtensionEntrypoint;
+}
+
 const MISSING_METADATA_PROPERTY = Symbol("missing-extension-metadata-property");
 const INVALID_METADATA_PROPERTY = Symbol("invalid-extension-metadata-property");
 const MAX_EXTENSION_METADATA_ENTRIES = 1_024;
@@ -48,7 +63,6 @@ const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwn = Object.hasOwn;
 const isArray = Array.isArray;
 const isSafeInteger = Number.isSafeInteger;
-const stringifyJSON = JSON.stringify;
 
 function readOwnDataProperty(
   value: unknown,
@@ -144,13 +158,15 @@ function readActivationMode(
 }
 
 function quotedPath(path: string): string {
-  return stringifyJSON(path);
+  return quoteDiagnosticString(path);
 }
 
 /**
- * Resolve package activation without invoking an accessor supplied through an
- * injected discovery seam. Missing activation preserves legacy automatic
- * discovery; any malformed live value fails closed as explicit-only.
+ * Resolve package activation without invoking an accessor on an ordinary data
+ * object. Missing activation preserves legacy automatic discovery; malformed
+ * live values fail closed as explicit-only. Injected discovery implementations
+ * are trusted test seams and must not supply Proxies, whose descriptor traps
+ * cannot be detected portably without invoking them.
  */
 export function resolvePackageActivation(
   metadata: PackageMetadata,
@@ -317,7 +333,7 @@ async function resolveProjectExtensionActivation(
 ): Promise<ExtensionActivationMode> {
   let resolvedActivation: ExtensionActivationMode = "auto";
   const manifests: ReadonlyArray<readonly [string, ExtensionManifestSyntax]> = [
-    ["deno.json", "json"],
+    ["deno.json", "jsonc"],
     ["deno.jsonc", "jsonc"],
     ["package.json", "json"],
   ];
@@ -340,11 +356,11 @@ async function resolveProjectExtensionActivation(
  * Scan `node_modules` (including `@scoped` packages) for packages
  * that declare veryfront extension metadata in their `package.json`.
  */
-export async function discoverPackageExtensions(
+export async function discoverBoundPackageExtensions(
   baseDir: string,
-): Promise<DiscoveredPackageExtension[]> {
+): Promise<BoundDiscoveredPackageExtension[]> {
   const nmDir = join(baseDir, "node_modules");
-  const results: DiscoveredPackageExtension[] = [];
+  const results: BoundDiscoveredPackageExtension[] = [];
   const entries = await readDir(nmDir);
 
   for (const entry of entries) {
@@ -376,11 +392,50 @@ export async function discoverPackageExtensions(
   return results;
 }
 
+/** Discover auto-activated package extensions without exposing identity internals. */
+export async function discoverPackageExtensions(
+  baseDir: string,
+): Promise<DiscoveredPackageExtension[]> {
+  return (await discoverBoundPackageExtensions(baseDir)).map((hit) => ({
+    packageName: hit.packageName,
+    importTarget: hit.importTarget,
+    metadata: hit.metadata,
+  }));
+}
+
 async function tryReadPackageMeta(
   pkgDir: string,
   packageName: string,
-): Promise<DiscoveredPackageExtension | undefined> {
-  const manifestPath = join(pkgDir, "package.json");
+): Promise<BoundDiscoveredPackageExtension | undefined> {
+  let owner;
+  try {
+    owner = await captureExtensionOwner(pkgDir);
+  } catch (error) {
+    // Broken node_modules entries are not extension candidates. Capturing the
+    // physical owner before reading package.json prevents a pnpm symlink from
+    // authorizing code in a different package if it is retargeted mid-scan.
+    if (
+      error instanceof ExtensionEntrypointIdentityError &&
+      error.reason === "identity-unavailable"
+    ) {
+      throw new TypeError(
+        `Extension package ${
+          quotedPath(packageName)
+        } cannot be discovered securely because stable filesystem identity is unavailable`,
+        { cause: error },
+      );
+    }
+    if (error instanceof ExtensionEntrypointIdentityError) return undefined;
+    if (error instanceof Deno.errors.NotFound) return undefined;
+    throw new TypeError(
+      `Extension package ${
+        quotedPath(packageName)
+      } owning directory could not be verified securely`,
+      { cause: error },
+    );
+  }
+
+  const manifestPath = join(owner.canonicalPath, "package.json");
   let readResult;
   try {
     readResult = await readExtensionManifest(manifestPath, { syntax: "json" });
@@ -398,14 +453,19 @@ async function tryReadPackageMeta(
   }
   const metadata = parsePackageMetadata(pkg as Record<string, unknown>);
   if (!metadata) return undefined;
+  if (resolvePackageActivation(metadata) === "explicit") {
+    // Explicit packages are inert unless materialized in config. Do not let a
+    // missing or intentionally unsupported export abort unrelated startup.
+    return undefined;
+  }
 
   try {
     const selectedEntrypoint = selectPackageImportEntrypoint(packageName, pkg);
-    const importTarget = await canonicalizeExtensionEntrypoint(
-      pkgDir,
+    const binding = await bindExtensionEntrypoint(
+      owner,
       selectedEntrypoint,
     );
-    return { packageName, importTarget, metadata };
+    return { packageName, importTarget: binding.path, metadata, binding };
   } catch (error) {
     throw new TypeError(
       `Extension package ${quotedPath(packageName)} has an unsafe import target`,
@@ -422,36 +482,41 @@ async function tryReadPackageMeta(
  * deliberately omitted: only a materialized `config.extensions` entry may
  * activate them.
  */
-export async function discoverProjectExtensions(
+export async function discoverBoundProjectExtensions(
   baseDir: string,
-): Promise<string[]> {
+): Promise<BoundDiscoveredProjectExtension[]> {
   const extDir = join(baseDir, "extensions");
   const entries = await readDir(extDir);
-  const results: string[] = [];
+  if (entries.length === 0) return [];
+
+  const extensionsRoot = await captureExtensionOwner(extDir);
+  const results: BoundDiscoveredProjectExtension[] = [];
 
   for (const entry of entries) {
     if (!entry.isDirectory) continue;
     const extensionDirectory = join(extDir, entry.name);
-    const srcIndex = join(extensionDirectory, "src", "index.ts");
-    const rootIndex = join(extensionDirectory, "index.ts");
-    const entryPoint = await pathEntryExists(srcIndex)
-      ? srcIndex
+    const owner = await captureExtensionOwner(extensionDirectory, {
+      parent: extensionsRoot,
+    });
+    const srcIndex = join(owner.canonicalPath, "src", "index.ts");
+    const rootIndex = join(owner.canonicalPath, "index.ts");
+    const selectedEntrypoint = await pathEntryExists(srcIndex)
+      ? "./src/index.ts"
       : await pathEntryExists(rootIndex)
-      ? rootIndex
+      ? "./index.ts"
       : undefined;
-    if (!entryPoint) continue;
+    if (!selectedEntrypoint) continue;
 
-    const activation = await resolveProjectExtensionActivation(extensionDirectory);
+    const activation = await resolveProjectExtensionActivation(owner.canonicalPath);
     if (activation === "explicit") continue;
 
     try {
-      results.push(
-        await canonicalizeExtensionEntrypoint(extensionDirectory, entryPoint),
-      );
+      const binding = await bindExtensionEntrypoint(owner, selectedEntrypoint);
+      results.push({ extensionName: entry.name, binding });
     } catch (error) {
       throw new TypeError(
         `Project extension entrypoint ${
-          quotedPath(entryPoint)
+          quotedPath(join(extensionDirectory, selectedEntrypoint))
         } is not a safe regular file within its extension directory`,
         { cause: error },
       );
@@ -461,8 +526,19 @@ export async function discoverProjectExtensions(
   return results;
 }
 
+/** Discover project extension paths without exposing identity internals. */
+export async function discoverProjectExtensions(
+  baseDir: string,
+): Promise<string[]> {
+  return (await discoverBoundProjectExtensions(baseDir)).map((hit) => hit.binding.path);
+}
+
 /**
  * Find `*.extension.ts` files in the project root.
+ *
+ * These are ordinary trusted project source, not manifest-authorized package
+ * code. Symlinks are ignored and the paths intentionally carry no discovery
+ * identity binding; the factory loader still rejects file-URL remapping.
  */
 export async function discoverLocalExtensions(
   baseDir: string,

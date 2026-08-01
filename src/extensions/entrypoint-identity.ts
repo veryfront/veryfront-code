@@ -10,8 +10,10 @@
  * @module extensions/entrypoint-identity
  */
 
-import { realPath, stat } from "#veryfront/compat/fs.ts";
-import { isAbsolute, normalize, relative, resolve } from "#veryfront/compat/path";
+import { realPath } from "#veryfront/compat/fs.ts";
+import { dirname, isAbsolute, normalize, relative, resolve } from "#veryfront/compat/path";
+import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { quoteDiagnosticString } from "./diagnostic-string.ts";
 
 const DEFAULT_PACKAGE_ENTRYPOINT = "./index.js";
 const PREFERRED_EXPORT_CONDITIONS = ["deno", "import", "default"] as const;
@@ -20,6 +22,8 @@ const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 const arrayIsArray = Array.isArray;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const numberIsSafeInteger = Number.isSafeInteger;
+const objectFreeze = Object.freeze;
 const reflectOwnKeys = Reflect.ownKeys;
 
 interface DataProperty {
@@ -27,23 +31,104 @@ interface DataProperty {
   value?: unknown;
 }
 
-interface EntrypointFileInfo {
+export interface EntrypointFileInfo {
   isFile: boolean;
   isDirectory: boolean;
+  dev: number | bigint | null;
+  ino: number | bigint | null;
 }
 
-interface EntrypointFileOperations {
+export interface EntrypointFileOperations {
   realPath(path: string): Promise<string>;
   stat(path: string): Promise<EntrypointFileInfo>;
 }
 
+interface NodeBigIntFileInfo {
+  isFile(): boolean;
+  isDirectory(): boolean;
+  readonly dev: bigint;
+  readonly ino: bigint;
+}
+
+async function statWithIdentity(path: string): Promise<EntrypointFileInfo> {
+  const deno = getDenoRuntime();
+  if (deno) {
+    const info = await deno.stat(path);
+    return {
+      isFile: info.isFile,
+      isDirectory: info.isDirectory,
+      dev: info.dev,
+      ino: info.ino,
+    };
+  }
+
+  if (isNode || isBun) {
+    const fs = await import("node:fs/promises");
+    const info = await fs.stat(path, { bigint: true }) as unknown as NodeBigIntFileInfo;
+    return {
+      isFile: info.isFile(),
+      isDirectory: info.isDirectory(),
+      dev: info.dev,
+      ino: info.ino,
+    };
+  }
+
+  return invalid(
+    "the current runtime exposes no stable filesystem identity",
+    "identity-unavailable",
+  );
+}
+
 const nativeFileOperations: EntrypointFileOperations = {
   realPath,
-  stat,
+  stat: statWithIdentity,
 };
 
-function invalid(message: string): never {
-  throw new Error(`Invalid extension entrypoint: ${message}`);
+export interface ExtensionFileIdentity {
+  readonly dev: number | bigint;
+  readonly ino: number | bigint;
+}
+
+/** Canonical directory identity captured before any activation manifest read. */
+export interface CapturedExtensionOwner {
+  readonly lexicalPath: string;
+  readonly canonicalPath: string;
+  readonly identity: ExtensionFileIdentity;
+  readonly parent?: CapturedExtensionOwner;
+}
+
+/** Internal security descriptor carried from discovery to dynamic import. */
+export interface BoundExtensionEntrypoint {
+  readonly path: string;
+  readonly owner: CapturedExtensionOwner;
+  readonly targetIdentity: ExtensionFileIdentity;
+}
+
+export interface CaptureExtensionOwnerOptions {
+  readonly parent?: CapturedExtensionOwner;
+  /** @internal Deterministic filesystem seam for race tests. */
+  readonly operations?: EntrypointFileOperations;
+}
+
+export type ExtensionEntrypointIdentityFailure =
+  | "unsafe-entrypoint"
+  | "identity-unavailable";
+
+export class ExtensionEntrypointIdentityError extends Error {
+  readonly reason: ExtensionEntrypointIdentityFailure;
+
+  constructor(message: string, reason: ExtensionEntrypointIdentityFailure) {
+    super(`Invalid extension entrypoint: ${message}`);
+    this.name = "ExtensionEntrypointIdentityError";
+    this.reason = reason;
+  }
+}
+
+function invalid(
+  message: string,
+  reason: ExtensionEntrypointIdentityFailure = "unsafe-entrypoint",
+): never {
+  throw new ExtensionEntrypointIdentityError(message, reason);
 }
 
 function isRecord(value: unknown): value is object {
@@ -274,7 +359,9 @@ export function selectPackageImportEntrypoint(
   }
   if (manifestName.value !== discoveredPackageName) {
     return invalid(
-      `package.json.name does not match discovered package '${discoveredPackageName}'`,
+      `package.json.name does not match discovered package ${
+        quoteDiagnosticString(discoveredPackageName)
+      }`,
     );
   }
 
@@ -307,13 +394,211 @@ function canonicalAbsolute(path: string, context: string): string {
   return canonical;
 }
 
+function stableIdentity(
+  info: EntrypointFileInfo,
+  context: string,
+): ExtensionFileIdentity {
+  const validPart = (value: number | bigint | null): value is number | bigint =>
+    (typeof value === "bigint" && value >= 0n) ||
+    (typeof value === "number" && value >= 0 && numberIsSafeInteger(value));
+  if (!validPart(info.dev) || !validPart(info.ino)) {
+    return invalid(`${context} has no stable filesystem identity`, "identity-unavailable");
+  }
+  return objectFreeze({ dev: info.dev, ino: info.ino });
+}
+
+function sameIdentity(
+  expected: ExtensionFileIdentity,
+  actual: ExtensionFileIdentity,
+): boolean {
+  return expected.dev === actual.dev && expected.ino === actual.ino;
+}
+
+async function revalidateCapturedOwner(
+  owner: CapturedExtensionOwner,
+  operations: EntrypointFileOperations,
+): Promise<void> {
+  if (owner.parent?.parent) {
+    return invalid("the owning directory has an invalid captured parent chain");
+  }
+  if (owner.parent) {
+    await revalidateCapturedOwner(owner.parent, operations);
+    if (dirname(owner.canonicalPath) !== owner.parent.canonicalPath) {
+      return invalid("the owning directory is no longer a direct child of its captured parent");
+    }
+  }
+
+  const currentCanonical = canonicalAbsolute(
+    await operations.realPath(owner.lexicalPath),
+    "the current owning directory",
+  );
+  if (currentCanonical !== owner.canonicalPath) {
+    return invalid("the owning directory mapping changed after discovery");
+  }
+
+  const currentInfo = await operations.stat(owner.canonicalPath);
+  if (!currentInfo.isDirectory || currentInfo.isFile) {
+    return invalid("the owning path is no longer a directory");
+  }
+  if (!sameIdentity(owner.identity, stableIdentity(currentInfo, "the owning directory"))) {
+    return invalid("the owning directory identity changed after discovery");
+  }
+}
+
+/**
+ * Capture one canonical directory before reading any manifest beneath it.
+ *
+ * A project extension can name a captured parent, which requires the physical
+ * owner to remain a direct child of the canonical `extensions/` directory.
+ * Package owners omit the parent because pnpm legitimately places their
+ * physical directories outside the lexical `node_modules/` tree.
+ *
+ * Runtimes that do not expose stable device and inode values cannot satisfy
+ * this security boundary. Capture fails deterministically instead of silently
+ * degrading to path-only checks.
+ */
+export async function captureExtensionOwner(
+  owningDirectory: string,
+  options: CaptureExtensionOwnerOptions = {},
+): Promise<CapturedExtensionOwner> {
+  if (owningDirectory.length === 0 || owningDirectory.includes("\0")) {
+    return invalid("the owning directory is empty or invalid");
+  }
+  const operations = options.operations ?? nativeFileOperations;
+  const lexicalPath = normalize(resolve(owningDirectory));
+  const canonicalPath = canonicalAbsolute(
+    await operations.realPath(lexicalPath),
+    "the owning directory",
+  );
+  const info = await operations.stat(canonicalPath);
+  if (!info.isDirectory || info.isFile) {
+    return invalid("the owning path is not a directory");
+  }
+  if (options.parent && dirname(canonicalPath) !== options.parent.canonicalPath) {
+    return invalid("the owning directory must be a direct child of its captured parent");
+  }
+  if (options.parent?.parent) {
+    return invalid("the owning directory parent must be a captured root");
+  }
+
+  const owner = objectFreeze({
+    lexicalPath,
+    canonicalPath,
+    identity: stableIdentity(info, "the owning directory"),
+    ...(options.parent ? { parent: options.parent } : {}),
+  });
+  await revalidateCapturedOwner(owner, operations);
+  return owner;
+}
+
+/** Bind a selected relative entrypoint to a captured owner and file identity. */
+export async function bindExtensionEntrypoint(
+  owner: CapturedExtensionOwner,
+  selectedEntrypoint: string,
+  operations: EntrypointFileOperations = nativeFileOperations,
+): Promise<BoundExtensionEntrypoint> {
+  if (selectedEntrypoint.length === 0 || selectedEntrypoint.includes("\0")) {
+    return invalid("the selected entrypoint is empty or invalid");
+  }
+
+  const targetIsAbsolute = isAbsolute(selectedEntrypoint);
+  if (!targetIsAbsolute && URL_SCHEME.test(selectedEntrypoint)) {
+    return invalid("the selected entrypoint must not be a URL");
+  }
+  const lexicalTarget = normalize(
+    targetIsAbsolute ? selectedEntrypoint : resolve(owner.lexicalPath, selectedEntrypoint),
+  );
+  if (!isContained(owner.lexicalPath, lexicalTarget)) {
+    return invalid("the selected entrypoint is lexically outside its owning directory");
+  }
+
+  const relativeTarget = relative(owner.lexicalPath, lexicalTarget);
+  const physicalCandidate = normalize(resolve(owner.canonicalPath, relativeTarget));
+  const canonicalTarget = canonicalAbsolute(
+    await operations.realPath(physicalCandidate),
+    "the selected entrypoint",
+  );
+  if (!isContained(owner.canonicalPath, canonicalTarget)) {
+    return invalid("the selected entrypoint is physically outside its owning directory");
+  }
+
+  const targetInfo = await operations.stat(canonicalTarget);
+  if (!targetInfo.isFile || targetInfo.isDirectory) {
+    return invalid("the selected entrypoint is not a regular file");
+  }
+  const targetIdentity = stableIdentity(targetInfo, "the selected entrypoint");
+
+  // Manifest parsing and target selection happen before this point. Recheck
+  // the lexical owner mapping and both identities after selection so a pnpm
+  // symlink retarget or project-directory replacement fails closed.
+  await revalidateCapturedOwner(owner, operations);
+  const finalTarget = canonicalAbsolute(
+    await operations.realPath(physicalCandidate),
+    "the current selected entrypoint",
+  );
+  if (finalTarget !== canonicalTarget) {
+    return invalid("the selected entrypoint mapping changed during discovery");
+  }
+  const finalTargetInfo = await operations.stat(canonicalTarget);
+  if (!finalTargetInfo.isFile || finalTargetInfo.isDirectory) {
+    return invalid("the selected entrypoint is no longer a regular file");
+  }
+  if (
+    !sameIdentity(
+      targetIdentity,
+      stableIdentity(finalTargetInfo, "the selected entrypoint"),
+    )
+  ) {
+    return invalid("the selected entrypoint identity changed during discovery");
+  }
+
+  return objectFreeze({ path: canonicalTarget, owner, targetIdentity });
+}
+
+/**
+ * Revalidate a discovery binding immediately before native ESM import.
+ *
+ * Native path-based ESM cannot make the final stat and module open atomic.
+ * This closes deterministic swaps before import; the remaining stat-to-open
+ * scheduling window is an explicit runtime limitation.
+ */
+export async function revalidateBoundExtensionEntrypoint(
+  binding: BoundExtensionEntrypoint,
+  operations: EntrypointFileOperations = nativeFileOperations,
+): Promise<void> {
+  await revalidateCapturedOwner(binding.owner, operations);
+  if (!isContained(binding.owner.canonicalPath, binding.path)) {
+    return invalid("the bound target is outside its captured owner");
+  }
+  const currentTarget = canonicalAbsolute(
+    await operations.realPath(binding.path),
+    "the current bound target",
+  );
+  if (currentTarget !== binding.path) {
+    return invalid("the bound target mapping changed after discovery");
+  }
+  const targetInfo = await operations.stat(binding.path);
+  if (!targetInfo.isFile || targetInfo.isDirectory) {
+    return invalid("the bound target is no longer a regular file");
+  }
+  if (
+    !sameIdentity(
+      binding.targetIdentity,
+      stableIdentity(targetInfo, "the bound target"),
+    )
+  ) {
+    return invalid("the bound target identity changed after discovery");
+  }
+  await revalidateCapturedOwner(binding.owner, operations);
+}
+
 /**
  * Bind a selected project or package entrypoint to its physical identity.
  *
  * Contained symlinks are accepted, but the returned value is their canonical
  * target. Direct or intermediate symlinks that escape the owning directory are
- * rejected. Returning the canonical absolute path makes later changes to the
- * discovered symlink or import-map aliases irrelevant to this captured value.
+ * rejected. This compatibility wrapper does not retain the identity binding;
+ * production discovery carries `BoundExtensionEntrypoint` through to import.
  *
  * The optional operations argument is an internal test seam; production callers
  * use the runtime-neutral compat filesystem functions.
@@ -323,46 +608,6 @@ export async function canonicalizeExtensionEntrypoint(
   selectedEntrypoint: string,
   operations: EntrypointFileOperations = nativeFileOperations,
 ): Promise<string> {
-  if (owningDirectory.length === 0 || owningDirectory.includes("\0")) {
-    return invalid("the owning directory is empty or invalid");
-  }
-  if (selectedEntrypoint.length === 0 || selectedEntrypoint.includes("\0")) {
-    return invalid("the selected entrypoint is empty or invalid");
-  }
-
-  const lexicalOwner = normalize(resolve(owningDirectory));
-  const targetIsAbsolute = isAbsolute(selectedEntrypoint);
-  if (!targetIsAbsolute && URL_SCHEME.test(selectedEntrypoint)) {
-    return invalid("the selected entrypoint must not be a URL");
-  }
-  const lexicalTarget = normalize(
-    targetIsAbsolute ? selectedEntrypoint : resolve(lexicalOwner, selectedEntrypoint),
-  );
-
-  if (!isContained(lexicalOwner, lexicalTarget)) {
-    return invalid("the selected entrypoint is lexically outside its owning directory");
-  }
-
-  const canonicalOwner = canonicalAbsolute(
-    await operations.realPath(lexicalOwner),
-    "the owning directory",
-  );
-  const ownerInfo = await operations.stat(canonicalOwner);
-  if (!ownerInfo.isDirectory || ownerInfo.isFile) {
-    return invalid("the owning path is not a directory");
-  }
-
-  const canonicalTarget = canonicalAbsolute(
-    await operations.realPath(lexicalTarget),
-    "the selected entrypoint",
-  );
-  if (!isContained(canonicalOwner, canonicalTarget)) {
-    return invalid("the selected entrypoint is physically outside its owning directory");
-  }
-
-  const targetInfo = await operations.stat(canonicalTarget);
-  if (!targetInfo.isFile || targetInfo.isDirectory) {
-    return invalid("the selected entrypoint is not a regular file");
-  }
-  return canonicalTarget;
+  const owner = await captureExtensionOwner(owningDirectory, { operations });
+  return (await bindExtensionEntrypoint(owner, selectedEntrypoint, operations)).path;
 }

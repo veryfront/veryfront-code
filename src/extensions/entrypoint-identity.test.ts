@@ -4,7 +4,10 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isAbsolute, join, resolve } from "#veryfront/compat/path";
 import {
+  bindExtensionEntrypoint,
   canonicalizeExtensionEntrypoint,
+  captureExtensionOwner,
+  revalidateBoundExtensionEntrypoint,
   selectPackageImportEntrypoint,
 } from "./entrypoint-identity.ts";
 
@@ -351,6 +354,8 @@ describe("canonicalizeExtensionEntrypoint()", () => {
               Promise.resolve({
                 isDirectory: path === virtualOwner,
                 isFile: false,
+                dev: 1,
+                ino: path === virtualOwner ? 1 : 2,
               }),
           },
         ),
@@ -370,5 +375,118 @@ describe("canonicalizeExtensionEntrypoint()", () => {
     assertEquals(captured.startsWith("#"), false);
     assertEquals(isAbsolute(captured), true);
     assertEquals(captured, await Deno.realPath(entrypoint));
+  });
+});
+
+describe("bound extension entrypoints", () => {
+  let temporaryDirectory: string;
+
+  beforeEach(async () => {
+    temporaryDirectory = await Deno.makeTempDir({ prefix: "vf-bound-entrypoint-" });
+  });
+
+  afterEach(async () => {
+    await Deno.remove(temporaryDirectory, { recursive: true });
+  });
+
+  it("rejects a package owner symlink retargeted after owner capture", async () => {
+    const firstOwner = join(temporaryDirectory, "store", "first");
+    const secondOwner = join(temporaryDirectory, "store", "second");
+    const lexicalOwner = join(temporaryDirectory, "node_modules", "ext-race");
+    await Deno.mkdir(firstOwner, { recursive: true });
+    await Deno.mkdir(secondOwner, { recursive: true });
+    await Deno.mkdir(join(temporaryDirectory, "node_modules"), { recursive: true });
+    await Deno.writeTextFile(join(firstOwner, "index.js"), "export default 'first';\n");
+    await Deno.writeTextFile(join(secondOwner, "index.js"), "export default 'second';\n");
+    await Deno.symlink(firstOwner, lexicalOwner);
+
+    const owner = await captureExtensionOwner(lexicalOwner);
+    await Deno.remove(lexicalOwner);
+    await Deno.symlink(secondOwner, lexicalOwner);
+
+    await assertRejects(
+      () => bindExtensionEntrypoint(owner, "./index.js"),
+      Error,
+      "mapping changed",
+    );
+  });
+
+  it("rejects a project owner replaced after capture", async () => {
+    const extensionsRoot = join(temporaryDirectory, "extensions");
+    const ownerPath = join(extensionsRoot, "ext-race");
+    const displacedOwner = join(temporaryDirectory, "displaced-owner");
+    await Deno.mkdir(ownerPath, { recursive: true });
+    await Deno.writeTextFile(join(ownerPath, "index.ts"), "export default 'first';\n");
+
+    const parent = await captureExtensionOwner(extensionsRoot);
+    const owner = await captureExtensionOwner(ownerPath, { parent });
+    await Deno.rename(ownerPath, displacedOwner);
+    await Deno.mkdir(ownerPath, { recursive: true });
+    await Deno.writeTextFile(join(ownerPath, "index.ts"), "export default 'second';\n");
+
+    await assertRejects(
+      () => bindExtensionEntrypoint(owner, "./index.ts"),
+      Error,
+      "identity changed",
+    );
+  });
+
+  it("requires project owners to remain direct children of the captured extensions root", async () => {
+    const extensionsRoot = join(temporaryDirectory, "extensions");
+    const nestedOwner = join(extensionsRoot, "group", "ext-nested");
+    await Deno.mkdir(nestedOwner, { recursive: true });
+
+    const parent = await captureExtensionOwner(extensionsRoot);
+    await assertRejects(
+      () => captureExtensionOwner(nestedOwner, { parent }),
+      Error,
+      "direct child",
+    );
+  });
+
+  it("fails deterministically for unavailable or invalid filesystem identities", async () => {
+    const ownerPath = resolve(temporaryDirectory, "identity-unavailable");
+    for (
+      const identity of [
+        { dev: null, ino: null },
+        { dev: -1, ino: 1 },
+        { dev: 1n, ino: -1n },
+      ] as const
+    ) {
+      await assertRejects(
+        () =>
+          captureExtensionOwner(ownerPath, {
+            operations: {
+              realPath: (path) => Promise.resolve(path),
+              stat: () =>
+                Promise.resolve({
+                  isDirectory: true,
+                  isFile: false,
+                  ...identity,
+                }),
+            },
+          }),
+        Error,
+        "no stable filesystem identity",
+      );
+    }
+  });
+
+  it("detects target replacement before import revalidation", async () => {
+    const ownerPath = join(temporaryDirectory, "extension");
+    const targetPath = join(ownerPath, "index.ts");
+    await Deno.mkdir(ownerPath, { recursive: true });
+    await Deno.writeTextFile(targetPath, "export default 'first';\n");
+
+    const owner = await captureExtensionOwner(ownerPath);
+    const binding = await bindExtensionEntrypoint(owner, "./index.ts");
+    await Deno.rename(targetPath, join(ownerPath, "first.ts"));
+    await Deno.writeTextFile(targetPath, "export default 'second';\n");
+
+    await assertRejects(
+      () => revalidateBoundExtensionEntrypoint(binding),
+      Error,
+      "target identity changed",
+    );
   });
 });

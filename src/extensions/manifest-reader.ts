@@ -2,7 +2,9 @@
  * Bounded, race-resistant parsing for extension manifest files.
  *
  * This module is internal. Callers must select JSON or JSONC explicitly so a
- * strict manifest cannot silently acquire the more permissive JSONC grammar.
+ * strict manifest cannot silently acquire the more permissive activation JSONC
+ * security profile. The profile is deliberately narrower than Deno's full
+ * loose config parser and never uses regex or best-effort source rewriting.
  *
  * @module extensions/manifest-reader
  */
@@ -10,6 +12,7 @@
 import { defineError, VeryfrontError } from "#veryfront/errors/types.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { quoteDiagnosticString } from "./diagnostic-string.ts";
 
 /** Maximum accepted UTF-8 manifest size (256 KiB). */
 export const MAX_EXTENSION_MANIFEST_BYTES = 256 * 1024;
@@ -21,19 +24,23 @@ const MAX_MANIFEST_BYTES_BIGINT = BigInt(MAX_EXTENSION_MANIFEST_BYTES);
 // parsing deterministic if application code mutates the corresponding globals
 // while a manifest read is in flight.
 const NativeError = Error;
+const NativeSet = Set;
 const NativeSyntaxError = SyntaxError;
 const NativeUint8Array = Uint8Array;
 const reflectApply = Reflect.apply;
+const arrayPop = Array.prototype.pop;
+const arrayPush = Array.prototype.push;
 const functionHasInstance = Function.prototype[Symbol.hasInstance];
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
 const jsonParse = JSON.parse;
-const jsonStringify = JSON.stringify;
 const numberIsSafeInteger = Number.isSafeInteger;
+const setAdd = Set.prototype.add;
+const setHas = Set.prototype.has;
 const stringCharCodeAt = String.prototype.charCodeAt;
 const stringSlice = String.prototype.slice;
 const textDecoderDecode = TextDecoder.prototype.decode;
-const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const typedArrayPrototype = reflectApply(objectGetPrototypeOf, undefined, [
   NativeUint8Array.prototype,
 ]) as object;
@@ -217,31 +224,6 @@ const DEFAULT_FILE_SYSTEM: ExtensionManifestFileSystem = Object.freeze({
   isNotFound: isNotFoundError,
 });
 
-function quotedDiagnosticString(value: string): string {
-  // JSON quoting handles C0 controls, quotes, and backslashes. Escape the
-  // remaining Unicode line separators explicitly so terminal and structured
-  // log renderers cannot interpret a crafted filename as a second record.
-  const quoted = reflectApply(jsonStringify, undefined, [value]) as string;
-  let escaped = "";
-  for (let index = 0; index < quoted.length; index++) {
-    const code = reflectApply(stringCharCodeAt, quoted, [index]) as number;
-    switch (code) {
-      case 0x0085:
-        escaped += "\\u0085";
-        break;
-      case 0x2028:
-        escaped += "\\u2028";
-        break;
-      case 0x2029:
-        escaped += "\\u2029";
-        break;
-      default:
-        escaped += reflectApply(stringSlice, quoted, [index, index + 1]) as string;
-    }
-  }
-  return escaped;
-}
-
 function errorContext(path: string, operation: string): Record<string, unknown> {
   return { path, operation };
 }
@@ -273,8 +255,8 @@ function diagnosticCause(cause: unknown): Error {
       const message = ownStringProperty(error, "message") ?? "The operation failed";
       const code = ownStringProperty(error, "code");
       const summary = code
-        ? `${quotedDiagnosticString(code)}: ${quotedDiagnosticString(message)}`
-        : quotedDiagnosticString(message);
+        ? `${quoteDiagnosticString(code)}: ${quoteDiagnosticString(message)}`
+        : quoteDiagnosticString(message);
       return intrinsicInstanceOf(error, NativeSyntaxError)
         ? new NativeSyntaxError(summary)
         : new NativeError(summary);
@@ -298,7 +280,7 @@ function combinedDiagnosticCause(operationError: unknown, closeError: unknown): 
 
 function readError(path: string, operation: string, cause: unknown): VeryfrontError {
   return MANIFEST_READ_ERROR.create({
-    message: `Failed to ${operation} extension manifest ${quotedDiagnosticString(path)}`,
+    message: `Failed to ${operation} extension manifest ${quoteDiagnosticString(path)}`,
     cause: diagnosticCause(cause),
     context: errorContext(path, operation),
   });
@@ -306,7 +288,7 @@ function readError(path: string, operation: string, cause: unknown): VeryfrontEr
 
 function fileError(path: string, detail: string): VeryfrontError {
   return MANIFEST_FILE_ERROR.create({
-    message: `Rejected extension manifest ${quotedDiagnosticString(path)}: ${detail}`,
+    message: `Rejected extension manifest ${quoteDiagnosticString(path)}: ${detail}`,
     context: errorContext(path, "validate-file-identity"),
   });
 }
@@ -314,7 +296,7 @@ function fileError(path: string, detail: string): VeryfrontError {
 function sizeError(path: string): VeryfrontError {
   return MANIFEST_SIZE_ERROR.create({
     message: `Extension manifest ${
-      quotedDiagnosticString(path)
+      quoteDiagnosticString(path)
     } exceeds ${MAX_EXTENSION_MANIFEST_BYTES} bytes`,
     context: {
       ...errorContext(path, "read-bounded"),
@@ -330,7 +312,7 @@ function parseError(
 ): VeryfrontError {
   const syntaxLabel = syntax === "json" ? "JSON" : "JSONC";
   return MANIFEST_PARSE_ERROR.create({
-    message: `Failed to parse ${syntaxLabel} extension manifest ${quotedDiagnosticString(path)}`,
+    message: `Failed to parse ${syntaxLabel} extension manifest ${quoteDiagnosticString(path)}`,
     cause: diagnosticCause(cause),
     context: { ...errorContext(path, "parse"), syntax },
   });
@@ -342,7 +324,7 @@ function requireManifestSyntax(
 ): ExtensionManifestSyntax {
   if (syntax === "json" || syntax === "jsonc") return syntax;
   throw MANIFEST_PARSE_ERROR.create({
-    message: `Rejected extension manifest ${quotedDiagnosticString(path)}: unsupported syntax`,
+    message: `Rejected extension manifest ${quoteDiagnosticString(path)}: unsupported syntax`,
     context: { ...errorContext(path, "select-syntax"), syntax },
   });
 }
@@ -463,6 +445,14 @@ function isJsonWhitespace(code: number): boolean {
   return code === 0x09 || code === 0x0a || code === 0x0d || code === 0x20;
 }
 
+function isDenoJsoncWhitespace(code: number): boolean {
+  return (code >= 0x09 && code <= 0x0d) || code === 0x20 ||
+    code === 0x85 || code === 0xa0 || code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) || code === 0x2028 ||
+    code === 0x2029 || code === 0x202f || code === 0x205f ||
+    code === 0x3000;
+}
+
 function stripJsoncComments(source: string): string {
   let output = "";
   let inString = false;
@@ -490,7 +480,9 @@ function stripJsoncComments(source: string): string {
     }
 
     if (code !== 0x2f || index + 1 >= source.length) {
-      output += reflectApply(stringSlice, source, [index, index + 1]) as string;
+      output += isDenoJsoncWhitespace(code) && !isJsonWhitespace(code)
+        ? " "
+        : reflectApply(stringSlice, source, [index, index + 1]) as string;
       continue;
     }
 
@@ -500,7 +492,10 @@ function stripJsoncComments(source: string): string {
       index += 2;
       while (index < source.length) {
         const commentCode = reflectApply(stringCharCodeAt, source, [index]) as number;
-        if (commentCode === 0x0a || commentCode === 0x0d) {
+        const afterCommentCode = index + 1 < source.length
+          ? reflectApply(stringCharCodeAt, source, [index + 1]) as number
+          : -1;
+        if (commentCode === 0x0a || (commentCode === 0x0d && afterCommentCode === 0x0a)) {
           output += reflectApply(stringSlice, source, [index, index + 1]) as string;
           break;
         }
@@ -540,6 +535,89 @@ function stripJsoncComments(source: string): string {
   }
 
   return output;
+}
+
+function rejectDuplicateObjectKeys(source: string): void {
+  const scopes: Array<Set<string> | null> = [];
+
+  for (let index = 0; index < source.length; index++) {
+    const code = reflectApply(stringCharCodeAt, source, [index]) as number;
+    if (code === 0x7b) {
+      reflectApply(arrayPush, scopes, [new NativeSet<string>()]);
+      continue;
+    }
+    if (code === 0x5b) {
+      reflectApply(arrayPush, scopes, [null]);
+      continue;
+    }
+    if (code === 0x7d || code === 0x5d) {
+      reflectApply(arrayPop, scopes, []);
+      continue;
+    }
+    if (code !== 0x22) continue;
+
+    const tokenStart = index;
+    let escaped = false;
+    let terminated = false;
+    for (index++; index < source.length; index++) {
+      const stringCode = reflectApply(stringCharCodeAt, source, [index]) as number;
+      if (escaped) {
+        escaped = false;
+      } else if (stringCode === 0x5c) {
+        escaped = true;
+      } else if (stringCode === 0x22) {
+        terminated = true;
+        break;
+      }
+    }
+    if (!terminated) return;
+
+    let next = index + 1;
+    while (
+      next < source.length &&
+      isJsonWhitespace(reflectApply(stringCharCodeAt, source, [next]) as number)
+    ) {
+      next++;
+    }
+    if (
+      next >= source.length ||
+      reflectApply(stringCharCodeAt, source, [next]) as number !== 0x3a
+    ) continue;
+
+    const scope = scopes[scopes.length - 1];
+    if (!scope) continue;
+    const token = reflectApply(stringSlice, source, [tokenStart, index + 1]) as string;
+    let key: unknown;
+    try {
+      key = reflectApply(jsonParse, undefined, [token]);
+    } catch {
+      return;
+    }
+    if (typeof key !== "string") continue;
+    if (reflectApply(setHas, scope, [key]) as boolean) {
+      throw new NativeSyntaxError(`Duplicate object key ${quoteDiagnosticString(key)}`);
+    }
+    reflectApply(setAdd, scope, [key]);
+  }
+}
+
+function containsJsonToken(source: string): boolean {
+  for (let index = 0; index < source.length; index++) {
+    if (!isJsonWhitespace(reflectApply(stringCharCodeAt, source, [index]) as number)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function jsoncProfileCause(error: unknown): SyntaxError {
+  const parserCause = diagnosticCause(error);
+  const detail = ownStringProperty(parserCause, "message") ?? "The document is invalid";
+  return new NativeSyntaxError(
+    "Activation JSONC security profile rejected malformed or unsupported loose syntax. " +
+      "Use double-quoted JSON keys and strings plus standards-JSON values. " +
+      `Comments, trailing commas, and Deno whitespace are supported. Parser detail: ${detail}`,
+  );
 }
 
 function stripJsoncTrailingCommas(source: string): string {
@@ -598,7 +676,14 @@ function stripJsoncTrailingCommas(source: string): string {
   return output;
 }
 
-/** Parse strict JSON or standards-compatible JSONC without regex rewriting. */
+/**
+ * Parse strict JSON or the hardened JSONC subset used for Deno manifests.
+ *
+ * JSONC accepts comments, trailing commas, Deno's Unicode whitespace, and an
+ * empty/comment-only document. It deliberately keeps JSON's double-quoted
+ * strings and property names: Deno's optional loose keys and single-quoted
+ * strings are rejected rather than approximated with brittle rewriting.
+ */
 export function parseExtensionManifest<T = unknown>(
   source: string,
   syntax: ExtensionManifestSyntax,
@@ -609,9 +694,15 @@ export function parseExtensionManifest<T = unknown>(
     const json = selectedSyntax === "jsonc"
       ? stripJsoncTrailingCommas(stripJsoncComments(source))
       : source;
+    if (selectedSyntax === "jsonc" && !containsJsonToken(json)) return {} as T;
+    rejectDuplicateObjectKeys(json);
     return reflectApply(jsonParse, undefined, [json]) as T;
   } catch (error) {
-    throw parseError(path, selectedSyntax, error);
+    throw parseError(
+      path,
+      selectedSyntax,
+      selectedSyntax === "jsonc" ? jsoncProfileCause(error) : error,
+    );
   }
 }
 
