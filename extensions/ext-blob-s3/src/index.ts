@@ -4,7 +4,7 @@
  * @module extensions/ext-blob-s3
  */
 
-import type { Extension } from "veryfront/extensions";
+import { composeAbortSignals, type Extension } from "veryfront/extensions";
 import { type BlobStorage, BlobStorageContractName } from "veryfront/workflow/blob";
 import { S3BlobStorage, type S3BlobStorageConfig } from "./s3-storage.ts";
 
@@ -33,6 +33,8 @@ export const extBlobS3 = (config: S3BlobStorageConfig): Extension => {
           "AWS_LAMBDA_FUNCTION_NAME",
           "AWS_LAMBDA_MAX_CONCURRENCY",
           "AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA",
+          "AWS_NEW_RETRIES_2026",
+          "AWS_SDK_JS_NODE_VERSION_SUPPORT_WARNING_DISABLED",
           "SMITHY_NEW_RETRIES_2026",
           "_X_AMZN_TRACE_ID",
         ],
@@ -46,7 +48,7 @@ export const extBlobS3 = (config: S3BlobStorageConfig): Extension => {
       selectedConfig.signal?.throwIfAborted();
       ctx.signal?.throwIfAborted();
       const controller = new AbortController();
-      const signal = AbortSignal.any([
+      const signal = composeAbortSignals([
         controller.signal,
         ...(selectedConfig.signal ? [selectedConfig.signal] : []),
         ...(ctx.signal ? [ctx.signal] : []),

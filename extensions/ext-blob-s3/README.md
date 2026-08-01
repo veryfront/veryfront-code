@@ -5,6 +5,10 @@
 Use this extension to select AWS S3 or an S3-compatible service as Veryfront's
 blob store.
 
+The extension requires Node.js 20 or newer when used from npm. This matches the
+minimum runtime supported by the pinned AWS SDK; Deno uses the same explicit
+extension package and dependency versions.
+
 ## Install and compose
 
 Add the package to the application, then compose it explicitly in
@@ -95,6 +99,8 @@ selection:
 - `AWS_LAMBDA_FUNCTION_NAME`
 - `AWS_LAMBDA_MAX_CONCURRENCY`
 - `AWS_LAMBDA_NODEJS_NO_GLOBAL_AWSLAMBDA`
+- `AWS_NEW_RETRIES_2026`
+- `AWS_SDK_JS_NODE_VERSION_SUPPORT_WARNING_DISABLED`
 - `SMITHY_NEW_RETRIES_2026`
 - `_X_AMZN_TRACE_ID`
 
