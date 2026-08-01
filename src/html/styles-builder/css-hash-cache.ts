@@ -11,15 +11,31 @@
 import {
   type CacheBackend,
   createCacheBackend,
-  MemoryCacheBackend,
+  readCacheValueWithinLimit,
 } from "#veryfront/cache/backend.ts";
 import { serverLogger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { assertCSSContentIdentity, hashCSS, isCSSContentHash } from "./css-identity.ts";
-import { buildCSSCacheEntry, parseCSSCacheEntry, resolveStylesheet } from "./css-compiler-utils.ts";
+import {
+  buildCSSCacheEntry,
+  parseCSSCacheEntry,
+  preflightSerializedCSSCacheFrame,
+  readOwnDataProperty,
+  resolveStylesheet,
+} from "./css-compiler-utils.ts";
 import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
 import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
+import {
+  assertCSSSerializedCacheValue,
+  ByteWeightedLRUCache,
+  detachRetainedString,
+  estimateRetainedStringBytes,
+  MAX_CSS_INPUTS_SERIALIZED_CACHE_ENTRY_BYTES,
+  MAX_CSS_SERIALIZED_CACHE_ENTRY_BYTES,
+  serializeCSSCacheValue,
+} from "./css-cache-limits.ts";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
 
 const logger = serverLogger.component("css-cache");
 
@@ -58,6 +74,13 @@ const CSS_CACHE_TTL_SECONDS = 24 * 3600;
 
 const LOCAL_CACHE_MAX_SIZE = 100;
 const LOCAL_CSS_INPUTS_CACHE_MAX = 50;
+const LOCAL_CACHE_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
+const LOCAL_CACHE_MAX_ENTRY_RETAINED_BYTES = 16 * 1024 * 1024;
+const LOCAL_CSS_INPUTS_CACHE_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
+const LOCAL_CSS_INPUTS_CACHE_MAX_ENTRY_RETAINED_BYTES = 16 * 1024 * 1024;
+const LOCAL_CACHE_ENTRY_OVERHEAD_BYTES = 128;
+const LOCAL_CACHE_ARRAY_OVERHEAD_BYTES = 32;
+const LOCAL_CACHE_REFERENCE_BYTES = 8;
 const CSS_CACHE_SCHEMA = "v2";
 
 // ============================================================================
@@ -68,9 +91,8 @@ interface DistributedCacheInitOptions {
   getCache: () => CacheBackend | null;
   getCacheInitPromise: () => Promise<CacheBackend> | null;
   setCache: (cache: CacheBackend) => void;
-  setCacheInitPromise: (promise: Promise<CacheBackend>) => void;
+  setCacheInitPromise: (promise: Promise<CacheBackend> | null) => void;
   keyPrefix: string;
-  localFallbackSize: number;
   initializedLog: string;
   initFailureLog: string;
 }
@@ -85,41 +107,46 @@ async function getOrInitializeDistributedCache(
   if (pending) return pending;
 
   const initPromise = (async () => {
-    try {
-      const backend = await createCacheBackend({ keyPrefix: options.keyPrefix });
-      options.setCache(backend);
-      logger.debug(options.initializedLog, { type: backend.type });
-      return backend;
-    } catch (error) {
-      logger.warn(options.initFailureLog, { error });
-      const fallback = new MemoryCacheBackend(options.localFallbackSize);
-      options.setCache(fallback);
-      return fallback;
-    }
+    const backend = await createCacheBackend({ keyPrefix: options.keyPrefix });
+    options.setCache(backend);
+    logger.debug(options.initializedLog, { type: backend.type });
+    return backend;
   })();
 
   options.setCacheInitPromise(initPromise);
-  return initPromise;
+  try {
+    return await initPromise;
+  } catch (error) {
+    logger.warn(options.initFailureLog, { error });
+    throw error;
+  } finally {
+    if (options.getCacheInitPromise() === initPromise) {
+      options.setCacheInitPromise(null);
+    }
+  }
 }
 
-// ============================================================================
-// Bounded local cache utility
-// ============================================================================
-
-function storeInBoundedLocalCache<T>(
-  cache: Map<string, T>,
-  maxSize: number,
-  key: string,
-  entry: T,
-): void {
-  if (cache.has(key)) return;
-
-  if (cache.size >= maxSize) {
-    const firstKey = cache.keys().next().value as string | undefined;
-    if (firstKey) cache.delete(firstKey);
+function estimateCandidatesRetainedBytes(candidates: readonly string[]): number {
+  let bytes = LOCAL_CACHE_ARRAY_OVERHEAD_BYTES;
+  for (const candidate of candidates) {
+    bytes += LOCAL_CACHE_REFERENCE_BYTES + estimateRetainedStringBytes(candidate);
   }
+  return bytes;
+}
 
-  cache.set(key, entry);
+function estimateCSSCacheEntryRetainedBytes(key: string, entry: CSSCacheEntry): number {
+  return LOCAL_CACHE_ENTRY_OVERHEAD_BYTES + estimateRetainedStringBytes(key) +
+    estimateRetainedStringBytes(entry.css) + estimateRetainedStringBytes(entry.stylesheet) +
+    estimateCandidatesRetainedBytes(entry.candidates);
+}
+
+function estimateCSSInputsCacheEntryRetainedBytes(
+  key: string,
+  entry: CSSInputsCacheEntry,
+): number {
+  return LOCAL_CACHE_ENTRY_OVERHEAD_BYTES + estimateRetainedStringBytes(key) +
+    estimateRetainedStringBytes(entry.stylesheet) +
+    estimateCandidatesRetainedBytes(entry.candidates);
 }
 
 // ============================================================================
@@ -129,7 +156,11 @@ function storeInBoundedLocalCache<T>(
 let cssCache: CacheBackend | null = null;
 let cssCacheInitPromise: Promise<CacheBackend> | null = null;
 
-const localCssCache = new Map<string, CSSCacheEntry>();
+const localCssCache = new ByteWeightedLRUCache<string, CSSCacheEntry>({
+  maxEntries: LOCAL_CACHE_MAX_SIZE,
+  maxEntrySizeBytes: LOCAL_CACHE_MAX_ENTRY_RETAINED_BYTES,
+  maxSizeBytes: LOCAL_CACHE_MAX_RETAINED_BYTES,
+});
 
 const cssCacheOptions: DistributedCacheInitOptions = {
   getCache: () => cssCache,
@@ -141,9 +172,8 @@ const cssCacheOptions: DistributedCacheInitOptions = {
     cssCacheInitPromise = promise;
   },
   keyPrefix: "css",
-  localFallbackSize: LOCAL_CACHE_MAX_SIZE,
   initializedLog: "CSS cache initialized",
-  initFailureLog: "Failed to initialize distributed CSS cache, using memory",
+  initFailureLog: "Failed to initialize configured CSS cache",
 };
 
 function getCssCache(): Promise<CacheBackend> {
@@ -153,12 +183,29 @@ function getCssCache(): Promise<CacheBackend> {
 function storeInLocalCache(hash: string, entry: CSSCacheEntry): void {
   assertCSSOutputContent(entry.css, "Cached CSS output");
   assertCSSOutputContent(entry.stylesheet, "Cached CSS regeneration stylesheet");
-  storeInBoundedLocalCache(localCssCache, LOCAL_CACHE_MAX_SIZE, hash, entry);
-}
-
-function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
-  localCssCache.delete(hash);
-  localCssCache.set(hash, entry);
+  const preflightRetainedBytes = estimateCSSCacheEntryRetainedBytes(hash, entry);
+  if (
+    preflightRetainedBytes > LOCAL_CACHE_MAX_ENTRY_RETAINED_BYTES ||
+    preflightRetainedBytes > LOCAL_CACHE_MAX_RETAINED_BYTES
+  ) {
+    localCssCache.delete(hash);
+    return;
+  }
+  const retainedHash = detachRetainedString(hash);
+  const retainedCSS = detachRetainedString(entry.css);
+  const retainedEntry = Object.freeze({
+    css: retainedCSS,
+    candidates: Object.freeze(entry.candidates.map(detachRetainedString)) as string[],
+    stylesheet: entry.stylesheet === entry.css
+      ? retainedCSS
+      : detachRetainedString(entry.stylesheet),
+  }) as CSSCacheEntry;
+  const retainedBytes = estimateCSSCacheEntryRetainedBytes(retainedHash, retainedEntry);
+  localCssCache.set(
+    retainedHash,
+    retainedEntry,
+    retainedBytes,
+  );
 }
 
 // ============================================================================
@@ -167,7 +214,11 @@ function touchLocalCache(hash: string, entry: CSSCacheEntry): void {
 
 let cssInputsCache: CacheBackend | null = null;
 let cssInputsCacheInitPromise: Promise<CacheBackend> | null = null;
-const localCssInputsCache = new Map<string, CSSInputsCacheEntry>();
+const localCssInputsCache = new ByteWeightedLRUCache<string, CSSInputsCacheEntry>({
+  maxEntries: LOCAL_CSS_INPUTS_CACHE_MAX,
+  maxEntrySizeBytes: LOCAL_CSS_INPUTS_CACHE_MAX_ENTRY_RETAINED_BYTES,
+  maxSizeBytes: LOCAL_CSS_INPUTS_CACHE_MAX_RETAINED_BYTES,
+});
 
 const cssInputsCacheOptions: DistributedCacheInitOptions = {
   getCache: () => cssInputsCache,
@@ -179,9 +230,8 @@ const cssInputsCacheOptions: DistributedCacheInitOptions = {
     cssInputsCacheInitPromise = promise;
   },
   keyPrefix: "css-inputs",
-  localFallbackSize: LOCAL_CSS_INPUTS_CACHE_MAX,
   initializedLog: "CSS inputs cache initialized",
-  initFailureLog: "Failed to initialize CSS inputs cache, using memory",
+  initFailureLog: "Failed to initialize configured CSS inputs cache",
 };
 
 function getCssInputsCache(): Promise<CacheBackend> {
@@ -190,7 +240,25 @@ function getCssInputsCache(): Promise<CacheBackend> {
 
 function storeInLocalCssInputsCache(hash: string, entry: CSSInputsCacheEntry): void {
   assertCSSOutputContent(entry.stylesheet, "Cached CSS regeneration stylesheet");
-  storeInBoundedLocalCache(localCssInputsCache, LOCAL_CSS_INPUTS_CACHE_MAX, hash, entry);
+  const preflightRetainedBytes = estimateCSSInputsCacheEntryRetainedBytes(hash, entry);
+  if (
+    preflightRetainedBytes > LOCAL_CSS_INPUTS_CACHE_MAX_ENTRY_RETAINED_BYTES ||
+    preflightRetainedBytes > LOCAL_CSS_INPUTS_CACHE_MAX_RETAINED_BYTES
+  ) {
+    localCssInputsCache.delete(hash);
+    return;
+  }
+  const retainedHash = detachRetainedString(hash);
+  const retainedEntry = Object.freeze({
+    candidates: Object.freeze(entry.candidates.map(detachRetainedString)) as string[],
+    stylesheet: detachRetainedString(entry.stylesheet),
+  }) as CSSInputsCacheEntry;
+  const retainedBytes = estimateCSSInputsCacheEntryRetainedBytes(retainedHash, retainedEntry);
+  localCssInputsCache.set(
+    retainedHash,
+    retainedEntry,
+    retainedBytes,
+  );
 }
 
 function getVersionedCacheKey(hash: string): string {
@@ -202,22 +270,23 @@ function isCSSCacheEntryForHash(entry: CSSCacheEntry, hash: string): boolean {
 }
 
 function parseCSSInputsCacheEntry(raw: string): CSSInputsCacheEntry | undefined {
+  assertCSSSerializedCacheValue(raw, MAX_CSS_INPUTS_SERIALIZED_CACHE_ENTRY_BYTES);
+  if (!preflightSerializedCSSCacheFrame(raw, "inputs")) return undefined;
   let parsed: Partial<CSSInputsCacheEntry>;
   try {
     parsed = JSON.parse(raw) as Partial<CSSInputsCacheEntry>;
   } catch {
     return undefined;
   }
-  if (
-    !Array.isArray(parsed.candidates) ||
-    typeof parsed.stylesheet !== "string"
-  ) {
+  const candidates = readOwnDataProperty(parsed, "candidates");
+  const stylesheet = readOwnDataProperty(parsed, "stylesheet");
+  if (!Array.isArray(candidates) || typeof stylesheet !== "string") {
     return undefined;
   }
-  assertCSSOutputContent(parsed.stylesheet, "Cached CSS regeneration stylesheet");
+  assertCSSOutputContent(stylesheet, "Cached CSS regeneration stylesheet");
   return {
-    candidates: normalizeCSSCandidates(parsed.candidates),
-    stylesheet: parsed.stylesheet,
+    candidates: normalizeCSSCandidates(candidates),
+    stylesheet,
   };
 }
 
@@ -239,13 +308,13 @@ export async function cacheCSSAsync(
   const resolvedHash = hashCSS(entry.css);
   if (hash !== undefined) assertCSSContentIdentity(entry.css, hash);
 
+  const cache = await getCssCache();
   storeInLocalCache(resolvedHash, entry);
 
   try {
-    const cache = await getCssCache();
     await cache.set(
       getVersionedCacheKey(resolvedHash),
-      JSON.stringify(entry),
+      serializeCSSCacheValue(entry, MAX_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
       CSS_CACHE_TTL_SECONDS,
     );
   } catch (error) {
@@ -267,7 +336,6 @@ export function getCSSByHash(hash: string): string | undefined {
       localCssCache.delete(hash);
       return undefined;
     }
-    touchLocalCache(hash, entry);
     return entry.css;
   }
   return undefined;
@@ -286,14 +354,17 @@ export async function getCSSByHashAsync(hash: string): Promise<string | undefine
           localCssCache.delete(hash);
           return undefined;
         }
-        touchLocalCache(hash, local);
         return local.css;
       }
 
+      const cache = await getCssCache();
       let raw: string | null;
       try {
-        const cache = await getCssCache();
-        raw = await cache.get(getVersionedCacheKey(hash));
+        raw = await readCacheValueWithinLimit(
+          cache,
+          getVersionedCacheKey(hash),
+          MAX_CSS_SERIALIZED_CACHE_ENTRY_BYTES,
+        );
       } catch (error) {
         logger.debug("Failed to read from distributed CSS cache", { hash, error });
         return undefined;
@@ -337,11 +408,15 @@ export async function cacheCSSInputsAsync(
   };
   assertCSSOutputContent(entry.stylesheet, "Cached CSS regeneration stylesheet");
 
+  const cache = await getCssInputsCache();
   storeInLocalCssInputsCache(hash, entry);
 
   try {
-    const cache = await getCssInputsCache();
-    await cache.set(getVersionedCacheKey(hash), JSON.stringify(entry), CSS_CACHE_TTL_SECONDS);
+    await cache.set(
+      getVersionedCacheKey(hash),
+      serializeCSSCacheValue(entry, MAX_CSS_INPUTS_SERIALIZED_CACHE_ENTRY_BYTES),
+      CSS_CACHE_TTL_SECONDS,
+    );
   } catch (error) {
     logger.debug("Failed to store CSS inputs in distributed cache", {
       hash,
@@ -361,7 +436,7 @@ export async function cacheCSSInputsAsync(
 async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined> {
   if (!isCSSContentHash(hash)) return undefined;
 
-  const local = localCssCache.get(hash);
+  const local = localCssCache.peek(hash);
   if (local && local.candidates.length > 0) {
     assertCSSOutputContent(local.css, "Cached CSS output");
     assertCSSOutputContent(local.stylesheet, "Cached CSS regeneration stylesheet");
@@ -369,14 +444,18 @@ async function getCSSCacheEntry(hash: string): Promise<CSSCacheEntry | undefined
       localCssCache.delete(hash);
       return undefined;
     }
-    touchLocalCache(hash, local);
+    localCssCache.get(hash);
     return local;
   }
 
+  const cache = await getCssCache();
   let raw: string | null;
   try {
-    const cache = await getCssCache();
-    raw = await cache.get(getVersionedCacheKey(hash));
+    raw = await readCacheValueWithinLimit(
+      cache,
+      getVersionedCacheKey(hash),
+      MAX_CSS_SERIALIZED_CACHE_ENTRY_BYTES,
+    );
   } catch (error) {
     logger.debug("Failed to read CSS cache entry", { hash, error });
     return undefined;
@@ -401,10 +480,14 @@ async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | u
     return local;
   }
 
+  const cache = await getCssInputsCache();
   let raw: string | null;
   try {
-    const cache = await getCssInputsCache();
-    raw = await cache.get(getVersionedCacheKey(hash));
+    raw = await readCacheValueWithinLimit(
+      cache,
+      getVersionedCacheKey(hash),
+      MAX_CSS_INPUTS_SERIALIZED_CACHE_ENTRY_BYTES,
+    );
   } catch (error) {
     logger.debug("Failed to read CSS inputs from distributed cache", { hash, error });
     return undefined;
@@ -421,7 +504,17 @@ async function getCSSInputsByHash(hash: string): Promise<CSSInputsCacheEntry | u
 function toCSSInputsEntry(cacheEntry: CSSCacheEntry | undefined): CSSInputsCacheEntry | undefined {
   if (!cacheEntry || cacheEntry.candidates.length === 0) return undefined;
   return {
-    candidates: cacheEntry.candidates,
+    candidates: [...cacheEntry.candidates],
+    stylesheet: cacheEntry.stylesheet,
+  };
+}
+
+function copyCSSInputsEntry(cacheEntry: CSSInputsCacheEntry | undefined):
+  | CSSInputsCacheEntry
+  | undefined {
+  if (!cacheEntry) return undefined;
+  return {
+    candidates: [...cacheEntry.candidates],
     stylesheet: cacheEntry.stylesheet,
   };
 }
@@ -441,7 +534,7 @@ export async function resolveRegenerationInputs(
     return unifiedInputs;
   }
 
-  return await getCSSInputsByHash(expectedHash);
+  return copyCSSInputsEntry(await getCSSInputsByHash(expectedHash));
 }
 
 /**
@@ -457,19 +550,19 @@ export async function persistRegeneratedCSSEntry(
     LEGACY_EMPTY_STYLESHEET,
   );
   assertCSSContentIdentity(admittedEntry.css, hash);
+  const cache = await getCssCache();
   storeInLocalCache(hash, admittedEntry);
 
   try {
-    const cache = await getCssCache();
     await cache.set(
       getVersionedCacheKey(hash),
-      JSON.stringify(admittedEntry),
+      serializeCSSCacheValue(admittedEntry, MAX_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
       CSS_CACHE_TTL_SECONDS,
     );
   } catch (error) {
     logger.error("CSS cache write failed", {
       hash: hash.slice(-20),
-      error: error instanceof Error ? error.message : String(error),
+      error: snapshotThrowableDiagnostic(error),
     });
   }
 }

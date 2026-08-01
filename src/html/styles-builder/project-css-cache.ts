@@ -8,7 +8,11 @@
  * @module html/styles-builder/project-css-cache
  */
 
-import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
+import {
+  type CacheBackend,
+  CacheBackends,
+  readCacheValueWithinLimit,
+} from "#veryfront/cache/backend.ts";
 import { assertCSSPipelineIdentity, serverLogger as logger } from "#veryfront/utils";
 import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
@@ -24,6 +28,13 @@ import {
   parseProjectCSSCacheEntry,
 } from "./css-compiler-utils.ts";
 import { cacheCSSAsync } from "./css-hash-cache.ts";
+import {
+  ByteWeightedLRUCache,
+  detachRetainedString,
+  estimateRetainedStringBytes,
+  MAX_PROJECT_CSS_SERIALIZED_CACHE_ENTRY_BYTES,
+  serializeCSSCacheValue,
+} from "./css-cache-limits.ts";
 
 const projectCssCacheLog = logger.component("project-css-cache");
 const cssCacheLog = logger.component("project-css-cache");
@@ -64,6 +75,9 @@ interface ProjectCSSProfile {
 
 const PROJECT_CSS_CACHE_TTL_SECONDS = 24 * 3600;
 const PROJECT_CSS_LOCAL_FALLBACK_MAX = 50;
+const PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
+const PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES = 16 * 1024 * 1024;
+const PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES = 160;
 const PROJECT_CSS_LOCAL_TTL_MS = PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
 const PROJECT_CSS_CACHE_SCHEMA = "v4";
 
@@ -75,12 +89,17 @@ let projectCSSBackend: CacheBackend | null = null;
 let projectCSSInitialized = false;
 let projectCSSInitPromise: Promise<void> | null = null;
 
-const projectCSSLocalFallback = new Map<string, ProjectCSSLocalEntry>();
+const projectCSSLocalFallback = new ByteWeightedLRUCache<string, ProjectCSSLocalEntry>({
+  maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
+  maxEntrySizeBytes: PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES,
+  maxSizeBytes: PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES,
+});
 
 registerCache("project-css-cache", () => ({
   name: "project-css-cache",
   entries: projectCSSLocalFallback.size,
   maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
+  estimatedSizeBytes: projectCSSLocalFallback.sizeBytes,
   backend: projectCSSBackend?.type ?? "uninitialized",
 }));
 
@@ -167,28 +186,37 @@ export function createProjectCSSRequestContext(
 
 function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): void {
   assertCSSOutputContent(entry.css, "Cached project CSS output");
-  projectCSSLocalFallback.set(key, { ...entry, expiresAt: Date.now() + PROJECT_CSS_LOCAL_TTL_MS });
-  if (projectCSSLocalFallback.size > PROJECT_CSS_LOCAL_FALLBACK_MAX) {
-    pruneProjectCSSLocalFallback();
+  const preflightRetainedBytes = PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES +
+    estimateRetainedStringBytes(key) + estimateRetainedStringBytes(entry.css) +
+    estimateRetainedStringBytes(entry.hash) + estimateRetainedStringBytes(entry.candidatesHash);
+  if (
+    preflightRetainedBytes > PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES ||
+    preflightRetainedBytes > PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES
+  ) {
+    projectCSSLocalFallback.delete(key);
+    return;
   }
+  const retainedHash = detachRetainedString(entry.hash);
+  const localEntry = Object.freeze({
+    css: detachRetainedString(entry.css),
+    hash: retainedHash,
+    candidatesHash: entry.candidatesHash === entry.hash
+      ? retainedHash
+      : detachRetainedString(entry.candidatesHash),
+    expiresAt: Date.now() + PROJECT_CSS_LOCAL_TTL_MS,
+  });
+  const retainedKey = detachRetainedString(key);
+  const retainedBytes = PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES +
+    estimateRetainedStringBytes(retainedKey) + estimateRetainedStringBytes(localEntry.css) +
+    estimateRetainedStringBytes(localEntry.hash) +
+    estimateRetainedStringBytes(localEntry.candidatesHash);
+  projectCSSLocalFallback.set(retainedKey, localEntry, retainedBytes);
 }
 
 function isValidProjectCSSCacheEntry(entry: ProjectCSSCacheEntry): boolean {
   return isCSSContentHash(entry.hash) &&
     isCSSContentHash(entry.candidatesHash) &&
     hashCSS(entry.css) === entry.hash;
-}
-
-function pruneProjectCSSLocalFallback(): void {
-  const excess = projectCSSLocalFallback.size - PROJECT_CSS_LOCAL_FALLBACK_MAX;
-  if (excess <= 0) return;
-
-  const keys = projectCSSLocalFallback.keys();
-  for (let i = 0; i < excess; i++) {
-    const result = keys.next();
-    if (result.done) break;
-    projectCSSLocalFallback.delete(result.value);
-  }
 }
 
 async function cacheProjectCSSEntryByHash(
@@ -239,7 +267,11 @@ export async function tryGetProjectCSSFromDistributedCache(
 
   let raw: string | null;
   try {
-    raw = await projectCSSBackend.get(context.cacheKey);
+    raw = await readCacheValueWithinLimit(
+      projectCSSBackend,
+      context.cacheKey,
+      MAX_PROJECT_CSS_SERIALIZED_CACHE_ENTRY_BYTES,
+    );
   } catch (error) {
     cssCacheLog.debug("Failed to read from project CSS cache", {
       cacheKey: context.cacheKey,
@@ -292,28 +324,44 @@ export async function storeProjectCSS(
   entry: ProjectCSSCacheEntry,
   candidates: Set<string>,
 ): Promise<void> {
-  assertCSSOutputContent(entry.css, "Cached project CSS output");
-  assertCSSContentIdentity(entry.css, entry.hash);
-  if (entry.candidatesHash !== context.candidatesHash) {
+  const cacheKey = context.cacheKey;
+  const stylesheet = context.stylesheet;
+  const contextCandidatesHash = context.candidatesHash;
+  const capturedEntry = Object.freeze({
+    css: entry.css,
+    hash: entry.hash,
+    candidatesHash: entry.candidatesHash,
+  });
+  assertCSSOutputContent(capturedEntry.css, "Cached project CSS output");
+  assertCSSContentIdentity(capturedEntry.css, capturedEntry.hash);
+  if (capturedEntry.candidatesHash !== contextCandidatesHash) {
     throw new TypeError("Project CSS candidate identity does not match the request context");
   }
 
   if (projectCSSBackend) {
-    projectCSSBackend.set(context.cacheKey, JSON.stringify(entry), PROJECT_CSS_CACHE_TTL_SECONDS)
+    const backend = projectCSSBackend;
+    void Promise.resolve()
+      .then(() =>
+        backend.set(
+          cacheKey,
+          serializeCSSCacheValue(capturedEntry, MAX_PROJECT_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
+          PROJECT_CSS_CACHE_TTL_SECONDS,
+        )
+      )
       .catch((error) => {
         cssCacheLog.debug("Failed to store in project CSS cache", {
-          cacheKey: context.cacheKey,
+          cacheKey,
           error,
         });
       });
   }
 
-  setProjectCSSLocalFallback(context.cacheKey, entry);
+  setProjectCSSLocalFallback(cacheKey, capturedEntry);
 
   // Await the hash-level cache write so other pods can serve
   // /_vf/css/{hash}.css immediately. Without awaiting, the browser's
   // CSS request may hit a different pod before the write completes.
-  await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
+  await cacheProjectCSSEntryByHash(capturedEntry, candidates, stylesheet);
 }
 
 /**

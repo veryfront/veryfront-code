@@ -1,8 +1,21 @@
-import { type CacheBackend, createCacheBackend } from "#veryfront/cache/backend.ts";
+import {
+  type CacheBackend,
+  createCacheBackend,
+  readCacheValueWithinLimit,
+} from "#veryfront/cache/backend.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { assertCSSPipelineIdentity, assertStyleProfileHash, serverLogger } from "#veryfront/utils";
 import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
 import { assertCSSContentIdentity, hashCSS, hashString, isCSSContentHash } from "./css-identity.ts";
+import {
+  assertCSSSerializedCacheValue,
+  ByteWeightedLRUCache,
+  detachRetainedString,
+  estimateRetainedStringBytes,
+  MAX_PREPARED_CSS_SERIALIZED_CACHE_ENTRY_BYTES,
+  serializeCSSCacheValue,
+} from "./css-cache-limits.ts";
+import { preflightSerializedCSSCacheFrame, readOwnDataProperty } from "./css-compiler-utils.ts";
 
 const logger = serverLogger.component("prepared-project-css-cache");
 
@@ -35,6 +48,9 @@ export interface PreparedProjectCSSRequestContext {
 
 const PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS = 24 * 3600;
 const PREPARED_PROJECT_CSS_LOCAL_MAX = 50;
+const PREPARED_PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
+const PREPARED_PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES = 16 * 1024 * 1024;
+const PREPARED_PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES = 144;
 const PREPARED_PROJECT_CSS_LOCAL_TTL_MS = PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
 const PREPARED_PROJECT_CSS_CACHE_SCHEMA = "v3";
 
@@ -42,48 +58,61 @@ let preparedProjectCSSBackend: CacheBackend | null = null;
 let preparedProjectCSSInitialized = false;
 let preparedProjectCSSInitPromise: Promise<void> | null = null;
 
-const localPreparedProjectCSS = new Map<string, PreparedProjectCSSLocalEntry>();
+const localPreparedProjectCSS = new ByteWeightedLRUCache<string, PreparedProjectCSSLocalEntry>({
+  maxEntries: PREPARED_PROJECT_CSS_LOCAL_MAX,
+  maxEntrySizeBytes: PREPARED_PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES,
+  maxSizeBytes: PREPARED_PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES,
+});
 
 registerCache("prepared-project-css-cache", () => ({
   name: "prepared-project-css-cache",
   entries: localPreparedProjectCSS.size,
   maxEntries: PREPARED_PROJECT_CSS_LOCAL_MAX,
+  estimatedSizeBytes: localPreparedProjectCSS.sizeBytes,
   backend: preparedProjectCSSBackend?.type ?? "uninitialized",
 }));
 
 function setLocalEntry(key: string, entry: PreparedProjectCSSCacheEntry): void {
   assertCSSOutputContent(entry.css, "Cached prepared CSS output");
-  localPreparedProjectCSS.set(key, {
-    ...entry,
+  const preflightRetainedBytes = PREPARED_PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES +
+    estimateRetainedStringBytes(key) + estimateRetainedStringBytes(entry.css) +
+    estimateRetainedStringBytes(entry.hash);
+  if (
+    preflightRetainedBytes > PREPARED_PROJECT_CSS_LOCAL_MAX_ENTRY_RETAINED_BYTES ||
+    preflightRetainedBytes > PREPARED_PROJECT_CSS_LOCAL_MAX_RETAINED_BYTES
+  ) {
+    localPreparedProjectCSS.delete(key);
+    return;
+  }
+  const localEntry = Object.freeze({
+    css: detachRetainedString(entry.css),
+    hash: detachRetainedString(entry.hash),
     expiresAt: Date.now() + PREPARED_PROJECT_CSS_LOCAL_TTL_MS,
   });
-
-  if (localPreparedProjectCSS.size <= PREPARED_PROJECT_CSS_LOCAL_MAX) return;
-
-  const keys = localPreparedProjectCSS.keys();
-  while (localPreparedProjectCSS.size > PREPARED_PROJECT_CSS_LOCAL_MAX) {
-    const result = keys.next();
-    if (result.done) break;
-    localPreparedProjectCSS.delete(result.value);
-  }
+  const retainedKey = detachRetainedString(key);
+  const retainedBytes = PREPARED_PROJECT_CSS_LOCAL_ENTRY_OVERHEAD_BYTES +
+    estimateRetainedStringBytes(retainedKey) + estimateRetainedStringBytes(localEntry.css) +
+    estimateRetainedStringBytes(localEntry.hash);
+  localPreparedProjectCSS.set(retainedKey, localEntry, retainedBytes);
 }
 
 function parsePreparedProjectCSSCacheEntry(
   raw: string,
 ): PreparedProjectCSSCacheEntry | null {
+  assertCSSSerializedCacheValue(raw, MAX_PREPARED_CSS_SERIALIZED_CACHE_ENTRY_BYTES);
+  if (!preflightSerializedCSSCacheFrame(raw, "prepared")) return null;
   let parsed: Partial<PreparedProjectCSSCacheEntry>;
   try {
     parsed = JSON.parse(raw) as Partial<PreparedProjectCSSCacheEntry>;
   } catch {
     return null;
   }
-  if (
-    typeof parsed.css !== "string" ||
-    !isCSSContentHash(parsed.hash)
-  ) return null;
-  assertCSSOutputContent(parsed.css, "Cached prepared CSS output");
-  if (hashCSS(parsed.css) !== parsed.hash) return null;
-  return { css: parsed.css, hash: parsed.hash };
+  const css = readOwnDataProperty(parsed, "css");
+  const hash = readOwnDataProperty(parsed, "hash");
+  if (typeof css !== "string" || !isCSSContentHash(hash)) return null;
+  assertCSSOutputContent(css, "Cached prepared CSS output");
+  if (hashCSS(css) !== hash) return null;
+  return { css, hash };
 }
 
 export async function initializePreparedProjectCSSCache(): Promise<boolean> {
@@ -170,7 +199,11 @@ export async function tryGetPreparedProjectCSS(
 
   let raw: string | null;
   try {
-    raw = await preparedProjectCSSBackend.get(context.cacheKey);
+    raw = await readCacheValueWithinLimit(
+      preparedProjectCSSBackend,
+      context.cacheKey,
+      MAX_PREPARED_CSS_SERIALIZED_CACHE_ENTRY_BYTES,
+    );
   } catch (error) {
     logger.debug("Failed to read prepared project CSS", {
       cacheKey: context.cacheKey,
@@ -191,22 +224,34 @@ export async function storePreparedProjectCSS(
   context: PreparedProjectCSSRequestContext,
   entry: PreparedProjectCSSCacheEntry,
 ): Promise<void> {
-  assertCSSOutputContent(entry.css, "Cached prepared CSS output");
-  assertCSSContentIdentity(entry.css, entry.hash);
+  const cacheKey = context.cacheKey;
+  const capturedEntry = Object.freeze({
+    css: entry.css,
+    hash: entry.hash,
+  });
+  assertCSSOutputContent(capturedEntry.css, "Cached prepared CSS output");
+  assertCSSContentIdentity(capturedEntry.css, capturedEntry.hash);
 
   if (!preparedProjectCSSInitialized) {
     await initializePreparedProjectCSSCache();
   }
 
-  setLocalEntry(context.cacheKey, entry);
+  setLocalEntry(cacheKey, capturedEntry);
 
   if (!preparedProjectCSSBackend) return;
 
-  preparedProjectCSSBackend
-    .set(context.cacheKey, JSON.stringify(entry), PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS)
+  const backend = preparedProjectCSSBackend;
+  void Promise.resolve()
+    .then(() =>
+      backend.set(
+        cacheKey,
+        serializeCSSCacheValue(capturedEntry, MAX_PREPARED_CSS_SERIALIZED_CACHE_ENTRY_BYTES),
+        PREPARED_PROJECT_CSS_CACHE_TTL_SECONDS,
+      )
+    )
     .catch((error) => {
       logger.debug("Failed to store prepared project CSS", {
-        cacheKey: context.cacheKey,
+        cacheKey,
         error,
       });
     });

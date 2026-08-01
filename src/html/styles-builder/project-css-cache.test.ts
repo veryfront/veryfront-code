@@ -5,6 +5,8 @@ import { register, tryResolve, unregister } from "#veryfront/extensions/contract
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_CSS_OUTPUT_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
+import { getCacheStats } from "#veryfront/utils/memory/index.ts";
+import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 import {
   createTestCSSOptimizationEngine,
   withTestCSSOptimizationEngine,
@@ -20,6 +22,7 @@ import {
 } from "./css-compiler.ts";
 import {
   createProjectCSSRequestContext,
+  initializeProjectCSSCache,
   storeProjectCSS,
   tryGetProjectCSSFromLocalFallback,
 } from "./project-css-cache.ts";
@@ -88,6 +91,59 @@ describe("styles-builder/project-css-cache", () => {
     );
   });
 
+  it("snapshots project cache keys and values before deferred storage", async () => {
+    const projectSlug = `project-snapshot-${crypto.randomUUID()}`;
+    const candidates = new Set(["snapshot"]);
+    const context = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "test-css-pipeline@snapshot" },
+    );
+    const lookupContext = { ...context };
+    const originalCss = ".original{}";
+    const entry = {
+      css: originalCss,
+      hash: hashCSS(originalCss),
+      candidatesHash: context.candidatesHash,
+    };
+    const originalSet = MemoryCacheBackend.prototype.set;
+    const writes: Array<{ key: string; value: string }> = [];
+    MemoryCacheBackend.prototype.set = function (key, value) {
+      writes.push({ key, value });
+      return Promise.resolve();
+    };
+
+    try {
+      await initializeProjectCSSCache();
+      const storing = storeProjectCSS(context, entry, candidates);
+      const mutatedCss = ".mutated{}";
+      context.cacheKey = "mutated-cache-key";
+      context.candidatesHash = "b".repeat(64);
+      entry.css = mutatedCss;
+      entry.hash = hashCSS(mutatedCss);
+      entry.candidatesHash = context.candidatesHash;
+      await storing;
+      await Promise.resolve();
+
+      const projectWrite = writes.find(({ value }) => value.includes('"candidatesHash"'));
+      assertEquals(projectWrite?.key, lookupContext.cacheKey);
+      assertEquals(JSON.parse(projectWrite!.value), {
+        css: originalCss,
+        hash: hashCSS(originalCss),
+        candidatesHash: lookupContext.candidatesHash,
+      });
+      assertEquals(
+        (await tryGetProjectCSSFromLocalFallback(lookupContext, candidates))?.css,
+        originalCss,
+      );
+    } finally {
+      MemoryCacheBackend.prototype.set = originalSet;
+      clearCSSCache();
+      invalidateProjectCSS(projectSlug);
+    }
+  });
+
   it("does not retain oversized project CSS when storage is rejected", async () => {
     const projectSlug = `oversized-project-css-${crypto.randomUUID()}`;
     const candidates = new Set(["oversized"]);
@@ -118,6 +174,98 @@ describe("styles-builder/project-css-cache", () => {
         await tryGetProjectCSSFromLocalFallback(context, candidates),
         undefined,
       );
+    } finally {
+      clearCSSCache();
+      invalidateProjectCSS(projectSlug);
+    }
+  });
+
+  it("evicts the least-recently-used project CSS under retained-byte pressure", async () => {
+    const candidates = new Set(["byte-pressure"]);
+    const projectSlugs = ["project-byte-a", "project-byte-b", "project-byte-c"].map((prefix) =>
+      `${prefix}-${crypto.randomUUID()}`
+    );
+    const contexts = projectSlugs.map((projectSlug) =>
+      createProjectCSSRequestContext(projectSlug, TEST_STYLESHEET, candidates, {
+        cssPipelineIdentity: "test-css-pipeline@byte-pressure",
+      })
+    );
+    const entries = contexts.map((context, index) => {
+      const css = `/*${index}*/${String(index).repeat(7 * 1024 * 1024)}`;
+      return { css, hash: hashCSS(css), candidatesHash: context.candidatesHash };
+    });
+
+    try {
+      clearCSSCache();
+      await storeProjectCSS(contexts[0]!, entries[0]!, candidates);
+      await storeProjectCSS(contexts[1]!, entries[1]!, candidates);
+      assertEquals(
+        (await tryGetProjectCSSFromLocalFallback(contexts[0]!, candidates)) !== undefined,
+        true,
+      );
+      await storeProjectCSS(contexts[2]!, entries[2]!, candidates);
+
+      assertEquals(
+        (await tryGetProjectCSSFromLocalFallback(contexts[0]!, candidates)) !== undefined,
+        true,
+      );
+      assertEquals(
+        (await tryGetProjectCSSFromLocalFallback(contexts[1]!, candidates)) === undefined,
+        true,
+      );
+    } finally {
+      clearCSSCache();
+      for (const projectSlug of projectSlugs) invalidateProjectCSS(projectSlug);
+    }
+  });
+
+  it("skips one project CSS entry above the local retained-byte limit", async () => {
+    const projectSlug = `project-byte-oversized-${crypto.randomUUID()}`;
+    const candidates = new Set(["byte-oversized"]);
+    const context = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "test-css-pipeline@byte-oversized" },
+    );
+    const css = "x".repeat(9 * 1024 * 1024);
+
+    try {
+      await storeProjectCSS(
+        context,
+        { css, hash: hashCSS(css), candidatesHash: context.candidatesHash },
+        candidates,
+      );
+      assertEquals(
+        (await tryGetProjectCSSFromLocalFallback(context, candidates)) === undefined,
+        true,
+      );
+    } finally {
+      clearCSSCache();
+      invalidateProjectCSS(projectSlug);
+    }
+  });
+
+  it("reports conservative retained bytes for the local project CSS cache", async () => {
+    const projectSlug = `project-byte-stats-${crypto.randomUUID()}`;
+    const candidates = new Set(["byte-stats"]);
+    const context = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "test-css-pipeline@byte-stats" },
+    );
+    const css = ".stats{color:green}";
+
+    try {
+      await storeProjectCSS(
+        context,
+        { css, hash: hashCSS(css), candidatesHash: context.candidatesHash },
+        candidates,
+      );
+      const stats = getCacheStats().find((entry) => entry.name === "project-css-cache");
+      assertEquals(typeof stats?.estimatedSizeBytes, "number");
+      assertEquals((stats?.estimatedSizeBytes ?? 0) > css.length, true);
     } finally {
       clearCSSCache();
       invalidateProjectCSS(projectSlug);
