@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { join } from "#veryfront/compat/path";
+import { join, toFileUrl } from "#veryfront/compat/path";
 import {
   clearMdxEsmCacheNamespace,
   clearModulePathCache,
@@ -503,6 +503,48 @@ describe("invalidateModulePaths — disk persistence", () => {
 });
 
 describe("lookupMdxEsmCache", () => {
+  it("keeps cached modules whose encoded file URL dependencies exist", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-encoded-dependency-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-encoded-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const dependencyPath = join(cacheDir, "_pins/on%3Asnapshot/lib/value.mjs");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("encodeddep"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await getLocalFs().mkdir(join(cacheDir, "_pins/on%3Asnapshot/lib"), {
+        recursive: true,
+      });
+      await writeTextFile(dependencyPath, `export default "available";`);
+      await writeTextFile(
+        cachedPath,
+        `import value from ${
+          JSON.stringify(toFileUrl(dependencyPath).href)
+        }; export default value;`,
+      );
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      const result = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+
+      assertEquals(result, { status: "hit", path: cachedPath });
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
   it("isolates local path-cache entries by react version", async () => {
     clearModulePathCache();
 

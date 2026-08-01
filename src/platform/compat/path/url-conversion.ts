@@ -27,10 +27,13 @@ function getFileURLToPath(): ((url: string | URL) => string) | null {
 }
 
 export function fromFileUrl(url: string | URL): string {
-  const fileURLToPath = getFileURLToPath();
-  if (fileURLToPath) return fileURLToPath(url);
+  const parsedUrl = typeof url === "string" ? new URL(url) : url;
+  if (parsedUrl.protocol !== "file:") {
+    throw new TypeError("Must be a file URL");
+  }
 
-  const urlString = typeof url === "string" ? url : url.toString();
+  const fileURLToPath = getFileURLToPath();
+  if (fileURLToPath) return fileURLToPath(parsedUrl);
 
   if (isDeno) {
     const g = globalThis as GlobalWithRequire;
@@ -38,20 +41,24 @@ export function fromFileUrl(url: string | URL): string {
     const isWindows = g.Deno?.build?.os === "windows";
 
     if (hasCwd && isWindows) {
-      return decodeURIComponent(urlString.slice(8).replace(/\//g, "\\"));
+      return decodeURIComponent(parsedUrl.pathname)
+        .replace(/^\/([A-Za-z]:)/, "$1")
+        .replace(/\//g, "\\");
     }
 
-    return decodeURIComponent(urlString.slice(7));
+    return decodeURIComponent(parsedUrl.pathname);
   }
 
-  if (!urlString.startsWith("file://")) {
-    throw new TypeError("Must be a file URL");
-  }
-
-  return decodeURIComponent(urlString.slice(7));
+  return decodeURIComponent(parsedUrl.pathname);
 }
 
 export function toFileUrl(path: string): URL {
   const absolute = hasNodePath ? path : isAbsolute(path) ? path : resolve(path);
-  return new URL(`file://${absolute}`);
+  // Preserve filesystem characters that URL parsing would otherwise decode or
+  // interpret as fragment/query delimiters.
+  const encodedPath = absolute
+    .replaceAll("%", "%25")
+    .replaceAll("#", "%23")
+    .replaceAll("?", "%3F");
+  return new URL(`file://${encodedPath}`);
 }

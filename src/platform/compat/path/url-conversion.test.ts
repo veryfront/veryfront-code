@@ -17,6 +17,13 @@ describe("url-conversion", () => {
       assertEquals(fromFileUrl("file:///home/user/my%20file.ts"), "/home/user/my file.ts");
     });
 
+    it("should ignore URL search and fragment data", () => {
+      assertEquals(
+        fromFileUrl("file:///tmp/_pins/on%253Asnapshot/file.ts?v=1#module"),
+        "/tmp/_pins/on%3Asnapshot/file.ts",
+      );
+    });
+
     it("should handle paths with special characters", () => {
       assertEquals(
         fromFileUrl("file:///path/to/%E6%97%A5%E6%9C%AC%E8%AA%9E.ts"),
@@ -43,6 +50,22 @@ describe("url-conversion", () => {
     it("should handle paths with spaces", () => {
       const result = toFileUrl("/path/with spaces/file.ts");
       assertEquals(result.href.includes("spaces"), true);
+    });
+
+    it("should preserve percent signs as literal path characters", () => {
+      const path = "/tmp/_pins/on%3Asnapshot/file.ts";
+      const result = toFileUrl(path);
+
+      assertEquals(result.href, "file:///tmp/_pins/on%253Asnapshot/file.ts");
+      assertEquals(fromFileUrl(result), path);
+    });
+
+    it("should preserve query and fragment delimiters as literal path characters", () => {
+      const path = "/tmp/cache?variant#module.ts";
+      const result = toFileUrl(path);
+
+      assertEquals(result.href, "file:///tmp/cache%3Fvariant%23module.ts");
+      assertEquals(fromFileUrl(result), path);
     });
 
     it("should handle relative path by resolving", () => {

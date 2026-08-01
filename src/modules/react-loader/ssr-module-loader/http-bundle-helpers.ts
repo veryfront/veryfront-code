@@ -8,10 +8,19 @@
  */
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
+import { fromFileUrl } from "#veryfront/compat/path/index.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 /** Max entries in the verified HTTP bundle paths LRU cache */
 const VERIFIED_BUNDLE_CACHE_MAX_ENTRIES = 2_000;
+
+function decodeFileUrlPath(path: string): string | null {
+  try {
+    return fromFileUrl(`file://${path}`);
+  } catch (_) {
+    return null;
+  }
+}
 
 /**
  * Extract VF module paths (veryfront-mdx-esm/*.mjs) from code.
@@ -24,12 +33,11 @@ function extractVfModulePaths(code: string): string[] {
   const seen = new Set<string>();
   let match;
   while ((match = vfModulePattern.exec(code)) !== null) {
-    const path = match[1] as string;
-    // Strip query params for path comparison
-    const cleanPath = path.replace(/\?.*$/, "");
-    if (!seen.has(cleanPath)) {
-      seen.add(cleanPath);
-      paths.push(cleanPath);
+    const path = decodeFileUrlPath(match[1] as string);
+    if (!path) continue;
+    if (!seen.has(path)) {
+      seen.add(path);
+      paths.push(path);
     }
   }
   return paths;
@@ -113,7 +121,7 @@ export function extractHttpBundlePaths(code: string): Array<{ path: string; hash
   const absolutePattern = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
   let match: RegExpExecArray | null;
   while ((match = absolutePattern.exec(code)) !== null) {
-    const path = match[1];
+    const path = match[1] ? decodeFileUrlPath(match[1]) : null;
     const hash = match[2];
     if (!path || !hash || seen.has(hash)) continue;
     seen.add(hash);
@@ -150,7 +158,7 @@ export function extractAllFilePaths(code: string): string[] {
 
   let match: RegExpExecArray | null;
   while ((match = allFilePathsPattern.exec(code)) !== null) {
-    const path = match[1]?.replace(/[?#].*$/, "");
+    const path = match[1] ? decodeFileUrlPath(match[1]) : null;
 
     if (!path || !supportedPathPattern.test(path) || seen.has(path)) continue;
 
