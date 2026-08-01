@@ -1152,6 +1152,9 @@ export async function finalizeConversationAgentRun(
       model: input.model,
       inputTokens: input.usage?.inputTokens ?? 0,
       outputTokens: input.usage?.outputTokens ?? 0,
+      ...(input.usage?.usageCaptureStatus !== undefined
+        ? { usageCaptureStatus: input.usage.usageCaptureStatus }
+        : {}),
       finishReason: input.finishReason ?? "stop",
     }
     : null;
