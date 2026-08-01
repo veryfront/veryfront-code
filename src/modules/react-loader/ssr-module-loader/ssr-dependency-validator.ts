@@ -168,7 +168,7 @@ export class SSRDependencyValidator {
             this.missingDependencies.push({
               specifier: imp.specifier,
               fromFile: fromFilePath,
-              reason: `Failed to read file: ${
+              reason: `Failed to load dependency: ${
                 error instanceof Error ? error.message : String(error)
               }`,
             });
