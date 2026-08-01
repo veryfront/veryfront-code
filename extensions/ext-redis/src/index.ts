@@ -4,7 +4,7 @@
  * @module extensions/ext-redis
  */
 
-import type { ExtensionFactory } from "veryfront/extensions";
+import type { ExtensionFactory } from "veryfront/extensions/types";
 import {
   type RedisRuntimeProvider,
   RedisRuntimeProviderName,

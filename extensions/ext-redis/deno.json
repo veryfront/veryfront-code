@@ -19,12 +19,13 @@
   "imports": {
     "@redis/client": "npm:@redis/client@1.5.8",
     "redis": "npm:redis@5.11.0",
-    "veryfront/errors": "../../src/errors/index.ts",
-    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/errors/general": "../../src/errors/error-registry/general.ts",
+    "veryfront/errors/module": "../../src/errors/error-registry/module.ts",
     "veryfront/extensions/distributed": "../../src/extensions/distributed/index.ts",
-    "veryfront/platform": "../../src/platform/index.ts",
-    "veryfront/utils": "../../src/utils/index.ts",
-    "veryfront/workflow/claude-code": "../../src/workflow/claude-code/index.ts"
+    "veryfront/extensions/types": "../../src/extensions/types.ts",
+    "veryfront/platform/env": "../../src/platform/compat/process/env.ts",
+    "veryfront/utils/logger": "../../src/utils/logger/index.ts",
+    "veryfront/workflow/claude-code/types": "../../src/workflow/claude-code/types.ts"
   },
   "tasks": {
     "check": "deno check --no-lock src/index.ts src/*.test.ts",

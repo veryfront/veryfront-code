@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ClaudeCodeEvent } from "veryfront/workflow/claude-code";
+import type { ClaudeCodeEvent } from "veryfront/workflow/claude-code/types";
 import {
   createRedisEventPublisher,
   type RedisEventListener,
