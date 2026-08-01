@@ -17,7 +17,7 @@ const extRedis: ExtensionFactory = () => {
   return {
     name: "ext-redis",
     version: "0.1.0",
-    contracts: { provides: ["RedisRuntimeProvider"] },
+    contracts: { provides: [RedisRuntimeProviderName] },
     capabilities: [
       { type: "net:outbound", hosts: ["*"] },
       {
