@@ -207,8 +207,8 @@ export interface ReleaseAssetBuildClient {
    *
    * Receives the Tailwind class candidates extracted from the release source
    * plus the resolved project stylesheet (so the implementation can compile
-   * without re-fetching the file set). Returns `null` on any failure so the
-   * executor keeps a CSS gap and proceeds.
+   * without re-fetching the file set). Returns `null` only when no CSS input
+   * exists; failures reject and the executor records an explicit CSS gap.
    */
   compileProjectCss?(
     candidates: Set<string>,

@@ -4,6 +4,11 @@ import {
   getCSSByHashAsync,
   regenerateCSSByHash,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import {
+  assertCSSContentIdentity,
+  createCSSAssetPathPattern,
+  extractCSSAssetHash,
+} from "#veryfront/html/styles-builder/css-identity.ts";
 import { HTTP_OK, PRIORITY_HIGH } from "#veryfront/utils/constants/index.ts";
 import {
   extractCacheKeyContext,
@@ -13,16 +18,17 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 
-/** Pattern to match hashed CSS URLs: /_vf/css/[8-char-hash].css */
-const CSS_URL_PATTERN = /^\/_vf\/css\/([a-z0-9-]{1,16})\.css$/;
+const CSS_URL_PATTERN = createCSSAssetPathPattern();
 
 async function getCSSWithJITFallback(
   cssHash: string,
   projectSlug: string | undefined,
+  ctx: HandlerContext,
 ): Promise<string | undefined> {
   const cached = await getCSSByHashAsync(cssHash);
   if (cached) return cached;
-
+  const built = await getBuiltCSSFallback(cssHash, ctx);
+  if (built) return built;
   return regenerateCSSByHash(cssHash, projectSlug);
 }
 
@@ -34,7 +40,9 @@ async function getBuiltCSSFallback(
   try {
     const exists = await ctx.adapter.fs.exists(builtCSSPath);
     if (!exists) return undefined;
-    return await ctx.adapter.fs.readFile(builtCSSPath);
+    const css = await ctx.adapter.fs.readFile(builtCSSPath);
+    assertCSSContentIdentity(css, cssHash);
+    return css;
   } catch {
     return undefined;
   }
@@ -54,7 +62,7 @@ export class CSSHandler extends BaseHandler {
     const method = req.method.toUpperCase();
     if (method !== "GET" && method !== "HEAD") return this.continue();
 
-    const cssHash = new URL(req.url).pathname.match(CSS_URL_PATTERN)?.[1];
+    const cssHash = extractCSSAssetHash(new URL(req.url).pathname);
     if (!cssHash) return this.continue();
 
     const cacheCtx = extractCacheKeyContext(ctx);
@@ -71,6 +79,7 @@ export class CSSHandler extends BaseHandler {
       getCSSWithJITFallback(
         cssHash,
         ctx.projectSlug ?? ctx.projectId,
+        ctx,
       );
     // When no scoped cache context can be built (no project identity), fetch
     // without a cache-key context rather than crashing the request.
@@ -89,9 +98,7 @@ export class CSSHandler extends BaseHandler {
       )
       : await lookup();
 
-    const resolvedCSS = css ?? await getBuiltCSSFallback(cssHash, ctx);
-
-    if (!resolvedCSS) {
+    if (!css) {
       this.logInfo(
         `CSS not found and JIT regeneration failed: ${cssHash}. ` +
           `Server restart or cache expiry. Reload page to regenerate.`,
@@ -113,7 +120,7 @@ export class CSSHandler extends BaseHandler {
       return this.respond(response);
     }
 
-    const body = method === "HEAD" ? null : resolvedCSS;
+    const body = method === "HEAD" ? null : css;
 
     const response = this.createResponseBuilder(ctx)
       .withCORS(req, ctx.securityConfig?.cors)

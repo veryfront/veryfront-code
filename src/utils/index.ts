@@ -146,3 +146,12 @@ export { endRequest, isEnabled, startRequest, startTimer, timeAsync } from "./pe
 export { parallelMap } from "./parallel.ts";
 
 export { safeJsonParse, type SafeJsonParseResult } from "./json.ts";
+
+export {
+  assertCSSPipelineIdentity,
+  assertStyleProfileHash,
+  isCSSPipelineIdentity,
+  isStyleProfileHash,
+  MAX_CSS_PIPELINE_IDENTITY_CODE_UNITS,
+  MAX_CSS_PIPELINE_IDENTITY_UTF8_BYTES,
+} from "./css-artifact-identity.ts";

@@ -42,7 +42,7 @@ Extension availability is separate from contract requirement:
 | --------------------------------------------------------- | ------------------------ | ------------------------------------------------------------------------- |
 | [`@veryfront/ext-bundler-esbuild`](./ext-bundler-esbuild) | `Bundler`, `ModuleLexer` | ESM bundling and module analysis via `esbuild` and `es-module-lexer`      |
 | [`@veryfront/ext-parser-babel`](./ext-parser-babel)       | `CodeParser`             | JS/TS AST parsing, traversal, and JSX source-position injection via Babel |
-| [`@veryfront/ext-css-tailwind`](./ext-css-tailwind)       | `CSSProcessor`           | Tailwind CSS v4 compilation with dynamic plugin loading                   |
+| [`@veryfront/ext-css-tailwind`](./ext-css-tailwind)       | `CSSProcessor`           | Tailwind CSS v4 compilation with pinned local plugins                     |
 
 ### Content
 
@@ -110,7 +110,6 @@ root package.
 | `@veryfront/ext-bundler-esbuild`     | `Bundler`, `ModuleLexer`    |
 | `@veryfront/ext-parser-babel`        | `CodeParser`                |
 | `@veryfront/ext-content-mdx`         | `ContentProcessor`          |
-| `@veryfront/ext-css-tailwind`        | `CSSProcessor`              |
 | `@veryfront/ext-document-kreuzberg`  | `DocumentExtractor`         |
 | `@veryfront/ext-db-sqlite`           | `SqliteStore`               |
 | `@veryfront/ext-sandbox-shell-tools` | `SandboxShellToolsProvider` |
@@ -152,7 +151,7 @@ level.
 | `Bundler`, `ModuleLexer`    | Build, import analysis, or module bundling runs | Auto-enabled core extension           |
 | `CodeParser`                | AST parsing or build-time code analysis runs    | Auto-enabled core extension           |
 | `ContentProcessor`          | MDX or Markdown content compilation runs        | Auto-enabled core extension           |
-| `CSSProcessor`              | Tailwind CSS processing runs                    | Auto-enabled core extension           |
+| `CSSProcessor`              | Class-candidate CSS processing runs             | Explicit user-installed extension     |
 | `DocumentExtractor`         | Document text extraction runs                   | Auto-enabled native service extension |
 | `SqliteStore`               | SQLite-backed persistence runs                  | Auto-enabled native service extension |
 | `SandboxShellToolsProvider` | Sandbox shell tools are created                 | Auto-enabled core extension           |

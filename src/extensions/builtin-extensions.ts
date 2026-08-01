@@ -135,13 +135,6 @@ export const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] =
     capabilities: [],
   },
   {
-    name: "ext-css-tailwind",
-    origin: "veryfront/ext-css-tailwind",
-    sourceDirectory: "ext-css-tailwind",
-    contracts: { provides: ["CSSProcessor"] },
-    capabilities: [{ type: "net:outbound", hosts: ["esm.sh"] }],
-  },
-  {
     name: "ext-document-kreuzberg",
     origin: "veryfront/ext-document-kreuzberg",
     sourceDirectory: "ext-document-kreuzberg",

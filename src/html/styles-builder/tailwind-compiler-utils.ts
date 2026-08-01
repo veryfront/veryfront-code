@@ -1,12 +1,8 @@
-/**
- * Pure helper utilities for Tailwind compiler cache parsing and error classification.
- */
+/** Pure helpers for provider-neutral CSS cache parsing and diagnostics. */
 
-interface ParsedCSSCacheEntry {
-  css: string;
-  candidates: string[];
-  stylesheet: string;
-}
+import { isCSSContentHash } from "./css-identity.ts";
+import { assertCSSOutputContent } from "#veryfront/utils/css-content-admission.ts";
+import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
 
 interface ParsedProjectCSSCacheEntry {
   css: string;
@@ -22,103 +18,41 @@ interface CSSErrorDescriptor {
 
 type ProjectCSSLocalCacheState = "miss" | "expired" | "mismatch" | "hit";
 
-interface RawCSSCacheEntry {
-  css?: unknown;
-  candidates?: unknown;
-  stylesheet?: unknown;
+const MAX_PROJECT_CSS_CACHE_ENTRY_BYTES = 40 * 1024 * 1024;
+
+function readOwnDataProperty(value: object, key: PropertyKey): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  return descriptor && "value" in descriptor ? descriptor.value : undefined;
 }
 
-interface RawProjectCSSCacheEntry {
-  css?: unknown;
-  hash?: unknown;
-  candidatesHash?: unknown;
-}
-
-interface CSSErrorRule {
-  matches: (message: string) => boolean;
-  format: (message: string) => CSSErrorDescriptor;
-}
-
-export function resolveStylesheet(
-  stylesheet: string | undefined,
-  defaultStylesheet: string,
-): string {
-  return stylesheet ?? defaultStylesheet;
-}
-
-export function buildCSSCacheEntry(
-  css: string,
-  inputs: { candidates: string[] | Set<string>; stylesheet: string } | undefined,
-  defaultStylesheet: string,
-): ParsedCSSCacheEntry {
-  return {
-    css,
-    candidates: inputs ? normalizeCandidates(inputs.candidates) : [],
-    stylesheet: resolveStylesheet(inputs?.stylesheet, defaultStylesheet),
-  };
-}
-
-function normalizeCandidates(candidates: string[] | Set<string>): string[] {
-  return Array.isArray(candidates) ? candidates : [...candidates];
-}
-
-export function parseCSSCacheEntry(raw: string, defaultStylesheet: string): ParsedCSSCacheEntry {
-  const parsed = tryParseStructuredCSSCacheEntry(raw, defaultStylesheet);
-  if (parsed) return parsed;
-
-  // Legacy format: plain CSS string (no inputs available)
-  return {
-    css: raw,
-    candidates: [],
-    stylesheet: defaultStylesheet,
-  };
-}
-
-function tryParseStructuredCSSCacheEntry(
+export function parseProjectCSSCacheEntry(
   raw: string,
-  defaultStylesheet: string,
-): ParsedCSSCacheEntry | undefined {
-  if (!raw.startsWith("{")) return undefined;
-
+): ParsedProjectCSSCacheEntry | undefined {
+  if (
+    typeof raw !== "string" ||
+    utf8ByteLength(raw, MAX_PROJECT_CSS_CACHE_ENTRY_BYTES) > MAX_PROJECT_CSS_CACHE_ENTRY_BYTES
+  ) return undefined;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as RawCSSCacheEntry;
-    if (typeof parsed.css !== "string") return undefined;
-
-    return {
-      css: parsed.css,
-      candidates: isStringArray(parsed.candidates) ? parsed.candidates : [],
-      stylesheet: typeof parsed.stylesheet === "string" ? parsed.stylesheet : defaultStylesheet,
-    };
-  } catch (_) {
-    /* expected: malformed JSON in CSS cache entry */
+    parsed = JSON.parse(raw);
+  } catch {
     return undefined;
   }
-}
-
-export function parseProjectCSSCacheEntry(raw: string): ParsedProjectCSSCacheEntry | undefined {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  const css = readOwnDataProperty(parsed, "css");
+  const hash = readOwnDataProperty(parsed, "hash");
+  const candidatesHash = readOwnDataProperty(parsed, "candidatesHash");
+  if (
+    typeof css !== "string" ||
+    !isCSSContentHash(hash) ||
+    !isCSSContentHash(candidatesHash)
+  ) return undefined;
   try {
-    const parsed = JSON.parse(raw) as RawProjectCSSCacheEntry;
-    if (
-      typeof parsed.css !== "string" ||
-      typeof parsed.hash !== "string" ||
-      typeof parsed.candidatesHash !== "string"
-    ) {
-      return undefined;
-    }
-
-    return {
-      css: parsed.css,
-      hash: parsed.hash,
-      candidatesHash: parsed.candidatesHash,
-    };
-  } catch (_) {
-    /* expected: malformed JSON in project CSS cache entry */
+    assertCSSOutputContent(css, "Cached project CSS output");
+  } catch {
     return undefined;
   }
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every((item) => typeof item === "string");
+  return { css, hash, candidatesHash };
 }
 
 export function evaluateProjectCSSLocalCacheState(
@@ -132,68 +66,49 @@ export function evaluateProjectCSSLocalCacheState(
   return "hit";
 }
 
-const CSS_ERROR_RULES: CSSErrorRule[] = [
-  {
-    matches: (message) => message.includes("does not accept options"),
-    format: (message) => {
-      const pluginName = extractQuotedToken(message) ?? "unknown plugin";
-      return {
-        title: "Plugin Options Not Supported",
-        message: `${pluginName} does not accept options in Tailwind CSS v4`,
-        suggestion: `Remove the options block from @plugin. Use: @plugin "${pluginName}";`,
-      };
-    },
-  },
-  {
-    matches: (message) =>
-      message.includes("Could not resolve") || message.includes("Failed to load plugin"),
-    format: (message) => {
-      const pluginName = extractPluginName(message) ?? "unknown";
-      return {
-        title: "Plugin Not Found",
-        message: `Could not load plugin: ${pluginName}`,
-        suggestion: `Check the plugin name is correct. Try: https://esm.sh/${pluginName}`,
-      };
-    },
-  },
-  {
-    matches: (message) => message.includes("@theme") || message.includes("Invalid theme"),
-    format: (message) => ({
-      title: "Invalid @theme",
-      message,
-      suggestion: "Check @theme syntax: @theme { --color-name: value; }",
-    }),
-  },
-  {
-    matches: (message) => message.includes("Unexpected") || message.includes("Expected"),
-    format: (message) => ({
-      title: "CSS Syntax Error",
-      message,
-      suggestion: "Check for missing semicolons, brackets, or typos",
-    }),
-  },
-];
-
 function extractQuotedToken(message: string): string | undefined {
-  const match = message.match(/"([^"]+)"/);
-  return match?.[1];
-}
-
-function extractPluginName(message: string): string | undefined {
-  const pluginMatch = message.match(/plugin\s*["']([^"']+)["']/i) ?? message.match(/"([^"]+)"/);
-  return pluginMatch?.[1];
+  return /["']([^"']+)["']/.exec(message)?.[1];
 }
 
 export function formatCSSErrorMessage(message: string): CSSErrorDescriptor {
-  for (const rule of CSS_ERROR_RULES) {
-    if (rule.matches(message)) {
-      return rule.format(message);
-    }
+  if (message.includes("does not accept options")) {
+    const pluginName = extractQuotedToken(message) ?? "configured plugin";
+    return {
+      title: "Plugin Options Not Supported",
+      message: `${pluginName} does not accept options`,
+      suggestion: `Remove the options block from @plugin "${pluginName}".`,
+    };
   }
-
+  if (
+    message.includes("Could not resolve") ||
+    message.includes("cannot resolve") ||
+    message.includes("Failed to load plugin") ||
+    message.includes("not an audited")
+  ) {
+    const pluginName = extractQuotedToken(message) ?? "unknown";
+    return {
+      title: "Plugin Not Available",
+      message: `The configured CSS processor could not load: ${pluginName}`,
+      suggestion: "Use a plugin and exact version supported by the explicitly registered provider.",
+    };
+  }
+  if (message.includes("@theme") || message.includes("Invalid theme")) {
+    return {
+      title: "Invalid CSS Theme",
+      message,
+      suggestion: "Check the configured processor's theme syntax.",
+    };
+  }
+  if (message.includes("Unexpected") || message.includes("Expected")) {
+    return {
+      title: "CSS Syntax Error",
+      message,
+      suggestion: "Check the stylesheet syntax accepted by the configured CSS processor.",
+    };
+  }
   return {
-    title: "Tailwind CSS Error",
+    title: "CSS Compilation Error",
     message,
-    suggestion: "Check your stylesheet for errors",
+    suggestion: "Check the stylesheet and explicit CSS provider configuration.",
   };
 }

@@ -1,10 +1,9 @@
 /**
  * Shared test helper: activates the `@veryfront/ext-css-tailwind` extension so
  * core tests that exercise the Tailwind compile path can resolve the
- * `CSSProcessor` contract and — for tests that dynamically load plugins
- * from esm.sh — find the `__tailwindPluginShim` / `__tailwindDefaultThemeShim`
- * / `__tailwindColorsShim` globals that plugin-loader rewrites plugin
- * bundle imports against.
+ * `CSSProcessor` contract. Minified test paths also receive an explicit,
+ * identity-bearing no-op CSSOptimizationEngine; neither provider is discovered
+ * or auto-registered by production core.
  *
  * Import this module (for side effects) from any test that exercises the
  * Tailwind compile path via `getCompiler` / `generateTailwindCSS` /
@@ -18,7 +17,12 @@
  * @module html/styles-builder/__tests__/css-processor-setup
  */
 
-import { register as registerContract } from "#veryfront/extensions/contracts.ts";
+import {
+  register as registerContract,
+  tryResolve as tryResolveContract,
+} from "#veryfront/extensions/contracts.ts";
+import { CSSOptimizationEngineName } from "#veryfront/extensions/css/index.ts";
+import { createTestCSSOptimizationEngine } from "../../../../tests/_helpers/css-optimization-engine.ts";
 import extTailwindFactory from "../../../../extensions/ext-css-tailwind/src/index.ts";
 
 const noopLogger = {
@@ -40,6 +44,9 @@ export async function registerTailwindExtension(): Promise<void> {
     },
   };
   await ext.setup?.(ctx as never);
+  if (tryResolveContract(CSSOptimizationEngineName) === undefined) {
+    registerContract(CSSOptimizationEngineName, createTestCSSOptimizationEngine());
+  }
 }
 
 await registerTailwindExtension();
