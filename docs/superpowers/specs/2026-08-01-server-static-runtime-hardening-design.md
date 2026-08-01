@@ -2,8 +2,8 @@
 
 ## Status
 
-Approved in four design sections on 2026-08-01; the written specification is
-awaiting its final user review. It covers the remaining
+Approved in four design sections and as a complete written specification on
+2026-08-01. It covers the remaining
 production-build/static-serving and generated-browser-runtime blockers found
 during the Server module review. It complements the earlier Server
 production-hardening design; it does not replace the runtime-profile, Node
@@ -118,6 +118,11 @@ Core defensively copies the returned value into a tight fixed `ArrayBuffer` and
 records its byte length through captured intrinsic accessors. A dishonest or
 malformed result is a capability failure.
 
+`FileSnapshotChangedError` uses a private runtime brand but is exported from
+the supported `veryfront/platform` adapter-author surface. External adapters
+construct that error when their object/release generation changes; consumers
+classify it through the exported predicate rather than a structural field.
+
 The existing `readFileBytesWithinLimit` remains valid for non-containment
 runtime reads. It does not silently satisfy the stronger snapshot capability.
 
@@ -146,7 +151,8 @@ than an arbitrary output string.
 The build flow is:
 
 1. acquire the existing output lock;
-2. create a private, unguessable stage owned by one publication generation;
+2. atomically create a private, unguessable stage owned by one publication
+   generation before returning its token;
 3. generate normal outputs and copy public assets into that stage;
 4. reserve every public-asset destination through exclusive create;
 5. on any failure, remove the whole owned stage; and
@@ -157,7 +163,8 @@ The build flow is:
 Therefore it cannot delete a replacement created by another owner. Compatible
 directory ancestors already created by the same owned build may be reused.
 File, symlink, and incompatible entry-type collisions fail; they are never
-overwritten.
+overwritten. Build setup populates the already-owned stage and never removes or
+recreates its root.
 
 Dry-run discovery remains read-only and does not require an output ownership
 token or output-write capability.
@@ -173,8 +180,10 @@ GET resolution proceeds in this order:
 
 1. capture the exact read plan once;
 2. admit trustworthy metadata when present;
-3. call the exact reader with precisely 64 MiB, or use a fixed whole-object
-   reader only when its upstream ceiling is at most 64 MiB;
+3. call the root-bound snapshot reader with precisely 64 MiB; only a virtual
+   adapter with `symlinkSemantics: "none"` and a positive monotonic generation
+   fence may instead use an exact reader or a fixed whole-object reader whose
+   upstream ceiling is at most 64 MiB;
 4. copy and measure with captured typed-array intrinsics;
 5. transform HTML within the same final-body limit;
 6. compute representation metadata from the admitted final bytes; and
@@ -189,6 +198,11 @@ content length only when stat metadata is an admitted safe integer. It omits a
 digest-derived ETag because producing that value would require reading the
 body. For nonce-transformed HTML it also omits content length because the final
 representation length is request-specific.
+
+Local filesystems never use exact/fixed whole-file reads as a replacement for a
+root-bound no-follow snapshot. A virtual generation is captured before
+metadata and must be the same positive safe integer after GET reading or HEAD
+metadata admission; absence or change fails closed.
 
 ### Bounded nonce transformation
 
@@ -214,8 +228,12 @@ The transform:
 - rejects before allocation when the final size exceeds the maximum; and
 - performs a second pass into one exact-size fixed buffer.
 
-Malformed UTF-8, scanner complexity violations, and final-size overflow become
-classified representation-unavailable failures. The existing string and
+Each scanner pass permits at most `2 * inputCodeUnits + 1` state transitions,
+and one undecided syntactic lexeme retains at most 1,048,576 UTF-16 code units.
+Comments and raw-text bodies are emitted incrementally and retain only their
+delimiter suffix. Malformed UTF-8, either exact scanner complexity violation,
+and final-size overflow become classified representation-unavailable failures.
+The existing string and
 stream nonce helpers share the same linear lexical state machine, while the
 static handler uses only the bounded byte API.
 
@@ -243,6 +261,12 @@ process-local budgets:
 - at most 128 settled identities;
 - at most 67,108,864 bytes of combined resident and in-flight weight; and
 - at most two unique active manifest loads/parses.
+
+One process-wide coordinator enforces these totals across all filesystem
+adapter/repository owners. Owners are cache-key dimensions, not independent
+budgets. Manifest bytes themselves require the rooted generation-bound snapshot
+capability; an ordinary bounded read is not a fallback. Stat/snapshot/stat
+mismatch fails as source-changed without recursive retry.
 
 An identical identity coalesces onto one load and does not consume another
 concurrency slot. A known safe stat size reserves that wire weight before the
