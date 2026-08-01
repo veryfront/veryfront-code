@@ -729,9 +729,9 @@ export class VeryfrontAPIOperations {
     attemptCount: number,
     contentHash: string,
     contentType: DependencyArtifactContentType,
-    bytes: Uint8Array,
+    bytes: Uint8Array<ArrayBuffer>,
   ): Promise<DependencyArtifactAssetUploadResponse> {
-    if (await computeHashBytes(new Uint8Array(bytes)) !== contentHash) {
+    if (await computeHashBytes(bytes) !== contentHash) {
       throw API_CLIENT_ERROR.create({
         detail: "Dependency artifact content hash does not match the upload body",
         status: 400,

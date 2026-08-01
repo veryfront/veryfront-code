@@ -440,7 +440,7 @@ export class VeryfrontApiClient {
     attemptCount: number,
     contentHash: string,
     contentType: DependencyArtifactContentType,
-    bytes: Uint8Array,
+    bytes: Uint8Array<ArrayBuffer>,
   ) {
     return this.operations.uploadDependencyArtifactAsset(
       artifactId,
