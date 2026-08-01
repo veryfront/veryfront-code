@@ -1069,7 +1069,7 @@ it("deferred search cannot spend provider capacity on an already-visible bootstr
             type: "tool-call",
             toolCallId: "search-bootstrap",
             toolName: "tool_search",
-            input: JSON.stringify({ query: "form_input" }),
+            input: JSON.stringify({ query: "collect input" }),
           }],
           finishReason: "tool-calls",
         };

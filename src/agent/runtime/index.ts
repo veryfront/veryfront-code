@@ -259,26 +259,14 @@ function executeFrameworkToolSearch(input: {
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
   }
-  const alreadyVisible = input.plan.visible.find((tool) =>
-    tool.name === query && tool.name !== TOOL_SEARCH_TOOL_NAME
-  );
-  const result: ToolSearchResult = alreadyVisible
-    ? {
-      matches: [{
-        name: alreadyVisible.name,
-        description: alreadyVisible.description,
-        status: "available",
-      }],
-      resultCount: 1,
-      loadedCount: 0,
-      miss: false,
-    }
-    : searchToolExposure({
-      query,
-      authorized: input.plan.deferred,
-      state: input.state,
-      maxLoadedTools: input.plan.maxLoadedTools,
-    });
+  const result: ToolSearchResult = searchToolExposure({
+    query,
+    authorized: input.plan.deferred,
+    available: input.plan.visible.filter((tool) => tool.name !== TOOL_SEARCH_TOOL_NAME),
+    state: input.state,
+    maxLoadedTools: input.plan.maxLoadedTools,
+  });
+  const alreadyVisible = result.matches.find((match) => match.status === "available");
   return {
     result: {
       ...result,

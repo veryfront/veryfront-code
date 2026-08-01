@@ -50,6 +50,12 @@ export type ToolSearchResult = {
   miss: boolean;
 };
 
+type RankedToolSearchMatch = {
+  rank: number;
+  matchCount: number;
+  match: ToolSearchMatch;
+};
+
 function normalizeSearchText(value: string): string {
   return value.replace(/[A-Z]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 32))
     .replaceAll("_", " ").trim().replace(/\s+/g, " ");
@@ -119,6 +125,50 @@ function getTermFallbackScore(input: {
     return rank === null ? [] : [rank];
   });
   return ranks.length > 0 ? { rank: Math.min(...ranks), matchCount: ranks.length } : null;
+}
+
+function rankToolExposureMatches(
+  query: string,
+  candidates: readonly { tool: ToolDefinition; status: ToolSearchMatch["status"] }[],
+): RankedToolSearchMatch[] {
+  const ranked: RankedToolSearchMatch[] = [];
+
+  for (const { tool, status } of candidates) {
+    const rank = getMatchRank({
+      query,
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    });
+    if (rank === null) continue;
+    ranked.push({
+      rank,
+      matchCount: 1,
+      match: { name: tool.name, description: tool.description, status },
+    });
+  }
+
+  if (ranked.length === 0) {
+    for (const { tool, status } of candidates) {
+      const score = getTermFallbackScore({
+        query,
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      });
+      if (!score) continue;
+      ranked.push({
+        ...score,
+        match: { name: tool.name, description: tool.description, status },
+      });
+    }
+  }
+
+  return ranked.sort((left, right) =>
+    left.rank - right.rank || right.matchCount - left.matchCount ||
+    (left.match.status === right.match.status ? 0 : left.match.status === "available" ? -1 : 1) ||
+    compareAscii(left.match.name, right.match.name)
+  );
 }
 
 /** Create fresh run-local tool exposure state. */
@@ -224,47 +274,29 @@ export function createToolExposurePlan(input: {
 export function searchToolExposure(input: {
   query: string;
   authorized: readonly ToolDefinition[];
+  available?: readonly ToolDefinition[];
   state: ToolExposureState;
   maxLoadedTools?: number;
 }): ToolSearchResult {
-  const ranked: Array<{ rank: number; matchCount: number; match: ToolSearchMatch }> = [];
-
-  for (const tool of input.authorized) {
-    const rank = getMatchRank({
-      query: input.query,
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    });
-    if (rank === null) continue;
-    ranked.push({
-      rank,
-      matchCount: 1,
-      match: { name: tool.name, description: tool.description, status: "loaded" },
-    });
-  }
-
-  if (ranked.length === 0) {
-    for (const tool of input.authorized) {
-      const score = getTermFallbackScore({
-        query: input.query,
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      });
-      if (!score) continue;
-      ranked.push({
-        ...score,
-        match: { name: tool.name, description: tool.description, status: "loaded" },
-      });
-    }
+  const ranked = rankToolExposureMatches(input.query, [
+    ...(input.available ?? []).map((tool) => ({ tool, status: "available" as const })),
+    ...input.authorized.map((tool) => ({ tool, status: "loaded" as const })),
+  ]);
+  if (ranked[0]?.match.status === "available") {
+    const matches = ranked
+      .filter(({ match }) => match.status === "available")
+      .slice(0, TOOL_SEARCH_RESULT_LIMIT)
+      .map(({ match }) => match);
+    return {
+      matches,
+      resultCount: matches.length,
+      loadedCount: 0,
+      miss: false,
+    };
   }
 
   const matches = ranked
-    .sort((left, right) =>
-      left.rank - right.rank || right.matchCount - left.matchCount ||
-      compareAscii(left.match.name, right.match.name)
-    )
+    .filter(({ match }) => match.status === "loaded")
     .slice(
       0,
       input.maxLoadedTools === undefined

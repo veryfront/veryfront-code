@@ -117,6 +117,45 @@ it("tool search ranks exact name, description, and parameter matches", () => {
   assertEquals(parameter.matches[0]?.name, "get_release");
 });
 
+it("tool search reports a capability-matched visible tool without loading deferred schemas", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "structured input",
+    authorized: [definition("create_form", "Create a reusable form")],
+    available: [definition("form_input", "Collect structured input")],
+    state,
+  });
+
+  assertEquals(result, {
+    matches: [{
+      name: "form_input",
+      description: "Collect structured input",
+      status: "available",
+    }],
+    resultCount: 1,
+    loadedCount: 0,
+    miss: false,
+  });
+  assertEquals([...state.loadedToolNames], []);
+});
+
+it("tool search loads a deferred exact-name match ahead of a visible capability match", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "release",
+    authorized: [definition("release", "Publish the release")],
+    available: [definition("get_status", "Read release status")],
+    state,
+  });
+
+  assertEquals(result.matches, [{
+    name: "release",
+    description: "Publish the release",
+    status: "loaded",
+  }]);
+  assertEquals([...state.loadedToolNames], ["release"]);
+});
+
 it("tool search orders all four match ranks before name tie-breaking", () => {
   const rankedCatalog = [
     definition("a_parameter", "Other capability", "Release value"),
