@@ -150,12 +150,12 @@ function buildConversationAgentRunUsage(
   usage: HostedLifecycleUsage | undefined,
   usageCaptureStatus: NonNullable<HostedLifecycleTerminalState["metadata"]>["usageCaptureStatus"],
 ): ConversationAgentRunUsage | undefined {
-  if (!usage) {
+  if (!usage && usageCaptureStatus === undefined) {
     return undefined;
   }
 
-  const inputTokens = usage.inputTokens ?? 0;
-  const outputTokens = usage.outputTokens ?? 0;
+  const inputTokens = usage?.inputTokens ?? 0;
+  const outputTokens = usage?.outputTokens ?? 0;
 
   return {
     inputTokens,

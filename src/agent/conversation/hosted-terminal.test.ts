@@ -133,6 +133,51 @@ describe("agent/conversation-hosted-terminal", () => {
     }
   });
 
+  it("preserves an explicit missing usage status without token metadata", async () => {
+    calls.length = 0;
+    const restoreFetch = installFetchMock();
+    try {
+      const adapter = createConversationHostedTerminalAdapter({
+        authToken: "tok",
+        apiUrl: "https://api.example.com",
+        run: {
+          conversationId: "conv-1",
+          runId: "run-1",
+          messageId: "msg-1",
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          waitingToolCallId: null,
+          waitingToolName: null,
+          streamProtocolVersion: 2,
+          status: "running",
+        },
+        fallbackModelId: "fallback-model",
+        resolveProvider: (modelId) => `provider:${modelId}`,
+      });
+
+      await adapter.finalizeRun({
+        status: "completed",
+        metadata: { usageCaptureStatus: "missing" },
+      });
+
+      assertEquals(calls[0]?.body, {
+        status: "completed",
+        metadata: {
+          provider: "provider:fallback-model",
+          model: "fallback-model",
+          inputTokens: 0,
+          outputTokens: 0,
+          usageCaptureStatus: "missing",
+          finishReason: "stop",
+        },
+        terminal_error_code: null,
+        terminal_error_message: null,
+      });
+    } finally {
+      restoreFetch();
+    }
+  });
+
   it("dispatches terminal state observers even without a durable run", async () => {
     const seen: unknown[] = [];
     const adapter = createConversationHostedTerminalAdapter({
