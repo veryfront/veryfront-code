@@ -327,6 +327,7 @@ export class Renderer {
             releaseId: effectiveCtx.releaseId,
             branch: effectiveCtx.branch,
             config: effectiveCtx.config,
+            dependencyWritebackToken: effectiveCtx.proxyToken,
             dependencyWritebackTarget: resolveDependencyWritebackTarget({
               environment: effectiveCtx.environment,
               isLocalProject: effectiveCtx.isLocalProject,
@@ -993,6 +994,7 @@ export class Renderer {
           releaseId: effectiveCtx.releaseId,
           branch: effectiveCtx.branch,
           config: effectiveCtx.config,
+          dependencyWritebackToken: effectiveCtx.proxyToken,
           dependencyWritebackTarget: resolveDependencyWritebackTarget({
             environment: effectiveCtx.environment,
             isLocalProject: effectiveCtx.isLocalProject,
