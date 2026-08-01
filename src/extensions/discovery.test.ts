@@ -331,6 +331,51 @@ describe("discoverPackageExtensions()", () => {
     assertEquals(found[0]?.packageName, "ext-pnpm");
   });
 
+  it("surfaces package-owner permission failures instead of silently skipping them", async () => {
+    const nodeModules = join(tmp, "node_modules");
+    const restrictedPackage = join(tmp, "restricted", "ext-denied");
+    const lexicalPackage = join(nodeModules, "ext-denied");
+    await writePkg(restrictedPackage, "ext-denied", { extension: true });
+    await Deno.mkdir(nodeModules, { recursive: true });
+    await Deno.symlink(restrictedPackage, lexicalPackage);
+
+    const repositoryRoot = Deno.cwd();
+    const childPath = join(nodeModules, "permission-child.ts");
+    const discoveryUrl = new URL("./discovery.ts", import.meta.url).href;
+    await Deno.writeTextFile(
+      childPath,
+      `import { discoverPackageExtensions } from ${JSON.stringify(discoveryUrl)};
+try {
+  await discoverPackageExtensions(Deno.args[0]);
+  Deno.exit(2);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!message.includes("owning directory could not be verified securely")) {
+    console.error(message);
+    Deno.exit(3);
+  }
+  console.log("surfaced-owner-failure");
+}`,
+    );
+
+    const output = await new Deno.Command(Deno.execPath(), {
+      args: [
+        "run",
+        "--quiet",
+        "--config",
+        join(repositoryRoot, "deno.json"),
+        `--allow-read=${repositoryRoot},${nodeModules}`,
+        childPath,
+        tmp,
+      ],
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    assertEquals(output.success, true, new TextDecoder().decode(output.stderr));
+    assertEquals(new TextDecoder().decode(output.stdout).trim(), "surfaced-owner-failure");
+  });
+
   it("finds symlinked scoped packages (pnpm scoped layout)", async () => {
     const realPkg = join(tmp, ".store", "ext-scoped@1.0.0");
     await writePkg(realPkg, "@veryfront/ext-scoped", { extension: true });
@@ -371,6 +416,27 @@ describe("discoverPackageExtensions()", () => {
       () => discoverPackageExtensions(tmp),
       TypeError,
       "unsafe import target",
+    );
+  });
+
+  it("ignores inert explicit packages before resolving an invalid entrypoint", async () => {
+    const explicit = join(tmp, "node_modules", "ext-explicit-invalid");
+    await Deno.mkdir(explicit, { recursive: true });
+    await Deno.writeTextFile(
+      join(explicit, "package.json"),
+      JSON.stringify({
+        name: "ext-explicit-invalid",
+        exports: "../outside.js",
+        veryfront: { extension: true, activation: "explicit" },
+      }),
+    );
+    await writePkg(join(tmp, "node_modules", "ext-ok"), "ext-ok", {
+      extension: true,
+    });
+
+    assertEquals(
+      (await discoverPackageExtensions(tmp)).map((entry) => entry.packageName),
+      ["ext-ok"],
     );
   });
 
@@ -566,6 +632,44 @@ describe("discoverProjectExtensions()", () => {
     assertEquals(await discoverProjectExtensions(tmp), []);
   });
 
+  it("uses Deno JSONC grammar for deno.json as well as deno.jsonc", async () => {
+    const dir = join(tmp, "extensions", "json-explicit");
+    await Deno.mkdir(dir, { recursive: true });
+    await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      `{
+        // Deno accepts JSONC syntax in deno.json too.
+        "veryfront": {
+          "activation": "explicit",
+        },
+      }`,
+    );
+
+    assertEquals(await discoverProjectExtensions(tmp), []);
+  });
+
+  it("uses strictest-wins for every manifest carrying the explicit declaration", async () => {
+    const manifestNames = ["deno.json", "deno.jsonc", "package.json"] as const;
+    for (const explicitManifest of manifestNames) {
+      const dir = join(tmp, "extensions", `strict-${explicitManifest.replace(".", "-")}`);
+      await Deno.mkdir(dir, { recursive: true });
+      await Deno.writeTextFile(join(dir, "index.ts"), "throw new Error('must not import');");
+      for (const manifestName of manifestNames) {
+        await Deno.writeTextFile(
+          join(dir, manifestName),
+          JSON.stringify({
+            veryfront: {
+              activation: manifestName === explicitManifest ? "explicit" : "auto",
+            },
+          }),
+        );
+      }
+    }
+
+    assertEquals(await discoverProjectExtensions(tmp), []);
+  });
+
   it("uses the strictest activation across JSON, JSONC, and npm manifests", async () => {
     const dir = join(tmp, "extensions", "three-manifests");
     await Deno.mkdir(dir, { recursive: true });
@@ -659,7 +763,7 @@ describe("discoverProjectExtensions()", () => {
     await assertRejects(
       () => discoverProjectExtensions(tmp),
       Error,
-      "Failed to parse JSON extension manifest",
+      "Failed to parse JSONC extension manifest",
     );
     await Deno.remove(join(tmp, "extensions", "malformed-json"), {
       recursive: true,
@@ -722,7 +826,7 @@ describe("discoverProjectExtensions()", () => {
     await assertRejects(
       () => discoverProjectExtensions(tmp),
       Error,
-      "Failed to parse JSON extension manifest",
+      "Failed to parse JSONC extension manifest",
     );
     await Deno.remove(invalidUtf8, { recursive: true });
 

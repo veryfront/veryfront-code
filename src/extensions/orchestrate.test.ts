@@ -100,6 +100,38 @@ describe("orchestrateExtensions()", () => {
     await loader.teardownAll();
   });
 
+  it("carries production discovery identity through to the factory loader", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-bound-orchestration-" });
+    const extensionDirectory = join(projectDir, "extensions", "ext-bound");
+    await Deno.mkdir(extensionDirectory, { recursive: true });
+    await Deno.writeTextFile(
+      join(extensionDirectory, "index.ts"),
+      "export default () => ({ name: 'must-not-import', version: '1', capabilities: [] });",
+    );
+
+    let bindingObserved = false;
+    try {
+      const loader = await orchestrateExtensions({
+        projectDir,
+        config: {},
+        logger: noopLogger,
+        loadFactory: (path, source, _config, binding) => {
+          bindingObserved = binding?.path === path;
+          return Promise.resolve({
+            extension: stubExt("ext-bound"),
+            source,
+            origin: path,
+          });
+        },
+      });
+
+      assertEquals(bindingObserved, true);
+      await loader.teardownAll();
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("does not import, invoke, or set up explicit-only discovered extensions", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-explicit-extension-" });
     const projectExtensionDirectory = join(

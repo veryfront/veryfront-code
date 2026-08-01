@@ -183,6 +183,131 @@ describe("parseExtensionManifest()", () => {
     });
   });
 
+  it("accepts Deno JSONC whitespace outside strings", () => {
+    const acceptedWhitespace = [
+      0x09,
+      0x0a,
+      0x0b,
+      0x0c,
+      0x0d,
+      0x20,
+      0x85,
+      0xa0,
+      0x1680,
+      ...Array.from({ length: 11 }, (_, index) => 0x2000 + index),
+      0x2028,
+      0x2029,
+      0x202f,
+      0x205f,
+      0x3000,
+    ];
+    for (const codePoint of acceptedWhitespace) {
+      const whitespace = String.fromCodePoint(codePoint);
+      const manifest = parseExtensionManifest<{ activation: string }>(
+        `{${whitespace}\"activation\"${whitespace}:${whitespace}\"explicit\",${whitespace}}`,
+        "jsonc",
+      );
+      assertEquals(manifest, { activation: "explicit" });
+    }
+
+    for (const codePoint of [0xfeff, 0x180e, 0x200b]) {
+      const whitespace = String.fromCodePoint(codePoint);
+      const error = captureSyncManifestError(() =>
+        parseExtensionManifest(`{${whitespace}\"activation\":\"explicit\"}`, "jsonc")
+      );
+      assertEquals(error.slug, "extension-manifest-parse-failed");
+    }
+
+    const strictError = captureSyncManifestError(() =>
+      parseExtensionManifest(`{\u00a0\"activation\":\"explicit\"}`, "json")
+    );
+    assertEquals(strictError.slug, "extension-manifest-parse-failed");
+  });
+
+  it("matches Deno line-comment termination semantics", () => {
+    for (const newline of ["\n", "\r\n"]) {
+      assertEquals(
+        parseExtensionManifest(`{"first":1,// comment${newline}"second":2}`, "jsonc"),
+        { first: 1, second: 2 },
+      );
+    }
+    for (const nonTerminator of ["\r", "\u2028", "\u2029"]) {
+      const error = captureSyncManifestError(() =>
+        parseExtensionManifest(
+          `{"first":1,// comment${nonTerminator}"second":2}`,
+          "jsonc",
+        )
+      );
+      assertEquals(error.slug, "extension-manifest-parse-failed");
+    }
+  });
+
+  it("treats empty and comment-only Deno manifests as empty objects", () => {
+    for (const source of ["", "  \u2003\n", "// comment", "/* comment */\u3000"]) {
+      assertEquals(parseExtensionManifest(source, "jsonc"), {});
+    }
+    const strictError = captureSyncManifestError(() => parseExtensionManifest("", "json"));
+    assertEquals(strictError.slug, "extension-manifest-parse-failed");
+  });
+
+  it("fails closed with profile diagnostics for unsupported Deno loose syntax", () => {
+    for (const source of ["{activation:'explicit'}", '{"value":+1}', '{"value":0x1}']) {
+      const error = captureSyncManifestError(() => parseExtensionManifest(source, "jsonc"));
+      assertInstanceOf(error.cause, SyntaxError);
+      assertStringIncludes(
+        (error.cause as SyntaxError).message,
+        "Activation JSONC security profile",
+      );
+      assertStringIncludes((error.cause as SyntaxError).message, "double-quoted JSON keys");
+    }
+  });
+
+  it("rejects duplicate object keys, including escaped security keys", () => {
+    for (
+      const [source, syntax] of [
+        ['{"activation":"explicit","activation":"auto"}', "json"],
+        ['{"veryfront":{},"veryfront":{"activation":"auto",}}', "jsonc"],
+        ['{"activ\\u0061tion":"explicit","activation":"auto"}', "jsonc"],
+      ] as const
+    ) {
+      const error = captureSyncManifestError(() => parseExtensionManifest(source, syntax));
+      assertEquals(error.slug, "extension-manifest-parse-failed");
+      assertInstanceOf(error.cause, SyntaxError);
+      assertStringIncludes((error.cause as SyntaxError).message, "Duplicate object key");
+    }
+
+    assertEquals(
+      parseExtensionManifest('{"first":{"key":1},"second":{"key":2}}', "json"),
+      { first: { key: 1 }, second: { key: 2 } },
+    );
+  });
+
+  it("uses captured Set intrinsics for duplicate-key checks", () => {
+    const hasDescriptor = Object.getOwnPropertyDescriptor(Set.prototype, "has");
+    const addDescriptor = Object.getOwnPropertyDescriptor(Set.prototype, "add");
+    try {
+      Object.defineProperty(Set.prototype, "has", {
+        configurable: true,
+        value: () => {
+          throw new Error("poisoned Set.has");
+        },
+      });
+      Object.defineProperty(Set.prototype, "add", {
+        configurable: true,
+        value: () => {
+          throw new Error("poisoned Set.add");
+        },
+      });
+      const error = captureSyncManifestError(() =>
+        parseExtensionManifest('{"key":1,"key":2}', "json")
+      );
+      assertStringIncludes((error.cause as SyntaxError).message, "Duplicate object key");
+    } finally {
+      if (hasDescriptor) Object.defineProperty(Set.prototype, "has", hasDescriptor);
+      if (addDescriptor) Object.defineProperty(Set.prototype, "add", addDescriptor);
+    }
+  });
+
   it("rejects comments and trailing commas in strict JSON mode", () => {
     const commentError = captureSyncManifestError(() =>
       parseExtensionManifest('{/* no comments */"value":1}', "json")
@@ -625,6 +750,18 @@ describe("readExtensionManifest() cleanup and errors", () => {
       readExtensionManifest("manifest.json", { syntax: "json", fileSystem })
     );
 
+    assertEquals(error.slug, "extension-manifest-parse-failed");
+    assertEquals(state.closeCalls, 1);
+  });
+
+  it("rejects a leading UTF-8 BOM like Deno config parsing", async () => {
+    const { fileSystem, state } = createFakeFileSystem({
+      data: new Uint8Array([0xef, 0xbb, 0xbf, 0x7b, 0x7d]),
+    });
+
+    const error = await captureManifestError(() =>
+      readExtensionManifest("deno.json", { syntax: "jsonc", fileSystem })
+    );
     assertEquals(error.slug, "extension-manifest-parse-failed");
     assertEquals(state.closeCalls, 1);
   });

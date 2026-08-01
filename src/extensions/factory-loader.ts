@@ -9,7 +9,19 @@
 
 import { isAbsolute, toFileUrl } from "#veryfront/compat/path";
 import { EXTENSION_VALIDATION_ERROR } from "./errors.ts";
+import { quoteDiagnosticString } from "./diagnostic-string.ts";
+import {
+  type BoundExtensionEntrypoint,
+  revalidateBoundExtensionEntrypoint,
+} from "./entrypoint-identity.ts";
 import type { Extension, ExtensionFactory, ExtensionSource, ResolvedExtension } from "./types.ts";
+
+const importMetaResolve = import.meta.resolve;
+const reflectApply = Reflect.apply;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * Dynamically import an extension factory from `path` and resolve it.
@@ -28,20 +40,64 @@ import type { Extension, ExtensionFactory, ExtensionSource, ResolvedExtension } 
  * @param path Absolute filesystem path or bare module specifier.
  * @param source Where the extension was discovered (drives merge priority).
  * @param config Optional config forwarded to the factory.
+ * @param binding Internal filesystem identity captured during discovery.
  */
 export async function loadExtensionFactory(
   path: string,
   source: ExtensionSource,
   config?: unknown,
+  binding?: BoundExtensionEntrypoint,
 ): Promise<ResolvedExtension> {
-  const specifier = isAbsolute(path) ? toFileUrl(path).href : path;
+  if (binding) {
+    if (binding.path !== path) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        detail: `Extension discovery binding does not match import target ${
+          quoteDiagnosticString(path)
+        }`,
+      });
+    }
+    try {
+      await revalidateBoundExtensionEntrypoint(binding);
+    } catch (error) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        detail: `Extension import target ${
+          quoteDiagnosticString(path)
+        } failed identity revalidation: ${quoteDiagnosticString(errorMessage(error))}`,
+        cause: error,
+      });
+    }
+  }
+
+  const absoluteTarget = isAbsolute(path);
+  const specifier = absoluteTarget ? toFileUrl(path).href : path;
+  if (absoluteTarget) {
+    let resolvedSpecifier: string;
+    try {
+      resolvedSpecifier = reflectApply(importMetaResolve, undefined, [specifier]) as string;
+    } catch (error) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        detail: `Failed to resolve extension import target ${quoteDiagnosticString(path)}: ${
+          quoteDiagnosticString(errorMessage(error))
+        }`,
+        cause: error,
+      });
+    }
+    if (resolvedSpecifier !== specifier) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        detail: `Extension import target ${
+          quoteDiagnosticString(path)
+        } was remapped from its canonical file URL and was not imported`,
+      });
+    }
+  }
+
   let mod: { default?: unknown };
   try {
     mod = await import(specifier);
   } catch (err) {
     throw EXTENSION_VALIDATION_ERROR.create({
-      detail: `Failed to import extension at "${path}": ${
-        err instanceof Error ? err.message : String(err)
+      detail: `Failed to import extension at ${quoteDiagnosticString(path)}: ${
+        quoteDiagnosticString(errorMessage(err))
       }`,
       cause: err,
     });
@@ -50,13 +106,15 @@ export async function loadExtensionFactory(
   const factory = mod.default;
   if (factory === undefined || factory === null) {
     throw EXTENSION_VALIDATION_ERROR.create({
-      detail: `Extension at "${path}" has no default export`,
+      detail: `Extension at ${quoteDiagnosticString(path)} has no default export`,
     });
   }
 
   if (typeof factory !== "function") {
     throw EXTENSION_VALIDATION_ERROR.create({
-      detail: `Extension at "${path}" default export is not a function (got ${typeof factory})`,
+      detail: `Extension at ${
+        quoteDiagnosticString(path)
+      } default export is not a function (got ${typeof factory})`,
     });
   }
 
@@ -65,8 +123,8 @@ export async function loadExtensionFactory(
     extension = (factory as ExtensionFactory)(config);
   } catch (err) {
     throw EXTENSION_VALIDATION_ERROR.create({
-      detail: `Extension factory at "${path}" threw during invocation: ${
-        err instanceof Error ? err.message : String(err)
+      detail: `Extension factory at ${quoteDiagnosticString(path)} threw during invocation: ${
+        quoteDiagnosticString(errorMessage(err))
       }`,
       cause: err,
     });
