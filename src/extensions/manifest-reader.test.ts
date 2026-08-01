@@ -445,6 +445,42 @@ describe("readExtensionManifest() cleanup and errors", () => {
     assertEquals(caught.slug, "extension-manifest-read-failed");
   });
 
+  it("keeps parse errors typed when VeryfrontError has-instance is poisoned", async () => {
+    const originalHasInstance = Object.getOwnPropertyDescriptor(
+      VeryfrontError,
+      Symbol.hasInstance,
+    );
+    const { fileSystem, state } = createFakeFileSystem({
+      data: encoder.encode("{"),
+      onLstat(call) {
+        if (call !== 0) return;
+        Object.defineProperty(VeryfrontError, Symbol.hasInstance, {
+          configurable: true,
+          value() {
+            throw new Error("poisoned VeryfrontError has-instance hook ran");
+          },
+        });
+      },
+    });
+
+    let caught: unknown;
+    try {
+      await readExtensionManifest("manifest.json", { syntax: "json", fileSystem });
+    } catch (error) {
+      caught = error;
+    } finally {
+      if (originalHasInstance) {
+        Object.defineProperty(VeryfrontError, Symbol.hasInstance, originalHasInstance);
+      } else {
+        Reflect.deleteProperty(VeryfrontError, Symbol.hasInstance);
+      }
+    }
+
+    assertInstanceOf(caught, VeryfrontError);
+    assertEquals(caught.slug, "extension-manifest-parse-failed");
+    assertEquals(state.closeCalls, 1);
+  });
+
   it("does not consume a poisoned array iterator when operation and close fail", async () => {
     const originalIterator = Object.getOwnPropertyDescriptor(
       Array.prototype,
