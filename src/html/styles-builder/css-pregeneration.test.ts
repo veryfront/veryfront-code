@@ -11,6 +11,11 @@ import {
   findStylesheetFromFiles,
   readLocalProjectStylesheet,
 } from "./css-pregeneration.ts";
+import {
+  MAX_CSS_FILE_BYTES,
+  MAX_CSS_FILES,
+  MAX_CSS_TOTAL_BYTES,
+} from "#veryfront/utils/constants/css.ts";
 
 describe("styles-builder/css-pregeneration", () => {
   describe("findGlobalStylesheet", () => {
@@ -239,9 +244,315 @@ describe("styles-builder/css-pregeneration", () => {
         "matched multiple",
       );
     });
+
+    it("does not match a configured stylesheet outside the project root", () => {
+      assertThrows(
+        () =>
+          findStylesheetFromFiles(
+            [{ path: "/outside/styles/custom.css", content: "outside" }],
+            "styles/custom.css",
+            "/project",
+          ),
+        TypeError,
+        "project",
+      );
+    });
+
+    it("rejects a proxied source listing without invoking its traps", () => {
+      let trapCalls = 0;
+      const files = new Proxy([{ path: "globals.css", content: "safe" }], {
+        getOwnPropertyDescriptor(target, property) {
+          trapCalls++;
+          return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+      });
+
+      assertThrows(
+        () => findStylesheetFromFiles(files),
+        TypeError,
+        "Proxy",
+      );
+      assertEquals(trapCalls, 0);
+    });
+
+    it("rejects sparse source listings before stylesheet discovery", () => {
+      const files = new Array<{ path: string; content?: string }>(1);
+      assertThrows(
+        () => findStylesheetFromFiles(files),
+        TypeError,
+        "dense",
+      );
+    });
   });
 
   describe("local project helpers", () => {
+    it("always excludes generated roots even when configuration protects them", async () => {
+      const encoder = new TextEncoder();
+      const fs = {
+        readDir: (directoryPath: string) =>
+          (async function* () {
+            if (directoryPath === "/project") {
+              for (const name of [".deno_cache", ".veryfront", "app"]) {
+                yield { name, isFile: false, isDirectory: true, isSymlink: false };
+              }
+              return;
+            }
+            yield { name: "page.tsx", isFile: true, isDirectory: false, isSymlink: false };
+          })(),
+        readFileBytesWithinLimit: (path: string) =>
+          Promise.resolve(encoder.encode(`<main className="${path}" />`)),
+      } as unknown as FileSystem;
+
+      const files = await collectLocalProjectSourceFiles({
+        projectDir: "/project",
+        styleProfile: createStyleScopeProfile({
+          directories: {
+            app: ".veryfront",
+            components: [".deno_cache"],
+          },
+        }),
+        fs,
+      });
+
+      assertEquals(files.map((file) => file.path), ["/project/app/page.tsx"]);
+    });
+
+    it("admits zero and exactly 10,000 selected local source files", async () => {
+      const createSourceFileSystem = (fileCount: number) =>
+        ({
+          readDir: () =>
+            (async function* () {
+              for (let index = fileCount - 1; index >= 0; index--) {
+                yield {
+                  name: `source-${String(index).padStart(5, "0")}.ts`,
+                  isFile: true,
+                  isDirectory: false,
+                  isSymlink: false,
+                };
+              }
+            })(),
+          readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+        }) as unknown as FileSystem;
+
+      assertEquals(
+        await collectLocalProjectSourceFiles({
+          projectDir: "/project",
+          styleProfile: createStyleScopeProfile(),
+          fs: createSourceFileSystem(0),
+        }),
+        [],
+      );
+      const files = await collectLocalProjectSourceFiles({
+        projectDir: "/project",
+        styleProfile: createStyleScopeProfile(),
+        fs: createSourceFileSystem(MAX_CSS_FILES),
+      });
+      assertEquals(files.length, MAX_CSS_FILES);
+      assertEquals(files[0]?.path, "/project/source-00000.ts");
+      assertEquals(files.at(-1)?.path, "/project/source-09999.ts");
+    });
+
+    it("rejects 10,001 selected local source files", async () => {
+      const fs = {
+        readDir: () =>
+          (async function* () {
+            for (let index = 0; index <= MAX_CSS_FILES; index++) {
+              yield {
+                name: `source-${index}.ts`,
+                isFile: true,
+                isDirectory: false,
+                isSymlink: false,
+              };
+            }
+          })(),
+        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+      } as unknown as FileSystem;
+
+      await assertRejects(
+        () =>
+          collectLocalProjectSourceFiles({
+            projectDir: "/project",
+            styleProfile: createStyleScopeProfile(),
+            fs,
+          }),
+        TypeError,
+        `${MAX_CSS_FILES} files`,
+      );
+    });
+
+    it("rejects duplicate local source paths", async () => {
+      const fs = {
+        readDir: () =>
+          (async function* () {
+            for (let index = 0; index < 2; index++) {
+              yield {
+                name: "page.tsx",
+                isFile: true,
+                isDirectory: false,
+                isSymlink: false,
+              };
+            }
+          })(),
+        readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
+      } as unknown as FileSystem;
+
+      await assertRejects(
+        () =>
+          collectLocalProjectSourceFiles({
+            projectDir: "/project",
+            styleProfile: createStyleScopeProfile(),
+            fs,
+          }),
+        TypeError,
+        "duplicate path",
+      );
+    });
+
+    it("admits a trailing empty local source at the exact aggregate budget", async () => {
+      const boundaryChunk = new Uint8Array(MAX_CSS_FILE_BYTES);
+      const requestedLimits: number[] = [];
+      const fs = {
+        readDir: () =>
+          (async function* () {
+            for (const name of ["four.ts", "one.ts", "three.ts", "two.ts", "z-empty.ts"]) {
+              yield { name, isFile: true, isDirectory: false, isSymlink: false };
+            }
+          })(),
+        readFileBytesWithinLimit: (path: string, byteLimit: number) => {
+          requestedLimits.push(byteLimit);
+          return Promise.resolve(path.endsWith("z-empty.ts") ? new Uint8Array() : boundaryChunk);
+        },
+      } as unknown as FileSystem;
+
+      const files = await collectLocalProjectSourceFiles({
+        projectDir: "/project",
+        styleProfile: createStyleScopeProfile(),
+        fs,
+      });
+
+      assertEquals(MAX_CSS_FILE_BYTES * 4, MAX_CSS_TOTAL_BYTES);
+      assertEquals(files.length, 5);
+      assertEquals(files.at(-1), { path: "/project/z-empty.ts", content: "" });
+      assertEquals(requestedLimits.at(-1), 1);
+    });
+
+    it("collects source content only through the exact bounded reader", async () => {
+      let unboundedReads = 0;
+      let receivedLimit = 0;
+      const content = `export default () => <div className="safe" />;`;
+      const fs = {
+        readDir: () =>
+          (async function* () {
+            yield {
+              name: "page.tsx",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          })(),
+        stat: () => Promise.reject(new Error("source stat must not be a resource boundary")),
+        readTextFile: () => {
+          unboundedReads++;
+          return Promise.reject(new Error("unbounded source read must not run"));
+        },
+        readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+          receivedLimit = byteLimit;
+          return Promise.resolve(new TextEncoder().encode(content));
+        },
+      } as unknown as FileSystem;
+
+      assertEquals(
+        await collectLocalProjectSourceFiles({
+          projectDir: "/project",
+          styleProfile: createStyleScopeProfile(),
+          fs,
+        }),
+        [{ path: "/project/page.tsx", content }],
+      );
+      assertEquals(receivedLimit, Math.min(MAX_CSS_FILE_BYTES, MAX_CSS_TOTAL_BYTES));
+      assertEquals(unboundedReads, 0);
+    });
+
+    it("treats source growth past the exact per-file bound as an integrity failure", async () => {
+      let unboundedReads = 0;
+      const fs = {
+        readDir: () =>
+          (async function* () {
+            yield {
+              name: "page.tsx",
+              isFile: true,
+              isDirectory: false,
+              isSymlink: false,
+            };
+          })(),
+        stat: () =>
+          Promise.resolve({
+            size: 1,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+            mtime: null,
+          }),
+        readTextFile: () => {
+          unboundedReads++;
+          return Promise.resolve("small-before-growth");
+        },
+        readFileBytesWithinLimit: (_path: string, byteLimit: number) =>
+          Promise.reject(new RangeError(`File exceeds byte limit of ${byteLimit} bytes`)),
+      } as unknown as FileSystem;
+
+      await assertRejects(
+        () =>
+          collectLocalProjectSourceFiles({
+            projectDir: "/project",
+            styleProfile: createStyleScopeProfile(),
+            fs,
+          }),
+        TypeError,
+        `${MAX_CSS_FILE_BYTES} bytes`,
+      );
+      assertEquals(unboundedReads, 0);
+    });
+
+    it("reads a configured stylesheet only through the exact bounded reader", async () => {
+      let receivedLimit = 0;
+      let unboundedReads = 0;
+      const fs = {
+        readTextFile: () => {
+          unboundedReads++;
+          return Promise.reject(new Error("unbounded stylesheet read must not run"));
+        },
+        readFileBytesWithinLimit: (_path: string, byteLimit: number) => {
+          receivedLimit = byteLimit;
+          return Promise.resolve(new TextEncoder().encode(".safe{}"));
+        },
+      } as unknown as FileSystem;
+
+      assertEquals(
+        await readLocalProjectStylesheet("/project", "styles.css", fs),
+        ".safe{}",
+      );
+      assertEquals(receivedLimit, MAX_CSS_FILE_BYTES);
+      assertEquals(unboundedReads, 0);
+    });
+
+    it("fails closed before a configured stylesheet unbounded fallback", async () => {
+      let unboundedReads = 0;
+      const fs = {
+        readTextFile: () => {
+          unboundedReads++;
+          return Promise.resolve(".unsafe{}");
+        },
+      } as unknown as FileSystem;
+
+      await assertRejects(
+        () => readLocalProjectStylesheet("/project", "styles.css", fs),
+        TypeError,
+        "exact bounded byte reader",
+      );
+      assertEquals(unboundedReads, 0);
+    });
+
     it("collects local source files while skipping ignored roots", async () => {
       const projectDir = await Deno.makeTempDir({ prefix: "vf-css-pregeneration-" });
 
@@ -332,7 +643,7 @@ describe("styles-builder/css-pregeneration", () => {
             isSymlink: false,
             mtime: null,
           }),
-        readTextFile: () => Promise.reject(readFailure),
+        readFileBytesWithinLimit: () => Promise.reject(readFailure),
       } as unknown as FileSystem;
 
       const error = await assertRejects(() =>
@@ -348,7 +659,7 @@ describe("styles-builder/css-pregeneration", () => {
     it("propagates operational default stylesheet read failures", async () => {
       const readFailure = Object.assign(new Error("stylesheet read failed"), { code: "EIO" });
       const fs = {
-        readTextFile: () => Promise.reject(readFailure),
+        readFileBytesWithinLimit: () => Promise.reject(readFailure),
       } as unknown as FileSystem;
 
       const error = await assertRejects(() =>

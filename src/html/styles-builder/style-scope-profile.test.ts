@@ -76,4 +76,25 @@ describe("styles-builder/style-scope-profile", () => {
       true,
     );
   });
+
+  it("never protects generated roots used by style collectors", () => {
+    const profile = createStyleScopeProfile({
+      directories: {
+        app: ".veryfront/app",
+        components: [".deno_cache/components"],
+      },
+    });
+
+    for (const path of [".veryfront/app/page.tsx", ".deno_cache/components/Card.tsx"]) {
+      assertEquals(shouldIncludeStylePath(profile, `/project/${path}`, "/project"), false);
+    }
+    assertEquals(
+      shouldTraverseStyleDirectory(profile, "/project/.veryfront", "/project"),
+      false,
+    );
+    assertEquals(
+      shouldTraverseStyleDirectory(profile, "/project/.deno_cache", "/project"),
+      false,
+    );
+  });
 });

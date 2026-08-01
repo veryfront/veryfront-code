@@ -7,41 +7,31 @@
  */
 
 import type { StyleScopeProfile } from "./style-scope-profile.ts";
-import { shouldIncludeStylePath } from "./style-scope-profile.ts";
 import { extractCandidatesWithByteLength } from "./candidate-tokenizer.ts";
-import {
-  MAX_CSS_FILES,
-  MAX_CSS_SELECTOR_TOKENS,
-  MAX_CSS_TOTAL_BYTES,
-} from "#veryfront/utils/constants/css.ts";
-import { assertBoundedPathString } from "#veryfront/utils/project-relative-path.ts";
+import { MAX_CSS_SELECTOR_TOKENS, MAX_CSS_TOTAL_BYTES } from "#veryfront/utils/constants/css.ts";
+import { snapshotSuppliedProjectStyleSourceFiles } from "./project-style-source-snapshot.ts";
 
 export { extractCandidates } from "./candidate-tokenizer.ts";
 export { hashCandidates, hashCSS, hashString } from "./css-identity.ts";
 
 export function extractCandidatesFromFiles(
-  files: Array<{ path: string; content?: string }>,
+  files: readonly { path: string; content?: string }[],
   options: {
     projectDir?: string;
     styleProfile?: StyleScopeProfile;
   } = {},
 ): Set<string> {
-  if (!Array.isArray(files) || files.length > MAX_CSS_FILES) {
-    throw new TypeError(`CSS candidate extraction cannot exceed ${MAX_CSS_FILES} source files`);
-  }
+  const sourceFiles = snapshotSuppliedProjectStyleSourceFiles(files, {
+    projectDir: options.projectDir,
+    styleProfile: options.styleProfile,
+  });
   const candidates = new Set<string>();
   const sourceExtensions = [".tsx", ".jsx", ".ts", ".js", ".mdx"];
   let sourceBytes = 0;
 
-  for (const file of files) {
-    const path = assertBoundedPathString(file.path, "CSS candidate source path");
+  for (const file of sourceFiles) {
+    const path = file.path;
     if (!file.content) continue;
-    if (
-      options.styleProfile &&
-      !shouldIncludeStylePath(options.styleProfile, path, options.projectDir)
-    ) {
-      continue;
-    }
     if (!sourceExtensions.some((ext) => path.endsWith(ext))) continue;
 
     const extracted = extractCandidatesWithByteLength(

@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 import { collectCSSCandidateSourceFiles } from "./css-source-collector.ts";
+import { createStyleScopeProfile } from "./style-scope-profile.ts";
 
 describe("styles-builder/css-source-collector", () => {
   it("returns matching project sources in deterministic path order", async () => {
@@ -55,6 +56,29 @@ describe("styles-builder/css-source-collector", () => {
       patterns: ["**/*"],
       adapter,
       ignoredDirs: ["/project/custom-output", "/outside/project"],
+    });
+
+    assertEquals(files.map((file) => file.path), ["/project/app/page.tsx"]);
+  });
+
+  it("always excludes generated roots even when configuration protects them", async () => {
+    const adapter = createMockAdapter();
+    adapter.fs.files.set("/project/app/page.tsx", '<div className="included" />');
+    adapter.fs.files.set("/project/.veryfront/app/page.tsx", '<div className="excluded" />');
+    adapter.fs.files.set(
+      "/project/.deno_cache/components/Card.tsx",
+      '<div className="excluded" />',
+    );
+
+    const files = await collectCSSCandidateSourceFiles({
+      projectDir: "/project",
+      adapter,
+      styleProfile: createStyleScopeProfile({
+        directories: {
+          app: ".veryfront/app",
+          components: [".deno_cache/components"],
+        },
+      }),
     });
 
     assertEquals(files.map((file) => file.path), ["/project/app/page.tsx"]);
@@ -178,6 +202,60 @@ describe("styles-builder/css-source-collector", () => {
     );
     assertEquals(requestedLimit, MAX_CSS_FILE_BYTES);
     assertEquals(unboundedReads, 0);
+  });
+
+  it("passes the remaining aggregate budget to each exact source read", async () => {
+    const adapter = createMockAdapter();
+    for (let index = 0; index < 5; index++) {
+      adapter.fs.files.set(`/project/app/source-${index}.ts`, "x");
+    }
+    let readIndex = 0;
+    let finalLimit = 0;
+    adapter.fs.readFileBytesWithinLimit = (_path, byteLimit) => {
+      const index = readIndex++;
+      if (index === 4) {
+        finalLimit = byteLimit;
+        return Promise.reject(new RangeError(`File exceeds byte limit of ${byteLimit} bytes`));
+      }
+      const byteLength = index === 3 ? MAX_CSS_FILE_BYTES - 1 : MAX_CSS_FILE_BYTES;
+      return Promise.resolve(new Uint8Array(byteLength));
+    };
+
+    await assertRejects(
+      () =>
+        collectCSSCandidateSourceFiles({
+          projectDir: "/project",
+          patterns: ["**/*"],
+          adapter,
+        }),
+      TypeError,
+      "1 bytes",
+    );
+    assertEquals(finalLimit, 1);
+  });
+
+  it("admits an empty source after exact reads consume the aggregate budget", async () => {
+    const adapter = createMockAdapter();
+    for (let index = 0; index < 4; index++) {
+      adapter.fs.files.set(`/project/app/source-${index}.ts`, "x");
+    }
+    adapter.fs.files.set("/project/app/source-4.ts", "");
+    const boundaryChunk = new Uint8Array(MAX_CSS_FILE_BYTES);
+    const requestedLimits: number[] = [];
+    adapter.fs.readFileBytesWithinLimit = (path, byteLimit) => {
+      requestedLimits.push(byteLimit);
+      return Promise.resolve(path.endsWith("source-4.ts") ? new Uint8Array() : boundaryChunk);
+    };
+
+    const files = await collectCSSCandidateSourceFiles({
+      projectDir: "/project",
+      patterns: ["**/*"],
+      adapter,
+    });
+
+    assertEquals(files.length, 5);
+    assertEquals(files.at(-1)?.content, "");
+    assertEquals(requestedLimits.at(-1), 1);
   });
 
   it("fails closed before an unbounded read when bounded bytes are unavailable", async () => {

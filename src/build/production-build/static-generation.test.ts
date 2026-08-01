@@ -25,6 +25,7 @@ import {
   resetReactCache,
 } from "#veryfront/react/compat/ssr-adapter/server-loader.ts";
 import { installTestCSSOptimizationEngine } from "../../../tests/_helpers/css-optimization-engine.ts";
+import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
 
 function createMockAdapter(): RuntimeAdapter {
   const files = new Map<string, string>();
@@ -216,14 +217,14 @@ describe(
           "/tmp/project/app/page.tsx",
           "export default function Page() { return null; }",
         );
-        const readFile = adapter.fs.readFile.bind(adapter.fs);
-        adapter.fs.readFile = (path: string) => {
+        const readFile = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+        adapter.fs.readFileBytesWithinLimit = (path: string, byteLimit: number) => {
           if (path === "/tmp/project/globals.css") {
             return Promise.reject(
               Object.assign(new Error("stylesheet permission denied"), { code: "EACCES" }),
             );
           }
-          return readFile(path);
+          return readFile(path, byteLimit);
         };
         const traced: string[] = [];
 
@@ -256,6 +257,207 @@ describe(
         assertEquals((error as Error).message, "Failed to prepare App Router styles");
         assertEquals(traced, ["app:styles"]);
         assertEquals(adapter.fs.files.has("/tmp/output/index.html"), false);
+      });
+
+      it("fails closed when the configured stylesheet is not found", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set(
+          "/tmp/project/app/page.tsx",
+          "export default function Page() { return null; }",
+        );
+        const traced: string[] = [];
+
+        const error = await assertRejects(() =>
+          buildAppRoutes(
+            [{
+              path: "/",
+              pageFile: "/tmp/project/app/page.tsx",
+              segments: [],
+              segmentDirs: ["/tmp/project/app"],
+            }],
+            {
+              adapter,
+              projectDir: "/tmp/project",
+              outputDir: "/tmp/output",
+              renderer: createMockRenderer(),
+              config: { styles: { stylesheet: "styles/missing.css" } },
+              enablePrefetch: false,
+              chunkManifest: null,
+              traceStep: async (name, fn) => {
+                traced.push(name);
+                return await fn();
+              },
+            },
+          )
+        );
+
+        assertEquals(error instanceof VeryfrontError, true);
+        assertEquals((error as VeryfrontError).slug, "ssg-generation-error");
+        assertEquals((error as Error).message, "Failed to prepare App Router styles");
+        assertEquals(traced, ["app:styles"]);
+        assertEquals(adapter.fs.files.has("/tmp/output/index.html"), false);
+      });
+
+      it("reads the build stylesheet through the exact bounded capability", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", '@import "tailwindcss";');
+        adapter.fs.files.set(
+          "/tmp/project/app/page.tsx",
+          'export default function Page() { return <main className="flex" />; }',
+        );
+        const exactReader = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+        const stylesheetLimits: number[] = [];
+        adapter.fs.readFileBytesWithinLimit = (path: string, byteLimit: number) => {
+          if (path === "/tmp/project/globals.css") stylesheetLimits.push(byteLimit);
+          return exactReader(path, byteLimit);
+        };
+        const readFile = adapter.fs.readFile.bind(adapter.fs);
+        adapter.fs.readFile = (path: string) =>
+          path === "/tmp/project/globals.css"
+            ? Promise.reject(new Error("unbounded build stylesheet read must not run"))
+            : readFile(path);
+
+        await buildAppRoutes(
+          [{
+            path: "/",
+            pageFile: "/tmp/project/app/page.tsx",
+            segments: [],
+            segmentDirs: ["/tmp/project/app"],
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+          },
+        );
+
+        assertEquals(stylesheetLimits, [MAX_CSS_FILE_BYTES]);
+      });
+
+      it("uses the configuration-derived style scope for build sources", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set(
+          "/tmp/project/knowledge/app/page.tsx",
+          'export default function Page() { return <main className="included" />; }',
+        );
+        adapter.fs.files.set(
+          "/tmp/project/knowledge/ignored.tsx",
+          'export default function Ignored() { return <main className="excluded" />; }',
+        );
+        const exactReader = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+        const sourceReads: string[] = [];
+        adapter.fs.readFileBytesWithinLimit = (path: string, byteLimit: number) => {
+          if (path.endsWith(".tsx")) sourceReads.push(path);
+          return exactReader(path, byteLimit);
+        };
+
+        await buildAppRoutes(
+          [{
+            path: "/",
+            pageFile: "/tmp/project/knowledge/app/page.tsx",
+            segments: [],
+            segmentDirs: ["/tmp/project/knowledge/app"],
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: { directories: { app: "knowledge/app" } } as VeryfrontConfig,
+            enablePrefetch: false,
+            chunkManifest: null,
+          },
+        );
+
+        assertEquals(sourceReads, ["/tmp/project/knowledge/app/page.tsx"]);
+      });
+
+      it("fails closed before an unavailable build stylesheet fallback", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", '@import "tailwindcss";');
+        adapter.fs.files.set(
+          "/tmp/project/app/page.tsx",
+          "export default function Page() { return null; }",
+        );
+        let unboundedStylesheetReads = 0;
+        const readFile = adapter.fs.readFile.bind(adapter.fs);
+        adapter.fs.readFile = (path: string) => {
+          if (path === "/tmp/project/globals.css") unboundedStylesheetReads++;
+          return readFile(path);
+        };
+        adapter.fs.readFileBytesWithinLimit = undefined;
+
+        await assertRejects(
+          () =>
+            buildAppRoutes(
+              [{
+                path: "/",
+                pageFile: "/tmp/project/app/page.tsx",
+                segments: [],
+                segmentDirs: ["/tmp/project/app"],
+              }],
+              {
+                adapter,
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer: createMockRenderer(),
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          VeryfrontError,
+          "Failed to prepare App Router styles",
+        );
+        assertEquals(unboundedStylesheetReads, 0);
+      });
+
+      it("fails closed when the build stylesheet grows past its exact bound", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", "small-before-growth");
+        adapter.fs.files.set(
+          "/tmp/project/app/page.tsx",
+          "export default function Page() { return null; }",
+        );
+        const exactReader = adapter.fs.readFileBytesWithinLimit!.bind(adapter.fs);
+        let stylesheetReads = 0;
+        adapter.fs.readFileBytesWithinLimit = (path: string, byteLimit: number) => {
+          if (path === "/tmp/project/globals.css") {
+            stylesheetReads++;
+            return Promise.reject(
+              new RangeError(`File exceeds byte limit of ${byteLimit} bytes`),
+            );
+          }
+          return exactReader(path, byteLimit);
+        };
+
+        await assertRejects(
+          () =>
+            buildAppRoutes(
+              [{
+                path: "/",
+                pageFile: "/tmp/project/app/page.tsx",
+                segments: [],
+                segmentDirs: ["/tmp/project/app"],
+              }],
+              {
+                adapter,
+                projectDir: "/tmp/project",
+                outputDir: "/tmp/output",
+                renderer: createMockRenderer(),
+                config: createMockConfig(),
+                enablePrefetch: false,
+                chunkManifest: null,
+              },
+            ),
+          VeryfrontError,
+          "Failed to prepare App Router styles",
+        );
+        assertEquals(stylesheetReads, 1);
       });
 
       it("fails closed when App Router CSS compilation fails", async () => {

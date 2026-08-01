@@ -29,6 +29,9 @@ import { createSecureFs } from "#veryfront/security";
 import { COMPILATION_ERROR, SSG_GENERATION_ERROR } from "#veryfront/errors";
 import { collectCSSCandidateSourceFiles } from "../../html/styles-builder/css-source-collector.ts";
 import { getRouteOutputPath } from "./output-paths.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
+import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -131,14 +134,16 @@ function extractClientNavigationHtml(html: string): string {
   return html.slice(contentStart, rootClose);
 }
 
-async function readOptionalFile(
-  readFile: (path: string) => Promise<string>,
+async function readResolvedStylesheet(
+  filesystem: unknown,
   path: string,
+  configured: boolean,
 ): Promise<string | undefined> {
+  const reader = captureBoundedTextReader(filesystem, "Build stylesheet filesystem");
   try {
-    return await readFile(path);
+    return (await reader.readUtf8(path, MAX_CSS_FILE_BYTES, "Build stylesheet")).content;
   } catch (error) {
-    if (isNotFoundError(error)) return undefined;
+    if (!configured && isNotFoundError(error)) return undefined;
     throw error;
   }
 }
@@ -146,7 +151,8 @@ async function readOptionalFile(
 async function prepareAppRouteStylesheet(
   options: SSGOptions,
 ): Promise<string | undefined> {
-  const stylesheetPath = options.config.styles?.stylesheet ?? "globals.css";
+  const configuredStylesheetPath = options.config.styles?.stylesheet;
+  const stylesheetPath = configuredStylesheetPath ?? "globals.css";
   const resolvedStylesheetPath = resolveProjectSourcePath(
     stylesheetPath,
     options.projectDir,
@@ -160,18 +166,21 @@ async function prepareAppRouteStylesheet(
       followSymlinks: false,
     },
   });
-  const stylesheet = await readOptionalFile(
-    (path) => secureFs.readFile(path),
+  const styleProfile = createStyleScopeProfile(options.config);
+  const stylesheet = await readResolvedStylesheet(
+    secureFs,
     resolvedStylesheetPath,
+    configuredStylesheetPath !== undefined,
   );
   const sourceFiles = await collectCSSCandidateSourceFiles({
     adapter: options.adapter,
     projectDir: options.projectDir,
-    patterns: ["**/*"],
     ignoredDirs: options.ignoredSourceDirs,
+    styleProfile,
   });
   const candidates = extractCandidatesFromFiles(sourceFiles, {
     projectDir: options.projectDir,
+    styleProfile,
   });
   for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
   const cssPipeline = await acquireCSSGenerationSession(true);

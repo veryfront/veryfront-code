@@ -2,6 +2,19 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { assertCanonicalStylesheetPath } from "./stylesheet-path.ts";
 import { hashString } from "./css-identity.ts";
 
+const ALWAYS_EXCLUDED_STYLE_DIRECTORIES = [
+  ".deno_cache",
+  ".git",
+  ".veryfront",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+] as const;
+const ALWAYS_EXCLUDED_STYLE_DIRECTORY_SET = new Set<string>(
+  ALWAYS_EXCLUDED_STYLE_DIRECTORIES,
+);
+
 const DEFAULT_IGNORED_ROOTS = [
   "knowledge",
   "coverage",
@@ -51,6 +64,14 @@ function toRelativeProjectPath(path: string, projectDir?: string): string {
 
 function isWithinPath(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
+}
+
+/** Return true for generated/dependency directories that style scans never enter. */
+export function isAlwaysExcludedStylePath(path: string, projectDir?: string): boolean {
+  const relativePath = normalizeRelativePath(toRelativeProjectPath(path, projectDir));
+  return relativePath.split("/").some((segment) =>
+    ALWAYS_EXCLUDED_STYLE_DIRECTORY_SET.has(segment)
+  );
 }
 
 function getParentDirectory(path: string): string | null {
@@ -107,6 +128,7 @@ export function createStyleScopeProfile(config?: VeryfrontConfig): StyleScopePro
     protectedPaths: sortedProtectedPaths,
     hash: hashString(
       JSON.stringify({
+        alwaysExcludedDirectories: ALWAYS_EXCLUDED_STYLE_DIRECTORIES,
         ignoredRoots: sortedIgnoredRoots,
         protectedRoots: sortedProtectedRoots,
         protectedPaths: sortedProtectedPaths,
@@ -130,6 +152,7 @@ export function shouldIncludeStylePath(
 ): boolean {
   const relativePath = normalizeRelativePath(toRelativeProjectPath(path, projectDir));
   if (!relativePath) return true;
+  if (isAlwaysExcludedStylePath(relativePath)) return false;
   if (isProtectedPath(profile, relativePath)) return true;
 
   return !profile.ignoredRoots.some((root) => isWithinPath(relativePath, root));
@@ -142,6 +165,7 @@ export function shouldTraverseStyleDirectory(
 ): boolean {
   const relativePath = normalizeRelativePath(toRelativeProjectPath(directoryPath, projectDir));
   if (!relativePath) return true;
+  if (isAlwaysExcludedStylePath(relativePath)) return false;
   if (isProtectedPath(profile, relativePath)) return true;
 
   const ignoredRoot = profile.ignoredRoots.find((root) => isWithinPath(relativePath, root));

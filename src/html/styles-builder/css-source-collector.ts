@@ -13,24 +13,17 @@ import {
 import { isContainedBuildPath } from "../../build/bundler/project-module-resolver.ts";
 import { hasControlCharacters } from "../../build/utils/string-validation.ts";
 import {
+  isAlwaysExcludedStylePath,
   shouldIncludeStylePath,
   shouldTraverseStyleDirectory,
   type StyleScopeProfile,
 } from "./style-scope-profile.ts";
+import { snapshotProjectStyleSourceFiles } from "./project-style-source-snapshot.ts";
 
 const MAX_PATTERN_CHARACTERS = 4_096;
 const MAX_CONTENT_PATTERNS = 256;
 const MAX_IGNORED_DIRECTORIES = 256;
 const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".ts", ".tsx", ".mdx"]);
-const EXCLUDED_DIRECTORIES = new Set([
-  ".deno_cache",
-  ".git",
-  ".veryfront",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
 
 interface CompiledContentPattern {
   matcher: PathGlobMatcher;
@@ -103,7 +96,7 @@ function compileContentPatterns(
  */
 export async function collectCSSCandidateSourceFiles(options: {
   projectDir: string;
-  patterns: string[];
+  patterns?: string[];
   adapter: RuntimeAdapter;
   ignoredDirs?: string[];
   styleProfile?: StyleScopeProfile;
@@ -112,7 +105,9 @@ export async function collectCSSCandidateSourceFiles(options: {
   if (!isAbsolute(options.projectDir)) {
     throw new TypeError("CSS candidate projectDir must be an absolute path");
   }
-  const patterns = compileContentPatterns(projectDir, options.patterns);
+  const patterns = options.patterns === undefined
+    ? undefined
+    : compileContentPatterns(projectDir, options.patterns);
   const configuredIgnoredDirs = options.ignoredDirs ?? [];
   if (
     !Array.isArray(configuredIgnoredDirs) ||
@@ -141,7 +136,7 @@ export async function collectCSSCandidateSourceFiles(options: {
   const isIgnored = (path: string): boolean =>
     ignoredDirs.some((ignoredDir) => isContainedBuildPath(ignoredDir, path));
 
-  if (patterns.length === 0) return [];
+  if (patterns?.length === 0) return [];
 
   const secureFs = createSecureFs({
     baseDir: projectDir,
@@ -186,7 +181,7 @@ export async function collectCSSCandidateSourceFiles(options: {
       const fullPath = join(directory, entry.name);
       if (entry.isDirectory) {
         if (
-          !EXCLUDED_DIRECTORIES.has(entry.name) &&
+          !isAlwaysExcludedStylePath(fullPath, projectDir) &&
           !isIgnored(fullPath) &&
           (!options.styleProfile ||
             shouldTraverseStyleDirectory(options.styleProfile, fullPath, projectDir))
@@ -206,7 +201,9 @@ export async function collectCSSCandidateSourceFiles(options: {
       }
 
       const relativePath = portablePath(relative(projectDir, fullPath));
-      if (!patterns.some((pattern) => pattern.matcher.test(relativePath))) {
+      if (
+        patterns !== undefined && !patterns.some((pattern) => pattern.matcher.test(relativePath))
+      ) {
         continue;
       }
 
@@ -231,7 +228,10 @@ export async function collectCSSCandidateSourceFiles(options: {
       }
       const { content, byteLength: contentBytes } = await sourceReader.readUtf8(
         fullPath,
-        MAX_CSS_FILE_BYTES,
+        Math.max(
+          1,
+          Math.min(MAX_CSS_FILE_BYTES, MAX_CSS_TOTAL_BYTES - sourceBytes),
+        ),
         `CSS candidate source file ${relativePath}`,
       );
       if (contentBytes > MAX_CSS_TOTAL_BYTES - sourceBytes) {
@@ -248,5 +248,10 @@ export async function collectCSSCandidateSourceFiles(options: {
   };
 
   await scan(projectDir, 0);
-  return files;
+  return [
+    ...await snapshotProjectStyleSourceFiles(files, {
+      projectDir,
+      styleProfile: options.styleProfile,
+    }),
+  ];
 }
