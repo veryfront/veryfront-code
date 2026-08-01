@@ -20,7 +20,15 @@ export const RedisRuntimeProviderName = "RedisRuntimeProvider" as const;
 /** Structural module surface used by the platform Redis adapter. */
 export interface NodeRedisModule {
   createClient(
-    options: { url?: string; socket?: { host?: string; port?: number } },
+    options: {
+      url?: string;
+      socket?: {
+        host?: string;
+        port?: number;
+        connectTimeout?: number;
+        reconnectStrategy?: (retries: number) => number | Error;
+      };
+    },
   ): NodeRedisClient;
 }
 
@@ -64,12 +72,19 @@ export interface NodeRedisClient {
     options?: { NX?: boolean; PX?: number; EX?: number },
   ): Promise<string | null>;
   get(key: string): Promise<string | null>;
+  publish(channel: string, message: string): Promise<number>;
+  subscribe(
+    channel: string,
+    listener: (message: string, channel: string) => void,
+  ): Promise<void>;
+  unsubscribe(channel: string): Promise<void>;
   eval(
     script: string,
     options?: { keys?: string[]; arguments?: string[] },
   ): Promise<unknown>;
   close(): Promise<void>;
-  destroy(): Promise<void>;
+  destroy(): void;
+  on(event: "error", listener: (error: unknown) => void): unknown;
 }
 
 /** Structural client surface used by core cache features. */
@@ -273,7 +288,7 @@ function captureAsyncMethods(
   }));
 }
 
-const NODE_REDIS_CLIENT_METHODS = [
+const NODE_REDIS_CLIENT_ASYNC_METHODS = [
   "connect",
   "hSet",
   "hGetAll",
@@ -296,18 +311,33 @@ const NODE_REDIS_CLIENT_METHODS = [
   "expire",
   "set",
   "get",
+  "publish",
+  "subscribe",
+  "unsubscribe",
   "eval",
   "close",
-  "destroy",
 ] as const;
 
 function captureNodeRedisClient(value: unknown): NodeRedisClient {
   if (!value || typeof value !== "object") {
     throw new TypeError("Redis runtime provider module returned an invalid client");
   }
-  return Object.freeze(
-    captureAsyncMethods(value, NODE_REDIS_CLIENT_METHODS, "Redis module client"),
-  ) as unknown as NodeRedisClient;
+  const methods = captureAsyncMethods(
+    value,
+    NODE_REDIS_CLIENT_ASYNC_METHODS,
+    "Redis module client",
+  );
+  const destroy = readDataMethod(value, "destroy", "Redis module client destroy")!;
+  const on = readDataMethod(value, "on", "Redis module client on")!;
+  return Object.freeze({
+    ...methods,
+    destroy(): void {
+      Reflect.apply(destroy, value, []);
+    },
+    on(event: "error", listener: (error: unknown) => void): unknown {
+      return Reflect.apply(on, value, [event, listener]);
+    },
+  }) as unknown as NodeRedisClient;
 }
 
 function captureRedisModule(value: unknown): NodeRedisModule {
@@ -320,7 +350,7 @@ function captureRedisModule(value: unknown): NodeRedisModule {
     "Redis runtime provider module createClient",
   )!;
   return Object.freeze({
-    createClient(options: { url?: string; socket?: { host?: string; port?: number } }) {
+    createClient(options: Parameters<NodeRedisModule["createClient"]>[0]) {
       return captureNodeRedisClient(Reflect.apply(createClient, value, [options]));
     },
   });

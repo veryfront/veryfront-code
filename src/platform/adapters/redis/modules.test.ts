@@ -142,6 +142,18 @@ describe("platform/adapters/redis/modules", () => {
       assertExists(result.NodeRedis);
     });
 
+    it("should preserve Pub/Sub and error-listener methods on module clients", async () => {
+      const { NodeRedis } = await getRedisModule();
+      assertExists(NodeRedis);
+
+      const client = NodeRedis.createClient({});
+
+      assertEquals(typeof client.publish, "function");
+      assertEquals(typeof client.subscribe, "function");
+      assertEquals(typeof client.unsubscribe, "function");
+      assertEquals(typeof client.on, "function");
+    });
+
     it("should use the pinned npm Redis client in Deno", async () => {
       if (!isDeno) return;
 
