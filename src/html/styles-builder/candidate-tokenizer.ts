@@ -6,12 +6,14 @@ import {
 } from "#veryfront/utils/constants/css.ts";
 import { assertCSSFileContent } from "#veryfront/utils/css-content-admission.ts";
 
+const candidateBodyCharacterClass = "[a-zA-Z0-9_\\-:\\/\\.\\[\\]%#,()!'=<>$@{}|*+?;^~]";
 const candidatePattern = new RegExp(
-  `!?-?@?(?:[a-zA-Z0-9]|\\[&?)[a-zA-Z0-9_\\-:\\/\\.\\[\\]%#,()!'=<>$@{}|*+?;^~]{0,${
+  `!?-?@?(?:[a-zA-Z0-9]|\\[&?)${candidateBodyCharacterClass}{0,${
     MAX_CSS_SELECTOR_TOKEN_CHARACTERS - 1
   }}`,
   "g",
 );
+const candidateContinuationPattern = new RegExp(candidateBodyCharacterClass);
 const apply = Reflect.apply;
 const NativeTypeError = TypeError;
 const arrayPush = Array.prototype.push;
@@ -19,6 +21,13 @@ const regExpExec = RegExp.prototype.exec;
 const setAdd = Set.prototype.add;
 const setHas = Set.prototype.has;
 const SetConstructor = Set;
+const stringCharAt = String.prototype.charAt;
+
+function hasCandidateContinuation(content: string, index: number): boolean {
+  if (index >= content.length) return false;
+  const nextCharacter = apply(stringCharAt, content, [index]) as string;
+  return apply(regExpExec, candidateContinuationPattern, [nextCharacter]) !== null;
+}
 
 export interface ExtractedCSSCandidates {
   readonly candidates: string[];
@@ -40,7 +49,10 @@ export function extractCandidatesWithByteLength(
       (match = apply(regExpExec, candidatePattern, [content]) as RegExpExecArray | null) !== null
     ) {
       const candidate = match[0];
-      if (candidate.length > MAX_CSS_SELECTOR_TOKEN_CHARACTERS) {
+      if (
+        candidate.length > MAX_CSS_SELECTOR_TOKEN_CHARACTERS ||
+        hasCandidateContinuation(content, candidatePattern.lastIndex)
+      ) {
         throw new NativeTypeError(
           `CSS candidate tokens cannot exceed ${MAX_CSS_SELECTOR_TOKEN_CHARACTERS} characters`,
         );
