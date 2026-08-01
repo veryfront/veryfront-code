@@ -387,6 +387,11 @@ function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean 
 
 function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
   const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
+  for (const toolName of plan.loadedToolNames) {
+    if (shouldHideProjectToolAfterAgentWriteSuccess(toolName)) {
+      plan.loadedToolNames.delete(toolName);
+    }
+  }
   return {
     ...plan,
     authorized: plan.authorized.filter(keep),

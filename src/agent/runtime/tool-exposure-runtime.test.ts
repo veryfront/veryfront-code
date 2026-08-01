@@ -1259,6 +1259,125 @@ it("deferred final-response guard frees loaded capacity before a later search", 
   assertEquals(response.text, "done");
 });
 
+it("final-response guard releases a loaded schema slot before deferred search", async () => {
+  const retainedToolName = "catalog_tool_retained";
+  const searchedToolName = "catalog_tool_searched";
+  const fillerToolNames = Array.from(
+    { length: 123 },
+    (_, index) => `catalog_tool_${String(index).padStart(3, "0")}`,
+  );
+  const remoteTools: ToolDefinition[] = [
+    retainedToolName,
+    ...fillerToolNames,
+    searchedToolName,
+    "catalog_tool_still_deferred",
+  ].map((name) => ({
+    name,
+    description: `Deferred schema for ${name}`,
+    parameters: { type: "object", properties: {} },
+  }));
+  const allowedRemoteToolNames = remoteTools.map((tool) => tool.name);
+  const initiallyLoadedToolNames = [
+    retainedToolName,
+    ...fillerToolNames,
+    "create_agent",
+  ];
+  const observedTools: string[][] = [];
+  let step = 0;
+  const model: ModelRuntime = {
+    provider: "openai",
+    modelId: "gpt-5.5",
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      step++;
+      if (step === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "create-agent-before-search",
+            toolName: "create_agent",
+            input: JSON.stringify({ id: "capacity-agent" }),
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      if (step === 2) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "search-after-create-agent",
+            toolName: "tool_search",
+            input: JSON.stringify({ query: searchedToolName }),
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const remoteSource: RemoteToolSource = {
+    id: "veryfront-platform-mcp",
+    listTools: () => Promise.resolve(remoteTools),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+  const assistant = agent(
+    {
+      id: "guarded-schema-capacity",
+      model: "openai/gpt-5.5",
+      system: "Create the agent, then search the deferred catalog.",
+      skills: true,
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        create_agent: tool({
+          id: "create_agent",
+          description: "Create a Studio project agent",
+          inputSchema: defineSchema((v) => v.object({ id: v.string() }))(),
+          execute: ({ id }) => ({ id, name: "Capacity Agent" }),
+        }),
+      },
+      maxSteps: 3,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+      __vfRemoteToolSources: [remoteSource],
+      __vfAllowedRemoteTools: allowedRemoteToolNames,
+      __vfToolExposureCheckpoint: {
+        version: 1,
+        loadedToolNames: initiallyLoadedToolNames,
+      },
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  const response = await assistant.generate({ input: "Create the capacity agent" });
+
+  assertEquals(observedTools.length, 3);
+  assertEquals(observedTools[0]?.length, 128);
+  assertEquals(observedTools[0]?.includes("create_agent"), true);
+  assertEquals(observedTools[1]?.includes("create_agent"), false);
+  assertEquals(observedTools[1]?.includes("tool_search"), true);
+  assertEquals(observedTools[2]?.length, 128);
+  assertEquals(observedTools[2]?.includes(retainedToolName), true);
+  assertEquals(observedTools[2]?.includes(searchedToolName), true);
+  assertEquals(observedTools[2]?.includes("create_agent"), false);
+  assertEquals(response.text, "done");
+});
+
 it(
   "framework fallback preserves configured provider tools for generate, stream, and respond",
   async () => {
