@@ -1,7 +1,7 @@
 import { assertEquals } from "#std/assert";
 import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
 
-Deno.test("compiled CLI does not implicitly embed the explicit Node WebSocket extension", () => {
+Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in activation", () => {
   const args = createCompileArgs({
     entrypoint: "cli/main.ts",
     extraIncludes: [],
@@ -10,7 +10,7 @@ Deno.test("compiled CLI does not implicitly embed the explicit Node WebSocket ex
 
   assertEquals(
     args.some((value) => value.includes("ext-node-websocket-ws")),
-    false,
+    true,
   );
 });
 
