@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import type { ReactDOMServer } from "./server-loader.ts";
@@ -190,5 +190,135 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
     );
     assertEquals(stringRenderCalls, 0);
     assertEquals(signal?.aborted, true);
+  });
+
+  it("enforces the absolute deadline while an always-ready stream starves timers", async () => {
+    let cancelReason: unknown;
+    let observed: Error | undefined;
+    let thrown: unknown;
+    setSSRAdapterTimeoutForTests(1);
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>must not render</div>",
+      renderToStaticMarkup: () => "<div>unused</div>",
+      renderToReadableStream: async () =>
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new Uint8Array(1024));
+          },
+          cancel(reason) {
+            cancelReason = reason;
+          },
+        }) as Awaited<
+          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+        >,
+    });
+
+    await assertRejects(
+      async () => {
+        try {
+          await renderToStringAdapter(React.createElement("div"), {
+            maxBufferedBytes: 16 * 1024 * 1024,
+            onError: (error) => {
+              observed = error;
+            },
+          });
+        } catch (error) {
+          thrown = error;
+          throw error;
+        }
+      },
+      Error,
+      "SSR timeout",
+    );
+    assertStrictEquals(observed, thrown as Error);
+    assertStrictEquals(cancelReason, thrown);
+  });
+
+  it("cancels and reports the owned failure when buffered output exceeds its limit", async () => {
+    let cancelReason: unknown;
+    let observed: Error | undefined;
+    let thrown: unknown;
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>must not render</div>",
+      renderToStaticMarkup: () => "<div>unused</div>",
+      renderToReadableStream: async () =>
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
+          },
+          cancel(reason) {
+            cancelReason = reason;
+          },
+        }) as Awaited<
+          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+        >,
+    });
+
+    await assertRejects(
+      async () => {
+        try {
+          await renderToStringAdapter(React.createElement("div"), {
+            maxBufferedBytes: 4,
+            onError: (error) => {
+              observed = error;
+            },
+          });
+        } catch (error) {
+          thrown = error;
+          throw error;
+        }
+      },
+      RangeError,
+      "exceeded 4 bytes",
+    );
+    assertStrictEquals(observed, thrown as Error);
+    assertStrictEquals(cancelReason, thrown);
+  });
+
+  it("enforces buffered output limits for direct string and static rendering", async () => {
+    __injectReactDOMServerForTests({
+      renderToString: () => "12345",
+      renderToStaticMarkup: () => "🌍",
+      renderToReadableStream: undefined,
+    });
+
+    await assertRejects(
+      () =>
+        renderToStringAdapter(React.createElement("div"), {
+          maxBufferedBytes: 4,
+        }),
+      RangeError,
+      "exceeded 4 bytes",
+    );
+    await assertRejects(
+      () =>
+        renderToStaticMarkupAdapter(React.createElement("div"), {
+          maxBufferedBytes: 3,
+        }),
+      RangeError,
+      "exceeded 3 bytes",
+    );
+  });
+
+  it("rejects invalid buffered output limits before rendering", async () => {
+    let renderCalls = 0;
+    __injectReactDOMServerForTests({
+      renderToString: () => {
+        renderCalls += 1;
+        return "unused";
+      },
+      renderToStaticMarkup: () => "unused",
+      renderToReadableStream: undefined,
+    });
+
+    await assertRejects(
+      () =>
+        renderToStringAdapter(React.createElement("div"), {
+          maxBufferedBytes: Number.MAX_VALUE,
+        }),
+      RangeError,
+      "positive safe integer",
+    );
+    assertEquals(renderCalls, 0);
   });
 });

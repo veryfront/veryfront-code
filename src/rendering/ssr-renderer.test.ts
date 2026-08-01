@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import type { ReactDOMServer } from "../react/compat/ssr-adapter/server-loader.ts";
@@ -57,6 +57,71 @@ describe("rendering/ssr-renderer", () => {
 
     assertEquals(result.stream instanceof ReadableStream, true);
     await result.stream?.cancel(new Error("stop"));
+    assertEquals(abortCalled, true);
+  });
+
+  it("bounds buffered readable-stream output and cancels the render", async () => {
+    let cancelled = false;
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>unused</div>",
+      renderToStaticMarkup: () => "<div>static</div>",
+      renderToReadableStream: async () =>
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }) as Awaited<
+          ReturnType<NonNullable<ReactDOMServer["renderToReadableStream"]>>
+        >,
+    });
+
+    const renderer = new SSRRenderer("production");
+    await assertRejects(
+      () =>
+        renderer.renderToHTML(React.createElement("div"), {
+          mode: "production",
+          wantsStream: false,
+          maxBufferedBytes: 4,
+        }),
+      Error,
+      "limit of 4 bytes",
+    );
+    assertEquals(cancelled, true);
+  });
+
+  it("bounds buffered pipeable output and aborts the render", async () => {
+    let abortCalled = false;
+    __injectReactDOMServerForTests({
+      renderToString: () => "<div>unused</div>",
+      renderToStaticMarkup: () => "<div>static</div>",
+      renderToReadableStream: undefined,
+      renderToPipeableStream: (_element, options) => {
+        queueMicrotask(() => options?.onShellReady?.());
+        return createPipeableSSRStream(
+          (writable) => {
+            writable.write(new Uint8Array([1, 2, 3, 4, 5]));
+          },
+          () => {
+            abortCalled = true;
+          },
+        );
+      },
+    });
+
+    const renderer = new SSRRenderer("production");
+    await assertRejects(
+      () =>
+        renderer.renderToHTML(React.createElement("div"), {
+          mode: "production",
+          wantsStream: false,
+          maxBufferedBytes: 4,
+        }),
+      Error,
+      "limit of 4 bytes",
+    );
     assertEquals(abortCalled, true);
   });
 

@@ -1,5 +1,7 @@
-import { SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
+import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import { rendererLogger as logger } from "#veryfront/utils";
+
+const STREAM_YIELD_INTERVAL_BYTES = 256 * 1024;
 
 export class TimeoutError extends Error {
   readonly timeoutKind?: "idle" | "hard";
@@ -235,6 +237,18 @@ export class StreamTimeoutError extends Error {
   }
 }
 
+export class StreamSizeLimitError extends Error {
+  readonly maxBytes: number;
+  readonly bytesRead: number;
+
+  constructor(maxBytes: number, bytesRead: number) {
+    super(`Stream exceeded buffered output limit of ${maxBytes} bytes`);
+    this.name = "StreamSizeLimitError";
+    this.maxBytes = maxBytes;
+    this.bytesRead = bytesRead;
+  }
+}
+
 function concatUint8Arrays(chunks: Uint8Array[], totalLength: number): Uint8Array {
   const result = new Uint8Array(totalLength);
   let offset = 0;
@@ -250,47 +264,97 @@ function concatUint8Arrays(chunks: Uint8Array[], totalLength: number): Uint8Arra
 export async function streamToString(
   stream: ReadableStream,
   timeoutMs: number = SSR_TIMEOUT_MS,
+  maxBytes: number = SSR_MAX_BUFFERED_BYTES,
 ): Promise<string> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Stream timeout must be a positive safe integer");
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new RangeError("Stream buffered output limit must be a positive safe integer");
+  }
+
   const reader = stream.getReader();
   const binaryChunks: Uint8Array[] = [];
   let totalBytes = 0;
+  let bytesSinceYield = 0;
   const decoder = new TextDecoder();
+  const expiresAt = performance.now() + timeoutMs;
 
-  let timedOut = false;
-  const timeoutId = setTimeout(() => {
-    timedOut = true;
-    reader.cancel("Stream read timeout").catch(() => {
-      /* SILENT: stream already closed */
-    });
-  }, timeoutMs);
-
-  function throwTimeout(): never {
-    const partial = decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
-    logger.error("STREAM_TIMEOUT stream read timed out", {
+  let completed = false;
+  let cancelRequested = false;
+  let failure: unknown;
+  let timeoutFailure: StreamTimeoutError | undefined;
+  const requestCancel = (reason: unknown): void => {
+    if (cancelRequested) return;
+    cancelRequested = true;
+    try {
+      reader.cancel(reason).catch(() => {
+        /* expected: the stream may already be closed or errored */
+      });
+    } catch {
+      /* expected: a non-conforming stream may throw during cancellation */
+    }
+  };
+  const getTimeoutFailure = (): StreamTimeoutError => {
+    timeoutFailure ??= new StreamTimeoutError(
       timeoutMs,
-      partialLength: partial.length,
-    });
-    throw new StreamTimeoutError(timeoutMs, partial);
-  }
+      decoder.decode(concatUint8Arrays(binaryChunks, totalBytes)),
+    );
+    return timeoutFailure;
+  };
+  const throwIfExpired = (): void => {
+    if (!timeoutFailure && performance.now() < expiresAt) return;
+    const error = getTimeoutFailure();
+    requestCancel(error);
+    throw error;
+  };
+  const timeoutId = setTimeout(() => {
+    const error = getTimeoutFailure();
+    requestCancel(error);
+  }, timeoutMs);
 
   try {
     while (true) {
-      if (timedOut) throwTimeout();
+      // An always-ready stream can starve timers by chaining microtasks, so
+      // enforce the absolute deadline before and after each read as well.
+      throwIfExpired();
 
       const { done, value } = await reader.read();
 
-      if (timedOut) throwTimeout();
-      if (done) break;
+      throwIfExpired();
+      if (done) {
+        completed = true;
+        break;
+      }
 
       if (!value) continue;
 
+      if (value.byteLength > maxBytes - totalBytes) {
+        throw new StreamSizeLimitError(maxBytes, totalBytes + value.byteLength);
+      }
       binaryChunks.push(value);
       totalBytes += value.byteLength;
+      bytesSinceYield += value.byteLength;
+      if (bytesSinceYield >= STREAM_YIELD_INTERVAL_BYTES) {
+        bytesSinceYield = 0;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        throwIfExpired();
+      }
     }
 
     return decoder.decode(concatUint8Arrays(binaryChunks, totalBytes));
+  } catch (error) {
+    failure = error;
+    if (error instanceof StreamTimeoutError) {
+      logger.error("STREAM_TIMEOUT stream read timed out", {
+        timeoutMs,
+        partialLength: error.partialContent.length,
+      });
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
+    if (!completed) requestCancel(failure);
     try {
       reader.releaseLock();
     } catch (_) {

@@ -1,4 +1,5 @@
 import { RENDER_ERROR } from "#veryfront/errors";
+import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getReactVersionInfo,
@@ -20,28 +21,6 @@ import {
 
 function supportsStreamingReactVersion(version: string): boolean {
   return Number(version.split(".")[0]) >= 18;
-}
-
-async function pipeToString(
-  pipeFn: (writable: NodeJS.WritableStream) => void,
-): Promise<string> {
-  const { PassThrough } = await import("node:stream");
-  const { Buffer } = await import("node:buffer");
-
-  return await new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    const passThrough = new PassThrough();
-
-    passThrough.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-    passThrough.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    passThrough.on("error", (err: Error) => reject(err));
-
-    try {
-      pipeFn(passThrough);
-    } catch (error) {
-      reject(error);
-    }
-  });
 }
 
 function pipeToReadableStream(
@@ -105,6 +84,8 @@ export interface SSRRenderOptions {
   debugMode?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Maximum UTF-8 bytes retained when the result must be buffered. */
+  maxBufferedBytes?: number;
 }
 
 export interface SSRRenderResult {
@@ -176,6 +157,7 @@ export class SSRRenderer {
     );
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;
     const compiledBinary = isCompiledBinary();
+    const maxBufferedBytes = options.maxBufferedBytes ?? SSR_MAX_BUFFERED_BYTES;
 
     if (compiledBinary && wantsStreamingMode) {
       logger.debug(
@@ -202,6 +184,7 @@ export class SSRRenderer {
         () =>
           renderToStringAdapter(pageElement, {
             identifierPrefix: "vf",
+            maxBufferedBytes,
             reactVersion,
           }),
         {
@@ -223,6 +206,7 @@ export class SSRRenderer {
       () =>
         renderToStreamAdapter(pageElement, {
           identifierPrefix: "vf",
+          maxBufferedBytes,
           reactVersion,
         }),
       {
@@ -238,7 +222,11 @@ export class SSRRenderer {
         return { html: "", stream: attachAllReady(renderResult.stream, renderResult.allReady) };
       }
 
-      const html = await streamToString(renderResult.stream);
+      const html = await streamToString(
+        renderResult.stream,
+        SSR_TIMEOUT_MS,
+        maxBufferedBytes,
+      );
 
       if (options.debugMode) {
         logger.debug("Streaming SSR completed (buffered)", { htmlLength: html.length });
@@ -255,7 +243,11 @@ export class SSRRenderer {
       }
 
       logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");
-      const html = await pipeToString(renderResult.pipe);
+      const html = await streamToString(
+        pipeToReadableStream(renderResult.pipe, renderResult.abort),
+        SSR_TIMEOUT_MS,
+        maxBufferedBytes,
+      );
 
       if (options.debugMode) {
         logger.debug("Pipeable SSR completed", { htmlLength: html.length });
