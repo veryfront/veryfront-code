@@ -18,6 +18,7 @@ export type ToolExposurePlan = {
   visible: ToolDefinition[];
   deferred: ToolDefinition[];
   loadedToolNames: Set<string>;
+  maxLoadedTools?: number;
 };
 
 /** Private versioned state persisted by the framework between resumed steps. */
@@ -123,6 +124,15 @@ export function createToolExposureState(
   return { loadedToolNames: new Set(loadedToolNames) };
 }
 
+function retainNewestLoadedToolNames(state: ToolExposureState, limit: number | undefined): void {
+  if (limit === undefined) return;
+  while (state.loadedToolNames.size > limit) {
+    const oldest = state.loadedToolNames.values().next().value;
+    if (oldest === undefined) return;
+    state.loadedToolNames.delete(oldest);
+  }
+}
+
 /** Create the framework fallback tool definition without exposing catalog schemas. */
 export function createToolSearchDefinition(): ToolDefinition {
   return {
@@ -150,6 +160,7 @@ export function createToolExposurePlan(input: {
   mode: RuntimeToolLoadingMode;
   state: ToolExposureState;
   bootstrapToolNames?: ReadonlySet<string>;
+  maxVisibleTools?: number;
 }): ToolExposurePlan {
   const authorized = [...input.authorized];
   if (input.mode === "eager") {
@@ -165,6 +176,12 @@ export function createToolExposurePlan(input: {
   }
 
   const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
+  const bootstrapCount = authorized.filter((tool) => bootstrap.has(tool.name)).length;
+  const hasSearchableTools = authorized.some((tool) => !bootstrap.has(tool.name));
+  const maxLoadedTools = input.maxVisibleTools === undefined
+    ? undefined
+    : Math.max(0, input.maxVisibleTools - bootstrapCount - (hasSearchableTools ? 1 : 0));
+  retainNewestLoadedToolNames(input.state, maxLoadedTools);
   const visible = authorized
     .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name))
     .sort((left, right) => compareAscii(left.name, right.name));
@@ -181,6 +198,7 @@ export function createToolExposurePlan(input: {
     visible,
     deferred,
     loadedToolNames: input.state.loadedToolNames,
+    ...(maxLoadedTools === undefined ? {} : { maxLoadedTools }),
   };
 }
 
@@ -189,6 +207,7 @@ export function searchToolExposure(input: {
   query: string;
   authorized: readonly ToolDefinition[];
   state: ToolExposureState;
+  maxLoadedTools?: number;
 }): ToolSearchResult {
   const ranked: Array<{ rank: number; matchCount: number; match: ToolSearchMatch }> = [];
 
@@ -228,16 +247,26 @@ export function searchToolExposure(input: {
       left.rank - right.rank || right.matchCount - left.matchCount ||
       compareAscii(left.match.name, right.match.name)
     )
-    .slice(0, TOOL_SEARCH_RESULT_LIMIT)
+    .slice(
+      0,
+      input.maxLoadedTools === undefined
+        ? TOOL_SEARCH_RESULT_LIMIT
+        : Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools),
+    )
     .map(({ match }) => match);
 
-  for (const match of matches) input.state.loadedToolNames.add(match.name);
+  for (const match of matches) {
+    input.state.loadedToolNames.delete(match.name);
+    input.state.loadedToolNames.add(match.name);
+  }
+  retainNewestLoadedToolNames(input.state, input.maxLoadedTools);
+  const loadedMatches = matches.filter((match) => input.state.loadedToolNames.has(match.name));
 
   return {
-    matches,
-    resultCount: matches.length,
-    loadedCount: matches.length,
-    miss: matches.length === 0,
+    matches: loadedMatches,
+    resultCount: loadedMatches.length,
+    loadedCount: loadedMatches.length,
+    miss: loadedMatches.length === 0,
   };
 }
 

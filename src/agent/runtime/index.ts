@@ -262,6 +262,7 @@ function executeFrameworkToolSearch(input: {
     query,
     authorized: input.plan.authorized,
     state: input.state,
+    maxLoadedTools: input.plan.maxLoadedTools,
   });
   return {
     result: {
@@ -1112,6 +1113,7 @@ export class AgentRuntime {
             : activeSkillToolAvailability,
           allowedRemoteToolNames,
           config: runtimeStepConfig,
+          effectiveModel,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
           isLocalModel: isLocal,
@@ -1705,6 +1707,7 @@ export class AgentRuntime {
         activeSkillToolAvailability,
         allowedRemoteToolNames,
         config: runtimeStepConfig,
+        effectiveModel,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
         isLocalModel: isLocalStreaming,

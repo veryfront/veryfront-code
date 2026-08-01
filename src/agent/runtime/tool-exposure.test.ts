@@ -228,6 +228,64 @@ it("authorized search matches load for the next step", () => {
   );
 });
 
+it("deferred exposure reserves bootstrap and search inside the provider tool budget", () => {
+  const remoteCatalog = Array.from(
+    { length: 130 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    ...remoteCatalog,
+  ];
+  const state = restoreToolExposureState({
+    version: 1,
+    loadedToolNames: remoteCatalog.map((tool) => tool.name),
+  }, authorized);
+  const plan = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+
+  assertEquals(plan.visible.length, 128);
+  assertEquals(plan.visible.some((tool) => tool.name === "form_input"), true);
+  assertEquals(plan.visible.some((tool) => tool.name === "load_skill"), true);
+  assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), true);
+  assertEquals(plan.maxLoadedTools, 125);
+  assertEquals(state.loadedToolNames.size, 125);
+  assertEquals(state.loadedToolNames.has("catalog_tool_000"), false);
+  assertEquals(state.loadedToolNames.has("catalog_tool_129"), true);
+});
+
+it("tool search evicts the oldest loaded schema before activating a new match at capacity", () => {
+  const remoteCatalog = Array.from(
+    { length: 130 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const state = createToolExposureState();
+  for (const tool of remoteCatalog.slice(0, 125)) {
+    searchToolExposure({
+      query: tool.name,
+      authorized: remoteCatalog,
+      state,
+      maxLoadedTools: 125,
+    });
+  }
+  const result = searchToolExposure({
+    query: "catalog_tool_129",
+    authorized: remoteCatalog,
+    state,
+    maxLoadedTools: 125,
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["catalog_tool_129"]);
+  assertEquals(state.loadedToolNames.size, 125);
+  assertEquals(state.loadedToolNames.has("catalog_tool_000"), false);
+  assertEquals(state.loadedToolNames.has("catalog_tool_129"), true);
+});
+
 it("tool search never returns tools outside the currently authorized executable catalog", () => {
   assertEquals(
     searchToolExposure({

@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
 import { defineSchema } from "#veryfront/schemas";
-import { tool } from "#veryfront/tool";
+import { type RemoteToolSource, tool, type ToolDefinition } from "#veryfront/tool";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { agent } from "../index.ts";
 import type { AgentConfig, Message } from "../types.ts";
@@ -868,6 +868,180 @@ it("veryfront-cloud Anthropic and OpenAI transports default to framework fallbac
     await assistant.generate({ input: "hi" });
 
     assertEquals(observedTools, ["tool_search"]);
+  }
+});
+
+it("deferred OpenAI searches, exposes, and executes a remote tool beyond 128 authorized tools", async () => {
+  const lateToolName = "write_sandbox_files";
+  const remoteTools: ToolDefinition[] = [
+    ...Array.from(
+      { length: 132 },
+      (_, index): ToolDefinition => ({
+        name: `catalog_tool_${String(index).padStart(3, "0")}`,
+        description: "Catalog tool",
+        parameters: { type: "object", properties: {} },
+      }),
+    ),
+    {
+      name: lateToolName,
+      description: "Write sandbox files",
+      parameters: { type: "object", properties: {} },
+    },
+  ];
+  const allowedRemoteToolNames = remoteTools.map((tool) => tool.name);
+  const observedTools: string[][] = [];
+  let step = 0;
+  let executionCount = 0;
+  const remoteSource: RemoteToolSource = {
+    id: "veryfront-platform-mcp",
+    listTools: () => Promise.resolve(remoteTools),
+    executeTool: (toolName) => {
+      assertEquals(toolName, lateToolName);
+      executionCount++;
+      return Promise.resolve({ written: true });
+    },
+  };
+  const model: ModelRuntime = {
+    provider: "openai",
+    modelId: "gpt-5.5",
+    async doGenerate(options: unknown) {
+      observedTools.push(toolNames(options));
+      step++;
+      if (step === 1) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "search-1",
+            toolName: "tool_search",
+            input: JSON.stringify({ query: lateToolName }),
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      if (step === 2) {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "write-1",
+            toolName: lateToolName,
+            input: "{}",
+          }],
+          finishReason: "tool-calls",
+        };
+      }
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+  const assistant = agent(
+    {
+      id: "openai-large-deferred-catalog",
+      model: "openai/gpt-5.5",
+      system: "Use tools when needed.",
+      skills: false,
+      tools: true,
+      maxSteps: 4,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+      __vfRemoteToolSources: [remoteSource],
+      __vfAllowedRemoteTools: allowedRemoteToolNames,
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  const response = await assistant.generate({ input: "Write the sandbox files" });
+
+  assertEquals(observedTools.every((names) => names.length <= 128), true);
+  assertEquals(observedTools[0]?.includes("tool_search"), true);
+  assertEquals(observedTools[0]?.includes(lateToolName), false);
+  assertEquals(observedTools[1]?.includes(lateToolName), true);
+  assertEquals(executionCount, 1);
+  assertEquals(response.text, "done");
+});
+
+it("generate and stream budget restored exposure against an OpenAI request override", async () => {
+  const remoteTools: ToolDefinition[] = Array.from(
+    { length: 130 },
+    (_, index): ToolDefinition => ({
+      name: `catalog_tool_${String(index).padStart(3, "0")}`,
+      description: "Catalog tool",
+      parameters: { type: "object", properties: {} },
+    }),
+  );
+  const allowedRemoteToolNames = remoteTools.map((tool) => tool.name);
+  const observedGenerateTools: string[][] = [];
+  const observedStreamTools: string[][] = [];
+  const remoteSource: RemoteToolSource = {
+    id: "veryfront-platform-mcp",
+    listTools: () => Promise.resolve(remoteTools),
+    executeTool: () => Promise.resolve({ ok: true }),
+  };
+  const model: ModelRuntime = {
+    provider: "openai",
+    modelId: "gpt-5.5",
+    async doGenerate(options: unknown) {
+      observedGenerateTools.push(toolNames(options));
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+      };
+    },
+    async doStream(options: unknown) {
+      observedStreamTools.push(toolNames(options));
+      return {
+        stream: createRuntimeStream([
+          { type: "text-delta", text: "done" },
+          { type: "finish", finishReason: "stop" },
+        ]),
+      };
+    },
+  };
+  const assistant = agent(
+    {
+      id: "request-model-override-budget",
+      model: "anthropic/claude-opus-4-6",
+      system: "Use tools when needed.",
+      skills: true,
+      tools: {
+        form_input: tool({
+          id: "form_input",
+          description: "Collect input",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+        load_skill: tool({
+          id: "load_skill",
+          description: "Load a skill",
+          inputSchema: defineSchema((v) => v.object({}))(),
+          execute: () => ({}),
+        }),
+      },
+      maxSteps: 1,
+      resolveModelTransport: () => ({ model }),
+      __vfToolLoadingMode: "deferred",
+      __vfRemoteToolSources: [remoteSource],
+      __vfAllowedRemoteTools: allowedRemoteToolNames,
+      __vfToolExposureCheckpoint: {
+        version: 1,
+        loadedToolNames: allowedRemoteToolNames,
+      },
+    } as AgentConfig & RuntimeToolFilterConfig,
+  );
+
+  await assistant.generate({ input: "hi", model: "openai/gpt-5.5" });
+  await (await assistant.stream({ input: "hi", model: "openai/gpt-5.5" }))
+    .toDataStreamResponse().text();
+
+  for (const observedTools of [observedGenerateTools[0], observedStreamTools[0]]) {
+    assertEquals(observedTools?.length, 128);
+    assertEquals(observedTools?.includes("form_input"), true);
+    assertEquals(observedTools?.includes("load_skill"), true);
+    assertEquals(observedTools?.includes("tool_search"), true);
+    assertEquals(observedTools?.includes("catalog_tool_129"), true);
   }
 });
 
