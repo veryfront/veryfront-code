@@ -6459,6 +6459,12 @@
           "npm:@babel/types@7.29.0"
         ]
       },
+      "extensions/ext-redis": {
+        "dependencies": [
+          "npm:@redis/client@1.5.8",
+          "npm:redis@5.11.0"
+        ]
+      },
       "extensions/ext-sandbox-shell-tools": {
         "dependencies": [
           "jsr:@std/assert@1.0.19",
