@@ -630,7 +630,17 @@ export async function startNodeVeryfrontServer(
   };
 
   const ready = listenerReady.then(() => undefined).catch(async (startupError) => {
-    await stop();
+    try {
+      await stop();
+    } catch (cleanupError) {
+      // Startup is the primary failure. Cleanup still runs to completion, but
+      // a lifecycle rollback error must not replace the transport error that
+      // explains why the server never became ready.
+      logger.warn?.("Veryfront service server cleanup failed during startup rollback", {
+        startupError: startupError instanceof Error ? startupError.message : String(startupError),
+        cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      });
+    }
     throw startupError;
   });
   void ready.catch(() => undefined);
