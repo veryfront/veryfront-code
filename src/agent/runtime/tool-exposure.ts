@@ -36,7 +36,11 @@ export type ToolExposureCheckpointEvent = ToolExposureCheckpoint & {
 };
 
 /** Schema-free model-visible search result. */
-export type ToolSearchMatch = { name: string; description: string; status: "loaded" };
+export type ToolSearchMatch = {
+  name: string;
+  description: string;
+  status: "available" | "loaded";
+};
 
 /** Search output plus bounded observability counters. */
 export type ToolSearchResult = {

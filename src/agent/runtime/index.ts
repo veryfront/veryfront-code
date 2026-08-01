@@ -220,6 +220,7 @@ import {
   type ToolExposureCheckpoint,
   type ToolExposurePlan,
   type ToolExposureState,
+  type ToolSearchResult,
 } from "./tool-exposure.ts";
 
 const logger = serverLogger.component("agent");
@@ -258,16 +259,32 @@ function executeFrameworkToolSearch(input: {
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
   }
-  const result = searchToolExposure({
-    query,
-    authorized: input.plan.deferred,
-    state: input.state,
-    maxLoadedTools: input.plan.maxLoadedTools,
-  });
+  const alreadyVisible = input.plan.visible.find((tool) =>
+    tool.name === query && tool.name !== TOOL_SEARCH_TOOL_NAME
+  );
+  const result: ToolSearchResult = alreadyVisible
+    ? {
+      matches: [{
+        name: alreadyVisible.name,
+        description: alreadyVisible.description,
+        status: "available",
+      }],
+      resultCount: 1,
+      loadedCount: 0,
+      miss: false,
+    }
+    : searchToolExposure({
+      query,
+      authorized: input.plan.deferred,
+      state: input.state,
+      maxLoadedTools: input.plan.maxLoadedTools,
+    });
   return {
     result: {
       ...result,
-      nextStep: result.loadedCount > 0
+      nextStep: alreadyVisible
+        ? `The matching tool "${alreadyVisible.name}" is already available. Call it directly.`
+        : result.loadedCount > 0
         ? "Continue to the next model step. Loaded tool schemas will be available then."
         : "Continue with the available tools or answer without a tool.",
     },

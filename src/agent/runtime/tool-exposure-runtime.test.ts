@@ -1130,6 +1130,17 @@ it("deferred search cannot spend provider capacity on an already-visible bootstr
     assertEquals(names.includes("load_skill"), true);
     assertEquals(names.includes("tool_search"), true);
   }
+  assertEquals(response.toolCalls[0]?.result, {
+    matches: [{
+      name: "form_input",
+      description: "Collect input",
+      status: "available",
+    }],
+    resultCount: 1,
+    loadedCount: 0,
+    miss: false,
+    nextStep: 'The matching tool "form_input" is already available. Call it directly.',
+  });
   assertEquals(response.text, "done");
 });
 

@@ -302,6 +302,48 @@ it("deferred exposure uses the full provider budget once the exact-fit catalog i
   assertEquals(state.loadedToolNames.size, 126);
 });
 
+it("exact-fit deferred exposure loads the final schema without exceeding the provider budget", () => {
+  const remoteCatalog = Array.from(
+    { length: 126 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    ...remoteCatalog,
+  ];
+  const state = createToolExposureState(remoteCatalog.slice(0, 125).map((tool) => tool.name));
+
+  const searchStep = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+  assertEquals(searchStep.visible.length, 128);
+  assertEquals(searchStep.deferred.map((tool) => tool.name), ["catalog_tool_125"]);
+  assertEquals(searchStep.maxLoadedTools, 126);
+
+  const search = searchToolExposure({
+    query: "catalog_tool_125",
+    authorized: searchStep.deferred,
+    state,
+    maxLoadedTools: searchStep.maxLoadedTools,
+  });
+  assertEquals(search.loadedCount, 1);
+  assertEquals(state.loadedToolNames.size, 126);
+
+  const loadedStep = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+  assertEquals(loadedStep.visible.length, 128);
+  assertEquals(loadedStep.deferred, []);
+  assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
+});
+
 it("deferred exposure prunes revoked and bootstrap names before budget eviction", () => {
   const retained = definition("retained_tool", "Retained deferred tool");
   const authorized = [
