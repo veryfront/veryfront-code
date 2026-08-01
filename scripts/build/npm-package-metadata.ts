@@ -27,6 +27,8 @@ const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
 };
 
 export const EXTENSION_OWNED_DEPENDENCIES = [
+	"@aws-sdk/client-s3",
+	"@aws-sdk/lib-storage",
 	"@babel/generator",
 	"@babel/parser",
 	"@babel/traverse",

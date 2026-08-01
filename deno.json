@@ -44,6 +44,8 @@
     "./extensions/ext-llm-google",
     "./extensions/ext-llm-openai",
     "./extensions/ext-auth-jwt",
+    "./extensions/ext-blob-gcs",
+    "./extensions/ext-blob-s3",
     "./extensions/ext-bundler-esbuild",
     "./extensions/ext-cache-redis",
     "./extensions/ext-css-tailwind",
@@ -68,8 +70,7 @@
     "data/",
     ".deno_cache/",
     "cli/templates/files/",
-    "cli/templates/integrations/",
-    "extensions/"
+    "cli/templates/integrations/"
   ],
   "exports": {
     ".": "./src/index.ts",
@@ -96,6 +97,7 @@
     "./channels/invoke": "./src/channels/invoke.ts",
     "./tool": "./src/tool/index.ts",
     "./workflow": "./src/workflow/index.ts",
+    "./workflow/blob": "./src/workflow/blob/index.ts",
     "./workflow/worker": "./src/workflow/worker/index.ts",
     "./workflow/claude-code": "./src/workflow/claude-code/index.ts",
     "./workflow/claude-code/react": "./src/workflow/claude-code/react/index.ts",
@@ -111,6 +113,7 @@
     "./webhook": "./src/webhook/index.ts",
     "./mcp": "./src/mcp/index.ts",
     "./middleware": "./src/middleware/index.ts",
+    "./errors": "./src/errors/index.ts",
     "./observability": "./src/observability/index.ts",
     "./observability/sentry": "./src/observability/sentry.ts",
     "./observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",
