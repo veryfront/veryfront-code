@@ -293,7 +293,16 @@ describe("utils/response-body", () => {
   });
 
   it("rejects invalid byte limits", async () => {
-    for (const limit of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    for (
+      const limit of [
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.MAX_SAFE_INTEGER + 1,
+        1e100,
+      ]
+    ) {
       await assertRejects(
         () => readResponseTextPrefix(new Response("body"), limit),
         RangeError,

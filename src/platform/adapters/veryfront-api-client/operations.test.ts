@@ -13,6 +13,11 @@ import {
   __resetLogRecordEmitterForTests,
   type LogEntry,
 } from "#veryfront/utils/logger/index.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+import {
+  createVeryfrontApiTransport,
+  type TransportRequestInit,
+} from "#veryfront/platform/adapters/veryfront-api-transport.ts";
 import { VeryfrontAPIOperations } from "./operations.ts";
 
 function createOps(
@@ -503,6 +508,123 @@ describe("VeryfrontAPIOperations", () => {
         RangeError,
         "exceeds 2 bytes",
       );
+    });
+  });
+
+  describe("bounded transport failures", () => {
+    it("retries a body read aborted by the per-attempt timeout", async () => {
+      let fetchCalls = 0;
+      let cancellations = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull() {
+                return new Promise<void>(() => {});
+              },
+              cancel() {
+                cancellations++;
+              },
+            }),
+          ),
+        );
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+        timeoutMs: 5,
+      });
+
+      await assertRejects(
+        () =>
+          transport.request("/bounded", {
+            maxResponseBytes: 128,
+            jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 8 },
+          }),
+        VeryfrontError,
+      );
+
+      assertEquals(fetchCalls, 2);
+      assertEquals(cancellations, 2);
+    });
+
+    it("preserves a 400 status when its diagnostic body is malformed UTF-8", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(new Uint8Array([0xc3, 0x28]), {
+            status: 400,
+            statusText: "Bad Request",
+          }),
+        );
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+
+      const error = await assertRejects(
+        () => transport.request("/invalid"),
+        VeryfrontError,
+        "API request failed: 400 Bad Request",
+      );
+
+      assertEquals((error as VeryfrontError).status, 400);
+      assertEquals(fetchCalls, 1);
+    });
+
+    it("retries a 500 even when its diagnostic body is malformed UTF-8", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(new Uint8Array([0xc3, 0x28]), {
+            status: 500,
+            statusText: "Internal Server Error",
+          }),
+        );
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+      });
+
+      await assertRejects(
+        () => transport.request("/failed"),
+        VeryfrontError,
+        "API request failed after 1 retries",
+      );
+
+      assertEquals(fetchCalls, 2);
+    });
+
+    it("rejects invalid bounded options before fetching", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("{}"));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+      const invalidOptions = [
+        { maxResponseBytes: 0 },
+        { maxResponseBytes: Number.MAX_SAFE_INTEGER + 1 },
+        { jsonStringFieldWithinLimit: { fieldName: "", maximumBytes: 1 } },
+        { jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 1.5 } },
+      ] as TransportRequestInit[];
+
+      for (const init of invalidOptions) {
+        await assertRejects(() => transport.request("/invalid", init));
+      }
+      assertEquals(fetchCalls, 0);
     });
   });
 
