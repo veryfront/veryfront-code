@@ -9,28 +9,64 @@ import {
   invalidateCompiler,
   invalidateProjectCSS,
 } from "./tailwind-compiler.ts";
+import {
+  createProjectCSSRequestContext,
+  storeProjectCSS,
+  tryGetProjectCSSFromLocalFallback,
+} from "./project-css-cache.ts";
+import { hashCSS } from "./css-identity.ts";
 
-// Simple stylesheet without plugins — avoids loading @tailwindcss/typography from esm.sh in tests
+// Simple provider-owned stylesheet without plugin directives.
 const TEST_STYLESHEET = `@import "tailwindcss";`;
 
+function forbidNetwork(): () => void {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch =
+    (() => Promise.reject(new Error("CSS project cache tests must not fetch"))) as typeof fetch;
+  return () => {
+    globalThis.fetch = originalFetch;
+  };
+}
+
 describe("styles-builder/project-css-cache", () => {
+  it("hash-frames project and environment segments before cache-key use", () => {
+    const context = createProjectCSSRequestContext(
+      "project:*:scope",
+      TEST_STYLESHEET,
+      ["alpha"],
+      {
+        cssPipelineIdentity: "pipeline",
+        environment: "preview:*:environment",
+      },
+    );
+
+    assertEquals(context.cacheKey.includes("project:*:scope"), false);
+    assertEquals(context.cacheKey.includes("preview:*:environment"), false);
+    assertEquals(context.cacheKey.startsWith("v4:"), true);
+  });
+
+  it("does not repopulate a project cache from a pre-invalidation context", async () => {
+    const projectSlug = `stale-project-context-${crypto.randomUUID()}`;
+    const candidates = ["alpha"];
+    const context = createProjectCSSRequestContext(
+      projectSlug,
+      TEST_STYLESHEET,
+      candidates,
+      { cssPipelineIdentity: "pipeline" },
+    );
+    const css = ".alpha{display:block}";
+
+    invalidateProjectCSS(projectSlug);
+    await storeProjectCSS(
+      context,
+      { css, hash: hashCSS(css), candidatesHash: context.candidatesHash },
+      candidates,
+    );
+    assertEquals(await tryGetProjectCSSFromLocalFallback(context, candidates), undefined);
+  });
+
   it("populates hash-level cache on fresh generation so other pods can serve CSS", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((input: URL | Request | string) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
-
-      if (!url.includes("tailwindcss")) {
-        return Promise.reject(new Error(`Unexpected fetch URL during test: ${url}`));
-      }
-
-      return Promise.resolve(
-        new Response("@layer theme, base, components, utilities;", { status: 200 }),
-      );
-    }) as typeof fetch;
+    const restoreFetch = forbidNetwork();
 
     const projectSlug = `hash-cache-test-${crypto.randomUUID()}`;
 
@@ -51,7 +87,7 @@ describe("styles-builder/project-css-cache", () => {
       assertEquals(typeof cached, "string");
       assertEquals(cached!.length > 0, true);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreFetch();
       clearCSSCache();
       invalidateCompiler();
       invalidateProjectCSS(projectSlug);
@@ -59,22 +95,7 @@ describe("styles-builder/project-css-cache", () => {
   });
 
   it("invalidates project CSS cache when candidates change or explicit invalidation runs", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = ((input: URL | Request | string) => {
-      const url = typeof input === "string"
-        ? input
-        : input instanceof URL
-        ? input.toString()
-        : input.url;
-
-      if (!url.includes("tailwindcss")) {
-        return Promise.reject(new Error(`Unexpected fetch URL during test: ${url}`));
-      }
-
-      return Promise.resolve(
-        new Response("@layer theme, base, components, utilities;", { status: 200 }),
-      );
-    }) as typeof fetch;
+    const restoreFetch = forbidNetwork();
 
     const projectSlug = `cache-test-${crypto.randomUUID()}`;
     const stylesheet = TEST_STYLESHEET;
@@ -106,7 +127,7 @@ describe("styles-builder/project-css-cache", () => {
       const afterInvalidation = await getProjectCSS(projectSlug, stylesheet, candidatesB, options);
       assertEquals(afterInvalidation.fromCache, false);
     } finally {
-      globalThis.fetch = originalFetch;
+      restoreFetch();
       clearCSSCache();
       invalidateCompiler();
       invalidateProjectCSS(projectSlug);

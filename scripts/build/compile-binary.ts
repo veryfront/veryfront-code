@@ -5,7 +5,6 @@
 
 import { parseArgs } from "#std/flags";
 import { fromFileUrl, isAbsolute, join } from "#std/path.ts";
-import { getBinaryPluginBundleIncludes } from "../../src/build/binary-plugin-includes.ts";
 
 const PROJECT_ROOT = fromFileUrl(new URL("../..", import.meta.url));
 export const DEFAULT_INCLUDES = [
@@ -54,7 +53,6 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
 
   for (const include of [
     ...DEFAULT_INCLUDES,
-    ...getBinaryPluginBundleIncludes(),
     ...options.extraIncludes,
   ]) {
     args.push("--include", include);

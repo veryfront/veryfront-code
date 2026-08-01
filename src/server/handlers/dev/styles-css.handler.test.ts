@@ -127,7 +127,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(first.continue, false);
       assertEquals(first.response!.status, 200);
       assertEquals(firstBody.length > 0, true);
-      assertEquals(initialFetchCount > 0, true);
+      assertEquals(initialFetchCount, 0);
 
       invalidateCompiler();
 
@@ -147,7 +147,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
     }
   });
 
-  it("serves prepared CSS without rescanning files after the first request", async () => {
+  it("does not reuse prepared CSS after the candidate snapshot changes", async () => {
     const fetchMock = mockTailwindFetch();
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
@@ -183,7 +183,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       const secondBody = await second.response!.text();
 
       assertEquals(second.response!.status, 200);
-      assertEquals(secondBody, firstBody);
+      assertEquals(secondBody === firstBody, false);
+      assertEquals(secondBody.includes(".text-fuchsia-500"), false);
       assertEquals(fetchMock.getCallCount(), initialFetchCount);
     } finally {
       fetchMock.restore();

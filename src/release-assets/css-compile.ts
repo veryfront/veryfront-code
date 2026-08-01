@@ -2,8 +2,8 @@
  * Release Asset Manifest — production CSS compiler.
  *
  * Provides the `compileProjectCss` implementation injected into the build
- * executor's client. It compiles a project's Tailwind CSS directly through the
- * core compiler (`generateTailwindCSS`) against the candidates the executor
+ * executor's client. It compiles project CSS through an explicitly registered
+ * processor (`generateTailwindCSS` is retained as a compatibility name) against the candidates
  * extracted from the materialized release file set, using the project
  * stylesheet the executor resolved from that same file set.
  *
@@ -12,21 +12,26 @@
  *   the distributed/project-CSS cache (`initializeProjectCSSCache`,
  *   prepared-project-css, style-artifact resolution) — the very machinery whose
  *   per-route candidate contract and distributed-cache init motivated deferring
- *   CSS from the builder. `generateTailwindCSS` is the pure compile primitive:
- *   it resolves the `CSSProcessor` extension (auto-registering the built-in
- *   `@veryfront/ext-css-tailwind` on first use) and calls
- *   `compiler.build(candidates)` with no cross-request/distributed state.
+ *   CSS from the builder. The compile primitive captures explicit compiler and
+ *   optimizer providers once and performs no discovery, network loading, or
+ *   empty-output fallback.
  * - Work is bounded: one compile over the candidate set the executor already
  *   gathered, output minified, no background tasks.
- * - It is defensive by construction: every failure path returns `null` so the
- *   executor keeps its `css:no-pipeline` / `css:compile-failed` gap and proceeds.
+ * - `null` means only that there is no stylesheet and no candidate to compile.
+ *   Provider/compiler failures propagate to the executor, which records its
+ *   explicit `css:compile-failed` gap.
  *
  * @module release-assets/css-compile
  */
 
 import { serverLogger } from "#veryfront/utils";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { generateTailwindCSS, hashCSS } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import {
+  acquireCSSGenerationSession,
+  generateTailwindCSS,
+  hashCSS,
+} from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import { composeCSSStyleProfileHash } from "#veryfront/html/styles-builder/css-identity.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 
 const logger = serverLogger.component("release-asset-css-compile");
@@ -52,9 +57,9 @@ export interface CompileProjectCssRuntimeOptions {
  * Build a `compileProjectCss` function bound to a specific release build.
  *
  * The returned function matches the build executor's injected client signature:
- * `(candidates, stylesheet, options) => Promise<{ css, styleProfileHash } | null>`. It
- * NEVER throws — any failure resolves to `null` so the executor records a CSS
- * gap and proceeds.
+ * `(candidates, stylesheet, options) => Promise<{ css, styleProfileHash } | null>`.
+ * Missing providers and compilation failures reject; only a genuinely empty
+ * CSS input resolves to `null`.
  */
 export function createCompileProjectCss(
   options: CompileProjectCssOptions,
@@ -68,50 +73,45 @@ export function createCompileProjectCss(
     stylesheet: string | undefined,
     runtimeOptions?: CompileProjectCssRuntimeOptions,
   ): Promise<CompileProjectCssResult | null> => {
-    try {
-      // A stylesheet can emit base/custom CSS without any utility candidates
-      // (CSS variables, global rules), so only skip when there is neither a
-      // stylesheet nor any candidates to compile.
-      if (candidates.size === 0 && !stylesheet) {
-        logger.debug("No CSS candidates or stylesheet for release; skipping compile", {
-          projectScope: options.projectScope,
-        });
-        return null;
-      }
-
-      const styleProfile = createStyleScopeProfile(runtimeOptions?.config ?? options.config);
-
-      const result = await generateTailwindCSS(stylesheet, candidates, {
-        minify: true,
-        environment: "production",
-        buildMode: "production",
-        projectSlug: options.projectScope,
-      });
-
-      if (result.error || !result.css) {
-        logger.warn("Release asset CSS compile produced no output", {
-          projectScope: options.projectScope,
-          error: result.error,
-        });
-        return null;
-      }
-
-      logger.debug("Release asset CSS compiled", {
+    // A stylesheet can emit base/custom CSS without any utility candidates
+    // (CSS variables, global rules), so only skip when there is neither a
+    // stylesheet nor any candidates to compile.
+    if (candidates.size === 0 && !stylesheet) {
+      logger.debug("No CSS candidates or stylesheet for release; skipping compile", {
         projectScope: options.projectScope,
-        candidateCount: candidates.size,
-        cssLength: result.css.length,
-        cssHash: hashCSS(result.css),
-        styleProfileHash: styleProfile.hash,
-      });
-
-      return { css: result.css, styleProfileHash: styleProfile.hash };
-    } catch (error) {
-      // Defensive: any failure → null so the executor keeps the CSS gap.
-      logger.warn("Release asset CSS compile failed (returning null)", {
-        projectScope: options.projectScope,
-        error: error instanceof Error ? error.message : String(error),
       });
       return null;
     }
+
+    const styleProfile = createStyleScopeProfile(runtimeOptions?.config ?? options.config);
+    const generationSession = acquireCSSGenerationSession(true);
+    const resolvedStylesheet = stylesheet ??
+      generationSession.compilationSession.defaultStylesheet;
+
+    const result = await generateTailwindCSS(resolvedStylesheet, candidates, {
+      minify: true,
+      environment: "production",
+      buildMode: "production",
+      projectSlug: options.projectScope,
+    }, { generationSession });
+
+    if (result.css.length === 0) {
+      throw new TypeError("Release asset CSS compiler produced an empty output");
+    }
+
+    const styleArtifactProfileHash = composeCSSStyleProfileHash(
+      styleProfile.hash,
+      result.cacheIdentity,
+    );
+
+    logger.debug("Release asset CSS compiled", {
+      projectScope: options.projectScope,
+      candidateCount: candidates.size,
+      cssLength: result.css.length,
+      cssHash: hashCSS(result.css),
+      styleProfileHash: styleArtifactProfileHash,
+    });
+
+    return { css: result.css, styleProfileHash: styleArtifactProfileHash };
   };
 }
