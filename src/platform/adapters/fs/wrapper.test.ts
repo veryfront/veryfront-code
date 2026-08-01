@@ -18,6 +18,7 @@ import { denoAdapter } from "../deno.ts";
 import { MultiProjectFSAdapter } from "./veryfront/multi-project-adapter.ts";
 import { VERYFRONT_FS_ADAPTER_KIND } from "./veryfront/adapter-kind.ts";
 import type { ContextualFSAdapter, FSAdapter, StyleArtifactAccess } from "./veryfront/types.ts";
+import { captureBoundedTextReader } from "../bounded-text-reader.ts";
 
 function createMockFSAdapter(overrides: Partial<FSAdapter> = {}): FSAdapter {
   return {
@@ -119,6 +120,27 @@ describe("isExtendedFSAdapter", () => {
 
     assertEquals(isExtendedFSAdapter(partialFs as any), false);
   });
+
+  it("does not let Object.prototype classify a local adapter as extended", () => {
+    let forgedCalls = 0;
+    for (const key of ["isVeryfrontAdapter", "getUnderlyingAdapter", "isMultiProjectMode"]) {
+      Object.defineProperty(Object.prototype, key, {
+        configurable: true,
+        value: () => {
+          forgedCalls++;
+          return true;
+        },
+      });
+    }
+    try {
+      assertEquals(isExtendedFSAdapter(denoAdapter.fs), false);
+      assertEquals(forgedCalls, 0);
+    } finally {
+      for (const key of ["isVeryfrontAdapter", "getUnderlyingAdapter", "isMultiProjectMode"]) {
+        delete (Object.prototype as Record<string, unknown>)[key];
+      }
+    }
+  });
 });
 
 describe("hasHostedStyleConfigCapability", () => {
@@ -213,6 +235,99 @@ describe("isVirtualFilesystem", () => {
 });
 
 describe("FSAdapterWrapper", () => {
+  it("does not allow published metadata to forge a whole-file read ceiling", async () => {
+    let unboundedReads = 0;
+    const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+      readFile: () => {
+        unboundedReads++;
+        return Promise.resolve("oversized unbounded text");
+      },
+    }));
+
+    assertEquals(Reflect.set(wrapper, "maxWholeFileReadBytes", 1), false);
+    assertEquals(Reflect.deleteProperty(wrapper, "maxWholeFileReadBytes"), false);
+    await assertRejects(
+      () => captureBoundedTextReader(wrapper).readUtf8("/asset.txt", 1, "Asset"),
+      TypeError,
+      "genuine exact bounded byte reader",
+    );
+    assertEquals(unboundedReads, 0);
+  });
+
+  it("publishes every optional filesystem capability as immutable own data", async () => {
+    let boundedReads = 0;
+    let exactReads = 0;
+    const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+      readFileBytesBounded: () => {
+        boundedReads++;
+        return Promise.resolve(new Uint8Array([1]));
+      },
+      readFileBytesWithinLimit: () => {
+        exactReads++;
+        return Promise.resolve(new Uint8Array([2]));
+      },
+      readFileBytes: () => Promise.resolve(new Uint8Array([3])),
+      maxWholeFileReadBytes: 3,
+    }));
+    const publishedCapabilities = [
+      "symlinkSemantics",
+      "maxWholeFileReadBytes",
+      "readFileBytesBounded",
+      "readFileBytesWithinLimit",
+      "writeFileBytes",
+      "refreshSourceSnapshot",
+      "ensureSourceSnapshotFresh",
+      "getSourceSnapshotVersion",
+      "getStyleArtifactAccess",
+    ] as const;
+
+    for (const key of publishedCapabilities) {
+      const descriptor = Object.getOwnPropertyDescriptor(wrapper, key);
+      assertExists(descriptor, key);
+      assertEquals("value" in descriptor, true, key);
+      assertEquals(descriptor.enumerable, true, key);
+      assertEquals(descriptor.configurable, false, key);
+      assertEquals(descriptor.writable, false, key);
+      assertEquals(Reflect.deleteProperty(wrapper, key), false, key);
+    }
+    assertEquals(Reflect.set(wrapper, "readFileBytesBounded", async () => new Uint8Array()), false);
+    assertEquals(
+      Reflect.set(wrapper, "readFileBytesWithinLimit", async () => new Uint8Array()),
+      false,
+    );
+    assertThrows(
+      () => Object.defineProperty(wrapper, "maxWholeFileReadBytes", { value: 1 }),
+      TypeError,
+    );
+
+    assertEquals([...(await wrapper.readFileBytesBounded!("/asset.bin", 1))], [1]);
+    assertEquals([...(await wrapper.readFileBytesWithinLimit!("/asset.bin", 1))], [2]);
+    assertEquals({ boundedReads, exactReads }, { boundedReads: 1, exactReads: 1 });
+  });
+
+  it("keeps internal authority private while allowing unrelated subclass state", async () => {
+    class DerivedWrapper extends FSAdapterWrapper {
+      readonly marker = "derived";
+    }
+
+    const wrapper = new DerivedWrapper(createMockFSAdapter({
+      readFileBytes: () => Promise.resolve(new Uint8Array([7])),
+      maxWholeFileReadBytes: 1,
+    }));
+    const forged = wrapper as unknown as Record<string, unknown>;
+    Reflect.set(forged, "_fileCapabilities", Object.freeze({}));
+    Reflect.set(
+      forged,
+      "_fsAdapter",
+      createMockFSAdapter({
+        readFile: () => Promise.resolve("forged"),
+      }),
+    );
+
+    assertEquals(wrapper.marker, "derived");
+    assertEquals([...(await wrapper.readFileBytes("/asset.bin"))], [7]);
+  });
+
   it("propagates only an explicit own symlink-free capability", () => {
     const explicit = createMockFSAdapter({ symlinkSemantics: "none" });
     const inherited = Object.create(explicit) as FSAdapter;
@@ -496,6 +611,20 @@ describe("FSAdapterWrapper", () => {
       assertEquals(replacementCalls, 0);
     });
 
+    it("post-verifies an exact reader before re-advertising its result", async () => {
+      const wrapper = new FSAdapterWrapper(createMockFSAdapter({
+        readFileBytesWithinLimit() {
+          return Promise.resolve(new Uint8Array([1, 2, 3]));
+        },
+      }));
+
+      await assertRejects(
+        () => wrapper.readFileBytesWithinLimit!("/dishonest.bin", 2),
+        TypeError,
+        "exceeds 2 bytes",
+      );
+    });
+
     it("rejects accessor and Proxy capabilities without invoking their hooks", () => {
       let getterCalls = 0;
       const accessor = createMockFSAdapter();
@@ -554,17 +683,117 @@ describe("FSAdapterWrapper", () => {
   });
 
   describe("maxWholeFileReadBytes", () => {
-    it("preserves a fixed whole-read ceiling only with binary whole reads", () => {
+    it("captures the whole reader and its ceiling as one immutable capability", async () => {
+      let originalReads = 0;
+      let replacementReads = 0;
+      let textReads = 0;
+      const fsAdapter = createMockFSAdapter({
+        readFile: () => {
+          textReads++;
+          return Promise.resolve("unbounded fallback");
+        },
+        readFileBytes: () => {
+          originalReads++;
+          return Promise.resolve(new Uint8Array([1, 2, 3]));
+        },
+        maxWholeFileReadBytes: 3,
+      });
+      const wrapper = new FSAdapterWrapper(fsAdapter);
+
+      fsAdapter.readFileBytes = () => {
+        replacementReads++;
+        return Promise.resolve(new Uint8Array([9]));
+      };
+      Object.defineProperty(fsAdapter, "maxWholeFileReadBytes", {
+        configurable: true,
+        value: 1,
+      });
+
+      assertEquals(wrapper.maxWholeFileReadBytes, 3);
+      assertEquals([...await wrapper.readFileBytes("/asset.bin")], [1, 2, 3]);
+      assertEquals({ originalReads, replacementReads, textReads }, {
+        originalReads: 1,
+        replacementReads: 0,
+        textReads: 0,
+      });
+    });
+
+    it("preserves a fixed whole-read ceiling only with its captured binary reader", () => {
       const capable = new FSAdapterWrapper(createMockFSAdapter({
         readFileBytes: () => Promise.resolve(new Uint8Array()),
         maxWholeFileReadBytes: 1024,
       }));
-      const textOnly = new FSAdapterWrapper(createMockFSAdapter({
-        maxWholeFileReadBytes: 1024,
-      }));
 
       assertEquals(capable.maxWholeFileReadBytes, 1024);
-      assertEquals(textOnly.maxWholeFileReadBytes, undefined);
+      assertThrows(
+        () =>
+          new FSAdapterWrapper(createMockFSAdapter({
+            maxWholeFileReadBytes: 1024,
+          })),
+        TypeError,
+        "requires readFileBytes",
+      );
+    });
+
+    it("rejects accessor-backed binary capabilities without invoking them", () => {
+      for (
+        const key of [
+          "readFileBytes",
+          "readFileBytesBounded",
+          "readFileBytesWithinLimit",
+          "writeFileBytes",
+          "maxWholeFileReadBytes",
+        ] as const
+      ) {
+        let getterCalls = 0;
+        const accessor = createMockFSAdapter();
+        Object.defineProperty(accessor, key, {
+          configurable: true,
+          get() {
+            getterCalls++;
+            return key === "maxWholeFileReadBytes" ? 1024 : () => Promise.resolve(new Uint8Array());
+          },
+        });
+
+        assertThrows(
+          () => new FSAdapterWrapper(accessor),
+          TypeError,
+          "data",
+        );
+        assertEquals(getterCalls, 0, key);
+      }
+    });
+
+    it("rejects hostile capability prototypes without invoking Proxy traps", () => {
+      let getTraps = 0;
+      let descriptorTraps = 0;
+      let prototypeTraps = 0;
+      const hostilePrototype = new Proxy({}, {
+        get() {
+          getTraps++;
+          throw new Error("get trap");
+        },
+        getOwnPropertyDescriptor() {
+          descriptorTraps++;
+          throw new Error("descriptor trap");
+        },
+        getPrototypeOf() {
+          prototypeTraps++;
+          throw new Error("prototype trap");
+        },
+      });
+      const trapped = Object.setPrototypeOf(createMockFSAdapter(), hostilePrototype);
+
+      assertThrows(
+        () => new FSAdapterWrapper(trapped),
+        TypeError,
+        "Proxy",
+      );
+      assertEquals({ getTraps, descriptorTraps, prototypeTraps }, {
+        getTraps: 0,
+        descriptorTraps: 0,
+        prototypeTraps: 0,
+      });
     });
 
     it("does not invoke or leak hostile ceiling metadata traps", () => {
@@ -578,7 +807,11 @@ describe("FSAdapterWrapper", () => {
           return 1024;
         },
       });
-      assertEquals(new FSAdapterWrapper(accessor).maxWholeFileReadBytes, undefined);
+      assertThrows(
+        () => new FSAdapterWrapper(accessor),
+        TypeError,
+        "data property",
+      );
       assertEquals(getterCalls, 0);
 
       const hostilePrototype = new Proxy({}, {
@@ -590,7 +823,7 @@ describe("FSAdapterWrapper", () => {
         createMockFSAdapter({ readFileBytes: () => Promise.resolve(new Uint8Array()) }),
         hostilePrototype,
       );
-      assertEquals(new FSAdapterWrapper(trapped).maxWholeFileReadBytes, undefined);
+      assertThrows(() => new FSAdapterWrapper(trapped), TypeError, "Proxy");
     });
   });
 
@@ -668,6 +901,37 @@ describe("FSAdapterWrapper", () => {
 
     it("does not advertise style artifact access when the underlying adapter omits it", () => {
       assertEquals(new FSAdapterWrapper(createMockFSAdapter()).getStyleArtifactAccess, undefined);
+    });
+
+    it("does not invoke accessors or trust Object.prototype for optional capabilities", () => {
+      let getterCalls = 0;
+      const accessor = createMockFSAdapter();
+      Object.defineProperty(accessor, "getStyleArtifactAccess", {
+        configurable: true,
+        get() {
+          getterCalls++;
+          return () => Promise.reject(new Error("must not run"));
+        },
+      });
+      assertThrows(
+        () => new FSAdapterWrapper(accessor),
+        TypeError,
+        "data-property method",
+      );
+      assertEquals(getterCalls, 0);
+
+      Object.defineProperty(Object.prototype, "getStyleArtifactAccess", {
+        configurable: true,
+        value: () => Promise.reject(new Error("forged capability")),
+      });
+      try {
+        assertEquals(
+          new FSAdapterWrapper(createMockFSAdapter()).getStyleArtifactAccess,
+          undefined,
+        );
+      } finally {
+        delete (Object.prototype as Record<string, unknown>).getStyleArtifactAccess;
+      }
     });
   });
 
@@ -902,6 +1166,29 @@ describe("FSAdapterWrapper", () => {
       const wrapper = new FSAdapterWrapper(fsAdapter);
 
       assertEquals(wrapper.isContextualMode(), true);
+    });
+
+    it("does not invoke a contextual method forged on Object.prototype", () => {
+      let forgedCalls = 0;
+      Object.defineProperty(Object.prototype, "setRequestToken", {
+        configurable: true,
+        value: () => {
+          forgedCalls++;
+        },
+      });
+      try {
+        const wrapper = new FSAdapterWrapper(createMockContextualAdapter({
+          runWithContext: <T>(_slug: string, _token: string, fn: () => Promise<T>) => fn(),
+        }));
+        assertThrows(
+          () => wrapper.setRequestToken("secret"),
+          NotSupportedError,
+          "setRequestToken",
+        );
+        assertEquals(forgedCalls, 0);
+      } finally {
+        delete (Object.prototype as Record<string, unknown>).setRequestToken;
+      }
     });
 
     it("setRequestToken should throw when not supported", () => {

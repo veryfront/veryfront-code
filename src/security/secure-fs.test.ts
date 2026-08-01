@@ -6,10 +6,11 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createSecureFs, wrapAdapterWithSecurity } from "./secure-fs.ts";
+import { createSecureFs, SecureFs, wrapAdapterWithSecurity } from "./secure-fs.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import type { RuntimeAdapter, ServeOptions, Server } from "#veryfront/platform/adapters/base.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 
 function createMockFileSystem(
   overrides: Partial<RuntimeAdapter["fs"]> = {},
@@ -604,6 +605,97 @@ describe("SecureFs", () => {
     assertEquals("setContext" in secureFs, false);
   });
 
+  it("does not allow published metadata to forge a whole-file read ceiling", async () => {
+    let unboundedReads = 0;
+    const adapter = createMockAdapter();
+    adapter.fs = createMockFileSystem({
+      readFileBytes: () => {
+        unboundedReads++;
+        return Promise.resolve(new Uint8Array([1, 2]));
+      },
+    });
+    const secureFs = createSecureFs({ baseDir: "/tmp", adapter, context: "build" });
+
+    assertEquals(Reflect.set(secureFs, "maxWholeFileReadBytes", 1), false);
+    assertEquals(Reflect.deleteProperty(secureFs, "maxWholeFileReadBytes"), false);
+    await assertRejects(
+      () => captureBoundedTextReader(secureFs).readUtf8("file.txt", 1, "Asset"),
+      TypeError,
+      "genuine exact bounded byte reader",
+    );
+    assertEquals(unboundedReads, 0);
+  });
+
+  it("publishes bounded filesystem capabilities as immutable own data", async () => {
+    let boundedReads = 0;
+    let exactReads = 0;
+    const adapter = createMockAdapter();
+    adapter.fs = createMockFileSystem({
+      readFileBytes: () => Promise.resolve(new Uint8Array([3])),
+      maxWholeFileReadBytes: 3,
+      readFileBytesBounded: () => {
+        boundedReads++;
+        return Promise.resolve(new Uint8Array([1]));
+      },
+      readFileBytesWithinLimit: () => {
+        exactReads++;
+        return Promise.resolve(new Uint8Array([2]));
+      },
+    });
+    const secureFs = createSecureFs({ baseDir: "/tmp", adapter, context: "build" });
+
+    for (
+      const key of [
+        "maxWholeFileReadBytes",
+        "readFileBytesBounded",
+        "readFileBytesWithinLimit",
+      ] as const
+    ) {
+      const descriptor = Object.getOwnPropertyDescriptor(secureFs, key);
+      assertStrictEquals(descriptor?.enumerable, true, key);
+      assertStrictEquals(descriptor?.configurable, false, key);
+      assertStrictEquals(descriptor?.writable, false, key);
+      assertEquals(Reflect.deleteProperty(secureFs, key), false, key);
+    }
+    assertEquals(
+      Reflect.set(secureFs, "readFileBytesBounded", async () => new Uint8Array()),
+      false,
+    );
+    assertEquals(
+      Reflect.set(secureFs, "readFileBytesWithinLimit", async () => new Uint8Array()),
+      false,
+    );
+    assertThrows(
+      () => Object.defineProperty(secureFs, "maxWholeFileReadBytes", { value: 1 }),
+      TypeError,
+    );
+
+    assertEquals([...(await secureFs.readFileBytesBounded!("file.txt", 1))], [1]);
+    assertEquals([...(await secureFs.readFileBytesWithinLimit!("file.txt", 1))], [2]);
+    assertEquals({ boundedReads, exactReads }, { boundedReads: 1, exactReads: 1 });
+  });
+
+  it("keeps policy authority private while allowing unrelated subclass state", async () => {
+    class DerivedSecureFs extends SecureFs {
+      readonly marker = "derived";
+    }
+
+    const adapter = createMockAdapter();
+    adapter.fs = createMockFileSystem({
+      readFile: () => Promise.resolve("original"),
+    });
+    const secureFs = new DerivedSecureFs({ baseDir: "/tmp", adapter, context: "build" });
+    const forged = secureFs as unknown as Record<string, unknown>;
+    Reflect.set(forged, "fileSystem", {
+      readFile: () => Promise.resolve("forged"),
+    });
+    Reflect.set(forged, "config", Object.freeze({}));
+    Reflect.deleteProperty(forged, "validationOptions");
+
+    assertEquals(secureFs.marker, "derived");
+    assertEquals(await secureFs.readFile("file.txt"), "original");
+  });
+
   it("keeps validation authoritative when an observer throws", async () => {
     const baseDir = await Deno.makeTempDir();
     try {
@@ -765,6 +857,48 @@ describe("SecureFs", () => {
     assertEquals(replacementCalls, 0);
   });
 
+  it("post-verifies an exact reader before re-advertising its result", async () => {
+    const fileSystem = createMockFileSystem({
+      readFileBytesWithinLimit() {
+        return Promise.resolve(new Uint8Array([1, 2, 3]));
+      },
+    });
+    const secureFs = createSecureFs({
+      baseDir: "/project",
+      adapter: { fs: fileSystem } as RuntimeAdapter,
+      context: "internal",
+    });
+
+    await assertRejects(
+      () => secureFs.readFileBytesWithinLimit!("assets/app.bin", 2),
+      TypeError,
+      "exceeds 2 bytes",
+    );
+  });
+
+  it("does not let Object.prototype provide a missing filesystem method", () => {
+    const fileSystem = createMockFileSystem();
+    delete (fileSystem as Partial<RuntimeAdapter["fs"]>).writeFile;
+    Object.defineProperty(Object.prototype, "writeFile", {
+      configurable: true,
+      value: () => Promise.resolve(),
+    });
+    try {
+      assertThrows(
+        () =>
+          createSecureFs({
+            baseDir: "/project",
+            adapter: { fs: fileSystem } as RuntimeAdapter,
+            context: "internal",
+          }),
+        VeryfrontError,
+        "must provide writeFile",
+      );
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).writeFile;
+    }
+  });
+
   it("rejects traversal and invalid limits before invoking an exact bounded reader", async () => {
     let reads = 0;
     const fileSystem = createMockFileSystem({
@@ -809,7 +943,7 @@ describe("SecureFs", () => {
           context: "internal",
         }),
       VeryfrontError,
-      "must be a data-property method",
+      "binary capabilities are invalid",
     );
     assertEquals(getterCalls, 0);
 
@@ -833,7 +967,7 @@ describe("SecureFs", () => {
           context: "internal",
         }),
       VeryfrontError,
-      "non-Proxy function",
+      "binary capabilities are invalid",
     );
     assertEquals(applyTraps, 0);
 
@@ -855,6 +989,30 @@ describe("SecureFs", () => {
       "Proxy",
     );
     assertEquals(proxyTraps, 0);
+  });
+
+  it("rejects an accessor-backed binary writer as sanitized configuration", () => {
+    let getterCalls = 0;
+    const fileSystem = createMockFileSystem();
+    Object.defineProperty(fileSystem, "writeFileBytes", {
+      configurable: true,
+      get() {
+        getterCalls++;
+        return () => Promise.resolve();
+      },
+    });
+
+    assertThrows(
+      () =>
+        createSecureFs({
+          baseDir: "/project",
+          adapter: { fs: fileSystem } as RuntimeAdapter,
+          context: "internal",
+        }),
+      VeryfrontError,
+      "binary capabilities are invalid",
+    );
+    assertEquals(getterCalls, 0);
   });
 
   it("does not advertise exact bounded reads when the adapter lacks the capability", () => {
@@ -901,7 +1059,7 @@ describe("SecureFs", () => {
           context: "internal",
         }),
       VeryfrontError,
-      "must be a data property",
+      "binary capabilities are invalid",
     );
     assertEquals(getterCalls, 0);
   });

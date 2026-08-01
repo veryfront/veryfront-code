@@ -16,6 +16,110 @@ import type {
 import type { RequestTokenProvenance } from "./veryfront/request-context.ts";
 import { getVeryfrontFSAdapterKind } from "./veryfront/adapter-kind.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  type CapturedFileSystemCapabilities,
+  captureFileSystemCapabilities,
+} from "#veryfront/platform/adapters/file-system-capabilities.ts";
+import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+
+const universalObjectPrototype = Object.prototype;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+const WRAPPER_PUBLISHED_CAPABILITY_KEYS = [
+  "symlinkSemantics",
+  "maxWholeFileReadBytes",
+  "readFileBytesBounded",
+  "readFileBytesWithinLimit",
+  "writeFileBytes",
+  "refreshSourceSnapshot",
+  "ensureSourceSnapshotFresh",
+  "getSourceSnapshotVersion",
+  "getStyleArtifactAccess",
+] as const;
+
+function hardenPublishedCapabilities(target: object): void {
+  for (const key of WRAPPER_PUBLISHED_CAPABILITY_KEYS) {
+    const descriptor = getOwnPropertyDescriptor(target, key);
+    if (descriptor === undefined || !("value" in descriptor)) {
+      throw new TypeError(`FSAdapterWrapper ${key} publication is invalid`);
+    }
+    defineProperty(target, key, {
+      configurable: false,
+      enumerable: true,
+      value: descriptor.value,
+      writable: false,
+    });
+  }
+}
+
+type SnapshotMethod = (...args: never[]) => unknown;
+
+function captureOptionalAdapterMethod(
+  adapter: object,
+  key: string,
+): SnapshotMethod | undefined {
+  let owner: object | null = adapter;
+  const seen = new Set<object>();
+  for (let depth = 0; owner !== null && depth < 64; depth++) {
+    if (owner === universalObjectPrototype) return undefined;
+    if (isProxyWithoutHooks(owner) || seen.has(owner)) {
+      throw new TypeError(`FSAdapter ${key} capability has an invalid prototype chain`);
+    }
+    seen.add(owner);
+    let parent: object | null;
+    try {
+      parent = Object.getPrototypeOf(owner);
+    } catch (cause) {
+      throw new TypeError(`FSAdapter ${key} capability could not be inspected safely`, {
+        cause,
+      });
+    }
+    if (owner !== adapter && parent === null) return undefined;
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    } catch (cause) {
+      throw new TypeError(`FSAdapter ${key} capability could not be inspected safely`, {
+        cause,
+      });
+    }
+    if (descriptor !== undefined) {
+      if (!("value" in descriptor)) {
+        throw new TypeError(`FSAdapter ${key} must be a data-property method`);
+      }
+      if (descriptor.value === undefined) return undefined;
+      if (typeof descriptor.value !== "function" || isProxyWithoutHooks(descriptor.value)) {
+        throw new TypeError(`FSAdapter ${key} must be a non-Proxy function`);
+      }
+      return descriptor.value as SnapshotMethod;
+    }
+    owner = parent;
+  }
+  if (owner !== null) {
+    throw new TypeError("FSAdapter capability prototype chain is too deep");
+  }
+  return undefined;
+}
+
+function assertPositiveReadLimit(byteLimit: number, label: string): void {
+  if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+    throw new RangeError(`${label} limit must be a positive safe integer`);
+  }
+}
+
+/** Capture request-scoped style authority without accessors or ambient prototypes. */
+export function captureStyleArtifactAccessCapability(
+  value: unknown,
+): (() => Promise<StyleArtifactAccess>) | undefined {
+  if (typeof value !== "object" || value === null || isProxyWithoutHooks(value)) {
+    throw new TypeError("Style artifact filesystem must be a non-Proxy object");
+  }
+  const method = captureOptionalAdapterMethod(value, "getStyleArtifactAccess");
+  return method === undefined
+    ? undefined
+    : () => Reflect.apply(method, value, []) as Promise<StyleArtifactAccess>;
+}
 
 export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   getUnderlyingAdapter(): FSAdapter;
@@ -65,7 +169,13 @@ export type HostedStyleConfigFileSystemAdapter =
   >;
 
 export function isExtendedFSAdapter(fs: FileSystemAdapter): fs is ExtendedFileSystemAdapter {
-  return "isVeryfrontAdapter" in fs && "getUnderlyingAdapter" in fs && "isMultiProjectMode" in fs;
+  try {
+    return captureOptionalAdapterMethod(fs, "isVeryfrontAdapter") !== undefined &&
+      captureOptionalAdapterMethod(fs, "getUnderlyingAdapter") !== undefined &&
+      captureOptionalAdapterMethod(fs, "isMultiProjectMode") !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -81,22 +191,28 @@ export function hasHostedStyleConfigCapability(
   fs: FileSystemAdapter,
 ): fs is HostedStyleConfigFileSystemAdapter {
   try {
-    if (
-      !isExtendedFSAdapter(fs) ||
-      typeof fs.runWithContext !== "function" ||
-      typeof fs.createStyleConfigBinding !== "function" ||
-      typeof fs.installStyleConfig !== "function" ||
-      typeof fs.getUnderlyingAdapter !== "function"
-    ) {
+    if (!isExtendedFSAdapter(fs)) {
       return false;
     }
+    const runWithContext = captureOptionalAdapterMethod(fs, "runWithContext");
+    const createStyleConfigBinding = captureOptionalAdapterMethod(
+      fs,
+      "createStyleConfigBinding",
+    );
+    const installStyleConfig = captureOptionalAdapterMethod(fs, "installStyleConfig");
+    const getUnderlyingAdapter = captureOptionalAdapterMethod(fs, "getUnderlyingAdapter");
+    if (
+      runWithContext === undefined ||
+      createStyleConfigBinding === undefined ||
+      installStyleConfig === undefined ||
+      getUnderlyingAdapter === undefined
+    ) return false;
 
-    const underlying: unknown = fs.getUnderlyingAdapter();
+    const underlying: unknown = Reflect.apply(getUnderlyingAdapter, fs, []);
     if (!underlying || typeof underlying !== "object") return false;
-    const contextual = underlying as ContextualFSAdapter;
-    return typeof contextual.runWithContext === "function" &&
-      typeof contextual.createStyleConfigBinding === "function" &&
-      typeof contextual.installStyleConfig === "function";
+    return captureOptionalAdapterMethod(underlying, "runWithContext") !== undefined &&
+      captureOptionalAdapterMethod(underlying, "createStyleConfigBinding") !== undefined &&
+      captureOptionalAdapterMethod(underlying, "installStyleConfig") !== undefined;
   } catch (_) {
     return false;
   }
@@ -129,86 +245,17 @@ export class NotSupportedError extends Error {
 }
 
 function isContextualAdapter(adapter: FSAdapter): adapter is ContextualFSAdapter {
-  return "setRequestToken" in adapter || "runWithContext" in adapter;
-}
-
-function snapshotMaxWholeFileReadBytes(adapter: FSAdapter): number | undefined {
-  if (isProxyWithoutHooks(adapter)) return undefined;
-  let owner: object | null = adapter;
-  const seen = new Set<object>();
-  for (let depth = 0; owner !== null && depth < 64; depth++) {
-    if (isProxyWithoutHooks(owner) || seen.has(owner)) return undefined;
-    seen.add(owner);
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = Object.getOwnPropertyDescriptor(owner, "maxWholeFileReadBytes");
-    } catch {
-      return undefined;
-    }
-    if (descriptor !== undefined) {
-      if (!("value" in descriptor) || descriptor.value === undefined) return undefined;
-      return Number.isSafeInteger(descriptor.value) && descriptor.value > 0
-        ? descriptor.value as number
-        : undefined;
-    }
-    try {
-      owner = Object.getPrototypeOf(owner);
-    } catch {
-      return undefined;
-    }
+  try {
+    return captureOptionalAdapterMethod(adapter, "setRequestToken") !== undefined ||
+      captureOptionalAdapterMethod(adapter, "runWithContext") !== undefined;
+  } catch {
+    return false;
   }
-  return undefined;
-}
-
-type ExactReadMethod = (
-  path: string,
-  byteLimit: number,
-) => Promise<Uint8Array>;
-
-function snapshotExactReadMethod(adapter: FSAdapter): ExactReadMethod | undefined {
-  let owner: object | null = adapter;
-  const seen = new Set<object>();
-  for (let depth = 0; owner !== null && depth < 64; depth++) {
-    // A proxied prototype makes capability discovery unverifiable. Omit the
-    // optional capability without consulting any trap.
-    if (isProxyWithoutHooks(owner) || seen.has(owner)) return undefined;
-    seen.add(owner);
-
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = Object.getOwnPropertyDescriptor(owner, "readFileBytesWithinLimit");
-    } catch {
-      return undefined;
-    }
-    if (descriptor !== undefined) {
-      if (!("value" in descriptor)) {
-        throw new TypeError(
-          "FSAdapter readFileBytesWithinLimit must be a data-property method",
-        );
-      }
-      if (descriptor.value === undefined) return undefined;
-      if (
-        typeof descriptor.value !== "function" ||
-        isProxyWithoutHooks(descriptor.value)
-      ) {
-        throw new TypeError(
-          "FSAdapter readFileBytesWithinLimit must be a non-Proxy function",
-        );
-      }
-      return descriptor.value as ExactReadMethod;
-    }
-
-    try {
-      owner = Object.getPrototypeOf(owner);
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
 }
 
 export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
-  private readonly _fsAdapter: FSAdapter;
+  readonly #fsAdapter: FSAdapter;
+  readonly #fileCapabilities: CapturedFileSystemCapabilities;
   readonly symlinkSemantics: "none" | undefined;
   readonly maxWholeFileReadBytes?: number;
   readonly readFileBytesBounded?: (
@@ -232,7 +279,8 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     if (isProxyWithoutHooks(fsAdapter)) {
       throw new TypeError("FSAdapterWrapper cannot safely wrap a Proxy filesystem adapter");
     }
-    this._fsAdapter = fsAdapter;
+    this.#fsAdapter = fsAdapter;
+    this.#fileCapabilities = captureFileSystemCapabilities(fsAdapter, "FSAdapter");
     const symlinkSemantics = Object.getOwnPropertyDescriptor(
       fsAdapter,
       "symlinkSemantics",
@@ -242,63 +290,91 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
         symlinkSemantics.value === "none"
       ? "none"
       : undefined;
-    const maxWholeFileReadBytes = snapshotMaxWholeFileReadBytes(fsAdapter);
-    if (
-      maxWholeFileReadBytes !== undefined &&
-      typeof fsAdapter.readFileBytes === "function"
-    ) {
-      this.maxWholeFileReadBytes = maxWholeFileReadBytes;
+    const wholeFileReader = this.#fileCapabilities.wholeFileReader;
+    if (wholeFileReader !== undefined) {
+      this.maxWholeFileReadBytes = wholeFileReader.maximumBytes;
     }
-    if (typeof fsAdapter.readFileBytesBounded === "function") {
-      this.readFileBytesBounded = (path: string, byteLimit: number) =>
-        fsAdapter.readFileBytesBounded!.call(fsAdapter, path, byteLimit);
+    const boundedReader = this.#fileCapabilities.readFileBytesBounded;
+    if (boundedReader !== undefined) {
+      this.readFileBytesBounded = async (path: string, byteLimit: number) => {
+        assertPositiveReadLimit(byteLimit, "FSAdapter bounded read");
+        return copyFixedUint8ArrayWithinLimit(
+          await boundedReader(path, byteLimit),
+          byteLimit,
+          "FSAdapter bounded read",
+        );
+      };
     }
-    const readFileBytesWithinLimit = snapshotExactReadMethod(fsAdapter);
+    const readFileBytesWithinLimit = this.#fileCapabilities.readFileBytesWithinLimit;
     if (readFileBytesWithinLimit !== undefined) {
-      this.readFileBytesWithinLimit = (path: string, byteLimit: number) =>
-        Reflect.apply(readFileBytesWithinLimit, fsAdapter, [path, byteLimit]);
+      this.readFileBytesWithinLimit = async (path: string, byteLimit: number) => {
+        assertPositiveReadLimit(byteLimit, "FSAdapter exact bounded read");
+        return copyFixedUint8ArrayWithinLimit(
+          await readFileBytesWithinLimit(path, byteLimit),
+          byteLimit,
+          "FSAdapter exact bounded read",
+        );
+      };
     }
-    if (typeof fsAdapter.writeFileBytes === "function") {
-      this.writeFileBytes = (path: string, content: Uint8Array) =>
-        fsAdapter.writeFileBytes!.call(fsAdapter, path, content);
+    const writeFileBytes = this.#fileCapabilities.writeFileBytes;
+    if (writeFileBytes !== undefined) {
+      this.writeFileBytes = writeFileBytes;
     }
-    if (typeof fsAdapter.refreshSourceSnapshot === "function") {
+    const refreshSourceSnapshot = captureOptionalAdapterMethod(
+      fsAdapter,
+      "refreshSourceSnapshot",
+    );
+    if (refreshSourceSnapshot !== undefined) {
       this.refreshSourceSnapshot = (reason?: string) =>
-        fsAdapter.refreshSourceSnapshot!.call(fsAdapter, reason);
+        Reflect.apply(refreshSourceSnapshot, fsAdapter, [reason]) as Promise<void>;
     }
-    if (typeof fsAdapter.ensureSourceSnapshotFresh === "function") {
+    const ensureSourceSnapshotFresh = captureOptionalAdapterMethod(
+      fsAdapter,
+      "ensureSourceSnapshotFresh",
+    );
+    if (ensureSourceSnapshotFresh !== undefined) {
       this.ensureSourceSnapshotFresh = (reason?: string) =>
-        fsAdapter.ensureSourceSnapshotFresh!.call(fsAdapter, reason);
+        Reflect.apply(ensureSourceSnapshotFresh, fsAdapter, [reason]) as Promise<void>;
     }
-    if (typeof fsAdapter.getSourceSnapshotVersion === "function") {
-      this.getSourceSnapshotVersion = () => fsAdapter.getSourceSnapshotVersion!.call(fsAdapter);
+    const getSourceSnapshotVersion = captureOptionalAdapterMethod(
+      fsAdapter,
+      "getSourceSnapshotVersion",
+    );
+    if (getSourceSnapshotVersion !== undefined) {
+      this.getSourceSnapshotVersion = () =>
+        Reflect.apply(getSourceSnapshotVersion, fsAdapter, []) as
+          | number
+          | undefined
+          | Promise<number | undefined>;
     }
-    if (typeof fsAdapter.getStyleArtifactAccess === "function") {
-      this.getStyleArtifactAccess = () => fsAdapter.getStyleArtifactAccess!.call(fsAdapter);
+    const getStyleArtifactAccess = captureStyleArtifactAccessCapability(fsAdapter);
+    if (getStyleArtifactAccess !== undefined) {
+      this.getStyleArtifactAccess = getStyleArtifactAccess;
     }
+    hardenPublishedCapabilities(this);
   }
 
   getUnderlyingAdapter(): FSAdapter {
-    return this._fsAdapter;
+    return this.#fsAdapter;
   }
 
   getAdapterType(): string {
-    return this._fsAdapter.constructor.name;
+    return this.#fsAdapter.constructor.name;
   }
 
   isVeryfrontAdapter(): boolean {
-    return getVeryfrontFSAdapterKind(this._fsAdapter) !== undefined;
+    return getVeryfrontFSAdapterKind(this.#fsAdapter) !== undefined;
   }
 
   private get adapterType(): string {
-    return this._fsAdapter.constructor.name;
+    return this.#fsAdapter.constructor.name;
   }
 
   private get contextual(): ContextualFSAdapter {
-    if (!isContextualAdapter(this._fsAdapter)) {
+    if (!isContextualAdapter(this.#fsAdapter)) {
       throw new NotSupportedError("contextual operations", this.adapterType);
     }
-    return this._fsAdapter;
+    return this.#fsAdapter;
   }
 
   private requireContextualMethod<K extends keyof ContextualFSAdapter>(
@@ -306,9 +382,9 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     key: K,
   ): NonNullable<ContextualFSAdapter[K]> {
     const adapter = this.contextual;
-    const method = adapter[key];
-    if (!method) throw new NotSupportedError(operation, this.adapterType);
-    return (typeof method === "function" ? method.bind(adapter) : method) as NonNullable<
+    const method = captureOptionalAdapterMethod(adapter, String(key));
+    if (method === undefined) throw new NotSupportedError(operation, this.adapterType);
+    return ((...args: unknown[]) => Reflect.apply(method, adapter, args)) as NonNullable<
       ContextualFSAdapter[K]
     >;
   }
@@ -377,53 +453,54 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   isMultiProjectMode(): boolean {
-    return isContextualAdapter(this._fsAdapter) &&
-      typeof this._fsAdapter.runWithContext === "function";
+    return isContextualAdapter(this.#fsAdapter) &&
+      typeof this.#fsAdapter.runWithContext === "function";
   }
 
   isContextualMode(): boolean {
-    return isContextualAdapter(this._fsAdapter);
+    return isContextualAdapter(this.#fsAdapter);
   }
 
   async readFile(path: string): Promise<string> {
-    if (this._fsAdapter.readTextFile) return this._fsAdapter.readTextFile(path);
+    if (this.#fsAdapter.readTextFile) return this.#fsAdapter.readTextFile(path);
 
-    const result = await this._fsAdapter.readFile(path);
+    const result = await this.#fsAdapter.readFile(path);
     return typeof result === "string" ? result : new TextDecoder().decode(result);
   }
 
   async readOptionalTextFile(path: string): Promise<string> {
-    if (this._fsAdapter.readOptionalTextFile) {
-      return this._fsAdapter.readOptionalTextFile(path);
+    if (this.#fsAdapter.readOptionalTextFile) {
+      return this.#fsAdapter.readOptionalTextFile(path);
     }
 
     return this.readFile(path);
   }
 
   async readFileBytes(path: string): Promise<Uint8Array> {
-    if (this._fsAdapter.readFileBytes) {
-      return await this._fsAdapter.readFileBytes(path);
+    const binaryReader = this.#fileCapabilities.readFileBytes;
+    if (binaryReader !== undefined) {
+      return await binaryReader(path);
     }
-    const result = await this._fsAdapter.readFile(path);
+    const result = await this.#fsAdapter.readFile(path);
     return typeof result === "string" ? new TextEncoder().encode(result) : result;
   }
 
   async writeFile(path: string, content: string): Promise<void> {
-    if (!this._fsAdapter.writeFile) throw new NotSupportedError("writeFile", this.adapterType);
-    await this._fsAdapter.writeFile(path, content);
+    if (!this.#fsAdapter.writeFile) throw new NotSupportedError("writeFile", this.adapterType);
+    await this.#fsAdapter.writeFile(path, content);
   }
 
   exists(path: string): Promise<boolean> {
-    return this._fsAdapter.exists(path);
+    return this.#fsAdapter.exists(path);
   }
 
   private async getDirEntries(path: string): Promise<DirectoryEntry[]> {
-    if (this._fsAdapter.readdir) {
-      const result = this._fsAdapter.readdir(path);
+    if (this.#fsAdapter.readdir) {
+      const result = this.#fsAdapter.readdir(path);
       return result instanceof Promise ? await result : await Array.fromAsync(result);
     }
 
-    if (this._fsAdapter.readDir) return await Array.fromAsync(this._fsAdapter.readDir(path));
+    if (this.#fsAdapter.readDir) return await Array.fromAsync(this.#fsAdapter.readDir(path));
 
     throw new NotSupportedError("readdir", this.adapterType);
   }
@@ -445,7 +522,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   async stat(path: string): Promise<FileInfo> {
-    const info = await this._fsAdapter.stat(path);
+    const info = await this.#fsAdapter.stat(path);
     return {
       size: info.size,
       isFile: info.isFile,
@@ -456,18 +533,18 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   resolveFile(basePath: string, options?: ResolveFileOptions): Promise<string | null> {
-    if (!this._fsAdapter.resolveFile) throw new NotSupportedError("resolveFile", this.adapterType);
-    return this._fsAdapter.resolveFile(basePath, options);
+    if (!this.#fsAdapter.resolveFile) throw new NotSupportedError("resolveFile", this.adapterType);
+    return this.#fsAdapter.resolveFile(basePath, options);
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    if (!this._fsAdapter.mkdir) throw new NotSupportedError("mkdir", this.adapterType);
-    await this._fsAdapter.mkdir(path, options);
+    if (!this.#fsAdapter.mkdir) throw new NotSupportedError("mkdir", this.adapterType);
+    await this.#fsAdapter.mkdir(path, options);
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    if (!this._fsAdapter.remove) throw new NotSupportedError("remove", this.adapterType);
-    await this._fsAdapter.remove(path, options);
+    if (!this.#fsAdapter.remove) throw new NotSupportedError("remove", this.adapterType);
+    await this.#fsAdapter.remove(path, options);
   }
 
   makeTempDir(_prefix: string): Promise<string> {
@@ -479,7 +556,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   }
 
   async shutdown(): Promise<void> {
-    await this._fsAdapter.shutdown?.();
+    await this.#fsAdapter.shutdown?.();
   }
 }
 
