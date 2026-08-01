@@ -350,7 +350,6 @@ async function readBoundedText(
         if (remaining > 0) chunks.push(value.subarray(0, remaining));
         total = maximumBytes;
         truncated = true;
-        cancelled = true;
         try {
           await reader.cancel("error body truncated");
         } catch {

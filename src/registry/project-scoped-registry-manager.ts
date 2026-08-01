@@ -382,8 +382,8 @@ export class ProjectScopedRegistryManager<T> {
    *
    * The disposer captures the canonical scope at registration time, so
    * lifecycle teardown does not depend on whichever request context happens to
-   * be active later. It removes the entry only while the registered value is
-   * exact generation is still current; a subsequent replacement therefore
+   * be active later. It removes the entry only while its captured owner
+   * generation is still current; a subsequent replacement therefore
    * remains owned by its own lifecycle even when both registrations contain
    * the same value or object.
    */
