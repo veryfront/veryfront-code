@@ -2,6 +2,7 @@ import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 import { validateTempDirectoryPrefix } from "./temp-directory-prefix.ts";
+import { readFileWithinLimit } from "../adapters/bounded-file-read.ts";
 
 const DEFAULT_TEMP_DIRECTORY_PREFIX = "tmp-";
 const UNSUPPORTED_CHMOD_ERROR_CODES = new Set([
@@ -60,6 +61,8 @@ function denoGlobal(): typeof Deno {
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
   readFile(path: string): Promise<Uint8Array>;
+  /** Exact bounded binary read; implementations must reject oversized files before materializing them. */
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
   writeTextFile(path: string, data: string): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
   /** Atomically replace a path when same-filesystem rename is supported. */
@@ -80,6 +83,10 @@ export interface FileSystem {
 }
 
 interface NodeFsPromises {
+  open(path: string, flags: "r"): Promise<{
+    read(buffer: Uint8Array): Promise<{ bytesRead: number }>;
+    close(): Promise<void>;
+  }>;
   readFile(
     path: string,
     options?: { encoding?: string; flag?: string } | string,
@@ -173,6 +180,17 @@ class NodeFileSystem implements FileSystem {
   async readFile(path: string): Promise<Uint8Array> {
     await this.ensureInitialized();
     return this.getFs().readFile(path) as Promise<Uint8Array>;
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    await this.ensureInitialized();
+    return await readFileWithinLimit(async () => {
+      const handle = await this.getFs().open(path, "r");
+      return {
+        close: () => handle.close(),
+        read: async (buffer: Uint8Array) => (await handle.read(buffer)).bytesRead,
+      };
+    }, byteLimit);
   }
 
   async writeTextFile(path: string, data: string): Promise<void> {
@@ -287,6 +305,16 @@ class DenoFileSystem implements FileSystem {
 
   readFile(path: string): Promise<Uint8Array> {
     return denoGlobal().readFile(path);
+  }
+
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    return await readFileWithinLimit(async () => {
+      const file = await denoGlobal().open(path, { read: true });
+      return {
+        close: () => file.close(),
+        read: (buffer: Uint8Array) => file.read(buffer),
+      };
+    }, byteLimit);
   }
 
   async writeTextFile(path: string, data: string): Promise<void> {

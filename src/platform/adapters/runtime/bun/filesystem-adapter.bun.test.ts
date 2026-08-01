@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +26,15 @@ describe("BunFileSystemAdapter native integration", () => {
       assertEquals(
         [...await adapter.readFileBytesBounded(file, 3)],
         [104, 101, 108],
+      );
+      assertEquals(
+        [...await adapter.readFileBytesWithinLimit(file, 5)],
+        [104, 101, 108, 108, 111],
+      );
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit(file, 4),
+        RangeError,
+        "exceeds byte limit of 4 bytes",
       );
 
       watcher = adapter.watch(root, { recursive: false });

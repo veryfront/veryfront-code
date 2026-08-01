@@ -397,6 +397,17 @@ contract. The Veryfront API, GitHub, and Cloudflare KV adapters intentionally
 omit it because their current upstream APIs return whole objects; advertising a
 post-read slice as a bounded read would be misleading.
 
+`FileSystemAdapter.readFileBytesWithinLimit(path, byteLimit)` is the exact-read
+counterpart for consumers that need the complete object or no object. Node,
+Deno, and Bun stream through EOF; the in-memory test adapter verifies the
+stored byte or UTF-8 length before copying. All return complete bytes only when
+the source fits. An additional byte rejects with `RangeError`; other I/O
+failures propagate unchanged. The native implementation uses an EOF probe
+without retaining a `byteLimit + 1` prefix, and wrapper and security layers
+snapshot only data-property, non-Proxy implementations of the capability.
+Adapters backed by whole-object transports must omit the capability unless
+that transport can enforce the caller-selected limit before materialization.
+
 `FileSystemAdapter.maxWholeFileReadBytes` is a separate fixed-ceiling
 capability. It may be advertised only with `readFileBytes()` and only when the
 backing store or transport rejects a larger whole response before returning it.
