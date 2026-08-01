@@ -51,6 +51,7 @@
     "./extensions/ext-css-lightning",
     "./extensions/ext-css-purgecss",
     "./extensions/ext-css-tailwind",
+    "./extensions/ext-image-sharp",
     "./extensions/ext-node-websocket-ws",
     "./extensions/ext-document-kreuzberg",
     "./extensions/ext-db-sqlite",

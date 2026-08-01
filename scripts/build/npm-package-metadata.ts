@@ -90,6 +90,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"remark-parse",
 	"remark-rehype",
 	"protobufjs",
+	"sharp",
 	"tailwindcss",
 	"unified",
 	"unist-util-visit",

@@ -52,6 +52,21 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       requiredCapabilities: [{ type: "fs:read" }],
     },
     {
+      label: "native image optimization",
+      manifestPath: "extensions/ext-image-sharp/deno.json",
+      requiredCapabilities: [
+        {
+          type: "fs:read",
+          paths: ["/proc/self/exe", "/usr/bin/ldd"],
+        },
+        {
+          type: "env:read",
+          keys: ["MALLOC_ARENA_MAX", "npm_package_config_libvips"],
+        },
+        { type: "native:ffi" },
+      ],
+    },
+    {
       label: "OpenTelemetry observability",
       manifestPath: "extensions/ext-observability-opentelemetry/deno.json",
       requiredCapabilities: [
