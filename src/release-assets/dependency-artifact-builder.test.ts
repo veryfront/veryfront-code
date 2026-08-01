@@ -144,7 +144,7 @@ describe("release-assets/dependency-artifact-builder", () => {
     const root = graph.assets.find((asset) => asset.contentHash === graph.rootContentHash);
     assertEquals(root?.contentType, "text/javascript");
     const rootCode = new TextDecoder().decode(root?.bytes);
-    assertEquals(rootCode.includes("https://esm.sh"), false);
+    assertEquals(/https?:\/\/[^"'\s]+/.test(rootCode), false);
     assertEquals(rootCode.includes('from "react"'), true);
     assertEquals((rootCode.match(/\/_vf\/assets\/[0-9a-f]{64}\.js/g) ?? []).length, 2);
   });
