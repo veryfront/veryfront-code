@@ -12622,6 +12622,8 @@ export const FRAMEWORK_CANDIDATES: readonly string[] = [
   "merged.onClick",
   "merged.onClickCapture",
   "merged.onKeyDownCapture",
+  "merged.onKeyUp",
+  "merged.onKeyUpCapture",
   "merged.ref",
   "merged.tabIndex",
   "merged:",

@@ -188,6 +188,8 @@ export const Slot: React.ForwardRefExoticComponent<
       merged.onClickCapture = preventDisabledActivation;
       merged.onClick = preventDisabledActivation;
       merged.onKeyDownCapture = preventDisabledKeyboardActivation;
+      merged.onKeyUpCapture = preventDisabledKeyboardActivation;
+      merged.onKeyUp = preventDisabledKeyboardActivation;
       if (
         typeof child.type === "string" &&
         NATIVELY_DISABLEABLE_ELEMENTS.has(child.type)

@@ -158,6 +158,7 @@ describe("Slot", () => {
           <div
             onClick={() => calls.push("ancestor-click")}
             onAuxClick={() => calls.push("ancestor-aux")}
+            onKeyUp={() => calls.push("ancestor-keyup")}
           >
             <Slot
               disabled
@@ -165,6 +166,8 @@ describe("Slot", () => {
               onClick={() => calls.push("slot")}
               onAuxClickCapture={() => calls.push("slot-aux-capture")}
               onAuxClick={() => calls.push("slot-aux")}
+              onKeyUpCapture={() => calls.push("slot-keyup-capture")}
+              onKeyUp={() => calls.push("slot-keyup")}
             >
               <a
                 href="/target"
@@ -173,6 +176,8 @@ describe("Slot", () => {
                 onClick={() => calls.push("child")}
                 onAuxClickCapture={() => calls.push("child-aux-capture")}
                 onAuxClick={() => calls.push("child-aux")}
+                onKeyUpCapture={() => calls.push("child-keyup-capture")}
+                onKeyUp={() => calls.push("child-keyup")}
               >
                 Disabled link
               </a>
@@ -212,6 +217,17 @@ describe("Slot", () => {
       link.dispatchEvent(enter);
       assertEquals(enter.defaultPrevented, true);
       assertEquals(calls, []);
+
+      for (const key of ["Enter", " "]) {
+        const keyUp = new dom.window.KeyboardEvent("keyup", {
+          bubbles: true,
+          cancelable: true,
+          key,
+        });
+        link.dispatchEvent(keyUp);
+        assertEquals(keyUp.defaultPrevented, true);
+        assertEquals(calls, []);
+      }
     } finally {
       flushSync(() => root.unmount());
       restore();

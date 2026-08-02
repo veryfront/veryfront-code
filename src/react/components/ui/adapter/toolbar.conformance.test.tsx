@@ -80,6 +80,18 @@ function keydown(node: Element, key: string): KeyboardEvent {
   return event;
 }
 
+function keyup(node: Element, key: string): KeyboardEvent {
+  const KeyboardEventCtor = (globalThis as unknown as { KeyboardEvent: typeof KeyboardEvent })
+    .KeyboardEvent;
+  let event!: KeyboardEvent;
+  flushSync(() =>
+    node.dispatchEvent(
+      event = new KeyboardEventCtor("keyup", { bubbles: true, cancelable: true, key }),
+    )
+  );
+  return event;
+}
+
 function auxclick(node: Element): MouseEvent {
   const MouseEventCtor = (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
   let event!: MouseEvent;
@@ -209,6 +221,7 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
               onClick={() => linkActivations.push("click")}
               onAuxClick={() => linkActivations.push("auxclick")}
               onKeyDown={() => linkActivations.push("keydown")}
+              onKeyUp={() => linkActivations.push("keyup")}
             >
               Disabled link
             </ToolbarLink>
@@ -233,8 +246,14 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         const auxiliary = auxclick(link!);
         const enter = keydown(link!, "Enter");
         const space = keydown(link!, " ");
+        const enterUp = keyup(link!, "Enter");
+        const spaceUp = keyup(link!, " ");
         assert(auxiliary.defaultPrevented, "prevents disabled auxiliary navigation");
         assert(enter.defaultPrevented && space.defaultPrevented, "prevents keyboard activation");
+        assert(
+          enterUp.defaultPrevented && spaceUp.defaultPrevented,
+          "prevents keyup activation",
+        );
         assert(linkActivations.length === 0, "suppresses every disabled activation handler");
         first!.focus();
         keydown(bar, "ArrowRight");
