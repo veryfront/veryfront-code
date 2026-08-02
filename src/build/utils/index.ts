@@ -6,14 +6,17 @@
 
 export {
   calculateAspectRatio,
+  calculateRequiredAspectRatio,
   CSS_EXTENSIONS,
   findCSSFiles,
   generateSrcSet,
   getImageDimensions,
   getOptimizedFormat,
+  getRequiredImageDimensions,
   getStandardPseudoSelectors,
   getVariantPath,
   globFiles,
+  isContainedAssetPath,
   isImageFile,
   isPseudoSelector,
 } from "./asset-utils.ts";

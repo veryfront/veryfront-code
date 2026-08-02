@@ -3,7 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for CSS Optimizer Utilities
  */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
@@ -16,7 +16,9 @@ import {
   getOutputPath,
   globFiles,
   matchPattern,
+  parseBrowserTargets,
   shouldKeepSelector,
+  validateCSSSourceMap,
 } from "./utils.ts";
 
 const TEST_DIR = "./.veryfront/test-css-utils";
@@ -46,6 +48,12 @@ describe("CSS Optimizer Utils", () => {
 
       await cleanupTestDir();
     });
+
+    it("rejects a missing directory", async () => {
+      await assertRejects(
+        () => findCSSFiles(`${TEST_DIR}-${crypto.randomUUID()}`),
+      );
+    });
   });
 
   describe("matchPattern", () => {
@@ -66,6 +74,14 @@ describe("CSS Optimizer Utils", () => {
     it("generates correct output path with .min suffix", () => {
       const result = getOutputPath("styles/main.css", ".output");
       assertEquals(result, ".output/styles/main.min.css");
+    });
+
+    it("rejects paths that could escape output", () => {
+      assertThrows(
+        () => getOutputPath("../main.css", ".output"),
+        TypeError,
+        "Invalid relative",
+      );
     });
   });
 
@@ -154,6 +170,10 @@ describe("CSS Optimizer Utils", () => {
 
       assertEquals(minified, ".button{color:red}");
     });
+
+    it("rejects malformed CSS instead of applying regex rewrites", () => {
+      assertThrows(() => basicMinify("@media ( { .x { color: red }"));
+    });
   });
 
   describe("calculateSavings", () => {
@@ -161,6 +181,7 @@ describe("CSS Optimizer Utils", () => {
       assertEquals(calculateSavings(1000, 500), 50);
       assertEquals(calculateSavings(1000, 750), 25);
       assertEquals(calculateSavings(0, 0), 0);
+      assertThrows(() => calculateSavings(-1, 0), TypeError);
     });
   });
 
@@ -180,6 +201,92 @@ describe("CSS Optimizer Utils", () => {
       assert(files.some((f) => f.includes("test.ts")));
 
       await cleanupTestDir();
+    });
+
+    it("rejects patterns outside the project boundary", async () => {
+      const baseDir = await Deno.makeTempDir();
+      try {
+        await assertRejects(
+          () => globFiles("../outside/**/*.ts", { baseDir }),
+          TypeError,
+          "outside the project",
+        );
+      } finally {
+        await Deno.remove(baseDir, { recursive: true });
+      }
+    });
+
+    it("treats only a missing static glob root as no matches", async () => {
+      const baseDir = await Deno.makeTempDir();
+      try {
+        assertEquals(
+          await globFiles("optional/**/*.tsx", { baseDir }),
+          [],
+        );
+        await assertRejects(
+          () =>
+            globFiles("blocked/**/*.tsx", {
+              baseDir,
+              fs: {
+                readDir() {
+                  throw new Deno.errors.PermissionDenied("blocked");
+                },
+              },
+            }),
+          Deno.errors.PermissionDenied,
+        );
+      } finally {
+        await Deno.remove(baseDir, { recursive: true });
+      }
+    });
+  });
+
+  describe("parseBrowserTargets", () => {
+    it("converts real Browserslist queries", () => {
+      const targets = parseBrowserTargets(["ie 11"]);
+      assertEquals(typeof targets?.ie, "number");
+    });
+
+    it("rejects empty browser query lists", () => {
+      assertThrows(() => parseBrowserTargets([]), TypeError, "bounded");
+      assertThrows(
+        () => parseBrowserTargets(null as unknown as string[]),
+        TypeError,
+        "queries or a target object",
+      );
+      assertThrows(
+        () => parseBrowserTargets(new Array<string>(1)),
+        TypeError,
+        "bounded",
+      );
+    });
+  });
+
+  describe("validateCSSSourceMap", () => {
+    it("requires a bounded source-map v3 structure", () => {
+      validateCSSSourceMap(
+        JSON.stringify({
+          version: 3,
+          sources: ["main.css"],
+          names: [],
+          mappings: "AAAA",
+        }),
+        "main.css",
+      );
+      assertThrows(
+        () =>
+          validateCSSSourceMap(
+            JSON.stringify({
+              version: 3,
+              sources: ["../outside.css"],
+              names: [],
+              mappings: "AAAA",
+            }),
+            "main.css",
+          ),
+        TypeError,
+        "invalid",
+      );
     });
   });
 });

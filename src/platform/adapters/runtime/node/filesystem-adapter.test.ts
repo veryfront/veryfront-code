@@ -44,6 +44,22 @@ function captureDebugLogs(): { entries: LogEntry[]; restore: () => void } {
 }
 
 describe("NodeFileSystemAdapter", () => {
+  it("renames files on the native filesystem", async () => {
+    const adapter = new NodeFileSystemAdapter();
+    const tempDir = await adapter.makeTempDir("vf-node-fs-rename-");
+    const from = `${tempDir}/source.txt`;
+    const to = `${tempDir}/destination.txt`;
+
+    try {
+      await adapter.writeFile(from, "renamed");
+      await adapter.rename(from, to);
+      assertEquals(await adapter.exists(from), false);
+      assertEquals(await adapter.readFile(to), "renamed");
+    } finally {
+      await adapter.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("does not log an expected missing path as an access failure", async () => {
     const adapter = new NodeFileSystemAdapter();
     const tempDir = await adapter.makeTempDir("vf-node-fs-exists-");

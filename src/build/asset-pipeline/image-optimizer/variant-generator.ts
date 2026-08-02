@@ -1,9 +1,9 @@
 import { dirname, relative } from "#veryfront/compat/path/index.ts";
-import { logger } from "#veryfront/utils";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { processFormat } from "./format-processor.ts";
-import { calculateAspectRatio, getVariantPath } from "../../utils/asset-utils.ts";
+import { getVariantPath } from "../../utils/asset-utils.ts";
+import { MAX_IMAGE_DIMENSION, MAX_IMAGE_OUTPUT_SIZES, SUPPORTED_FORMATS } from "./constants.ts";
 import type {
   ImageFormat,
   ImageVariant,
@@ -12,53 +12,55 @@ import type {
   SharpMetadata,
 } from "./types.ts";
 
-/** Default assumed image width when metadata has no width */
-const DEFAULT_IMAGE_WIDTH = 1_920;
-
 function generateVariant(
   sharp: SharpConstructor,
   image: SharpInstance,
   relPath: string,
   format: ImageFormat,
   width: number,
-  metadata: SharpMetadata,
   quality: number,
   outputDir: string,
-): Promise<ImageVariant | null> {
+  fs: FileSystem,
+): Promise<ImageVariant> {
   return withSpan(
     "build.asset.generateVariant",
-    async (): Promise<ImageVariant | null> => {
-      const fs = createFileSystem();
+    async (): Promise<ImageVariant> => {
+      const outputPath = getVariantPath(outputDir, relPath, format, width);
+      await fs.mkdir(dirname(outputPath), { recursive: true });
 
-      try {
-        const outputPath = getVariantPath(outputDir, relPath, format, width);
-        await fs.mkdir(dirname(outputPath), { recursive: true });
+      const processor = image.clone().resize(width, null, {
+        fit: "inside",
+        withoutEnlargement: true,
+      });
 
-        const processor = image.clone().resize(width, null, {
-          fit: "inside",
-          withoutEnlargement: true,
-        });
-
-        const buffer = await processFormat(processor, format, quality).toBuffer();
-        await fs.writeFile(outputPath, buffer);
-
-        const processedMetadata = await sharp(buffer).metadata();
-        const aspectRatio = calculateAspectRatio(metadata.width, metadata.height);
-
-        return {
-          format,
-          size: width,
-          width: processedMetadata.width ?? width,
-          height: processedMetadata.height ?? Math.round(width / aspectRatio),
-          path: relative(outputDir, outputPath),
-          fileSize: buffer.length,
-        };
-      } catch (error) {
-        logger.error(`Failed to generate ${format} variant at ${width}px`, {
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return null;
+      const buffer = await processFormat(processor, format, quality).toBuffer();
+      if (buffer.length === 0) {
+        throw new TypeError(
+          `Image encoder returned an empty ${format} variant at ${width}px`,
+        );
       }
+
+      const processedMetadata = await sharp(buffer).metadata();
+      const processedWidth = processedMetadata.width;
+      const processedHeight = processedMetadata.height;
+      if (
+        !isValidDimension(processedWidth) ||
+        !isValidDimension(processedHeight)
+      ) {
+        throw new TypeError(
+          `Encoded ${format} variant has invalid dimensions at ${width}px`,
+        );
+      }
+      await fs.writeFile(outputPath, buffer);
+
+      return {
+        format,
+        size: width,
+        width: processedWidth,
+        height: processedHeight,
+        path: relative(outputDir, outputPath).replaceAll("\\", "/"),
+        fileSize: buffer.length,
+      };
     },
     {
       "image.path": relPath,
@@ -78,31 +80,62 @@ export function generateImageVariants(
   sizes: number[],
   quality: number,
   outputDir: string,
+  fs: FileSystem = createFileSystem(),
 ): Promise<ImageVariant[]> {
   return withSpan(
     "build.asset.generateImageVariants",
     async (): Promise<ImageVariant[]> => {
-      const variants: ImageVariant[] = [];
-      const originalWidth = metadata.width ?? DEFAULT_IMAGE_WIDTH;
-      const metaWidth = metadata.width;
+      const originalWidth = metadata.width;
+      const originalHeight = metadata.height;
+      if (
+        !isValidDimension(originalWidth) ||
+        !isValidDimension(originalHeight)
+      ) {
+        throw new TypeError(
+          `Image metadata requires positive integer dimensions no larger than ${MAX_IMAGE_DIMENSION}: ${relPath}`,
+        );
+      }
+      if (
+        formats.length === 0 ||
+        new Set(formats).size !== formats.length ||
+        formats.some((format) => !SUPPORTED_FORMATS.includes(format))
+      ) {
+        throw new TypeError(
+          "Image output formats must be a non-empty, unique supported list",
+        );
+      }
+      if (
+        sizes.length > MAX_IMAGE_OUTPUT_SIZES ||
+        new Set(sizes).size !== sizes.length ||
+        sizes.some((size) => !Number.isInteger(size) || size <= 0 || size > MAX_IMAGE_DIMENSION)
+      ) {
+        throw new TypeError(
+          `Image output sizes must contain at most ${MAX_IMAGE_OUTPUT_SIZES} unique positive integers no larger than ${MAX_IMAGE_DIMENSION}`,
+        );
+      }
 
-      const validSizes = metaWidth ? sizes.filter((size) => metaWidth >= size) : sizes;
-      const allSizes = [...validSizes, originalWidth];
+      const variants: ImageVariant[] = [];
+      const allSizes = [
+        ...new Set([
+          ...sizes.filter((size) => originalWidth >= size),
+          originalWidth,
+        ]),
+      ].sort((left, right) => left - right);
 
       for (const size of allSizes) {
         for (const format of formats) {
-          const variant = await generateVariant(
-            sharp,
-            image,
-            relPath,
-            format,
-            size,
-            metadata,
-            quality,
-            outputDir,
+          variants.push(
+            await generateVariant(
+              sharp,
+              image,
+              relPath,
+              format,
+              size,
+              quality,
+              outputDir,
+              fs,
+            ),
           );
-
-          if (variant) variants.push(variant);
         }
       }
 
@@ -114,4 +147,10 @@ export function generateImageVariants(
       "image.sizesCount": sizes.length,
     },
   );
+}
+
+function isValidDimension(value: unknown): value is number {
+  return Number.isInteger(value) &&
+    (value as number) > 0 &&
+    (value as number) <= MAX_IMAGE_DIMENSION;
 }

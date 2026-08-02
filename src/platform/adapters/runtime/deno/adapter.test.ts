@@ -92,6 +92,10 @@ if (!isDeno) {
         assertFunction(denoAdapter.fs.writeFile);
       });
 
+      it("should have rename method", () => {
+        assertFunction(denoAdapter.fs.rename);
+      });
+
       it("should have exists method", () => {
         assertFunction(denoAdapter.fs.exists);
       });
@@ -192,6 +196,21 @@ if (!isDeno) {
           await denoAdapter.fs.writeFile(filePath, "hello from test");
           const content = await denoAdapter.fs.readFile(filePath);
           assertEquals(content, "hello from test");
+        } finally {
+          await denoAdapter.fs.remove(tmpDir, { recursive: true });
+        }
+      });
+
+      it("should rename a file", async () => {
+        const tmpDir = await denoAdapter.fs.makeTempDir("test-rename-");
+        const from = `${tmpDir}/source.txt`;
+        const to = `${tmpDir}/destination.txt`;
+
+        try {
+          await denoAdapter.fs.writeFile(from, "renamed");
+          await denoAdapter.fs.rename(from, to);
+          assertEquals(await denoAdapter.fs.exists(from), false);
+          assertEquals(await denoAdapter.fs.readFile(to), "renamed");
         } finally {
           await denoAdapter.fs.remove(tmpDir, { recursive: true });
         }
