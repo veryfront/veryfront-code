@@ -283,6 +283,27 @@ export function snapshotClientRouteHead(
   return aggregated.map(managedHeadDescriptorToTransportEntry);
 }
 
+/**
+ * Whether a destination has to be committed by the browser's document loader.
+ *
+ * Inline scripts never execute through an `innerHTML` transition and a soft
+ * commit would drop the browser's script ordering and CSP guarantees, so any
+ * scripted payload is handed to a full document navigation instead.
+ */
+export function routeRequiresDocumentNavigation(
+  data: {
+    html?: string;
+    managedHead?: ClientRouteHeadEntry[];
+    requiresFullDocumentNavigation?: boolean;
+  },
+): boolean {
+  return Boolean(
+    data.requiresFullDocumentNavigation ||
+      data.managedHead?.some((entry) => entry.tagName === "script") ||
+      (typeof data.html === "string" && /<script\b/i.test(data.html)),
+  );
+}
+
 export function parsePageDataFromHTML(html: string): {
   content: string | undefined;
   pageData: PageData;

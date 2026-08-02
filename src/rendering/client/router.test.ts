@@ -156,6 +156,60 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
     }
   });
 
+  it("hands scripted JSON routes to the document loader instead of the error page", async () => {
+    const restore = installDom("https://example.com/current");
+    const originalLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+    const originalFetch = globalThis.fetch;
+    try {
+      const errors: Error[] = [];
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        onError: (error) => errors.push(error),
+      });
+      // The test observes the navigation decision without mounting a React root.
+      // deno-lint-ignore no-explicit-any
+      (router as any).root = {};
+      // A route-data payload whose fragment carries structured data — no server
+      // layouts, so nothing upstream flags it as a document navigation.
+      globalThis.fetch = ((input: URL | RequestInfo) =>
+        Promise.resolve(
+          String(input).startsWith("/_veryfront/data")
+            ? Response.json({
+              html:
+                '<main>Post</main><script type="application/ld+json">{"@type":"Article"}</script>',
+              frontmatter: {},
+            })
+            : new Response("Not Found", { status: 404 }),
+        )) as typeof fetch;
+      const assigned: string[] = [];
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          origin: "https://example.com",
+          pathname: "/current",
+          search: "",
+          hash: "",
+          assign: (url: string) => assigned.push(url),
+        },
+      });
+
+      await router.navigate("/blog/post");
+
+      assertEquals(assigned, ["/blog/post"]);
+      assertEquals(errors, []);
+      assertEquals(
+        document.getElementById("root")?.innerHTML,
+        "",
+        "A scripted destination must not replace the route with an error page",
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalLocation) Object.defineProperty(globalThis, "location", originalLocation);
+      else delete (globalThis as Record<string, unknown>).location;
+      restore();
+    }
+  });
+
   it("a popstate (history: none) soft query change updates without a load", async () => {
     const restore = installDom("https://example.com/dashboard?tab=a");
     try {
