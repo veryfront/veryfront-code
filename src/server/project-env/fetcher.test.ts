@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createMockServer } from "../../../tests/_helpers/utils.ts";
-import { fetchProjectEnvVars } from "./fetcher.ts";
+import { fetchProjectEnvVars, PROJECT_ENV_RESPONSE_MAX_BYTES } from "./fetcher.ts";
 
 const INTERNAL_USER_ENV = "VERYFRONT_API_INTERNAL_USER";
 const INTERNAL_PASS_ENV = "VERYFRONT_API_INTERNAL_PASS";
@@ -92,15 +92,14 @@ describe("project-env/fetcher", () => {
     }
   });
 
-  it("handles missing data field in response", async () => {
+  it("rejects a missing data field instead of substituting an empty environment", async () => {
     const { server, port } = createMockServer(() => {
       return Response.json({});
     });
 
     try {
-      const result = await fetchFromMockApi(port);
-
-      assertEquals(result, {});
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals((error as { slug?: string }).slug, "network-error");
     } finally {
       await server.shutdown();
     }
@@ -372,6 +371,56 @@ describe("project-env/fetcher", () => {
 
     try {
       await assertRejects(() => fetchFromMockApi(port));
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("rejects malformed and duplicate environment entries", async () => {
+    const responses: unknown[] = [
+      { data: "not-an-array" },
+      { data: [null] },
+      { data: [{ key: "VALID", value: 123 }] },
+      { data: [{ key: "DUP", value: "one" }, { key: "DUP", value: "two" }] },
+      { data: Array.from({ length: 101 }, (_, index) => ({ key: `KEY_${index}`, value: "x" })) },
+    ];
+    const { server, port } = createMockServer(() => Response.json(responses.shift()));
+
+    try {
+      for (let index = 0; index < 5; index += 1) {
+        const error = await assertRejects(() => fetchFromMockApi(port));
+        assertEquals((error as { slug?: string }).slug, "network-error");
+      }
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("bounds streamed environment responses before JSON parsing", async () => {
+    const chunk = new Uint8Array(64 * 1024).fill(0x20);
+    let emittedBytes = 0;
+    const { server, port } = createMockServer(() => {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (emittedBytes > PROJECT_ENV_RESPONSE_MAX_BYTES) {
+              controller.close();
+              return;
+            }
+            emittedBytes += chunk.byteLength;
+            controller.enqueue(chunk);
+          },
+        }),
+        {
+          headers: { "content-type": "application/json" },
+        },
+      );
+    });
+
+    try {
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals((error as { slug?: string }).slug, "network-error");
+      assertEquals(emittedBytes <= PROJECT_ENV_RESPONSE_MAX_BYTES + chunk.byteLength * 2, true);
     } finally {
       await server.shutdown();
     }

@@ -5,8 +5,10 @@
  */
 
 import { encodeBase64, getBaseLogger } from "#veryfront/utils";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { AUTHENTICATION_REQUIRED, NETWORK_ERROR, PERMISSION_DENIED } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { createProjectEnvSnapshot } from "./snapshot.ts";
 
 const baseLogger = getBaseLogger("PROJECT-ENV");
 
@@ -15,10 +17,101 @@ const logger = baseLogger.component("project-env");
 /** Max env vars per request. API enforces a hard cap of 100. */
 const ENV_VARS_FETCH_LIMIT = 100;
 const MASKED_ENV_VALUE = "********";
+/** Hard ceiling for the complete JSON envelope returned by the env API. */
+export const PROJECT_ENV_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+const UTF8_ENCODER = new TextEncoder();
 
-type EnvironmentVariableResponse = {
-  data?: Array<{ key: string; value: string }>;
-};
+function discardResponseBody(response: Response): void {
+  try {
+    void response.body?.cancel().catch(() => {});
+  } catch {
+    // Best-effort cleanup; admission has already failed closed.
+  }
+}
+
+function parseDeclaredContentLength(response: Response): number | undefined {
+  const raw = response.headers.get("content-length");
+  if (raw === null || !/^(0|[1-9]\d*)$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+function invalidEnvironmentResponse(detail: string, cause?: unknown): Error {
+  return NETWORK_ERROR.create({ detail, cause });
+}
+
+async function readBoundedEnvironmentResponse(
+  response: Response,
+  signal?: AbortSignal,
+): Promise<string> {
+  const declaredLength = parseDeclaredContentLength(response);
+  if (declaredLength !== undefined && declaredLength > PROJECT_ENV_RESPONSE_MAX_BYTES) {
+    discardResponseBody(response);
+    throw invalidEnvironmentResponse("Project environment response exceeded its size limit");
+  }
+
+  const { text, truncated } = await readResponseTextPrefix(
+    response,
+    PROJECT_ENV_RESPONSE_MAX_BYTES + 1,
+    signal,
+    { fatalUtf8: true },
+  );
+  if (
+    truncated || UTF8_ENCODER.encode(text).byteLength > PROJECT_ENV_RESPONSE_MAX_BYTES
+  ) {
+    throw invalidEnvironmentResponse("Project environment response exceeded its size limit");
+  }
+  return text;
+}
+
+function parseEnvironmentResponse(text: string): Readonly<Record<string, string>> {
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch (cause) {
+    throw invalidEnvironmentResponse("Project environment response was not valid JSON", cause);
+  }
+
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw invalidEnvironmentResponse("Project environment response must be an object");
+  }
+  const data = (body as { data?: unknown }).data;
+  if (!Array.isArray(data)) {
+    throw invalidEnvironmentResponse("Project environment response must contain a data array");
+  }
+  if (data.length > ENV_VARS_FETCH_LIMIT) {
+    throw invalidEnvironmentResponse("Project environment response contained too many entries");
+  }
+
+  const result = Object.create(null) as Record<string, string>;
+  const keys = new Set<string>();
+  for (const entry of data) {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw invalidEnvironmentResponse("Project environment response contained an invalid entry");
+    }
+    const key = (entry as { key?: unknown }).key;
+    const value = (entry as { value?: unknown }).value;
+    if (typeof key !== "string" || typeof value !== "string") {
+      throw invalidEnvironmentResponse(
+        "Project environment response entries must contain string keys and values",
+      );
+    }
+    if (keys.has(key)) {
+      throw invalidEnvironmentResponse("Project environment response contained a duplicate key");
+    }
+    keys.add(key);
+    if (value === MASKED_ENV_VALUE) {
+      throw invalidEnvironmentResponse("Refusing masked environment variable response");
+    }
+    result[key] = value;
+  }
+
+  try {
+    return createProjectEnvSnapshot(result);
+  } catch (cause) {
+    throw invalidEnvironmentResponse("Project environment response violated runtime limits", cause);
+  }
+}
 
 function getInternalAuthorization(): string | undefined {
   const username = getHostEnv("VERYFRONT_API_INTERNAL_USER");
@@ -143,19 +236,9 @@ export async function fetchProjectEnvVars(
   }
 
   try {
-    const body = await response.json() as EnvironmentVariableResponse;
-
-    const result: Record<string, string> = {};
-    if (body.data) {
-      for (const entry of body.data) {
-        if (entry.value === MASKED_ENV_VALUE) {
-          throw NETWORK_ERROR.create({
-            detail: "Refusing masked environment variable response",
-          });
-        }
-        result[entry.key] = entry.value;
-      }
-    }
+    const result = parseEnvironmentResponse(
+      await readBoundedEnvironmentResponse(response, signal),
+    );
 
     logger.debug("Fetched env vars", {
       projectSlug,

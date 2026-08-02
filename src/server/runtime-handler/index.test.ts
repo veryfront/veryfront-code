@@ -166,6 +166,20 @@ describe("server/runtime-handler/index", () => {
 
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {
     const handler = createProxyModeHandler();
+    const isolationCalls = { check: 0, start: 0, complete: 0 };
+    injectIsolationDepsForTests({
+      checkRequest: () => {
+        isolationCalls.check += 1;
+        return { allowed: true };
+      },
+      startRequest: () => {
+        isolationCalls.start += 1;
+      },
+      completeRequest: () => {
+        isolationCalls.complete += 1;
+      },
+    });
+    const trackerBefore = requestTracker.getStats();
 
     const response = await handler(
       new Request("http://localhost/page", {
@@ -179,6 +193,8 @@ describe("server/runtime-handler/index", () => {
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",
     });
+    assertEquals(isolationCalls, { check: 0, start: 0, complete: 0 });
+    assertEquals(requestTracker.getStats(), trackerBefore);
   });
 
   it("does not emit security guidance for the safe development defaults", async () => {

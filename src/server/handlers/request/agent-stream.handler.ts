@@ -53,7 +53,7 @@ import {
   type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { errorToResponse, INVALID_ARGUMENT, isVeryfrontError } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -62,11 +62,11 @@ import { isServerShuttingDown } from "../../shutdown-state.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveVeryfrontApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { serverLogger } from "#veryfront/utils";
-import { LRUCacheAdapter } from "#veryfront/utils/cache/stores/memory/lru-cache-adapter.ts";
 import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
   filterRuntimeProjectEnv,
+  ProductionEnvironmentResolver,
   runWithProjectEnv,
 } from "../../project-env/index.ts";
 import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
@@ -78,12 +78,21 @@ export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
   resolveRuntimeOwnerInvokeUrl?: typeof resolveRuntimeOwnerInvokeUrl;
   getLocalTools?: (agentId: string) => RuntimeAgentStreamExecutionDeps["localTools"];
+  loadAgentSourceEnvironment?: AgentSourceEnvironmentLoader;
 }
+
+export type AgentSourceEnvironmentLoader = (
+  ctx: HandlerContext,
+  sourceContext: RuntimeAgentSourceContext,
+  apiAuthToken: string,
+  signal?: AbortSignal,
+) => Promise<Record<string, string>>;
 
 const defaultDeps: AgentStreamHandlerDeps = {
   ...defaultChannelInvokeDeps,
   sessionManager: agentRunSessionManager,
   resolveRuntimeOwnerInvokeUrl,
+  loadAgentSourceEnvironment: resolveAgentSourceEnvironment,
   getLocalTools: (agentId) =>
     getDiscoveredHostTools({ agentId }) as RuntimeAgentStreamExecutionDeps["localTools"],
 };
@@ -113,50 +122,7 @@ const _agentEnvVarCache = new EnvironmentVariableCache(
   },
 );
 
-// Cache: projectSlug → production environmentId (stable across restarts)
-const _productionEnvIdCache = new LRUCacheAdapter({ maxEntries: 1000 });
-
-async function _resolveProductionEnvironmentId(
-  projectSlug: string,
-  token: string,
-): Promise<string | null> {
-  const cached = _productionEnvIdCache.get<string>(projectSlug);
-  if (cached) return cached;
-  const apiBaseUrl = resolveVeryfrontApiBaseUrlFromHostEnv();
-  try {
-    const res = await fetch(
-      `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/environments`,
-      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
-    );
-    if (!res.ok) {
-      await res.body?.cancel();
-      logger.warn("Unable to resolve production environment for agent stream", {
-        projectSlug,
-        apiBaseUrl,
-        status: res.status,
-      });
-      return null;
-    }
-    const body = await res.json() as { data?: Array<{ id: string; name?: string }> };
-    const env = body.data?.find((e) => e.name === "production") ?? body.data?.[0];
-    if (!env?.id) {
-      logger.warn("Production environment missing for agent stream", {
-        projectSlug,
-        apiBaseUrl,
-      });
-      return null;
-    }
-    _productionEnvIdCache.set(projectSlug, env.id);
-    return env.id;
-  } catch (error) {
-    logger.warn("Unable to resolve production environment for agent stream", {
-      projectSlug,
-      apiBaseUrl,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    return null;
-  }
-}
+const _productionEnvironmentResolver = new ProductionEnvironmentResolver();
 
 function mergeAllowedRemoteTools(
   current: RuntimeRemoteToolConfig["__vfAllowedRemoteTools"],
@@ -383,13 +349,25 @@ async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
   apiAuthToken: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
   if (sourceContext.type === "release") return {};
-  if (!ctx.projectSlug || !apiAuthToken) return {};
+  if (!ctx.projectSlug) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Agent source environment requires a canonical project identity",
+    });
+  }
 
   const environmentId = ctx.environmentId ??
-    await _resolveProductionEnvironmentId(ctx.projectSlug, apiAuthToken);
-  if (!environmentId) return {};
+    await _productionEnvironmentResolver.resolve(
+      {
+        apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+        projectSlug: ctx.projectSlug,
+        projectId: ctx.projectId,
+        token: apiAuthToken,
+      },
+      signal,
+    );
 
   return await _agentEnvVarCache.get({
     environmentId,
@@ -752,10 +730,13 @@ export class AgentStreamHandler extends BaseHandler {
           async () => {
             // Resolved before the config load because hosted evaluation binds
             // config to the same environment the run will execute with.
-            const envVarsForAgent = await resolveAgentSourceEnvironment(
+            const envVarsForAgent = await (
+              this.deps.loadAgentSourceEnvironment ?? resolveAgentSourceEnvironment
+            )(
               requestScopedContext,
               payload.agentSource,
               apiAuthToken,
+              req.signal,
             );
             const sourceConfig = await resolveAgentSourceConfig(
               requestScopedContext,
@@ -889,6 +870,11 @@ export class AgentStreamHandler extends BaseHandler {
         return this.respond(
           builder.json({ error: "Invalid internal agent stream request" }, 400),
         );
+      }
+
+      if (isVeryfrontError(error)) {
+        const response = errorToResponse(error, new URL(req.url).pathname);
+        return this.respond(applyBuilderHeaders(response, builder.headers));
       }
 
       this.logWarn("Internal agent stream request failed", {

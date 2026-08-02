@@ -52,6 +52,10 @@ export interface TransportRequestInit {
   timeoutMs?: number;
   /** Caller-owned cancellation signal, composed with the per-attempt timeout. */
   signal?: AbortSignal;
+  /** Redirect policy for requests carrying platform credentials. */
+  redirect?: RequestRedirect;
+  /** Allow bounded upstream error bodies in logs/error context. Defaults to true. */
+  includeErrorBodyInDiagnostics?: boolean;
 }
 
 export interface VeryfrontApiTransportConfig<T> {
@@ -140,6 +144,7 @@ function createValidatedVeryfrontApiTransport<T>(
       const timeoutMs = init.timeoutMs ?? cfgTimeout;
       const requestHeaders = new Headers(init.headers);
       const body = init.body;
+      const redirect = requireRedirectPolicy(init.redirect);
       const responseInit: TransportRequestInit = Object.freeze({
         method,
         headers: new Headers(requestHeaders),
@@ -150,6 +155,8 @@ function createValidatedVeryfrontApiTransport<T>(
         expected404: init.expected404 === true,
         timeoutMs,
         signal: callerSignal,
+        redirect,
+        includeErrorBodyInDiagnostics: init.includeErrorBodyInDiagnostics !== false,
       });
       // Capture the token once per request: retries of this request must not
       // pick up mid-flight token mutations (setRequestToken/clearRequestToken),
@@ -170,6 +177,7 @@ function createValidatedVeryfrontApiTransport<T>(
               headers,
               body,
               signal,
+              redirect,
             };
             const res = config.outboundPolicy
               ? await guardedOutboundFetch(url, { ...requestInit, redirect: "error" }, {
@@ -287,23 +295,25 @@ async function defaultOnResponse(
     const isExpected404 = init.expected404 === true && response.status === 404;
     const level = isExpected404 ? "debug" : response.status >= 500 ? "error" : "warn";
     const redactedUrl = sanitizeUrlCredentials(url);
+    const includeErrorBody = init.includeErrorBodyInDiagnostics !== false;
     apiClientLog[level]("Request failed", {
       url: redactedUrl,
       status: response.status,
       statusText: response.statusText,
-      responseText: text.slice(0, 500),
+      responseText: includeErrorBody ? text.slice(0, 500) : undefined,
       responseTruncated: truncated,
     });
+    const details: Record<string, unknown> = {
+      url: redactedUrl,
+      responseTruncated: truncated,
+    };
+    if (includeErrorBody) details.responseText = text;
     throw API_CLIENT_ERROR.create({
       detail: `API request failed: ${response.status} ${response.statusText}`,
       status: response.status,
       // Redacted so error telemetry cannot leak token query params.
       context: {
-        details: {
-          url: redactedUrl,
-          responseText: text,
-          responseTruncated: truncated,
-        },
+        details,
       },
     });
   }
@@ -370,6 +380,14 @@ function requireSuccessResponseByteLimit(value: number | undefined): number {
     );
   }
   return limit;
+}
+
+function requireRedirectPolicy(value: RequestRedirect | undefined): RequestRedirect {
+  const redirect = value ?? "follow";
+  if (redirect !== "error" && redirect !== "follow" && redirect !== "manual") {
+    throw new TypeError("redirect must be 'error', 'follow', or 'manual'");
+  }
+  return redirect;
 }
 
 /**

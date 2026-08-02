@@ -92,7 +92,6 @@ import {
 } from "./request-lifecycle.ts";
 import {
   checkRequestIsolation,
-  completeIsolatedRequest,
   completeIsolatedRequestOnSettlement,
   createIsolationErrorResponse,
   startIsolatedRequest,
@@ -419,6 +418,26 @@ export function createVeryfrontHandler(
       const spanInfo = startRequestTracing(req, url.pathname);
       setRequestAttributes(spanInfo.span, req, url);
 
+      // Reject untrusted/malformed proxy identity before any project-keyed
+      // accounting is touched. In particular, isolation creates per-slug
+      // state on first access; admitting attacker-controlled slugs there would
+      // let rejected requests grow shared-process state indefinitely.
+      if (preparedRequest.proxyGuard) {
+        try {
+          logger.warn(preparedRequest.proxyGuard.detail, {
+            pathname: url.pathname,
+            domain: preparedRequest.loggerFacts.domain,
+            projectSlug: headers.projectSlug,
+            host: req.headers.get("host"),
+            forwardedHost: req.headers.get("x-forwarded-host"),
+          });
+          endRequestTracing(spanInfo.span, preparedRequest.proxyGuard.response.status);
+          return preparedRequest.proxyGuard.response;
+        } finally {
+          endRequestLifecycle(lifecycle);
+        }
+      }
+
       startRequestTracking(
         lifecycle.requestId,
         preparedRequest.trackingFacts.projectSlug,
@@ -452,25 +471,6 @@ export function createVeryfrontHandler(
       startIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation);
 
       try {
-        if (preparedRequest.proxyGuard) {
-          logger.warn(preparedRequest.proxyGuard.detail, {
-            pathname: url.pathname,
-            domain: preparedRequest.loggerFacts.domain,
-            projectSlug: headers.projectSlug,
-            host: req.headers.get("host"),
-            forwardedHost: req.headers.get("x-forwarded-host"),
-          });
-          endContentMetrics({
-            requestId: lifecycle.requestId,
-            pathname: url.pathname,
-            mode: "proxy",
-          });
-          completeRequestTracking(lifecycle.requestId, 502, false);
-          completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
-          endRequestTracing(spanInfo.span, 502);
-          return preparedRequest.proxyGuard.response;
-        }
-
         const profileCategory = url.pathname.startsWith("/_vf_styles/")
           ? "css"
           : url.pathname.startsWith("/_vf_modules/")

@@ -17,3 +17,7 @@ export {
 } from "./cache.ts";
 export { filterRuntimeProjectEnv, filterSharedRuntimeProjectEnv } from "./reserved-env.ts";
 export { fetchProjectEnvVars } from "./fetcher.ts";
+export {
+  ProductionEnvironmentResolver,
+  type ProductionEnvironmentScope,
+} from "./production-environment-resolver.ts";

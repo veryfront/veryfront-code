@@ -10,7 +10,7 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getVerifiedCacheApiCredential } from "#veryfront/cache/verified-api-credential-context.ts";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
-import { AgentStreamHandler } from "./agent-stream.handler.ts";
+import { AgentStreamHandler, type AgentStreamHandlerDeps } from "./agent-stream.handler.ts";
 import type { HandlerContext } from "../types.ts";
 import {
   createAgent,
@@ -39,6 +39,13 @@ import {
 // depending on external DNS answers for production or reserved test hosts.
 const TEST_PUBLIC_API_ORIGIN = "https://93.184.216.34";
 const TEST_PUBLIC_STUDIO_MCP_URL = "https://93.184.216.35/studio-mcp";
+
+function createTestAgentStreamHandler(deps: AgentStreamHandlerDeps): AgentStreamHandler {
+  return new AgentStreamHandler({
+    loadAgentSourceEnvironment: () => Promise.resolve({}),
+    ...deps,
+  });
+}
 
 function createRuntimeAgentRunInvocationBody() {
   return JSON.stringify({
@@ -86,7 +93,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -202,7 +209,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let streamContext: Record<string, unknown> | undefined;
     let runtimeSystem: unknown;
     let runtimeMessages: AgentMessage[] | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -322,7 +329,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("accepts the public control-plane stream route", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -380,7 +387,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let runtimeAgentId: string | undefined;
     let runtimeToolNames: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => agents.get(id),
       getAllAgentIds: () => [...agents.keys()],
@@ -455,7 +462,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("rejects the removed internal AG-UI request shape on the public stream route", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls++;
       },
@@ -520,7 +527,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       required: ["query"],
     };
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "incident-responder" ? createAgent("incident-responder") : undefined,
       getAllAgentIds: () => ["incident-responder"],
@@ -694,7 +701,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }) as typeof fetch;
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = createTestAgentStreamHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
@@ -782,7 +789,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("does not pass undeclared forwarded remote tool allowlists into the runtime agent config", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -845,7 +852,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let capturedSourcePolicy: ReturnType<typeof getRuntimeSourceIntegrationPolicy>;
     let discoveryConfig: HandlerContext["config"];
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async (ctx) => {
         discoveryConfig = ctx.config;
       },
@@ -957,7 +964,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("fails closed before discovery when the runtime cannot select the signed source", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -980,13 +987,13 @@ describe("server/handlers/request/agent-stream.handler", () => {
       createSingleProjectCtx(publicKeyPem),
     );
 
-    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.status, 400);
     assertEquals(discoveryCalls, 0);
   });
 
   it("rejects a missing source before discovery", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -1015,7 +1022,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("does not use an outer config when the exact source config cannot load", async () => {
     let discoveryCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
@@ -1046,14 +1053,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
       ctx,
     );
 
-    assertEquals(result.response?.status, 500);
+    assertEquals(result.response?.status, 400);
     assertEquals(discoveryCalls, 0);
   });
 
   it("drops undeclared Studio runtime tool allowlists for untrusted clients", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -1153,7 +1160,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }) as typeof fetch;
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = createTestAgentStreamHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
         getAllAgentIds: () => ["assistant-1"],
@@ -1245,7 +1252,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }) as typeof fetch;
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = createTestAgentStreamHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) =>
           id === "assistant-1"
@@ -1333,7 +1340,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("fails closed for malformed runtime integration tool allowlists from forwarded props", async () => {
     let capturedAllowedTools: string[] | undefined;
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -1404,7 +1411,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     };
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = createTestAgentStreamHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) =>
           id === "assistant-1"
@@ -1493,7 +1500,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
           return Promise.resolve(new Response(null, { status: 503 }));
         }) as typeof fetch;
 
-        const handler = new AgentStreamHandler({
+        const handler = createTestAgentStreamHandler({
           ensureProjectDiscovery: async () => {},
           getAgent: (id) =>
             id === "assistant-1"
@@ -1632,7 +1639,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }) as typeof fetch;
 
     try {
-      const handler = new AgentStreamHandler({
+      const handler = createTestAgentStreamHandler({
         ensureProjectDiscovery: async () => {},
         getAgent: (id) =>
           id === "assistant-1"
@@ -1927,6 +1934,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
     const apiBaseUrl = "http://93.184.216.34:8080";
+    const canonicalApiOrigin = new URL(apiBaseUrl).origin;
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
 
@@ -1997,7 +2005,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         "Bearer request-scoped-user-token",
       );
 
-      if (String(url) === `${apiBaseUrl}/mcp`) {
+      if (String(url) === `${canonicalApiOrigin}/mcp`) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -2018,7 +2026,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
-      if (String(url) === `${apiBaseUrl}/projects/base-url-agent-fork/environments`) {
+      if (String(url) === `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`) {
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -2079,14 +2087,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
-      `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
+      `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
-      `${new URL(apiBaseUrl).origin}/mcp`,
+      `${canonicalApiOrigin}/mcp`,
     ]);
   });
 
   it("rejects oversized internal agent stream payloads before parsing", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
@@ -2116,7 +2124,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 404 when the requested agent is not available", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => undefined,
       getAllAgentIds: () => [],
@@ -2144,7 +2152,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 400 for malformed internal agent stream payloads", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
@@ -2172,7 +2180,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 400 when the runtime input exceeds the message limit", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: () => createAgent("assistant-1"),
       getAllAgentIds: () => ["assistant-1"],
@@ -2206,7 +2214,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("accepts generic control-plane tool names like invoke_agent", async () => {
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2287,7 +2295,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       environmentName?: string | null;
     }> = [];
 
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
       },
@@ -2392,7 +2400,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     let observedCacheCredential:
       | ReturnType<typeof getVerifiedCacheApiCredential>
       | undefined;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
       },
@@ -2439,7 +2447,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("returns 409 when the same run is started twice", async () => {
     const sessionManager = new AgentRunSessionManager();
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2483,7 +2491,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("returns 500 when runtime execution setup fails unexpectedly", async () => {
     const sessionManager = new AgentRunSessionManager();
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2514,9 +2522,59 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
+  it("fails closed with typed authorization semantics when production env lookup is denied", async () => {
+    const originalFetch = globalThis.fetch;
+    let discoveryCalls = 0;
+    let redirect: RequestRedirect | undefined;
+    globalThis.fetch = ((_input, init) => {
+      redirect = init?.redirect;
+      return Promise.resolve(new Response(null, { status: 403 }));
+    }) as typeof fetch;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "denied-project-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 403);
+      assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+      assertEquals(
+        (await result.response.json()).type,
+        "https://veryfront.com/docs/errors/permission-denied",
+      );
+      assertEquals(discoveryCalls, 0);
+      assertEquals(redirect, "error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {
     const sessionManager = new TrackingSessionManager();
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2565,7 +2623,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
 
   it("keeps a waiting run resumable after the client disconnects", async () => {
     const sessionManager = new TrackingSessionManager();
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2654,7 +2712,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("accepts an early resume before the runtime registers the tool wait", async () => {
     const sessionManager = new TrackingSessionManager();
     const resumeHandler = new AgentRunResumeHandler(sessionManager);
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
@@ -2790,7 +2848,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   it("rejects new agent stream requests with 503 while the runtime is shutting down", async () => {
     let discoveryCalls = 0;
     let resolveOwnerCalls = 0;
-    const handler = new AgentStreamHandler({
+    const handler = createTestAgentStreamHandler({
       ensureProjectDiscovery: async () => {
         discoveryCalls += 1;
       },
