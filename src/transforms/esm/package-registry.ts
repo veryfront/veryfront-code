@@ -728,7 +728,7 @@ async function readProjectDependencyVersionsUncoalesced(
       return {
         react: cached.react,
         veryfront: cached.veryfront,
-        dependencies: pinningOn ? cached.dependencies : undefined,
+        dependencies: undefined,
         dependencyState: "verified",
       };
     }

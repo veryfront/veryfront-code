@@ -83,7 +83,7 @@ function createHTTPModuleCache(projectDir: string | undefined): HTTPModuleCache 
 
         const contents = await fs.readTextFile(sourcePath);
         const integrity = await computeIntegrity(contents);
-        if (expectedIntegrity && integrity !== expectedIntegrity) {
+        if (integrity !== expectedIntegrity) {
           logger.warn(`[http] cached module integrity mismatch: ${url}`);
           return null;
         }
