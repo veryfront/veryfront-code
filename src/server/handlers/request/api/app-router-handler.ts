@@ -12,6 +12,11 @@ import { applyCORSHeaders } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { methodNotAllowed } from "#veryfront/http/responses";
 import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 
 const logger = serverLogger.component("app-router-api-handler");
 
@@ -39,6 +44,29 @@ export async function handleAppRouter(
   ctx: HandlerContext,
 ): Promise<Response | null> {
   try {
+    if (isSharedProjectRuntime(ctx)) {
+      const unavailable = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail: "Shared runtimes require a dedicated isolated project runtime for API execution",
+          instance: pathname,
+        },
+      );
+      const headers = new Headers(unavailable.headers);
+      headers.set("cache-control", "no-store");
+      await applyCORSHeaders({
+        request: req,
+        headers,
+        config: ctx.securityConfig?.cors,
+      });
+      applySecurityHeaders(headers, ctx, req);
+      return new Response(req.method === "HEAD" ? null : unavailable.body, {
+        status: unavailable.status,
+        statusText: unavailable.statusText,
+        headers,
+      });
+    }
+
     const match = await resolveAppRouteFile(pathname, ctx);
     if (!match) return null;
 

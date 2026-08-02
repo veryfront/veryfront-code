@@ -16,6 +16,7 @@ import {
   createErrorResponseFromDefinition,
   PROJECT_EXECUTION_UNAVAILABLE,
 } from "#veryfront/errors";
+import { isSharedProjectRuntime } from "#veryfront/security/project-locality.ts";
 
 const MODULE_ENDPOINT_PREFIXES = [
   "/_vf_modules/",
@@ -72,7 +73,7 @@ export class ModuleHandler extends BaseHandler {
     // reach that path until rendering has a generation-owned prepared module
     // graph equivalent to isolated API routes.
     if (
-      ctx.isLocalProject !== true &&
+      isSharedProjectRuntime(ctx) &&
       HOST_RENDERER_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix))
     ) {
       const problem = createErrorResponseFromDefinition(

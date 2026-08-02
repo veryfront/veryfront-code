@@ -237,7 +237,12 @@ describe("server/handlers/request/module/module.handler", () => {
       ) {
         const result = await handler.handle(
           new Request(`https://tenant.example${pathname}`),
-          makeCtx({ isLocalProject: false }),
+          makeCtx({
+            isLocalProject: false,
+            prepareHostedConfigContext: (() => {
+              throw new Error("shared module endpoint prepared host rendering context");
+            }) as HandlerContext["prepareHostedConfigContext"],
+          }),
         );
         assertEquals(result.continue, false);
         assertEquals(result.response?.status, 503);
@@ -257,7 +262,12 @@ describe("server/handlers/request/module/module.handler", () => {
         new Request("https://tenant.example/_veryfront/page-data/page.json", {
           method: "HEAD",
         }),
-        makeCtx({ isLocalProject: false }),
+        makeCtx({
+          isLocalProject: false,
+          prepareHostedConfigContext: (() => {
+            throw new Error("shared module endpoint prepared host rendering context");
+          }) as HandlerContext["prepareHostedConfigContext"],
+        }),
       );
 
       assertEquals(result.response?.status, 503);
