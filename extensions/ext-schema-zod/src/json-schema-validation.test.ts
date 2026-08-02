@@ -140,6 +140,13 @@ describe("SchemaValidator.compileJsonSchema", () => {
       TypeError,
       "plain JSON objects",
     );
+    for (const schema of [null, false, [], "string"] as const) {
+      assertThrows(
+        () => compile(schema as never),
+        TypeError,
+        "JSON Schema root must be a plain object",
+      );
+    }
   });
 
   it("rejects sparse and extended arrays regardless of cache insertion order", () => {

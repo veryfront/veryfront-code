@@ -485,6 +485,9 @@ function canonicalizeJsonValue(value: unknown): unknown {
 
 function snapshotJsonSchema(schema: JsonSchema): { key: string; schema: JsonSchema } {
   const canonical = canonicalizeJsonValue(schema);
+  if (canonical === null || typeof canonical !== "object" || Array.isArray(canonical)) {
+    throw new TypeError("JSON Schema root must be a plain object");
+  }
   const key = JSON.stringify(canonical);
   if (key === undefined) throw new TypeError("JSON Schema must be JSON serializable");
   return { key, schema: canonical as JsonSchema };
