@@ -21,7 +21,6 @@ const MAX_DISCOVERY_HOST_CODE_UNITS = 253;
 const MAX_FALLBACK_URL_CODE_UNITS = 4_096;
 const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
 const FNV_PRIME = 0x100000001b3n;
-const UINT64_MASK = 0xffffffffffffffffn;
 const JUMP_HASH_MULTIPLIER = 2_862_933_555_777_941_757n;
 const JUMP_HASH_SCALE = 2_147_483_648;
 
@@ -48,7 +47,7 @@ function fnv1a64(input: string): bigint {
   let hash = FNV_OFFSET_BASIS;
   for (let index = 0; index < input.length; index++) {
     hash ^= BigInt(input.charCodeAt(index));
-    hash = (hash * FNV_PRIME) & UINT64_MASK;
+    hash = BigInt.asUintN(64, hash * FNV_PRIME);
   }
   return hash;
 }
@@ -73,7 +72,7 @@ export function jumpHash(keyValue: string, numBuckets: number): number {
   const bucketCount = BigInt(numBuckets);
   while (next < bucketCount) {
     previous = next;
-    key = ((key * JUMP_HASH_MULTIPLIER) + 1n) & UINT64_MASK;
+    key = BigInt.asUintN(64, (key * JUMP_HASH_MULTIPLIER) + 1n);
     next = BigInt(
       Math.floor(
         Number(previous + 1n) * JUMP_HASH_SCALE /

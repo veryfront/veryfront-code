@@ -40,6 +40,12 @@ Deno.test("jumpHash", async (t) => {
     assertEquals(jumpHash("project-abc", 5), jumpHash("project-abc", 5));
   });
 
+  await t.step("keeps stable 64-bit hash vectors", () => {
+    assertEquals(jumpHash("test", 10), 1);
+    assertEquals(jumpHash("project-abc", 5), 3);
+    assertEquals(jumpHash("key-123", 17), 15);
+  });
+
   await t.step("distributes keys across buckets", () => {
     const buckets = new Map<number, number>();
     const bucketCount = 10;
