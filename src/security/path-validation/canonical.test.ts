@@ -1,83 +1,59 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getCanonicalPath, validateAllowedDirs } from "./canonical.ts";
 import { PathValidationError } from "./types.ts";
 
+function createAdapterWithFs(
+  overrides: Partial<RuntimeAdapter["fs"]>,
+): RuntimeAdapter {
+  const adapter = createMockAdapter();
+  Object.assign(adapter.fs, overrides);
+  return adapter;
+}
+
 describe("security/path-validation/canonical", () => {
   describe("getCanonicalPath", () => {
-    it("should resolve path segments without adapter", async () => {
-      const { path, isSymlink } = await getCanonicalPath("/a/b/../c");
-      assertEquals(path, "/a/c");
-      assertEquals(isSymlink, false);
-    });
-
-    it("should resolve dot segments", async () => {
-      const { path, isSymlink } = await getCanonicalPath("/a/./b/./c");
-      assertEquals(path, "/a/b/c");
-      assertEquals(isSymlink, false);
-    });
-
-    it("should return isSymlink false when followSymlinks is false", async () => {
-      const { isSymlink } = await getCanonicalPath("/some/path", undefined, false);
-      assertEquals(isSymlink, false);
-    });
-
-    it("should return isSymlink false when adapter is undefined", async () => {
-      const { isSymlink } = await getCanonicalPath("/some/path", undefined, true);
-      assertEquals(isSymlink, false);
+    it("requires a runtime adapter instead of degrading to lexical resolution", async () => {
+      await assertRejects(
+        () => getCanonicalPath("/a/b/../c", undefined as never),
+        TypeError,
+        "requires a runtime adapter",
+      );
     });
 
     it("should detect symlinks via adapter.fs.lstat", async () => {
       // lstat (not stat) is the correct symlink detector: stat() follows the
       // link and always reports isSymlink:false, so detection must use lstat.
-      const mockAdapter: Parameters<typeof getCanonicalPath>[1] = {
-        fs: {
-          lstat: (_path: string) =>
-            Promise.resolve({
-              isSymlink: true,
-              isDirectory: false,
-              isFile: true,
-              size: 0,
-            }),
-        },
-      };
+      const mockAdapter = createAdapterWithFs({
+        lstat: (_path: string) =>
+          Promise.resolve({
+            isSymlink: true,
+            isDirectory: false,
+            isFile: true,
+            size: 0,
+            mtime: null,
+          }),
+      });
 
-      const { isSymlink } = await getCanonicalPath("/some/path", mockAdapter, true);
+      const { isSymlink } = await getCanonicalPath("/some/path", mockAdapter);
       assertEquals(isSymlink, true);
     });
 
-    it("should fall back gracefully when adapter.fs.stat throws", async () => {
-      const mockAdapter: Parameters<typeof getCanonicalPath>[1] = {
-        fs: {
-          stat: () => Promise.reject(new Error("not found")),
-        },
-      };
-
-      const { path, isSymlink } = await getCanonicalPath("/some/path", mockAdapter, true);
-      assertEquals(path, "/some/path");
-      assertEquals(isSymlink, false);
-    });
-
-    it("should handle relative paths", async () => {
-      const { path } = await getCanonicalPath("a/b/../c");
-      assertEquals(path, "a/c");
-    });
-
     it("should resolve the nearest existing ancestor for a missing target", async () => {
-      const mockAdapter: Parameters<typeof getCanonicalPath>[1] = {
-        fs: {
-          realPath: (path: string) => {
-            if (path === "/project/link/new.txt") {
-              return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
-            }
-            if (path === "/project/link") {
-              return Promise.resolve("/outside");
-            }
-            return Promise.reject(new Error(`unexpected path: ${path}`));
-          },
+      const mockAdapter = createAdapterWithFs({
+        realPath: (path: string) => {
+          if (path === "/project/link/new.txt") {
+            return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
+          }
+          if (path === "/project/link") {
+            return Promise.resolve("/outside");
+          }
+          return Promise.reject(new Error(`unexpected path: ${path}`));
         },
-      };
+      });
 
       const result = await getCanonicalPath("/project/link/new.txt", mockAdapter);
 
@@ -95,9 +71,9 @@ describe("security/path-validation/canonical", () => {
         await Deno.mkdir(`${outsideDir}/child`, { recursive: true });
         await Deno.symlink(`${outsideDir}/child`, `${baseDir}/link`);
 
-        const adapter: Parameters<typeof getCanonicalPath>[1] = {
-          fs: { realPath: (path: string) => Deno.realPath(path) },
-        };
+        const adapter = createAdapterWithFs({
+          realPath: (path: string) => Deno.realPath(path),
+        });
         const physicalParent = await Deno.realPath(`${baseDir}/link/..`);
         const result = await getCanonicalPath(`${baseDir}/link/../new.txt`, adapter);
 
@@ -109,15 +85,13 @@ describe("security/path-validation/canonical", () => {
 
     it("should preserve the root while walking a missing Windows drive path", async () => {
       const candidates: string[] = [];
-      const mockAdapter: Parameters<typeof getCanonicalPath>[1] = {
-        fs: {
-          realPath: (path: string) => {
-            candidates.push(path);
-            if (path === "C:/") return Promise.resolve("C:/");
-            return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
-          },
+      const mockAdapter = createAdapterWithFs({
+        realPath: (path: string) => {
+          candidates.push(path);
+          if (path === "C:/") return Promise.resolve("C:/");
+          return Promise.reject(Object.assign(new Error("missing"), { code: "ENOENT" }));
         },
-      };
+      });
 
       const result = await getCanonicalPath("C:/project/new.txt", mockAdapter);
 
@@ -126,12 +100,10 @@ describe("security/path-validation/canonical", () => {
     });
 
     it("should propagate realPath errors other than not found", async () => {
-      const mockAdapter: Parameters<typeof getCanonicalPath>[1] = {
-        fs: {
-          realPath: () =>
-            Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
-        },
-      };
+      const mockAdapter = createAdapterWithFs({
+        realPath: () =>
+          Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+      });
 
       await assertRejects(
         () => getCanonicalPath("/project/file.txt", mockAdapter),
@@ -141,12 +113,10 @@ describe("security/path-validation/canonical", () => {
     });
 
     it("should propagate lstat errors other than not found", async () => {
-      const mockAdapter: Parameters<typeof getCanonicalPath>[1] = {
-        fs: {
-          lstat: () =>
-            Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
-        },
-      };
+      const mockAdapter = createAdapterWithFs({
+        lstat: () =>
+          Promise.reject(Object.assign(new Error("permission denied"), { code: "EACCES" })),
+      });
 
       await assertRejects(
         () => getCanonicalPath("/project/file.txt", mockAdapter),
@@ -158,8 +128,14 @@ describe("security/path-validation/canonical", () => {
 
   describe("validateAllowedDirs", () => {
     it("should return valid when path is within base and no allowedDirs", () => {
-      const { valid } = validateAllowedDirs("/project/src/file.ts", "/project", []);
+      const { valid } = validateAllowedDirs("/project/src/file.ts", "/project", undefined);
       assertEquals(valid, true);
+    });
+
+    it("should treat an explicit empty allowlist as deny-all", () => {
+      const { valid, code } = validateAllowedDirs("/project/src/file.ts", "/project", []);
+      assertEquals(valid, false);
+      assertEquals(code, PathValidationError.NOT_IN_ALLOWLIST);
     });
 
     it("should return invalid when path is outside base directory", () => {

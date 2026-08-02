@@ -1,5 +1,9 @@
-export type OriginValidator = (origin: string) => boolean | string | Promise<boolean | string>;
+export type SyncOriginValidator = (origin: string) => boolean | string;
+export type OriginValidator = (
+  origin: string,
+) => boolean | string | Promise<boolean | string>;
 
+/** CORS policy accepted by asynchronous middleware and preflight APIs. */
 export interface CORSConfig {
   origin?: string | string[] | OriginValidator;
   credentials?: boolean;
@@ -7,6 +11,11 @@ export interface CORSConfig {
   allowedHeaders?: string[];
   exposedHeaders?: string[];
   maxAge?: number;
+}
+
+/** CORS policy accepted by synchronous response-building APIs. */
+export interface SyncCORSConfig extends Omit<CORSConfig, "origin"> {
+  origin?: string | string[] | SyncOriginValidator;
 }
 
 export interface CORSValidationResult {
@@ -27,4 +36,12 @@ export interface CORSHeaderOptions {
   response?: Response;
   headers?: Headers;
   config?: boolean | CORSConfig;
+}
+
+/** Header options accepted by synchronous CORS response helpers. */
+export interface SyncCORSHeaderOptions {
+  request: Request;
+  response?: Response;
+  headers?: Headers;
+  config?: boolean | SyncCORSConfig;
 }

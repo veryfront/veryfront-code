@@ -116,6 +116,7 @@ function buildManifestFetcher(
 export class VeryfrontFSAdapter implements FSAdapter {
   readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
   readonly symlinkSemantics = "none" as const;
+  readonly projectContextSemantics: "fixed" | undefined;
   private client: VeryfrontApiClient;
   private cache: FileCache;
   private normalizer: PathNormalizer;
@@ -250,6 +251,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.projectSlug = vf.projectSlug ?? "";
     this.contentSource = vf.contentSource ?? { type: "branch", branch: "main" };
     this.proxyMode = vf.proxyMode ?? false;
+    this.projectContextSemantics = this.proxyMode ? undefined : "fixed";
 
     const retryConfig = buildRetryConfig(vf.retry);
 

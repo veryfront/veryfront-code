@@ -38,7 +38,6 @@ export class CorsHandler extends BaseHandler {
       this.logWarn(
         "Failed to load CORS config — falling back to security-context defaults",
         { error },
-        ctx,
       );
     }
 
@@ -67,7 +66,7 @@ export class CorsHandler extends BaseHandler {
 
       return [...new Set(methods)].join(", ");
     } catch (error) {
-      this.logWarn("Failed to resolve route for CORS", { error, pathname }, ctx);
+      this.logWarn("Failed to resolve route for CORS", { error, pathname });
       return CorsHandler.DEFAULT_METHODS;
     }
   }

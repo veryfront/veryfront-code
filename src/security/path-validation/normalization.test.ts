@@ -104,5 +104,18 @@ describe("security/path-validation/normalization", () => {
     it("should handle trailing slashes", () => {
       assertEquals(isWithinDirectory("/project/", "/project/src"), true);
     });
+
+    it("should reject an empty trust root", () => {
+      assertEquals(isWithinDirectory("", "/etc/passwd"), false);
+    });
+
+    it("should normalize unresolved traversal before comparing", () => {
+      assertEquals(isWithinDirectory("/project", "/project/../../etc/passwd"), false);
+    });
+
+    it("should treat the filesystem root as an absolute-path boundary", () => {
+      assertEquals(isWithinDirectory("/", "/etc/passwd"), true);
+      assertEquals(isWithinDirectory("/", "relative/path"), false);
+    });
   });
 });

@@ -7,7 +7,7 @@
  * - validateTrustedHtml() provides defense-in-depth for server HTML
  */
 
-import { escapeHtml } from "#veryfront/html/html-escape.ts";
+import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { SECURITY_VIOLATION } from "#veryfront/errors/error-registry.ts";
 
 export { escapeHtml };
@@ -40,7 +40,11 @@ export function escapeInlineJsonText(value: string): string {
 }
 
 export function jsonForInlineScript(value: unknown, space?: string | number): string {
-  return escapeInlineJsonText(JSON.stringify(value, null, space));
+  const serialized = JSON.stringify(value, null, space);
+  if (serialized === undefined) {
+    throw new TypeError("Inline script data must be JSON-serializable");
+  }
+  return escapeInlineJsonText(serialized);
 }
 
 export function buildTrustedHtmlValidatorScript(): string {

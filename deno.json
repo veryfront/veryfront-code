@@ -122,6 +122,7 @@
     "./mcp": "./src/mcp/index.ts",
     "./middleware": "./src/middleware/index.ts",
     "./errors": "./src/errors/index.ts",
+    "./security": "./src/security/index.ts",
     "./observability": "./src/observability/index.ts",
     "./observability/sentry": "./src/observability/sentry.ts",
     "./observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",

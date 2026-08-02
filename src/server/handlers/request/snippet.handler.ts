@@ -9,7 +9,7 @@ import {
   SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath, ValidationPresets } from "#veryfront/security";
 import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
@@ -26,12 +26,12 @@ export class SnippetHandler extends BaseHandler {
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const { pathname } = url;
 
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
-      return Promise.resolve(this.continue());
+      return this.continue();
     }
 
     logger.debug("Handling snippet request", {
@@ -41,27 +41,31 @@ export class SnippetHandler extends BaseHandler {
 
     const filePath = this.resolveFilePath(pathname);
 
-    const pathResult = validatePathSync(filePath, {
-      baseDir: ctx.projectDir,
-    });
-
-    if (!pathResult.valid) {
-      logger.warn("Path traversal blocked in snippet request", { pathname, filePath });
-      const error = SECURITY_VIOLATION.create({
-        detail: "Invalid snippet path",
-      });
-      return Promise.resolve({ response: createErrorResponse(error) });
-    }
-
     logger.debug("Resolved file path", { filePath });
 
     return this.withProxyContext(ctx, async () => {
       try {
-        const content = await ctx.adapter.fs.readFile(filePath);
+        const fs = ctx.adapter.fs;
+        const stableAdapter = { fs } as typeof ctx.adapter;
+        const pathResult = await validatePath(filePath, {
+          ...ValidationPresets.internal(ctx.projectDir),
+          adapter: stableAdapter,
+        });
+
+        if (!pathResult.valid || !pathResult.canonicalPath) {
+          logger.warn("Path traversal blocked in snippet request", { pathname, filePath });
+          const error = SECURITY_VIOLATION.create({
+            detail: "Invalid snippet path",
+          });
+          return { response: createErrorResponse(error) };
+        }
+
+        const admittedPath = pathResult.canonicalPath;
+        const content = await fs.readFile(admittedPath);
 
         if (!content) {
           logger.debug("File not found or empty", { filePath });
-          return this.respondNotFound(ctx, filePath);
+          return this.respondNotFound(ctx, admittedPath);
         }
 
         const moduleServerUrl = this.getModuleServerUrl(ctx.moduleServerUrl, url);
@@ -72,12 +76,12 @@ export class SnippetHandler extends BaseHandler {
         const result = await renderSnippet(content, {
           mode: isDev ? "development" : "production",
           projectDir: ctx.projectDir,
-          adapter: ctx.adapter,
+          adapter: stableAdapter,
           isLocalProject: ctx.isLocalProject,
           projectId: dependencyIdentity.projectId,
           contentSourceId: dependencyIdentity.contentSourceId,
           dependencyPinningSource: createHandlerDependencyPinningSource(ctx),
-          filePath,
+          filePath: admittedPath,
           moduleServerUrl,
           projectSlug: dependencyIdentity.projectSlug,
           config: ctx.config,

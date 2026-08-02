@@ -2,6 +2,9 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { FSAdapterWrapper } from "../wrapper.ts";
+import { validatePath, ValidationPresets } from "#veryfront/security/path-validation/index.ts";
+import type { RuntimeAdapter } from "../../base.ts";
 import { GitHubFSAdapter } from "./adapter.ts";
 import { createGitHubConfig } from "./types.ts";
 
@@ -27,9 +30,10 @@ const mockFileContent = {
   encoding: "base64",
 };
 
-function createAdapter(): GitHubFSAdapter {
+function createAdapter(projectDir?: string): GitHubFSAdapter {
   return new GitHubFSAdapter({
     type: "github",
+    projectDir,
     github: { token: "test", owner: "owner", repo: "repo" },
   });
 }
@@ -113,6 +117,29 @@ describe("GitHubFSAdapter", () => {
       await adapter.initialize();
 
       assertEquals(treeRequested, true);
+    });
+
+    it("admits ordinary files through the real wrapper while excluding Git symlinks", async () => {
+      globalThis.fetch = createTreeFetch({
+        sha: "abc123",
+        tree: [
+          { path: "README.md", mode: "100644", type: "blob", sha: "sha1", size: 100 },
+          { path: "outside.md", mode: "120000", type: "blob", sha: "sha2", size: 9 },
+        ],
+        truncated: false,
+      });
+
+      const adapter = createAdapter("/project");
+      const wrapped = new FSAdapterWrapper(adapter);
+      const result = await validatePath("README.md", {
+        ...ValidationPresets.internal("/project"),
+        adapter: { fs: wrapped } as unknown as RuntimeAdapter,
+      });
+
+      assertEquals(wrapped.symlinkSemantics, "none");
+      assertEquals(result.valid, true);
+      assertEquals(result.canonicalPath, "/project/README.md");
+      assertEquals(await wrapped.exists("/project/outside.md"), false);
     });
   });
 

@@ -3,11 +3,7 @@
  * @module security/path-validation/rules
  */
 
-import {
-  FORBIDDEN_PATH_PATTERNS,
-  MAX_PATH_LENGTH,
-  MAX_PATH_TRAVERSAL_DEPTH,
-} from "#veryfront/utils";
+import { MAX_PATH_LENGTH, MAX_PATH_TRAVERSAL_DEPTH } from "#veryfront/utils";
 
 import { normalizeSeparators } from "./normalization.ts";
 import { PathValidationError, type ValidationResult } from "./types.ts";
@@ -29,15 +25,6 @@ export function validatePathBasics(path: string): ValidationResult {
       valid: false,
       error: `Path exceeds maximum length of ${MAX_PATH_LENGTH}`,
       code: PathValidationError.PATH_TOO_LONG,
-    };
-  }
-
-  const forbiddenPattern = FORBIDDEN_PATH_PATTERNS.find((pattern) => pattern.test(path));
-  if (forbiddenPattern) {
-    return {
-      valid: false,
-      error: `Path contains forbidden pattern: ${forbiddenPattern}`,
-      code: PathValidationError.FORBIDDEN_PATTERN,
     };
   }
 

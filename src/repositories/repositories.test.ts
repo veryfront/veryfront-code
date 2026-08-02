@@ -197,6 +197,16 @@ describe("MockFileSystemRepository", () => {
 });
 
 describe("SecureFsRepository", () => {
+  it("fails closed for paths outside its repository root", async () => {
+    const repository = createFileSystemRepository({
+      baseDir: "/project",
+      adapter: createMockAdapter(),
+      context: createMockRepositoryContext(),
+    });
+
+    await expect(repository.readFile("../outside.txt")).rejects.toThrow();
+  });
+
   it("publishes immutable exact and snapshot read capabilities", async () => {
     const adapter = createMockAdapter();
     adapter.fs.files.set("/project/asset.bin", "abc");
