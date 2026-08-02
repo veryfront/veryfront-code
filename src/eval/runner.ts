@@ -32,6 +32,7 @@ import {
   isEvalRecord,
   normalizeEvalExamples,
   normalizeEvalString,
+  stringifyEvalError,
 } from "./validation.ts";
 
 const UNMAPPED_TOOL_INPUT = Symbol("unmapped-tool-input");
@@ -319,10 +320,6 @@ function createMissingExporterResult(exporterId: string): EvalReportExportResult
   };
 }
 
-function exportErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function metricEvaluationFailure(
   metric: EvalDefinition["metrics"][number],
   error: unknown,
@@ -332,7 +329,7 @@ function metricEvaluationFailure(
     family: metric.family,
     severity: metric.severity,
     pass: false,
-    explanation: `Metric evaluation failed: ${exportErrorMessage(error)}`,
+    explanation: `Metric evaluation failed: ${stringifyEvalError(error)}`,
   };
 }
 
@@ -367,7 +364,7 @@ function createExporterFailureResult(
   return {
     exporterId,
     ok: false,
-    error: exportErrorMessage(error),
+    error: stringifyEvalError(error),
   };
 }
 
@@ -504,7 +501,7 @@ async function runRecord(
     result = {
       ...(definition.targetKind === "tool" ? { output: undefined } : { text: "" }),
       completed: false,
-      error: error instanceof Error ? error.message : String(error),
+      error: stringifyEvalError(error),
     };
   }
 
@@ -567,7 +564,7 @@ async function runRecord(
         checks,
       }));
     } catch (error) {
-      evaluationErrors.push(`Eval check failed: ${exportErrorMessage(error)}`);
+      evaluationErrors.push(`Eval check failed: ${stringifyEvalError(error)}`);
     }
   }
   record.checks = checks;
