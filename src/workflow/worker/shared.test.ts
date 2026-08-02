@@ -132,7 +132,7 @@ describe("workflow worker shared helpers", () => {
     );
   });
 
-  it("maps waiting and unexpected statuses to success exit codes", () => {
+  it("maps a paused waiting run to the success exit code", () => {
     const logger = createLogger();
     const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
 
@@ -140,7 +140,6 @@ describe("workflow worker shared helpers", () => {
       getFinalRunExitCode(logger, exitCodes, "run-1", { status: "waiting" } as never, false),
       0,
     );
-    assertEquals(getFinalRunExitCode(logger, exitCodes, "run-1", null, false), 0);
   });
 
   it("maps failed runs to the failure exit code", () => {
@@ -149,6 +148,25 @@ describe("workflow worker shared helpers", () => {
 
     assertEquals(
       getFinalRunExitCode(logger, exitCodes, "run-1", { status: "failed" } as never, false),
+      1,
+    );
+  });
+
+  it("does not report success for runs that never reached a durable final state", () => {
+    const logger = createLogger();
+    const exitCodes = { SUCCESS: 0, WORKFLOW_FAILED: 1 };
+
+    assertEquals(getFinalRunExitCode(logger, exitCodes, "run-1", null, false), 1);
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, "run-1", { status: "cancelled" } as never, false),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, "run-1", { status: "pending" } as never, false),
+      1,
+    );
+    assertEquals(
+      getFinalRunExitCode(logger, exitCodes, "run-1", { status: "running" } as never, false),
       1,
     );
   });
