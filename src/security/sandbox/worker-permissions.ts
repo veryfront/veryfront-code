@@ -8,26 +8,22 @@
  */
 
 import { getFrameworkRootFromMeta } from "#veryfront/platform/compat/vfs-paths.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import {
-  getCacheBaseDir,
-  getHttpBundleCacheDir,
-  getMdxEsmCacheDir,
-} from "#veryfront/utils/cache-dir.ts";
-import { WORKER_INTERNAL_EGRESS_OVERRIDE_ENV } from "./worker-egress-guard.ts";
+import { join } from "#veryfront/compat/path/index.ts";
 
 /**
  * Deno Worker permission object.
  * See: https://docs.deno.com/runtime/fundamentals/permissions/
  */
 export interface WorkerPermissions {
-  read: string[] | boolean;
+  read: readonly string[] | boolean;
   write: boolean;
   net: boolean;
-  env: string[] | boolean;
+  env: readonly string[] | boolean;
   run: boolean;
   ffi: boolean;
   sys: boolean;
+  /** Remote module loading is always denied; extension worker graphs must be local. */
+  import: readonly string[] | boolean;
 }
 
 interface WorkerPermissionOptions {
@@ -35,21 +31,7 @@ interface WorkerPermissionOptions {
   isCompiledBinary?: boolean;
   /** Override for tests that need deterministic compiled-binary support paths. */
   compiledReadPaths?: string[];
-  /** Project-configured env keys that route code may read inside the worker. */
-  projectEnvKeys?: Iterable<string | undefined>;
 }
-
-export const FRAMEWORK_WORKER_ENV_ALLOWLIST = [
-  "NODE_ENV",
-  "DENO_ENV",
-  "VERYFRONT_ENV",
-  "LOG_LEVEL",
-  "LOG_FORMAT",
-  "NO_COLOR",
-  "FORCE_COLOR",
-  "CI",
-  WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
-] as const;
 
 // Cache compiled binary check — Deno.execPath() is a syscall that never changes at runtime
 const _isCompiledBinary = (() => {
@@ -74,43 +56,21 @@ function normalizeReadPaths(paths: Array<string | undefined>): string[] {
   return [...unique];
 }
 
-function normalizeEnvKeys(keys: Iterable<string | undefined>): string[] {
-  const unique = new Set<string>();
-  for (const key of keys) {
-    if (!key) continue;
-    const trimmed = key.trim();
-    if (!trimmed) continue;
-    unique.add(trimmed);
-  }
-  return [...unique];
-}
-
-export function buildWorkerEnvAllowlist(
-  projectEnvKeys: Iterable<string | undefined> = [],
-): string[] {
-  return normalizeEnvKeys([
-    ...FRAMEWORK_WORKER_ENV_ALLOWLIST,
-    ...projectEnvKeys,
-  ]);
-}
-
 function getDefaultCompiledReadPaths(): string[] {
+  const frameworkRoot = getFrameworkRootFromMeta(import.meta.url);
   return normalizeReadPaths([
-    getFrameworkRootFromMeta(import.meta.url),
-    getCacheBaseDir(),
-    getMdxEsmCacheDir(),
-    getHttpBundleCacheDir(),
-    getHostEnv("DENO_DIR"),
+    join(frameworkRoot, "src"),
+    join(frameworkRoot, "dist", "framework-src"),
   ]);
 }
 
 /**
  * Build scoped permissions for a project worker.
  *
- * - read: restricted to the project temp dir (transformed modules) and cache dirs
+ * - read: restricted to exact project roots and immutable framework source dirs
  * - write: denied (workers produce output via postMessage, not filesystem)
  * - net: broker-scoped by ProjectWorker before user code starts
- * - env: restricted to framework keys and the project's configured env keys
+ * - env: denied; request-owned project env travels through handler contexts
  * - run: denied (no subprocess spawning from user code)
  * - ffi: denied (no native code from user code)
  * - sys: denied (no system info access from user code)
@@ -121,10 +81,17 @@ export function buildWorkerPermissions(
 ): WorkerPermissions {
   const isCompiledBinary = options.isCompiledBinary ?? _isCompiledBinary;
   const normalizedReadPaths = normalizeReadPaths(readPaths);
-  const env = buildWorkerEnvAllowlist(options.projectEnvKeys);
+  // Deno's env permission is read/write and process-global across Workers. A
+  // project Worker must never receive it, even for an apparently read-only
+  // allowlist. Request-owned project env is transported in the worker protocol
+  // instead of mutating the host process environment.
+  const env = false;
 
   if (isCompiledBinary) {
     const compiledReadPaths = options.compiledReadPaths ?? getDefaultCompiledReadPaths();
+    if (compiledReadPaths.length === 0) {
+      throw new TypeError("Compiled worker framework read scope is unavailable");
+    }
     const scopedReadPaths = normalizeReadPaths([...normalizedReadPaths, ...compiledReadPaths]);
     return {
       read: scopedReadPaths.length > 0 ? scopedReadPaths : false,
@@ -134,6 +101,7 @@ export function buildWorkerPermissions(
       run: false,
       ffi: false,
       sys: false,
+      import: false,
     };
   }
 
@@ -145,5 +113,6 @@ export function buildWorkerPermissions(
     run: false,
     ffi: false,
     sys: false,
+    import: false,
   };
 }
