@@ -10,6 +10,7 @@
 
 import { rendererLogger } from "#veryfront/utils";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
+import { getHostedConfig } from "#veryfront/config/loader.ts";
 import { getEnvBoolean, getEnvString } from "#veryfront/compat/process.ts";
 import type { HandlerContext } from "../../handlers/types.ts";
 import { buildEnrichedContext } from "../../context/enriched-context.ts";
@@ -211,6 +212,28 @@ function resolveEnvironment(ctx: HandlerContext): "preview" | "production" {
   return ctx.requestContext?.mode ?? "preview";
 }
 
+/**
+ * Load project config for a handler that did not receive one.
+ *
+ * A shared multi-project runtime serves untrusted project sources, so config
+ * is evaluated declaratively under the identity the request already
+ * established. Deriving a source or environment here instead would let one
+ * request evaluate the same project two different ways.
+ */
+async function loadConfigForHandler(
+  ctx: HandlerContext,
+  cacheKey: string | undefined,
+): Promise<VeryfrontConfig> {
+  if (shouldUseMultiProjectContext(ctx) && ctx.prepareHostedConfigContext && cacheKey) {
+    return await getHostedConfig(ctx.projectDir, ctx.adapter, {
+      cacheKey,
+      ...await ctx.prepareHostedConfigContext(),
+    });
+  }
+
+  return await getConfig(ctx.projectDir, ctx.adapter, { cacheKey });
+}
+
 async function createContextFromHandler(ctx: HandlerContext): Promise<RenderContext> {
   // "unknown" is used only for debug logging below — actual cache keys and enriched context
   // use ctx.projectSlug ?? ctx.projectId ?? derivedProjectId (never "unknown"), so there
@@ -233,7 +256,7 @@ async function createContextFromHandler(ctx: HandlerContext): Promise<RenderCont
     });
 
     const configStartTime = performance.now();
-    config = await getConfig(ctx.projectDir, ctx.adapter, { cacheKey });
+    config = await loadConfigForHandler(ctx, cacheKey);
     logger.debug("Loading config from adapter DONE", {
       projectSlug,
       duration: `${(performance.now() - configStartTime).toFixed(2)}ms`,

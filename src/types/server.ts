@@ -1,5 +1,6 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "../config/schemas/index.ts";
+import type { PreparedHostedConfigContext } from "../config/loader.ts";
 import type { RequestContext } from "../server/context/request-context.ts";
 import type { EnrichedContext } from "../server/context/enriched-context-types.ts";
 import type { ParsedDomain } from "../server/utils/domain-parser.ts";
@@ -69,6 +70,15 @@ export interface HandlerContext {
   isLocalProject?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
+  /**
+   * Prepares this request's authenticated hosted evaluation context.
+   *
+   * Present only for shared multi-project runtimes, where project config is
+   * untrusted and must be evaluated declaratively. Handlers that load config
+   * themselves must use this rather than deriving source or environment
+   * identity, so every load in a request shares one identity.
+   */
+  prepareHostedConfigContext?: () => Promise<PreparedHostedConfigContext>;
   /** Route registry for handler chain inspection (dev dashboard) */
   routeRegistry?: {
     getHandlers(): ReadonlyArray<{ metadata: HandlerMetadata }>;
