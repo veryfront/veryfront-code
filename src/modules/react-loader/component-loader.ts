@@ -1,4 +1,4 @@
-import { join } from "#veryfront/compat/path/index.ts";
+import { join, toFileUrl } from "#veryfront/compat/path/index.ts";
 import type * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { transformToESM } from "#veryfront/transforms/esm/index.ts";
@@ -11,6 +11,25 @@ import { SSRModuleLoader } from "./ssr-module-loader/index.ts";
 import { extractComponent } from "./extract-component.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { resolveDependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { computeHash } from "#veryfront/utils/hash-utils.ts";
+
+/**
+ * Build the import specifier for a transformed module on disk.
+ *
+ * Keyed by the content hash rather than a timestamp: repeated loads of
+ * unchanged output resolve to one module-map entry instead of adding a new
+ * one per load, while edited output still gets a fresh specifier so dev
+ * reloads observe the change. `toFileUrl` percent-encodes the path, keeping
+ * a `#` or `?` in a directory name from being parsed as a fragment or query.
+ */
+export function buildTransformedModuleSpecifier(
+  componentFile: string,
+  contentHash: string,
+): string {
+  const moduleUrl = toFileUrl(componentFile);
+  moduleUrl.searchParams.set("v", contentHash);
+  return moduleUrl.href;
+}
 
 export async function loadModuleFromSource(
   source: string,
@@ -86,7 +105,9 @@ export async function loadModuleFromSource(
       await fs.mkdir(componentDir, { recursive: true });
       await fs.writeTextFile(componentFile, transformedCode);
 
-      return await import(`file://${componentFile}?t=${Date.now()}`);
+      return await import(
+        buildTransformedModuleSpecifier(componentFile, await computeHash(transformedCode))
+      );
     },
     {
       "react.file": fileName,
