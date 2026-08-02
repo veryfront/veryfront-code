@@ -96,7 +96,6 @@ describe("ext-llm-openai/openai-responses-stream", () => {
         data({
           type: "response.function_call_arguments.done",
           item_id: "fc_1",
-          name: "lookup",
           arguments: '{"id":"abc"}',
         }),
         data({
@@ -1213,7 +1212,7 @@ describe("ext-llm-openai/openai-responses-stream", () => {
           }),
         ].join(""))),
       ProviderRequestError,
-      "name changed or was missing",
+      "name changed",
     );
   });
 
