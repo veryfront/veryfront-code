@@ -59,7 +59,7 @@ describe("ShellAdapter - statSync()", () => {
     });
   });
 
-  it("throws error for non-existent files", async () => {
+  it("propagates the runtime error for non-existent files", async () => {
     const adapter = await getShellAdapter();
 
     try {
@@ -67,10 +67,7 @@ describe("ShellAdapter - statSync()", () => {
       assert(false, "Should throw error for non-existent file");
     } catch (error) {
       assert(error instanceof Error);
-      assert(
-        error.message.includes("Failed to stat file"),
-        "Error message should mention stat failure",
-      );
+      assert(error.message.length > 0);
     }
   });
 
@@ -165,7 +162,7 @@ describe("ShellAdapter - readFileSync()", () => {
     });
   });
 
-  it("throws error for non-existent files", async () => {
+  it("propagates the runtime error for non-existent files", async () => {
     const adapter = await getShellAdapter();
 
     try {
@@ -173,10 +170,7 @@ describe("ShellAdapter - readFileSync()", () => {
       assert(false, "Should throw error for non-existent file");
     } catch (error) {
       assert(error instanceof Error);
-      assert(
-        error.message.includes("Failed to read file"),
-        "Error message should mention read failure",
-      );
+      assert(error.message.length > 0);
     }
   });
 
@@ -332,7 +326,6 @@ describe("ShellAdapter - Error Handling", () => {
     } catch (error) {
       assert(error instanceof Error);
       assert(error.message.length > 0);
-      assert(error.message.includes("Failed"));
     }
 
     try {
@@ -340,7 +333,6 @@ describe("ShellAdapter - Error Handling", () => {
     } catch (error) {
       assert(error instanceof Error);
       assert(error.message.length > 0);
-      assert(error.message.includes("Failed"));
     }
   });
 

@@ -35,13 +35,11 @@ describe("CloudflareEnvironmentAdapter", () => {
 
   it("snapshots own string bindings and preserves special keys as data", () => {
     const inherited = { INHERITED: "not-a-binding" };
-    const bindings = Object.create(inherited) as CloudflareEnv;
-    bindings.API_URL = "https://initial.example.com";
-    Object.defineProperty(bindings, "__proto__", {
-      value: "literal",
-      enumerable: true,
-      configurable: true,
-    });
+    const bindings = Object.fromEntries([
+      ["API_URL", "https://initial.example.com"],
+      ["__proto__", "literal"],
+    ]) as CloudflareEnv;
+    Object.setPrototypeOf(bindings, inherited);
 
     const environment = new CloudflareEnvironmentAdapter(bindings);
     bindings.API_URL = "https://mutated.example.com";
