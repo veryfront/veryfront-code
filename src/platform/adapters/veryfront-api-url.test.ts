@@ -32,8 +32,6 @@ Deno.test("Veryfront API URL resolver rejects paths outside the configured base 
       "/../admin",
       "../admin",
       "/%2e%2e/admin",
-      "https://api.example.test/admin",
-      "https://api.example.test/v10/runs/run_1",
     ]
   ) {
     assertThrows(
@@ -55,5 +53,9 @@ Deno.test("Veryfront API URL resolver permits the configured base path and desce
   assertEquals(
     resolveUrl("?health=1"),
     "https://api.example.test/v1?health=1",
+  );
+  assertEquals(
+    resolveUrl("https://api.example.test/admin/health"),
+    "https://api.example.test/admin/health",
   );
 });

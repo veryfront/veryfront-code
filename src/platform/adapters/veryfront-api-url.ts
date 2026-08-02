@@ -9,8 +9,9 @@ export type VeryfrontApiRequestUrlResolver = (pathOrUrl: string) => string;
 /**
  * Create the canonical resolver for Veryfront API endpoints.
  *
- * Relative request paths are appended to the configured base path. Absolute
- * request URLs are accepted only when they use the configured origin.
+ * Relative request paths are appended to and contained by the configured base
+ * path. Explicit absolute request URLs are accepted only when they use the
+ * configured origin.
  */
 export function createVeryfrontApiRequestUrlResolver(
   baseUrl: string,
@@ -51,7 +52,7 @@ function validateBaseUrl(value: string): ValidatedBaseUrl {
   };
 }
 
-function assertWithinConfiguredBasePath(
+function assertRelativeRequestWithinConfiguredBasePath(
   baseUrl: ValidatedBaseUrl,
   requestUrl: URL,
 ): void {
@@ -91,7 +92,6 @@ function resolveRequestUrl(baseUrl: ValidatedBaseUrl, pathOrUrl: string): string
     if (absolute.origin !== baseUrl.origin) {
       throw new TypeError("Veryfront API request origin must match the configured API origin");
     }
-    assertWithinConfiguredBasePath(baseUrl, absolute);
     return absolute.href;
   }
 
@@ -100,6 +100,6 @@ function resolveRequestUrl(baseUrl: ValidatedBaseUrl, pathOrUrl: string): string
   if (resolved.origin !== baseUrl.origin) {
     throw new TypeError("Veryfront API request origin must match the configured API origin");
   }
-  assertWithinConfiguredBasePath(baseUrl, resolved);
+  assertRelativeRequestWithinConfiguredBasePath(baseUrl, resolved);
   return resolved.href;
 }
