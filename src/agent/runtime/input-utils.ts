@@ -148,9 +148,25 @@ export function accumulateUsage(
 export function getMaxSteps(
   configuredMaxSteps: number | undefined,
   edgeMaxSteps: number | undefined,
-  platformLimit: number,
+  executionPolicyLimit: number = Infinity,
   defaultMaxSteps: number = 20,
 ): number {
+  assertStepLimit(configuredMaxSteps, "Configured maxSteps");
+  assertStepLimit(edgeMaxSteps, "Edge maxSteps");
+  assertStepLimit(defaultMaxSteps, "Default maxSteps");
+  if (executionPolicyLimit !== Infinity) {
+    assertStepLimit(executionPolicyLimit, "Execution policy maxSteps");
+  }
+
   const effectiveMaxSteps = edgeMaxSteps ?? configuredMaxSteps ?? defaultMaxSteps;
-  return Math.min(effectiveMaxSteps, platformLimit);
+  return Math.min(effectiveMaxSteps, executionPolicyLimit);
+}
+
+function assertStepLimit(value: number | undefined, label: string): void {
+  if (value === undefined) return;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a positive safe integer`,
+    });
+  }
 }

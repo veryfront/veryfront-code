@@ -114,7 +114,7 @@ describe("input-utils", () => {
   });
 
   describe("getMaxSteps", () => {
-    it("returns configured max steps clamped to platform limit", () => {
+    it("returns configured max steps within an explicit execution-policy limit", () => {
       assertEquals(getMaxSteps(10, undefined, 50), 10);
     });
 
@@ -122,7 +122,7 @@ describe("input-utils", () => {
       assertEquals(getMaxSteps(undefined, undefined, 50), 20);
     });
 
-    it("clamps to platform limit when configured exceeds it", () => {
+    it("clamps to an explicit execution-policy limit", () => {
       assertEquals(getMaxSteps(100, undefined, 30), 30);
     });
 
@@ -130,12 +130,37 @@ describe("input-utils", () => {
       assertEquals(getMaxSteps(10, 5, 50), 5);
     });
 
-    it("edge max steps still clamped to platform limit", () => {
+    it("edge max steps remain subject to an explicit execution-policy limit", () => {
       assertEquals(getMaxSteps(10, 100, 30), 30);
     });
 
     it("uses custom default when provided", () => {
       assertEquals(getMaxSteps(undefined, undefined, 50, 15), 15);
+    });
+
+    it("does not infer a deployment limit when none was configured", () => {
+      assertEquals(getMaxSteps(100, undefined), 100);
+      assertEquals(getMaxSteps(undefined, undefined), 20);
+    });
+
+    it("rejects invalid authored and execution-policy limits", () => {
+      for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        assertThrows(
+          () => getMaxSteps(invalid, undefined),
+          Error,
+          "positive safe integer",
+        );
+        assertThrows(
+          () => getMaxSteps(undefined, invalid),
+          Error,
+          "positive safe integer",
+        );
+      }
+      assertThrows(
+        () => getMaxSteps(1, undefined, 0),
+        Error,
+        "positive safe integer",
+      );
     });
   });
 });
