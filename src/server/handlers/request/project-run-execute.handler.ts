@@ -1235,7 +1235,7 @@ async function executeDependencyArtifactBuildRun(input: {
       result,
       ...(result.success ? {} : { error: result.failureCode }),
       logs: null,
-      duration_ms: result.durationMs,
+      duration_ms: Date.now() - startedAt,
     };
   } catch (error) {
     return {
