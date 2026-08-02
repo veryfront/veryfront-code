@@ -501,7 +501,8 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "serve");
         assertEquals(parsed.error.code, "USAGE_ERROR");
-        assertEquals(parsed.error.slug, "invalid-argument");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+        assertEquals(parsed.error.registrySlug, "unknown-error");
       } finally {
         restoreAll();
       }
@@ -543,7 +544,8 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.success, false);
         assertEquals(parsed.command, "schedule");
         assertEquals(parsed.error.code, "USAGE_ERROR");
-        assertEquals(parsed.error.slug, "invalid-argument");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+        assertEquals(parsed.error.registrySlug, "invalid-argument");
       } finally {
         restoreAll();
       }
@@ -590,6 +592,7 @@ describe("cli/router helpers", () => {
         assertEquals(parsed.command, "schedule");
         assertEquals(parsed.error.code, "RUNTIME_ERROR");
         assertEquals(parsed.error.slug, "command-failed");
+        assertEquals(parsed.error.registrySlug, "unknown-error");
         assertEquals(parsed.error.message, "Authentication required for this operation.");
         assertEquals(consoleErrorOutput, []);
       } finally {
