@@ -1,4 +1,4 @@
-/** Local UTF-16 well-formedness check for the extension's Node 18 package. */
+/** Local UTF-16 well-formedness check independent of mutable host methods. */
 
 const apply = Reflect.apply;
 const stringCharCodeAt = String.prototype.charCodeAt;

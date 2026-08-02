@@ -101,9 +101,9 @@ export async function setupNodeFsWatcher(
         if (!isRecursiveWatchUnsupported(error)) throw error;
       }
 
-      // Node 18 does not provide recursive fs.watch on Linux. Maintain one
-      // non-recursive watcher per physical directory and reconcile the set
-      // whenever a directory entry is renamed.
+      // Compatible hosts and filesystems can reject recursive fs.watch.
+      // Maintain one non-recursive watcher per physical directory and
+      // reconcile the set whenever a directory entry is renamed.
       const directoryWatchers = new Map<string, import("node:fs").FSWatcher>();
       let reconcileTail = Promise.resolve();
 

@@ -113,9 +113,9 @@ export class NodeServer implements Server {
               }
               // During a pending bind Node can report NOT_RUNNING before its
               // close event. Wait for that event to finish this close attempt.
-              // On Node 18 it does not prove that the queued lookup was
-              // cancelled; the startup coordinator retains ownership of any
-              // later listening/error outcome.
+              // This does not prove that the queued lookup was cancelled; the
+              // startup coordinator retains ownership of any later
+              // listening/error outcome.
               if (isServerNotRunningError(error)) {
                 if (
                   this.transportState === "close-observed" ||
@@ -130,7 +130,7 @@ export class NodeServer implements Server {
             });
             // `close()` waits for active HTTP requests and can otherwise
             // deadlock with handlers that are waiting for their Fetch signal to
-            // abort. Node >=18.2 exposes this explicit force-close phase.
+            // abort. Use Node's explicit force-close phase.
             this.server.closeAllConnections?.();
           } catch (error) {
             settle(error);
@@ -287,7 +287,7 @@ function retireLateNodeListener(
 
   server.once("close", onClose);
   try {
-    // Node 18 can bind after close() has already reported a pending listen as
+    // Node can bind after close() has already reported a pending listen as
     // closed. Begin a fresh native close inside the listening callback, before
     // the event loop can dispatch connections for that resurrected handle.
     server.close((error) => {
@@ -314,10 +314,9 @@ function retireCanceledNodeListener(
 }
 
 function armCanceledNodeListenGuards(server: import("node:http").Server): void {
-  // Node 18 may still bind or emit a bind error after close() reports that a
-  // pending hostname listen is closed. Newer Node releases cancel that work
-  // without exposing a completion acknowledgement. Shared one-shot guards own
-  // either late outcome without retaining application/startup closures.
+  // Some Node resolver paths may still bind or emit a bind error after close()
+  // reports that a pending hostname listen is closed. Shared one-shot guards
+  // own either late outcome without retaining application/startup closures.
   server.once("error", absorbCanceledNodeListenError);
   server.once("listening", retireCanceledNodeListener);
 }

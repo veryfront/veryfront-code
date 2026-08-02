@@ -7,7 +7,7 @@ order: 2
 ## Requirements
 
 - macOS 12 or later, Linux x86_64 or arm64 (glibc), or Windows 10 or later.
-- A JavaScript runtime: Node.js 18.18 or later, Deno 1.45 or later, or Bun
+- A JavaScript runtime: Node.js 22.3 or later, Deno 2.2 or later, or Bun
   1.1 or later.
 - 1 GB of free disk space and 2 GB of RAM for local development.
 

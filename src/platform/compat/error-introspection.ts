@@ -1,16 +1,11 @@
 /**
  * Runtime-compatible, no-hook value introspection.
  *
- * The Node compatibility implementation exposes runtime internal-slot checks
- * across supported runtimes without consulting mutable global constructors.
+ * Node-compatible hosts expose internal-slot checks that do not consult
+ * mutable global constructors. Browser and edge imports must remain linkable
+ * even though those hosts do not provide `node:util/types`.
  */
-import {
-  isAsyncFunction as nativeAsyncFunctionBrandCheck,
-  isNativeError as nativeErrorBrandCheck,
-  isPromise as nativePromiseBrandCheck,
-  isProxy as nativeProxyBrandCheck,
-  isUint8Array as nativeUint8ArrayBrandCheck,
-} from "node:util/types";
+import { nativeBrandChecks } from "./native-brand-checks.ts";
 
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;
@@ -22,6 +17,13 @@ const apply = Reflect.apply;
 const NativeError = Error;
 const NativeAsyncFunctionPrototype = getPrototypeOf(async function () {});
 const toStringTagSymbol = Symbol.toStringTag;
+
+const unavailableBrandCheck = (_value: unknown): boolean => false;
+const nativeAsyncFunctionBrandCheck = nativeBrandChecks?.isAsyncFunction ?? unavailableBrandCheck;
+const nativeErrorBrandCheck = nativeBrandChecks?.isNativeError ?? unavailableBrandCheck;
+const nativePromiseBrandCheck = nativeBrandChecks?.isPromise ?? unavailableBrandCheck;
+const nativeProxyBrandCheck = nativeBrandChecks?.isProxy ?? unavailableBrandCheck;
+const nativeUint8ArrayBrandCheck = nativeBrandChecks?.isUint8Array ?? unavailableBrandCheck;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;
