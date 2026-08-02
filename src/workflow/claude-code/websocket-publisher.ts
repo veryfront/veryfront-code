@@ -16,6 +16,7 @@ import type {
   ClientCommandHandler,
   ClientCommandObserver,
   CommandAckEvent,
+  InputRequestEvent,
   PongEvent,
 } from "./types.ts";
 import {
@@ -642,9 +643,9 @@ export class WebSocketPublisher implements BidirectionalPublisher {
 }
 
 /**
- * Create a WebSocket handler for HTTP upgrade requests
+ * Configuration for a registry-owned WebSocket upgrade handler.
  */
-export function createWebSocketHandler(config: {
+export interface WebSocketHandlerConfig {
   /** Get run ID from request */
   getRunId: (req: Request) => string | null;
 
@@ -664,7 +665,12 @@ export function createWebSocketHandler(config: {
 
   /** Enable debug logging */
   debug?: boolean;
-}): (req: Request) => Response {
+}
+
+/** Create a WebSocket handler for HTTP upgrade requests. */
+export function createWebSocketHandler(
+  config: WebSocketHandlerConfig,
+): (req: Request) => Response {
   const { registry } = config;
   return (req: Request): Response => {
     const runId = config.getRunId(req);
@@ -783,6 +789,21 @@ interface AgentControllerTransport {
   readonly unsubscribe: () => void;
 }
 
+type PendingInputRequestEvent = Readonly<
+  InputRequestEvent & {
+    readonly runId: string;
+    readonly requestId: string;
+    readonly timeout: number;
+  }
+>;
+
+interface PendingInputOperation {
+  readonly event: PendingInputRequestEvent;
+  readonly resolve: (input: string) => void;
+  readonly reject: (error: Error) => void;
+  readonly timeout: number | null;
+}
+
 interface PendingApprovalOperation {
   readonly event: Readonly<ApprovalRequestEvent>;
   readonly resolve: (approved: boolean) => void;
@@ -800,10 +821,7 @@ function getControllerAuthority(controller: AgentControllerHandle): AgentControl
   return authority;
 }
 
-/** @deprecated Use {@link AgentControllerHandle}; lifecycle is registry-owned. */
-export type AgentController = AgentControllerHandle;
-
-/** Registry-owned implementation; registrations expose only AgentControllerHandle. */
+/** Registry-owned implementation; registrations expose no disposal authority. */
 class RunAgentController implements AgentControllerHandle {
   readonly #runId: string;
   readonly #config: Readonly<AgentControllerConfig>;
@@ -816,11 +834,7 @@ class RunAgentController implements AgentControllerHandle {
   >();
   readonly #pendingApprovals = new Map<string, PendingApprovalOperation>();
   readonly #pendingApprovalByToolCallId = new Map<string, string>();
-  readonly #inputResolvers = new Map<string, {
-    resolve: (input: string) => void;
-    reject: (error: Error) => void;
-    timeout: number | null;
-  }>();
+  readonly #inputResolvers = new Map<string, PendingInputOperation>();
   #nextInputRequestId = 1;
   #nextApprovalRequestSequence = 1;
   readonly #approvalRequestNamespace: string;
@@ -915,6 +929,9 @@ class RunAgentController implements AgentControllerHandle {
     this.#transport = replacement;
     for (const pending of [...this.#pendingApprovals.values()]) {
       this.#deliverApproval(pending, replacement);
+    }
+    for (const pending of [...this.#inputResolvers.values()]) {
+      this.#deliverInput(pending, replacement);
     }
   }
 
@@ -1048,6 +1065,25 @@ class RunAgentController implements AgentControllerHandle {
       this.#nextApprovalRequestSequence.toString(36)
     }`;
     this.#nextApprovalRequestSequence += 1;
+    return requestId;
+  }
+
+  #createInputRequestId(): string {
+    if (
+      !Number.isSafeInteger(this.#nextInputRequestId) ||
+      this.#nextInputRequestId < 1
+    ) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Agent input request identity space is exhausted",
+      });
+    }
+    const requestId = `input-${this.#nextInputRequestId}`;
+    if (this.#inputResolvers.has(requestId)) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Agent input request identity collided with pending work",
+      });
+    }
+    this.#nextInputRequestId += 1;
     return requestId;
   }
 
@@ -1189,26 +1225,37 @@ class RunAgentController implements AgentControllerHandle {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent controller disposed" }));
     }
 
+    let event: PendingInputRequestEvent;
+    try {
+      if (
+        !isBoundedString(prompt) ||
+        (defaultValue !== undefined && !isBoundedString(defaultValue))
+      ) {
+        throw INVALID_ARGUMENT.create({ detail: "Input text exceeds the wire field limit" });
+      }
+      const timeout = this.#config.inputTimeout ?? DEFAULT_INPUT_TIMEOUT_MS;
+      event = Object.freeze({
+        type: "input_request",
+        timestamp: Date.now(),
+        runId: this.#runId,
+        requestId: this.#createInputRequestId(),
+        prompt,
+        ...(defaultValue === undefined ? {} : { defaultValue }),
+        timeout,
+      });
+      serializeWireEvent(event);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const transport = this.#transport;
     if (!transport) {
       return Promise.reject(ORCHESTRATION_ERROR.create({ detail: "Agent transport is detached" }));
     }
-    const timeout = this.#config.inputTimeout ?? DEFAULT_INPUT_TIMEOUT_MS;
-    const requestId = `input-${this.#nextInputRequestId++}`;
-
-    // Send input request to client
-    transport.publisher.send({
-      type: "input_request",
-      timestamp: Date.now(),
-      runId: this.#runId,
-      requestId,
-      prompt,
-      ...(defaultValue === undefined ? {} : { defaultValue }),
-      timeout,
-    });
+    const { requestId, timeout } = event;
 
     return new Promise((resolve, reject) => {
       const timeoutId = globalThis.setTimeout(() => {
+        if (this.#inputResolvers.get(requestId) !== pending) return;
         this.#inputResolvers.delete(requestId);
         if (defaultValue !== undefined) {
           resolve(defaultValue);
@@ -1217,12 +1264,41 @@ class RunAgentController implements AgentControllerHandle {
         }
       }, timeout);
 
-      this.#inputResolvers.set(requestId, {
+      const pending: PendingInputOperation = {
+        event,
         resolve,
         reject,
         timeout: timeoutId,
-      });
+      };
+      this.#inputResolvers.set(requestId, pending);
+
+      this.#deliverInput(pending, transport);
     });
+  }
+
+  #deliverInput(
+    pending: PendingInputOperation,
+    transport: AgentControllerTransport,
+  ): void {
+    const rejectDelivery = (cause: unknown): void => {
+      if (this.#transport?.generation !== transport.generation) return;
+      const { requestId } = pending.event;
+      if (this.#inputResolvers.get(requestId) !== pending) return;
+      if (pending.timeout !== null) clearTimeout(pending.timeout);
+      this.#inputResolvers.delete(requestId);
+      pending.reject(ORCHESTRATION_ERROR.create({
+        detail: "Input request delivery failed",
+        cause,
+      }));
+    };
+    let delivery: void | Promise<void>;
+    try {
+      delivery = transport.publisher.send(pending.event);
+    } catch (cause) {
+      rejectDelivery(cause);
+      return;
+    }
+    if (delivery !== undefined) void Promise.resolve(delivery).catch(rejectDelivery);
   }
 
   #dispose(): void {
@@ -1255,6 +1331,49 @@ class RunAgentController implements AgentControllerHandle {
     this.#inputResolvers.clear();
     this.#handledCommands.clear();
     if (unsubscribeFailed) throw unsubscribeError;
+  }
+}
+
+/**
+ * Backwards-compatible single-connection controller.
+ *
+ * Prefer {@link AgentControllerRegistry} when a run may outlive one publisher
+ * connection. Registry registrations deliberately expose no disposal method.
+ */
+export class AgentController implements AgentControllerHandle {
+  readonly #controller: RunAgentController;
+
+  constructor(
+    publisher: BidirectionalPublisher,
+    config: AgentControllerConfig = {},
+  ) {
+    this.#controller = new RunAgentController(publisher, publisher.runId, config);
+  }
+
+  get runId(): string {
+    return this.#controller.runId;
+  }
+
+  get isCancelled(): boolean {
+    return this.#controller.isCancelled;
+  }
+
+  requestApproval(
+    toolCallId: string,
+    toolName: string,
+    input: Record<string, unknown>,
+    reason: string,
+  ): Promise<boolean> {
+    return this.#controller.requestApproval(toolCallId, toolName, input, reason);
+  }
+
+  requestInput(prompt: string, defaultValue?: string): Promise<string> {
+    return this.#controller.requestInput(prompt, defaultValue);
+  }
+
+  /** Release the direct controller's subscription and pending work. */
+  dispose(): void {
+    getControllerAuthority(this.#controller).dispose();
   }
 }
 

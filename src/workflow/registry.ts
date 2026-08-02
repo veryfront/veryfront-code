@@ -19,9 +19,9 @@ export interface NodeInfo {
   /** Tool ID if this is a step using a tool */
   tool?: string;
   /** Node IDs this node depends on */
-  dependsOn?: string[];
+  dependsOn?: readonly string[];
   /** Child node IDs (for parallel/branch nodes) */
-  children?: string[];
+  children?: readonly string[];
   /** Description from wait/approval nodes */
   message?: string;
 }
@@ -38,13 +38,13 @@ export interface WorkflowMetadata {
   /** Error message if introspection failed */
   introspectionError?: string;
   nodeCount: number;
-  nodeTypes: string[];
+  nodeTypes: readonly string[];
   /** Detailed node information */
-  nodes: NodeInfo[];
+  nodes: readonly NodeInfo[];
   /** Agent IDs referenced by this workflow */
-  agentRefs: string[];
+  agentRefs: readonly string[];
   /** Tool IDs referenced by this workflow */
-  toolRefs: string[];
+  toolRefs: readonly string[];
   hasInputSchema: boolean;
   hasOutputSchema: boolean;
   /** JSON Schema representation of input schema (if available) */
@@ -153,9 +153,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
       const nodeInfo: NodeInfo = {
         id: node.id,
         type,
-        dependsOn: node.dependsOn === undefined
-          ? undefined
-          : Object.freeze([...node.dependsOn]) as string[],
+        dependsOn: node.dependsOn === undefined ? undefined : Object.freeze([...node.dependsOn]),
       };
 
       const config = node.config as unknown as Record<string, unknown>;
@@ -194,7 +192,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         children.push(...extractNodeInfo(config.else as WorkflowNode[]));
       }
 
-      if (children.length) nodeInfo.children = Object.freeze(children) as string[];
+      if (children.length) nodeInfo.children = Object.freeze(children);
 
       nodeInfoList.push(Object.freeze(nodeInfo));
     }
@@ -229,10 +227,10 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     introspectionSkipped,
     introspectionError,
     nodeCount: workflowNodes.length,
-    nodeTypes: Object.freeze(Array.from(nodeTypes)) as string[],
-    nodes: Object.freeze(nodeInfoList) as NodeInfo[],
-    agentRefs: Object.freeze(Array.from(agentRefs)) as string[],
-    toolRefs: Object.freeze(Array.from(toolRefs)) as string[],
+    nodeTypes: Object.freeze(Array.from(nodeTypes)),
+    nodes: Object.freeze(nodeInfoList),
+    agentRefs: Object.freeze(Array.from(agentRefs)),
+    toolRefs: Object.freeze(Array.from(toolRefs)),
     hasInputSchema: !!definition.inputSchema,
     hasOutputSchema: !!definition.outputSchema,
     inputSchemaJson,

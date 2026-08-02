@@ -16,11 +16,12 @@ import type {
   ClientCommandHandler,
 } from "./types.ts";
 import {
+  AgentController,
   type AgentControllerRegistration,
   AgentControllerRegistry,
   createWebSocketHandler,
   WebSocketPublisher,
-} from "./websocket-publisher.ts";
+} from "./index.ts";
 
 class FakePublisher implements BidirectionalPublisher {
   constructor(readonly runId = "run-1") {}
@@ -110,6 +111,115 @@ function registerController(
 }
 
 describe("AgentController", () => {
+  it("preserves direct construction for single-connection integrations", async () => {
+    const publisher = new FakePublisher();
+    const controller = new AgentController(publisher, { inputTimeout: 1_000 });
+    const input = controller.requestInput("Value?");
+    const request = publisher.events.find((event) => event.type === "input_request");
+
+    publisher.emit(command({
+      type: "input",
+      content: "direct value",
+      requestId: request?.requestId,
+    }));
+
+    assertEquals(await input, "direct value");
+    controller.dispose();
+    assertEquals(publisher.subscriberCount, 0);
+  });
+
+  it("installs input correlation before a reentrant client response", async () => {
+    class ReentrantInputPublisher extends FakePublisher {
+      override send(event: ClaudeCodeEventExtended): void {
+        super.send(event);
+        if (event.type !== "input_request") return;
+        this.emit(command({
+          type: "input",
+          content: "immediate value",
+          requestId: event.requestId,
+        }));
+      }
+    }
+
+    const publisher = new ReentrantInputPublisher();
+    const { controller, registration, registry } = registerController(publisher, {
+      inputTimeout: 1_000,
+    });
+    assertEquals(await controller.requestInput("Value?"), "immediate value");
+    assertEquals(registry.releaseRun(registration.run), true);
+  });
+
+  it("rejects input requests when synchronous or asynchronous delivery fails", async () => {
+    class FailingInputPublisher extends FakePublisher {
+      constructor(private readonly asynchronous: boolean) {
+        super();
+      }
+
+      override send(event: ClaudeCodeEventExtended): void | Promise<void> {
+        if (event.type !== "input_request") return super.send(event);
+        if (this.asynchronous) return Promise.reject(new Error("async send failed"));
+        throw new Error("sync send failed");
+      }
+    }
+
+    for (const asynchronous of [false, true]) {
+      const publisher = new FailingInputPublisher(asynchronous);
+      const { controller, registration, registry } = registerController(publisher, {
+        inputTimeout: 1_000,
+      });
+      await assertRejects(
+        () => controller.requestInput("Value?"),
+        Error,
+        "Input request delivery failed",
+      );
+      assertEquals(
+        publisher.emit(command({ type: "input", content: "late value" })),
+        [{ status: "rejected", reason: "input request is not pending or is ambiguous" }],
+      );
+      assertEquals(registry.releaseRun(registration.run), true);
+    }
+  });
+
+  it("rejects unbounded input fields before publishing or retaining work", async () => {
+    const publisher = new FakePublisher();
+    const { controller, registration, registry } = registerController(publisher, {
+      inputTimeout: 1_000,
+    });
+    const oversized = "x".repeat(32 * 1024 + 1);
+
+    await assertRejects(
+      () => controller.requestInput(oversized),
+      Error,
+      "Input text exceeds the wire field limit",
+    );
+    await assertRejects(
+      () => controller.requestInput("Value?", oversized),
+      Error,
+      "Input text exceeds the wire field limit",
+    );
+    assertEquals(publisher.events, []);
+    assertEquals(registry.releaseRun(registration.run), true);
+  });
+
+  it("fails closed when the input request identity space is exhausted", async () => {
+    const publisher = new FakePublisher();
+    const { controller, registration, registry } = registerController(publisher);
+    const originalIsSafeInteger = Number.isSafeInteger;
+    Number.isSafeInteger = (value: unknown): value is number =>
+      value === 1 ? false : originalIsSafeInteger(value);
+    try {
+      await assertRejects(
+        () => controller.requestInput("Value?"),
+        Error,
+        "input request identity space is exhausted",
+      );
+    } finally {
+      Number.isSafeInteger = originalIsSafeInteger;
+    }
+    assertEquals(publisher.events, []);
+    assertEquals(registry.releaseRun(registration.run), true);
+  });
+
   it("publishes an approval only after its exact correlation is pending", async () => {
     class ReentrantPublisher extends FakePublisher {
       override send(event: ClaudeCodeEventExtended): void {
@@ -466,6 +576,29 @@ describe("AgentControllerRegistry", () => {
       toolCallId: gapRequest.toolCallId,
     }));
     assertEquals(await gapApproval, true);
+    assertEquals(registry.releaseRun(replacementRegistration.run), true);
+  });
+
+  it("replays an immutable pending input after transport replacement", async () => {
+    const registry = new AgentControllerRegistry({ inputTimeout: 1_000 });
+    const firstPublisher = new FakePublisher("run-1");
+    const firstRegistration = registry.register(firstPublisher);
+    const input = firstRegistration.controller.requestInput("Value?", "default");
+    const request = firstPublisher.events.find((event) => event.type === "input_request");
+    assertExists(request);
+    assertEquals(Object.isFrozen(request), true);
+
+    assertEquals(registry.detach(firstRegistration), true);
+    const replacementPublisher = new FakePublisher("run-1");
+    const replacementRegistration = registry.register(replacementPublisher);
+    assertEquals(replacementPublisher.events, [request]);
+
+    replacementPublisher.emit(command({
+      type: "input",
+      content: "replacement value",
+      requestId: request.requestId,
+    }));
+    assertEquals(await input, "replacement value");
     assertEquals(registry.releaseRun(replacementRegistration.run), true);
   });
 

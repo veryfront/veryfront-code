@@ -218,7 +218,8 @@ function requireEventFilterPath(value: unknown, label: string): string {
   if (typeof value !== "string" || value.length === 0) {
     invalid(`${label} is required.`);
   }
-  const normalized = value.trim();
+  const trimmed = value.trim();
+  const normalized = trimmed.startsWith("$.") ? trimmed.slice(2) : trimmed;
   if (normalized.length === 0) invalid(`${label} is required.`);
   if (normalized.length > MAX_EVENT_FILTER_PATH_LENGTH) {
     invalid(`${label} must be at most ${MAX_EVENT_FILTER_PATH_LENGTH} characters.`);

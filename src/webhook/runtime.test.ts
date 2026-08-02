@@ -6,6 +6,23 @@ import { webhook } from "./factory.ts";
 import { prepareWebhookInvocation, renderWebhookPromptTemplate } from "./runtime.ts";
 
 describe("webhook/runtime", () => {
+  it("normalizes JSONPath root prefixes before evaluating filters", () => {
+    const definition = webhook({
+      id: "jsonpath-filter",
+      target: { kind: "workflow", id: "process-event" },
+      eventFilter: {
+        mode: "all",
+        conditions: [{ path: "$.repository.name", operator: "equals", value: "code" }],
+      },
+    });
+
+    assertEquals(definition.eventFilter?.conditions[0]?.path, "repository.name");
+    assertEquals(
+      prepareWebhookInvocation(definition, { repository: { name: "code" } }).matched,
+      true,
+    );
+  });
+
   it("matches every hosted filter operator with structural JSON equality", () => {
     const definition = webhook({
       id: "pull-request",

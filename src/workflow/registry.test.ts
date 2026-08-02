@@ -176,7 +176,10 @@ describe("WorkflowRegistry", () => {
         () => (stored.steps as WorkflowNode[]).push(node("forbidden", "step")),
         TypeError,
       );
-      assertThrows(() => metadata.agentRefs.push("forbidden"), TypeError);
+      assertThrows(
+        () => (metadata.agentRefs as string[]).push("forbidden"),
+        TypeError,
+      );
       assertEquals(workflowRegistry.get(definition.id)?.agentRefs, ["original-agent"]);
     });
 
