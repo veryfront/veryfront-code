@@ -1,15 +1,38 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { clearModelProviders, resolveModel } from "./model-registry.ts";
+import type { ModelRuntime } from "./types.ts";
+import {
+  clearModelProviders,
+  ensureModelReady,
+  getRegisteredModelProviders,
+  hasModelProvider,
+  registerModelProvider,
+  resolveModel,
+} from "./model-registry.ts";
 
 const MODEL_REGISTRY_ENV_KEYS = [
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
+  "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
+  "MISTRAL_API_KEY",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_PROJECT_SLUG",
 ] as const;
+
+const PROJECT_A = {
+  projectId: "provider-registry-project-a",
+  mode: "preview" as const,
+  versionId: "main",
+};
+const PROJECT_B = {
+  projectId: "provider-registry-project-b",
+  mode: "preview" as const,
+  versionId: "main",
+};
 
 function clearModelRegistryEnv(): void {
   for (const key of MODEL_REGISTRY_ENV_KEYS) {
@@ -21,13 +44,270 @@ function clearModelRegistryEnv(): void {
   }
 }
 
+function testRuntime(provider: string, modelId: string): ModelRuntime {
+  return {
+    specificationVersion: "v2",
+    provider,
+    modelId,
+    async doGenerate() {
+      return {};
+    },
+    async doStream() {
+      return { stream: new ReadableStream() };
+    },
+  };
+}
+
 describe("provider/model-registry", () => {
   const originalFetch = globalThis.fetch;
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
     clearModelRegistryEnv();
+    runWithCacheKeyContext(PROJECT_A, clearModelProviders);
+    runWithCacheKeyContext(PROJECT_B, clearModelProviders);
     clearModelProviders();
+  });
+
+  it("initializes shared built-ins even when the first project shadows one", () => {
+    setEnv("OPENAI_API_KEY", "sk-test-openai");
+    runWithCacheKeyContext(PROJECT_A, () => {
+      registerModelProvider("openai", (id) => testRuntime("project-a", id));
+      assertEquals(resolveModel("openai/project-model").provider, "project-a");
+    });
+
+    const shared = runWithCacheKeyContext(
+      PROJECT_B,
+      () => resolveModel("openai/gpt-5.4-nano"),
+    );
+    assertEquals(shared.provider, "openai");
+  });
+
+  it("uses bootstrap providers as project defaults and preserves scoped overrides", () => {
+    registerModelProvider("bootstrap", (id) => testRuntime("bootstrap", id));
+
+    assertEquals(
+      runWithCacheKeyContext(
+        PROJECT_A,
+        () => resolveModel("bootstrap/family/model").provider,
+      ),
+      "bootstrap",
+    );
+
+    runWithCacheKeyContext(PROJECT_A, () => {
+      registerModelProvider("bootstrap", (id) => testRuntime("project-a", id));
+      assertEquals(resolveModel("bootstrap/model").provider, "project-a");
+    });
+    assertEquals(
+      runWithCacheKeyContext(
+        PROJECT_B,
+        () => resolveModel("bootstrap/model").provider,
+      ),
+      "bootstrap",
+    );
+
+    runWithCacheKeyContext(PROJECT_A, clearModelProviders);
+    assertEquals(
+      runWithCacheKeyContext(
+        PROJECT_A,
+        () => resolveModel("bootstrap/model").provider,
+      ),
+      "bootstrap",
+    );
+  });
+
+  it("clears only the current project and preserves other projects and built-ins", () => {
+    runWithCacheKeyContext(PROJECT_A, () => {
+      registerModelProvider("tenant", (id) => testRuntime("project-a", id));
+    });
+    runWithCacheKeyContext(PROJECT_B, () => {
+      registerModelProvider("tenant", (id) => testRuntime("project-b", id));
+    });
+
+    runWithCacheKeyContext(PROJECT_A, clearModelProviders);
+    assertThrows(
+      () =>
+        runWithCacheKeyContext(
+          PROJECT_A,
+          () => resolveModel("tenant/model"),
+        ),
+      Error,
+      'provider "tenant" not registered',
+    );
+    assertEquals(
+      runWithCacheKeyContext(
+        PROJECT_B,
+        () => resolveModel("tenant/model").provider,
+      ),
+      "project-b",
+    );
+    assertEquals(
+      runWithCacheKeyContext(PROJECT_A, () => hasModelProvider("local")),
+      false,
+    );
+  });
+
+  it("reports bootstrap, project, and shared providers without duplicates", () => {
+    registerModelProvider("bootstrap-list", (id) => testRuntime("bootstrap", id));
+    const providers = runWithCacheKeyContext(PROJECT_A, () => {
+      registerModelProvider("project-list", (id) => testRuntime("project", id));
+      return getRegisteredModelProviders();
+    });
+
+    assertEquals(providers.includes("bootstrap-list"), true);
+    assertEquals(providers.includes("project-list"), true);
+    assertEquals(providers.includes("local"), false);
+    assertEquals(new Set(providers).size, providers.length);
+  });
+
+  it("rejects malformed registrations, model strings, and runtime results", () => {
+    assertThrows(
+      () => registerModelProvider(null as never, () => testRuntime("test", "model")),
+      TypeError,
+      "non-empty string",
+    );
+    assertThrows(
+      () => registerModelProvider(" ", () => testRuntime("test", "model")),
+      TypeError,
+      "non-empty string",
+    );
+    assertThrows(
+      () => registerModelProvider("bad/name", () => testRuntime("test", "model")),
+      TypeError,
+      "without slashes",
+    );
+    assertThrows(
+      () => registerModelProvider("invalid-factory", null as never),
+      TypeError,
+      "factory must be a function",
+    );
+    assertThrows(
+      () => resolveModel(null as never),
+      TypeError,
+      "provider/model",
+    );
+    assertThrows(
+      () => resolveModel(" missing/model"),
+      Error,
+      "Both provider and model name are required",
+    );
+    assertThrows(
+      () => resolveModel("missing/model "),
+      Error,
+      "Both provider and model name are required",
+    );
+
+    registerModelProvider("null-runtime", () => null as never);
+    assertThrows(
+      () => resolveModel("null-runtime/model"),
+      TypeError,
+      "expected an object",
+    );
+    registerModelProvider(
+      "partial-runtime",
+      () => ({ doGenerate() {} }) as never,
+    );
+    assertThrows(
+      () => resolveModel("partial-runtime/model"),
+      TypeError,
+      "doGenerate and doStream must be functions",
+    );
+    registerModelProvider(
+      "unreadable-runtime",
+      () =>
+        Object.defineProperty({}, "doGenerate", {
+          get() {
+            throw new Error("private getter failure");
+          },
+        }) as never,
+    );
+    assertThrows(
+      () => resolveModel("unreadable-runtime/model"),
+      TypeError,
+      "unreadable runtime",
+    );
+  });
+
+  it("preserves nested model identifiers when invoking custom factories", () => {
+    let receivedModelId = "";
+    registerModelProvider("custom", (id) => {
+      receivedModelId = id;
+      return testRuntime("custom", id);
+    });
+
+    const runtime = resolveModel("custom/family/model");
+    assertEquals(receivedModelId, "family/model");
+    assertEquals(runtime.modelId, "family/model");
+  });
+
+  it("fails actionably when an explicit provider has not been composed", () => {
+    assertThrows(
+      () => resolveModel("local/example"),
+      Error,
+      "Register it during application composition with registerModelProvider()",
+    );
+  });
+
+  it("disposes only the exact registration generation it owns", () => {
+    const disposeFirst = registerModelProvider(
+      "owned",
+      (id) => testRuntime("first", id),
+    );
+    const disposeSecond = registerModelProvider(
+      "owned",
+      (id) => testRuntime("second", id),
+    );
+
+    disposeFirst();
+    assertEquals(resolveModel("owned/model").provider, "second");
+    disposeSecond();
+    disposeSecond();
+    assertThrows(() => resolveModel("owned/model"), Error, "not registered");
+  });
+
+  it("disposes a scoped registration outside its original request context", () => {
+    let dispose = () => {};
+    runWithCacheKeyContext(PROJECT_A, () => {
+      dispose = registerModelProvider(
+        "scoped-owned",
+        (id) => testRuntime("project-a", id),
+      );
+    });
+
+    dispose();
+    assertThrows(
+      () =>
+        runWithCacheKeyContext(
+          PROJECT_A,
+          () => resolveModel("scoped-owned/model"),
+        ),
+      Error,
+      "not registered",
+    );
+  });
+
+  it("runs a provider-neutral preparation hook before use", async () => {
+    const expected = new Error("runtime unavailable");
+    let prepareThis: unknown;
+    let prepareSignal: AbortSignal | undefined;
+    const abortController = new AbortController();
+    const runtime: ModelRuntime = {
+      ...testRuntime("prepared", "model"),
+      prepare(abortSignal) {
+        prepareThis = this;
+        prepareSignal = abortSignal;
+        return Promise.reject(expected);
+      },
+    };
+
+    const error = await ensureModelReady(runtime, abortController.signal).then(
+      () => undefined,
+      (caught) => caught,
+    );
+    assertStrictEquals(error, expected);
+    assertStrictEquals(prepareThis, runtime);
+    assertStrictEquals(prepareSignal, abortController.signal);
+    await ensureModelReady(testRuntime("plain", "model"));
   });
 
   it("routes env-backed OpenAI reasoning models with tools through Responses", async () => {
