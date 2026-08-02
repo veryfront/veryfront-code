@@ -68,6 +68,11 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(([
     sourceDirectory: "ext-bundler-esbuild",
   },
   {
+    name: "ext-dev-ui-react",
+    origin: "veryfront/ext-dev-ui-react",
+    sourceDirectory: "ext-dev-ui-react",
+  },
+  {
     name: "ext-parser-babel",
     origin: "veryfront/ext-parser-babel",
     sourceDirectory: "ext-parser-babel",
