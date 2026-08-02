@@ -156,10 +156,52 @@ export class RuntimeProjectFilesApiAuthError extends Error {
 export function createRuntimeProjectFilesClient(
   options: RuntimeProjectFilesClientOptions,
 ): RuntimeProjectFilesClient {
-  return {
-    getProjectFile: (input) => getRuntimeProjectFile({ ...options, ...input }),
-    getProjectFiles: (input) => getRuntimeProjectFiles({ ...options, ...input }),
-  };
+  // Snapshot the trusted transport configuration. Callers can pass plain
+  // JavaScript objects at runtime, so spreading request input into this scope
+  // would let excess properties replace the configured origin or transport.
+  const apiUrl = new URL(options.apiUrl).toString();
+  const configuredTimeoutMs = options.timeoutMs;
+  const configuredFetch = options.fetch;
+  const configuredPageLimit = options.pageLimit;
+  const configuredTrace = options.trace;
+  const configuredAccessDeniedErrorFactory = options.createAccessDeniedError;
+
+  return Object.freeze({
+    getProjectFile: (input) =>
+      getRuntimeProjectFile({
+        apiUrl,
+        fetch: configuredFetch,
+        pageLimit: configuredPageLimit,
+        trace: configuredTrace,
+        createAccessDeniedError: configuredAccessDeniedErrorFactory,
+        projectId: input.projectId,
+        authToken: input.authToken,
+        branchId: input.branchId,
+        maximumEntries: input.maximumEntries,
+        pathPrefix: input.pathPrefix,
+        listingBudget: input.listingBudget,
+        abortSignal: input.abortSignal,
+        timeoutMs: input.timeoutMs ?? configuredTimeoutMs,
+        path: input.path,
+        maximumContentCharacters: input.maximumContentCharacters,
+      }),
+    getProjectFiles: (input) =>
+      getRuntimeProjectFiles({
+        apiUrl,
+        fetch: configuredFetch,
+        pageLimit: configuredPageLimit,
+        trace: configuredTrace,
+        createAccessDeniedError: configuredAccessDeniedErrorFactory,
+        projectId: input.projectId,
+        authToken: input.authToken,
+        branchId: input.branchId,
+        maximumEntries: input.maximumEntries,
+        pathPrefix: input.pathPrefix,
+        listingBudget: input.listingBudget,
+        abortSignal: input.abortSignal,
+        timeoutMs: input.timeoutMs ?? configuredTimeoutMs,
+      }),
+  });
 }
 
 /** Return runtime project file. */

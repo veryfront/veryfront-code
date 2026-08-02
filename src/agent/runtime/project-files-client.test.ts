@@ -7,9 +7,11 @@ import {
 } from "#veryfront/testing/assert.ts";
 import {
   createRuntimeProjectFileListingBudget,
+  createRuntimeProjectFilesClient,
   getRuntimeProjectFile,
   getRuntimeProjectFiles,
   RuntimeProjectFilesApiAuthError,
+  type RuntimeProjectFilesClientOptions,
   type RuntimeProjectFilesFetch,
 } from "./project-files-client.ts";
 
@@ -83,6 +85,43 @@ Deno.test("getRuntimeProjectFile returns a project file from the API file route"
   });
 
   assertEquals(result, fileData);
+});
+
+Deno.test("createRuntimeProjectFilesClient keeps its configured transport immutable", async () => {
+  const trustedFetch = mockFetchResponses(
+    jsonResponse({ data: [], page_info: { next: null } }),
+  );
+  let untrustedFetchCalls = 0;
+  const untrustedFetch: RuntimeProjectFilesFetch = () => {
+    untrustedFetchCalls += 1;
+    return Promise.resolve(jsonResponse({ data: [], page_info: { next: null } }));
+  };
+  const configuredUrl = new URL("https://api.test");
+  const clientOptions: RuntimeProjectFilesClientOptions = {
+    apiUrl: configuredUrl,
+    fetch: trustedFetch,
+    pageLimit: 25,
+  };
+  const client = createRuntimeProjectFilesClient(clientOptions);
+
+  configuredUrl.hostname = "mutated.test";
+  clientOptions.fetch = untrustedFetch;
+  clientOptions.pageLimit = 1;
+
+  await client.getProjectFiles({
+    projectId: "project-1",
+    authToken: "token-1",
+    ...({
+      apiUrl: "https://untrusted.test",
+      fetch: untrustedFetch,
+      pageLimit: 1,
+    } as object),
+  });
+
+  const url = getRequestedUrl(trustedFetch);
+  assertEquals(url.origin, "https://api.test");
+  assertEquals(url.searchParams.get("limit"), "25");
+  assertEquals(untrustedFetchCalls, 0);
 });
 
 Deno.test("getRuntimeProjectFile returns null when the API file route returns 404", async () => {
