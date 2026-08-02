@@ -80,6 +80,10 @@ interface GCSObject {
   metadata: Record<string, string>;
 }
 
+interface TokenRequest {
+  readonly promise: Promise<string>;
+}
+
 function linkAbortSignal(
   upstream: AbortSignal | undefined,
   controller: AbortController,
@@ -649,7 +653,7 @@ export class GCSBlobStorage implements BlobStorage {
   readonly #lifecycleController = new AbortController();
   readonly #detachConfigAbort: () => void;
   #privateKey: Promise<CryptoKey> | undefined;
-  #tokenRequest: Promise<string> | undefined;
+  #tokenRequest: TokenRequest | undefined;
   #tokenCache: { accessToken: string; refreshAt: number } | undefined;
   #closed = false;
 
@@ -789,15 +793,15 @@ export class GCSBlobStorage implements BlobStorage {
       return this.#tokenCache.accessToken;
     }
     if (!this.#tokenRequest) {
-      const pending = this.#requestAccessToken();
-      this.#tokenRequest = pending;
+      const request: TokenRequest = { promise: this.#requestAccessToken() };
+      this.#tokenRequest = request;
       try {
-        return await pending;
+        return await request.promise;
       } finally {
-        if (this.#tokenRequest === pending) this.#tokenRequest = undefined;
+        if (this.#tokenRequest === request) this.#tokenRequest = undefined;
       }
     }
-    return await this.#tokenRequest;
+    return await this.#tokenRequest.promise;
   }
 
   async #authorizedHeaders(): Promise<Headers> {
