@@ -183,7 +183,12 @@ class SkillRegistryInternal extends ScopedRegistryFacade<Skill> {
 /** Framework-only skill registry with process-wide maintenance capabilities. */
 export const skillRegistryInternal = new SkillRegistryInternal(skillManager);
 
-/** Project-scoped skill registry API safe for application code. */
+/**
+ * Application-facing project-scoped skill registry API.
+ *
+ * Process-wide maintenance methods remain for compatibility; framework
+ * composition roots should use `skillRegistryInternal` for that behavior.
+ */
 class SkillRegistry extends ScopedRegistryView<Skill> {
   readonly #registry: SkillRegistryInternal;
 

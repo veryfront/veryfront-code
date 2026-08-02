@@ -53,5 +53,10 @@ class PromptRegistry extends ScopedRegistryView<Prompt> {
   }
 }
 
-/** Project-scoped prompt registry value safe for application code. */
+/**
+ * Application-facing project-scoped prompt registry value.
+ *
+ * Process-wide maintenance methods remain for compatibility; framework
+ * composition roots should use `promptRegistryInternal` for that behavior.
+ */
 export const promptRegistry = new PromptRegistry(promptRegistryInternal);

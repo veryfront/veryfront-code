@@ -55,8 +55,8 @@ validateSkillMetadata(parsed.frontmatter, "review");
 | `createLoadSkillTool` | Create the load_skill tool. Loads a skill's full instructions, available references, and scripts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/tools.ts#L482) |
 | `filterToolNamesForSkill` | Filter provider-native or other name-only tool inventories through the same policy boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L174) |
 | `filterToolsForSkill` | Layer 1: Filter tool definitions before sending to model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L126) |
-| `getAllSkills` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L272) |
-| `getSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L268) |
+| `getAllSkills` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L277) |
+| `getSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L273) |
 | `getSkillScriptExecutor` | Get the appropriate script executor. Checks cloud auth availability on every call so request-scoped credentials and environment overrides are respected. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/executor.ts#L473) |
 | `isSkillInfrastructureToolId` | Framework-owned membership check that cannot be changed by public Set mutation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/types.ts#L151) |
 | `isSkillVisibleTo` | Whether a skill is visible to the caller identified by the scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L65) |
@@ -68,7 +68,7 @@ validateSkillMetadata(parsed.frontmatter, "review");
 | `parseBoundedSkillDocument` | Parse one bounded Skill document with an explicit provider or the active extension contract generation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/document-parser.ts#L361) |
 | `parseSkillFileFrontmatter` | Parse and bound an untrusted SKILL.md document read from a filesystem boundary. YAML frontmatter is decoded by the explicit provider, or by the active `SkillDocumentParserProvider` registration when the argument is omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L114) |
 | `parseSkillFrontmatter` | Parse SKILL.md content through the bounded, fail-closed format. Malformed YAML, invalid Unicode, and oversized documents are rejected. YAML frontmatter is decoded by the explicit provider, or by the active `SkillDocumentParserProvider` registration when the argument is omitted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L100) |
-| `registerSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L264) |
+| `registerSkill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L269) |
 | `snapshotAllowedToolPatterns` | Validate, detach, and freeze an active authorization policy. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L217) |
 | `validateAllowedToolPatterns` | Validate allowed-tool patterns at parse time. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/allowed-tools.ts#L207) |
 | `validateSkillFileMetadata` | Validate metadata loaded from a filesystem skill. The caller-supplied directory/runtime identity remains canonical; a differing authored `name` is display metadata and never participates in lookup or authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/parser.ts#L463) |
@@ -96,4 +96,4 @@ validateSkillMetadata(parsed.frontmatter, "review");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `skillRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L262) |
+| `skillRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/skill/registry.ts#L267) |

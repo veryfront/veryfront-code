@@ -73,7 +73,12 @@ class ToolRegistryInternal extends ScopedRegistryFacade<Tool> {
 /** Framework-only tool registry with process-wide maintenance capabilities. */
 export const toolRegistryInternal = new ToolRegistryInternal(toolManager);
 
-/** Project-scoped tool registry API safe for application code. */
+/**
+ * Application-facing project-scoped tool registry API.
+ *
+ * Process-wide maintenance methods remain for compatibility; framework
+ * composition roots should use `toolRegistryInternal` for that behavior.
+ */
 class ToolRegistry extends ScopedRegistryView<Tool> {
   getToolsForProvider(): ToolDefinition[] {
     return [...this.getAll().values()].map(toolToProviderDefinition);

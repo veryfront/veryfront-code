@@ -35,10 +35,11 @@ export class DiscoveryGenerationError extends Error {
 /**
  * Replace every project-scoped primitive registry as one atomic generation.
  *
- * Discovery can continue collecting independent file failures, but a
- * generation containing any failure is never published. Concurrent readers
- * therefore see either the complete previous generation or the complete new
- * one, never a partial mix.
+ * Discovery can continue collecting independent file failures. By default a
+ * generation containing any failure is rejected; `publish-valid` explicitly
+ * publishes the successfully discovered entries together as one generation.
+ * Concurrent readers therefore see either the complete previous generation
+ * or one complete replacement generation, never an in-progress mix.
  */
 export async function replaceDiscoveredProjectPrimitives(
   config: DiscoveryConfig,
