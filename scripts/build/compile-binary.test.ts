@@ -154,7 +154,35 @@ Deno.test("proxy binary embeds only the runtime-resolved proxy entrypoint", asyn
       `proxy lock must not contain ${unrelated}`,
     );
   }
+});
 
+Deno.test("proxy release verifies lock freshness and publishes an exact SBOM", async () => {
+  const workflow = await Deno.readTextFile(".github/workflows/cicd.yml");
+
+  assertEquals(workflow.includes("deno task build:proxy-lock"), true);
+  assertEquals(
+    workflow.includes("git diff --exit-code -- scripts/build/proxy-deno.lock"),
+    true,
+  );
+  assertEquals(
+    workflow.includes("deno task sbom --lock scripts/build/proxy-deno.lock"),
+    true,
+  );
+});
+
+Deno.test("compiled proxy smoke covers cache and observability providers", async () => {
+  const smoke = await Deno.readTextFile("scripts/build/smoke-proxy-binary.sh");
+
+  for (const contract of [
+    "CACHE_TYPE=memory",
+    "CACHE_TYPE=redis",
+    "TokenCacheStore registered",
+    "OTEL_TRACES_EXPORTER=otlp",
+    "[otel] Initialized",
+    "SENTRY_DSN=https://public@example.com/1",
+  ]) {
+    assertEquals(smoke.includes(contract), true, `missing smoke contract ${contract}`);
+  }
 });
 
 Deno.test("full binary remains the default compile profile", () => {

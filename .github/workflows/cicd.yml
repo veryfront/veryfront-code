@@ -414,6 +414,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
       - run: deno task build:prepare
+      - name: Verify proxy dependency lock is current
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
       - name: Compile proxy binary
         run: |
           deno run -A scripts/build/compile-binary.ts \
@@ -466,6 +470,13 @@ jobs:
       - uses: ./.github/actions/setup-deno
 
       - run: deno task build:prepare
+
+      - name: Verify proxy dependency lock is current
+        if: matrix.profile == 'proxy'
+        shell: bash
+        run: |
+          deno task build:proxy-lock
+          git diff --exit-code -- scripts/build/proxy-deno.lock
 
       - name: Compile binary
         shell: bash
@@ -534,7 +545,9 @@ jobs:
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create release GitHub App token
         id: release-app-token
@@ -686,7 +699,9 @@ jobs:
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+        run: |
+          deno task sbom:all --output-dir "dist/sbom-${VERSION}"
+          deno task sbom --lock scripts/build/proxy-deno.lock --output "dist/sbom-${VERSION}/proxy.json"
 
       - name: Create git tag
         env:

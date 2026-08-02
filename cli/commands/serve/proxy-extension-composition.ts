@@ -7,10 +7,9 @@
  */
 
 import { cliLogger } from "veryfront/utils/logger";
-import { ExtensionLoader } from "veryfront/extensions/loader";
-import type { ExtensionFactory } from "veryfront/extensions/types";
+import { type ExtensionFactory, ExtensionLoader } from "veryfront/extensions";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
-import { getEnv } from "veryfront/platform/env";
+import { getEnv, setEnv } from "veryfront/platform/env";
 import {
   createProxyShutdownAggregateError,
   type RegisterProxyShutdownHook,
@@ -52,8 +51,8 @@ const REDIS_EXTENSION_PACKAGE_NAME = "@veryfront/ext-redis";
  */
 async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoader | null> {
   const cacheType = getEnv("CACHE_TYPE") || "memory";
-  if (cacheType !== "memory" && cacheType !== "extension") {
-    throw new NativeTypeError("CACHE_TYPE must be memory or extension");
+  if (cacheType !== "memory" && cacheType !== "extension" && cacheType !== "redis") {
+    throw new NativeTypeError("CACHE_TYPE must be memory, extension, or redis");
   }
 
   const selected: Array<{
@@ -61,7 +60,7 @@ async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoa
     packageName: string;
     sourceDirectory: string;
   }> = [];
-  if (cacheType === "extension") {
+  if (cacheType === "extension" || cacheType === "redis") {
     selected.push({
       origin: "standalone proxy cache selection",
       packageName: CACHE_EXTENSION_PACKAGE_NAME,
@@ -95,6 +94,10 @@ async function activateStandaloneProxyExtensionsInternal(): Promise<ExtensionLoa
   const loader = new ExtensionLoader(cliLogger);
   try {
     await loader.setupAll(extensions, {});
+    // Keep the chart compatible with older universal binaries during rollout.
+    // The dedicated entrypoint translates the legacy value only after the
+    // extension-backed store is registered.
+    if (cacheType === "redis") setEnv("CACHE_TYPE", "extension");
     return loader;
   } catch (error) {
     try {

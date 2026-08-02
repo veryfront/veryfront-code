@@ -36,36 +36,39 @@ describe("standalone proxy extension composition", () => {
     assertEquals(loader, null);
   });
 
-  it("activates ext-cache-redis before standalone cache acquisition", async () => {
-    Deno.env.set("CACHE_TYPE", "extension");
-    Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
+  for (const cacheType of ["extension", "redis"] as const) {
+    it(`activates ext-cache-redis before ${cacheType} cache acquisition`, async () => {
+      Deno.env.set("CACHE_TYPE", cacheType);
+      Deno.env.set("REDIS_URL", "redis://127.0.0.1:6379");
 
-    loader = await activateStandaloneProxyExtensions();
-    const shutdownHooks = createProxyShutdownHooks();
-    await registerStandaloneProxyExtensionTeardown(loader, shutdownHooks.register);
-    const acquisition = await acquireExtensionTokenCacheStoreFromEnv();
+      loader = await activateStandaloneProxyExtensions();
+      const shutdownHooks = createProxyShutdownHooks();
+      await registerStandaloneProxyExtensionTeardown(loader, shutdownHooks.register);
+      const acquisition = await acquireExtensionTokenCacheStoreFromEnv();
 
-    assertEquals(loader !== null, true);
-    assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
-    assertEquals(acquisition.kind, "borrowed");
-    assertStrictEquals(
-      acquisition.store,
-      tryResolve<TokenCacheStore>("TokenCacheStore"),
-    );
+      assertEquals(Deno.env.get("CACHE_TYPE"), "extension");
+      assertEquals(loader !== null, true);
+      assertEquals(tryResolve(RedisRuntimeProviderName) !== undefined, true);
+      assertEquals(acquisition.kind, "borrowed");
+      assertStrictEquals(
+        acquisition.store,
+        tryResolve<TokenCacheStore>("TokenCacheStore"),
+      );
 
-    const cache = await createCacheFromEnv({ extensionStore: acquisition });
-    assertEquals(cache instanceof TracingTokenCache, true);
-    await cache.close();
-    assertStrictEquals(
-      tryResolve<TokenCacheStore>("TokenCacheStore"),
-      acquisition.store,
-    );
+      const cache = await createCacheFromEnv({ extensionStore: acquisition });
+      assertEquals(cache instanceof TracingTokenCache, true);
+      await cache.close();
+      assertStrictEquals(
+        tryResolve<TokenCacheStore>("TokenCacheStore"),
+        acquisition.store,
+      );
 
-    assertEquals(await shutdownHooks.settle(), []);
-    assertEquals(tryResolve<TokenCacheStore>("TokenCacheStore"), undefined);
-    assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
-    loader = null;
-  });
+      assertEquals(await shutdownHooks.settle(), []);
+      assertEquals(tryResolve<TokenCacheStore>("TokenCacheStore"), undefined);
+      assertEquals(tryResolve(RedisRuntimeProviderName), undefined);
+      loader = null;
+    });
+  }
 
   it("activates the Redis runtime for routing invalidation in memory-cache mode", async () => {
     Deno.env.set("CACHE_TYPE", "memory");

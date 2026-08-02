@@ -1,7 +1,7 @@
 /**
  * Generate a CycloneDX 1.5 SBOM from deno.lock.
  *
- * Usage: deno run --allow-read --allow-write scripts/build/generate-sbom.ts [--output path]
+ * Usage: deno run --allow-read --allow-write scripts/build/generate-sbom.ts [--lock path] [--output path]
  *        deno run --allow-read --allow-write scripts/build/generate-sbom.ts \
  *          --all-manifests --output-dir dist/sbom
  *        deno run --allow-read --allow-write scripts/build/generate-sbom.ts \
@@ -614,12 +614,16 @@ async function writeTextOutput(
 if (import.meta.main) {
   const args = parseArgs(Deno.args, {
     boolean: ["all-manifests"],
-    string: ["manifest", "output", "output-dir"],
-    default: { output: "dist/sbom.json", "output-dir": "dist/sbom" },
+    string: ["lock", "manifest", "output", "output-dir"],
+    default: {
+      lock: "deno.lock",
+      output: "dist/sbom.json",
+      "output-dir": "dist/sbom",
+    },
   });
 
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
-  const lockText = await Deno.readTextFile("deno.lock");
+  const lockText = await Deno.readTextFile(args.lock);
 
   if (args["all-manifests"]) {
     const workspaceMembers = workspaceMembersFromDenoConfig(denoConfig);
