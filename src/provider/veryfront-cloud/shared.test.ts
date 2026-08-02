@@ -35,6 +35,23 @@ describe("provider/veryfront-cloud/shared", () => {
       Error,
       'Invalid veryfront-cloud model string: "openai"',
     );
+    for (const modelId of ["openai/ gpt-5.5", "openai/gpt-5.5 ", "openai/ "]) {
+      assertThrows(
+        () => parseVeryfrontCloudModelId(modelId, "language"),
+        Error,
+        `Invalid veryfront-cloud model string: "${modelId}"`,
+      );
+    }
+  });
+
+  it("rejects object-prototype names as provider aliases", () => {
+    for (const provider of ["constructor", "toString", "valueOf", "__proto__"]) {
+      assertThrows(
+        () => parseVeryfrontCloudModelId(`${provider}/model`, "language"),
+        Error,
+        `Invalid veryfront-cloud model string: "${provider}/model"`,
+      );
+    }
   });
 
   it("rejects unsupported Mistral model IDs at the provider boundary", () => {
@@ -61,6 +78,52 @@ describe("provider/veryfront-cloud/shared", () => {
     );
   });
 
+  it("preserves base URL query parameters and removes fragments", () => {
+    assertEquals(
+      getVeryfrontCloudGatewayBaseUrl(
+        "https://api.veryfront.com/base/?region=eu#private-fragment",
+        "openai",
+      ),
+      "https://api.veryfront.com/base/ai/gateway/openai/v1?region=eu",
+    );
+  });
+
+  it("rejects unsafe gateway base URLs and unknown providers", () => {
+    for (
+      const baseURL of [
+        "file:///tmp/gateway",
+        "javascript:alert(1)",
+        "not a URL",
+        "https://user:private-password@api.veryfront.com",
+      ]
+    ) {
+      assertThrows(
+        () => getVeryfrontCloudGatewayBaseUrl(baseURL, "openai"),
+        TypeError,
+        "API base URL",
+      );
+    }
+    assertThrows(
+      () => getVeryfrontCloudGatewayBaseUrl("https://api.veryfront.com", "constructor" as never),
+      TypeError,
+      'Unsupported Veryfront Cloud provider "constructor"',
+    );
+  });
+
+  it("rejects malformed gateway credentials before creating a fetch wrapper", () => {
+    for (const token of ["", " token", "token ", "token\nprivate", "token-\u00e5"]) {
+      assertThrows(
+        () =>
+          createVeryfrontCloudFetch(
+            token,
+            "https://93.184.216.34/ai/gateway/openai/v1",
+          ),
+        TypeError,
+        "Veryfront Cloud API token",
+      );
+    }
+  });
+
   it("rewrites auth headers for the gateway fetch wrapper", async () => {
     let capturedRequest: Request | undefined;
     globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
@@ -78,6 +141,8 @@ describe("provider/veryfront-cloud/shared", () => {
         Authorization: "Bearer upstream-token",
         "x-api-key": "anthropic-key",
         "x-goog-api-key": "google-key",
+        "x-veryfront-project-slug": "spoofed-project",
+        "x-veryfront-billing-group-id": "spoofed-billing-group",
         "x-extra-header": "kept",
       },
     });
@@ -86,10 +151,11 @@ describe("provider/veryfront-cloud/shared", () => {
     assertEquals(capturedRequest?.headers.get("x-api-key"), null);
     assertEquals(capturedRequest?.headers.get("x-goog-api-key"), null);
     assertEquals(capturedRequest?.headers.get("x-extra-header"), "kept");
+    assertEquals(capturedRequest?.headers.get("x-veryfront-project-slug"), null);
     assertEquals(capturedRequest?.headers.get("x-veryfront-billing-group-id"), null);
   });
 
-  it("forwards the request-scoped billing group id to the gateway", async () => {
+  it("replaces caller identity headers with trusted project and billing context", async () => {
     let capturedRequest: Request | undefined;
     globalThis.fetch = ((input: URL | Request | string, init?: RequestInit) => {
       capturedRequest = new Request(input, init);
@@ -99,13 +165,24 @@ describe("provider/veryfront-cloud/shared", () => {
     const wrappedFetch = createVeryfrontCloudFetch(
       "vf_test_provider",
       "https://93.184.216.34/ai/gateway/openai/v1",
+      "trusted-project",
     );
 
     await runWithVeryfrontCloudContext(
       { billingGroupId: "evalrun_20260628_kimi" },
-      () => wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions"),
+      () =>
+        wrappedFetch("https://93.184.216.34/ai/gateway/openai/v1/chat/completions", {
+          headers: {
+            "x-veryfront-project-slug": "spoofed-project",
+            "x-veryfront-billing-group-id": "spoofed-billing-group",
+          },
+        }),
     );
 
+    assertEquals(
+      capturedRequest?.headers.get("x-veryfront-project-slug"),
+      "trusted-project",
+    );
     assertEquals(
       capturedRequest?.headers.get("x-veryfront-billing-group-id"),
       "evalrun_20260628_kimi",

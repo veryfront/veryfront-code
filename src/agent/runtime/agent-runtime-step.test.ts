@@ -43,7 +43,7 @@ describe("agent/runtime-step", () => {
         toolDefinition("get_release"),
         toolDefinition("load_skill"),
       ],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -74,7 +74,7 @@ describe("agent/runtime-step", () => {
       config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [toolDefinition("create_release")],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       providerToolNames: ["web_search"],
@@ -104,7 +104,7 @@ describe("agent/runtime-step", () => {
       config: { model: "auto", system: "Base", __vfToolLoadingMode: "eager" } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -138,7 +138,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.remoteToolContext?.allowedSkillIds, ["selected"]);
         return [];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -179,7 +179,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: ["remote_allowed"],
       config,
       forwardedRemoteToolDefinitions: [toolDefinition("forwarded_remote")],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "generate",
       remoteToolSources: [remoteSource],
@@ -249,7 +249,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -287,7 +287,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.includeSkillTools, false);
         return [toolDefinition("ordinary_tool")];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -320,7 +320,7 @@ describe("agent/runtime-step", () => {
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: undefined,
@@ -342,7 +342,7 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolContext.__vfSourceIntegrationPolicy, sourceIntegrationPolicy);
   });
 
-  it("uses the canonical deferred exposure contract for local models", async () => {
+  it("does not load tools for runtimes that declare tool calling unsupported", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -350,7 +350,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -359,13 +359,44 @@ describe("agent/runtime-step", () => {
       systemPrompt: "Local",
       toolContextBase: undefined,
       getAvailableTools: async () => {
-        throw new Error("local model should not load tools");
+        throw new Error("tool-incompatible runtime should not load tools");
       },
       resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
     });
 
     assertEquals(prepared.tools.map((tool) => tool.name), []);
     assertEquals(prepared.toolContext, {});
+  });
+
+  it("loads tools for server-local runtimes that declare tool calling support", async () => {
+    let loaded = false;
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: undefined,
+      activeSkillToolAvailability: undefined,
+      allowedRemoteToolNames: undefined,
+      config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 0,
+      systemPrompt: "Local",
+      toolContextBase: undefined,
+      getAvailableTools: async () => {
+        loaded = true;
+        return [toolDefinition("local_lookup")];
+      },
+      resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
+    });
+
+    assertEquals(loaded, true);
+    assertEquals(
+      prepared.toolExposurePlan.authorized.map((tool) => tool.name),
+      ["local_lookup"],
+    );
   });
 
   it("hides intake tools but keeps delegation tools after submitted form input", async () => {
@@ -394,7 +425,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -489,7 +520,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -551,7 +582,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -593,7 +624,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -634,7 +665,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],

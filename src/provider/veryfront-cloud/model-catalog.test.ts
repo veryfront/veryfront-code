@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL,
+  DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
+  DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
+  DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
   findVeryfrontCloudModel,
   findVeryfrontCloudModelByModelId,
   getVeryfrontCloudProviderFromModelId,
@@ -10,8 +14,10 @@ import {
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudReasoningOption,
   resolveVeryfrontCloudThinkingProviderOptions,
   tryGetVeryfrontCloudProviderFromModelId,
+  VERYFRONT_CLOUD_CHAT_MODELS,
 } from "./model-catalog.ts";
 
 describe("provider/veryfront-cloud/model-catalog", () => {
@@ -36,9 +42,22 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(findVeryfrontCloudModel("nonexistent"), undefined);
   });
 
+  it("derives every default-model representation from one catalog entry", () => {
+    assertEquals(DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.id, DEFAULT_VERYFRONT_CLOUD_MODEL_ID);
+    assertEquals(
+      DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID,
+      DEFAULT_VERYFRONT_CLOUD_CHAT_MODEL.modelId,
+    );
+    assertEquals(
+      DEFAULT_VERYFRONT_CLOUD_RUNTIME_MODEL_ID,
+      `veryfront-cloud/${DEFAULT_VERYFRONT_CLOUD_PROVIDER_MODEL_ID}`,
+    );
+  });
+
   it("extracts providers from direct and hosted model ids", () => {
     assertEquals(getVeryfrontCloudProviderFromModelId("anthropic/claude-opus-4-8"), "anthropic");
     assertEquals(getVeryfrontCloudProviderFromModelId("veryfront-cloud/openai/gpt-5.5"), "openai");
+    assertEquals(getVeryfrontCloudProviderFromModelId("google/gemini-3.5-flash"), "google");
     assertEquals(
       getVeryfrontCloudProviderFromModelId("google-ai-studio/gemini-3.1-pro-preview"),
       "google",
@@ -50,6 +69,26 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       Error,
       'Unknown model provider prefix "unknown"',
     );
+  });
+
+  it("keeps the exported catalog immutable", () => {
+    const originalFirstModelId = VERYFRONT_CLOUD_CHAT_MODELS[0]?.id;
+    assertThrows(
+      () =>
+        (VERYFRONT_CLOUD_CHAT_MODELS as unknown as Array<{ id: string }>).push({
+          id: "injected",
+        }),
+      TypeError,
+    );
+    assertThrows(
+      () => {
+        (VERYFRONT_CLOUD_CHAT_MODELS[0] as { id: string }).id = "corrupted";
+      },
+      TypeError,
+    );
+
+    assertEquals(VERYFRONT_CLOUD_CHAT_MODELS[0]?.id, originalFirstModelId);
+    assertEquals(findVeryfrontCloudModel("injected"), undefined);
   });
 
   it("returns undefined for unknown provider prefixes in the try helper", () => {
@@ -151,6 +190,45 @@ describe("provider/veryfront-cloud/model-catalog", () => {
       undefined,
     );
     assertEquals(resolveVeryfrontCloudModelThinking("mistral/mistral-large-2512"), undefined);
+    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
+      if (model.thinkingBudgetTokens !== undefined) {
+        assertEquals(Number.isSafeInteger(model.thinkingBudgetTokens), true);
+        assertEquals(model.thinkingBudgetTokens > 0, true);
+      }
+    }
+  });
+
+  it("rejects non-positive and non-safe thinking budgets", () => {
+    const invalidBudgets = [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+
+    for (const budgetTokens of invalidBudgets) {
+      assertThrows(
+        () =>
+          resolveVeryfrontCloudReasoningOption("anthropic/claude-sonnet-4-6", {
+            enabled: true,
+            budgetTokens,
+          }),
+        Error,
+        "positive safe integer",
+      );
+      assertThrows(
+        () =>
+          resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-sonnet-4-6", {
+            enabled: true,
+            budgetTokens,
+          }),
+        Error,
+        "positive safe integer",
+      );
+    }
   });
 
   it("prefixes direct provider model ids for the Veryfront Cloud gateway", () => {
@@ -161,6 +239,10 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     assertEquals(
       resolveVeryfrontCloudGatewayModelId("google-ai-studio/gemini-3.5-flash"),
       "veryfront-cloud/google-ai-studio/gemini-3.5-flash",
+    );
+    assertEquals(
+      resolveVeryfrontCloudGatewayModelId("google/gemini-3.5-flash"),
+      "veryfront-cloud/google/gemini-3.5-flash",
     );
     assertEquals(
       resolveVeryfrontCloudGatewayModelId("mistral/mistral-large-2512"),
