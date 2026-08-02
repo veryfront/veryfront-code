@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CacheHttpModuleFn } from "./specifier-resolver.ts";
 import { buildReplacements, rewriteModuleImports } from "./specifier-resolver.ts";
 import type { CacheOptions } from "./http-cache-helpers.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 
 describe("transforms/esm/specifier-resolver", () => {
   const defaultOptions: CacheOptions = {
@@ -219,6 +220,18 @@ describe("transforms/esm/specifier-resolver", () => {
         },
       );
       assertEquals(result.degraded, ["https://esm.sh/foo"]);
+    });
+
+    it("never degrades an outbound-policy denial into a runtime import", async () => {
+      const code = `export const load = () => import("http://169.254.169.254/metadata");`;
+      await assertRejects(
+        () =>
+          buildReplacements(code, undefined, defaultOptions, async () => {
+            throw new OutboundRequestBlockedError("internal destination blocked");
+          }),
+        OutboundRequestBlockedError,
+        "internal destination blocked",
+      );
     });
 
     it("reports nothing as degraded when every specifier resolves", async () => {
