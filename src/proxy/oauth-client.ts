@@ -10,6 +10,7 @@ import {
   readProxyResponseText,
   settleProxyResponseBody,
 } from "./response-body.ts";
+import { createAbortError } from "#veryfront/utils/abort.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -108,9 +109,7 @@ async function readOAuthErrorText(
     );
   } catch (error) {
     if (signal.aborted) {
-      throw signal.reason instanceof Error
-        ? signal.reason
-        : new DOMException("OAuth token response read was aborted", "AbortError");
+      throw createAbortError(signal.reason);
     }
     if (error instanceof ProxyResponseBodyError && error.failure === "too-large") {
       return "OAuth error response exceeded the supported size";
@@ -186,11 +185,9 @@ export async function fetchOAuthToken(
         const errorText = await readOAuthErrorText(response, controller.signal);
         throw new OAuthTokenRequestError(response.status, errorText);
       } catch (error) {
-        if (error instanceof Error && error.name === "AbortError") {
+        if (controller.signal.aborted) {
           if (abortedByCaller) {
-            const reason = config.signal?.reason;
-            if (reason instanceof Error) throw reason;
-            throw new DOMException("OAuth token request was aborted", "AbortError");
+            throw createAbortError(config.signal?.reason);
           }
           throw TIMEOUT_ERROR.create({
             detail: `OAuth token request timed out after ${timeoutMs}ms`,

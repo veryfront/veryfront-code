@@ -259,5 +259,73 @@ describe("OAuth Client", () => {
         "timeout",
       );
     });
+
+    it("preserves primitive caller abort reasons before the request starts", async () => {
+      using _fetch = stub(
+        globalThis,
+        "fetch",
+        (_input, init) => Promise.reject(init?.signal?.reason),
+      );
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+      const controller = new AbortController();
+      controller.abort("caller cancelled token request");
+
+      const error = await assertRejects(
+        () =>
+          fetchOAuthToken({
+            apiBaseUrl: "https://api.example.test",
+            apiClientId: "test",
+            apiClientSecret: "test",
+            signal: controller.signal,
+          }),
+        DOMException,
+        "caller cancelled token request",
+      );
+
+      if (!(error instanceof DOMException)) {
+        throw new Error("Expected a DOMException abort reason");
+      }
+      assertEquals(error.name, "AbortError");
+    });
+
+    it("preserves primitive caller abort reasons while reading an error response", async () => {
+      const readStarted = Promise.withResolvers<void>();
+      using _fetch = stub(
+        globalThis,
+        "fetch",
+        () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                pull() {
+                  readStarted.resolve();
+                },
+              }),
+              { status: 503 },
+            ),
+          ),
+      );
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+      const controller = new AbortController();
+      const request = fetchOAuthToken({
+        apiBaseUrl: "https://api.example.test",
+        apiClientId: "test",
+        apiClientSecret: "test",
+        signal: controller.signal,
+      });
+      await readStarted.promise;
+      controller.abort("caller cancelled response read");
+
+      const error = await assertRejects(
+        () => request,
+        DOMException,
+        "caller cancelled response read",
+      );
+
+      if (!(error instanceof DOMException)) {
+        throw new Error("Expected a DOMException abort reason");
+      }
+      assertEquals(error.name, "AbortError");
+    });
   });
 });
