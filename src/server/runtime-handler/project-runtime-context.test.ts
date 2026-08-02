@@ -15,6 +15,8 @@ import {
   type LogEntry,
 } from "#veryfront/utils/logger/logger.ts";
 import { createRequestContext } from "../context/request-context.ts";
+import { AuthHandler } from "#veryfront/security/http/auth.ts";
+import { CsrfHandler } from "#veryfront/security/http/csrf/csrf-handler.ts";
 import type { DomainLookupResult } from "../utils/domain-lookup.ts";
 import type { ParsedDomain } from "#veryfront/types";
 import { defaultDiscoveryCache } from "./local-project-discovery.ts";
@@ -114,6 +116,18 @@ function createExtendedMockAdapter(
     },
   };
   return { ...base, fs: extendedFs } as unknown as RuntimeAdapter;
+}
+
+function createHostedConfigAdapter(source: string): RuntimeAdapter {
+  const configPath = "/base/project/veryfront.config.ts";
+  const adapter = createMockAdapter({
+    [configPath]: { isDirectory: false, isFile: true },
+  });
+  adapter.fs.readFile = (path: string) =>
+    path === configPath
+      ? Promise.resolve(source)
+      : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
+  return adapter;
 }
 
 function makeRuntimeContextInput(
@@ -216,11 +230,20 @@ describe("prepareProjectRequest", () => {
     assertEquals(trustChecks, 1);
     assertStrictEquals(prepared.proxyTrust.proxyTrusted, false);
     assertEquals(prepared.headers, extractRequestHeaders(req, url, false));
-    assertEquals(prepared.requestContext, createRequestContext(req, { proxyTrusted: false }));
+    assertEquals(
+      prepared.requestContext,
+      createRequestContext(req, {
+        proxyTrusted: false,
+        allowHostTokenFallback: false,
+      }),
+    );
     assertEquals(prepared.headers.environment, undefined);
     assertEquals(prepared.loggerFacts.projectSlug, "header-project");
     assertEquals(prepared.trackingFacts.releaseId, "rel_123");
-    assertEquals(prepared.proxyGuard, undefined);
+    assertEquals(
+      prepared.proxyGuard?.detail,
+      "proxy mode requires an operator-trusted upstream proxy",
+    );
   });
 
   it("returns the existing missing slug proxy guard response", async () => {
@@ -261,7 +284,7 @@ describe("prepareProjectRequest", () => {
     });
   });
 
-  it("guards only trust-sensitive x-project-path in untrusted proxy requests", async () => {
+  it("rejects every untrusted proxy identity, not only x-project-path", async () => {
     const forwardedOnly = new Request("http://localhost/page", {
       headers: {
         "x-project-slug": "my-project",
@@ -270,14 +293,17 @@ describe("prepareProjectRequest", () => {
       },
     });
 
-    const allowed = await prepareProjectRequest({
+    const rejectedForwarded = await prepareProjectRequest({
       req: forwardedOnly,
       url: new URL(forwardedOnly.url),
       isProxyMode: true,
       trustProxy: () => Promise.resolve(false),
     });
 
-    assertEquals(allowed.proxyGuard, undefined);
+    assertEquals(
+      rejectedForwarded.proxyGuard?.detail,
+      "proxy mode requires an operator-trusted upstream proxy",
+    );
 
     const projectPath = new Request("http://localhost/page", {
       headers: {
@@ -296,15 +322,15 @@ describe("prepareProjectRequest", () => {
 
     assertEquals(
       rejected.proxyGuard?.detail,
-      "proxy context headers require a trusted upstream proxy",
+      "proxy mode requires an operator-trusted upstream proxy",
     );
     await assertJsonResponse(rejected.proxyGuard!.response, 502, {
       error: "Untrusted proxy context",
-      detail: "proxy context headers require a trusted upstream proxy",
+      detail: "proxy mode requires an operator-trusted upstream proxy",
     });
   });
 
-  it("preserves websocket environment query and skips the proxy guard", async () => {
+  it("rejects untrusted websocket query identity", async () => {
     const req = new Request(
       "http://localhost/_ws?x-environment=preview&x-project-slug=test-project",
     );
@@ -316,11 +342,11 @@ describe("prepareProjectRequest", () => {
       trustProxy: () => Promise.resolve(false),
     });
 
-    assertEquals(prepared.headers.environment, "preview");
-    assertEquals(prepared.proxyGuard, undefined);
+    assertEquals(prepared.headers.environment, undefined);
+    assertEquals(prepared.proxyGuard?.detail, "x-project-slug header is required in proxy mode");
   });
 
-  it("skips the proxy guard for lightweight requests", async () => {
+  it("applies the proxy guard to lightweight requests", async () => {
     const req = new Request("http://localhost/_veryfront/hydration-runtime.js", {
       headers: { "x-release-id": "rel_123" },
     });
@@ -332,7 +358,7 @@ describe("prepareProjectRequest", () => {
       trustProxy: () => Promise.resolve(false),
     });
 
-    assertEquals(prepared.proxyGuard, undefined);
+    assertEquals(prepared.proxyGuard?.detail, "x-project-slug header is required in proxy mode");
   });
 });
 
@@ -661,6 +687,12 @@ describe("resolveProjectRuntimeContext", () => {
           import { defineConfigWithEnv, getEnv } from "veryfront";
           export default defineConfigWithEnv((environmentName) => ({
             title: environmentName + ":" + getEnv("TENANT"),
+            security: {
+              auth: { bearer: { token: getEnv("AUTH_TOKEN") } },
+              cors: { origin: ["https://client.example"] },
+              csrf: true,
+              csp: { defaultSrc: ["'none'"] },
+            },
           }));
         `)
         : Promise.reject(new Deno.errors.NotFound(`Not found: ${path}`));
@@ -697,7 +729,7 @@ describe("resolveProjectRuntimeContext", () => {
       envVarCache: {
         get: () => {
           envLoadCount += 1;
-          return Promise.resolve({ TENANT: "tenant-value" });
+          return Promise.resolve({ TENANT: "tenant-value", AUTH_TOKEN: "tenant-secret" });
         },
       },
     }));
@@ -707,7 +739,146 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(result.adapter.projectDir, "/base/project");
     assertEquals(defaultDiscoveryCache.projects.has("remote-project"), false);
     assertEquals(result.handlerContext?.config?.title, "preview:tenant-value");
-    assertEquals(result.rawEnvVars, { TENANT: "tenant-value" });
+    assertEquals(result.rawEnvVars, {
+      TENANT: "tenant-value",
+      AUTH_TOKEN: "tenant-secret",
+    });
+    const ctx = result.handlerContext!;
+    assertEquals(ctx.securityConfig?.auth, {
+      bearer: { token: "tenant-secret" },
+    });
+    assertEquals(ctx.securityConfig?.csrf, true);
+    assertEquals(ctx.securityConfig?.cors, {
+      origin: ["https://client.example"],
+    });
+    assertEquals(ctx.cspUserHeader, "default-src 'none'");
+
+    const authResult = await new AuthHandler().handle(
+      new Request("http://localhost/page"),
+      ctx,
+    );
+    assertEquals(authResult.response?.status, 401);
+    const csrfResult = await new CsrfHandler().handle(
+      new Request("http://localhost/action", { method: "POST" }),
+      ctx,
+    );
+    assertEquals(csrfResult.response?.status, 403);
+  });
+
+  it("derives isolated hosted security snapshots for concurrent tenants", async () => {
+    const makeTenantResolution = (
+      projectSlug: string,
+      projectId: string,
+      token: string,
+    ) => {
+      const adapter = createHostedConfigAdapter(`
+        import { defineConfigWithEnv, getEnv } from "veryfront";
+        export default defineConfigWithEnv((environmentName) => ({
+          title: environmentName,
+          security: {
+            auth: { bearer: { token: getEnv("AUTH_TOKEN") } },
+            cors: { origin: [getEnv("CLIENT_ORIGIN")] },
+            csrf: true,
+            csp: { defaultSrc: [getEnv("CSP_SOURCE")] },
+          },
+        }));
+      `);
+      const req = new Request(`http://${projectSlug}.preview.lvh.me/page`, {
+        headers: {
+          "x-project-slug": projectSlug,
+          "x-project-id": projectId,
+          "x-token": "proxy-token",
+          "x-environment-id": `env-${projectId}`,
+        },
+      });
+      const url = new URL(req.url);
+      return resolveProjectRuntimeContext(makeRuntimeContextInput({
+        req,
+        url,
+        adapter,
+        headers: extractRequestHeaders(req, url, false),
+        requestContext: createRequestContext(req, { proxyTrusted: false }),
+        isProxyMode: true,
+        proxyTrust: { proxyTrusted: false },
+        projectIdentity: {
+          projectSlug,
+          projectId,
+          releaseId: undefined,
+          environmentName: undefined,
+          proxyEnv: "preview",
+          parsedDomain: defaultParsedDomain,
+        },
+        envVarCache: {
+          get: () =>
+            Promise.resolve({
+              AUTH_TOKEN: token,
+              CLIENT_ORIGIN: `https://${projectSlug}.client.example`,
+              CSP_SOURCE: `https://${projectSlug}.assets.example`,
+            }),
+        },
+      }));
+    };
+
+    const [alpha, beta] = await Promise.all([
+      makeTenantResolution("alpha-project", "proj-alpha-security", "alpha-secret"),
+      makeTenantResolution("beta-project", "proj-beta-security", "beta-secret"),
+    ]);
+
+    const alphaSecurity = alpha.handlerContext?.securityConfig;
+    const betaSecurity = beta.handlerContext?.securityConfig;
+    assertEquals(alphaSecurity?.auth, { bearer: { token: "alpha-secret" } });
+    assertEquals(betaSecurity?.auth, { bearer: { token: "beta-secret" } });
+    assertEquals(alphaSecurity?.cors, {
+      origin: ["https://alpha-project.client.example"],
+    });
+    assertEquals(betaSecurity?.cors, {
+      origin: ["https://beta-project.client.example"],
+    });
+    assertEquals(
+      alpha.handlerContext?.cspUserHeader,
+      "default-src https://alpha-project.assets.example",
+    );
+    assertEquals(
+      beta.handlerContext?.cspUserHeader,
+      "default-src https://beta-project.assets.example",
+    );
+    assertEquals(Object.isFrozen(alphaSecurity), true);
+    assertEquals(Object.isFrozen(betaSecurity), true);
+    assertEquals(alphaSecurity === betaSecurity, false);
+  });
+
+  it("enables the production CSRF default for hosted project config", async () => {
+    const adapter = createHostedConfigAdapter("export default {};");
+    const req = new Request("http://production-project.production.veryfront.com/page", {
+      headers: {
+        "x-project-slug": "production-project",
+        "x-project-id": "proj-production-security",
+        "x-token": "proxy-token",
+        "x-release-id": "rel-production-security",
+      },
+    });
+    const url = new URL(req.url);
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      adapter,
+      headers: extractRequestHeaders(req, url, false),
+      requestContext: createRequestContext(req, { proxyTrusted: false }),
+      isProxyMode: true,
+      proxyTrust: { proxyTrusted: false },
+      projectIdentity: {
+        projectSlug: "production-project",
+        projectId: "proj-production-security",
+        releaseId: "rel-production-security",
+        environmentName: "Production",
+        proxyEnv: "production",
+        parsedDomain: defaultParsedDomain,
+      },
+    }));
+
+    assertEquals(result.environment.resolvedEnvironment, "production");
+    assertEquals(result.handlerContext?.securityConfig?.csrf, true);
+    assertEquals(result.handlerContext?.securityConfig?.cors, false);
   });
 
   it("returns production 404 responses and standalone synthetic fallback from environment resolution", async () => {

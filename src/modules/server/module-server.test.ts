@@ -105,6 +105,8 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       projectId: "test",
       projectDir,
       adapter: denoAdapter,
+      isLocalProject: true,
+      allowSSRModuleMode: true,
     });
   }
 
@@ -132,6 +134,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     dependencies: ReleaseAssetManifest["dependencies"],
     releaseId = "release-id",
     dependencyMode: ReleaseAssetManifest["dependencyMode"] = "immutable",
+    modules: ReleaseAssetManifest["modules"] = {},
   ): ReleaseAssetManifest {
     return {
       schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
@@ -143,7 +146,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       sourceContentHash: "a".repeat(64),
       createdAt: new Date(0).toISOString(),
       assetBasePath: "/_vf/assets",
-      modules: {},
+      modules,
       css: [],
       routes: {},
       dependencyMode,
@@ -261,6 +264,285 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     });
     assertEquals(developmentResponse.status, 500);
     assertStringIncludes(await developmentResponse.text(), secret);
+  });
+
+  it("does not expose project metadata or server route roots as browser modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-private-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/app/actions`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.ts`,
+        `export default { secret: "not-browser-data" };`,
+      );
+      await Deno.writeTextFile(`${projectDir}/package.json`, `{"secret":"not-browser-data"}`);
+      await Deno.writeTextFile(
+        `${projectDir}/app/actions/save.ts`,
+        `export const save = () => "not-browser-code";`,
+      );
+
+      for (const path of ["veryfront.config.js", "package.json.js", "app/actions/save.js"]) {
+        const response = await serve(
+          new Request(`http://localhost:3000/_vf_modules/${path}`),
+          projectDir,
+        );
+        assertEquals(response.status, 404);
+        assertEquals((await response.text()).includes("not-browser"), false);
+      }
+
+      const headResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/app/actions/save.js", { method: "HEAD" }),
+        projectDir,
+      );
+      assertEquals(headResponse.status, 404);
+      assertEquals(await headResponse.text(), "");
+
+      const claimedSsrResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/package.json.js?ssr=true"),
+        projectDir,
+      );
+      assertEquals(claimedSsrResponse.status, 404);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects server-directed source from browser module requests", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-boundary-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/server.ts`,
+        `"use server"; export const secret = "private";`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/function-action.ts`,
+        `export async function save() { "use server"; return "private"; }`,
+      );
+
+      for (const path of ["components/server.js", "components/function-action.js"]) {
+        const response = await serve(
+          new Request(`http://localhost:3000/_vf_modules/${path}`),
+          projectDir,
+        );
+        assertEquals(response.status, 404);
+        assertEquals((await response.text()).includes("private"), false);
+      }
+
+      const ssrResponse = await serve(
+        new Request("http://localhost:3000/_vf_modules/components/server.js?ssr=true"),
+        projectDir,
+      );
+      assertEquals(ssrResponse.status, 200);
+      assertStringIncludes(await ssrResponse.text(), "secret");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not let remote requests spoof the local SSR module capability", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-remote-ssr-spoof-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/server.ts`,
+        `"use server"; export const secret = "private";`,
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "remote-project",
+        projectDir,
+        adapter: denoAdapter,
+        isLocalProject: false,
+        // Even a mistakenly broad in-process capability is insufficient unless
+        // the project itself was explicitly classified as local.
+        allowSSRModuleMode: true,
+      } as const;
+
+      for (
+        const request of [
+          new Request("http://localhost:3000/_vf_modules/components/server.js?ssr=true"),
+          new Request("http://localhost:3000/_vf_modules/components/server.js", {
+            headers: { "user-agent": "Deno/2.4.0" },
+          }),
+        ]
+      ) {
+        const response = await serveModule(request, options);
+        assertEquals(response.status, 404);
+        assertEquals((await response.text()).includes("private"), false);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rejects private and server-only cross-project browser modules", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-cross-project-private-" });
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+
+    try {
+      await Deno.writeTextFile(`${projectDir}/package.json`, `{"name":"local"}`);
+      globalThis.fetch = (_input: string | URL | Request) => {
+        fetchCalls++;
+        return Promise.resolve(
+          new Response(`"use server"; export const secret = "private";`, {
+            status: 200,
+          }),
+        );
+      };
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "local-project",
+        projectDir,
+        adapter: denoAdapter,
+        isLocalProject: false,
+        allowSSRModuleMode: true,
+      } as const;
+
+      for (
+        const path of [
+          "package.json.js",
+          "app/actions/save.js",
+          "app/api/private.js",
+          ".env.js",
+        ]
+      ) {
+        const response = await serveModule(
+          new Request(
+            `http://localhost:3000/_vf_modules/_cross/remote@1.0.0/@/${path}?ssr=true`,
+          ),
+          options,
+        );
+        assertEquals(response.status, 404);
+      }
+      assertEquals(fetchCalls, 0);
+
+      const serverOnlyResponse = await serveModule(
+        new Request(
+          "http://localhost:3000/_vf_modules/_cross/remote@1.0.0/@/components/server.js?ssr=true",
+          { headers: { "user-agent": "Deno/2.4.0" } },
+        ),
+        options,
+      );
+      assertEquals(serverOnlyResponse.status, 404);
+      assertEquals((await serverOnlyResponse.text()).includes("private"), false);
+      assertEquals(fetchCalls, 1);
+    } finally {
+      globalThis.fetch = originalFetch;
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("admits production browser modules only from a ready release manifest", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-manifest-" });
+    const releaseId = `rel-browser-admission-${crypto.randomUUID()}`;
+    const hash = "b".repeat(64);
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/components/App.tsx`,
+        `export default function App() { return "safe"; }`,
+      );
+      await Deno.writeTextFile(
+        `${projectDir}/components/Secret.ts`,
+        `export const secret = "not-listed";`,
+      );
+      registerManifestFetcherForRelease(releaseId, () =>
+        Promise.resolve({
+          state: "ready",
+          manifest_version: 1,
+          manifest: manifest({}, releaseId, "source", {
+            "components/App.tsx": {
+              contentHash: hash,
+              size: 1,
+              contentType: "text/javascript",
+            },
+          }),
+        }));
+
+      const { serveModule } = await import("./module-server.ts");
+      const options = {
+        projectId: "test",
+        projectDir,
+        adapter: denoAdapter,
+        dev: false,
+        mode: "production",
+        releaseId,
+      } as const;
+
+      const admitted = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/App.js"),
+        options,
+      );
+      assertEquals(admitted.status, 200);
+
+      const rejected = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/Secret.js"),
+        options,
+      );
+      assertEquals(rejected.status, 404);
+      assertEquals((await rejected.text()).includes("not-listed"), false);
+
+      for (
+        const spoofedRequest of [
+          new Request(
+            "http://localhost:3000/_vf_modules/components/Secret.js?ssr=true",
+          ),
+          new Request("http://localhost:3000/_vf_modules/components/Secret.js", {
+            headers: { "user-agent": "Deno/2.4.0" },
+          }),
+        ]
+      ) {
+        const spoofed = await serveModule(spoofedRequest, {
+          ...options,
+          allowSSRModuleMode: true,
+          isLocalProject: false,
+        });
+        assertEquals(spoofed.status, 404);
+        assertEquals((await spoofed.text()).includes("not-listed"), false);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("fails closed while a production browser manifest is unavailable", async () => {
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-manifest-wait-" });
+    const releaseId = `rel-browser-wait-${crypto.randomUUID()}`;
+
+    try {
+      await Deno.mkdir(`${projectDir}/components`, { recursive: true });
+      await Deno.writeTextFile(`${projectDir}/components/App.ts`, `export const app = true;`);
+      registerManifestFetcherForRelease(
+        releaseId,
+        () => Promise.resolve({ state: "building", manifest_version: 1, manifest: null }),
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const response = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/components/App.js"),
+        {
+          projectId: "test",
+          projectDir,
+          adapter: denoAdapter,
+          dev: false,
+          mode: "production",
+          releaseId,
+        },
+      );
+      assertEquals(response.status, 503);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 
   it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {

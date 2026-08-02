@@ -28,6 +28,11 @@ import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { invalidateProjectMiddlewareCache } from "../../../src/server/runtime-handler/project-middleware.ts";
 import { registerTailwindExtension } from "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
+import {
+  deleteEnv,
+  getHostEnv,
+  setEnv,
+} from "../../../src/platform/compat/process.ts";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

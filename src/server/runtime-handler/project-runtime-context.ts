@@ -5,6 +5,7 @@ import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { SecurityConfig } from "#veryfront/types";
+import { deriveSecurityContext } from "#veryfront/security/http/config.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { createRequestContext } from "../context/request-context.ts";
 import type { HandlerContext } from "../handlers/types.ts";
@@ -14,22 +15,14 @@ import { resolveAdapter } from "./adapter-factory.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext } from "./handler-context-builder.ts";
 import { extractRequestHeaders, resolveProject } from "./project-resolution.ts";
-import { isLightweightPath, isWebSocketPath, shouldSkipEnrichedContext } from "./request-utils.ts";
+import { shouldSkipEnrichedContext } from "./request-utils.ts";
 
-type AdapterEnvLike = {
-  get(key: string): string | undefined;
-};
-
-type ProxyTrustVerifier = (
-  req: Request,
-  options: { publicKeyPem?: string },
-) => Promise<boolean>;
+type ProxyTrustVerifier = (req: Request) => Promise<boolean>;
 
 export interface PrepareProjectRequestInput {
   req: Request;
   url: URL;
   isProxyMode: boolean;
-  adapterEnv?: AdapterEnvLike;
   trustProxy?: ProxyTrustVerifier;
 }
 
@@ -139,14 +132,12 @@ export async function prepareProjectRequest(
   input: PrepareProjectRequestInput,
 ): Promise<PreparedProjectRequest> {
   const { req, url, isProxyMode } = input;
-  const proxyTrusted = isProxyMode
-    ? await (input.trustProxy ?? isProxyTrusted)(req, {
-      publicKeyPem: input.adapterEnv?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
-        getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY"),
-    })
-    : undefined;
+  const proxyTrusted = isProxyMode ? await (input.trustProxy ?? isProxyTrusted)(req) : undefined;
   const headers = extractRequestHeaders(req, url, proxyTrusted);
-  const requestContext = createRequestContext(req, { proxyTrusted });
+  const requestContext = createRequestContext(req, {
+    proxyTrusted,
+    allowHostTokenFallback: !isProxyMode,
+  });
 
   const hostHeader = req.headers.get("host") ?? url.host;
   const domain = hostHeader.replace(/:\d+$/, "");
@@ -172,7 +163,7 @@ export async function prepareProjectRequest(
       environment: headers.environment,
       releaseId: headers.releaseId,
     },
-    proxyGuard: createProxyGuard(req, url, isProxyMode, headers, proxyTrusted),
+    proxyGuard: createProxyGuard(req, isProxyMode, headers, proxyTrusted),
   };
 }
 
@@ -296,11 +287,24 @@ export async function resolveProjectRuntimeContext(
     };
   }
 
+  // The process-wide SecurityConfigLoader is valid only for a standalone
+  // project. A shared proxy loads one authenticated, source-qualified config
+  // snapshot per request above; derive security from that exact snapshot so a
+  // tenant cannot inherit another tenant's auth/CORS/CSRF/CSP state. Keep the
+  // deliberately config-less control-plane path config-less: those endpoints
+  // authenticate their signed operation envelope and do not expose an
+  // application/browser surface.
+  const requestSecurity = input.isProxyMode && adapterRes.config !== undefined
+    ? deriveSecurityContext(adapterRes.config, {
+      productionDefaults: envRes.resolvedEnvironment === "production",
+    })
+    : undefined;
+
   const handlerContext = buildHandlerContext({
     projectDir: adapterRes.projectDir,
     adapter: adapterRes.adapter,
-    securityConfig: input.securityConfig,
-    cspUserHeader: input.cspUserHeader,
+    securityConfig: requestSecurity?.securityConfig ?? input.securityConfig,
+    cspUserHeader: requestSecurity?.cspUserHeader ?? input.cspUserHeader,
     debug: input.debug,
     config: adapterRes.config,
     parsedDomain: projectRes.parsedDomain,
@@ -368,14 +372,11 @@ export async function resolveProjectRuntimeContext(
 
 function createProxyGuard(
   req: Request,
-  url: URL,
   isProxyMode: boolean,
   headers: ProjectRequestHeaders,
   proxyTrusted: boolean | undefined,
 ): ProxyGuardResult | undefined {
-  if (!isProxyMode || isLightweightPath(url.pathname) || isWebSocketPath(url.pathname)) {
-    return undefined;
-  }
+  if (!isProxyMode) return undefined;
 
   const token = req.headers.get("x-token");
   const body = !headers.projectSlug
@@ -388,10 +389,10 @@ function createProxyGuard(
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",
     }
-    : req.headers.get("x-project-path") && !proxyTrusted
+    : !proxyTrusted
     ? {
       error: "Untrusted proxy context",
-      detail: "proxy context headers require a trusted upstream proxy",
+      detail: "proxy mode requires an operator-trusted upstream proxy",
     }
     : undefined;
 
