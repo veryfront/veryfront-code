@@ -20,6 +20,7 @@
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
+ * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Total time allowed for post-drain cleanup
  */
 
 import { createProxyHandler, type ProxyConfig } from "./handler.ts";
@@ -51,6 +52,13 @@ import {
   withContext,
   withSpan,
 } from "./tracing.ts";
+import { settleProxyShutdownHooksOrThrow } from "./shutdown-hooks.ts";
+import {
+  DEFAULT_PROXY_SHUTDOWN_CLEANUP_TIMEOUT_MS,
+  parseProxyShutdownCleanupTimeoutMs,
+  type ProxyShutdownFailure,
+  runProxyShutdownSteps,
+} from "./shutdown-lifecycle.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
 import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
@@ -170,6 +178,10 @@ const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
 const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
   getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
   DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
+);
+const SHUTDOWN_CLEANUP_TIMEOUT_MS = parseProxyShutdownCleanupTimeoutMs(
+  getEnv("SHUTDOWN_CLEANUP_TIMEOUT_MS"),
+  DEFAULT_PROXY_SHUTDOWN_CLEANUP_TIMEOUT_MS,
 );
 const routingInvalidationSecret = getEnv("VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET") ?? "";
 const routingInvalidationSecretBytes =
@@ -753,12 +765,43 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
   proxyLogger.info(`Received ${signal}, initiating graceful shutdown`, {
     inFlightRequests: proxyRequestDrainTracker.getInFlightCount(),
     drainTimeoutMs: SHUTDOWN_DRAIN_TIMEOUT_MS,
+    cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
   });
+
+  const reportShutdownFailure = ({ step, error, timedOut }: ProxyShutdownFailure): void => {
+    try {
+      captureApplicationError(error, { boundary: `process.shutdown.${step}` });
+    } catch (reportingError) {
+      try {
+        proxyLogger.error(
+          "Failed to capture proxy shutdown error",
+          { step },
+          reportingError,
+        );
+      } catch {
+        // Diagnostics must never skip later cleanup owners.
+      }
+    }
+    try {
+      proxyLogger.error(
+        timedOut ? "Proxy shutdown step timed out" : "Proxy shutdown step failed",
+        { step, timedOut },
+        error,
+      );
+    } catch {
+      // Diagnostics must never skip later cleanup owners.
+    }
+  };
 
   try {
     // New requests receive the draining response after shuttingDown is set.
     // Keep this replica subscribed while already-started responses finish.
-    const drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    let drained = false;
+    try {
+      drained = await proxyRequestDrainTracker.waitForDrain(SHUTDOWN_DRAIN_TIMEOUT_MS);
+    } catch (error) {
+      reportShutdownFailure({ step: "request_drain", error, timedOut: false });
+    }
     if (!drained) {
       const now = performance.now();
       proxyLogger.warn("Proxy drain timeout exceeded, forcing shutdown", {
@@ -773,26 +816,52 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
       });
     }
 
-    await routingInvalidationBus?.close();
-
-    const closed = await closeProxyServerWithin(
-      () => server.close(),
-      PROXY_SERVER_CLOSE_TIMEOUT_MS,
-    );
-    if (!closed) {
-      proxyLogger.warn(
-        "Proxy server close timed out; process exit will close remaining connections",
-        {
-          closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS,
+    const cleanupFailures = await runProxyShutdownSteps([
+      {
+        name: "routing_invalidation_bus",
+        run: () => routingInvalidationBus?.close(),
+      },
+      {
+        name: "http_server",
+        run: async () => {
+          const closed = await closeProxyServerWithin(
+            () => server.close(),
+            PROXY_SERVER_CLOSE_TIMEOUT_MS,
+          );
+          if (!closed) {
+            proxyLogger.warn(
+              "Proxy server close timed out; process exit will close remaining connections",
+              { closeTimeoutMs: PROXY_SERVER_CLOSE_TIMEOUT_MS },
+            );
+          }
         },
-      );
+      },
+      { name: "renderer_router", run: () => rendererRouter?.close() },
+      { name: "server_resolver", run: () => serverResolver.close() },
+      { name: "proxy_handler", run: () => proxyHandler.close() },
+      {
+        name: "extension_owners",
+        requires: ["proxy_handler"],
+        run: () => settleProxyShutdownHooksOrThrow(),
+      },
+      { name: "telemetry", run: () => shutdownOTLP() },
+      {
+        name: "application_error_flush",
+        run: async () => {
+          await flushApplicationErrors();
+        },
+      },
+    ], {
+      timeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      onFailure: reportShutdownFailure,
+    });
+    if (cleanupFailures.length === 0) {
+      proxyLogger.info("Closed connections");
+    } else {
+      proxyLogger.warn("Proxy shutdown completed with cleanup failures", {
+        failureCount: cleanupFailures.length,
+      });
     }
-    rendererRouter?.close();
-    serverResolver.close();
-    await proxyHandler.close();
-    await shutdownOTLP();
-    await flushApplicationErrors();
-    proxyLogger.info("Closed connections");
   } catch (error) {
     captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Error while shutting down proxy", error);

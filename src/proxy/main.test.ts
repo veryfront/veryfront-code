@@ -31,8 +31,15 @@ describe("proxy main request URL parsing", () => {
 
     const drainIndex = source.indexOf("await proxyRequestDrainTracker.waitForDrain");
     const closeIndex = source.indexOf("await closeProxyServerWithin");
+    const handlerCloseIndex = source.indexOf('name: "proxy_handler"');
+    const shutdownHooksIndex = source.indexOf('name: "extension_owners"');
+    const tracingCloseIndex = source.indexOf('name: "telemetry"');
     assertEquals(drainIndex >= 0, true);
     assertEquals(closeIndex > drainIndex, true);
+    assertEquals(handlerCloseIndex > closeIndex, true);
+    assertEquals(shutdownHooksIndex > handlerCloseIndex, true);
+    assertEquals(tracingCloseIndex > shutdownHooksIndex, true);
+    assertStringIncludes(source, 'requires: ["proxy_handler"]');
   });
 
   it("starts acknowledged routing invalidation fan-out and handles signed ingress", async () => {
@@ -53,7 +60,7 @@ describe("proxy main request URL parsing", () => {
     assertStringIncludes(source, "integritySecret: routingInvalidationSecret");
 
     const drainIndex = source.indexOf("await proxyRequestDrainTracker.waitForDrain");
-    const busCloseIndex = source.indexOf("await routingInvalidationBus?.close()");
+    const busCloseIndex = source.indexOf('name: "routing_invalidation_bus"');
     const serverCloseIndex = source.indexOf("await closeProxyServerWithin");
     assertEquals(drainIndex >= 0, true);
     assertEquals(busCloseIndex > drainIndex, true);

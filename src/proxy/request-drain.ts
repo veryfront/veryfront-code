@@ -87,7 +87,7 @@ export function parseProxyDrainTimeoutMs(
   }
   if (rawValue === undefined || rawValue === "") return defaultValue;
   if (!/^\d+$/.test(rawValue)) {
-    throw new TypeError("SHUTDOWN_DRAIN_TIMEOUT_MS must be a decimal integer");
+    throw new TypeError("SHUTDOWN_DRAIN_TIMEOUT_MS must be a non-negative decimal integer");
   }
   const parsed = Number(rawValue);
   if (

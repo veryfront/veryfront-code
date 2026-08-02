@@ -148,10 +148,16 @@ async function runProxy(options: ServeOptions): Promise<void> {
   setEnv("PORT", String(options.port));
   setEnv("HOST", options.bindAddress);
 
-  const { activateStandaloneProxyCacheExtension } = await import(
+  const {
+    activateStandaloneProxyCacheExtension,
+    registerStandaloneProxyCacheExtensionTeardown,
+  } = await import(
     "./proxy-extension-composition.ts"
   );
   const extensionLoader = await activateStandaloneProxyCacheExtension();
+  const teardownCacheExtension = await registerStandaloneProxyCacheExtensionTeardown(
+    extensionLoader,
+  );
 
   // DenoHttpServer.serve() blocks until the server stops,
   // so this import keeps the process alive.
@@ -159,7 +165,7 @@ async function runProxy(options: ServeOptions): Promise<void> {
     await import("veryfront/proxy/main");
   } catch (error) {
     try {
-      await extensionLoader?.teardownAll();
+      await teardownCacheExtension();
     } catch (cleanupError) {
       cliLogger.error("Failed to clean up proxy extensions after startup failure", cleanupError);
     }
