@@ -1,11 +1,13 @@
 /**
- * `Slot` — forked from @radix-ui/react-slot (MIT, © WorkOS), inlined so
+ * `Slot` - forked from @radix-ui/react-slot (MIT, © WorkOS), inlined so
  * `veryfront/chat` takes no external Radix dependency. Merges its props onto a
  * single child element (the `asChild` pattern): className is concatenated,
- * style is shallow-merged, event handlers are chained (child first), and refs
- * are composed.
+ * style is shallow-merged, event handlers are chained (child first by default),
+ * and refs are composed. The `disabled` contract gives composed controls a
+ * capture-phase gate that suppresses primary, auxiliary, keyboard, and default
+ * activation across Slot and child handlers.
  *
- * Scoped to the single-child case Veryfront's UI primitives use — Radix's
+ * Scoped to the single-child case Veryfront's UI primitives use; Radix's
  * `Slottable`/lazy-children handling is intentionally omitted.
  *
  * @module react/components/ui/slot
@@ -180,9 +182,14 @@ export const Slot: React.ForwardRefExoticComponent<
     if (disabled) {
       merged["aria-disabled"] = true;
       merged.tabIndex = -1;
+      if ("href" in merged) merged.href = undefined;
       merged.onAuxClickCapture = preventDisabledActivation;
+      merged.onAuxClick = preventDisabledActivation;
       merged.onClickCapture = preventDisabledActivation;
+      merged.onClick = preventDisabledActivation;
       merged.onKeyDownCapture = preventDisabledKeyboardActivation;
+      merged.onKeyUpCapture = preventDisabledKeyboardActivation;
+      merged.onKeyUp = preventDisabledKeyboardActivation;
       if (
         typeof child.type === "string" &&
         NATIVELY_DISABLEABLE_ELEMENTS.has(child.type)

@@ -141,7 +141,7 @@ describe("Slot", () => {
     }
   });
 
-  it("blocks disabled asChild activation before consumer handlers", () => {
+  it("blocks disabled activation, handlers, and propagation", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/start" },
@@ -150,21 +150,39 @@ describe("Slot", () => {
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
-    let consumerCalls = 0;
+    const calls: string[] = [];
 
     try {
       flushSync(() => {
         root.render(
-          <Slot disabled onClick={() => consumerCalls += 1}>
-            <a
-              href="/target"
-              tabIndex={0}
-              onClickCapture={() => consumerCalls += 1}
-              onClick={() => consumerCalls += 1}
+          <div
+            onClick={() => calls.push("ancestor-click")}
+            onAuxClick={() => calls.push("ancestor-aux")}
+            onKeyUp={() => calls.push("ancestor-keyup")}
+          >
+            <Slot
+              disabled
+              onClickCapture={() => calls.push("slot-capture")}
+              onClick={() => calls.push("slot")}
+              onAuxClickCapture={() => calls.push("slot-aux-capture")}
+              onAuxClick={() => calls.push("slot-aux")}
+              onKeyUpCapture={() => calls.push("slot-keyup-capture")}
+              onKeyUp={() => calls.push("slot-keyup")}
             >
-              Disabled link
-            </a>
-          </Slot>,
+              <a
+                href="/target"
+                tabIndex={0}
+                onClickCapture={() => calls.push("child-capture")}
+                onClick={() => calls.push("child")}
+                onAuxClickCapture={() => calls.push("child-aux-capture")}
+                onAuxClick={() => calls.push("child-aux")}
+                onKeyUpCapture={() => calls.push("child-keyup-capture")}
+                onKeyUp={() => calls.push("child-keyup")}
+              >
+                Disabled link
+              </a>
+            </Slot>
+          </div>,
         );
       });
       const link = document.querySelector("a");
@@ -178,8 +196,18 @@ describe("Slot", () => {
       });
       link.dispatchEvent(click);
       assertEquals(click.defaultPrevented, true);
-      assertEquals(consumerCalls, 0);
+      assertEquals(calls, []);
       assertEquals(dom.window.location.pathname, "/start");
+
+      const auxClick = new dom.window.MouseEvent("auxclick", {
+        bubbles: true,
+        button: 1,
+        cancelable: true,
+      });
+      link.dispatchEvent(auxClick);
+      assertEquals(auxClick.defaultPrevented, true);
+      assertEquals(calls, []);
+      assertEquals(link.getAttribute("href"), null);
 
       const enter = new dom.window.KeyboardEvent("keydown", {
         bubbles: true,
@@ -188,7 +216,18 @@ describe("Slot", () => {
       });
       link.dispatchEvent(enter);
       assertEquals(enter.defaultPrevented, true);
-      assertEquals(consumerCalls, 0);
+      assertEquals(calls, []);
+
+      for (const key of ["Enter", " "]) {
+        const keyUp = new dom.window.KeyboardEvent("keyup", {
+          bubbles: true,
+          cancelable: true,
+          key,
+        });
+        link.dispatchEvent(keyUp);
+        assertEquals(keyUp.defaultPrevented, true);
+        assertEquals(calls, []);
+      }
     } finally {
       flushSync(() => root.unmount());
       restore();

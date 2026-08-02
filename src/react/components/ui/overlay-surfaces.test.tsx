@@ -390,7 +390,7 @@ describe("dropdown menu keyboard contract", () => {
 describe("Collapsible ARIA contract", () => {
   it("uses hydration-stable control wiring and keeps closed content represented", () => {
     const html = renderToString(
-      <Collapsible>
+      <Collapsible triggerId="details-trigger" contentId="details-content">
         <CollapsibleTrigger>Details</CollapsibleTrigger>
         <CollapsibleContent>Hidden details</CollapsibleContent>
       </Collapsible>,
@@ -403,6 +403,33 @@ describe("Collapsible ARIA contract", () => {
       assertEquals(trigger.getAttribute("aria-controls"), content.id);
       assertEquals(trigger.getAttribute("aria-expanded"), "false");
       assertEquals(content.getAttribute("data-state"), "closed");
+    } finally {
+      dom.window.close();
+    }
+  });
+
+  it("never emits dangling SSR references for part-owned ids", () => {
+    function WrappedTrigger(): React.ReactElement {
+      return <CollapsibleTrigger id="wrapped-trigger">Details</CollapsibleTrigger>;
+    }
+    function WrappedContent(): React.ReactElement {
+      return <CollapsibleContent id="wrapped-content">Hidden details</CollapsibleContent>;
+    }
+
+    const html = renderToString(
+      <Collapsible>
+        <WrappedTrigger />
+        <WrappedContent />
+      </Collapsible>,
+    );
+    const dom = new JSDOM(`<!doctype html><body>${html}</body>`);
+    try {
+      const trigger = dom.window.document.querySelector("button")!;
+      const content = dom.window.document.querySelector<HTMLElement>("div[hidden]")!;
+      assertEquals(trigger.id, "wrapped-trigger");
+      assertEquals(content.id, "wrapped-content");
+      assertEquals(trigger.getAttribute("aria-controls"), null);
+      assertEquals(content.getAttribute("aria-labelledby"), null);
     } finally {
       dom.window.close();
     }

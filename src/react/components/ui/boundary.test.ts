@@ -7,8 +7,8 @@ import { walk } from "@std/fs/walk";
 // silently reintroduce the dependency (regression guard for PR #2798).
 const UI_DIR = new URL(".", import.meta.url).pathname;
 
-/** Matches any import/export specifier that reaches into the chat module. */
-const CHAT_IMPORT = /from\s+["']([^"']*)["']/g;
+/** Matches specifiers from static import and export declarations. */
+const STATIC_MODULE_SPECIFIER = /from\s+["']([^"']*)["']/g;
 
 function referencesChat(specifier: string): boolean {
   return (
@@ -17,6 +17,13 @@ function referencesChat(specifier: string): boolean {
     specifier.startsWith("../../chat/")
   );
 }
+
+// RFC 0001 §6.6 + issue #220: the core `veryfront/ui` depends on NO UI-primitive
+// engine. Reference adapters (Base UI, Radix, React Aria, Ariakit) are vendored
+// CLI templates the consumer owns: the engine is *their* dependency, never
+// core's. This guard fails loudly if an engine import ever leaks into `ui/**`.
+const ENGINE_SPECIFIER =
+  /@base-ui|@base-ui-components|(^|\/)react-aria|react-aria-components|@react-aria|@react-stately|@radix-ui|(^|\/)radix-ui|@ariakit|@zag-js|@ark-ui/;
 
 describe("veryfront/ui module boundary", () => {
   it("does not import anything from the chat module", async () => {
@@ -30,7 +37,7 @@ describe("veryfront/ui module boundary", () => {
     ) {
       if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
       const source = await Deno.readTextFile(entry.path);
-      for (const match of source.matchAll(CHAT_IMPORT)) {
+      for (const match of source.matchAll(STATIC_MODULE_SPECIFIER)) {
         const specifier = match[1];
         if (specifier && referencesChat(specifier)) {
           offenders.push(`${entry.name} -> ${specifier}`);
@@ -42,6 +49,34 @@ describe("veryfront/ui module boundary", () => {
       offenders,
       [],
       `ui/** must not import chat internals:\n  - ${offenders.join("\n  - ")}`,
+    );
+  });
+
+  it("core imports no third-party UI-primitive engine (adapters are vendored templates)", async () => {
+    const offenders: string[] = [];
+
+    for await (
+      const entry of walk(UI_DIR, {
+        exts: [".ts", ".tsx"],
+        includeDirs: false,
+      })
+    ) {
+      if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
+      const source = await Deno.readTextFile(entry.path);
+      for (const match of source.matchAll(STATIC_MODULE_SPECIFIER)) {
+        const specifier = match[1];
+        if (specifier && ENGINE_SPECIFIER.test(specifier)) {
+          offenders.push(`${entry.name} -> ${specifier}`);
+        }
+      }
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `ui/** must depend on no primitive engine: vendor a reference adapter instead:\n  - ${
+        offenders.join("\n  - ")
+      }`,
     );
   });
 
