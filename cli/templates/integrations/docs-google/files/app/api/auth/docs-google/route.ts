@@ -1,12 +1,12 @@
 import { createOAuthInitHandler, docsGoogleConfig } from "veryfront/oauth";
-import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
-import { requireUserIdFromRequest } from "../../../../../lib/user-id.ts";
+import { tokenStore } from "../../../../lib/token-store.ts";
+import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";
 
 function getUserId(request: Request): string {
   return requireUserIdFromRequest(request);
 }
 
 export const GET = createOAuthInitHandler(docsGoogleConfig, {
-  tokenStore: oauthMemoryTokenStore,
+  tokenStore,
   getUserId,
 });

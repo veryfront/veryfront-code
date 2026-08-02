@@ -407,7 +407,7 @@ describe("cli/templates", () => {
       "token-store.ts should centralize default store selection",
     );
     assertEquals(
-      tokenStore.includes("In-memory token storage is not allowed in production"),
+      tokenStore.includes("OAuth token storage is not configured for production"),
       true,
       "token-store.ts should fail closed for production memory storage",
     );
@@ -417,14 +417,69 @@ describe("cli/templates", () => {
       "token-store.ts should resolve the default store lazily",
     );
     assertEquals(
-      tokenStore.includes("export const tokenStore: TokenStore = inMemoryStore;"),
-      false,
-      "token-store.ts must not export the in-memory store unconditionally",
+      tokenStore.includes("type RefreshCapableTokenStore"),
+      true,
+      "token-store.ts should require the production refresh-capable contract",
     );
     assertEquals(
-      tokenStore.includes("export const tokenStore: TokenStore = createDefaultTokenStore();"),
-      false,
-      "token-store.ts must not throw during module import in production",
+      tokenStore.includes("return store.compareAndSetTokens"),
+      true,
+      "token-store.ts should delegate atomic token replacement",
+    );
+    assertEquals(
+      tokenStore.includes("return store.withTokenRefreshLock"),
+      true,
+      "token-store.ts should delegate refresh locking to the configured backend",
+    );
+    assertEquals(
+      tokenStore.includes("return store.consumeState"),
+      true,
+      "token-store.ts should keep one-shot state in the configured shared backend",
+    );
+    assertEquals(
+      tokenStore.includes("export const tokenStore: TokenStore = {"),
+      true,
+      "token-store.ts should expose a lazy proxy that is safe to import in production",
+    );
+  });
+
+  it("OAuth route templates use the central shared token store", async () => {
+    const integrationTemplates = new URL("./integrations/", import.meta.url);
+    const offenders: string[] = [];
+    let routeCount = 0;
+
+    for (const file of await collectTemplateTsFiles(integrationTemplates)) {
+      const source = await Deno.readTextFile(file);
+      if (
+        !source.includes("createOAuthInitHandler") &&
+        !source.includes("createOAuthCallbackHandler")
+      ) continue;
+
+      routeCount++;
+      const isCallbackRoute = source.includes("createOAuthCallbackHandler");
+      const expectedStoreImport = isCallbackRoute
+        ? 'import { tokenStore } from "../../../../../lib/token-store.ts";'
+        : 'import { tokenStore } from "../../../../lib/token-store.ts";';
+      if (
+        !source.includes(expectedStoreImport) ||
+        (!isCallbackRoute &&
+          !source.includes(
+            'import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";',
+          )) ||
+        source.includes("oauthMemoryTokenStore") ||
+        source.includes("hybridTokenStore")
+      ) {
+        offenders.push(file.pathname.replace(integrationTemplates.pathname, ""));
+      }
+    }
+
+    assertEquals(routeCount, 46, "Expected every generated OAuth init and callback route");
+    assertEquals(
+      offenders,
+      [],
+      `OAuth routes must share the central refresh-capable store. Offenders: ${
+        offenders.join(", ")
+      }`,
     );
   });
 
