@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { loadConfig } from "./config.ts";
 
@@ -44,6 +44,17 @@ describe("observability/tracing/config", () => {
       assertEquals(result.exporter, "otlp");
     });
 
+    it("gives the signal-specific endpoint precedence over the generic endpoint", () => {
+      const vars: Record<string, string> = {
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://generic:4318",
+        OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://traces:4318/v1/traces",
+      };
+
+      const result = loadConfig({}, createAdapter((key) => vars[key]));
+
+      assertEquals(result.endpoint, "http://traces:4318/v1/traces");
+    });
+
     it("should enable via VERYFRONT_OTEL=1", () => {
       const result = loadConfig(
         {},
@@ -58,6 +69,41 @@ describe("observability/tracing/config", () => {
         createAdapter((key) => (key === "OTEL_TRACES_EXPORTER" ? "invalid" : undefined)),
       );
       assertEquals(result.exporter, "console");
+    });
+
+    it("rejects malformed caller configuration instead of enabling truthy values", () => {
+      assertThrows(
+        () => loadConfig({ enabled: "yes" } as never, emptyEnvAdapter),
+        TypeError,
+        "enabled",
+      );
+      assertThrows(
+        () => loadConfig({ exporter: "invalid" } as never, emptyEnvAdapter),
+        TypeError,
+        "exporter",
+      );
+      assertThrows(
+        () => loadConfig({ sampleRate: 2 }, emptyEnvAdapter),
+        RangeError,
+        "sampleRate",
+      );
+      assertThrows(
+        () => loadConfig({ serviceName: "   " }, emptyEnvAdapter),
+        TypeError,
+        "serviceName",
+      );
+    });
+
+    it("contains adapter environment failures without consulting another environment", () => {
+      const result = loadConfig(
+        { enabled: false, serviceName: "configured" },
+        createAdapter(() => {
+          throw new Error("environment unavailable");
+        }),
+      );
+
+      assertEquals(result.enabled, false);
+      assertEquals(result.serviceName, "configured");
     });
   });
 });

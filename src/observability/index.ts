@@ -166,3 +166,16 @@ export {
   FileLogSubscriber,
   parseMaxSize,
 } from "./file-log-subscriber.ts";
+
+export {
+  type ApplicationErrorContext,
+  type ApplicationErrorReporter,
+  type ApplicationErrorReporterInitializationContext,
+  type ApplicationErrorReporterInitializer,
+  ApplicationErrorReporterInitializerName,
+  type ApplicationErrorReporterLifecycle,
+  type ApplicationErrorReporterSession,
+  captureApplicationError,
+  flushApplicationErrors,
+  initializeApplicationErrorReporter,
+} from "./application-errors.ts";

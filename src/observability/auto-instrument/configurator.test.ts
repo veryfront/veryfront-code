@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_CONFIG, mergeConfig } from "./configurator.ts";
 
@@ -48,6 +48,33 @@ describe("observability/auto-instrument/configurator", () => {
           captureErrors: false,
         },
       );
+    });
+
+    it("rejects malformed flags and nested configuration", () => {
+      assertThrows(
+        () => mergeConfig({ instrumentHttp: "yes" } as never),
+        TypeError,
+        "instrumentHttp",
+      );
+      assertThrows(
+        () => mergeConfig({ tracing: { enabled: "yes" } } as never),
+        TypeError,
+        "tracing enabled",
+      );
+      assertThrows(
+        () => mergeConfig({ metrics: null } as never),
+        TypeError,
+        "metrics config",
+      );
+    });
+
+    it("returns detached nested configuration snapshots", () => {
+      const tracing = { enabled: true, exporter: "console" as const };
+      const merged = mergeConfig({ tracing });
+
+      tracing.enabled = false;
+
+      assertEquals(merged.tracing?.enabled, true);
     });
   });
 });

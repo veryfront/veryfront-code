@@ -5,6 +5,7 @@ import type {
   ObservableResult,
 } from "#veryfront/observability/tracing/api-shim.ts";
 import type { MetricsConfig, RuntimeState } from "../metrics/types.ts";
+import type { ObservableCallbackBinding } from "./observable-callbacks.ts";
 
 export interface CacheInstruments {
   cacheGetCounter: Counter | null;
@@ -18,7 +19,6 @@ export interface CacheInstruments {
 export function createCacheInstruments(
   meter: Meter,
   config: MetricsConfig,
-  runtimeState: RuntimeState,
 ): CacheInstruments {
   const prefix = `${config.prefix}.cache`;
 
@@ -52,8 +52,6 @@ export function createCacheInstruments(
     unit: "entries",
   });
 
-  cacheSizeGauge.addCallback((result: ObservableResult) => result.observe(runtimeState.cacheSize));
-
   return {
     cacheGetCounter,
     cacheHitCounter,
@@ -62,4 +60,15 @@ export function createCacheInstruments(
     cacheInvalidateCounter,
     cacheSizeGauge,
   };
+}
+
+export function createCacheObservableBindings(
+  instruments: CacheInstruments,
+  runtimeState: RuntimeState,
+): ObservableCallbackBinding[] {
+  if (!instruments.cacheSizeGauge) return [];
+  return [{
+    instrument: instruments.cacheSizeGauge,
+    callback: (result: ObservableResult) => result.observe(runtimeState.cacheSize),
+  }];
 }

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { _resetShimForTests, setGlobalMetricsAPI } from "../tracing/api-shim.ts";
 import {
   getOtelInstruments,
   resetOtelInstruments,
@@ -11,6 +12,10 @@ import {
 describe("observability/simple-metrics/otel-instruments", () => {
   beforeEach(() => {
     resetOtelInstruments();
+  });
+
+  afterEach(() => {
+    _resetShimForTests();
   });
 
   describe("getOtelInstruments", () => {
@@ -47,6 +52,22 @@ describe("observability/simple-metrics/otel-instruments", () => {
       resetOtelInstruments();
       await safeOtelOperation(() => {}, "test");
     });
+
+    it("does not publish an in-flight candidate after reset", async () => {
+      const meter = {
+        createHistogram: () => ({ record() {} }),
+        createCounter: () => ({ add() {} }),
+        createUpDownCounter: () => ({ add() {} }),
+        createObservableGauge: () => ({ addCallback() {} }),
+      };
+      setGlobalMetricsAPI({ getMeter: () => meter });
+
+      const pending = safeOtelOperation(() => {}, "pending init");
+      resetOtelInstruments();
+      await pending;
+
+      assertEquals(getOtelInstruments().meter, undefined);
+    });
   });
 
   describe("safeLogWarn", () => {
@@ -64,6 +85,59 @@ describe("observability/simple-metrics/otel-instruments", () => {
   });
 
   describe("safeOtelOperation", () => {
+    it("initializes after a metrics provider is registered late", async () => {
+      _resetShimForTests();
+      await safeOtelOperation(() => {}, "before provider");
+      let getMeterCalls = 0;
+      const meter = {
+        createHistogram: () => ({ record() {} }),
+        createCounter: () => ({ add() {} }),
+        createUpDownCounter: () => ({ add() {} }),
+        createObservableGauge: () => ({ addCallback() {} }),
+      };
+      setGlobalMetricsAPI({
+        getMeter: () => {
+          getMeterCalls++;
+          return meter;
+        },
+      });
+
+      await safeOtelOperation(() => {}, "after provider");
+
+      assertEquals(getMeterCalls, 1);
+      assertEquals(getOtelInstruments().meter, meter);
+    });
+
+    it("publishes instruments atomically and retries a failed revision", async () => {
+      let shouldFail = true;
+      let counterCreations = 0;
+      const meter = {
+        createHistogram: () => ({ record() {} }),
+        createCounter: () => {
+          counterCreations++;
+          if (shouldFail && counterCreations === 2) {
+            throw new Error("transient instrument failure");
+          }
+          return { add() {} };
+        },
+        createUpDownCounter: () => ({ add() {} }),
+        createObservableGauge: () => ({ addCallback() {} }),
+      };
+      setGlobalMetricsAPI({ getMeter: () => meter });
+
+      await safeOtelOperation(() => {}, "first attempt");
+
+      assertEquals(getOtelInstruments().meter, undefined);
+      assertEquals(getOtelInstruments().requestCounter, undefined);
+
+      shouldFail = false;
+      await safeOtelOperation(() => {}, "retry");
+
+      assertEquals(getOtelInstruments().meter, meter);
+      assertEquals(typeof getOtelInstruments().requestCounter?.add, "function");
+      assertEquals(typeof getOtelInstruments().routeManifestLookupCounter?.add, "function");
+    });
+
     it("should execute the operation", async () => {
       let executed = false;
 
