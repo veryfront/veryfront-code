@@ -9,6 +9,7 @@ import {
   sanitizePathForDisplay,
   validateLexicalPath,
   validatePath,
+  validatePathSync,
   ValidationPresets,
 } from "./index.ts";
 import { PathValidationError } from "./types.ts";
@@ -413,6 +414,49 @@ describe("security/path-validation/index", () => {
 
       assertEquals(unknownOption.code, PathValidationError.INVALID_PATH);
       assertEquals(nestedAllowedDir.code, PathValidationError.INVALID_PATH);
+    });
+  });
+
+  describe("validatePathSync compatibility", () => {
+    it("delegates legacy policy fields to hardened lexical validation", () => {
+      const options = {
+        baseDir: "/project",
+        allowedDirs: ["src"],
+        level: "strict" as const,
+        followSymlinks: true,
+        checkExists: true,
+        adapter: createMockAdapter(),
+      };
+
+      assertEquals(
+        validatePathSync("src/file.ts", options),
+        validateLexicalPath("src/file.ts", {
+          baseDir: "/project",
+          allowedDirs: ["src"],
+        }),
+      );
+      assertEquals(
+        validatePathSync("../outside.ts", options).code,
+        PathValidationError.OUTSIDE_BASE,
+      );
+    });
+
+    it("rejects hostile compatibility policy objects without invoking accessors", () => {
+      let getterCalls = 0;
+      const options = { baseDir: "/project" } as Record<string, unknown>;
+      Object.defineProperty(options, "level", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          return "normal";
+        },
+      });
+
+      assertEquals(
+        validatePathSync("src/file.ts", options as never).code,
+        PathValidationError.INVALID_PATH,
+      );
+      assertEquals(getterCalls, 0);
     });
   });
 

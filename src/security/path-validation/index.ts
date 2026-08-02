@@ -59,6 +59,7 @@ import { validatePathBasics } from "./rules.ts";
 import {
   type LexicalPathValidationOptions,
   PathValidationError,
+  type PathValidationPolicyOptions,
   type ValidationOptions,
   type ValidationResult,
 } from "./types.ts";
@@ -416,6 +417,30 @@ export function validateLexicalPath(
 
   const canonicalPath = resolvePathSegments(targetResult.targetPath);
   return validateAllowedDirs(canonicalPath, baseDir, allowedDirs);
+}
+
+/**
+ * Validate lexical path containment without consulting a filesystem.
+ *
+ * The legacy physical-policy fields are accepted for source compatibility but
+ * do not weaken lexical containment. Filesystem admission must use
+ * `validatePath()` with the target runtime adapter.
+ *
+ * @deprecated Use `validateLexicalPath()` and pass only lexical policy fields.
+ */
+export function validatePathSync(
+  path: string,
+  options: PathValidationPolicyOptions & { adapter?: ValidationOptions["adapter"] },
+): ValidationResult {
+  if (typeof path !== "string") return invalidOptionsResult();
+  const normalizedOptions = snapshotValidationOptions(options, true, false);
+  if (!normalizedOptions) return invalidOptionsResult();
+
+  return validateLexicalPath(path, {
+    baseDir: normalizedOptions.baseDir,
+    allowedDirs: normalizedOptions.allowedDirs,
+    allowAbsolute: normalizedOptions.allowAbsolute,
+  });
 }
 
 export function createValidator(

@@ -1,9 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/adapter.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
-import { deriveSecurityContext, SecurityConfigLoader } from "./config.ts";
+import { clearConfigCache, type VeryfrontConfig } from "#veryfront/config";
+import {
+  deriveSecurityContext,
+  isValidSecurityConfig,
+  loadSecurityConfig,
+  SecurityConfigLoader,
+} from "./config.ts";
 
 function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
   const originalWarn = console.warn;
@@ -37,8 +43,80 @@ describe("security/http/config", () => {
   const originalNodeEnv = Deno.env.get("NODE_ENV");
 
   afterEach(() => {
+    clearConfigCache();
     if (originalNodeEnv === undefined) Deno.env.delete("NODE_ENV");
     else Deno.env.set("NODE_ENV", originalNodeEnv);
+  });
+
+  it("validates compatibility inputs through the canonical security schema", () => {
+    assertEquals(
+      isValidSecurityConfig({
+        cors: { origin: "https://client.example", methods: ["GET"] },
+        csrf: true,
+      }),
+      true,
+    );
+    assertEquals(isValidSecurityConfig({ csrf: "enabled" }), false);
+    assertEquals(isValidSecurityConfig({ unknownPolicy: true }), false);
+
+    let getterCalls = 0;
+    const hostile = {} as Record<string, unknown>;
+    Object.defineProperty(hostile, "csrf", {
+      enumerable: true,
+      get() {
+        getterCalls++;
+        return true;
+      },
+    });
+
+    assertEquals(isValidSecurityConfig(hostile), false);
+    assertEquals(getterCalls, 0);
+  });
+
+  it("loads a frozen compatibility snapshot and reserves null for absent policy", async () => {
+    const configuredProject = await Deno.makeTempDir({ prefix: "vf-security-configured-" });
+    const defaultProject = await Deno.makeTempDir({ prefix: "vf-security-default-" });
+
+    try {
+      await Deno.writeTextFile(
+        `${configuredProject}/veryfront.config.js`,
+        'export default { security: { csrf: true, cors: { methods: ["GET"] } } };',
+      );
+
+      const loaded = await loadSecurityConfig(configuredProject, new DenoAdapter());
+      const absent = await loadSecurityConfig(defaultProject, new DenoAdapter());
+
+      assertEquals(loaded?.csrf, true);
+      assertEquals(
+        (loaded?.cors as { methods?: string[] } | undefined)?.methods,
+        ["GET"],
+      );
+      assertEquals(Object.isFrozen(loaded), true);
+      assertEquals(Object.isFrozen((loaded?.cors as { methods?: string[] })?.methods), true);
+      assertEquals(absent, null);
+    } finally {
+      await Deno.remove(configuredProject, { recursive: true });
+      await Deno.remove(defaultProject, { recursive: true });
+    }
+  });
+
+  it("propagates invalid project configuration instead of failing open", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-security-invalid-" });
+
+    try {
+      await Deno.writeTextFile(
+        `${projectDir}/veryfront.config.js`,
+        'export default { security: { csrf: "enabled" } };',
+      );
+
+      await assertRejects(
+        () => loadSecurityConfig(projectDir, new DenoAdapter()),
+        Error,
+        "security.csrf",
+      );
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
   });
 
   it("serializes object CSP config for downstream handler context", async () => {

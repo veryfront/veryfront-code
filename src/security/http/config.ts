@@ -1,7 +1,7 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { SecurityConfig } from "#veryfront/types";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { getConfig } from "#veryfront/config";
+import { getConfig, validateVeryfrontConfig } from "#veryfront/config";
 import { serverLogger } from "#veryfront/utils";
 import { buildCSP, generateNonce, serializeCSPDirectives } from "./response/security-handler.ts";
 import { isProduction } from "#veryfront/platform/environment.ts";
@@ -202,6 +202,42 @@ function readProductionDefaults(options: unknown): boolean | undefined {
   } catch {
     return invalidSecurityConfig();
   }
+}
+
+/**
+ * Check a standalone security configuration against the canonical project
+ * configuration schema.
+ *
+ * @deprecated Project configuration loaded through `getConfig()` is already
+ * validated. Prefer that validated configuration or `SecurityConfigLoader`.
+ */
+export function isValidSecurityConfig(config: unknown): config is SecurityConfig {
+  try {
+    const snapshot = cloneAndFreezeSecurityValue(config);
+    return validateVeryfrontConfig({ security: snapshot }).security !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Load the project's schema-validated security configuration.
+ *
+ * Unlike the historical implementation, configuration loading and validation
+ * failures are propagated so callers cannot silently continue without the
+ * configured security policy. `null` means that the project has no security
+ * configuration.
+ *
+ * @deprecated Use `SecurityConfigLoader` to derive the runtime security
+ * context, including production defaults and the serialized CSP header.
+ */
+export async function loadSecurityConfig(
+  projectDir: string,
+  adapter: RuntimeAdapter,
+): Promise<SecurityConfig | null> {
+  const config = await getConfig(projectDir, adapter);
+  const security = readSecurityConfig(config);
+  return security === undefined ? null : cloneAndFreezeSecurityValue(security);
 }
 
 /**

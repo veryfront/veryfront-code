@@ -13,15 +13,15 @@ and bearer-token request gate. Public rate limiting belongs to
 
 The root entrypoint exports the following groups:
 
-| Area             | Runtime exports                                                                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| HTTP handlers    | `BaseHandler`, `AuthHandler`, `CsrfHandler`, `SecurityConfigLoader`                                                             |
-| Input boundaries | `validateRequestLimits`, `readBodyWithLimit`, `parseJsonBody`, `parseFormData`, `parseQueryParams`, `createValidatedHandler`    |
-| CORS             | `cors`, `corsSimple`, `validateOrigin`, `validateOriginSync`, `applyCORSHeaders`, `applyCORSHeadersSync`, `handleCORSPreflight` |
-| CSRF             | `generateCsrfToken`, `validateCsrf`, `applyCsrfCookie`                                                                          |
-| Responses        | `ResponseBuilder`, `createResponseBuilder`, `applySecurityHeaders`, `buildCacheControl`, `generateNonce`                        |
-| Paths and files  | `validatePath`, `validateLexicalPath`, `createValidator`, `createSecureFs`, `SecureFs`, `wrapAdapterWithSecurity`               |
-| Deno permissions | `BUILD_HELPER_PERMISSIONS`, `SERVER_PERMISSIONS`, `WORKFLOW_RUN_PERMISSIONS`                                                    |
+| Area             | Runtime exports                                                                                                                                  |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| HTTP handlers    | `BaseHandler`, `AuthHandler`, `CsrfHandler`, `SecurityConfigLoader`, deprecated `loadSecurityConfig` and `isValidSecurityConfig`                 |
+| Input boundaries | `validateRequestLimits`, `readBodyWithLimit`, `parseJsonBody`, `parseFormData`, `parseQueryParams`, `createValidatedHandler`                     |
+| CORS             | `cors`, `corsSimple`, `validateOrigin`, `validateOriginSync`, `applyCORSHeaders`, `applyCORSHeadersSync`, `handleCORSPreflight`                  |
+| CSRF             | `generateCsrfToken`, `validateCsrf`, `applyCsrfCookie`                                                                                           |
+| Responses        | `ResponseBuilder`, `createResponseBuilder`, `applySecurityHeaders`, `buildCacheControl`, `generateNonce`                                         |
+| Paths and files  | `validatePath`, `validateLexicalPath`, deprecated `validatePathSync`, `createValidator`, `createSecureFs`, `SecureFs`, `wrapAdapterWithSecurity` |
+| Deno permissions | `BUILD_HELPER_PERMISSIONS`, `SERVER_PERMISSIONS`, `WORKFLOW_RUN_PERMISSIONS`                                                                     |
 
 Types are exported beside their owning runtime contracts. The exact runtime
 inventory is regression-pinned in [`index.test.ts`](./index.test.ts); adding or
@@ -37,11 +37,12 @@ context. Production derivation enables the default CSRF policy when the project
 does not specify one. A failed configuration load fails the current request and
 remains retryable for a later request.
 
-`SecurityConfigLoader` is the only runtime configuration loader. Call
-`ensureLoaded()` before reading its derived values. The former
-`loadSecurityConfig()` and `isValidSecurityConfig()` helpers were removed: they
-duplicated schema validation and converted loader failures into an insecure
-`null` configuration.
+`SecurityConfigLoader` is the canonical runtime configuration loader. Call
+`ensureLoaded()` before reading its derived values. The deprecated
+`loadSecurityConfig()` and `isValidSecurityConfig()` exports remain for source
+compatibility. They delegate to the canonical loader/schema behavior;
+`loadSecurityConfig()` propagates load and validation failures and returns
+`null` only when no security policy is configured.
 
 ### CORS
 
@@ -114,6 +115,9 @@ configured trust root.
 `validateLexicalPath` performs only string-level containment checks. It does
 not accept adapter, existence, or symlink-policy options and must not be used as
 filesystem admission for a local or otherwise symlink-capable backing store.
+The deprecated `validatePathSync` compatibility wrapper applies the same
+lexical-only behavior while accepting historical policy fields; those fields
+cannot enable filesystem checks or weaken containment.
 Conversely, `validatePath` always requires the runtime adapter whose filesystem
 will perform the admitted operation. `ValidationPresets` are immutable policy
 fragments, not standalone physical validators; combine a preset with that

@@ -3,8 +3,9 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import * as securityModule from "./index.ts";
 import { AuthHandler } from "./http/auth.ts";
-import { SecurityConfigLoader } from "./http/config.ts";
+import { isValidSecurityConfig, loadSecurityConfig, SecurityConfigLoader } from "./http/config.ts";
 import { setCors } from "./http/middleware/index.ts";
+import { validatePathSync } from "./path-validation.ts";
 
 describe("security/index.ts exports", () => {
   it("is available through the public package security subpath", async () => {
@@ -17,6 +18,8 @@ describe("security/index.ts exports", () => {
     const publicSecurityModule = await import("veryfront/security");
     assertEquals(publicSecurityModule.AuthHandler, AuthHandler);
     assertEquals(publicSecurityModule.SecurityConfigLoader, SecurityConfigLoader);
+    assertEquals(publicSecurityModule.loadSecurityConfig, loadSecurityConfig);
+    assertEquals(publicSecurityModule.validatePathSync, validatePathSync);
   });
 
   it("keeps the public runtime surface explicit", () => {
@@ -58,6 +61,7 @@ describe("security/index.ts exports", () => {
         "generateNonce",
         "getSecurityHeader",
         "handleCORSPreflight",
+        "isValidSecurityConfig",
         "isPreflightRequest",
         "isRequestBodyTooLargeError",
         "parseFormData",
@@ -75,14 +79,19 @@ describe("security/index.ts exports", () => {
         "validatePath",
         "validateLexicalPath",
         "validateRequestLimits",
+        "validatePathSync",
         "wrapAdapterWithSecurity",
+        "loadSecurityConfig",
       ].sort(),
     );
   });
 
   it("keeps the http security helpers wired to their source modules", () => {
     assertEquals(securityModule.AuthHandler, AuthHandler);
+    assertEquals(securityModule.isValidSecurityConfig, isValidSecurityConfig);
+    assertEquals(securityModule.loadSecurityConfig, loadSecurityConfig);
     assertEquals(securityModule.SecurityConfigLoader, SecurityConfigLoader);
     assertEquals(securityModule.setCors, setCors);
+    assertEquals(securityModule.validatePathSync, validatePathSync);
   });
 });

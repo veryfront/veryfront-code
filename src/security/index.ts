@@ -41,7 +41,7 @@ export type {
 } from "./input-validation/index.ts";
 
 export { AuthHandler } from "./http/auth.ts";
-export { SecurityConfigLoader } from "./http/config.ts";
+export { isValidSecurityConfig, loadSecurityConfig, SecurityConfigLoader } from "./http/config.ts";
 export { setCors } from "./http/middleware/index.ts";
 export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/middleware/index.ts";
 
@@ -92,6 +92,7 @@ export {
   sanitizePathForDisplay,
   validateLexicalPath,
   validatePath,
+  validatePathSync,
   ValidationPresets,
 } from "./path-validation.ts";
 export type {

@@ -14,6 +14,7 @@ export {
   validateLexicalPath,
   validatePath,
   validatePathBasics,
+  validatePathSync,
   type ValidationLevel,
   type ValidationOptions,
   ValidationPresets,

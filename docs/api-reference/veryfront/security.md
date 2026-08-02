@@ -63,27 +63,30 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `createSecureFs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L1129) |
 | `createValidatedHandler` | Create a validated API handler with bounded body/query validation. Bodies without a schema are preflighted through a clone, leaving the original request body available to the handler after its size is verified. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L163) |
 | `createValidationError` | Create an input validation error. Convenience wrapper around INPUT_VALIDATION_FAILED.create(). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/errors.ts#L12) |
-| `createValidator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L421) |
+| `createValidator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L446) |
 | `generateCsrfToken` | Generate a CSRF token and return value + Set-Cookie header string | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/csrf/helpers.ts#L70) |
 | `generateNonce` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/security-handler.ts#L44) |
 | `getSecurityHeader` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/security-handler.ts#L160) |
 | `handleCORSPreflight` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/preflight.ts#L126) |
 | `isPreflightRequest` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/preflight.ts#L186) |
 | `isRequestBodyTooLargeError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/limits.ts#L100) |
-| `parseFormData` | Parse and validate multipart or URL-encoded form data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L133) |
-| `parseJsonBody` | Parse and validate a JSON request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L67) |
-| `parseQueryParams` | Parse and validate query parameters from a bounded request URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L189) |
+| `isValidSecurityConfig` | Check a standalone security configuration against the canonical project configuration schema. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/config.ts#L214) |
+| `loadSecurityConfig` | Load the project's schema-validated security configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/config.ts#L234) |
+| `parseFormData` | Parse and validate multipart or URL-encoded form data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L139) |
+| `parseJsonBody` | Parse and validate a JSON request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L68) |
+| `parseQueryParams` | Parse and validate query parameters from a bounded request URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L195) |
 | `readBodyWithLimit` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/limits.ts#L229) |
 | `sanitizeData` | Sanitize JSON-like data by HTML-encoding string values and removing keys that can mutate an object's prototype chain. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/sanitizers.ts#L8) |
-| `sanitizePathForDisplay` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L443) |
+| `sanitizePathForDisplay` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L468) |
 | `setCors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/middleware/cors-handler.ts#L4) |
 | `shouldApplyCORS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/headers.ts#L130) |
 | `validateCORSConfig` | Validate CORS configuration for security issues. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/validators.ts#L418) |
 | `validateCsrf` | Validate CSRF token by comparing header and cookie | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/csrf/helpers.ts#L119) |
-| `validateLexicalPath` | Validate lexical path containment without consulting a filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L402) |
+| `validateLexicalPath` | Validate lexical path containment without consulting a filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L403) |
 | `validateOrigin` | Validate origin against CORS configuration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/validators.ts#L392) |
 | `validateOriginSync` | Synchronous origin validation. Promise-returning values still fail closed at runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/validators.ts#L408) |
-| `validatePath` | Admit a path against the physical semantics of a runtime filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L329) |
+| `validatePath` | Admit a path against the physical semantics of a runtime filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L330) |
+| `validatePathSync` | Validate lexical path containment without consulting a filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/index.ts#L431) |
 | `validateRequestLimits` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/limits.ts#L106) |
 | `wrapAdapterWithSecurity` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L1188) |
 
@@ -96,7 +99,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `CsrfHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/csrf/csrf-handler.ts#L55) |
 | `ResponseBuilder` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/builder.ts#L9) |
 | `SecureFs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L645) |
-| `SecurityConfigLoader` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/config.ts#L238) |
+| `SecurityConfigLoader` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/config.ts#L274) |
 
 ### Types
 
@@ -114,9 +117,9 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `HandlerHelpers` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/base-handler.ts#L19) |
 | `LexicalPathValidationOptions` | Options for lexical containment checks that never inspect a filesystem. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L33) |
 | `OriginValidator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L2) |
-| `ParseFormOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L32) |
+| `ParseFormOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L39) |
 | `ParseJsonOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L28) |
-| `ParseQueryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L36) |
+| `ParseQueryOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L43) |
 | `PathValidationPolicyOptions` | Filesystem-independent policy fields shared by physical path presets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L18) |
 | `RequestLimits` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L8) |
 | `ResponseBuilderConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/types.ts#L27) |
@@ -127,7 +130,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `SyncCORSConfig` | CORS policy accepted by synchronous response-building APIs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L17) |
 | `SyncCORSHeaderOptions` | Header options accepted by synchronous CORS response helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L42) |
 | `SyncOriginValidator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L1) |
-| `ValidatedData` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L40) |
+| `ValidatedData` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L47) |
 | `ValidatedHandlerConfig` | Configuration for `createValidatedHandler()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L11) |
 | `ValidatedHandlerFunction` | Handler signature that receives validated request data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L18) |
 | `ValidationLevel` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/path-validation/types.ts#L8) |
