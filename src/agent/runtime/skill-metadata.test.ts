@@ -8,6 +8,7 @@ import {
   resolveRuntimeSkillSelectorForAgent,
   resolveRuntimeSkillsForAgent,
 } from "./skill-metadata.ts";
+import { SKILL_NAME_REGEX, SKILL_PROVIDER_SAFE_ID_REGEX } from "#veryfront/skill/types.ts";
 
 Deno.test("parseRuntimeSkillMetadata parses valid frontmatter", () => {
   const content = `---
@@ -109,6 +110,38 @@ Body`;
   assertEquals(skill.displayName, "Owned Helper");
   assertEquals(skill.ownerAgentId, "a.b");
   assertEquals(skill.shortName, "x_y");
+});
+
+Deno.test("runtime skill id admission ignores mutations of public compatibility matchers", () => {
+  const originalNameTest = SKILL_NAME_REGEX.test;
+  const originalProviderSafeTest = SKILL_PROVIDER_SAFE_ID_REGEX.test;
+  try {
+    SKILL_NAME_REGEX.test = () => false;
+    SKILL_PROVIDER_SAFE_ID_REGEX.test = () => false;
+    assertExists(buildRuntimeSkillDefinition({ id: "valid-skill", content: "Body" }));
+    assertExists(buildRuntimeSkillDefinition({
+      id: "agent--owned_skill",
+      content: "Body",
+      ownerAgentId: "agent",
+      shortName: "owned_skill",
+    }));
+
+    SKILL_NAME_REGEX.test = () => true;
+    SKILL_PROVIDER_SAFE_ID_REGEX.test = () => true;
+    assertEquals(buildRuntimeSkillDefinition({ id: "Invalid Skill", content: "Body" }), null);
+    assertEquals(
+      buildRuntimeSkillDefinition({
+        id: "invalid/owned",
+        content: "Body",
+        ownerAgentId: "agent",
+        shortName: "owned",
+      }),
+      null,
+    );
+  } finally {
+    SKILL_NAME_REGEX.test = originalNameTest;
+    SKILL_PROVIDER_SAFE_ID_REGEX.test = originalProviderSafeTest;
+  }
 });
 
 Deno.test("buildRuntimeSkillDefinition uses id as fallback name", () => {

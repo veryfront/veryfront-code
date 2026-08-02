@@ -30,6 +30,7 @@ import {
 } from "./validation.ts";
 
 const defineOwnProperty = Object.defineProperty;
+const freeze = Object.freeze;
 
 function appendOwnArrayElement<T>(values: T[], value: T): void {
   defineOwnProperty(values, values.length, {
@@ -218,7 +219,19 @@ class SkillRegistry extends ScopedRegistryView<Skill> {
     skillsConfig: true | string[] | undefined,
     scope?: AgentCapabilityScope,
   ): ResolvedSkillSelectorSnapshot<Skill> {
-    return this.#registry.resolveSelectorForAgent(skillsConfig, scope);
+    const snapshot = this.#registry.resolveSelectorForAgent(skillsConfig, scope);
+    const definitions: Skill[] = [];
+    for (let index = 0; index < snapshot.definitions.length; index += 1) {
+      appendOwnArrayElement(
+        definitions,
+        getPublicSkillView(snapshot.definitions[index]!),
+      );
+    }
+    freeze(definitions);
+    return freeze({
+      ...snapshot,
+      definitions,
+    });
   }
 
   resolveForAgent(

@@ -235,6 +235,27 @@ export interface SkillScriptResult {
   exitCode: number;
 }
 
+/** One validated text file retained in an executable skill-script snapshot. */
+export interface SkillScriptSnapshotFile {
+  /** Canonical path relative to the skill root, beginning with `scripts/`. */
+  readonly path: string;
+  /** Exact validated UTF-8 content materialized for execution. */
+  readonly content: string;
+}
+
+/**
+ * Bounded, validated script tree used to preserve same-directory imports.
+ *
+ * Executors materialize this tree under a private root and execute
+ * `entryPath`; they never resolve missing files against the host project.
+ */
+export interface SkillScriptSnapshot {
+  /** Canonical entry path relative to the skill root. */
+  readonly entryPath: string;
+  /** Validated files, including exactly one file matching `entryPath`. */
+  readonly files: readonly SkillScriptSnapshotFile[];
+}
+
 /** Input for the script executor */
 export interface SkillScriptExecutorInput {
   scriptPath: string;
@@ -246,6 +267,12 @@ export interface SkillScriptExecutorInput {
    * cloud execution uploads the same validated snapshot.
    */
   scriptContent?: string;
+  /**
+   * Optional bounded script tree. Framework tools provide this snapshot so
+   * sibling module imports resolve from the same private materialization.
+   * `scriptContent` remains populated for compatibility with custom executors.
+   */
+  scriptSnapshot?: SkillScriptSnapshot;
   args?: string[];
   /** Passed as structured environment data, never embedded in a shell command. */
   env?: Record<string, string>;

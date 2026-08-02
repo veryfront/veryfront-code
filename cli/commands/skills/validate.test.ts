@@ -117,6 +117,20 @@ Process inbound email.
     }, "process-email");
   });
 
+  it("treats a loose non-canonical name as display metadata", async () => {
+    await withTempSkill({
+      "SKILL.md": `---
+name: invalid--name
+description: Legacy display metadata.
+---
+
+# Legacy Display
+`,
+    }, async (dir) => {
+      assertEquals(await validateSkillDirectory(dir), []);
+    }, "process-email");
+  });
+
   it("reports SKILL.md frontmatter name mismatch with directory", async () => {
     const originalTest = SKILL_NAME_REGEX.test;
     SKILL_NAME_REGEX.test = () => false;

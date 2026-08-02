@@ -168,6 +168,83 @@ describe("src/skill/executor", () => {
       assertEquals(result.stdout.trim(), "adapter-typescript");
     });
 
+    it("materializes sibling modules from the validated script snapshot", async () => {
+      const result = await new LocalScriptExecutor().execute({
+        scriptPath: "skills/adapter-only/scripts/run.ts",
+        scriptContent: 'import { message } from "./helper.ts";\nconsole.log(message);',
+        scriptSnapshot: {
+          entryPath: "scripts/run.ts",
+          files: [
+            {
+              path: "scripts/helper.ts",
+              content: 'export const message = "snapshot-import";',
+            },
+            {
+              path: "scripts/run.ts",
+              content: 'import { message } from "./helper.ts";\nconsole.log(message);',
+            },
+          ],
+        },
+      });
+
+      assertEquals(result.exitCode, 0);
+      assertEquals(result.stderr, "");
+      assertEquals(result.stdout.trim(), "snapshot-import");
+    });
+
+    it("rejects duplicate and non-canonical script snapshot paths", async () => {
+      await assertRejects(
+        () =>
+          new LocalScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "echo run",
+            scriptSnapshot: {
+              entryPath: "scripts/run.sh",
+              files: [
+                { path: "scripts/run.sh", content: "echo run" },
+                { path: "scripts/run.sh", content: "echo duplicate" },
+              ],
+            },
+          }),
+        TypeError,
+        "duplicate path",
+      );
+      await assertRejects(
+        () =>
+          new LocalScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "echo run",
+            scriptSnapshot: {
+              entryPath: "scripts/run.sh",
+              files: [{ path: "scripts/../run.sh", content: "echo run" }],
+            },
+          }),
+        TypeError,
+        "canonical scripts/ paths",
+      );
+    });
+
+    it("rejects accessor-backed script snapshots without invoking them", async () => {
+      let getterCalls = 0;
+      await assertRejects(
+        () =>
+          new LocalScriptExecutor().execute({
+            scriptPath: "scripts/run.sh",
+            scriptContent: "echo run",
+            scriptSnapshot: {
+              entryPath: "scripts/run.sh",
+              get files() {
+                getterCalls += 1;
+                return [{ path: "scripts/run.sh", content: "echo run" }];
+              },
+            },
+          }),
+        TypeError,
+        "files must be an own data property",
+      );
+      assertEquals(getterCalls, 0);
+    });
+
     it("rejects a native script changed after framework validation", async () => {
       const root = await Deno.makeTempDir({ prefix: "vf-skill-executor-" });
       const scriptPath = `${root}/run.sh`;
@@ -259,6 +336,46 @@ describe("src/skill/executor", () => {
       } finally {
         await Deno.remove(root, { recursive: true });
       }
+    });
+
+    it("uploads a bounded script tree and executes from its private root", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      setEnv("VERYFRONT_API_URL", "https://api.test.com");
+      mockFetch([
+        jsonResponse({
+          id: "session-snapshot",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+        textResponse(""),
+        ndjsonResponse([{ type: "exit", exitCode: 0 }]),
+        ndjsonResponse([
+          { type: "stdout", data: "cloud-snapshot\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        textResponse(""),
+      ]);
+
+      const result = await getSkillScriptExecutor().execute({
+        scriptPath: "scripts/run.ts",
+        scriptContent: 'import "./helper.ts";',
+        scriptSnapshot: {
+          entryPath: "scripts/run.ts",
+          files: [
+            { path: "scripts/helper.ts", content: "export {};" },
+            { path: "scripts/run.ts", content: 'import "./helper.ts";' },
+          ],
+        },
+      });
+
+      assertEquals(result, { stdout: "cloud-snapshot\n", stderr: "", exitCode: 0 });
+      const body = JSON.parse(fetchCalls[1]!.init?.body?.toString() ?? "{}") as {
+        files: Array<{ path: string; content: string }>;
+      };
+      assertEquals(body.files.length, 2);
+      assertEquals(body.files[0]!.path.endsWith("/scripts/helper.ts"), true);
+      assertEquals(body.files[1]!.path.endsWith("/scripts/run.ts"), true);
+      assertStringIncludes(fetchCalls[3]!.init?.body?.toString() ?? "", "cd '/tmp/");
     });
 
     it("handles a late sandbox command rejection after timeout", async () => {

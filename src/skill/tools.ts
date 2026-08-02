@@ -19,6 +19,7 @@ import {
   captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { createError, toError } from "#veryfront/errors";
+import { join, relative } from "#veryfront/compat/path";
 import { skillRegistryInternal } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
 import { listStrictSkillSubdir, validateStrictSkillPath } from "./path-safety.ts";
@@ -37,10 +38,19 @@ import {
   SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH,
   SKILL_SCRIPT_MAX_OUTPUT_BYTES,
   SKILL_SCRIPT_MAX_TIMEOUT_MS,
+  SKILL_SCRIPT_SNAPSHOT_MAX_BYTES,
+  SKILL_SCRIPT_SNAPSHOT_MAX_FILES,
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "./limits.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
-import type { Skill, SkillContent, SkillScriptExecutor, SkillScriptResult } from "./types.ts";
+import type {
+  Skill,
+  SkillContent,
+  SkillScriptExecutor,
+  SkillScriptResult,
+  SkillScriptSnapshot,
+  SkillScriptSnapshotFile,
+} from "./types.ts";
 import {
   isValidProviderSafeSkillId,
   isValidSkillName,
@@ -56,10 +66,24 @@ const MAX_SCRIPT_TIMEOUT_MS = SKILL_SCRIPT_MAX_TIMEOUT_MS;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
 const freeze = Object.freeze;
+const defineOwnProperty = Object.defineProperty;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const hasOwnProperty = Object.prototype.hasOwnProperty;
 const numberIsSafeInteger = Number.isSafeInteger;
 const reflectApply = Reflect.apply;
+const arrayIncludes = Array.prototype.includes;
+const arraySlice = Array.prototype.slice;
+const arraySort = Array.prototype.sort;
+const stringReplaceAll = String.prototype.replaceAll;
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
@@ -195,6 +219,59 @@ function assertScriptInputs(
       );
     }
   }
+}
+
+async function createScriptSnapshot(
+  skill: Skill,
+  validatedEntryPath: string,
+  entryContent: string,
+  budget: SkillOperationBudget,
+): Promise<SkillScriptSnapshot> {
+  const entryPath = reflectApply(
+    stringReplaceAll,
+    relative(skill.rootPath, validatedEntryPath),
+    ["\\", "/"],
+  ) as string;
+  const listedPaths = await listStrictSkillSubdir(
+    skill.rootPath,
+    SKILL_SCRIPTS_DIR,
+    skill.fsAdapter,
+    { budget },
+  );
+  let paths = listedPaths;
+  if (!(reflectApply(arrayIncludes, paths, [entryPath]) as boolean)) {
+    paths = reflectApply(arraySlice, listedPaths, []) as string[];
+    appendOwnArrayElement(paths, entryPath);
+    reflectApply(arraySort, paths, [
+      (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0,
+    ]);
+  }
+  if (paths.length > SKILL_SCRIPT_SNAPSHOT_MAX_FILES) {
+    throw new RangeError(
+      `Skill script snapshots may contain at most ${SKILL_SCRIPT_SNAPSHOT_MAX_FILES} files`,
+    );
+  }
+
+  const files: SkillScriptSnapshotFile[] = [];
+  let totalBytes = 0;
+  for (let index = 0; index < paths.length; index += 1) {
+    const path = paths[index]!;
+    const content = path === entryPath ? entryContent : await readSkillFile(
+      skill,
+      join(skill.rootPath, path),
+      SKILL_SCRIPT_MAX_CONTENT_BYTES,
+      budget,
+    );
+    totalBytes += utf8Encoder.encode(content).byteLength;
+    if (totalBytes > SKILL_SCRIPT_SNAPSHOT_MAX_BYTES) {
+      throw new RangeError(
+        `Skill script snapshots may contain at most ${SKILL_SCRIPT_SNAPSHOT_MAX_BYTES} bytes`,
+      );
+    }
+    appendOwnArrayElement(files, freeze({ path, content }));
+  }
+
+  return freeze({ entryPath, files: freeze(files) });
 }
 
 function readScriptResultField(
@@ -551,14 +628,20 @@ export function createExecuteSkillScriptTool(
         SKILL_SCRIPT_MAX_CONTENT_BYTES,
         budget,
       );
+      const scriptSnapshot = await createScriptSnapshot(
+        skill,
+        validatedPath,
+        scriptContent,
+        budget,
+      );
       const executor = options.executor ?? getSkillScriptExecutor();
       const result = await budget.run(async (abortSignal) =>
         await executor.execute({
           scriptPath: validatedPath,
           scriptContent,
+          scriptSnapshot,
           args: input.args,
           env: input.env,
-          cwd: skill.fsAdapter === undefined ? skill.rootPath : undefined,
           validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
           timeoutMs: budget.remainingMs(),
           abortSignal,

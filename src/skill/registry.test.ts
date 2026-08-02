@@ -520,12 +520,14 @@ describe("src/skill/registry", () => {
 
   describe("resolveSelectorForAgent", () => {
     it("keeps the historical public registry selector method", () => {
-      registerSkill("a", createTestSkill("a"));
+      const registered = createTestSkill("a");
+      registerSkill("a", registered);
 
       const snapshot = skillRegistry.resolveSelectorForAgent(["a"]);
 
       assertEquals(snapshot.allowedSkillIds, ["a"]);
       assertEquals(snapshot.definitions.map((skill) => skill.id), ["a"]);
+      assertStrictEquals(snapshot.definitions[0], registered);
     });
 
     it("preserves omitted, true, empty, and allowlist selector policies", () => {

@@ -25,6 +25,8 @@ export type {
   SkillScriptExecutor,
   SkillScriptExecutorInput,
   SkillScriptResult,
+  SkillScriptSnapshot,
+  SkillScriptSnapshotFile,
 } from "./types.ts";
 
 export {

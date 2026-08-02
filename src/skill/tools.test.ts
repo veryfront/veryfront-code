@@ -524,6 +524,60 @@ Do work.`,
     assertEquals(result.stdout.trim(), "adapter-script");
   });
 
+  it("execute_skill_script snapshots adapter sibling modules", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/helper.ts": 'export const message = "adapter-sibling";',
+      "/project/skills/my-skill/scripts/run.ts":
+        'import { message } from "./helper.ts";\nconsole.log(message);',
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const result = await createExecuteSkillScriptTool({
+      executor: new LocalScriptExecutor(),
+    }).execute({
+      skillId: "my-skill",
+      script: "scripts/run.ts",
+    });
+
+    assertEquals(result.exitCode, 0);
+    assertEquals(result.stderr, "");
+    assertEquals(result.stdout.trim(), "adapter-sibling");
+  });
+
+  it("execute_skill_script snapshots native sibling modules", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "vf-skill-sibling-" });
+    try {
+      const skillRoot = `${tempDir}/my-skill`;
+      await Deno.mkdir(`${skillRoot}/scripts`, { recursive: true });
+      await Deno.writeTextFile(
+        `${skillRoot}/scripts/helper.ts`,
+        'export const message = "native-sibling";',
+      );
+      await Deno.writeTextFile(
+        `${skillRoot}/scripts/run.ts`,
+        'import { message } from "./helper.ts";\nconsole.log(message);',
+      );
+      registerSkill("my-skill", {
+        id: "my-skill",
+        metadata: { name: "my-skill", description: "Executes scripts" },
+        rootPath: skillRoot,
+      });
+
+      const result = await createExecuteSkillScriptTool({
+        executor: new LocalScriptExecutor(),
+      }).execute({
+        skillId: "my-skill",
+        script: "scripts/run.ts",
+      });
+
+      assertEquals(result.exitCode, 0);
+      assertEquals(result.stderr, "");
+      assertEquals(result.stdout.trim(), "native-sibling");
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("execute_skill_script snapshots only validated executor result fields", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/scripts/run.sh": "echo run",
