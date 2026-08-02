@@ -19,7 +19,7 @@ import {
   ModuleGraphLimitError,
   ModuleSourceLimitError,
 } from "./limits.ts";
-import { MAX_MDX_MODULE_CODE_BYTES } from "./recovery-payload.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "./limits.ts";
 import { FRAMEWORK_ROOT, HASH_SEED_FNV1A } from "../constants.ts";
 import { resolveVeryfrontModuleUrl } from "../../../veryfront-module-urls.ts";
 import { MDX_ESM_CACHE_NAMESPACE } from "../cache-format.ts";

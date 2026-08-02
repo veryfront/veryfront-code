@@ -17,7 +17,7 @@ import { findNestedImports } from "./nested-imports.ts";
 import { replaceSourceSpans, type SourceSpanReplacement } from "../utils/source-spans.ts";
 import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { readHttpModuleText } from "../../../shared/http-module-response.ts";
-import { MAX_MDX_MODULE_CODE_BYTES } from "./recovery-payload.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "./limits.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
 import { assertMdxModuleImportCount } from "./limits.ts";
 

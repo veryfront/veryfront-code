@@ -13,6 +13,15 @@ export const MAX_MDX_MODULE_IMPORTS_PER_FILE = 500;
 /** Bound independent top-level and JSX work without recursive semaphore deadlocks. */
 export const MAX_MDX_MODULE_TRANSFORM_CONCURRENCY = 16;
 
+/** Maximum UTF-8 source bytes accepted for one fetched module. */
+export const MAX_MDX_MODULE_CODE_BYTES = 2 * 1024 * 1024;
+
+const utf8Encoder = new TextEncoder();
+
+export function utf8ByteLength(value: string): number {
+  return utf8Encoder.encode(value).byteLength;
+}
+
 export class ModuleGraphLimitError extends Error {
   constructor(normalizedPath: string) {
     super(

@@ -212,10 +212,11 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(await malformedCrossProject.text(), "Invalid module path");
   });
 
-  it("should return 404 for invalid cross-project import path", async () => {
+  it("returns 400 for an invalid path in the reserved cross-project namespace", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_cross//@/"));
 
-    assertEquals(response.status === 404 || response.status === 500, true);
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Invalid module path");
   });
 
   it("redacts internal module failures outside development", async () => {

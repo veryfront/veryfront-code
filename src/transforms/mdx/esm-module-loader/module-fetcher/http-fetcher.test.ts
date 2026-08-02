@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
-import { MAX_MDX_MODULE_CODE_BYTES } from "./recovery-payload.ts";
+import { MAX_MDX_MODULE_CODE_BYTES } from "./limits.ts";
 import { HttpModuleBodyTooLargeError } from "../../../shared/http-module-response.ts";
 
 describe("module-fetcher/http-fetcher", () => {

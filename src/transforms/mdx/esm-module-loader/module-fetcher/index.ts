@@ -29,12 +29,13 @@ import { readValidCachedModulePath } from "./path-cache-lookup.ts";
 import { persistResolvedModule } from "./persistence.ts";
 import { transformResolvedModuleSource } from "./source-transform.ts";
 import {
+  MAX_MDX_MODULE_CODE_BYTES,
   MAX_MDX_MODULE_GRAPH_ENTRIES,
   ModuleGraphLimitError,
   ModuleImportLimitError,
   ModuleSourceLimitError,
+  utf8ByteLength,
 } from "./limits.ts";
-import { MAX_MDX_MODULE_CODE_BYTES, utf8ByteLength } from "./recovery-payload.ts";
 
 export {
   MAX_MDX_MODULE_GRAPH_ENTRIES,

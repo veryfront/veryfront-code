@@ -6,7 +6,6 @@ import {
   resolveCssModuleKey,
   rewriteCssModuleContent,
   rewriteCssModuleContentWithinLimit,
-  toProjectRelativeCssModuleKey,
   toScopedCssModuleClass,
 } from "./naming.ts";
 
