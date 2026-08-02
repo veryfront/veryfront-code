@@ -29,6 +29,30 @@ describe("parseJsonBody", () => {
     assertEquals(result, { name: "Alice", age: 30 });
   });
 
+  it("retains the sanitize option for compatibility", async () => {
+    const textSchema = defineSchema((v) => v.object({ value: v.string() }))();
+    const result = await parseJsonBody(
+      createJsonRequest(JSON.stringify({ value: "<b>&</b>" })),
+      textSchema,
+      { sanitize: true },
+    );
+
+    assertEquals(result, { value: "&lt;b&gt;&amp;&lt;&#x2F;b&gt;" });
+  });
+
+  it("rejects a non-boolean sanitize option", async () => {
+    await assertRejects(
+      () =>
+        parseJsonBody(
+          createJsonRequest(JSON.stringify({ name: "Alice", age: 30 })),
+          schema,
+          { sanitize: "yes" } as never,
+        ),
+      TypeError,
+      "sanitize must be a boolean",
+    );
+  });
+
   it("should reject request with wrong Content-Type", async () => {
     const request = new Request("http://localhost/test", {
       method: "POST",

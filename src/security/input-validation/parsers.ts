@@ -1,6 +1,7 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { createValidationError, VeryfrontError } from "./errors.ts";
+import { sanitizeData } from "./sanitizers.ts";
 import {
   readBodyBytesWithLimit,
   readBodyWithLimit,
@@ -17,7 +18,7 @@ import * as nodeBuffer from "node:buffer";
 
 const FileCtor = globalThis.File ??
   (nodeBuffer as typeof nodeBuffer & { File: typeof File }).File;
-const PARSE_JSON_OPTION_KEYS = new Set(["limits"]);
+const PARSE_JSON_OPTION_KEYS = new Set(["limits", "sanitize"]);
 const PARSE_FORM_OPTION_KEYS = new Set(["limits"]);
 const PARSE_QUERY_OPTION_KEYS = new Set(["limits"]);
 
@@ -75,12 +76,17 @@ export async function parseJsonBody<T>(
     PARSE_JSON_OPTION_KEYS,
   );
   const limits = validateRequestLimits(request, snapshot.limits as RequestLimits | undefined);
+  const sanitize = snapshot.sanitize;
+  if (sanitize !== undefined && typeof sanitize !== "boolean") {
+    throw new TypeError("JSON body parser options.sanitize must be a boolean");
+  }
 
-  return await parseJsonBodyAfterRequestLimits(
+  const result = await parseJsonBodyAfterRequestLimits(
     request,
     schema,
     limits,
   );
+  return sanitize === true ? sanitizeData(result) as T : result;
 }
 
 /**

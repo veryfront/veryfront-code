@@ -27,6 +27,13 @@ export const DEFAULT_LIMITS: Readonly<Required<RequestLimits>> = Object.freeze({
 
 export interface ParseJsonOptions {
   limits?: RequestLimits;
+  /**
+   * HTML-encode string values in the validated result.
+   *
+   * @deprecated Prefer contextual output encoding. This option remains for
+   * compatibility with existing consumers.
+   */
+  sanitize?: boolean;
 }
 
 export interface ParseFormOptions {
