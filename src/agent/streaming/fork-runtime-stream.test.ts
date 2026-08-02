@@ -582,7 +582,9 @@ describe("agent/fork-runtime-stream", () => {
       const parts: ForkPart[] = [];
       const contexts: ModelCallContext[] = [];
       await runWithModelCallRecorder(
-        (context) => contexts.push(context),
+        (context) => {
+          contexts.push(context);
+        },
         async () => {
           for await (const part of streamResult.fullStream) {
             parts.push(part);

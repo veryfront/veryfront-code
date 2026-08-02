@@ -491,7 +491,7 @@ async function recordModelCallContext(
   if (!recorder) return;
 
   const context: ModelCallContext = {
-    prompt: directOptions.prompt,
+    messages: directOptions.prompt,
     ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
   await recorder(structuredClone(context));

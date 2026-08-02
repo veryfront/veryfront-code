@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { clearModelProviders, type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { agent } from "../factory.ts";
+import type { ModelCallContext } from "../../runtime/model-call-context.ts";
 import type { ModelTransportRequest } from "../types.ts";
 import {
   __registerLogRecordEmitter,
@@ -107,6 +108,54 @@ describe("agent provider transport hooks", () => {
     );
     assertEquals(captured.generateOptions.providerOptions, {
       veryfront: { projectSlug: "demo-project" },
+    });
+  });
+
+  it("records equivalent context through cloud and server-local runtime paths", async () => {
+    const contexts: ModelCallContext[] = [];
+
+    for (const provider of ["cloud", "local"] as const) {
+      let runtimePrompt: unknown;
+      const runtime: ModelRuntime = {
+        provider,
+        modelId: `${provider}/context-parity`,
+        async doGenerate(options: unknown) {
+          const prompt = (options as { prompt: unknown }).prompt;
+          runtimePrompt = prompt;
+          assertEquals(contexts.at(-1)?.messages, prompt);
+          return {
+            content: [{ type: "text", text: "done" }],
+            finishReason: "stop",
+            usage: {},
+          };
+        },
+        async doStream() {
+          return { stream: createTextStream([{ type: "finish" }]) };
+        },
+      };
+      const assistant = agent({
+        model: `${provider}/context-parity`,
+        system: "Follow the same instructions.",
+        skills: [],
+        modelCallRecorder: (context) => contexts.push(context),
+        resolveModelTransport: () => ({ model: runtime }),
+      });
+
+      await assistant.generate({ input: "Use the same normalized input." });
+
+      assertEquals(contexts.at(-1)?.messages, runtimePrompt);
+    }
+
+    assertEquals(contexts.length, 2);
+    assertEquals(contexts[0], contexts[1]);
+    assertEquals(contexts[0], {
+      messages: [
+        { role: "system", content: "Follow the same instructions." },
+        {
+          role: "user",
+          content: [{ type: "text", text: "Use the same normalized input." }],
+        },
+      ],
     });
   });
 

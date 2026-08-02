@@ -48,7 +48,7 @@ export type ModelCallTool =
 
 /** Exact provider-agnostic input supplied at one model dispatch boundary. */
 export interface ModelCallContext {
-  prompt: ModelCallMessage[];
+  messages: ModelCallMessage[];
   tools?: ModelCallTool[];
 }
 

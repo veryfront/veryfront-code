@@ -567,7 +567,7 @@ describe("agent/durable", () => {
 
   it("forces durable event-id cursor mode for model-call context and mixed batches", async () => {
     const [modelCallContextEvent] = await createModelCallContextRunEvents({
-      prompt: [{ role: "system", content: "exact" }],
+      messages: [{ role: "system", content: "exact" }],
     });
     if (!modelCallContextEvent) throw new Error("expected model-call context event");
     const fetchCalls = stubFetchSequence(jsonResponse({
@@ -599,7 +599,7 @@ describe("agent/durable", () => {
 
   it("fails closed without projection resync on ambiguous durable-ID replay", async () => {
     const [event] = await createModelCallContextRunEvents({
-      prompt: [{ role: "system", content: "A then B" }],
+      messages: [{ role: "system", content: "A then B" }],
     });
     if (!event) throw new Error("expected model-call context event");
     let requestCount = 0;
@@ -631,7 +631,7 @@ describe("agent/durable", () => {
 
   it("accepts API-proven exact replay as an ordinary successful durable-ID append", async () => {
     const [event] = await createModelCallContextRunEvents({
-      prompt: [{ role: "system", content: "already committed" }],
+      messages: [{ role: "system", content: "already committed" }],
     });
     if (!event) throw new Error("expected model-call context event");
     stubFetchSequence(jsonResponse({
@@ -666,7 +666,7 @@ describe("agent/durable", () => {
 
   it("stops an ambiguous A-B replay after response loss and an interleaved event", async () => {
     const events = await createModelCallContextRunEvents(
-      { prompt: [{ role: "system", content: "x".repeat(600) }] },
+      { messages: [{ role: "system", content: "x".repeat(600) }] },
       { singleEventByteLimit: 1, chunkEventByteLimit: 800 },
     );
     assertEquals(events.length, 2);
@@ -730,7 +730,7 @@ describe("agent/durable", () => {
 
   it("persists the exact 32-part maximum in 16 requests and never starts request 17", async () => {
     const events = await createModelCallContextRunEvents(
-      { prompt: [{ role: "system", content: "x".repeat(4 * 1024 * 1024 - 128) }] },
+      { messages: [{ role: "system", content: "x".repeat(4 * 1024 * 1024 - 128) }] },
       { singleEventByteLimit: 1, chunkEventByteLimit: 132 * 1024 },
     );
     assertEquals(events.length, 32);

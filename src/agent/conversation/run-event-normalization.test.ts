@@ -220,7 +220,7 @@ describe("agent/conversation-run-event-normalization", () => {
 
   it("preserves valid model-call context envelopes byte-for-byte instead of summarizing", async () => {
     const [event] = await createModelCallContextRunEvents({
-      prompt: [{ role: "system", content: "x".repeat(300 * 1024) }],
+      messages: [{ role: "system", content: "x".repeat(300 * 1024) }],
     });
     if (!event) throw new Error("expected event");
     assertEquals(normalizeConversationRunEvent(event), [event]);
@@ -241,7 +241,7 @@ describe("agent/conversation-run-event-normalization", () => {
 
   it("rejects model-call context envelopes with unrecognized fields", async () => {
     const [event] = await createModelCallContextRunEvents({
-      prompt: [{ role: "system", content: "exact" }],
+      messages: [{ role: "system", content: "exact" }],
     });
     if (!event) throw new Error("expected event");
     let rejected = false;

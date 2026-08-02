@@ -8,8 +8,8 @@ import type {
 } from "./model-call-context.ts";
 
 describe("model-call-context", () => {
-  it("describes only the provider-agnostic prompt and resolved tools", async () => {
-    const prompt: ModelCallMessage[] = [{
+  it("describes only the provider-agnostic messages and resolved tools", async () => {
+    const messages: ModelCallMessage[] = [{
       role: "assistant",
       content: [{
         type: "tool-call",
@@ -29,9 +29,9 @@ describe("model-call-context", () => {
       contexts.push(context);
     };
 
-    await recorder({ prompt, tools });
+    await recorder({ messages, tools });
 
-    assertEquals(contexts, [{ prompt, tools }]);
+    assertEquals(contexts, [{ messages, tools }]);
 
     const providerPrivateReasoning: ModelCallMessage = {
       role: "assistant",

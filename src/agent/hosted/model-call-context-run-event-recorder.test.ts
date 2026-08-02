@@ -140,7 +140,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
   });
 
   it("serializes once into a reconstructable envelope with an exact UTF-8 hash", async () => {
-    const context = { prompt: [{ role: "system" as const, content: "héllo 😀" }] };
+    const context = { messages: [{ role: "system" as const, content: "héllo 😀" }] };
     const events = await createModelCallContextRunEvents(context);
     const serialized = events.map((event) => event.serializedSegment).join("");
     const expected = JSON.stringify(context);
@@ -157,13 +157,13 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
   it("chunks large escape-heavy unicode contexts losslessly within the per-row limit", async () => {
     const content = `${'"'.repeat(1_100_000)}${"😀".repeat(300_000)}`;
     const events = await createModelCallContextRunEvents({
-      prompt: [{ role: "system", content }],
+      messages: [{ role: "system", content }],
     });
 
     assertEquals(events.length > 1, true);
     assertEquals(
       events.map((event) => event.serializedSegment).join(""),
-      JSON.stringify({ prompt: [{ role: "system", content }] }),
+      JSON.stringify({ messages: [{ role: "system", content }] }),
     );
     for (const event of events) {
       assertEquals(
@@ -178,7 +178,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     await assertRejects(
       () =>
         createModelCallContextRunEvents({
-          prompt: [{ role: "system", content: "x".repeat(MAX_MODEL_CALL_CONTEXT_BYTES) }],
+          messages: [{ role: "system", content: "x".repeat(MAX_MODEL_CALL_CONTEXT_BYTES) }],
         }),
       ModelCallContextPersistenceError,
       "4 MiB",
@@ -189,7 +189,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     await assertRejects(
       () =>
         createModelCallContextRunEvents({
-          prompt: [{ role: "system", content: '"'.repeat(2_097_000) }],
+          messages: [{ role: "system", content: '"'.repeat(2_097_000) }],
         }),
       ModelCallContextPersistenceError,
       "too many parts",
@@ -203,7 +203,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       mirror: target.result,
       metrics: metrics.result,
     });
-    await recorder({ prompt: [{ role: "system", content: "persist me" }] });
+    await recorder({ messages: [{ role: "system", content: "persist me" }] });
     assertEquals(target.appended.length, 1);
     assertEquals(target.isDisposed(), false);
     assertEquals(metrics.writerOutcomes, ["recorded"]);
@@ -226,7 +226,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     await target.appendEvents([{ type: "CUSTOM", value: "ordinary pending event" }]);
 
     await createModelCallContextRunEventRecorder({ mirror: target })({
-      prompt: [{ role: "system", content: "required context" }],
+      messages: [{ role: "system", content: "required context" }],
     });
 
     assertEquals(requests.map((request) => request.events.map((event) => event.type)), [[
@@ -257,7 +257,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
 
     const recording = Promise.resolve(
       createModelCallContextRunEventRecorder({ mirror: target })({
-        prompt: [{ role: "system", content: "required continuation" }],
+        messages: [{ role: "system", content: "required continuation" }],
       }),
     );
     resolveFirst?.(appendResponse(1, 1));
@@ -321,7 +321,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       });
       await assertRejects(() =>
         Promise.resolve(
-          recorder({ prompt: [{ role: "system", content: "SENSITIVE_SENTINEL" }] }),
+          recorder({ messages: [{ role: "system", content: "SENSITIVE_SENTINEL" }] }),
         )
       );
       assertEquals(metrics.writerOutcomes, [testCase.outcome]);
@@ -337,7 +337,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     await createModelCallContextRunEventRecorder({
       mirror: target.result,
       metrics: { writerOutcome: fail, barrierOutcome: fail, measurements: fail },
-    })({ prompt: [{ role: "system", content: "persisted" }] });
+    })({ messages: [{ role: "system", content: "persisted" }] });
     assertEquals(target.appended.length, 1);
   });
 
@@ -385,7 +385,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     assertEquals("error" in event, false);
     assertEquals("lifecycle" in event, false);
     assertEquals(JSON.parse(String(event.serializedSegment)), {
-      prompt: [
+      messages: [
         { role: "system", content: "Child instructions" },
         { role: "user", content: [{ type: "text", text: "fail after dispatch" }] },
       ],
@@ -404,7 +404,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     it(`fails closed when the mirror is ${name}`, async () => {
       const recorder = createModelCallContextRunEventRecorder({ mirror: target.result });
       await assertRejects(
-        () => Promise.resolve(recorder({ prompt: [{ role: "system", content: "no dispatch" }] })),
+        () => Promise.resolve(recorder({ messages: [{ role: "system", content: "no dispatch" }] })),
         ModelCallContextPersistenceError,
       );
       assertEquals(target.isDisposed(), true);
@@ -420,7 +420,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       metrics: metrics.result,
     });
     await assertRejects(
-      () => Promise.resolve(recorder({ prompt: [{ role: "system", content: "timeout" }] })),
+      () => Promise.resolve(recorder({ messages: [{ role: "system", content: "timeout" }] })),
       ModelCallContextPersistenceError,
       "timed out",
     );
@@ -438,7 +438,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       metrics: metrics.result,
     });
     const recording = Promise.resolve(
-      recorder({ prompt: [{ role: "system", content: "abort" }] }),
+      recorder({ messages: [{ role: "system", content: "abort" }] }),
     );
     controller.abort();
     await assertRejects(() => recording, DOMException, "aborted");
@@ -468,7 +468,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     });
 
     await assertRejects(
-      () => Promise.resolve(recorder({ prompt: [{ role: "system", content: "deadline" }] })),
+      () => Promise.resolve(recorder({ messages: [{ role: "system", content: "deadline" }] })),
       ModelCallContextPersistenceError,
       "timed out",
     );
@@ -521,7 +521,7 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
         mirror: target,
         abortSignal: controller.signal,
         metrics: metrics.result,
-      })({ prompt: [{ role: "system", content: "caller abort" }] }),
+      })({ messages: [{ role: "system", content: "caller abort" }] }),
     );
 
     await requestStarted;

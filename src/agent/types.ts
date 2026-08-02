@@ -234,7 +234,7 @@ export interface AgentConfig {
    */
   resolveModelTransport?: ModelTransportResolver;
   /**
-   * Record the exact provider-agnostic prompt and resolved tools immediately
+   * Record the exact provider-agnostic messages and resolved tools immediately
    * before each model dispatch. A thrown error or rejected promise prevents
    * dispatch.
    */

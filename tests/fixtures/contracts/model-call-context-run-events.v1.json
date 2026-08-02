@@ -5,22 +5,22 @@
   "scenarios": [
     {
       "name": "small_exact_context",
-      "serialized": "{\"prompt\":[{\"role\":\"system\",\"content\":\"You are exact.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up one item\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}}]}",
-      "utf8ByteLength": 206,
-      "sha256": "d72d8478bb069ee4965d9674af305ee253c83b5fe4f1e99121963686e42b3eb8",
+      "serialized": "{\"messages\":[{\"role\":\"system\",\"content\":\"You are exact.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up one item\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}}]}",
+      "utf8ByteLength": 208,
+      "sha256": "59b8039a0344cb1d174154ca4968d968981e9aace3130eba7b585de2cab74b70",
       "events": [
         {
           "type": "AGENT_RUN_MODEL_CALL_CONTEXT",
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 0,
           "partCount": 1,
-          "totalByteLength": 206,
-          "sha256": "d72d8478bb069ee4965d9674af305ee253c83b5fe4f1e99121963686e42b3eb8",
-          "serializedSegment": "{\"prompt\":[{\"role\":\"system\",\"content\":\"You are exact.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up one item\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}}]}"
+          "totalByteLength": 208,
+          "sha256": "59b8039a0344cb1d174154ca4968d968981e9aace3130eba7b585de2cab74b70",
+          "serializedSegment": "{\"messages\":[{\"role\":\"system\",\"content\":\"You are exact.\"}],\"tools\":[{\"type\":\"function\",\"name\":\"lookup\",\"description\":\"Look up one item\",\"inputSchema\":{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}}]}"
         }
       ],
       "expectedLogicalContext": {
-        "prompt": [
+        "messages": [
           {
             "role": "system",
             "content": "You are exact."
@@ -45,53 +45,53 @@
     },
     {
       "name": "complete_multi_part_unicode_context",
-      "serialized": "{\"prompt\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\\"}]}]}",
-      "utf8ByteLength": 546,
-      "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
+      "serialized": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\\"}]}]}",
+      "utf8ByteLength": 548,
+      "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
       "events": [
         {
           "type": "AGENT_RUN_MODEL_CALL_CONTEXT",
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 0,
           "partCount": 6,
-          "totalByteLength": 546,
-          "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
-          "serializedSegment": "{\"prompt\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café \\"
+          "totalByteLength": 548,
+          "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
+          "serializedSegment": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café "
         },
         {
           "type": "AGENT_RUN_MODEL_CALL_CONTEXT",
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 1,
           "partCount": 6,
-          "totalByteLength": 546,
-          "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
-          "serializedSegment": "\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 "
+          "totalByteLength": 548,
+          "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
+          "serializedSegment": "\\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀"
         },
         {
           "type": "AGENT_RUN_MODEL_CALL_CONTEXT",
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 2,
           "partCount": 6,
-          "totalByteLength": 546,
-          "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
-          "serializedSegment": "漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 c"
+          "totalByteLength": 548,
+          "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
+          "serializedSegment": " 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 "
         },
         {
           "type": "AGENT_RUN_MODEL_CALL_CONTEXT",
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 3,
           "partCount": 6,
-          "totalByteLength": 546,
-          "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
-          "serializedSegment": "afé \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\"
+          "totalByteLength": 548,
+          "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
+          "serializedSegment": "café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\"
         },
         {
           "type": "AGENT_RUN_MODEL_CALL_CONTEXT",
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 4,
           "partCount": 6,
-          "totalByteLength": 546,
-          "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
+          "totalByteLength": 548,
+          "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
           "serializedSegment": "\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 "
         },
         {
@@ -99,13 +99,13 @@
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 5,
           "partCount": 6,
-          "totalByteLength": 546,
-          "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
+          "totalByteLength": 548,
+          "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
           "serializedSegment": "漢字 café \\\\\"}]}]}"
         }
       ],
       "expectedLogicalContext": {
-        "prompt": [
+        "messages": [
           {
             "role": "user",
             "content": [
@@ -120,18 +120,18 @@
     },
     {
       "name": "incomplete_committed_prefix",
-      "serialized": "{\"prompt\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\\"}]}]}",
-      "utf8ByteLength": 546,
-      "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
+      "serialized": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\😀 漢字 café \\\\\"}]}]}",
+      "utf8ByteLength": 548,
+      "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
       "events": [
         {
           "type": "AGENT_RUN_MODEL_CALL_CONTEXT",
           "contextId": "11111111-1111-4111-8111-111111111111",
           "partIndex": 0,
           "partCount": 6,
-          "totalByteLength": 546,
-          "sha256": "97d50d601314b2aa6e8ebec25670a03a43ac5885f8114b7b4043de17639efec1",
-          "serializedSegment": "{\"prompt\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café \\"
+          "totalByteLength": 548,
+          "sha256": "1e56954b7c230e9ee55a826bfa330bac15191441097d99bb962c7a7eb8fef6ab",
+          "serializedSegment": "{\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"😀 漢字 café \\\\😀 漢字 café "
         }
       ],
       "expectedLogicalContext": null

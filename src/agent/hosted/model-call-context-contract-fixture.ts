@@ -10,7 +10,7 @@ export const LARGE_FIXTURE_FILE = "model-call-context-run-events-large.v1.json.g
 const encoder = new TextEncoder();
 
 const smallContext: ModelCallContext = {
-  prompt: [{ role: "system", content: "You are exact." }],
+  messages: [{ role: "system", content: "You are exact." }],
   tools: [{
     type: "function",
     name: "lookup",
@@ -19,13 +19,13 @@ const smallContext: ModelCallContext = {
   }],
 };
 const unicodeContext: ModelCallContext = {
-  prompt: [{
+  messages: [{
     role: "user",
     content: [{ type: "text", text: "😀 漢字 café \\".repeat(24) }],
   }],
 };
 const productionLimitUnicodeContext: ModelCallContext = {
-  prompt: [{
+  messages: [{
     role: "user",
     content: [
       { type: "text", text: '😀e\u0301漢字\\"line\n'.repeat(100_000) },

@@ -11,13 +11,16 @@ import {
 } from "./runtime-bridge.test-helpers.ts";
 
 describe("runtime-bridge", () => {
-  it("records the exact normalized prompt and resolved tools before direct generate", async () => {
+  it("records the exact normalized messages and resolved tools before direct generate", async () => {
     const order: string[] = [];
     let recorded: unknown;
     const model = createGenerateModel("test", "test/model-call-context", async (options) => {
       order.push("dispatch");
+      const context = recorded as ModelCallContext;
+      assertEquals(context.messages, options.prompt);
+      assertEquals(context.tools, options.tools);
       assertEquals(recorded, {
-        prompt: options.prompt,
+        messages: options.prompt,
         tools: options.tools,
       });
       return {
@@ -75,7 +78,7 @@ describe("runtime-bridge", () => {
 
     assertEquals(order, ["record", "dispatch"]);
     assertEquals(recorded, {
-      prompt: [
+      messages: [
         { role: "system", content: "System instructions" },
         { role: "user", content: [{ type: "text", text: "Load the skill" }] },
         {
@@ -189,14 +192,14 @@ describe("runtime-bridge", () => {
     }];
     assertEquals(contexts, [
       {
-        prompt: [
+        messages: [
           { role: "system", content: system },
           { role: "user", content: [{ type: "text", text: "Review this change." }] },
         ],
         tools: resolvedTools,
       },
       {
-        prompt: [
+        messages: [
           { role: "system", content: system },
           { role: "user", content: [{ type: "text", text: "Review this change." }] },
           {
@@ -339,9 +342,9 @@ describe("runtime-bridge", () => {
           },
         },
         modelCallRecorder: (context: ModelCallContext) => {
-          const message = context.prompt[0];
+          const message = context.messages[0];
           if (message?.role === "user" && message.content[0]?.type === "text") {
-            message.content[0].text = "mutated prompt";
+            message.content[0].text = "mutated messages";
           }
           const tool = context.tools?.[0];
           if (tool?.type === "function") {

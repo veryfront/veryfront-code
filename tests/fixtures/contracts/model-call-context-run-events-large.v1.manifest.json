@@ -3,9 +3,9 @@
   "version": 1,
   "artifact": "model-call-context-run-events-large.v1.json.gz",
   "encoding": "gzip",
-  "decompressedUtf8ByteLength": 7905526,
-  "decompressedSha256": "de67f8c6e04be61f80cf0f7809784c6eb39a824aa24d774b85f40218ddd1f365",
-  "logicalContextUtf8ByteLength": 2300259,
-  "logicalContextSha256": "7f4595ff1e75142bfd81b48134199c981028a2bc07651dd2a0731f681a4daab5",
+  "decompressedUtf8ByteLength": 7905532,
+  "decompressedSha256": "62f785a4977309eb3ab5592556b78afc2dab26430bfb63891b651d683640e902",
+  "logicalContextUtf8ByteLength": 2300261,
+  "logicalContextSha256": "409aaf5d53e40329795e9becd8d0b52fac5dab6809b19bd26954deb1470d8e9f",
   "partCount": 12
 }
