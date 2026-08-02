@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd, env } from "#veryfront/platform/compat/process.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { VERYFRONT_CONFIG_FILES } from "#veryfront/config/config-files.ts";
 import { DEFAULT_PROJECT_DISCOVERY_DIRS } from "../../discovery/index.ts";
 import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../service/node-runtime-infrastructure.ts";
 
@@ -11,12 +12,6 @@ import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../serv
 export type AgentServicePathOption = string | URL;
 
 export const DEFAULT_AGENT_SERVICE_NAME = "veryfront-agent-service";
-
-const PROJECT_CONFIG_FILES = [
-  "veryfront.config.js",
-  "veryfront.config.ts",
-  "veryfront.config.mjs",
-];
 
 /** Converts a path option (string or URL) to a string path. */
 export function pathOptionToPath(pathOption: AgentServicePathOption): string {
@@ -48,7 +43,7 @@ function hasDiscoveryRoot(baseDir: string): boolean {
   ];
 
   return discoveryDirs.some((dir) => existsSync(resolve(baseDir, dir))) ||
-    PROJECT_CONFIG_FILES.some((file) => existsSync(resolve(baseDir, file)));
+    VERYFRONT_CONFIG_FILES.some((file) => existsSync(resolve(baseDir, file)));
 }
 
 function uniquePaths(paths: string[]): string[] {
