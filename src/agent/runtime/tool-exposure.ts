@@ -6,6 +6,16 @@ export const TOOL_SEARCH_TOOL_NAME = "tool_search";
 
 const DEFAULT_BOOTSTRAP_TOOL_NAMES = new Set(["form_input", "load_skill"]);
 const TOOL_SEARCH_RESULT_LIMIT = 5;
+const TOOL_SEARCH_QUERY_MAX_BYTES = 256;
+const TOOL_SEARCH_CANDIDATE_LIMIT = 4_096;
+const TOOL_SEARCH_NAME_MAX_BYTES = 256;
+const TOOL_SEARCH_DESCRIPTION_MAX_BYTES = 4_096;
+const TOOL_SEARCH_SCHEMA_MAX_DEPTH = 64;
+const TOOL_SEARCH_SCHEMA_MAX_NODES = 4_096;
+const TOOL_SEARCH_SCHEMA_MAX_BYTES = 65_536;
+const TOOL_SEARCH_TOTAL_SCHEMA_NODES = 65_536;
+const TOOL_SEARCH_TOTAL_SCHEMA_BYTES = 524_288;
+const UTF8_ENCODER = new TextEncoder();
 
 /** Run-local mutable exposure state. Create a new state for every child run. */
 export type ToolExposureState = {
@@ -57,6 +67,15 @@ type RankedToolSearchMatch = {
   match: ToolSearchMatch;
 };
 
+type SearchableTool = ToolSearchMatch & {
+  parameterDescriptions: string[];
+};
+
+type SchemaSearchBudget = {
+  nodes: number;
+  bytes: number;
+};
+
 function normalizeSearchText(value: string): string {
   return value.replace(/[A-Z]/g, (character) => String.fromCharCode(character.charCodeAt(0) + 32))
     .replaceAll("_", " ").trim().replace(/\s+/g, " ");
@@ -64,6 +83,10 @@ function normalizeSearchText(value: string): string {
 
 function compareAscii(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function isUtf8LengthWithin(value: string, maxBytes: number): boolean {
+  return value.length <= maxBytes && UTF8_ENCODER.encode(value).byteLength <= maxBytes;
 }
 
 /** Return whether a persisted name matches the existing non-empty tool id contract. */
@@ -78,96 +101,180 @@ export function isSupportedToolExposureCheckpointVersion(
   return value === 1 || value === 2;
 }
 
-function collectSchemaDescriptions(value: unknown, output: string[]): void {
-  if (Array.isArray(value)) {
-    for (const entry of value) collectSchemaDescriptions(entry, output);
-    return;
-  }
-  if (!value || typeof value !== "object") return;
+/**
+ * Collect searchable schema descriptions without recursion or property reads.
+ * Getters are never invoked. Proxy reflection traps can still run; failures are
+ * caught and make only that schema non-searchable.
+ */
+function snapshotSchemaDescriptions(
+  root: unknown,
+  aggregate: SchemaSearchBudget,
+): string[] | null {
+  if (aggregate.nodes >= TOOL_SEARCH_TOTAL_SCHEMA_NODES) return null;
+  if (aggregate.bytes >= TOOL_SEARCH_TOTAL_SCHEMA_BYTES) return null;
 
-  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    if (key === "description" && typeof entry === "string") {
-      output.push(entry);
-    } else {
-      collectSchemaDescriptions(entry, output);
+  const descriptions: string[] = [];
+  const seen = new WeakSet<object>();
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: root, depth: 0 }];
+  let nodes = 0;
+  let bytes = 0;
+
+  const debitBytes = (value: string): boolean => {
+    if (value.length > TOOL_SEARCH_SCHEMA_MAX_BYTES) return false;
+    const length = UTF8_ENCODER.encode(value).byteLength;
+    bytes += length;
+    aggregate.bytes += length;
+    return bytes <= TOOL_SEARCH_SCHEMA_MAX_BYTES &&
+      aggregate.bytes <= TOOL_SEARCH_TOTAL_SCHEMA_BYTES;
+  };
+
+  try {
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current || current.depth > TOOL_SEARCH_SCHEMA_MAX_DEPTH) return null;
+      nodes += 1;
+      aggregate.nodes += 1;
+      if (
+        nodes > TOOL_SEARCH_SCHEMA_MAX_NODES ||
+        aggregate.nodes > TOOL_SEARCH_TOTAL_SCHEMA_NODES
+      ) return null;
+
+      if (typeof current.value === "string") {
+        if (!debitBytes(current.value)) return null;
+        continue;
+      }
+      if (!current.value || typeof current.value !== "object") continue;
+      if (seen.has(current.value)) return null;
+      seen.add(current.value);
+
+      const isArray = Array.isArray(current.value);
+      const prototype = Object.getPrototypeOf(current.value);
+      if (prototype !== null && prototype !== (isArray ? Array.prototype : Object.prototype)) {
+        return null;
+      }
+      const keys = Reflect.ownKeys(current.value);
+      if (keys.length > TOOL_SEARCH_SCHEMA_MAX_NODES - nodes) return null;
+
+      let arrayLength: number | null = null;
+      if (isArray) {
+        const lengthDescriptor = Object.getOwnPropertyDescriptor(current.value, "length");
+        if (!lengthDescriptor || !("value" in lengthDescriptor)) return null;
+        const length = lengthDescriptor.value;
+        if (!Number.isSafeInteger(length) || length < 0 || keys.length !== length + 1) return null;
+        arrayLength = length;
+      }
+
+      for (const key of keys) {
+        if (isArray && key === "length") continue;
+        if (typeof key !== "string" || !debitBytes(key)) return null;
+        if (isArray) {
+          const index = Number(key);
+          if (
+            !Number.isSafeInteger(index) || index < 0 || index >= (arrayLength ?? 0) ||
+            String(index) !== key
+          ) return null;
+        }
+        const descriptor = Object.getOwnPropertyDescriptor(current.value, key);
+        if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return null;
+        if (key === "description" && typeof descriptor.value === "string") {
+          descriptions.push(normalizeSearchText(descriptor.value));
+        }
+        stack.push({ value: descriptor.value, depth: current.depth + 1 });
+      }
     }
+  } catch {
+    return null;
+  }
+
+  return descriptions;
+}
+
+function snapshotSearchableTool(
+  tool: ToolDefinition,
+  status: ToolSearchMatch["status"],
+  budget: SchemaSearchBudget,
+): SearchableTool | null {
+  try {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) return null;
+    const name = Object.getOwnPropertyDescriptor(tool, "name");
+    const description = Object.getOwnPropertyDescriptor(tool, "description");
+    const parameters = Object.getOwnPropertyDescriptor(tool, "parameters");
+    if (
+      !name || !("value" in name) || typeof name.value !== "string" || name.value.length === 0 ||
+      !isUtf8LengthWithin(name.value, TOOL_SEARCH_NAME_MAX_BYTES) ||
+      !description || !("value" in description) || typeof description.value !== "string" ||
+      !isUtf8LengthWithin(description.value, TOOL_SEARCH_DESCRIPTION_MAX_BYTES) ||
+      (parameters && !("value" in parameters))
+    ) return null;
+    return {
+      name: name.value,
+      description: description.value,
+      status,
+      parameterDescriptions: parameters
+        ? snapshotSchemaDescriptions(parameters.value, budget) ?? []
+        : [],
+    };
+  } catch {
+    return null;
   }
 }
 
-function getMatchRank(input: {
-  query: string;
-  name: string;
-  description: string;
-  parameters?: unknown;
-}): number | null {
-  const query = normalizeSearchText(input.query);
-  if (!query) return null;
-
-  const name = normalizeSearchText(input.name);
+function getIndexedMatchRank(
+  query: string,
+  tool: SearchableTool,
+): number | null {
+  const name = normalizeSearchText(tool.name);
   if (name === query) return 0;
   if (name.includes(query)) return 1;
-  if (normalizeSearchText(input.description).includes(query)) return 2;
-
-  const parameterDescriptions: string[] = [];
-  collectSchemaDescriptions(input.parameters, parameterDescriptions);
-  return parameterDescriptions.some((description) =>
-      normalizeSearchText(description).includes(query)
-    )
-    ? 3
-    : null;
+  if (normalizeSearchText(tool.description).includes(query)) return 2;
+  return tool.parameterDescriptions.some((description) => description.includes(query)) ? 3 : null;
 }
 
-function getTermFallbackScore(input: {
+function rankToolExposureMatches(input: {
   query: string;
-  name: string;
-  description: string;
-  parameters?: unknown;
-}): { rank: number; matchCount: number } | null {
-  const terms = [
-    ...new Set(input.query.trim().split(/\s+/).map(normalizeSearchText).filter(Boolean)),
-  ];
-  if (terms.length < 2) return null;
-
-  const ranks = terms.flatMap((term) => {
-    const rank = getMatchRank({ ...input, query: term });
-    return rank === null ? [] : [rank];
-  });
-  return ranks.length > 0 ? { rank: Math.min(...ranks), matchCount: ranks.length } : null;
-}
-
-function rankToolExposureMatches(
-  query: string,
-  candidates: readonly { tool: ToolDefinition; status: ToolSearchMatch["status"] }[],
-): RankedToolSearchMatch[] {
+  available: readonly ToolDefinition[];
+  authorized: readonly ToolDefinition[];
+}): RankedToolSearchMatch[] {
+  if (!isUtf8LengthWithin(input.query, TOOL_SEARCH_QUERY_MAX_BYTES)) return [];
+  const query = normalizeSearchText(input.query);
+  if (!query) return [];
+  const terms = [...new Set(query.split(/\s+/).filter(Boolean))];
+  const budget: SchemaSearchBudget = { nodes: 0, bytes: 0 };
+  const candidates: SearchableTool[] = [];
+  let examinedCandidates = 0;
+  const append = (tools: readonly ToolDefinition[], status: ToolSearchMatch["status"]): void => {
+    for (const tool of tools) {
+      if (examinedCandidates >= TOOL_SEARCH_CANDIDATE_LIMIT) return;
+      examinedCandidates += 1;
+      const snapshot = snapshotSearchableTool(tool, status, budget);
+      if (snapshot) candidates.push(snapshot);
+    }
+  };
+  append(input.available, "available");
+  append(input.authorized, "loaded");
   const ranked: RankedToolSearchMatch[] = [];
 
-  for (const { tool, status } of candidates) {
-    const rank = getMatchRank({
-      query,
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    });
+  for (const tool of candidates) {
+    const rank = getIndexedMatchRank(query, tool);
     if (rank === null) continue;
     ranked.push({
       rank,
       matchCount: 1,
-      match: { name: tool.name, description: tool.description, status },
+      match: { name: tool.name, description: tool.description, status: tool.status },
     });
   }
 
-  if (ranked.length === 0) {
-    for (const { tool, status } of candidates) {
-      const score = getTermFallbackScore({
-        query,
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
+  if (ranked.length === 0 && terms.length >= 2) {
+    for (const tool of candidates) {
+      const ranks = terms.flatMap((term) => {
+        const rank = getIndexedMatchRank(term, tool);
+        return rank === null ? [] : [rank];
       });
-      if (!score) continue;
+      if (ranks.length === 0) continue;
       ranked.push({
-        ...score,
-        match: { name: tool.name, description: tool.description, status },
+        rank: Math.min(...ranks),
+        matchCount: ranks.length,
+        match: { name: tool.name, description: tool.description, status: tool.status },
       });
     }
   }
@@ -218,7 +325,7 @@ export function createToolSearchDefinition(): ToolDefinition {
         query: {
           type: "string",
           description:
-            "One exact tool name when known, or one short capability phrase. Do not combine alternatives.",
+            `One exact tool name when known, or one short capability phrase. UTF-8 input must be at most ${TOOL_SEARCH_QUERY_MAX_BYTES} bytes. Do not combine alternatives.`,
         },
       },
     },
@@ -286,10 +393,11 @@ export function searchToolExposure(input: {
   state: ToolExposureState;
   maxLoadedTools?: number;
 }): ToolSearchResult {
-  const ranked = rankToolExposureMatches(input.query, [
-    ...(input.available ?? []).map((tool) => ({ tool, status: "available" as const })),
-    ...input.authorized.map((tool) => ({ tool, status: "loaded" as const })),
-  ]);
+  const ranked = rankToolExposureMatches({
+    query: input.query,
+    available: input.available ?? [],
+    authorized: input.authorized,
+  });
   if (ranked[0]?.match.status === "available") {
     const matches = ranked
       .filter(({ match }) => match.status === "available")

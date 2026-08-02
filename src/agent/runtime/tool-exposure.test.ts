@@ -204,13 +204,30 @@ it("tool search falls back to deterministic whitespace terms after a phrase miss
 
 it("tool_search tells the model to search before declaring a requested tool unavailable", () => {
   const search = createToolSearchDefinition();
+  const querySchema = (search.parameters as {
+    properties?: { query?: { description?: string; maxLength?: number } };
+  }).properties?.query;
 
   assert(search.description.includes("before declaring a requested tool unavailable"));
   assertEquals(
-    (search.parameters as { properties?: { query?: { description?: string } } }).properties?.query
-      ?.description,
-    "One exact tool name when known, or one short capability phrase. Do not combine alternatives.",
+    querySchema?.description,
+    "One exact tool name when known, or one short capability phrase. UTF-8 input must be at most 256 bytes. Do not combine alternatives.",
   );
+  assertEquals(querySchema?.maxLength, undefined);
+});
+
+it("tool search enforces query limits in UTF-8 bytes", () => {
+  const search = (query: string) =>
+    searchToolExposure({
+      query,
+      authorized: [definition("matching_tool", query)],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name);
+
+  assertEquals(search("a".repeat(256)), ["matching_tool"]);
+  assertEquals(search("a".repeat(257)), []);
+  assertEquals(search("💥".repeat(64)), ["matching_tool"]);
+  assertEquals(search("💥".repeat(65)), []);
 });
 
 it("tool search breaks equal-rank ties by raw ASCII name order", () => {
@@ -266,6 +283,126 @@ it("tool search caps stable schema-free results at five", () => {
   assert(!serialized.includes("parameters"));
   assert(!serialized.includes("inputSchema"));
   assert(!serialized.includes("outputSchema"));
+});
+
+it("tool search treats deeply nested and cyclic parameter schemas as isolated non-matches", () => {
+  const deepRoot: Record<string, unknown> = {};
+  let cursor = deepRoot;
+  for (let index = 0; index < 20_000; index += 1) {
+    const child: Record<string, unknown> = {};
+    cursor.next = child;
+    cursor = child;
+  }
+  cursor.description = "deep-only capability";
+  const cyclic: Record<string, unknown> = {};
+  cyclic.self = cyclic;
+  cyclic.description = "cyclic-only capability";
+
+  const result = searchToolExposure({
+    query: "healthy capability",
+    authorized: [
+      { name: "deep", description: "Unrelated", parameters: deepRoot },
+      { name: "cyclic", description: "Unrelated", parameters: cyclic },
+      definition("healthy", "Healthy capability"),
+    ],
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["healthy"]);
+});
+
+it("tool search never invokes schema accessors and contains throwing proxy reflection", () => {
+  let getterReads = 0;
+  const accessorSchema = Object.defineProperty({}, "description", {
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      return "accessor capability";
+    },
+  });
+  let proxyReads = 0;
+  const proxySchema = new Proxy({}, {
+    ownKeys() {
+      proxyReads += 1;
+      throw new Error("hostile reflection");
+    },
+  });
+
+  const result = searchToolExposure({
+    query: "healthy capability",
+    authorized: [
+      { name: "accessor", description: "Unrelated", parameters: accessorSchema },
+      { name: "proxy", description: "Unrelated", parameters: proxySchema },
+      definition("healthy", "Healthy capability"),
+    ],
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["healthy"]);
+  assertEquals(getterReads, 0);
+  assertEquals(proxyReads, 1);
+});
+
+it("tool search bounds catalog traversal and returned description bytes", () => {
+  const within = Array.from(
+    { length: 4_096 },
+    (_, index) => definition(index === 4_095 ? "within_limit" : `irrelevant_${index}`, "Other"),
+  );
+  within.push(definition("beyondcatalog", "Beyond candidate ceiling"));
+  assertEquals(
+    searchToolExposure({
+      query: "within_limit",
+      authorized: within,
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["within_limit"],
+  );
+  assertEquals(
+    searchToolExposure({
+      query: "beyondcatalog",
+      authorized: within,
+      state: createToolExposureState(),
+    }).miss,
+    true,
+  );
+
+  const oversizedDescription = "💥".repeat(1_100);
+  assertEquals(
+    searchToolExposure({
+      query: "healthy",
+      authorized: [
+        definition("oversized", oversizedDescription),
+        definition("healthy", "Healthy bounded result"),
+      ],
+      state: createToolExposureState(),
+    }).matches.map((match) => match.name),
+    ["healthy"],
+  );
+});
+
+it("tool search preserves later name matches after exhausting aggregate schema work", () => {
+  const wideSchema = (): Record<string, unknown> => ({
+    type: "object",
+    properties: Object.fromEntries(
+      Array.from({ length: 4_000 }, (_, index) => [`field_${index}`, { type: "string" }]),
+    ),
+  });
+  const exhausting = Array.from(
+    { length: 20 },
+    (_, index) => ({
+      name: `wide_${index}`,
+      description: "Other",
+      parameters: wideSchema(),
+    }),
+  );
+
+  const result = searchToolExposure({
+    query: "healthy_after_budget",
+    authorized: [...exhausting, definition("healthy_after_budget", "Healthy")],
+    state: createToolExposureState(),
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["healthy_after_budget"]);
 });
 
 it("authorized search matches load for the next step", () => {

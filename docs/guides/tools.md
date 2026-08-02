@@ -100,6 +100,12 @@ matches. Results contain the tool name, description, and loading status, but no
 input or output schema. The search tool has no page or pagination parameter.
 Refine the query when the required tool is not in the first five matches.
 
+Search work is bounded to 4,096 catalog candidates. Each parameter schema is
+inspected iteratively with depth, node, and byte budgets, and the whole search
+has an aggregate schema-work budget. A malformed, cyclic, or over-budget schema
+cannot abort the search; that tool simply cannot match by parameter description.
+Name and description matching remains available for other healthy tools.
+
 The search only loads schemas from the current authorized `tools` catalog. It
 does not search or load provider-native `providerTools`. The runtime reapplies
 the current authorization policy before executing a tool and when restoring a
