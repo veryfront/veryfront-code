@@ -7,6 +7,7 @@ import { createDataInstruments } from "./data-instruments.ts";
 import { createErrorInstruments } from "./error-instruments.ts";
 import { createHttpInstruments } from "./http-instruments.ts";
 import { createMemoryInstruments } from "./memory-instruments.ts";
+import { createModelCallContextInstruments } from "./model-call-context-instruments.ts";
 import { createRenderInstruments } from "./render-instruments.ts";
 import { createRscInstruments } from "./rsc-instruments.ts";
 import { createStreamLifecycleInstruments } from "./stream-lifecycle-instruments.ts";
@@ -61,6 +62,12 @@ export function initializeInstruments(
     streamLifecycleSemanticIdleDuration: null,
     streamLifecycleToolInputDuration: null,
     streamLifecycleToolExecutionDuration: null,
+    modelCallContextWriterOutcomeCounter: null,
+    modelCallContextBarrierOutcomeCounter: null,
+    modelCallContextLogicalByteLength: null,
+    modelCallContextPartCount: null,
+    modelCallContextAppendRequestCount: null,
+    modelCallContextRecorderBarrierDuration: null,
   };
 
   try {
@@ -75,6 +82,7 @@ export function initializeInstruments(
       ...createMemoryInstruments(meter, config),
       ...createErrorInstruments(meter, config),
       ...createStreamLifecycleInstruments(meter, config),
+      ...createModelCallContextInstruments(meter, config),
     };
   } catch (error) {
     logger.warn("Failed to initialize metric instruments", error);

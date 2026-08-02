@@ -52,11 +52,11 @@ const result = await withSpan("load-data", async () => {
 | `getGlobalMetricsAPI` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L451) |
 | `getHostTelemetryEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/telemetry-env.ts#L7) |
 | `getLogBuffer` | Return log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L168) |
-| `getMetricsState` | State for get metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L38) |
+| `getMetricsState` | State for get metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L48) |
 | `getTraceContext` | Context for get trace. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L305) |
 | `initAutoInstrumentation` | Initialize automatic instrumentation wrappers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/orchestrator.ts#L13) |
 | `initializeOTLP` | Initialize OTLP tracing export. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L104) |
-| `initMetrics` | Initialize metrics collection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L20) |
+| `initMetrics` | Initialize metrics collection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L30) |
 | `initTracing` | Initialize tracing for the current runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L18) |
 | `injectContext` | Context for inject. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L93) |
 | `instrument` | Instrument an async operation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/wrappers.ts#L6) |
@@ -68,7 +68,7 @@ const result = await withSpan("load-data", async () => {
 | `instrumentSync` | Instrument a synchronous operation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/wrappers.ts#L28) |
 | `interceptConsole` | Capture console output in the log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L180) |
 | `isAutoInstrumentEnabled` | Check whether auto instrumentation is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/auto-instrument/orchestrator.ts#L42) |
-| `isMetricsEnabled` | Check whether metrics collection is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L28) |
+| `isMetricsEnabled` | Check whether metrics collection is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L38) |
 | `isOTLPEnabled` | Check whether OTLP export is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L122) |
 | `isReservedSharedRuntimeTelemetryEnvKey` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/telemetry-env.ts#L11) |
 | `isTracingDegraded` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L30) |
@@ -80,32 +80,32 @@ const result = await withSpan("load-data", async () => {
 | `profileSyncPhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L122) |
 | `recordApiRequest` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L291) |
 | `recordApiRetry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L305) |
-| `recordBuild` | Record build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L124) |
-| `recordBundle` | Record bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L132) |
-| `recordCacheGet` | Record cache get. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L56) |
-| `recordCacheInvalidate` | Record cache invalidate. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L69) |
-| `recordCacheSet` | Record cache set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L64) |
+| `recordBuild` | Record build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L134) |
+| `recordBundle` | Record bundle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L142) |
+| `recordCacheGet` | Record cache get. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L66) |
+| `recordCacheInvalidate` | Record cache invalidate. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L79) |
+| `recordCacheSet` | Record cache set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L74) |
 | `recordContentCacheHit` | Record a content cache hit at the specified layer | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L329) |
 | `recordContentNetworkFetch` | Record a content network fetch with timing | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L355) |
-| `recordCorsRejection` | Record CORS rejection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L153) |
-| `recordDataFetch` | Record data fetch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L140) |
-| `recordDataFetchError` | Error shape for record data fetch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L148) |
-| `recordErrorCount` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L162) |
-| `recordHttpRequest` | Request payload for record HTTP. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L43) |
-| `recordHttpRequestComplete` | Record HTTP request complete. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L48) |
-| `recordRender` | Record render. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L82) |
-| `recordRenderError` | Error shape for record render. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L90) |
-| `recordRSCError` | Error shape for record rscerror. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L119) |
-| `recordRSCRender` | Record RSC render. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L95) |
-| `recordRSCRequest` | Request payload for record rscrequest. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L111) |
-| `recordRSCStream` | Record RSC stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L103) |
-| `recordSecurityHeaders` | Record security headers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L158) |
+| `recordCorsRejection` | Record CORS rejection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L163) |
+| `recordDataFetch` | Record data fetch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L150) |
+| `recordDataFetchError` | Error shape for record data fetch. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L158) |
+| `recordErrorCount` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L172) |
+| `recordHttpRequest` | Request payload for record HTTP. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L53) |
+| `recordHttpRequestComplete` | Record HTTP request complete. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L58) |
+| `recordRender` | Record render. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L92) |
+| `recordRenderError` | Error shape for record render. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L100) |
+| `recordRSCError` | Error shape for record rscerror. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L129) |
+| `recordRSCRender` | Record RSC render. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L105) |
+| `recordRSCRequest` | Request payload for record rscrequest. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L121) |
+| `recordRSCStream` | Record RSC stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L113) |
+| `recordSecurityHeaders` | Record security headers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L168) |
 | `resetErrorCollector` | Reset captured runtime errors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/error-collector.ts#L347) |
 | `resetLogBuffer` | Reset the in-memory log buffer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L174) |
 | `setActiveSpanAttributes` | Sets active span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L282) |
-| `setCacheSize` | Sets cache size. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L77) |
+| `setCacheSize` | Sets cache size. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L87) |
 | `setSpanAttributes` | Sets span attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L62) |
-| `shutdownMetrics` | Shut down metrics collection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L33) |
+| `shutdownMetrics` | Shut down metrics collection. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/index.ts#L43) |
 | `shutdownOTLP` | Shut down OTLP tracing export. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L116) |
 | `shutdownTracing` | Shut down the tracing runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/index.ts#L35) |
 | `snapshotRequestProfiles` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/request-profiler.ts#L218) |
@@ -142,7 +142,7 @@ const result = await withSpan("load-data", async () => {
 | `LogLevel` | Public API contract for log level. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L5) |
 | `LogSubscriber` | Public API contract for log subscriber. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/log-buffer.ts#L26) |
 | `Meter` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L161) |
-| `MetricsConfig` | Configuration used by metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/types.ts#L75) |
+| `MetricsConfig` | Configuration used by metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/metrics/types.ts#L109) |
 | `ModuleServeStatus` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/simple-metrics/metrics-recorder.ts#L132) |
 | `ObservableGauge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/api-shim.ts#L157) |
 | `OpenTelemetryContextApi` | Public API contract for open telemetry context API. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/service-tracer.ts#L39) |
@@ -225,11 +225,11 @@ import { captureApplicationError, flushApplicationErrors, initializeSentry } fro
 |------|-------------|--------|
 | `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L20) |
 | `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L32) |
-| `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L90) |
-| `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L81) |
-| `isSentryEnabled` | Resolve the compatibility-release Sentry flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L43) |
-| `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L124) |
-| `resolveSentryConfigFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L59) |
+| `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L91) |
+| `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L82) |
+| `isSentryEnabled` | Resolve the compatibility-release Sentry flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L44) |
+| `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L130) |
+| `resolveSentryConfigFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L60) |
 
 #### Types
 

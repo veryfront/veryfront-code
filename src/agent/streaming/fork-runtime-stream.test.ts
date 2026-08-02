@@ -5,6 +5,8 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type ModelRuntime, registerModelProvider } from "#veryfront/provider";
 import { createToolsFromRemoteDefinitions, type RemoteToolSource } from "#veryfront/tool";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
+import type { ModelCallContext } from "../../runtime/model-call-context.ts";
+import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 import {
   applyPartToStreamedStepState,
   buildForkRuntimeStepFromResponse,
@@ -559,6 +561,7 @@ describe("agent/fork-runtime-stream", () => {
     const forkTools = { upload_attachment: uploadAttachment };
 
     const childParts: ForkPart[][] = [];
+    const childContexts: ModelCallContext[][] = [];
     for (const childOrdinal of [1, 2]) {
       const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
         apiUrl: "https://api.example.com",
@@ -577,14 +580,35 @@ describe("agent/fork-runtime-stream", () => {
       assertEquals(forkToolNames, ["upload_attachment"]);
 
       const parts: ForkPart[] = [];
-      for await (const part of streamResult.fullStream) {
-        parts.push(part);
-      }
+      const contexts: ModelCallContext[] = [];
+      await runWithModelCallRecorder(
+        (context) => {
+          contexts.push(context);
+        },
+        async () => {
+          for await (const part of streamResult.fullStream) {
+            parts.push(part);
+          }
+        },
+      );
       childParts.push(parts);
+      childContexts.push(contexts);
     }
 
     assertEquals(providerToolNames, ["upload_attachment"]);
     assertEquals(streamCalls, 4);
+    assertEquals(childContexts.map((contexts) => contexts.length), [2, 2]);
+    for (let index = 0; index < childContexts.length; index += 1) {
+      const contexts = childContexts[index] ?? [];
+      const first = JSON.stringify(contexts[0]);
+      const second = JSON.stringify(contexts[1]);
+      assertEquals(first.includes(`Inspect attachment ${index + 1}.`), true);
+      assertEquals(first.includes("Base instructions."), true);
+      assertEquals(second.includes(`upload-call-${index + 1}`), true);
+      assertEquals(second.includes(`attachment-${index + 1}`), true);
+      assertEquals(second.includes("uploaded"), true);
+      assertEquals(second.includes("ROOT_CROSS_RUN_SENTINEL"), false);
+    }
     assertEquals(remoteExecutions, [
       {
         toolName: "gmail__upload_attachment",

@@ -229,7 +229,7 @@ export type ConversationRunQueueFlushOutcome =
 /** Public API contract for conversation run event queue controller. */
 export interface ConversationRunEventQueueController {
   enqueue(events: unknown[]): void;
-  flush(): Promise<
+  flush(options?: { abortSignal?: AbortSignal }): Promise<
     | {
       outcome: "idle" | "flushed";
       latestEventId: number;
@@ -247,6 +247,7 @@ export interface ConversationRunEventQueueController {
       disabled: true;
       disableReason?:
         | "cursor_resyncs_exhausted"
+        | "cursor_mismatch_ambiguous"
         | "non_appendable"
         | "ignorable_append_rejection"
         | "payload_too_large"
@@ -268,7 +269,16 @@ export interface ConversationRunEventQueueController {
     pendingEventCount: number;
     consecutiveFailures: number;
     disabled: boolean;
+    appendRequestCount?: number;
+    disableReason?:
+      | "cursor_resyncs_exhausted"
+      | "cursor_mismatch_ambiguous"
+      | "non_appendable"
+      | "ignorable_append_rejection"
+      | "payload_too_large"
+      | "auth_rejected";
   };
+  dispose?(): void;
 }
 
 /** Zod schema for get create conversation run accepted. */

@@ -7,6 +7,7 @@ import {
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
 } from "./run-event-normalization.ts";
+import { createModelCallContextRunEvents } from "../hosted/model-call-context-run-event-recorder.ts";
 
 describe("agent/conversation-run-event-normalization", () => {
   it("returns UTF-8 byte length for JSON-serialized values", () => {
@@ -215,5 +216,57 @@ describe("agent/conversation-run-event-normalization", () => {
 
     const result = normalizeConversationRunEvents(events);
     assertEquals(result.length > 2, true);
+  });
+
+  it("preserves valid model-call context envelopes byte-for-byte instead of summarizing", async () => {
+    const [event] = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "x".repeat(300 * 1024) }],
+    });
+    if (!event) throw new Error("expected event");
+    assertEquals(normalizeConversationRunEvent(event), [event]);
+  });
+
+  it("keeps pass-through model-call context envelopes within the per-event payload budget", async () => {
+    // Model-call context events skip summarization, so the recorder must chunk any
+    // context above the budget itself — otherwise normalization would hand the API
+    // an event it rejects and fail the run closed before dispatch.
+    const events = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "x".repeat(300 * 1024) }],
+    });
+
+    assertEquals(events.length > 1, true);
+    for (const event of normalizeConversationRunEvents(events)) {
+      assertEquals(
+        getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+        true,
+      );
+    }
+  });
+
+  it("rejects malformed model-call context envelopes", () => {
+    let rejected = false;
+    try {
+      normalizeConversationRunEvent({
+        type: "AGENT_RUN_MODEL_CALL_CONTEXT",
+        contextId: "not-a-uuid",
+      });
+    } catch {
+      rejected = true;
+    }
+    assertEquals(rejected, true);
+  });
+
+  it("rejects model-call context envelopes with unrecognized fields", async () => {
+    const [event] = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "exact" }],
+    });
+    if (!event) throw new Error("expected event");
+    let rejected = false;
+    try {
+      normalizeConversationRunEvent({ ...event, unexpected: "content" });
+    } catch {
+      rejected = true;
+    }
+    assertEquals(rejected, true);
   });
 });

@@ -51,6 +51,10 @@ export {
   parseAppendConversationRunEventsErrorBody,
 } from "./durable-append-errors.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
+import {
+  isModelCallContextRunEvent,
+  ModelCallContextPersistenceError,
+} from "./model-call-context-run-event.ts";
 export type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,
@@ -75,12 +79,12 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   const controller = new AbortController();
   let abortedByCaller = false;
   const timeout = setTimeout(() => {
-    controller.abort();
+    controller.abort(new DOMException("Conversation run API request timed out", "TimeoutError"));
   }, timeoutMs);
 
   const onAbort = () => {
     abortedByCaller = true;
-    controller.abort();
+    controller.abort(abortSignal?.reason);
   };
 
   if (abortSignal?.aborted) {
@@ -184,12 +188,13 @@ export async function recoverConversationRunCursorMismatch(input: {
   latestExternalEventSequence: number;
   cursorResyncsThisFlush: number;
   maxCursorResyncsPerFlush: number;
+  cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
 }): Promise<{
   outcome: ConversationRunAppendRecoveryOutcome;
   latestEventId: number;
   latestExternalEventSequence: number;
-  disableReason?: "cursor_resyncs_exhausted" | "non_appendable";
+  disableReason?: "cursor_resyncs_exhausted" | "cursor_mismatch_ambiguous" | "non_appendable";
   run?: ConversationRunProjection;
 }> {
   if (!isCursorMismatchConversationRunAppendError(input.error)) {
@@ -197,6 +202,19 @@ export async function recoverConversationRunCursorMismatch(input: {
       outcome: "bubbled",
       latestEventId: input.latestEventId,
       latestExternalEventSequence: input.latestExternalEventSequence,
+    };
+  }
+
+  // Durable-ID batches are replayed only when the append endpoint itself proves
+  // exact replay or a committed prefix and returns 200. A cursor mismatch is
+  // therefore ambiguous and must never resync to the latest projection, which
+  // could duplicate a partially committed context after unrelated events.
+  if (input.cursorMode === "durable_event_id") {
+    return {
+      outcome: "stopped",
+      latestEventId: input.latestEventId,
+      latestExternalEventSequence: input.latestExternalEventSequence,
+      disableReason: "cursor_mismatch_ambiguous",
     };
   }
 
@@ -256,6 +274,7 @@ export async function recoverConversationRunAppendFailure(input: {
   latestExternalEventSequence: number;
   cursorResyncsThisFlush: number;
   maxCursorResyncsPerFlush: number;
+  cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
 }): Promise<{
   outcome: ConversationRunAppendFailureOutcome;
@@ -263,6 +282,7 @@ export async function recoverConversationRunAppendFailure(input: {
   latestExternalEventSequence: number;
   disableReason?:
     | "cursor_resyncs_exhausted"
+    | "cursor_mismatch_ambiguous"
     | "non_appendable"
     | "ignorable_append_rejection"
     | "payload_too_large"
@@ -280,6 +300,7 @@ export async function recoverConversationRunAppendFailure(input: {
     latestExternalEventSequence: input.latestExternalEventSequence,
     cursorResyncsThisFlush: input.cursorResyncsThisFlush,
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
+    cursorMode: input.cursorMode,
     abortSignal: input.abortSignal,
   });
 
@@ -357,6 +378,7 @@ export async function recoverConversationRunAppendExecution(input: {
   cursorResyncsThisFlush: number;
   consecutiveFailures: number;
   maxCursorResyncsPerFlush: number;
+  cursorMode?: "external_sequence" | "durable_event_id";
   abortSignal?: AbortSignal;
 }): Promise<
   | {
@@ -372,6 +394,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestExternalEventSequence: number;
     disableReason?:
       | "cursor_resyncs_exhausted"
+      | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
       | "payload_too_large"
@@ -396,6 +419,7 @@ export async function recoverConversationRunAppendExecution(input: {
     latestExternalEventSequence: input.latestExternalEventSequence,
     cursorResyncsThisFlush: input.cursorResyncsThisFlush,
     maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
+    cursorMode: input.cursorMode,
     abortSignal: input.abortSignal,
   });
 
@@ -483,6 +507,7 @@ export async function flushConversationRunEventBatches(input: {
   consecutiveFailures?: number;
   maxCursorResyncsPerFlush: number;
   abortSignal?: AbortSignal;
+  onAppendRequest?: () => void;
 }): Promise<
   | {
     outcome: "flushed";
@@ -503,6 +528,7 @@ export async function flushConversationRunEventBatches(input: {
     latestExternalEventSequence: number;
     disableReason?:
       | "cursor_resyncs_exhausted"
+      | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
       | "payload_too_large"
@@ -519,16 +545,22 @@ export async function flushConversationRunEventBatches(input: {
   let latestExternalEventSequence = input.latestExternalEventSequence;
 
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    input.abortSignal?.throwIfAborted();
     const batch = batches[batchIndex];
     if (!batch) {
       continue;
     }
+    const cursorMode = batch.some(isModelCallContextRunEvent)
+      ? "durable_event_id" as const
+      : "external_sequence" as const;
     try {
+      input.onAppendRequest?.();
       const response = await appendConversationRunEvents({
         authToken: input.authToken,
         apiUrl: input.apiUrl,
         conversationId: input.conversationId,
         runId: input.runId,
+        ...(cursorMode === "durable_event_id" ? { expectedPreviousEventId: latestEventId } : {}),
         expectedPreviousExternalEventSequence: latestExternalEventSequence,
         events: batch,
         abortSignal: input.abortSignal,
@@ -536,6 +568,7 @@ export async function flushConversationRunEventBatches(input: {
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
     } catch (error) {
+      input.abortSignal?.throwIfAborted();
       const recovered = await recoverConversationRunAppendExecution({
         error,
         authToken: input.authToken,
@@ -549,6 +582,7 @@ export async function flushConversationRunEventBatches(input: {
         cursorResyncsThisFlush: input.cursorResyncsThisFlush ?? 0,
         consecutiveFailures: input.consecutiveFailures ?? 0,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
+        cursorMode,
         abortSignal: input.abortSignal,
       });
 
@@ -595,6 +629,7 @@ export async function flushConversationRunEventQueue(input: {
   maxCursorResyncsPerFlush: number;
   consecutiveFailures?: number;
   abortSignal?: AbortSignal;
+  onAppendRequest?: () => void;
 }): Promise<
   | {
     outcome: "flushed";
@@ -607,6 +642,7 @@ export async function flushConversationRunEventQueue(input: {
     latestExternalEventSequence: number;
     disableReason?:
       | "cursor_resyncs_exhausted"
+      | "cursor_mismatch_ambiguous"
       | "non_appendable"
       | "ignorable_append_rejection"
       | "payload_too_large"
@@ -646,6 +682,7 @@ export async function flushConversationRunEventQueue(input: {
       consecutiveFailures,
       maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
       abortSignal: input.abortSignal,
+      onAppendRequest: input.onAppendRequest,
     });
 
     latestEventId = flushed.latestEventId;
@@ -706,9 +743,15 @@ export function createConversationRunEventQueueController(input: {
   let pendingEvents: unknown[] = [];
   let consecutiveFailures = 0;
   let disabled = false;
+  let disposed = false;
+  let appendRequestCount = 0;
+  let disableReason: ReturnType<
+    ConversationRunEventQueueController["getSnapshot"]
+  >["disableReason"];
   let flushTail: Promise<unknown> | null = null;
 
-  async function flushOnce() {
+  async function flushOnce(abortSignal?: AbortSignal) {
+    abortSignal?.throwIfAborted();
     if (disabled) {
       return {
         outcome: "idle" as const,
@@ -748,10 +791,27 @@ export function createConversationRunEventQueueController(input: {
         maxBatchPayloadBytes: input.maxBatchPayloadBytes,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
         consecutiveFailures,
+        abortSignal,
+        onAppendRequest: () => {
+          appendRequestCount += 1;
+        },
       });
     } catch (error) {
-      pendingEvents = [...queuedEvents, ...pendingEvents];
+      if (!disposed) {
+        pendingEvents = [...queuedEvents, ...pendingEvents];
+      }
       throw error;
+    }
+
+    if (disposed) {
+      return {
+        outcome: "idle" as const,
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: 0,
+        consecutiveFailures,
+        disabled: true,
+      };
     }
 
     latestEventId = flushed.latestEventId;
@@ -772,6 +832,7 @@ export function createConversationRunEventQueueController(input: {
     if (flushed.outcome === "stopped") {
       pendingEvents = [];
       disabled = true;
+      disableReason = flushed.disableReason;
       return {
         outcome: "stopped" as const,
         latestEventId,
@@ -798,19 +859,21 @@ export function createConversationRunEventQueueController(input: {
 
   return {
     enqueue(events) {
-      if (disabled || events.length === 0) {
+      if (disposed || disabled || events.length === 0) {
         return;
       }
 
       pendingEvents.push(...events);
     },
-    flush() {
+    flush(options) {
       // Serialize overlapping flushes: a second call while one is still
       // awaiting the network would read stale cursors and burn resync budget
       // on a self-inflicted cursor mismatch. Start synchronously when idle so
       // events enqueued right after flush() still hit the in-flight merge
       // path.
-      const result = flushTail === null ? flushOnce() : flushTail.then(flushOnce);
+      const result = flushTail === null
+        ? flushOnce(options?.abortSignal)
+        : flushTail.then(() => flushOnce(options?.abortSignal));
       const tail = result.catch(() => {});
       flushTail = tail;
       tail.then(() => {
@@ -827,7 +890,14 @@ export function createConversationRunEventQueueController(input: {
         pendingEventCount: pendingEvents.length,
         consecutiveFailures,
         disabled,
+        appendRequestCount,
+        ...(disableReason ? { disableReason } : {}),
       };
+    },
+    dispose() {
+      disposed = true;
+      disabled = true;
+      pendingEvents = [];
     },
   };
 }
@@ -894,8 +964,7 @@ async function controlPlaneJson<T>(input: {
     return input.responseSchema.parse(await response.json());
   } catch (error) {
     if (
-      error instanceof DOMException &&
-      error.name === "AbortError" &&
+      timedAbort.signal.aborted &&
       !timedAbort.wasAbortedByCaller()
     ) {
       throw TIMEOUT_ERROR.create({
@@ -1000,6 +1069,18 @@ export async function appendConversationRunEvents(input: {
   }
 
   const timedAbort = createTimedAbortSignal(AGENT_RUN_API_TIMEOUT_MS, input.abortSignal);
+  const normalizedEvents = normalizeConversationRunEvents(
+    input.events as Parameters<typeof normalizeConversationRunEvents>[0],
+  );
+  const requiresDurableCursor = normalizedEvents.some(isModelCallContextRunEvent);
+  const isPureModelCallContextBatch = normalizedEvents.length > 0 &&
+    normalizedEvents.every(isModelCallContextRunEvent);
+  if (requiresDurableCursor && input.expectedPreviousEventId === undefined) {
+    timedAbort.cleanup();
+    throw new ModelCallContextPersistenceError(
+      "Model-call context append requires expected_previous_event_id",
+    );
+  }
 
   // The timed abort must stay armed while the body is read: a server that
   // stalls mid-body would otherwise hang past the timeout.
@@ -1016,7 +1097,7 @@ export async function appendConversationRunEvents(input: {
           ...(input.expectedPreviousEventId !== undefined
             ? { expected_previous_event_id: input.expectedPreviousEventId }
             : {}),
-          ...(input.expectedPreviousExternalEventSequence !== undefined
+          ...(!requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined
             ? {
               expected_previous_external_event_sequence:
                 input.expectedPreviousExternalEventSequence,
@@ -1027,9 +1108,7 @@ export async function appendConversationRunEvents(input: {
           // direct callers (hosted lifecycle, child-run progress) do not — this makes
           // it impossible to POST an event the API would reject for size. Idempotent
           // on already-normalized events.
-          events: normalizeConversationRunEvents(
-            input.events as Parameters<typeof normalizeConversationRunEvents>[0],
-          ),
+          events: normalizedEvents,
         }),
         signal: timedAbort.signal,
       },
@@ -1044,11 +1123,44 @@ export async function appendConversationRunEvents(input: {
       });
     }
 
-    return AppendConversationRunEventsResponseSchema.parse(await response.json());
+    const responseBody = await response.json();
+    // Pure private-event appends do not advance the external cursor and the API
+    // intentionally omits it. Preserve the caller's known cursor so the shared
+    // queue result remains total; mixed batches return the advanced API value.
+    if (
+      isPureModelCallContextBatch && input.expectedPreviousExternalEventSequence !== undefined &&
+      responseBody && typeof responseBody === "object" && !Array.isArray(responseBody)
+    ) {
+      const body = responseBody as Record<string, unknown>;
+      if (
+        body.latestExternalEventSequence === undefined &&
+        body.latest_external_event_sequence === undefined
+      ) {
+        if (body.latestEventId !== undefined) {
+          body.latestExternalEventSequence = input.expectedPreviousExternalEventSequence;
+        } else {
+          body.latest_external_event_sequence = input.expectedPreviousExternalEventSequence;
+        }
+      }
+      const run = body.run;
+      if (run && typeof run === "object" && !Array.isArray(run)) {
+        const runBody = run as Record<string, unknown>;
+        if (
+          runBody.latestExternalEventSequence === undefined &&
+          runBody.latest_external_event_sequence === undefined
+        ) {
+          if (runBody.latestEventId !== undefined) {
+            runBody.latestExternalEventSequence = input.expectedPreviousExternalEventSequence;
+          } else {
+            runBody.latest_external_event_sequence = input.expectedPreviousExternalEventSequence;
+          }
+        }
+      }
+    }
+    return AppendConversationRunEventsResponseSchema.parse(responseBody);
   } catch (error) {
     if (
-      error instanceof DOMException &&
-      error.name === "AbortError" &&
+      timedAbort.signal.aborted &&
       !timedAbort.wasAbortedByCaller()
     ) {
       throw TIMEOUT_ERROR.create({

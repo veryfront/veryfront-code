@@ -71,6 +71,12 @@ export class MetricsManager {
       streamLifecycleSemanticIdleDuration: null,
       streamLifecycleToolInputDuration: null,
       streamLifecycleToolExecutionDuration: null,
+      modelCallContextWriterOutcomeCounter: null,
+      modelCallContextBarrierOutcomeCounter: null,
+      modelCallContextLogicalByteLength: null,
+      modelCallContextPartCount: null,
+      modelCallContextAppendRequestCount: null,
+      modelCallContextRecorderBarrierDuration: null,
     };
   }
 
