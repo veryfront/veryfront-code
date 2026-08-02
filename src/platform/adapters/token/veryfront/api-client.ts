@@ -1,5 +1,11 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { type VeryfrontTokenConfig } from "./types.ts";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import {
+  assertTokenStorageKey,
+  assertTokenStoragePrefix,
+  assertTokenStorageValue,
+  type VeryfrontTokenConfig,
+} from "./types.ts";
 import { TOKEN_STORAGE_ERROR } from "#veryfront/errors/error-registry.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
@@ -8,15 +14,26 @@ import {
 } from "../../veryfront-api-transport.ts";
 
 const logger = baseLogger.component("token-storage-api-client");
+const MAX_TOKEN_STORAGE_RESPONSE_BODY_BYTES = 1024 * 1024;
 
-/** Default timeout for token storage API requests (30 seconds) */
-const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+interface TokenStorageHttpResponse {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  bodyText: string;
+}
 
-async function cancelResponseBody(response: Response, operation: string): Promise<void> {
+function cancelResponseBody(response: Response, operation: string): void {
   if (!response.body) return;
 
   try {
-    await response.body.cancel();
+    void response.body.cancel().catch((error) => {
+      logger.debug("Response body cancellation failed during token storage cleanup", {
+        operation,
+        status: response.status,
+        error,
+      });
+    });
   } catch (error) {
     logger.debug("Response body cancellation failed during token storage cleanup", {
       operation,
@@ -27,37 +44,50 @@ async function cancelResponseBody(response: Response, operation: string): Promis
 }
 
 export class TokenStorageApiClient {
-  private config: VeryfrontTokenConfig;
-  private transport: VeryfrontApiTransport<Response>;
+  private readonly config: VeryfrontTokenConfig;
+  private readonly transport: VeryfrontApiTransport<TokenStorageHttpResponse>;
 
   constructor(config: VeryfrontTokenConfig) {
     this.config = config;
 
     const { maxRetries, initialDelay, maxDelay } = config.retry;
-    const timeoutMs = config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
 
-    this.transport = createVeryfrontApiTransport<Response>({
+    this.transport = createVeryfrontApiTransport<TokenStorageHttpResponse>({
       baseUrl: config.apiBaseUrl,
       getToken: () => config.apiToken,
       retry: { maxRetries, initialDelay, maxDelay },
-      timeoutMs,
+      timeoutMs: config.timeoutMs,
       defaultHeaders: { "Accept": "application/json" },
 
-      onResponse: async (response) => {
-        // 4xx non-429: pass the response through so callers handle it.
-        if (response.status >= 400 && response.status < 500 && response.status !== 429) {
-          return response;
-        }
+      onResponse: async (response, _init, _url, signal) => {
         // 5xx / 429: throw to trigger retry logic. Cancel the body first so
         // retries do not hold connections/buffers open.
         if (!response.ok && (response.status >= 500 || response.status === 429)) {
-          await cancelResponseBody(response, "retry");
+          cancelResponseBody(response, "retry");
           throw TOKEN_STORAGE_ERROR.create({
             detail: `Server error: ${response.status}`,
             status: response.status,
           });
         }
-        return response;
+
+        const { text, truncated } = await readResponseTextPrefix(
+          response,
+          MAX_TOKEN_STORAGE_RESPONSE_BODY_BYTES,
+          signal,
+        );
+        if (truncated) {
+          throw TOKEN_STORAGE_ERROR.create({
+            detail:
+              `Token storage response body exceeds ${MAX_TOKEN_STORAGE_RESPONSE_BODY_BYTES} bytes`,
+            status: 502,
+          });
+        }
+        return {
+          ok: response.ok,
+          status: response.status,
+          statusText: response.statusText,
+          bodyText: text,
+        };
       },
 
       wrapFinalError: (lastError) =>
@@ -68,6 +98,7 @@ export class TokenStorageApiClient {
   }
 
   async get(key: string): Promise<string | null> {
+    assertTokenStorageKey(key);
     const url = this.buildUrl(key);
 
     try {
@@ -78,14 +109,19 @@ export class TokenStorageApiClient {
       }
 
       if (!response.ok) {
-        await cancelResponseBody(response, "get");
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to get token: ${response.statusText}`,
           status: response.status,
         });
       }
 
-      const data: { value: string } = await response.json();
+      const data = this.parseJsonBody(response, "get");
+      if (!isRecord(data) || typeof data.value !== "string") {
+        throw TOKEN_STORAGE_ERROR.create({
+          detail: "Malformed get response: expected an object with a string value",
+          status: 502,
+        });
+      }
       return data.value;
     } catch (error) {
       throw this.wrapError(error, "Get", key, `Failed to get token`);
@@ -93,6 +129,8 @@ export class TokenStorageApiClient {
   }
 
   async set(key: string, value: string): Promise<void> {
+    assertTokenStorageKey(key);
+    assertTokenStorageValue(value);
     const url = this.buildUrl(key);
 
     try {
@@ -103,7 +141,6 @@ export class TokenStorageApiClient {
       });
 
       if (!response.ok) {
-        await cancelResponseBody(response, "set");
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to set token: ${response.statusText}`,
           status: response.status,
@@ -115,6 +152,7 @@ export class TokenStorageApiClient {
   }
 
   async delete(key: string): Promise<void> {
+    assertTokenStorageKey(key);
     const url = this.buildUrl(key);
 
     try {
@@ -124,7 +162,6 @@ export class TokenStorageApiClient {
         return;
       }
 
-      await cancelResponseBody(response, "delete");
       throw TOKEN_STORAGE_ERROR.create({
         detail: `Failed to delete token: ${response.statusText}`,
         status: response.status,
@@ -134,30 +171,40 @@ export class TokenStorageApiClient {
     }
   }
 
-  async list(prefix?: string): Promise<string[]> {
-    const url = new URL(
-      `/v1/projects/${encodeURIComponent(this.config.projectSlug)}/tokens`,
-      this.config.apiBaseUrl,
-    );
+  async list(prefix?: string, signal?: AbortSignal): Promise<string[]> {
+    assertTokenStoragePrefix(prefix);
+    let url = `/v1/projects/${encodeURIComponent(this.config.projectSlug)}/tokens`;
 
-    if (prefix) {
-      url.searchParams.set("prefix", prefix);
+    if (prefix !== undefined && prefix.length > 0) {
+      const search = new URLSearchParams({ prefix });
+      url += `?${search.toString()}`;
     }
 
     try {
-      const response = await this.transport.request(url.toString());
+      const response = await this.transport.request(url, { signal });
 
       if (!response.ok) {
-        await cancelResponseBody(response, "list");
         throw TOKEN_STORAGE_ERROR.create({
           detail: `Failed to list tokens: ${response.statusText}`,
           status: response.status,
         });
       }
 
-      const data: { keys?: string[] } = await response.json();
+      const data = this.parseJsonBody(response, "list");
+      if (
+        !isRecord(data) ||
+        (data.keys !== undefined &&
+          (!Array.isArray(data.keys) ||
+            !data.keys.every((key: unknown) => typeof key === "string")))
+      ) {
+        throw TOKEN_STORAGE_ERROR.create({
+          detail: "Malformed list response: expected an object with a string keys array",
+          status: 502,
+        });
+      }
       return data.keys ?? [];
     } catch (error) {
+      signal?.throwIfAborted();
       if (error instanceof VeryfrontError && error.slug === "token-storage-error") {
         throw error;
       }
@@ -173,22 +220,33 @@ export class TokenStorageApiClient {
     }
   }
 
-  async ping(): Promise<boolean> {
+  async ping(signal?: AbortSignal): Promise<boolean> {
     try {
-      await this.list();
+      await this.list(undefined, signal);
       return true;
-    } catch (_) {
+    } catch {
+      signal?.throwIfAborted();
       /* expected: ping returns false when API is unreachable */
       return false;
     }
   }
 
   private buildUrl(key: string): string {
-    return `${this.config.apiBaseUrl}/v1/projects/${
-      encodeURIComponent(
-        this.config.projectSlug,
-      )
-    }/tokens/${encodeURIComponent(key)}`;
+    return `/v1/projects/${encodeURIComponent(this.config.projectSlug)}/tokens/${
+      encodeURIComponent(key)
+    }`;
+  }
+
+  private parseJsonBody(response: TokenStorageHttpResponse, operation: string): unknown {
+    try {
+      return JSON.parse(response.bodyText);
+    } catch (cause) {
+      throw TOKEN_STORAGE_ERROR.create({
+        detail: `Malformed ${operation} response: expected valid JSON`,
+        cause,
+        status: 502,
+      });
+    }
   }
 
   private wrapError(
@@ -207,4 +265,8 @@ export class TokenStorageApiClient {
 
     return TOKEN_STORAGE_ERROR.create({ detail: `${prefixMessage}: ${message}` });
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

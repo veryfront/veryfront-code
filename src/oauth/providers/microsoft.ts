@@ -13,11 +13,13 @@ const microsoftBase = {
   additionalAuthParams: {
     response_mode: "query",
   },
+  pkceMode: "supported",
 } satisfies Omit<OAuthServiceConfig, "serviceId" | "apiBaseUrl" | "defaultScopes">;
 
 /** Configuration used by outlook. */
 export const outlookConfig: OAuthServiceConfig = {
   ...microsoftBase,
+  additionalAuthParams: { ...microsoftBase.additionalAuthParams },
   serviceId: "outlook",
   displayName: "Outlook",
   apiBaseUrl: graphApiBaseUrl,
@@ -25,9 +27,11 @@ export const outlookConfig: OAuthServiceConfig = {
     "Mail.Read",
     "Mail.Send",
     "Mail.ReadWrite",
+    "Mail.Read.Shared",
     "Calendars.Read",
     "Calendars.ReadWrite",
-    "User.Read",
+    "Group.Read.All",
+    "Group-Conversation.Read.All",
     "offline_access",
   ],
 };
@@ -35,16 +39,16 @@ export const outlookConfig: OAuthServiceConfig = {
 /** Configuration used by teams. */
 export const teamsConfig: OAuthServiceConfig = {
   ...microsoftBase,
+  additionalAuthParams: { ...microsoftBase.additionalAuthParams },
   serviceId: "teams",
   displayName: "Microsoft Teams",
   apiBaseUrl: graphApiBaseUrl,
   defaultScopes: [
-    "Team.ReadBasic.All",
-    "Channel.ReadBasic.All",
     "Chat.Read",
     "Chat.ReadWrite",
-    "ChannelMessage.Read.All",
-    "User.Read",
+    "ChannelMessage.Send",
+    "Channel.ReadBasic.All",
+    "Team.ReadBasic.All",
     "offline_access",
   ],
 };
@@ -52,6 +56,7 @@ export const teamsConfig: OAuthServiceConfig = {
 /** Configuration used by share point. */
 export const sharePointConfig: OAuthServiceConfig = {
   ...microsoftBase,
+  additionalAuthParams: { ...microsoftBase.additionalAuthParams },
   serviceId: "sharepoint",
   displayName: "SharePoint",
   apiBaseUrl: graphApiBaseUrl,
@@ -60,7 +65,6 @@ export const sharePointConfig: OAuthServiceConfig = {
     "Sites.ReadWrite.All",
     "Files.Read.All",
     "Files.ReadWrite.All",
-    "User.Read",
     "offline_access",
   ],
 };
@@ -68,6 +72,7 @@ export const sharePointConfig: OAuthServiceConfig = {
 /** Configuration used by one drive. */
 export const oneDriveConfig: OAuthServiceConfig = {
   ...microsoftBase,
+  additionalAuthParams: { ...microsoftBase.additionalAuthParams },
   serviceId: "onedrive",
   displayName: "OneDrive",
   apiBaseUrl: graphApiBaseUrl,
@@ -76,7 +81,6 @@ export const oneDriveConfig: OAuthServiceConfig = {
     "Files.ReadWrite",
     "Files.Read.All",
     "Files.ReadWrite.All",
-    "User.Read",
     "offline_access",
   ],
 };

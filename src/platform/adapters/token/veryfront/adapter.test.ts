@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_VERYFRONT_API_RETRIES } from "#veryfront/utils/config-resource-limits.ts";
 import { VeryfrontTokenAdapter } from "./adapter.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 
@@ -23,6 +24,32 @@ describe("platform/adapters/token/veryfront/adapter", () => {
       const adapter = new VeryfrontTokenAdapter(createConfig());
       assertEquals(typeof adapter, "object");
     });
+
+    it("enforces retry policy at adapter construction", () => {
+      for (
+        const retry of [
+          { maxRetries: 10, initialDelay: 0, maxDelay: 0 },
+          { maxRetries: 0, initialDelay: Number.NaN, maxDelay: 0 },
+          { maxRetries: 0, initialDelay: 2, maxDelay: 1 },
+        ]
+      ) {
+        assertThrows(
+          () => new VeryfrontTokenAdapter(createConfig({ retry })),
+          RangeError,
+        );
+      }
+
+      const adapter = new VeryfrontTokenAdapter(
+        createConfig({
+          retry: {
+            maxRetries: MAX_VERYFRONT_API_RETRIES,
+            initialDelay: 0,
+            maxDelay: 0,
+          },
+        }),
+      );
+      assertEquals(typeof adapter, "object");
+    });
   });
 
   describe("initialize", () => {
@@ -32,6 +59,64 @@ describe("platform/adapters/token/veryfront/adapter", () => {
         () => adapter.initialize(),
         VeryfrontError,
       );
+    });
+
+    it("coalesces concurrent connection checks", async () => {
+      const originalFetch = globalThis.fetch;
+      let requests = 0;
+      globalThis.fetch = () => {
+        requests++;
+        return Promise.resolve(Response.json({ keys: [] }));
+      };
+
+      try {
+        const adapter = new VeryfrontTokenAdapter(createConfig({
+          apiBaseUrl: "https://api.example.com",
+        }));
+        await Promise.all([
+          adapter.initialize(),
+          adapter.initialize(),
+          adapter.initialize(),
+        ]);
+        assertEquals(requests, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("does not let a late connection check resurrect a disposed adapter", async () => {
+      const originalFetch = globalThis.fetch;
+      let resolveResponse: ((response: Response) => void) | undefined;
+      globalThis.fetch = () =>
+        new Promise<Response>((resolve) => {
+          resolveResponse = resolve;
+        });
+
+      try {
+        const adapter = new VeryfrontTokenAdapter(createConfig({
+          apiBaseUrl: "https://api.example.com",
+        }));
+        const initialization = adapter.initialize();
+        await Promise.resolve();
+        adapter.dispose();
+        resolveResponse?.(Response.json({ keys: [] }));
+
+        await assertRejects(
+          () => initialization,
+          DOMException,
+          "invalidated",
+        );
+
+        let retries = 0;
+        globalThis.fetch = () => {
+          retries++;
+          return Promise.resolve(Response.json({ keys: [] }));
+        };
+        await adapter.initialize();
+        assertEquals(retries, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 

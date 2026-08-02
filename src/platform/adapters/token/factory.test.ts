@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
+import type { TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
 describe("createTokenStorageAdapter", () => {
   it("should export createTokenStorageAdapter function", () => {
@@ -25,8 +26,24 @@ describe("createTokenStorageAdapter", () => {
     );
   });
 
+  it("rejects invalid Veryfront API retry config before initialization", async () => {
+    await assertRejects(
+      () =>
+        createTokenStorageAdapter({
+          type: "veryfront-api",
+          veryfront: {
+            apiToken: "test-token",
+            projectSlug: "test-project",
+            retry: { maxRetries: 10 },
+          },
+        }),
+      RangeError,
+      "maxRetries",
+    );
+  });
+
   it("should default to memory type when type not specified", async () => {
-    const adapter = await createTokenStorageAdapter({});
+    const adapter = await createTokenStorageAdapter({} as TokenStorageAdapterConfig);
     assertExists(adapter);
     assertExists(adapter.get);
     assertExists(adapter.set);

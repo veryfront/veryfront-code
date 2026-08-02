@@ -13,11 +13,13 @@ const googleBase = {
     access_type: "offline",
     prompt: "consent",
   },
+  pkceMode: "supported",
 } satisfies Partial<OAuthServiceConfig>;
 
 /** Configuration used by gmail. */
 export const gmailConfig: OAuthServiceConfig = {
   ...googleBase,
+  additionalAuthParams: { ...googleBase.additionalAuthParams },
   serviceId: "gmail",
   displayName: "Gmail",
   apiBaseUrl: "https://gmail.googleapis.com/gmail/v1",
@@ -25,8 +27,8 @@ export const gmailConfig: OAuthServiceConfig = {
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.compose",
     "https://www.googleapis.com/auth/gmail.labels",
+    "https://www.googleapis.com/auth/gmail.compose",
     "https://mail.google.com/",
   ],
 };
@@ -34,6 +36,7 @@ export const gmailConfig: OAuthServiceConfig = {
 /** Configuration used by calendar. */
 export const calendarConfig: OAuthServiceConfig = {
   ...googleBase,
+  additionalAuthParams: { ...googleBase.additionalAuthParams },
   serviceId: "calendar",
   displayName: "Google Calendar",
   apiBaseUrl: "https://www.googleapis.com/calendar/v3",
@@ -46,24 +49,38 @@ export const calendarConfig: OAuthServiceConfig = {
 /** Configuration used by sheets. */
 export const sheetsConfig: OAuthServiceConfig = {
   ...googleBase,
+  additionalAuthParams: { ...googleBase.additionalAuthParams },
   serviceId: "sheets",
   displayName: "Google Sheets",
   apiBaseUrl: "https://sheets.googleapis.com/v4",
   defaultScopes: [
-    "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
   ],
 };
 
 /** Configuration used by drive. */
 export const driveConfig: OAuthServiceConfig = {
   ...googleBase,
+  additionalAuthParams: { ...googleBase.additionalAuthParams },
   serviceId: "drive",
   displayName: "Google Drive",
   apiBaseUrl: "https://www.googleapis.com/drive/v3",
+  defaultScopes: ["https://www.googleapis.com/auth/drive"],
+};
+
+/** Configuration used by Google Docs. */
+export const docsGoogleConfig: OAuthServiceConfig = {
+  ...googleBase,
+  additionalAuthParams: { ...googleBase.additionalAuthParams },
+  serviceId: "docs-google",
+  displayName: "Google Docs",
+  apiBaseUrl: "https://docs.googleapis.com/v1",
   defaultScopes: [
+    "https://www.googleapis.com/auth/documents.readonly",
+    "https://www.googleapis.com/auth/documents",
     "https://www.googleapis.com/auth/drive.readonly",
-    "https://www.googleapis.com/auth/drive.file",
   ],
 };
 
@@ -72,4 +89,5 @@ export const googleServices = {
   calendar: calendarConfig,
   sheets: sheetsConfig,
   drive: driveConfig,
+  "docs-google": docsGoogleConfig,
 } as const;

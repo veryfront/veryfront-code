@@ -1,24 +1,41 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import { createTokenStorageAdapter } from "./factory.ts";
 import type { TokenStorageAdapter, TokenStorageAdapterConfig } from "./veryfront/types.ts";
 
 const logger = baseLogger.component("token-adapter-integration");
 
 let tokenStorageAdapter: TokenStorageAdapter | null = null;
+let tokenStorageAdapterCreation: Promise<TokenStorageAdapter> | null = null;
+let tokenStorageGeneration = 0;
 
 export function getTokenStorageAdapter(): Promise<TokenStorageAdapter> {
   if (tokenStorageAdapter) return Promise.resolve(tokenStorageAdapter);
+  if (tokenStorageAdapterCreation) return tokenStorageAdapterCreation;
 
-  return withSpan(
+  const generation = tokenStorageGeneration;
+  const rawCreation = withSpan(
     "platform.token.getTokenStorageAdapter",
     async () => {
       const adapterConfig = buildAdapterConfigFromEnv();
-      tokenStorageAdapter = await createTokenStorageAdapter(adapterConfig);
-      return tokenStorageAdapter;
+      const candidate = await createTokenStorageAdapter(adapterConfig);
+      if (generation !== tokenStorageGeneration) {
+        candidate.dispose?.();
+        throw new Error("Token storage adapter creation was invalidated by reset");
+      }
+      tokenStorageAdapter = candidate;
+      return candidate;
     },
     { "token.storage.type": getTokenStorageType() },
   );
+  const trackedCreation = rawCreation.finally(() => {
+    if (tokenStorageAdapterCreation === trackedCreation) {
+      tokenStorageAdapterCreation = null;
+    }
+  });
+  tokenStorageAdapterCreation = trackedCreation;
+  return trackedCreation;
 }
 
 export function isTokenStorageConfigured(): boolean {
@@ -30,8 +47,10 @@ export function getTokenStorageType(): string {
 }
 
 export function resetTokenStorageAdapter(): void {
+  tokenStorageGeneration++;
   tokenStorageAdapter?.dispose?.();
   tokenStorageAdapter = null;
+  tokenStorageAdapterCreation = null;
 }
 
 function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
@@ -53,6 +72,5 @@ function buildAdapterConfigFromEnv(): TokenStorageAdapterConfig {
 }
 
 function getEnvVar(name: string): string | undefined {
-  return globalThis.Deno?.env?.get(name) ??
-    (typeof process !== "undefined" ? process.env?.[name] : undefined);
+  return getEnv(name);
 }

@@ -25,16 +25,12 @@ export function createTokenStorageAdapter(
 
       if (type === "memory") {
         const { MemoryTokenAdapter } = await import("./veryfront/memory-adapter.ts");
-        const adapter = new MemoryTokenAdapter();
-        await adapter.initialize?.();
-        return adapter;
+        return await initializeAdapter(new MemoryTokenAdapter());
       }
 
       if (type === "veryfront-api") {
         const { VeryfrontTokenAdapter } = await import("./veryfront/adapter.ts");
-        const adapter = new VeryfrontTokenAdapter(config);
-        await adapter.initialize?.();
-        return adapter;
+        return await initializeAdapter(new VeryfrontTokenAdapter(config));
       }
 
       throw toError(
@@ -47,4 +43,22 @@ export function createTokenStorageAdapter(
     },
     { "token.adapter.type": type },
   );
+}
+
+async function initializeAdapter(
+  adapter: TokenStorageAdapter,
+): Promise<TokenStorageAdapter> {
+  try {
+    await adapter.initialize?.();
+    return adapter;
+  } catch (error) {
+    try {
+      adapter.dispose?.();
+    } catch (cleanupError) {
+      logger.warn("Failed to dispose token adapter after initialization failure", {
+        cleanupError,
+      });
+    }
+    throw error;
+  }
 }

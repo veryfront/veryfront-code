@@ -6,6 +6,11 @@
  */
 
 import { createError, toError } from "#veryfront/errors";
+import { normalizeVeryfrontApiRetryConfig } from "#veryfront/utils/config-resource-limits.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
+
+export const DEFAULT_TOKEN_STORAGE_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_TOKEN_STORAGE_KEY_CODE_UNITS = 4_096;
 
 /**
  * Token storage adapter interface
@@ -39,7 +44,7 @@ export interface TokenStorageAdapter {
  */
 export interface TokenStorageAdapterConfig {
   /** Storage type */
-  type: "memory" | "veryfront-api";
+  type?: "memory" | "veryfront-api";
 
   /** Veryfront Cloud configuration */
   veryfront?: {
@@ -49,10 +54,15 @@ export interface TokenStorageAdapterConfig {
     projectSlug?: string;
     /** API base URL (defaults to production) */
     apiBaseUrl?: string;
+    /** Per-request timeout in milliseconds. Defaults to 30000ms. */
+    timeoutMs?: number;
     /** Retry configuration */
     retry?: {
+      /** Retries after the initial request, from 0 through 9. */
       maxRetries?: number;
+      /** Initial retry delay in whole milliseconds. */
       initialDelay?: number;
+      /** Maximum retry delay in whole milliseconds. */
       maxDelay?: number;
     };
   };
@@ -65,8 +75,8 @@ export interface VeryfrontTokenConfig {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug: string;
-  /** Request timeout in milliseconds. Defaults to 30000ms (30 seconds). */
-  timeoutMs?: number;
+  /** Request timeout in milliseconds. */
+  timeoutMs: number;
   retry: {
     maxRetries: number;
     initialDelay: number;
@@ -91,15 +101,11 @@ function requireVeryfrontConfig(
 /**
  * Create verified config from adapter config
  */
-const DEFAULT_MAX_RETRIES = 3;
-const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
-const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
-
 export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontTokenConfig {
   const veryfront = requireVeryfrontConfig(config);
 
   const apiToken = veryfront.apiToken;
-  if (!apiToken) {
+  if (!isNonBlankString(apiToken)) {
     throw toError(
       createError({
         type: "config",
@@ -109,7 +115,7 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
   }
 
   const projectSlug = veryfront.projectSlug;
-  if (!projectSlug) {
+  if (!isNonBlankString(projectSlug)) {
     throw toError(
       createError({
         type: "config",
@@ -118,18 +124,59 @@ export function createTokenConfig(config: TokenStorageAdapterConfig): VeryfrontT
     );
   }
 
-  const retry = veryfront.retry;
-
   return {
     apiBaseUrl: veryfront.apiBaseUrl ?? "https://api.veryfront.com",
     apiToken,
     projectSlug,
-    retry: {
-      maxRetries: retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
-      initialDelay: retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
-      maxDelay: retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
-    },
+    timeoutMs: normalizeTimerDurationMs(
+      veryfront.timeoutMs ?? DEFAULT_TOKEN_STORAGE_REQUEST_TIMEOUT_MS,
+      "Token storage timeoutMs",
+    ),
+    retry: normalizeVeryfrontApiRetryConfig(veryfront.retry),
   };
+}
+
+export function assertTokenStorageKey(key: string): void {
+  assertBoundedTokenStorageIdentifier(key, "key", false);
+}
+
+export function assertTokenStoragePrefix(prefix: string | undefined): void {
+  if (prefix === undefined) return;
+  assertBoundedTokenStorageIdentifier(prefix, "prefix", true);
+}
+
+export function assertTokenStorageValue(value: string): void {
+  if (typeof value !== "string") {
+    throw new TypeError("Token storage value must be a string");
+  }
+}
+
+function isNonBlankString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function assertBoundedTokenStorageIdentifier(
+  value: string,
+  label: "key" | "prefix",
+  allowEmpty: boolean,
+): void {
+  if (typeof value !== "string") {
+    throw new TypeError(`Token storage ${label} must be a string`);
+  }
+  if (!allowEmpty && value.length === 0) {
+    throw new TypeError("Token storage key must be non-empty");
+  }
+  if (value.length > MAX_TOKEN_STORAGE_KEY_CODE_UNITS) {
+    throw new RangeError(
+      `Token storage ${label} must not exceed ${MAX_TOKEN_STORAGE_KEY_CODE_UNITS} code units`,
+    );
+  }
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) {
+      throw new TypeError(`Token storage ${label} must not contain control characters`);
+    }
+  }
 }
 
 export { TOKEN_STORAGE_ERROR } from "#veryfront/errors";
