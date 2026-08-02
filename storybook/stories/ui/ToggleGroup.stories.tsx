@@ -132,7 +132,7 @@ export const Disabled: Story = {
 export const Controlled: Story = {
   tags: ["!dev"],
   render: () => {
-    const [value, setValue] = useState<string | string[]>("grid");
+    const [value, setValue] = useState("grid");
     return (
       <ToggleGroup type="single" value={value} onValueChange={setValue} aria-label="View">
         <ToggleGroupItem value="list">List</ToggleGroupItem>

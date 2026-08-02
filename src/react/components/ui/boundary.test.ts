@@ -7,8 +7,8 @@ import { walk } from "@std/fs/walk";
 // silently reintroduce the dependency (regression guard for PR #2798).
 const UI_DIR = new URL(".", import.meta.url).pathname;
 
-/** Matches any import/export specifier that reaches into the chat module. */
-const CHAT_IMPORT = /from\s+["']([^"']*)["']/g;
+/** Matches specifiers from static import and export declarations. */
+const STATIC_MODULE_SPECIFIER = /from\s+["']([^"']*)["']/g;
 
 function referencesChat(specifier: string): boolean {
   return (
@@ -37,7 +37,7 @@ describe("veryfront/ui module boundary", () => {
     ) {
       if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
       const source = await Deno.readTextFile(entry.path);
-      for (const match of source.matchAll(CHAT_IMPORT)) {
+      for (const match of source.matchAll(STATIC_MODULE_SPECIFIER)) {
         const specifier = match[1];
         if (specifier && referencesChat(specifier)) {
           offenders.push(`${entry.name} -> ${specifier}`);
@@ -63,7 +63,7 @@ describe("veryfront/ui module boundary", () => {
     ) {
       if (/\.(test|spec)\.tsx?$/.test(entry.name)) continue;
       const source = await Deno.readTextFile(entry.path);
-      for (const match of source.matchAll(CHAT_IMPORT)) {
+      for (const match of source.matchAll(STATIC_MODULE_SPECIFIER)) {
         const specifier = match[1];
         if (specifier && ENGINE_SPECIFIER.test(specifier)) {
           offenders.push(`${entry.name} -> ${specifier}`);

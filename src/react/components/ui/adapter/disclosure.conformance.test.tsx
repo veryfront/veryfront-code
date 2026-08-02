@@ -1,10 +1,10 @@
 /**
  * Disclosure adapter conformance: the `disclosure` slot (Collapsible archetype).
  *
- * Runs one shared behaviour suite against (1) the builtin engine, (2) the builtin
- * re-supplied through `UIAdapterProvider` (the swap path), and (3) an independent,
- * contract-only alternative engine: proving the `disclosure` slot is a real seam
- * a third-party engine can satisfy without the skin (`collapsible.tsx`) changing.
+ * Runs one shared behaviour suite against (1) the builtin engine and (2) an
+ * independent, contract-only alternative engine: proving the `disclosure` slot
+ * is a real seam a third-party engine can satisfy without the skin
+ * (`collapsible.tsx`) changing.
  *
  * @module react/components/ui/adapter/disclosure.conformance.test
  */
@@ -14,8 +14,9 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { UIAdapterProvider, useAdapter } from "./context.tsx";
+import { UIAdapterProvider } from "./context.tsx";
 import { Slot } from "../slot.tsx";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "../collapsible.tsx";
 import type { DisclosureParts } from "./contract.ts";
 
 function installDom(dom: JSDOM): () => void {
@@ -199,16 +200,17 @@ function runDisclosureConformance(
 function DisclosureProbe(
   { disabled, preventToggle = false }: { disabled?: boolean; preventToggle?: boolean },
 ): React.ReactElement {
-  const { disclosure } = useAdapter();
   return (
-    <disclosure.Root disabled={disabled}>
-      <disclosure.Trigger onClick={preventToggle ? (event) => event.preventDefault() : undefined}>
+    <Collapsible disabled={disabled}>
+      <CollapsibleTrigger
+        onClick={preventToggle ? (event) => event.preventDefault() : undefined}
+      >
         Toggle
-      </disclosure.Trigger>
-      <disclosure.Content data-vf-content>
+      </CollapsibleTrigger>
+      <CollapsibleContent data-vf-content>
         <span data-vf-body>Body</span>
-      </disclosure.Content>
-    </disclosure.Root>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -225,10 +227,9 @@ function DisclosureAsChildProbe(
     onChildAuxClick?: React.MouseEventHandler<HTMLAnchorElement>;
   },
 ): React.ReactElement {
-  const { disclosure } = useAdapter();
   return (
-    <disclosure.Root disabled>
-      <disclosure.Trigger asChild onClick={onClick} onAuxClick={onAuxClick}>
+    <Collapsible disabled>
+      <CollapsibleTrigger asChild onClick={onClick} onAuxClick={onAuxClick}>
         <a
           href="#navigated"
           onClickCapture={onChildClick}
@@ -238,19 +239,18 @@ function DisclosureAsChildProbe(
         >
           Toggle
         </a>
-      </disclosure.Trigger>
-      <disclosure.Content>Body</disclosure.Content>
-    </disclosure.Root>
+      </CollapsibleTrigger>
+      <CollapsibleContent>Body</CollapsibleContent>
+    </Collapsible>
   );
 }
 
 function DisclosureCustomIdProbe(): React.ReactElement {
-  const { disclosure } = useAdapter();
   return (
-    <disclosure.Root triggerId="custom-trigger" contentId="custom-content">
-      <disclosure.Trigger id="custom-trigger">Toggle</disclosure.Trigger>
-      <disclosure.Content id="custom-content" role="region">Body</disclosure.Content>
-    </disclosure.Root>
+    <Collapsible triggerId="custom-trigger" contentId="custom-content">
+      <CollapsibleTrigger id="custom-trigger">Toggle</CollapsibleTrigger>
+      <CollapsibleContent id="custom-content" role="region">Body</CollapsibleContent>
+    </Collapsible>
   );
 }
 
@@ -258,7 +258,7 @@ function DisclosureCustomIdProbe(): React.ReactElement {
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
 runDisclosureConformance("builtin (default)", Identity);
 
-// (3) an INDEPENDENT contract-only engine: proves the seam. Different impl than
+// (2) an INDEPENDENT contract-only engine: proves the seam. Different impl than
 // the builtin (its own context + a `<section>` wrapper), same skin + call-site.
 const AltCtx = React.createContext<
   {
