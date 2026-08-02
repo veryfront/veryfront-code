@@ -19,7 +19,9 @@ import { HTTP_FETCH_TIMEOUT_MS } from "#veryfront/utils/constants/http.ts";
 import { readHttpModuleText } from "../../../shared/http-module-response.ts";
 import { MAX_MDX_MODULE_CODE_BYTES } from "./limits.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/constants/limits.ts";
-import { assertMdxModuleImportCount } from "./limits.ts";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import { assertMdxModuleImportCount, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from "./limits.ts";
 
 export interface FetchModuleViaHttpOptions {
   fetchFn?: typeof fetch;
@@ -169,11 +171,16 @@ export async function fetchModuleViaHTTP(
     ];
     assertMdxModuleImportCount(normalizedPath, allImports.length);
 
-    const results = [];
-    for (const { original, path, start, end, key } of allImports) {
-      const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
-      results.push({ original, start, end, nestedFilePath, [key]: path });
-    }
+    const results = await parallelMap(
+      allImports,
+      async ({ original, path, start, end, key }) => {
+        const nestedFilePath = await fetchAndCacheModuleFn(path, normalizedPath);
+        return { original, start, end, nestedFilePath, [key]: path };
+      },
+      {
+        semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
+      },
+    );
 
     const replacements: SourceSpanReplacement[] = [];
     for (const { original, start, end, nestedFilePath } of results) {

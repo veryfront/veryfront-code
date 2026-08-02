@@ -14,7 +14,13 @@ import {
 } from "../utils/source-spans.ts";
 import { buildMissingModuleError } from "../missing-module.ts";
 import type { Logger } from "#veryfront/utils";
-import { assertMdxModuleImportCount, MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./limits.ts";
+import { parallelMap } from "#veryfront/utils/parallel.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
+import {
+  assertMdxModuleImportCount,
+  MAX_MDX_MODULE_IMPORTS_PER_FILE,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+} from "./limits.ts";
 
 function matchUnresolvedVfModuleSpecifier(specifier: string): string | null {
   return specifier.match(/^((?:file:\/\/)?\/?\/?_vf_modules\/[^?]+)(?:\?.*)?$/)?.[1] ?? null;
@@ -215,9 +221,9 @@ export async function resolveNestedModuleImports(
   ];
   assertMdxModuleImportCount(input.normalizedPath, allImports.length);
 
-  const nestedResults: NestedImportResult[] = [];
-  for (const { original, path, start, end, key } of allImports) {
-    nestedResults.push({
+  const nestedResults: NestedImportResult[] = await parallelMap(
+    allImports,
+    async ({ original, path, start, end, key }) => ({
       original,
       start,
       end,
@@ -226,8 +232,11 @@ export async function resolveNestedModuleImports(
         input.parentBasePath ?? input.normalizedPath,
       ),
       [key]: path,
-    });
-  }
+    }),
+    {
+      semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY),
+    },
+  );
   input.log?.debug(`${LOG_PREFIX_MDX_LOADER} [fetchAndCacheModule] processing vfModules DONE`, {
     projectSlug: input.projectSlug,
     normalizedPath: input.normalizedPath,

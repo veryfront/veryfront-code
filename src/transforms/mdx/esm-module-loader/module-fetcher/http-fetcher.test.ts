@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { fetchModuleViaHTTP } from "./http-fetcher.ts";
-import { MAX_MDX_MODULE_CODE_BYTES } from "./limits.ts";
+import { MAX_MDX_MODULE_CODE_BYTES, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY } from "./limits.ts";
 import { HttpModuleBodyTooLargeError } from "../../../shared/http-module-response.ts";
 
 describe("module-fetcher/http-fetcher", () => {
@@ -58,6 +58,36 @@ describe("module-fetcher/http-fetcher", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("resolves nested HTTP imports with bounded concurrency", async () => {
+    const importCount = MAX_MDX_MODULE_TRANSFORM_CONCURRENCY + 4;
+    const moduleCode = Array.from(
+      { length: importCount },
+      (_, index) => `import value${index} from "./dependency-${index}.js";`,
+    ).join("\n");
+    let active = 0;
+    let peak = 0;
+
+    const result = await fetchModuleViaHTTP(
+      "_vf_modules/pages/index.js",
+      { env: { get: () => undefined } } as unknown as RuntimeAdapter,
+      async (path) => {
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return `/cache/${path.replaceAll("/", "__")}.mjs`;
+      },
+      { debug: () => {}, warn: () => {} } as unknown as Logger,
+      "docs",
+      true,
+      undefined,
+      { fetchFn: (() => Promise.resolve(new Response(moduleCode))) as typeof fetch },
+    );
+
+    assertEquals(peak, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY);
+    assertEquals(result?.includes("file:///cache/.__dependency-0.js.mjs"), true);
   });
 
   it("rejects and cancels an oversized local module response", async () => {

@@ -202,10 +202,10 @@ omit the broader unit gate before merging a loader or cache change.
 
 ## Related areas
 
-- [`build/`](../build/README.md) — production compilation and artifacts
-- [`config/`](../config/README.md) — project configuration
-- [`platform/`](../platform/README.md) — runtime adapters and filesystem
+- [`build/`](../build/README.md): production compilation and artifacts
+- [`config/`](../config/README.md): project configuration
+- [`platform/`](../platform/README.md): runtime adapters and filesystem
   contracts
-- [`rendering/`](../rendering/README.md) — render orchestration
-- [`routing/`](../routing/README.md) — API and application routes
-- [`transforms/`](../transforms/README.md) — source transformation pipelines
+- [`rendering/`](../rendering/README.md): render orchestration
+- [`routing/`](../routing/README.md): API and application routes
+- [`transforms/`](../transforms/README.md): source transformation pipelines
