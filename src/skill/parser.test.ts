@@ -465,7 +465,12 @@ Body`),
 
     it("preserves metadata keys that overlap object prototype accessors", () => {
       const metadata = Object.create(null) as Record<string, string>;
-      metadata.__proto__ = "legacy-value";
+      Object.defineProperty(metadata, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: "legacy-value",
+        writable: true,
+      });
 
       const result = validateSkillMetadata(
         { name: "test", description: "desc", metadata },
@@ -910,7 +915,12 @@ Body`),
 
     it("round-trips every admitted string metadata key as own data", () => {
       const metadata = Object.create(null) as Record<string, string>;
-      metadata.__proto__ = "strict-value";
+      Object.defineProperty(metadata, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: "strict-value",
+        writable: true,
+      });
 
       const result = validateSkillFileMetadata(
         {

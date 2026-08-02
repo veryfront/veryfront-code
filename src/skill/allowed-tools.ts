@@ -76,7 +76,16 @@ function isToolAllowedByCapturedPolicy(
   availability?: SkillToolAvailability,
 ): boolean {
   const skillToolAvailable = isSkillInfrastructureToolAllowed(toolName, availability);
-  if (skillToolAvailable !== undefined) return skillToolAvailable;
+  if (skillToolAvailable !== undefined) {
+    // Skill navigation stays available independently of the active policy, but
+    // file-backed capabilities require both an advertised file and an explicit
+    // policy grant whenever a policy exists. Treating availability alone as an
+    // authorization grant would widen malformed or explicitly empty policies.
+    if (!skillToolAvailable || toolName === LOAD_SKILL_TOOL_ID) {
+      return skillToolAvailable;
+    }
+    return allowedTools === undefined || matchesAnyAllowedTool(toolName, allowedTools);
+  }
   if (allowedTools === undefined) return true;
   return matchesAnyAllowedTool(toolName, allowedTools);
 }

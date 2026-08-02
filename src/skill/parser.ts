@@ -638,7 +638,6 @@ function parseStrictAllowedTools(
     patterns = parseStrictAllowedToolString(value);
   } else {
     if (
-      value !== null &&
       (typeof value === "object" || typeof value === "function") &&
       isProxyWithoutHooks(value)
     ) {
