@@ -128,7 +128,6 @@ export class NodeRedisAdapter implements RedisAdapter {
 
   disconnect(): Promise<void> {
     // redis v5: disconnect() renamed to destroy()
-    this.client.destroy();
-    return Promise.resolve();
+    return Promise.resolve().then(() => this.client.destroy());
   }
 }
