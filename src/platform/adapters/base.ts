@@ -1,6 +1,8 @@
 /***********************
  * Runtime identifier for platform-specific code paths
  ***********************/
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
+
 export type RuntimeId = "deno" | "node" | "bun" | "cloudflare" | "memory";
 
 /**
@@ -101,6 +103,10 @@ export interface WebSocketConnection {
 
 const WEBSOCKET_UPGRADE_RESPONSE_KIND = "websocket-upgrade";
 
+/**
+ * Explicit upgrade signal used when a runtime cannot construct a native
+ * `Response` with status 101.
+ */
 export interface WebSocketUpgradeResponse {
   readonly kind: typeof WEBSOCKET_UPGRADE_RESPONSE_KIND;
   readonly status: 101;
@@ -117,19 +123,78 @@ export interface WebSocketUpgrade {
 export function createWebSocketUpgradeResponse(
   input: { headers?: HeadersInit; statusText?: string } = {},
 ): WebSocketUpgradeResponse {
-  return {
+  return Object.freeze({
     kind: WEBSOCKET_UPGRADE_RESPONSE_KIND,
     status: 101,
     statusText: input.statusText ?? "Switching Protocols",
     headers: new Headers(input.headers),
     body: null,
-  };
+  });
+}
+
+type DataPropertyRead =
+  | { readonly readable: true; readonly value: unknown }
+  | { readonly readable: false };
+
+// A Proxy can synthesize a fresh prototype for every getPrototypeOf trap.
+// Bound each structural field lookup so an upgrade discriminator can never
+// turn into attacker-controlled, unbounded traversal.
+const MAX_UPGRADE_RESPONSE_PROTOTYPE_DEPTH = 16;
+const headersGet = Headers.prototype.get;
+
+function readDataProperty(value: object, key: PropertyKey): DataPropertyRead {
+  const visited = new Set<object>();
+  let current: object | null = value;
+
+  try {
+    for (
+      let depth = 0;
+      current !== null && depth < MAX_UPGRADE_RESPONSE_PROTOTYPE_DEPTH;
+      depth++
+    ) {
+      if (visited.has(current)) return { readable: false };
+      visited.add(current);
+      const descriptor = Reflect.getOwnPropertyDescriptor(current, key);
+      if (descriptor) {
+        return "value" in descriptor
+          ? { readable: true, value: descriptor.value }
+          : { readable: false };
+      }
+      current = Reflect.getPrototypeOf(current);
+    }
+  } catch {
+    return { readable: false };
+  }
+
+  return current === null ? { readable: true, value: undefined } : { readable: false };
 }
 
 export function isWebSocketUpgradeResponse(value: unknown): value is WebSocketUpgradeResponse {
-  return typeof value === "object" && value !== null &&
-    (value as { kind?: unknown }).kind === WEBSOCKET_UPGRADE_RESPONSE_KIND &&
-    (value as { status?: unknown }).status === 101;
+  if (typeof value !== "object" || value === null) return false;
+
+  const kind = readDataProperty(value, "kind");
+  if (!kind.readable || kind.value !== WEBSOCKET_UPGRADE_RESPONSE_KIND) return false;
+
+  const status = readDataProperty(value, "status");
+  if (!status.readable || status.value !== 101) return false;
+
+  const statusText = readDataProperty(value, "statusText");
+  if (!statusText.readable || typeof statusText.value !== "string") return false;
+
+  const headers = readDataProperty(value, "headers");
+  if (!headers.readable || typeof headers.value !== "object" || headers.value === null) {
+    return false;
+  }
+  try {
+    // Verify the native Headers internal slot without consulting hostile
+    // properties or Symbol.hasInstance hooks.
+    Reflect.apply(headersGet, headers.value, ["upgrade"]);
+  } catch {
+    return false;
+  }
+
+  const body = readDataProperty(value, "body");
+  return body.readable && body.value === null;
 }
 
 export interface ServeOptions {
@@ -137,6 +202,18 @@ export interface ServeOptions {
   hostname?: string;
   signal?: AbortSignal;
   onListen?: (params: { hostname: string; port: number }) => void;
+  /**
+   * Node.js only. Called synchronously for each raw HTTP listener `error` event
+   * emitted after `onListen` returns. Returned promises are observed only for
+   * rejection and are not awaited by the listener or shutdown.
+   */
+  onRuntimeError?: (error: Error) => void | Promise<void>;
+  /**
+   * Node.js only. Explicitly selected implementation for completing approved
+   * WebSocket upgrades. When absent, HTTP serving remains available and every
+   * Node WebSocket upgrade fails closed.
+   */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 }
 
 export interface Server {
@@ -145,10 +222,30 @@ export interface Server {
 }
 
 export interface FileSystemAdapter {
+  /** Explicit marker for virtual filesystems that never resolve symbolic links. */
+  readonly symlinkSemantics?: "none";
   readFile(path: string): Promise<string>;
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;
+  /** Fixed upstream whole-object ceiling, valid only with `readFileBytes`. */
+  readonly maxWholeFileReadBytes?: number;
+  /** Read at most a caller-selected byte prefix without materializing the whole source. */
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /** Read a complete file only when it fits within the caller-selected limit. */
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  /** Read one verified native snapshot beneath `containmentRoot`. */
+  readFileSnapshotWithinLimit?(
+    path: string,
+    containmentRoot: string,
+    byteLimit: number,
+  ): Promise<Uint8Array>;
   writeFile(path: string, content: string): Promise<void>;
+  /** Write raw bytes when binary-safe output is required. */
+  writeFileBytes?(path: string, content: Uint8Array): Promise<void>;
+  /** Create a new file atomically, refusing to replace an existing path. */
+  createFileBytesExclusive?(path: string, content: Uint8Array): Promise<void>;
+  /** Atomically replace a path when the runtime supports same-filesystem rename. */
+  rename?(from: string, to: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   readDir(path: string): AsyncIterable<DirEntry>;
   stat(path: string): Promise<FileInfo>;
@@ -187,6 +284,14 @@ export interface FileSystemAdapter {
    */
   getSourceSnapshotVersion?(): number | undefined | Promise<number | undefined>;
 }
+
+export type BoundedFileSystemAdapter =
+  & FileSystemAdapter
+  & Required<Pick<FileSystemAdapter, "readFileBytesBounded">>;
+
+export type ExactBoundedFileSystemAdapter =
+  & FileSystemAdapter
+  & Required<Pick<FileSystemAdapter, "readFileBytesWithinLimit">>;
 
 export interface ResolveFileOptions {
   allowPagesPrefix?: boolean;

@@ -461,6 +461,217 @@ Deno.test("ApiCacheBackend type property", async () => {
   assertEquals(cache.type, "api");
 });
 
+Deno.test("ApiCacheBackend enforces exact bounded decoded values", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = (() => Promise.resolve(Response.json({ value: "é" }))) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      circuitBreakerName: "api-cache-bounded-value-test",
+    });
+    assertEquals(await cache.getWithinLimit("key", 2), "é");
+    await assertRejects(
+      () => cache.getWithinLimit("key", 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("ApiCacheBackend reserves JSON escape bytes outside its response policy", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const body = '{"value":"\\u0000\\u0000"}';
+  assertEquals(new TextEncoder().encode(body).byteLength, 24);
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      // The compact string envelope is 12 bytes; the selected value receives
+      // its own deterministic six-bytes-per-logical-byte wire allowance.
+      maxResponseBytes: 12,
+      circuitBreakerName: "api-cache-bounded-wire-headroom-test",
+    });
+    assertEquals(await cache.getWithinLimit("key", 2), "\0\0");
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("ApiCacheBackend keeps unused string headroom outside its response policy", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const body = '{"value":"","x":0}';
+  let fetchCalls = 0;
+  assertEquals(new TextEncoder().encode(body).byteLength, 18);
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(new Response(body));
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      // The empty value uses none of its 12 bytes of wire headroom. The extra
+      // metadata must still fail the independent 12-byte response policy.
+      maxResponseBytes: 12,
+      circuitBreakerName: "api-cache-independent-non-value-budget-test",
+    });
+    assertEquals(await cache.getWithinLimit("key", 2), null);
+    assertEquals(fetchCalls, 1);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("ApiCacheBackend rejects unsafe combined response limits before fetching", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(Response.json({ value: "small" }));
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      maxResponseBytes: 1,
+      circuitBreakerName: "api-cache-unsafe-combined-limit-test",
+    });
+    await assertRejects(
+      () => cache.getWithinLimit("key", Number.MAX_SAFE_INTEGER),
+      RangeError,
+      "safe integer range",
+    );
+    assertEquals(fetchCalls, 0);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("ApiCacheBackend rejects oversized escaped values before JSON.parse", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const originalJsonParse = JSON.parse;
+  let parseCalls = 0;
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = (() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ value: "\0".repeat(1_000) })),
+    )) as typeof fetch;
+  JSON.parse = ((...args: Parameters<typeof JSON.parse>) => {
+    parseCalls++;
+    return Reflect.apply(originalJsonParse, JSON, args);
+  }) as typeof JSON.parse;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      circuitBreakerName: "api-cache-bounded-envelope-test",
+    });
+    await assertRejects(
+      () => cache.getWithinLimit("key", 1),
+      CacheValueTooLargeError,
+      "1 UTF-8 bytes",
+    );
+    assertEquals(parseCalls, 0);
+  } finally {
+    JSON.parse = originalJsonParse;
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("ApiCacheBackend bounded overflows do not open the dependency circuit", async () => {
+  const { ApiCacheBackend, CacheValueTooLargeError } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  let fetchCalls = 0;
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(new Response(JSON.stringify({ value: "xx" })));
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      circuitBreakerName: "api-cache-neutral-bounded-overflow-test",
+    });
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await assertRejects(
+        () => cache.getWithinLimit("key", 1),
+        CacheValueTooLargeError,
+      );
+    }
+    assertEquals(fetchCalls, 12);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("ApiCacheBackend set returns without auth context", async () => {
   const { ApiCacheBackend } = await importBackend();
 
@@ -1003,6 +1214,10 @@ Deno.test("RedisCacheBackend delByPattern deletes every scanned key in bounded b
       });
     },
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;
@@ -1042,6 +1257,10 @@ Deno.test("RedisCacheBackend delByPattern keeps Redis delete batches bounded", a
       });
     },
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;
@@ -1105,6 +1324,10 @@ Deno.test("RedisCacheBackend getBatch uses one MGET call for prefixed keys", asy
     del: () => Promise.resolve(0),
     scan: () => Promise.resolve({ cursor: 0, keys: [] }),
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;
@@ -1139,6 +1362,10 @@ Deno.test("RedisCacheBackend getBatch falls back to GET when MGET fails", async 
     del: () => Promise.resolve(0),
     scan: () => Promise.resolve({ cursor: 0, keys: [] }),
     expire: () => Promise.resolve(0),
+    eval: () => Promise.resolve(null),
+    incr: () => Promise.resolve(0),
+    pExpire: () => Promise.resolve(false),
+    pTTL: () => Promise.resolve(-1),
   } satisfies RedisClient;
 
   (cache as unknown as { client: RedisClient }).client = client;

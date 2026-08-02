@@ -387,18 +387,23 @@ const serverHTML = renderToString(<App initialData={data} />);
 ### Image Optimization Not Working
 
 ```typescript
-// Check if Sharp is installed for image optimization
-import { OptimizedImage } from "veryfront";
+// veryfront.config.ts
+import extImageSharp from "@veryfront/ext-image-sharp";
+import { defineConfig } from "veryfront";
 
-<OptimizedImage
-  src="/image.jpg"
-  alt="Test"
-  width={800}
-  height={600}
-  // Fallback if Sharp not available
-  unoptimized={!process.env.SHARP_AVAILABLE}
-/>;
+export default defineConfig({
+  extensions: [extImageSharp()],
+  assetPipeline: {
+    images: { enabled: true },
+  },
+});
 ```
+
+`OptimizedImage` consumes the manifest produced by the build pipeline. Core
+does not probe for Sharp or infer an environment-variable fallback. If image
+optimization is enabled, explicitly compose an `ImageOptimizationEngine` such
+as `@veryfront/ext-image-sharp`; a missing or invalid provider fails the build
+before replacing the last known-good image output.
 
 ### Link Prefetch Not Working
 

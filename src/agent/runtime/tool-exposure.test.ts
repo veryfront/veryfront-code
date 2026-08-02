@@ -77,6 +77,23 @@ it("deferred exposure omits tool_search when only bootstrap tools are authorized
   assertEquals(deferred.deferred, []);
 });
 
+it("deferred exposure keeps injected tool_search in visible ASCII order", () => {
+  const deferred = createToolExposurePlan({
+    authorized: [
+      definition("z_bootstrap", "Always visible"),
+      definition("a_deferred", "Searchable later"),
+    ],
+    bootstrapToolNames: new Set(["z_bootstrap"]),
+    mode: "deferred",
+    state: createToolExposureState(),
+  });
+
+  assertEquals(
+    deferred.visible.map((tool) => tool.name),
+    [TOOL_SEARCH_TOOL_NAME, "z_bootstrap"],
+  );
+});
+
 it("tool search ranks exact name, description, and parameter matches", () => {
   const state = createToolExposureState();
   const exact = searchToolExposure({ query: "get_release", authorized: catalog, state });
@@ -98,6 +115,45 @@ it("tool search ranks exact name, description, and parameter matches", () => {
     state: createToolExposureState(),
   });
   assertEquals(parameter.matches[0]?.name, "get_release");
+});
+
+it("tool search reports a capability-matched visible tool without loading deferred schemas", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "structured input",
+    authorized: [definition("create_form", "Create a reusable form")],
+    available: [definition("form_input", "Collect structured input")],
+    state,
+  });
+
+  assertEquals(result, {
+    matches: [{
+      name: "form_input",
+      description: "Collect structured input",
+      status: "available",
+    }],
+    resultCount: 1,
+    loadedCount: 0,
+    miss: false,
+  });
+  assertEquals([...state.loadedToolNames], []);
+});
+
+it("tool search loads a deferred exact-name match ahead of a visible capability match", () => {
+  const state = createToolExposureState();
+  const result = searchToolExposure({
+    query: "release",
+    authorized: [definition("release", "Publish the release")],
+    available: [definition("get_status", "Read release status")],
+    state,
+  });
+
+  assertEquals(result.matches, [{
+    name: "release",
+    description: "Publish the release",
+    status: "loaded",
+  }]);
+  assertEquals([...state.loadedToolNames], ["release"]);
 });
 
 it("tool search orders all four match ranks before name tie-breaking", () => {
@@ -228,6 +284,160 @@ it("authorized search matches load for the next step", () => {
   );
 });
 
+it("deferred exposure reserves bootstrap and search inside the provider tool budget", () => {
+  const remoteCatalog = Array.from(
+    { length: 130 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    ...remoteCatalog,
+  ];
+  const state = restoreToolExposureState({
+    version: 1,
+    loadedToolNames: remoteCatalog.map((tool) => tool.name),
+  }, authorized);
+  const plan = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+
+  assertEquals(plan.visible.length, 128);
+  assertEquals(plan.visible.some((tool) => tool.name === "form_input"), true);
+  assertEquals(plan.visible.some((tool) => tool.name === "load_skill"), true);
+  assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), true);
+  assertEquals(plan.maxLoadedTools, 125);
+  assertEquals(state.loadedToolNames.size, 125);
+  assertEquals(state.loadedToolNames.has("catalog_tool_000"), false);
+  assertEquals(state.loadedToolNames.has("catalog_tool_129"), true);
+});
+
+it("deferred exposure uses the full provider budget once the exact-fit catalog is loaded", () => {
+  const remoteCatalog = Array.from(
+    { length: 126 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    ...remoteCatalog,
+  ];
+  const state = createToolExposureState(remoteCatalog.map((tool) => tool.name));
+
+  const plan = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+
+  assertEquals(plan.visible.length, 128);
+  assertEquals(plan.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
+  assertEquals(plan.deferred, []);
+  assertEquals(plan.maxLoadedTools, 126);
+  assertEquals(state.loadedToolNames.size, 126);
+});
+
+it("exact-fit deferred exposure loads the final schema without exceeding the provider budget", () => {
+  const remoteCatalog = Array.from(
+    { length: 126 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    ...remoteCatalog,
+  ];
+  const state = createToolExposureState(remoteCatalog.slice(0, 125).map((tool) => tool.name));
+
+  const searchStep = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+  assertEquals(searchStep.visible.length, 128);
+  assertEquals(searchStep.deferred.map((tool) => tool.name), ["catalog_tool_125"]);
+  assertEquals(searchStep.maxLoadedTools, 126);
+
+  const search = searchToolExposure({
+    query: "catalog_tool_125",
+    authorized: searchStep.deferred,
+    state,
+    maxLoadedTools: searchStep.maxLoadedTools,
+  });
+  assertEquals(search.loadedCount, 1);
+  assertEquals(state.loadedToolNames.size, 126);
+
+  const loadedStep = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 128,
+  });
+  assertEquals(loadedStep.visible.length, 128);
+  assertEquals(loadedStep.deferred, []);
+  assertEquals(loadedStep.visible.some((tool) => tool.name === TOOL_SEARCH_TOOL_NAME), false);
+});
+
+it("deferred exposure prunes revoked and bootstrap names before budget eviction", () => {
+  const retained = definition("retained_tool", "Retained deferred tool");
+  const authorized = [
+    definition("form_input", "Ask the user for structured input"),
+    definition("load_skill", "Load a configured skill"),
+    retained,
+    definition("other_tool", "Other deferred tool"),
+  ];
+  const state = createToolExposureState([
+    retained.name,
+    "revoked_tool",
+    "form_input",
+  ]);
+
+  const plan = createToolExposurePlan({
+    authorized,
+    mode: "deferred",
+    state,
+    maxVisibleTools: 4,
+  });
+
+  assertEquals([...state.loadedToolNames], [retained.name]);
+  assertEquals(
+    plan.visible.map((tool) => tool.name),
+    ["form_input", "load_skill", retained.name, TOOL_SEARCH_TOOL_NAME],
+  );
+});
+
+it("tool search evicts the oldest loaded schema before activating a new match at capacity", () => {
+  const remoteCatalog = Array.from(
+    { length: 130 },
+    (_, index) => definition(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+  );
+  const state = createToolExposureState();
+  for (const tool of remoteCatalog.slice(0, 125)) {
+    searchToolExposure({
+      query: tool.name,
+      authorized: remoteCatalog,
+      state,
+      maxLoadedTools: 125,
+    });
+  }
+  const result = searchToolExposure({
+    query: "catalog_tool_129",
+    authorized: remoteCatalog,
+    state,
+    maxLoadedTools: 125,
+  });
+
+  assertEquals(result.matches.map((match) => match.name), ["catalog_tool_129"]);
+  assertEquals(state.loadedToolNames.size, 125);
+  assertEquals(state.loadedToolNames.has("catalog_tool_000"), false);
+  assertEquals(state.loadedToolNames.has("catalog_tool_129"), true);
+});
+
 it("tool search never returns tools outside the currently authorized executable catalog", () => {
   assertEquals(
     searchToolExposure({
@@ -239,12 +449,12 @@ it("tool search never returns tools outside the currently authorized executable 
   );
 });
 
-it("tool exposure checkpoints are private, sorted, and restore only currently authorized tools", () => {
+it("tool exposure checkpoints are private, ordered, and restore only currently authorized tools", () => {
   const authorized = catalog.slice(0, 3);
   const state = createToolExposureState(["get_release", "create_release", "get_release"]);
   const checkpoint = createToolExposureCheckpoint(authorized, state);
-  assertEquals(checkpoint.version, 1);
-  assertEquals(checkpoint.loadedToolNames, ["create_release", "get_release"]);
+  assertEquals(checkpoint.version, 2);
+  assertEquals(checkpoint.loadedToolNames, ["get_release", "create_release"]);
 
   assertEquals(
     [...restoreToolExposureState(checkpoint, authorized).loadedToolNames].sort(),
@@ -255,9 +465,49 @@ it("tool exposure checkpoints are private, sorted, and restore only currently au
     ["get_release"],
   );
   assertEquals(
-    [...restoreToolExposureState({ ...checkpoint, version: 2 }, authorized).loadedToolNames],
+    [...restoreToolExposureState({ ...checkpoint, version: 3 }, authorized).loadedToolNames],
     [],
   );
+});
+
+it("tool exposure checkpoint restoration upgrades legacy v1 order deterministically", () => {
+  const authorized = [
+    definition("a_legacy_oldest", "Legacy sorted first"),
+    definition("z_legacy_newer", "Legacy sorted last"),
+  ];
+
+  assertEquals(
+    [
+      ...restoreToolExposureState({
+        version: 1,
+        loadedToolNames: ["z_legacy_newer", "a_legacy_oldest"],
+      }, authorized).loadedToolNames,
+    ],
+    ["a_legacy_oldest", "z_legacy_newer"],
+  );
+});
+
+it("tool exposure checkpoints preserve eviction recency across restoration", () => {
+  const authorized = [
+    definition("z_oldest", "Oldest loaded tool"),
+    definition("a_newer", "Newer loaded tool"),
+    definition("m_next", "Next loaded tool"),
+  ];
+  const checkpoint = createToolExposureCheckpoint(
+    authorized,
+    createToolExposureState(["z_oldest", "a_newer"]),
+  );
+  const restored = restoreToolExposureState(checkpoint, authorized);
+
+  searchToolExposure({
+    query: "m_next",
+    authorized,
+    state: restored,
+    maxLoadedTools: 2,
+  });
+
+  assertEquals(checkpoint.loadedToolNames, ["z_oldest", "a_newer"]);
+  assertEquals([...restored.loadedToolNames], ["a_newer", "m_next"]);
 });
 
 it("tool exposure checkpoints canonicalize authorized loaded names", () => {
@@ -273,8 +523,8 @@ it("tool exposure checkpoints canonicalize authorized loaded names", () => {
   ]);
 
   assertEquals(createToolExposureCheckpoint(authorized, state), {
-    version: 1,
-    loadedToolNames: ["get_release", "list_projects"],
+    version: 2,
+    loadedToolNames: ["list_projects", "get_release"],
   });
 });
 
@@ -304,7 +554,7 @@ it("tool exposure checkpoint restoration fails closed and reauthorizes names", (
 
   assertEquals(
     restore({
-      version: 2,
+      version: 3,
       loadedToolNames: ["still_authorized"],
     }),
     [],

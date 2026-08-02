@@ -1,4 +1,5 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { CSSOptimizationEngine } from "#veryfront/extensions/css/index.ts";
 
 export interface TailwindProcessorOptions {
   projectDir: string;
@@ -8,7 +9,7 @@ export interface TailwindProcessorOptions {
   content?: string[];
   minify?: boolean;
   sourceMap?: boolean;
-  browserslist?: string[];
+  optimizationEngine?: CSSOptimizationEngine;
 }
 
 export interface TailwindProcessResult {
@@ -18,9 +19,8 @@ export interface TailwindProcessResult {
   detectedUtilities: number;
 }
 
-export interface LightningCSSOptions {
-  filename: string;
+export interface CSSOptimizationProcessOptions {
+  sourcePath: string;
   minify?: boolean;
   sourceMap?: boolean;
-  browserslist?: string[];
 }

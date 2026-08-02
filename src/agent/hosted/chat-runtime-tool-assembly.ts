@@ -355,25 +355,25 @@ export async function prepareHostedChatRuntimeToolAssembly<
     input.sourceIntegrationPolicy,
   );
   const localToolNames = Object.keys(localHostTools);
-  // Initial inventory = configured-binding remote tools + local + provider-native.
-  // The full MCP catalog does not flood the union: remoteToolNames is already
-  // filtered by the agent's configured binding (allowedToolNames), so only the
-  // explicitly selected subset reaches the provider cap. On-demand activation
-  // via load_tools extends this set at runtime beyond what the binding pre-loads.
-  const availableToolNames = selectProviderCompatibleToolNames(
-    [...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames])].sort(),
-    {
-      model: input.taskContext.model,
-      requiredToolNames: localToolNames,
-    },
-  );
-  const compatibleToolNames = new Set(availableToolNames);
-  const compatibleRemoteToolNames = remoteToolNames.filter((toolName) =>
-    compatibleToolNames.has(toolName)
-  );
   const toolLoadingMode: RuntimeToolLoadingMode = input.allowedToolNames === null
     ? "deferred"
     : "eager";
+  const authorizedToolNames = [
+    ...new Set([...localToolNames, ...providerToolNames, ...remoteToolNames]),
+  ].sort();
+  // Deferred mode sends only bootstrap/search plus explicitly loaded schemas to
+  // the model, so the provider schema limit must not truncate its searchable or
+  // executable authorization catalog. Eager mode still needs an up-front cap.
+  const availableToolNames = toolLoadingMode === "deferred"
+    ? authorizedToolNames
+    : selectProviderCompatibleToolNames(authorizedToolNames, {
+      model: input.taskContext.model,
+      requiredToolNames: localToolNames,
+    });
+  const compatibleToolNames = new Set(availableToolNames);
+  const compatibleRemoteToolNames = toolLoadingMode === "deferred"
+    ? remoteToolNames
+    : remoteToolNames.filter((toolName) => compatibleToolNames.has(toolName));
   const bootstrapToolNames = availableToolNames.filter((toolName) =>
     toolName === "form_input" || toolName === "load_skill"
   );

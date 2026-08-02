@@ -50,11 +50,9 @@
   "src/observability/tracing/span-operations.test.ts",
   "src/platform/adapters/fs/veryfront/adapter-helpers.test.ts",
   "src/platform/adapters/fs/veryfront/directory-operations.test.ts",
-  "src/platform/adapters/mock.test.ts",
   "src/platform/adapters/redis/node.test.ts",
   "src/platform/adapters/runtime/shared/watcher-queue.test.ts",
   "src/platform/adapters/token/factory.test.ts",
-  "src/platform/adapters/veryfront-api-client/client.test.ts",
   "src/platform/compat/crypto.test.ts",
   "src/platform/compat/shims/std-fs.test.ts",
   "src/platform/compat/std/front-matter-yaml.test.ts",
@@ -88,6 +86,5 @@
   "src/transforms/mdx/compiler/index.test.ts",
   "src/transforms/mdx/esm-module-loader/loader.test.ts",
   "src/utils/cache/stores/memory/lru-list-manager.test.ts",
-  "src/workflow/api/workflow-client.test.ts",
-  "src/workflow/blob/gcs-storage.test.ts"
+  "src/workflow/api/workflow-client.test.ts"
 ]

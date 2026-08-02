@@ -7,6 +7,7 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { ApiRouteMatcher } from "#veryfront/routing/api/index.ts";
 import { ComponentRegistry } from "#veryfront/modules/component-registry/index.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 import { MiddlewarePipeline } from "#veryfront/middleware/core/pipeline/index.ts";
 import { bootstrapDev } from "../bootstrap.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
@@ -61,6 +62,7 @@ export class DevServer {
   private adapter!: RuntimeAdapter;
   private server?: Server;
   private appConfig: VeryfrontConfig | undefined;
+  private _nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
   private requestHandler?: RequestHandler;
   private _handler?: (req: Request) => Promise<Response>;
   readonly ready: Promise<void>;
@@ -100,6 +102,7 @@ export class DevServer {
     const bootstrap = await bootstrapDev(this.options.projectDir, baseAdapter);
     this.adapter = bootstrap.adapter;
     this.appConfig = bootstrap.config;
+    this._nodeWebSocketServerProvider = bootstrap.nodeWebSocketServerProvider;
 
     // Merge CLI enableHMR flag into config to ensure HMR scripts are disabled when --no-hmr is passed
     if (this.appConfig && this.options.enableHMR === false) {
@@ -256,6 +259,7 @@ export class DevServer {
       port: this.options.port,
       hostname: this.options.bindAddress ?? LOCALHOST.IPV4,
       signal: this.options.signal,
+      nodeWebSocketServerProvider: this._nodeWebSocketServerProvider,
       onListen: ({ port }: { hostname: string; port: number }) => {
         const url = buildLocalhostUrl(port);
         logger.debug(`Dev server running at ${url}`);
@@ -280,6 +284,11 @@ export class DevServer {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });
     }
     return this._handler;
+  }
+
+  /** Explicit Node WebSocket implementation captured with this bootstrap generation. */
+  get nodeWebSocketServerProvider(): Readonly<NodeWebSocketServerProvider> | undefined {
+    return this._nodeWebSocketServerProvider;
   }
 
   private buildDiscoveryConfig(): DiscoveryConfig {

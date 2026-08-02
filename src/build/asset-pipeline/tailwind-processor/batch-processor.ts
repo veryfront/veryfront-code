@@ -1,7 +1,7 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { TailwindProcessorOptions, TailwindProcessResult } from "./types.ts";
 import { TailwindProcessor } from "./processor.ts";
@@ -33,26 +33,38 @@ export function processTailwindCSSInDirectory(
       const fs = createFileSystem();
       const adapter = await runtime.get();
 
+      let directoryInfo;
       try {
-        for await (const entry of fs.readDir(cssPath)) {
-          if (!entry.isFile || !entry.name.endsWith(".css")) continue;
-
-          const filePath = join(cssPath, entry.name);
-          if (!(await isTailwindV4File(filePath, projectDir, adapter))) continue;
-
-          logger.info("Found Tailwind v4 file", { file: filePath });
-
-          results.push(
-            await processTailwindCSS({
-              projectDir,
-              adapter,
-              inputFile: filePath,
-              outputFile: join(projectDir, outputDir, entry.name),
-            }),
-          );
-        }
+        directoryInfo = fs.lstat ? await fs.lstat(cssPath) : await fs.stat(cssPath);
       } catch (error) {
-        logger.error("Error processing Tailwind CSS directory", error);
+        if (isNotFoundError(error)) {
+          logger.debug("Tailwind CSS source directory is absent", {
+            directory: cssPath,
+          });
+          return [];
+        }
+        throw error;
+      }
+      if (!directoryInfo.isDirectory || directoryInfo.isSymlink) {
+        throw new TypeError("Tailwind CSS source path must be a real directory");
+      }
+
+      for await (const entry of fs.readDir(cssPath)) {
+        if (!entry.isFile || !entry.name.endsWith(".css")) continue;
+
+        const filePath = join(cssPath, entry.name);
+        if (!(await isTailwindV4File(filePath, projectDir, adapter))) continue;
+
+        logger.info("Found Tailwind v4 file", { file: filePath });
+
+        results.push(
+          await processTailwindCSS({
+            projectDir,
+            adapter,
+            inputFile: filePath,
+            outputFile: join(projectDir, outputDir, entry.name),
+          }),
+        );
       }
 
       return results;

@@ -151,6 +151,7 @@ async function startBinaryServer(
   nodeEnv = "development",
   extraEnv?: Record<string, string>,
 ): Promise<TestServer> {
+  await installBinaryTestCSSProcessor(projectDir);
   const maxRetries = 3;
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -219,6 +220,48 @@ async function startBinaryServer(
   throw new Error("Failed to start server after all retries");
 }
 
+const BINARY_TEST_CSS_PROCESSOR = `
+const compiler = Object.freeze({
+  build() {
+    return "";
+  },
+});
+
+const processor = Object.freeze({
+  cacheIdentity: "veryfront.binary-e2e.css-processor.v1",
+  defaultStylesheet: "",
+  async compile() {
+    return compiler;
+  },
+});
+
+const optimizer = Object.freeze({
+  cacheIdentity: "veryfront.binary-e2e.css-optimizer.v1",
+  optimize(request) {
+    return Object.freeze({ css: request.css });
+  },
+});
+
+export default function binaryE2ECSSProcessor() {
+  return {
+    name: "binary-e2e-css-processor",
+    version: "1.0.0",
+    capabilities: [],
+    contracts: { provides: ["CSSProcessor", "CSSOptimizationEngine"] },
+    setup(context) {
+      context.provide("CSSProcessor", processor);
+      context.provide("CSSOptimizationEngine", optimizer);
+    },
+  };
+}
+`;
+
+async function installBinaryTestCSSProcessor(projectDir: string): Promise<void> {
+  const extensionDir = join(projectDir, "extensions", "binary-e2e-css-processor");
+  await Deno.mkdir(extensionDir, { recursive: true });
+  await Deno.writeTextFile(join(extensionDir, "index.ts"), BINARY_TEST_CSS_PROCESSOR);
+}
+
 export async function createTestProject(
   name: string,
   pageContent: string,
@@ -275,7 +318,15 @@ export async function withServer(
 }
 
 export async function fetchOkHtml(server: TestServer, path = "/"): Promise<string> {
-  const response = await fetch(`http://127.0.0.1:${server.port}${path}`);
+  let response: Response;
+  try {
+    response = await fetch(`http://127.0.0.1:${server.port}${path}`);
+  } catch (cause) {
+    throw new Error(
+      `Request failed for ${path}\n\nRecent logs:\n${server.logs.join("").slice(-16000)}`,
+      { cause },
+    );
+  }
   const html = await response.text();
 
   const recentLogs = server.logs.join("").slice(-16000);

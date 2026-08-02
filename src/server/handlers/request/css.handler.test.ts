@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CSSHandler } from "./css.handler.ts";
 import type { HandlerContext } from "../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { hashCSS } from "#veryfront/html/styles-builder/css-identity.ts";
 
 function createMockAdapter(files: Record<string, string> = {}): RuntimeAdapter {
   return {
@@ -55,17 +56,19 @@ function makeCtx(files: Record<string, string> = {}): HandlerContext {
 describe("server/handlers/request/css", () => {
   it("serves built CSS files from local dist when the JIT cache misses", async () => {
     const handler = new CSSHandler();
+    const css = ".flex{display:flex}";
+    const hash = hashCSS(css);
 
     const result = await handler.handle(
-      new Request("http://localhost/_vf/css/jecaqb.css"),
+      new Request(`http://localhost/_vf/css/${hash}.css`),
       makeCtx({
-        "/project/dist/_vf/css/jecaqb.css": ".flex{display:flex}",
+        [`/project/dist/_vf/css/${hash}.css`]: css,
       }),
     );
 
     const response = result.response!;
     assertEquals(response.status, 200);
     assertEquals(response.headers.get("content-type"), "text/css; charset=utf-8");
-    assertEquals(await response.text(), ".flex{display:flex}");
+    assertEquals(await response.text(), css);
   });
 });

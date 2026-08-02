@@ -7,12 +7,14 @@ export type ExtensionManifest = {
   exports: string | Record<string, string>;
   veryfront?: {
     extension?: boolean;
+    activation?: "auto" | "explicit";
     contracts?: {
       provides?: string[];
       requires?: string[];
     };
     capabilities?: unknown[];
     npm?: {
+      nodeEngine?: string;
       publish?: boolean;
       stagedSources?: ExtensionStagedSourceManifest[];
       runtimePackages?: ExtensionRuntimePackageManifest[];
@@ -74,6 +76,19 @@ const TEST_ONLY_IMPORTS = new Set([
   "@std/assert",
   "@std/testing/bdd",
 ]);
+
+const DEFAULT_NODE_ENGINE = ">=18.0.0";
+const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
+
+function extensionNodeEngine(manifest: ExtensionManifest): string {
+  const nodeEngine = manifest.veryfront?.npm?.nodeEngine ?? DEFAULT_NODE_ENGINE;
+  if (typeof nodeEngine !== "string" || !NODE_ENGINE_PATTERN.test(nodeEngine)) {
+    throw new Error(
+      `${manifest.name} veryfront.npm.nodeEngine must use the exact minimum-version form >=MAJOR.MINOR.PATCH`,
+    );
+  }
+  return nodeEngine;
+}
 
 export function firstPartyExtensionManifestPaths(
   rootConfig: RootPackageConfig,
@@ -257,7 +272,7 @@ function createBaseExtensionPackageSpec(input: {
       homepage:
         `https://github.com/veryfront/veryfront-code/tree/main/${manifestDir}`,
       engines: {
-        node: ">=18.0.0",
+        node: extensionNodeEngine(input.manifest),
       },
       peerDependencies: {
         veryfront: veryfrontPeerRange,
@@ -334,7 +349,7 @@ function createRuntimeExtensionPackageSpec(input: {
     homepage:
       `https://github.com/veryfront/veryfront-code/tree/main/${input.baseSpec.manifestDir}`,
     engines: {
-      node: ">=18.0.0",
+      node: extensionNodeEngine(input.manifest),
     },
     dependencies,
     keywords: [

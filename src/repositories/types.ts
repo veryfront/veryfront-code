@@ -5,7 +5,12 @@ import type { CacheStats, RepositoryContext } from "./schemas/index.ts";
 export interface FileSystemRepository {
   readFile(path: string): Promise<string>;
   readFileBytes(path: string): Promise<Uint8Array>;
-  writeFile(path: string, content: string | Uint8Array): Promise<void>;
+  readFileBytesBounded?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileBytesWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readFileSnapshotWithinLimit?(path: string, byteLimit: number): Promise<Uint8Array>;
+  readonly maxWholeFileReadBytes?: number;
+  /** Write UTF-8 text. Binary writes require an explicitly binary repository API. */
+  writeFile(path: string, content: string): Promise<void>;
   exists(path: string): Promise<boolean>;
   stat(path: string): Promise<FileInfo>;
   readDir(path: string): AsyncIterable<DirEntry>;

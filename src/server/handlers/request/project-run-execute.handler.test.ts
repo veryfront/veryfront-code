@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";

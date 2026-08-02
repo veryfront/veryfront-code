@@ -3,13 +3,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests for CSS Optimizer Utilities
  */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import {
-  basicMinify,
   calculateSavings,
   extractSelectors,
   findCSSFiles,
@@ -46,6 +45,12 @@ describe("CSS Optimizer Utils", () => {
 
       await cleanupTestDir();
     });
+
+    it("rejects a missing directory", async () => {
+      await assertRejects(
+        () => findCSSFiles(`${TEST_DIR}-${crypto.randomUUID()}`),
+      );
+    });
   });
 
   describe("matchPattern", () => {
@@ -66,6 +71,14 @@ describe("CSS Optimizer Utils", () => {
     it("generates correct output path with .min suffix", () => {
       const result = getOutputPath("styles/main.css", ".output");
       assertEquals(result, ".output/styles/main.min.css");
+    });
+
+    it("rejects paths that could escape output", () => {
+      assertThrows(
+        () => getOutputPath("../main.css", ".output"),
+        TypeError,
+        "Invalid relative",
+      );
     });
   });
 
@@ -133,34 +146,12 @@ describe("CSS Optimizer Utils", () => {
     });
   });
 
-  describe("basicMinify", () => {
-    it("removes comments", () => {
-      const css = "/* Comment */ .button { color: red; }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified.includes("/*"), false);
-    });
-
-    it("removes whitespace", () => {
-      const css = ".button   {   color:   red;   }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified, ".button{color:red}");
-    });
-
-    it("removes semicolons before braces", () => {
-      const css = ".button { color: red; }";
-      const minified = basicMinify(css);
-
-      assertEquals(minified, ".button{color:red}");
-    });
-  });
-
   describe("calculateSavings", () => {
     it("calculates percentage savings correctly", () => {
       assertEquals(calculateSavings(1000, 500), 50);
       assertEquals(calculateSavings(1000, 750), 25);
       assertEquals(calculateSavings(0, 0), 0);
+      assertThrows(() => calculateSavings(-1, 0), TypeError);
     });
   });
 
@@ -180,6 +171,43 @@ describe("CSS Optimizer Utils", () => {
       assert(files.some((f) => f.includes("test.ts")));
 
       await cleanupTestDir();
+    });
+
+    it("rejects patterns outside the project boundary", async () => {
+      const baseDir = await Deno.makeTempDir();
+      try {
+        await assertRejects(
+          () => globFiles("../outside/**/*.ts", { baseDir }),
+          TypeError,
+          "outside the project",
+        );
+      } finally {
+        await Deno.remove(baseDir, { recursive: true });
+      }
+    });
+
+    it("treats only a missing static glob root as no matches", async () => {
+      const baseDir = await Deno.makeTempDir();
+      try {
+        assertEquals(
+          await globFiles("optional/**/*.tsx", { baseDir }),
+          [],
+        );
+        await assertRejects(
+          () =>
+            globFiles("blocked/**/*.tsx", {
+              baseDir,
+              fs: {
+                readDir() {
+                  throw new Deno.errors.PermissionDenied("blocked");
+                },
+              },
+            }),
+          Deno.errors.PermissionDenied,
+        );
+      } finally {
+        await Deno.remove(baseDir, { recursive: true });
+      }
     });
   });
 });

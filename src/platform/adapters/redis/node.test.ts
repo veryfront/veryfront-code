@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { NodeRedisAdapter } from "./node.ts";
 
@@ -206,6 +206,17 @@ describe("platform/adapters/redis/node", () => {
       const adapter = new NodeRedisAdapter(client as never);
       await adapter.disconnect();
       assertEquals(calls.some((c) => c.method === "destroy"), true);
+    });
+
+    it("normalizes synchronous destroy failures into promise rejections", async () => {
+      const { client } = createMockClient();
+      client.destroy = () => {
+        throw new Error("destroy failed");
+      };
+      const adapter = new NodeRedisAdapter(client as never);
+
+      const pending = adapter.disconnect();
+      await assertRejects(() => pending, Error, "destroy failed");
     });
 
     it("should forward hdel fields as an array (hDel)", async () => {

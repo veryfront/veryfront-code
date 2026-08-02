@@ -15,12 +15,12 @@ import { loadClientStyles } from "./asset-generation.ts";
 import { buildImportMap } from "#veryfront/html/utils.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
+  acquireCSSGenerationSession,
   cacheCSSAsync,
   extractCandidatesFromFiles,
   generateTailwindCSS,
   hashCSS,
 } from "#veryfront/html/styles-builder/index.ts";
-import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
 import { SSG_GENERATION_ERROR } from "#veryfront/errors";
@@ -191,23 +191,21 @@ async function prepareAppRouteStylesheet(
   });
   for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
 
-  const generated = await generateTailwindCSS(stylesheet, candidates, {
+  const generationSession = acquireCSSGenerationSession(true);
+  const resolvedStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
+  const generated = await generateTailwindCSS(resolvedStylesheet, candidates, {
     minify: true,
     environment: "production",
     buildMode: "production",
-  });
-
-  if (generated.error) {
-    logger.error("Failed to generate App Router CSS:", generated.error);
-    return undefined;
-  }
+  }, { generationSession });
 
   const hash = hashCSS(generated.css);
   if (!hash) return undefined;
 
   await cacheCSSAsync(generated.css, hash, {
     candidates,
-    stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+    stylesheet: resolvedStylesheet,
+    pipelineIdentity: generated.cacheIdentity,
   });
 
   if (!options.dryRun) {

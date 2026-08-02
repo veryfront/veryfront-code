@@ -36,6 +36,22 @@ describe("extensions/contracts", () => {
         "deno add @veryfront/ext-bundler-esbuild",
       );
     });
+
+    it("recommends first-party asset engine extensions", () => {
+      for (
+        const [contract, packageName] of [
+          ["CSSOptimizationEngine", "@veryfront/ext-css-lightning"],
+          ["CSSPurgingEngine", "@veryfront/ext-css-purgecss"],
+          ["ImageOptimizationEngine", "@veryfront/ext-image-sharp"],
+        ] as const
+      ) {
+        assertThrows(
+          () => resolve(contract),
+          Error,
+          `deno add ${packageName}`,
+        );
+      }
+    });
   });
 
   describe("tryResolve()", () => {

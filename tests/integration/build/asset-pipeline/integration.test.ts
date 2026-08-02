@@ -3,7 +3,7 @@
  */
 
 import "../../../_helpers/contract-init.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   type AssetPipelineOptions,
@@ -11,6 +11,32 @@ import {
   getAssetPipelineStatus,
   runAssetPipeline,
 } from "../../../../src/build/asset-pipeline/index.ts";
+import {
+  createTestCSSOptimizationEngine,
+  withTestCSSOptimizationEngine,
+} from "../../../_helpers/css-optimization-engine.ts";
+
+const optimizationEngine = createTestCSSOptimizationEngine();
+
+async function withCSSProject(
+  run: (projectDir: string) => Promise<void>,
+  engine = optimizationEngine,
+): Promise<void> {
+  const projectDir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${projectDir}/styles`);
+    await Deno.writeTextFile(
+      `${projectDir}/styles/main.css`,
+      ".main { color: red; }",
+    );
+    await withTestCSSOptimizationEngine(
+      engine,
+      () => run(projectDir),
+    );
+  } finally {
+    await Deno.remove(projectDir, { recursive: true });
+  }
+}
 
 describe("Asset Pipeline", () => {
   describe("runAssetPipeline", () => {
@@ -30,37 +56,178 @@ describe("Asset Pipeline", () => {
       const result = await runAssetPipeline();
 
       assertExists(result);
-      assertEquals(typeof result.images.enabled, "boolean");
-      assertEquals(typeof result.css.enabled, "boolean");
+      assertEquals(result.images.enabled, false);
+      assertEquals(result.css.enabled, false);
       assertEquals(typeof result.duration, "number");
     });
 
-    it("images only", async () => {
-      const result = await runAssetPipeline({
-        images: {
-          enabled: true,
-          inputDir: "./.veryfront/test-images-nonexistent",
-        },
-        css: { enabled: false },
-      });
-
-      assertExists(result);
-      assertEquals(typeof result.images.optimized, "number");
-      assertEquals(result.css.enabled, false);
+    it("rejects a failing explicitly requested image stage", async () => {
+      await assertRejects(() =>
+        runAssetPipeline({
+          images: {
+            enabled: true,
+            inputDir: "./.veryfront/test-images-nonexistent",
+          },
+          css: { enabled: false },
+        })
+      );
     });
 
-    it("CSS only", async () => {
-      const result = await runAssetPipeline({
-        images: { enabled: false },
-        css: {
-          enabled: true,
-          inputDir: "./.veryfront/test-css-nonexistent",
-        },
-      });
+    it("runs an explicitly composed CSS stage", async () => {
+      await withCSSProject(async (projectDir) => {
+        const result = await runAssetPipeline({
+          images: { enabled: false },
+          css: {
+            enabled: true,
+            projectDir,
+            inputDir: "styles",
+            outputDir: ".veryfront/css",
+          },
+        });
 
-      assertExists(result);
-      assertEquals(result.images.enabled, false);
-      assertEquals(typeof result.css.optimized, "number");
+        assertEquals(result.images.enabled, false);
+        assertEquals(result.css.enabled, true);
+        assertEquals(result.css.optimized, 1);
+      });
+    });
+
+    it("rejects overlapping Tailwind and CSS outputs before either stage writes", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const outputDir = `${projectDir}/.veryfront/shared-css`;
+      try {
+        await Deno.mkdir(`${projectDir}/styles`);
+        await Deno.writeTextFile(
+          `${projectDir}/styles/main.css`,
+          '@import "tailwindcss";\n.main { color: red; }',
+        );
+
+        await withTestCSSOptimizationEngine(
+          optimizationEngine,
+          () =>
+            assertRejects(
+              () =>
+                runAssetPipeline({
+                  images: { enabled: false },
+                  tailwind: {
+                    enabled: true,
+                    projectDir,
+                    sourceDir: "styles",
+                    outputDir: ".veryfront/shared-css",
+                  },
+                  css: {
+                    enabled: true,
+                    projectDir,
+                    inputDir: "styles",
+                    outputDir: ".veryfront/shared-css",
+                  },
+                }),
+              TypeError,
+              "output directories for tailwind and css must not overlap physically",
+            ),
+        );
+
+        await assertRejects(
+          () => Deno.stat(outputDir),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects nested Tailwind and CSS output directories", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const outputDir = `${projectDir}/.veryfront/css`;
+      try {
+        await Deno.mkdir(`${projectDir}/styles`);
+        await Deno.writeTextFile(
+          `${projectDir}/styles/main.css`,
+          '@import "tailwindcss";\n.main { color: red; }',
+        );
+
+        await withTestCSSOptimizationEngine(
+          optimizationEngine,
+          () =>
+            assertRejects(
+              () =>
+                runAssetPipeline({
+                  images: { enabled: false },
+                  tailwind: {
+                    enabled: true,
+                    projectDir,
+                    sourceDir: "styles",
+                    outputDir: ".veryfront/css/tailwind",
+                  },
+                  css: {
+                    enabled: true,
+                    projectDir,
+                    inputDir: "styles",
+                    outputDir: ".veryfront/css",
+                  },
+                }),
+              TypeError,
+              "output directories for tailwind and css must not overlap physically",
+            ),
+        );
+
+        await assertRejects(
+          () => Deno.stat(outputDir),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("rejects physically aliased output directories without replacing existing files", async () => {
+      const projectDir = await Deno.makeTempDir();
+      const physicalOutputDir = `${projectDir}/.veryfront/physical-css`;
+      const aliasedOutputDir = `${projectDir}/.veryfront/aliased-css`;
+      const sentinelPath = `${physicalOutputDir}/sentinel.txt`;
+      const generatedPath = `${physicalOutputDir}/main.css`;
+      try {
+        await Deno.mkdir(`${projectDir}/styles`);
+        await Deno.mkdir(physicalOutputDir, { recursive: true });
+        await Deno.symlink(physicalOutputDir, aliasedOutputDir, { type: "dir" });
+        await Deno.writeTextFile(sentinelPath, "preserve me");
+        await Deno.writeTextFile(
+          `${projectDir}/styles/main.css`,
+          '@import "tailwindcss";\n.main { color: red; }',
+        );
+
+        await withTestCSSOptimizationEngine(
+          optimizationEngine,
+          () =>
+            assertRejects(
+              () =>
+                runAssetPipeline({
+                  images: { enabled: false },
+                  tailwind: {
+                    enabled: true,
+                    projectDir,
+                    sourceDir: "styles",
+                    outputDir: ".veryfront/aliased-css",
+                  },
+                  css: {
+                    enabled: true,
+                    projectDir,
+                    inputDir: "styles",
+                    outputDir: ".veryfront/physical-css",
+                  },
+                }),
+              TypeError,
+              "output directories for tailwind and css must not overlap physically",
+            ),
+        );
+
+        assertEquals(await Deno.readTextFile(sentinelPath), "preserve me");
+        await assertRejects(
+          () => Deno.stat(generatedPath),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 
@@ -69,8 +236,8 @@ describe("Asset Pipeline", () => {
       const deps = await checkAssetPipelineDependencies();
 
       assertExists(deps);
-      assertEquals(typeof deps.sharp, "boolean");
-      assertEquals(typeof deps.lightningCSS, "boolean");
+      assertEquals(typeof deps.imageOptimization, "boolean");
+      assertEquals(typeof deps.cssOptimization, "boolean");
     });
   });
 
@@ -109,8 +276,8 @@ describe("Asset Pipeline", () => {
     });
   });
 
-  describe("graceful degradation", () => {
-    it("does not throw when dependencies are missing", async () => {
+  describe("fail-closed stages", () => {
+    it("rejects instead of returning partial success", async () => {
       const options: AssetPipelineOptions = {
         images: {
           enabled: true,
@@ -122,10 +289,34 @@ describe("Asset Pipeline", () => {
         },
       };
 
-      const result = await runAssetPipeline(options);
+      await assertRejects(() => runAssetPipeline(options));
+    });
 
-      assertExists(result);
-      assertEquals(typeof result.duration, "number");
+    it("surfaces an explicitly composed CSS provider failure", async () => {
+      const providerFailure = new Error("CSS provider failed");
+      const failingEngine = createTestCSSOptimizationEngine(() => {
+        throw providerFailure;
+      });
+
+      await withCSSProject(
+        async (projectDir) => {
+          await assertRejects(
+            () =>
+              runAssetPipeline({
+                images: { enabled: false },
+                css: {
+                  enabled: true,
+                  projectDir,
+                  inputDir: "styles",
+                  outputDir: ".veryfront/css",
+                },
+              }),
+            Error,
+            "CSS provider failed",
+          );
+        },
+        failingEngine,
+      );
     });
   });
 
@@ -161,45 +352,46 @@ describe("Asset Pipeline", () => {
   });
 
   describe("error handling", () => {
-    it("handles invalid paths without crashing", async () => {
-      const result = await runAssetPipeline({
-        images: {
-          enabled: true,
-          inputDir: "/invalid/path/that/does/not/exist",
-          outputDir: "/invalid/output/path",
-        },
-        css: {
-          enabled: true,
-          inputDir: "/invalid/css/path",
-          outputDir: "/invalid/css/output",
-        },
-      });
-
-      assertExists(result);
-      assertEquals(typeof result.duration, "number");
+    it("rejects output paths outside the project boundary", async () => {
+      await assertRejects(
+        () =>
+          runAssetPipeline({
+            images: {
+              enabled: true,
+              inputDir: "/invalid/path/that/does/not/exist",
+              outputDir: "/invalid/output/path",
+            },
+            css: {
+              enabled: true,
+              inputDir: "/invalid/css/path",
+              outputDir: "/invalid/css/output",
+            },
+          }),
+        TypeError,
+        "must be inside its project",
+      );
     });
   });
 
   describe("configuration validation", () => {
     it("accepts valid configuration options", async () => {
-      const result = await runAssetPipeline({
-        images: {
-          enabled: true,
-          formats: ["webp", "avif"],
-          sizes: [320, 640, 1024],
-          quality: 85,
-        },
-        css: {
-          enabled: true,
-          minify: true,
-          autoprefixer: true,
-          purge: false,
-        },
-      });
+      await withCSSProject(async (projectDir) => {
+        const result = await runAssetPipeline({
+          images: { enabled: false },
+          css: {
+            enabled: true,
+            projectDir,
+            inputDir: "styles",
+            outputDir: ".veryfront/css",
+            minify: true,
+            purge: false,
+          },
+        });
 
-      assertExists(result);
-      assertEquals(typeof result.images.enabled, "boolean");
-      assertEquals(typeof result.css.enabled, "boolean");
+        assertExists(result);
+        assertEquals(result.images.enabled, false);
+        assertEquals(result.css.enabled, true);
+      });
     });
   });
 });

@@ -22,6 +22,11 @@ import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/observability/tracing-exporter.ts";
 import {
+  type NodeWebSocketServerProvider,
+  NodeWebSocketServerProviderName,
+  snapshotNodeWebSocketServerProvider,
+} from "#veryfront/extensions/websocket";
+import {
   setGlobalActiveSpanAccessor,
   setGlobalContextAccessor,
   setGlobalMetricsAPI,
@@ -82,6 +87,9 @@ export interface BootstrapResult {
    * can safely invoke `teardownAll()` unconditionally.
    */
   extensionLoader: ExtensionLoader;
+
+  /** Immutable Node WebSocket implementation selected by this extension generation. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 
   /**
    * Dispose bootstrap resources: tears down extensions (reverse order),
@@ -156,6 +164,14 @@ function createBootstrapPrimeContracts(): Record<string, unknown> {
     [LLMProviderRegistryName]: createLLMProviderRegistry(),
     [EvalReportExporterRegistryName]: createEvalReportExporterRegistry(),
   };
+}
+
+/** @internal Snapshot the explicit Node WebSocket implementation for this generation. */
+export function resolveNodeWebSocketServerProviderForBootstrap():
+  | Readonly<NodeWebSocketServerProvider>
+  | undefined {
+  const provider = tryResolve<unknown>(NodeWebSocketServerProviderName);
+  return provider === undefined ? undefined : snapshotNodeWebSocketServerProvider(provider);
 }
 
 const DEFAULT_FILE_LOG_PATH = ".veryfront/logs/server.log";
@@ -325,11 +341,13 @@ export async function bootstrap(
       });
       wireTracingShim();
       assertRequiredContracts();
+      const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
       return {
         adapter,
         config,
         usingFSAdapter: false,
         extensionLoader,
+        ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
         dispose: combineDispose(extensionLoader, undefined, fileLog),
       };
     }
@@ -377,11 +395,13 @@ export async function bootstrap(
       });
       wireTracingShim();
       assertRequiredContracts();
+      const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
       return {
         adapter,
         config,
         usingFSAdapter: false,
         extensionLoader,
+        ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
         dispose: combineDispose(extensionLoader, undefined, fileLog),
       };
     }
@@ -459,6 +479,7 @@ export async function bootstrap(
     );
     wireTracingShim();
     assertRequiredContracts();
+    const nodeWebSocketServerProvider = resolveNodeWebSocketServerProviderForBootstrap();
 
     return {
       adapter: enhancedAdapter,
@@ -466,6 +487,7 @@ export async function bootstrap(
       usingFSAdapter: true,
       fsAdapterType: fsType,
       extensionLoader,
+      ...(nodeWebSocketServerProvider === undefined ? {} : { nodeWebSocketServerProvider }),
       dispose: combineDispose(extensionLoader, fsDispose, fileLog),
     };
   } catch (err) {

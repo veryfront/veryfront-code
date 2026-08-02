@@ -2,12 +2,11 @@
  * Release Asset Manifest — public barrel.
  *
  * @module release-assets
- *
- * @example Resolve an immutable release asset URL
+ * @example Build an immutable URL for a published JavaScript asset
  * ```ts
  * import { releaseAssetUrl } from "veryfront/release-assets";
  *
- * const url = releaseAssetUrl("abc123", "app.js");
+ * const url = releaseAssetUrl("a".repeat(64), "js");
  * ```
  */
 

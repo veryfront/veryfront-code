@@ -1,22 +1,10 @@
 import { createError, toError } from "#veryfront/errors";
+import { OwnedRedisClientConnection } from "#veryfront/extensions/distributed/owned-redis-client.ts";
+import type { RedisClient } from "#veryfront/extensions/distributed";
 import { serverLogger } from "#veryfront/utils";
 import type { RateLimitEntry, RateLimitStore } from "./types.ts";
 
 const logger = serverLogger.component("redis-ratelimit");
-
-interface RedisClient {
-  connect(): Promise<void>;
-  disconnect(): Promise<void>;
-  eval(
-    script: string,
-    options: { keys: string[]; arguments: string[] },
-  ): Promise<unknown>;
-  incr(key: string): Promise<number>;
-  pExpire(key: string, milliseconds: number): Promise<boolean>;
-  pTTL(key: string): Promise<number>;
-  del(key: string): Promise<number>;
-  on?(event: string, listener: (...args: unknown[]) => void): void;
-}
 
 const INCREMENT_WITH_TTL_SCRIPT = `
 local count = redis.call("INCR", KEYS[1])
@@ -36,69 +24,26 @@ export interface RedisRateLimitOptions {
 
 /** Implement redis rate limit store. */
 export class RedisRateLimitStore implements RateLimitStore {
-  private client: RedisClient | null = null;
-  private clientPromise: Promise<RedisClient> | null = null;
-  private readonly url?: string;
+  private readonly connection: OwnedRedisClientConnection;
   private readonly keyPrefix: string;
 
   constructor(options: RedisRateLimitOptions = {}) {
-    this.url = options.url;
     this.keyPrefix = options.keyPrefix ?? "veryfront:ratelimit:";
+    this.connection = new OwnedRedisClientConnection(
+      options.url === undefined ? {} : { url: options.url },
+      {
+        onError(error) {
+          logger.error("client error", error);
+        },
+        onCloseError(error) {
+          logger.error("client close failed", error);
+        },
+      },
+    );
   }
 
   private ensureClient(): Promise<RedisClient> {
-    if (this.client) return Promise.resolve(this.client);
-    this.clientPromise ??= this.connectClient();
-    return this.clientPromise;
-  }
-
-  private clearCachedClient(): void {
-    this.client = null;
-    this.clientPromise = null;
-  }
-
-  private attachClientLifecycleHandlers(client: RedisClient): void {
-    client.on?.("error", (err: unknown) => {
-      logger.error("client error", err);
-      this.clearCachedClient();
-    });
-
-    client.on?.("end", () => {
-      this.clearCachedClient();
-    });
-  }
-
-  private async connectClient(): Promise<RedisClient> {
-    let createClient: (options: { url?: string }) => RedisClient;
-
-    try {
-      const redisClientModule = ["npm:@redis/client", "@1.5.8"].join("");
-      const mod = await import(redisClientModule);
-      createClient = mod.createClient as (options: { url?: string }) => RedisClient;
-    } catch (_) {
-      // expected: redis client module may not be installed
-      this.clientPromise = null;
-      throw toError(
-        createError({
-          type: "config",
-          message:
-            "Redis rate limit store requires npm:@redis/client. Install dependencies or use MemoryRateLimitStore.",
-        }),
-      );
-    }
-
-    try {
-      const client = createClient({ url: this.url });
-      this.attachClientLifecycleHandlers(client);
-
-      await client.connect();
-      this.client = client;
-      this.clientPromise = null;
-      return client;
-    } catch (error) {
-      this.clientPromise = null;
-      throw error;
-    }
+    return this.connection.getClient();
   }
 
   private storageKey(key: string): string {
@@ -125,9 +70,7 @@ export class RedisRateLimitStore implements RateLimitStore {
   }
 
   async destroy(): Promise<void> {
-    if (!this.client) return;
-    await this.client.disconnect();
-    this.clearCachedClient();
+    await this.connection.close();
   }
 }
 

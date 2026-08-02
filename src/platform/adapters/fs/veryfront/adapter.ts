@@ -40,6 +40,8 @@ import {
   shouldBackgroundPregenerateStyles,
 } from "./adapter-helpers.ts";
 import { isNotFoundLikeError } from "./read-operations-helpers.ts";
+import { DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES } from "../../veryfront-api-transport.ts";
+import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 
 import {
   clearCachedReleaseAssetManifests,
@@ -116,6 +118,8 @@ function buildManifestFetcher(
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
+  readonly maxWholeFileReadBytes = DEFAULT_VERYFRONT_API_SUCCESS_BODY_BYTES;
+  readonly symlinkSemantics = "none" as const;
   private client: VeryfrontApiClient;
   private cache: FileCache;
   private normalizer: PathNormalizer;
@@ -123,6 +127,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private dirOps: DirectoryOperations;
   private statOps: StatOperations;
   private initialized = false;
+  private exactReadInitializationPromise: Promise<void> | null = null;
+  private exactReadInitializationGeneration = 0;
 
   /** Resolves when file list initialization is complete (for coordinating reads) */
   private fileListReadyResolve: (() => void) | null = null;
@@ -944,6 +950,15 @@ export class VeryfrontFSAdapter implements FSAdapter {
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readFile(path));
   }
 
+  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
+    const admittedLimit = requireBoundedFileReadLimit(byteLimit);
+    await this.ensureExactReadInitialized();
+    return this.withBranchSnapshotRecovery(
+      path,
+      () => this.readOps.readFileBytesWithinLimit(path, admittedLimit),
+    );
+  }
+
   async readTextFile(path: string): Promise<string> {
     await this.ensureInitialized();
     return this.withBranchSnapshotRecovery(path, () => this.readOps.readTextFile(path));
@@ -1002,6 +1017,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.statOps.clearIndex();
     this.dirOps.clearTree();
     this.initialized = false;
+    this.exactReadInitializationPromise = null;
+    this.exactReadInitializationGeneration++;
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.branchMissRecoveryPromise = null;
@@ -1203,6 +1220,40 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return;
     await this.initialize();
+  }
+
+  private async ensureExactReadInitialized(): Promise<void> {
+    if (this.client.isInitialized() && this.contentContext) return;
+    if (this.exactReadInitializationPromise) {
+      await this.exactReadInitializationPromise;
+      return;
+    }
+
+    const generation = ++this.exactReadInitializationGeneration;
+    const initialization = (async () => {
+      await this.client.initialize();
+      if (!this.contentContext) {
+        this.setContentContext(
+          await resolveContentContext(this.client, this.contentSource, this.projectSlug),
+        );
+      }
+      if (!this.contentContext) {
+        throw toError(
+          createError({
+            type: "config",
+            message: "Veryfront adapter content context resolution failed",
+          }),
+        );
+      }
+    })();
+    this.exactReadInitializationPromise = initialization;
+    try {
+      await initialization;
+    } finally {
+      if (this.exactReadInitializationGeneration === generation) {
+        this.exactReadInitializationPromise = null;
+      }
+    }
   }
 
   /**

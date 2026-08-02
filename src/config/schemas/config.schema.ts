@@ -1,8 +1,11 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { isAbsolute } from "#veryfront/compat/path/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { ALL_INTEGRATION_NAMES } from "#veryfront/integrations/schema.ts";
 import type { SourceIntegrationPolicyConfig } from "#veryfront/integrations/source-policy.ts";
+import { CSS_OPTIMIZATION, IMAGE_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
+import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 
 const integrationNames = new Set<string>(ALL_INTEGRATION_NAMES);
 
@@ -232,8 +235,16 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           images: v
             .object({
               enabled: v.boolean().optional(),
+              projectDir: v.string().optional(),
               formats: v.array(v.enum(["webp", "avif", "jpeg", "png"])).optional(),
-              sizes: v.array(v.number().int().positive()).optional(),
+              sizes: v
+                .array(
+                  v.number().int().positive().max(
+                    IMAGE_OPTIMIZATION.MAX_DIMENSION,
+                  ),
+                )
+                .max(IMAGE_OPTIMIZATION.MAX_OUTPUT_SIZES)
+                .optional(),
               quality: v.number().int().min(1).max(100).optional(),
               inputDir: v.string().optional(),
               outputDir: v.string().optional(),
@@ -244,17 +255,35 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
           css: v
             .object({
               enabled: v.boolean().optional(),
+              projectDir: v
+                .string()
+                .min(1)
+                .max(MAX_PATH_LENGTH_CHARS)
+                .refine(
+                  isAbsolute,
+                  "CSS projectDir must be an absolute path",
+                )
+                .optional(),
               minify: v.boolean().optional(),
-              autoprefixer: v.boolean().optional(),
               purge: v.boolean().optional(),
               criticalCSS: v.boolean().optional(),
-              inputDir: v.string().optional(),
-              outputDir: v.string().optional(),
-              browsers: v.array(v.string()).optional(),
-              purgeContent: v.array(v.string()).optional(),
+              inputFiles: v
+                .array(v.string().min(1).max(MAX_PATH_LENGTH_CHARS))
+                .max(CSS_OPTIMIZATION.MAX_FILES)
+                .optional(),
+              inputDir: v.string().min(1).max(MAX_PATH_LENGTH_CHARS).optional(),
+              outputDir: v.string().min(1).max(MAX_PATH_LENGTH_CHARS).optional(),
+              purgeContent: v
+                .array(v.string().min(1).max(MAX_PATH_LENGTH_CHARS))
+                .max(CSS_OPTIMIZATION.MAX_PURGE_PATTERNS)
+                .optional(),
+              purgeSafelist: v
+                .array(v.string().min(1).max(MAX_PATH_LENGTH_CHARS))
+                .max(CSS_OPTIMIZATION.MAX_PURGE_SAFELIST_ENTRIES)
+                .optional(),
               sourceMap: v.boolean().optional(),
             })
-            .partial()
+            .strict()
             .optional(),
         })
         .partial()

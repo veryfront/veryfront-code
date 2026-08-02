@@ -1,14 +1,24 @@
 import { logger } from "#veryfront/utils";
+import type { CSSOptimizationEngine } from "#veryfront/extensions/css/index.ts";
 import type {
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
   CSSProcessingResult,
 } from "../types/index.ts";
-import { basicMinify } from "../utils.ts";
+import {
+  acquireConfiguredCSSOptimization,
+  createCSSOptimizationSession,
+} from "../optimization-engine.ts";
 
 export class MinificationStrategy implements CSSOptimizationStrategy {
   readonly name = "basic-minification";
   readonly priority = 10;
+
+  readonly #engine: CSSOptimizationEngine | undefined;
+
+  constructor(engine?: CSSOptimizationEngine) {
+    this.#engine = engine;
+  }
 
   canProcess(options: CSSOptimizationOptions): boolean {
     return options.enabled !== false && options.minify !== false;
@@ -19,11 +29,18 @@ export class MinificationStrategy implements CSSOptimizationStrategy {
     filename: string,
     _options: CSSOptimizationOptions,
   ): Promise<CSSProcessingResult> {
-    logger.debug(`Using basic minification for ${filename}`);
+    logger.debug(`Using parser-backed minification for ${filename}`);
 
+    const session = this.#engine === undefined
+      ? acquireConfiguredCSSOptimization()
+      : createCSSOptimizationSession(this.#engine);
     return {
-      code: basicMinify(content),
-      sourceMap: undefined,
+      code: session.run({
+        css: content,
+        sourcePath: filename,
+        minify: true,
+        sourceMap: false,
+      }).css,
     };
   }
 }

@@ -39,6 +39,17 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       ],
     },
     {
+      label: "Redis distributed runtime",
+      manifestPath: "extensions/ext-redis/deno.json",
+      requiredCapabilities: [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: ["NODE_ENV", "REDIS_PASSWORD", "REDIS_URL", "REDIS_USERNAME"],
+        },
+      ],
+    },
+    {
       label: "native SQLite storage",
       manifestPath: "extensions/ext-db-sqlite/deno.json",
       requiredCapabilities: [
@@ -50,6 +61,21 @@ export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
       label: "document extraction",
       manifestPath: "extensions/ext-document-kreuzberg/deno.json",
       requiredCapabilities: [{ type: "fs:read" }],
+    },
+    {
+      label: "native image optimization",
+      manifestPath: "extensions/ext-image-sharp/deno.json",
+      requiredCapabilities: [
+        {
+          type: "fs:read",
+          paths: ["/proc/self/exe", "/usr/bin/ldd"],
+        },
+        {
+          type: "env:read",
+          keys: ["MALLOC_ARENA_MAX", "npm_package_config_libvips"],
+        },
+        { type: "native:ffi" },
+      ],
     },
     {
       label: "OpenTelemetry observability",

@@ -1,0 +1,28 @@
+{
+  "name": "@veryfront/ext-blob-gcs",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "activation": "explicit",
+    "contracts": {
+      "provides": ["BlobStorage"]
+    },
+    "capabilities": [
+      {
+        "type": "net:outbound",
+        "hosts": ["oauth2.googleapis.com", "storage.googleapis.com"]
+      }
+    ]
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1.0.19",
+    "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
+    "veryfront/errors": "../../src/errors/index.ts",
+    "veryfront/extensions": "../../src/extensions/index.ts",
+    "veryfront/workflow/blob": "../../src/workflow/blob/index.ts"
+  },
+  "tasks": {
+    "test": "deno test --frozen src/"
+  }
+}

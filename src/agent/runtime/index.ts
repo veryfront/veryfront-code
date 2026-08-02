@@ -220,6 +220,7 @@ import {
   type ToolExposureCheckpoint,
   type ToolExposurePlan,
   type ToolExposureState,
+  type ToolSearchResult,
 } from "./tool-exposure.ts";
 
 const logger = serverLogger.component("agent");
@@ -258,15 +259,20 @@ function executeFrameworkToolSearch(input: {
   if (!query) {
     throw new Error('tool_search requires a non-empty "query" string');
   }
-  const result = searchToolExposure({
+  const result: ToolSearchResult = searchToolExposure({
     query,
-    authorized: input.plan.authorized,
+    authorized: input.plan.deferred,
+    available: input.plan.visible.filter((tool) => tool.name !== TOOL_SEARCH_TOOL_NAME),
     state: input.state,
+    maxLoadedTools: input.plan.maxLoadedTools,
   });
+  const alreadyVisible = result.matches.find((match) => match.status === "available");
   return {
     result: {
       ...result,
-      nextStep: result.loadedCount > 0
+      nextStep: alreadyVisible
+        ? `The matching tool "${alreadyVisible.name}" is already available. Call it directly.`
+        : result.loadedCount > 0
         ? "Continue to the next model step. Loaded tool schemas will be available then."
         : "Continue with the available tools or answer without a tool.",
     },
@@ -370,12 +376,22 @@ function getResponseFinishReason(response: AgentResponse): string | undefined {
   return typeof finishReason === "string" && finishReason.length > 0 ? finishReason : undefined;
 }
 
+const AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES = new Set([
+  "create_agent",
+  "update_agent",
+]);
+
 function shouldHideProjectToolAfterAgentWriteSuccess(toolName: string): boolean {
-  return toolName === "create_agent" || toolName === "update_agent";
+  return AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES.has(toolName);
 }
 
 function applyAgentWriteFinalResponseGuard(plan: ToolExposurePlan): ToolExposurePlan {
   const keep = (tool: { name: string }) => !shouldHideProjectToolAfterAgentWriteSuccess(tool.name);
+  for (const toolName of plan.loadedToolNames) {
+    if (shouldHideProjectToolAfterAgentWriteSuccess(toolName)) {
+      plan.loadedToolNames.delete(toolName);
+    }
+  }
   return {
     ...plan,
     authorized: plan.authorized.filter(keep),
@@ -1112,6 +1128,10 @@ export class AgentRuntime {
             : activeSkillToolAvailability,
           allowedRemoteToolNames,
           config: runtimeStepConfig,
+          effectiveModel,
+          excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+            ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
+            : undefined,
           forwardedRemoteToolDefinitions,
           getAvailableTools,
           isLocalModel: isLocal,
@@ -1708,6 +1728,10 @@ export class AgentRuntime {
         activeSkillToolAvailability,
         allowedRemoteToolNames,
         config: runtimeStepConfig,
+        effectiveModel,
+        excludedToolNames: agentWriteFinalResponseToolGuardEnabled
+          ? AGENT_WRITE_FINAL_RESPONSE_EXCLUDED_TOOL_NAMES
+          : undefined,
         forwardedRemoteToolDefinitions,
         getAvailableTools,
         isLocalModel: isLocalStreaming,

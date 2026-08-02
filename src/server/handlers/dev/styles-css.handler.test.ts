@@ -2,6 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import "../../../html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type CSSOptimizationEngine,
+  CSSOptimizationEngineName,
+} from "#veryfront/extensions/css/index.ts";
 import { createMockAdapter, type MockRuntimeAdapter } from "#veryfront/platform/adapters/mock.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/index.ts";
@@ -103,6 +108,46 @@ function makeCtx(adapter: RuntimeAdapter, overrides: Partial<HandlerContext> = {
 }
 
 describe("server/handlers/dev/styles-css.handler", () => {
+  it("serves Tailwind-only development CSS without an optimization provider", async () => {
+    const previousEngine = tryResolve<CSSOptimizationEngine>(CSSOptimizationEngineName);
+    unregister(CSSOptimizationEngineName);
+    const handler = new StylesCSSHandler();
+    const adapter = createHandlerAdapter(
+      [{
+        path: "/project/pages/index.tsx",
+        content: '<div className="text-cyan-500">Hello</div>',
+      }],
+      null,
+    );
+    const ctx = makeCtx(adapter);
+    const req = new Request("http://localhost/_vf_styles/styles.css");
+
+    try {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+
+      const result = await handler.handle(req, ctx);
+      const body = await result.response!.text();
+
+      assertEquals(result.response!.status, 200);
+      assertEquals(body.includes("StylesCSSHandler error"), false);
+      assertEquals(body.includes("text-cyan-500"), true);
+    } finally {
+      clearCSSCache();
+      invalidateCompiler();
+      invalidateProjectCSS(PROJECT_SLUG);
+      invalidatePreparedProjectCSS(PROJECT_SLUG);
+      invalidateProjectCandidateManifests(PROJECT_SLUG);
+      unregister(CSSOptimizationEngineName);
+      if (previousEngine !== undefined) {
+        register(CSSOptimizationEngineName, previousEngine);
+      }
+    }
+  });
+
   it("serves project CSS from the project cache after the first request", async () => {
     const fetchMock = mockTailwindFetch();
     const handler = new StylesCSSHandler();
@@ -127,7 +172,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
       assertEquals(first.continue, false);
       assertEquals(first.response!.status, 200);
       assertEquals(firstBody.length > 0, true);
-      assertEquals(initialFetchCount > 0, true);
+      assertEquals(initialFetchCount, 0);
 
       invalidateCompiler();
 
@@ -147,7 +192,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
     }
   });
 
-  it("serves prepared CSS without rescanning files after the first request", async () => {
+  it("does not reuse prepared CSS after the candidate snapshot changes", async () => {
     const fetchMock = mockTailwindFetch();
     const handler = new StylesCSSHandler();
     const adapter = createHandlerAdapter(
@@ -183,7 +228,8 @@ describe("server/handlers/dev/styles-css.handler", () => {
       const secondBody = await second.response!.text();
 
       assertEquals(second.response!.status, 200);
-      assertEquals(secondBody, firstBody);
+      assertEquals(secondBody === firstBody, false);
+      assertEquals(secondBody.includes(".text-fuchsia-500"), false);
       assertEquals(fetchMock.getCallCount(), initialFetchCount);
     } finally {
       fetchMock.restore();

@@ -15,11 +15,11 @@ import {
 } from "./first-party-import.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
-import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
-import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
-import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
-import extEvalReportMlflow from "../../extensions/ext-eval-report-mlflow/src/index.ts";
-import extZod from "../../extensions/ext-schema-zod/src/index.ts";
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
+import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
+import { GoogleProvider } from "@veryfront/ext-llm-google";
+import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
+import extZod from "@veryfront/ext-schema-zod";
 export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
 
 type BuiltinLLMProviderDefinition = {
@@ -133,13 +133,6 @@ export const OPTIONAL_BUILTIN_EXTENSIONS: OptionalBuiltinExtensionDefinition[] =
     sourceDirectory: "ext-content-mdx",
     contracts: { provides: ["ContentProcessor"] },
     capabilities: [],
-  },
-  {
-    name: "ext-css-tailwind",
-    origin: "veryfront/ext-css-tailwind",
-    sourceDirectory: "ext-css-tailwind",
-    contracts: { provides: ["CSSProcessor"] },
-    capabilities: [{ type: "net:outbound", hosts: ["esm.sh"] }],
   },
   {
     name: "ext-document-kreuzberg",

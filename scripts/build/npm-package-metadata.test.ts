@@ -429,11 +429,9 @@ describe("normalizeNpmPackageMetadata", () => {
     assertEquals(pkg.dependencies, { zod: "4.3.6" });
     assertEquals(pkg.peerDependencies, {
       "@huggingface/transformers": "^4.2.0",
-      redis: "^5.11.0",
     });
     assertEquals(pkg.peerDependenciesMeta, {
       "@huggingface/transformers": { optional: true },
-      redis: { optional: true },
     });
   });
 
@@ -721,6 +719,17 @@ describe("npm supply-chain policy", () => {
     assertEquals(source.includes("timers: true"), false);
     assertStringIncludes(source, 'VF_DISABLE_LRU_INTERVAL: "0"');
     assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
+  });
+
+  it("exercises the root-bundled MLflow exporter in the npm lifecycle probe", async () => {
+    const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+    assertStringIncludes(source, 'createEvalCliBuiltinExtensions(["mlflow"])');
+    assertStringIncludes(source, 'registry.has("mlflow")');
+    assertStringIncludes(
+      source,
+      'MLFLOW_TRACKING_URI: "http://127.0.0.1:5000"',
+    );
   });
 
   it("keeps npm CLI agent workflow paths off the DNT Deno shim in real Deno", async () => {

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { CSS_OPTIMIZATION } from "#veryfront/utils/constants/build.ts";
 import { findUnknownTopLevelKeys, validateVeryfrontConfig } from "./config.schema.ts";
 
 describe("configSchema", () => {
@@ -12,6 +13,42 @@ describe("configSchema", () => {
 
     assertEquals(cfg.router, "app");
     assertEquals(findUnknownTopLevelKeys({ foo: 1, router: "pages" }), ["foo"]);
+  });
+
+  it("keeps CSS asset-pipeline schema constraints aligned with runtime", () => {
+    const projectDir = Deno.cwd();
+    const css = {
+      enabled: true,
+      projectDir,
+      inputFiles: ["styles/main.css"],
+      purge: true,
+      purgeContent: ["app/**/*.tsx"],
+      purgeSafelist: ["dynamic"],
+    };
+    assertEquals(
+      validateVeryfrontConfig({ assetPipeline: { css } }).assetPipeline?.css,
+      css,
+    );
+
+    for (
+      const invalid of [
+        { projectDir: "relative/project" },
+        { autoprefixer: true },
+        { browsers: ["defaults"] },
+        {
+          purgeSafelist: Array.from(
+            { length: CSS_OPTIMIZATION.MAX_PURGE_SAFELIST_ENTRIES + 1 },
+            (_, index) => `selector-${index}`,
+          ),
+        },
+      ]
+    ) {
+      assertThrows(
+        () => validateVeryfrontConfig({ assetPipeline: { css: invalid } }),
+        Error,
+        "assetPipeline.css",
+      );
+    }
   });
 
   it("accepts build.ssg as a boolean", () => {

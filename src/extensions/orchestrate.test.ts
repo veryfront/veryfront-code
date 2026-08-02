@@ -14,6 +14,7 @@ import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import { createBuiltinExtensions } from "./builtin-extensions.ts";
+import { join } from "@std/path";
 
 const noopLogger = {
   debug: () => {},
@@ -99,7 +100,191 @@ describe("orchestrateExtensions()", () => {
     await loader.teardownAll();
   });
 
+  it("carries production discovery identity through to the factory loader", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-bound-orchestration-" });
+    const extensionDirectory = join(projectDir, "extensions", "ext-bound");
+    await Deno.mkdir(extensionDirectory, { recursive: true });
+    await Deno.writeTextFile(
+      join(extensionDirectory, "index.ts"),
+      "export default () => ({ name: 'must-not-import', version: '1', capabilities: [] });",
+    );
+
+    let bindingObserved = false;
+    try {
+      const loader = await orchestrateExtensions({
+        projectDir,
+        config: {},
+        logger: noopLogger,
+        loadFactory: (path, source, _config, binding) => {
+          bindingObserved = binding?.path === path;
+          return Promise.resolve({
+            extension: stubExt("ext-bound"),
+            source,
+            origin: path,
+          });
+        },
+      });
+
+      assertEquals(bindingObserved, true);
+      await loader.teardownAll();
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not import, invoke, or set up explicit-only discovered extensions", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-explicit-extension-" });
+    const projectExtensionDirectory = join(
+      projectDir,
+      "extensions",
+      "ext-explicit-project",
+    );
+    const packageExtensionDirectory = join(
+      projectDir,
+      "node_modules",
+      "ext-explicit-package",
+    );
+    await Deno.mkdir(join(projectExtensionDirectory, "src"), { recursive: true });
+    await Deno.mkdir(packageExtensionDirectory, { recursive: true });
+    await Deno.writeTextFile(
+      join(projectExtensionDirectory, "src", "index.ts"),
+      "throw new Error('project extension must not be imported');",
+    );
+    await Deno.writeTextFile(
+      join(projectExtensionDirectory, "deno.json"),
+      JSON.stringify({
+        veryfront: { extension: true, activation: "explicit" },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(packageExtensionDirectory, "package.json"),
+      JSON.stringify({
+        name: "ext-explicit-package",
+        exports: "./index.js",
+        veryfront: { extension: true, activation: "explicit" },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(packageExtensionDirectory, "index.js"),
+      "throw new Error('package extension must not be imported');",
+    );
+
+    let factoryLoaderCalls = 0;
+    let discoveredSetupCalls = 0;
+    const discoveredExtension = stubExt("must-not-setup", {
+      setup() {
+        discoveredSetupCalls++;
+      },
+    });
+    try {
+      const loader = await orchestrateExtensions({
+        projectDir,
+        config: {},
+        logger: noopLogger,
+        loadFactory: (path, source) => {
+          factoryLoaderCalls++;
+          return Promise.resolve({
+            extension: discoveredExtension,
+            source,
+            origin: path,
+          });
+        },
+      });
+
+      assertEquals(factoryLoaderCalls, 0);
+      assertEquals(discoveredSetupCalls, 0);
+      await loader.teardownAll();
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("sets up an explicit-only extension only when materialized in config", async () => {
+    let factoryLoaderCalls = 0;
+    let setupCalls = 0;
+    const configuredExtension = stubExt("ext-explicit-project", {
+      setup() {
+        setupCalls++;
+      },
+    });
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [configuredExtension] },
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "ext-explicit-package",
+            importTarget: "/fake/node_modules/ext-explicit-package/index.js",
+            metadata: {
+              isExtension: true,
+              activation: "explicit",
+              capabilities: [],
+            },
+          }]),
+      },
+      loadFactory: (path, source) => {
+        factoryLoaderCalls++;
+        return Promise.resolve({
+          extension: stubExt("must-not-load"),
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    assertEquals(factoryLoaderCalls, 0);
+    assertEquals(setupCalls, 1);
+    await loader.teardownAll();
+  });
+
+  it("fails closed on injected activation accessors without invoking them", async () => {
+    let activationReads = 0;
+    let factoryLoaderCalls = 0;
+    const metadata = Object.defineProperty(
+      { isExtension: true as const, capabilities: [] },
+      "activation",
+      {
+        enumerable: true,
+        get() {
+          activationReads++;
+          return "auto";
+        },
+      },
+    );
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      discovery: {
+        ...emptyDiscovery(),
+        discoverPackageExtensions: () =>
+          Promise.resolve([{
+            packageName: "ext-accessor",
+            importTarget: "/canonical/ext-accessor.js",
+            metadata,
+          }]),
+      },
+      loadFactory: (path, source) => {
+        factoryLoaderCalls++;
+        return Promise.resolve({
+          extension: stubExt(path),
+          source,
+          origin: path,
+        });
+      },
+    });
+
+    assertEquals(activationReads, 0);
+    assertEquals(factoryLoaderCalls, 0);
+    await loader.teardownAll();
+  });
+
   it("honors source priority: config beats package beats project beats local-file", async () => {
+    const packageLoadPaths: string[] = [];
     const cfg = stubExt("shared", {
       provides: { Shared: { from: "config" } },
     });
@@ -122,7 +307,12 @@ describe("orchestrateExtensions()", () => {
           Promise.resolve([
             {
               packageName: "@scope/pkg",
-              metadata: { isExtension: true as const, capabilities: [] },
+              importTarget: "/canonical/scope-pkg.js",
+              metadata: {
+                isExtension: true as const,
+                activation: "auto" as const,
+                capabilities: [],
+              },
             },
           ]),
         discoverProjectExtensions: () => Promise.resolve(["/fake/proj.ts"]),
@@ -130,6 +320,7 @@ describe("orchestrateExtensions()", () => {
         mergeExtensions,
       },
       loadFactory: (path: string, source: ExtensionSource) => {
+        if (source === "package") packageLoadPaths.push(path);
         const map: Partial<Record<ExtensionSource, Extension>> = {
           "config": cfg,
           "package": pkg,
@@ -152,6 +343,7 @@ describe("orchestrateExtensions()", () => {
       (tryResolve("Shared") as { from: string }).from,
       "config",
     );
+    assertEquals(packageLoadPaths, ["/canonical/scope-pkg.js"]);
     await loader.teardownAll();
   });
 
@@ -219,7 +411,12 @@ describe("orchestrateExtensions()", () => {
           Promise.resolve([
             {
               packageName: "ext-broken-pkg",
-              metadata: { isExtension: true as const, capabilities: [] },
+              importTarget: "/canonical/ext-broken-pkg.js",
+              metadata: {
+                isExtension: true as const,
+                activation: "auto" as const,
+                capabilities: [],
+              },
             },
           ]),
       },

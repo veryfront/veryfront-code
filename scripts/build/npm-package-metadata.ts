@@ -15,7 +15,6 @@ import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dep
 
 export const ROOT_OPTIONAL_RUNTIME_PEERS = [
 	"@huggingface/transformers",
-	"redis",
 ] as const;
 
 // Opaque imports (src/platform/compat/opaque-deps.ts) are invisible to dnt, so
@@ -27,6 +26,8 @@ const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
 };
 
 export const EXTENSION_OWNED_DEPENDENCIES = [
+	"@aws-sdk/client-s3",
+	"@aws-sdk/lib-storage",
 	"@babel/generator",
 	"@babel/parser",
 	"@babel/traverse",
@@ -35,6 +36,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@types/hast",
 	"@types/mdast",
 	"@types/unist",
+	"@types/ws",
 	"better-sqlite3",
 	"brace-expansion",
 	"@kreuzberg/node",
@@ -55,11 +57,16 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
+	"@redis/client",
+	"redis",
 	"@sentry/deno",
 	"@sentry/node",
+	"@tailwindcss/forms",
+	"@tailwindcss/typography",
 	"ai",
 	"bash-tool",
-	"brace-expansion",
+	"browserslist",
+	"daisyui",
 	"es-module-lexer",
 	"jszip",
 	"pdf-lib",
@@ -67,12 +74,12 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"gaxios",
 	"gcp-metadata",
 	"github-slugger",
-	"gaxios",
-	"gcp-metadata",
 	"jose",
 	"just-bash",
+	"lightningcss",
 	"mdast-util-to-string",
 	"protobufjs",
+	"purgecss",
 	"rehype-highlight",
 	"rehype-raw",
 	"rehype-sanitize",
@@ -83,11 +90,14 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"remark-gfm",
 	"remark-parse",
 	"remark-rehype",
-	"protobufjs",
+	"sharp",
+	"tailwind-scrollbar-hide",
 	"tailwindcss",
+	"tailwindcss-animate",
 	"unified",
 	"unist-util-visit",
 	"vfile",
+	"ws",
 ] as const;
 
 const STALE_DEV_DEPENDENCIES = [

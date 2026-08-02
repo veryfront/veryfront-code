@@ -67,6 +67,45 @@ describe("auditExtensionCapabilities", () => {
     ]);
   });
 
+  it("requires the bounded Sharp native runtime capabilities", () => {
+    const capabilities = [
+      {
+        type: "fs:read",
+        paths: ["/proc/self/exe", "/usr/bin/ldd"],
+      },
+      {
+        type: "env:read",
+        keys: ["MALLOC_ARENA_MAX", "npm_package_config_libvips"],
+      },
+    ];
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath: "extensions/ext-image-sharp/deno.json",
+        manifestCapabilities: capabilities,
+        factoryCapabilities: capabilities,
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      'extensions/ext-image-sharp/deno.json sensitive extension "native image optimization" is missing capability {"type":"native:ffi"}',
+    ]);
+  });
+
+  it("requires the Redis runtime network and environment capabilities", () => {
+    const capabilities = [{ type: "net:outbound", hosts: ["*"] }];
+    const issues = auditExtensionCapabilities([
+      input({
+        manifestPath: "extensions/ext-redis/deno.json",
+        manifestCapabilities: capabilities,
+        factoryCapabilities: capabilities,
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      'extensions/ext-redis/deno.json sensitive extension "Redis distributed runtime" is missing capability {"keys":["NODE_ENV","REDIS_PASSWORD","REDIS_URL","REDIS_USERNAME"],"type":"env:read"}',
+    ]);
+  });
+
   it("requires MLflow export capabilities and forbids the exporter-id env key", () => {
     const manifestPath = "extensions/ext-eval-report-mlflow/deno.json";
     const allowedCapabilities = [

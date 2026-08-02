@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
@@ -88,8 +88,21 @@ if (!isDeno) {
         assertFunction(denoAdapter.fs.readFileBytes);
       });
 
+      it("should expose bounded snapshot and exclusive-create capabilities", () => {
+        assertFunction(denoAdapter.fs.readFileBytesWithinLimit);
+        assertEquals(
+          typeof denoAdapter.fs.readFileSnapshotWithinLimit,
+          Deno.build.os === "windows" ? "undefined" : "function",
+        );
+        assertFunction(denoAdapter.fs.createFileBytesExclusive);
+      });
+
       it("should have writeFile method", () => {
         assertFunction(denoAdapter.fs.writeFile);
+      });
+
+      it("should have rename method", () => {
+        assertFunction(denoAdapter.fs.rename);
       });
 
       it("should have exists method", () => {
@@ -134,6 +147,19 @@ if (!isDeno) {
         assertExists(bytes);
         assertEquals(bytes instanceof Uint8Array, true);
         assertEquals(bytes.length > 0, true);
+      });
+
+      it("should enforce exact byte limits", async () => {
+        const fileSize = (await Deno.stat(testFilePath)).size;
+        assertEquals(
+          (await denoAdapter.fs.readFileBytesWithinLimit!(testFilePath, fileSize)).byteLength,
+          fileSize,
+        );
+        await assertRejects(
+          () => denoAdapter.fs.readFileBytesWithinLimit!(testFilePath, fileSize - 1),
+          RangeError,
+          "exceeds byte limit",
+        );
       });
 
       it("should return true for file that exists", async () => {
@@ -192,6 +218,21 @@ if (!isDeno) {
           await denoAdapter.fs.writeFile(filePath, "hello from test");
           const content = await denoAdapter.fs.readFile(filePath);
           assertEquals(content, "hello from test");
+        } finally {
+          await denoAdapter.fs.remove(tmpDir, { recursive: true });
+        }
+      });
+
+      it("should rename a file", async () => {
+        const tmpDir = await denoAdapter.fs.makeTempDir("test-rename-");
+        const from = `${tmpDir}/source.txt`;
+        const to = `${tmpDir}/destination.txt`;
+
+        try {
+          await denoAdapter.fs.writeFile(from, "renamed");
+          await denoAdapter.fs.rename(from, to);
+          assertEquals(await denoAdapter.fs.exists(from), false);
+          assertEquals(await denoAdapter.fs.readFile(to), "renamed");
         } finally {
           await denoAdapter.fs.remove(tmpDir, { recursive: true });
         }

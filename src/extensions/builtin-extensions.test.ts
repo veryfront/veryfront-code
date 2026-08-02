@@ -12,7 +12,7 @@ import {
   ensureBuiltinSchemaValidator,
   OPTIONAL_BUILTIN_EXTENSIONS,
 } from "./builtin-extensions.ts";
-import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import { createZodAdapter } from "@veryfront/ext-schema-zod";
 
 describe("ensureBuiltinSchemaValidator", () => {
   afterEach(() => {
@@ -106,9 +106,20 @@ describe("createBuiltinExtensions", () => {
     );
   });
 
-  it("does not statically import optional implementation extensions", async () => {
+  it("never auto-loads the explicit Node WebSocket implementation", async () => {
     const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
 
+    assertEquals(source.includes("ext-node-websocket-ws"), false);
+    assertEquals(
+      OPTIONAL_BUILTIN_EXTENSIONS.some((definition) => definition.name === "ext-node-websocket-ws"),
+      false,
+    );
+  });
+
+  it("does not statically import workspace implementation paths", async () => {
+    const source = await Deno.readTextFile(new URL("./builtin-extensions.ts", import.meta.url));
+
+    assertEquals(source.includes('from "../../extensions/'), false);
     assertEquals(source.includes('from "../../extensions/ext-auth-jwt/src/index.ts"'), false);
     assertEquals(
       source.includes('from "../../extensions/ext-bundler-esbuild/src/index.ts"'),
@@ -157,6 +168,7 @@ describe("createBuiltinExtensions", () => {
     );
 
     assertEquals(mlflow?.evalExporterId, "mlflow");
+    assertEquals(typeof mlflow?.factory, "function");
   });
 
   it("builds a minimal eval CLI builtin set for selected eval exporters", () => {

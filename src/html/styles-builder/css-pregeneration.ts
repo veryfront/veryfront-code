@@ -9,7 +9,13 @@
 import { serverLogger } from "#veryfront/utils";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { extractCandidatesFromFiles, getProjectCSS } from "./tailwind-compiler.ts";
+import {
+  acquireCSSGenerationSession,
+  type CSSGenerationSession,
+  extractCandidatesFromFiles,
+  getProjectCSS,
+} from "./tailwind-compiler.ts";
+import { hashCandidates } from "./css-identity.ts";
 import {
   createPreparedProjectCSSContext,
   storePreparedProjectCSS,
@@ -66,35 +72,62 @@ export async function buildPreparedCSSArtifactFromFiles(
   options: CSSPregenerationOptions,
 ): Promise<PreparedCSSArtifactBuildResult> {
   const {
-    projectSlug,
-    projectVersion,
     projectDir,
     files,
     styleProfile,
     stylesheet,
     stylesheetPath,
     minify = true,
-    environment = "preview",
-    buildMode = "production",
   } = options;
 
-  const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath);
   const candidates = extractCandidatesFromFiles(files, {
     projectDir,
     styleProfile,
   });
+  const session = acquireCSSGenerationSession(minify);
+  const resolvedStylesheet = stylesheet ?? findStylesheetFromFiles(files, stylesheetPath) ??
+    session.compilationSession.defaultStylesheet;
+
+  return await buildPreparedCSSArtifactFromSnapshot(
+    options,
+    resolvedStylesheet,
+    candidates,
+    session,
+  );
+}
+
+async function buildPreparedCSSArtifactFromSnapshot(
+  options: CSSPregenerationOptions,
+  resolvedStylesheet: string,
+  candidates: Set<string>,
+  session: CSSGenerationSession,
+): Promise<PreparedCSSArtifactBuildResult> {
+  const {
+    projectSlug,
+    projectVersion,
+    styleProfile,
+    minify = true,
+    environment = "preview",
+    buildMode = "production",
+  } = options;
 
   const result = await getProjectCSS(projectSlug, resolvedStylesheet, candidates, {
     minify,
     environment,
     buildMode,
-  });
+  }, { generationSession: session });
   const context = createPreparedProjectCSSContext(
     projectSlug,
     projectVersion,
     resolvedStylesheet,
     styleProfile.hash,
-    { minify, environment, buildMode },
+    {
+      cssPipelineIdentity: session.cacheIdentity,
+      candidatesHash: hashCandidates(candidates),
+      minify,
+      environment,
+      buildMode,
+    },
   );
 
   await storePreparedProjectCSS(context, { css: result.css, hash: result.hash });
@@ -184,15 +217,24 @@ export async function readLocalProjectStylesheet(
 export async function warmPreparedCSSArtifactFromFiles(
   options: CSSPregenerationOptions,
 ): Promise<boolean> {
+  const minify = options.minify ?? true;
+  const candidates = extractCandidatesFromFiles(options.files, {
+    projectDir: options.projectDir,
+    styleProfile: options.styleProfile,
+  });
+  const session = acquireCSSGenerationSession(minify);
   const stylesheet = options.stylesheet ??
-    findStylesheetFromFiles(options.files, options.stylesheetPath);
+    findStylesheetFromFiles(options.files, options.stylesheetPath) ??
+    session.compilationSession.defaultStylesheet;
   const context = createPreparedProjectCSSContext(
     options.projectSlug,
     options.projectVersion,
     stylesheet,
     options.styleProfile.hash,
     {
-      minify: options.minify ?? true,
+      cssPipelineIdentity: session.cacheIdentity,
+      candidatesHash: hashCandidates(candidates),
+      minify,
       environment: options.environment ?? "preview",
       buildMode: options.buildMode ?? "production",
     },
@@ -201,10 +243,12 @@ export async function warmPreparedCSSArtifactFromFiles(
   if (await tryGetPreparedProjectCSS(context)) return false;
   if (inFlightPreparedCSSBuilds.has(context.cacheKey)) return false;
 
-  const task = buildPreparedCSSArtifactFromFiles({
-    ...options,
+  const task = buildPreparedCSSArtifactFromSnapshot(
+    { ...options, stylesheet },
     stylesheet,
-  }).then(() => {
+    candidates,
+    session,
+  ).then(() => {
     logger.debug("Warm prepared CSS complete", {
       projectSlug: options.projectSlug,
       projectVersion: options.projectVersion,

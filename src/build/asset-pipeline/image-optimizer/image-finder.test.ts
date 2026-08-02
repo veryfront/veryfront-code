@@ -1,13 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { findImages } from "./image-finder.ts";
 
 describe("build/asset-pipeline/image-optimizer/image-finder", () => {
   describe("findImages", () => {
-    it("should return empty array for non-existent directory", async () => {
-      const result = await findImages("/tmp/nonexistent-dir-" + Date.now());
-      assertEquals(result, []);
+    it("should reject a non-existent directory", async () => {
+      await assertRejects(
+        () => findImages("/tmp/nonexistent-dir-" + crypto.randomUUID()),
+      );
     });
 
     it("should find images in a directory with supported extensions", async () => {
@@ -57,6 +58,7 @@ describe("build/asset-pipeline/image-optimizer/image-finder", () => {
 
         const result = await findImages(tmpDir);
         assertEquals(result.length, 2);
+        assertEquals(result, [...result].sort());
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }
@@ -71,6 +73,22 @@ describe("build/asset-pipeline/image-optimizer/image-finder", () => {
 
         const result = await findImages(tmpDir);
         assertEquals(result.length, 0);
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("should reject image sets above the bounded discovery limit", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await Deno.writeTextFile(`${tmpDir}/a.jpg`, "");
+        await Deno.writeTextFile(`${tmpDir}/b.jpg`, "");
+
+        await assertRejects(
+          () => findImages(tmpDir, { maxImages: 1 }),
+          TypeError,
+          "configured limit",
+        );
       } finally {
         await Deno.remove(tmpDir, { recursive: true });
       }

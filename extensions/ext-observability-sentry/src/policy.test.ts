@@ -176,6 +176,22 @@ it("policy redacts application error attribute keys and credential-shaped values
   );
 });
 
+it("policy redacts credentials from custom-host DSNs", () => {
+  const event = prepareSentryEvent(
+    {
+      message: "failed to send to https://public:private@errors.example.test/42",
+    },
+    "veryfront-server",
+  );
+
+  assertEquals(
+    event.message,
+    "failed to send to https://[REDACTED]@errors.example.test/42",
+  );
+  assertEquals(event.message?.includes("public"), false);
+  assertEquals(event.message?.includes("private"), false);
+});
+
 it("policy applies sanitized application error attributes to Sentry scope", () => {
   const { sdk, state } = createSentrySdk();
   const error = new Error("agent failed");

@@ -12,6 +12,7 @@ import {
 import {
   createNodeAgentServiceLogApplicationErrorEmitter,
   initializeNodeAgentServiceSentryApplicationErrors,
+  resetNodeAgentServiceSentryForTests,
   resolveNodeAgentServiceSentryConfig,
 } from "./node-sentry.ts";
 
@@ -70,6 +71,114 @@ describe("agent/service/node-sentry", () => {
       },
     );
     assertStrictEquals(resolveNodeAgentServiceSentryConfig({}), undefined);
+  });
+
+  it("honors explicit Sentry enablement while preserving the legacy DSN behavior when unset", () => {
+    const dsn = "https://public@errors.example.test/42";
+
+    assertEquals(
+      resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "true", SENTRY_DSN: dsn })?.dsn,
+      dsn,
+    );
+    assertStrictEquals(
+      resolveNodeAgentServiceSentryConfig({ SENTRY_ENABLED: "false", SENTRY_DSN: dsn }),
+      undefined,
+    );
+    assertEquals(resolveNodeAgentServiceSentryConfig({ SENTRY_DSN: dsn })?.dsn, dsn);
+  });
+
+  it("warns once without exposing secrets when Sentry is explicitly enabled without a DSN", async () => {
+    resetNodeAgentServiceSentryForTests();
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    let loadCount = 0;
+    try {
+      console.warn = (...args: unknown[]) => warnings.push(args);
+
+      const options = {
+        env: {
+          SENTRY_ENABLED: "true",
+          SENTRY_DSN: "   ",
+          SENTRY_AUTH_TOKEN: "super-secret-token",
+        },
+        loadExtension: () => {
+          loadCount += 1;
+          return Promise.resolve({
+            createNodeSentryApplicationErrorReporter: () => createReporter(),
+          });
+        },
+      };
+
+      assertStrictEquals(resolveNodeAgentServiceSentryConfig(options.env), undefined);
+      assertStrictEquals(resolveNodeAgentServiceSentryConfig(options.env), undefined);
+      assertEquals(warnings, []);
+      const lifecycles = await Promise.all([
+        initializeNodeAgentServiceSentryApplicationErrors(options),
+        initializeNodeAgentServiceSentryApplicationErrors(options),
+        initializeNodeAgentServiceSentryApplicationErrors(options),
+      ]);
+      const repeated = await initializeNodeAgentServiceSentryApplicationErrors(options);
+
+      assertEquals(lifecycles.map((lifecycle) => lifecycle.enabled), [false, false, false]);
+      assertEquals(repeated.enabled, false);
+      assertEquals(loadCount, 0);
+      assertEquals(warnings, [[
+        "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.",
+      ]]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("does not warn or load the SDK when disabled or compatibility-unset without a DSN", async () => {
+    resetNodeAgentServiceSentryForTests();
+    const originalWarn = console.warn;
+    const warnings: unknown[][] = [];
+    let loadCount = 0;
+    const loadExtension = () => {
+      loadCount += 1;
+      return Promise.resolve({
+        createNodeSentryApplicationErrorReporter: () => createReporter(),
+      });
+    };
+    try {
+      console.warn = (...args: unknown[]) => warnings.push(args);
+
+      const disabled = await initializeNodeAgentServiceSentryApplicationErrors({
+        env: { SENTRY_ENABLED: "false", SENTRY_DSN: "   " },
+        loadExtension,
+      });
+      const compatibilityUnset = await initializeNodeAgentServiceSentryApplicationErrors({
+        env: { SENTRY_DSN: "   " },
+        loadExtension,
+      });
+
+      assertEquals(disabled.enabled, false);
+      assertEquals(compatibilityUnset.enabled, false);
+      assertEquals(warnings, []);
+      assertEquals(loadCount, 0);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  it("does not load the Sentry SDK when explicitly disabled with a valid DSN", async () => {
+    let loadCount = 0;
+    const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+      env: {
+        SENTRY_ENABLED: "false",
+        SENTRY_DSN: "https://public@errors.example.test/42",
+      },
+      loadExtension: () => {
+        loadCount += 1;
+        return Promise.resolve({
+          createNodeSentryApplicationErrorReporter: () => createReporter(),
+        });
+      },
+    });
+
+    assertEquals(lifecycle.enabled, false);
+    assertEquals(loadCount, 0);
   });
 
   it("converts unexpected Agent error logs into application errors with structured attributes", () => {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { VeryfrontFSAdapter } from "./adapter.ts";
@@ -102,6 +102,7 @@ describe("VeryfrontFSAdapter", () => {
       "setContentContext",
       "resolveFile",
       "readFileBytes",
+      "readFileBytesWithinLimit",
       "getAllSourceFiles",
       "getEntityIdForPath",
       "getFilePathByEntityId",
@@ -117,6 +118,88 @@ describe("VeryfrontFSAdapter", () => {
         assertEquals(typeof (createAdapter() as any)[method], "function");
       });
     }
+  });
+
+  describe("bounded byte reads", () => {
+    it("delegates to the exact reader after bounded context initialization", async () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      let exactCall: [string, number] | undefined;
+      const internals = adapter as unknown as {
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
+        exactCall = [path, byteLimit];
+        return Promise.resolve(new Uint8Array([7, 8]));
+      };
+
+      assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [7, 8]);
+      assertEquals(exactCall, ["manifest.json", 2]);
+    });
+
+    it("refreshes and retries a bounded branch read after a not-found miss", async () => {
+      const adapter = new VeryfrontFSAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "test-token",
+          projectSlug: "test-project",
+          projectId: "test-project-id",
+          contentSource: { type: "branch", branch: "main" },
+          cache: { enabled: false },
+        },
+      });
+      const exactCalls: Array<[string, number]> = [];
+      let refreshCalls = 0;
+      const internals = adapter as unknown as {
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.readOps.readFileBytesWithinLimit = (path, byteLimit) => {
+        exactCalls.push([path, byteLimit]);
+        return exactCalls.length === 1
+          ? Promise.reject(new Error(`404 Not Found: ${path}`))
+          : Promise.resolve(new Uint8Array([9, 8]));
+      };
+      adapter.refreshSourceSnapshot = (reason) => {
+        refreshCalls++;
+        assertEquals(reason, "branch-miss:manifest.json");
+        return Promise.resolve();
+      };
+
+      assertEquals([...await adapter.readFileBytesWithinLimit("manifest.json", 2)], [9, 8]);
+      assertEquals(exactCalls, [
+        ["manifest.json", 2],
+        ["manifest.json", 2],
+      ]);
+      assertEquals(refreshCalls, 1);
+    });
+
+    it("rejects an invalid limit before initialization", async () => {
+      const adapter = createAdapter();
+      let initializeCalls = 0;
+      (adapter as unknown as { initialize(): Promise<void> }).initialize = () => {
+        initializeCalls++;
+        return Promise.resolve();
+      };
+
+      await assertRejects(
+        () => adapter.readFileBytesWithinLimit("manifest.json", 0),
+        RangeError,
+        "positive safe integer",
+      );
+      assertEquals(initializeCalls, 0);
+    });
   });
 
   describe("request tokens", () => {

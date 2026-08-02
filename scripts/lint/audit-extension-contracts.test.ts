@@ -112,19 +112,36 @@ describe("extractExtensionSourceMetadata contracts", () => {
   it("resolves known exported contract name constants in contract arrays", () => {
     const metadata = extractExtensionSourceMetadata(`
       import {
+        CSSProcessorName,
         LLMProviderRegistryName,
         SandboxShellToolsProviderName,
       } from "veryfront/extensions/sandbox";
+      import {
+        NodeWebSocketServerProviderName,
+      } from "veryfront/extensions/websocket";
+      import {
+        RedisRuntimeProviderName,
+      } from "veryfront/extensions/distributed";
       const ext = () => ({
         contracts: {
-          provides: [SandboxShellToolsProviderName],
+          provides: [
+            CSSProcessorName,
+            NodeWebSocketServerProviderName,
+            RedisRuntimeProviderName,
+            SandboxShellToolsProviderName,
+          ],
           requires: [LLMProviderRegistryName],
         },
         capabilities: [],
       });
     `);
 
-    assertEquals(metadata.contracts?.provides, ["SandboxShellToolsProvider"]);
+    assertEquals(metadata.contracts?.provides, [
+      "CSSProcessor",
+      "NodeWebSocketServerProvider",
+      "RedisRuntimeProvider",
+      "SandboxShellToolsProvider",
+    ]);
     assertEquals(metadata.contracts?.requires, ["LLMProviderRegistry"]);
   });
 });

@@ -8,17 +8,29 @@
  * @module html/styles-builder/project-css-cache
  */
 
-import { type CacheBackend, CacheBackends, MemoryCacheBackend } from "#veryfront/cache/backend.ts";
-import { serverLogger as logger } from "#veryfront/utils";
+import { type CacheBackend, CacheBackends } from "#veryfront/cache/backend.ts";
+import { assertCSSPipelineIdentity, serverLogger as logger } from "#veryfront/utils";
+import { normalizeCSSCandidates } from "#veryfront/utils/css-candidate-admission.ts";
+import {
+  assertCSSFileContent,
+  assertCSSOutputContent,
+} from "#veryfront/utils/css-content-admission.ts";
 import { registerCache } from "#veryfront/utils/memory/index.ts";
-import { hashCandidates, hashString } from "./candidate-extractor.ts";
+import {
+  detachRetainedString,
+  estimateRetainedStringBytes,
+} from "#veryfront/utils/retained-string.ts";
+import {
+  assertCSSContentIdentity,
+  hashCandidates,
+  hashString,
+  isCSSContentHash,
+} from "./css-identity.ts";
 import {
   evaluateProjectCSSLocalCacheState,
   parseProjectCSSCacheEntry,
-  resolveStylesheet,
 } from "./tailwind-compiler-utils.ts";
-import { cacheCSSAsync, DEFAULT_STYLESHEET } from "./css-hash-cache.ts";
-import { TAILWIND_VERSION } from "#veryfront/utils/constants/cdn.ts";
+import { cacheCSSAsync } from "./css-hash-cache.ts";
 
 const projectCssCacheLog = logger.component("project-css-cache");
 const tailwindLog = logger.component("tailwind");
@@ -35,18 +47,22 @@ interface ProjectCSSCacheEntry {
 
 interface ProjectCSSLocalEntry extends ProjectCSSCacheEntry {
   expiresAt: number;
+  retainedBytes: number;
 }
 
-interface ProjectCSSRequestContext {
+export interface ProjectCSSRequestContext {
   projectSlug: string;
   stylesheet: string;
   candidatesHash: string;
   profileHash: string;
   environment: string;
+  cssPipelineIdentity: string;
   cacheKey: string;
+  cacheEpoch: number;
 }
 
 interface ProjectCSSProfile {
+  cssPipelineIdentity: string;
   minify?: boolean;
   environment?: string;
   buildMode?: "development" | "production";
@@ -57,7 +73,9 @@ interface ProjectCSSProfile {
 // ============================================================================
 
 const PROJECT_CSS_CACHE_TTL_SECONDS = 24 * 3600;
+const PROJECT_CSS_CACHE_SCHEMA = "v4";
 const PROJECT_CSS_LOCAL_FALLBACK_MAX = 50;
+const PROJECT_CSS_LOCAL_FALLBACK_MAX_BYTES = 64 * 1024 * 1024;
 const PROJECT_CSS_LOCAL_TTL_MS = PROJECT_CSS_CACHE_TTL_SECONDS * 1000;
 
 // ============================================================================
@@ -69,11 +87,14 @@ let projectCSSInitialized = false;
 let projectCSSInitPromise: Promise<void> | null = null;
 
 const projectCSSLocalFallback = new Map<string, ProjectCSSLocalEntry>();
+let projectCSSLocalFallbackBytes = 0;
+let projectCSSCacheEpoch = 0;
 
 registerCache("project-css-cache", () => ({
   name: "project-css-cache",
   entries: projectCSSLocalFallback.size,
   maxEntries: PROJECT_CSS_LOCAL_FALLBACK_MAX,
+  estimatedSizeBytes: projectCSSLocalFallbackBytes,
   backend: projectCSSBackend?.type ?? "uninitialized",
 }));
 
@@ -88,7 +109,9 @@ registerCache("project-css-cache", () => ({
  * @returns true if distributed backend was successfully initialized
  */
 export async function initializeProjectCSSCache(): Promise<boolean> {
-  if (projectCSSInitialized) return projectCSSBackend?.type !== "memory";
+  if (projectCSSInitialized) {
+    return projectCSSBackend !== null && projectCSSBackend.type !== "memory";
+  }
 
   if (!projectCSSInitPromise) {
     projectCSSInitPromise = (async () => {
@@ -96,8 +119,10 @@ export async function initializeProjectCSSCache(): Promise<boolean> {
         projectCSSBackend = await CacheBackends.projectCSS();
         projectCssCacheLog.debug("Initialized", { backend: projectCSSBackend.type });
       } catch (error) {
-        projectCssCacheLog.warn("Backend init failed, using memory", { error });
-        projectCSSBackend = new MemoryCacheBackend(100);
+        projectCssCacheLog.warn("Shared backend unavailable; bounded local cache remains active", {
+          error,
+        });
+        projectCSSBackend = null;
       } finally {
         projectCSSInitialized = true;
       }
@@ -107,7 +132,7 @@ export async function initializeProjectCSSCache(): Promise<boolean> {
   await projectCSSInitPromise;
   projectCSSInitPromise = null;
 
-  return projectCSSBackend?.type !== "memory";
+  return projectCSSBackend !== null && projectCSSBackend.type !== "memory";
 }
 
 /**
@@ -123,18 +148,27 @@ export function isProjectCSSCacheDistributed(): boolean {
 
 export function createProjectCSSRequestContext(
   projectSlug: string,
-  stylesheet: string | undefined,
-  candidates: Set<string>,
-  profile?: ProjectCSSProfile,
+  stylesheet: string,
+  candidates: string[] | Set<string>,
+  profile: ProjectCSSProfile,
 ): ProjectCSSRequestContext {
-  const resolvedStylesheet = resolveStylesheet(stylesheet, DEFAULT_STYLESHEET);
-  const stylesheetHash = hashString(resolvedStylesheet);
-  const candidatesHash = hashCandidates(candidates);
-  const environment = profile?.environment ?? "preview";
+  const capturedProjectSlug = assertCSSPipelineIdentity(
+    projectSlug,
+    "Project CSS project scope",
+  );
+  const cssPipelineIdentity = assertCSSPipelineIdentity(profile.cssPipelineIdentity);
+  assertCSSFileContent(stylesheet, "Project CSS stylesheet");
+  const admittedCandidates = normalizeCSSCandidates(candidates);
+  const stylesheetHash = hashString(stylesheet);
+  const candidatesHash = hashCandidates(admittedCandidates);
+  const environment = assertCSSPipelineIdentity(
+    profile?.environment ?? "preview",
+    "Project CSS environment",
+  );
   const profileHash = hashString(
     JSON.stringify({
-      cacheSchema: "v2",
-      tailwindVersion: TAILWIND_VERSION,
+      cacheSchema: PROJECT_CSS_CACHE_SCHEMA,
+      cssPipelineIdentity,
       minify: profile?.minify ?? false,
       buildMode: profile?.buildMode ?? "production",
       environment,
@@ -142,44 +176,91 @@ export function createProjectCSSRequestContext(
   );
 
   return {
-    projectSlug,
-    stylesheet: resolvedStylesheet,
+    projectSlug: capturedProjectSlug,
+    stylesheet,
     candidatesHash,
     profileHash,
     environment,
-    cacheKey: `${projectSlug}:${environment}:${stylesheetHash}:${candidatesHash}:${profileHash}`,
+    cssPipelineIdentity,
+    cacheKey: getProjectCSSCacheScopePrefix(capturedProjectSlug) + hashString(environment) +
+      `:${stylesheetHash}:${candidatesHash}:${profileHash}`,
+    cacheEpoch: projectCSSCacheEpoch,
   };
+}
+
+function getProjectCSSCacheScopePrefix(projectSlug: string): string {
+  return `${PROJECT_CSS_CACHE_SCHEMA}:${hashString(projectSlug)}:`;
 }
 
 // ============================================================================
 // Local fallback management
 // ============================================================================
 
-function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): void {
-  projectCSSLocalFallback.set(key, { ...entry, expiresAt: Date.now() + PROJECT_CSS_LOCAL_TTL_MS });
-  if (projectCSSLocalFallback.size > PROJECT_CSS_LOCAL_FALLBACK_MAX) {
-    pruneProjectCSSLocalFallback();
-  }
+function estimateProjectCSSLocalEntryBytes(key: string, entry: ProjectCSSCacheEntry): number {
+  return estimateRetainedStringBytes(key) + estimateRetainedStringBytes(entry.css) +
+    estimateRetainedStringBytes(entry.hash) +
+    estimateRetainedStringBytes(entry.candidatesHash) + 128;
 }
 
-function pruneProjectCSSLocalFallback(): void {
-  const excess = projectCSSLocalFallback.size - PROJECT_CSS_LOCAL_FALLBACK_MAX;
-  if (excess <= 0) return;
+function removeProjectCSSLocalFallback(key: string): void {
+  const existing = projectCSSLocalFallback.get(key);
+  if (!existing) return;
+  projectCSSLocalFallback.delete(key);
+  projectCSSLocalFallbackBytes -= existing.retainedBytes;
+}
 
-  const keys = projectCSSLocalFallback.keys();
-  for (let i = 0; i < excess; i++) {
-    const result = keys.next();
-    if (result.done) break;
-    projectCSSLocalFallback.delete(result.value);
+function setProjectCSSLocalFallback(key: string, entry: ProjectCSSCacheEntry): void {
+  assertCSSOutputContent(entry.css, "Cached project CSS output");
+  assertCSSContentIdentity(entry.css, entry.hash);
+  const retainedKey = detachRetainedString(key);
+  const retainedEntry = {
+    css: detachRetainedString(entry.css),
+    hash: detachRetainedString(entry.hash),
+    candidatesHash: detachRetainedString(entry.candidatesHash),
+  };
+  const retainedBytes = estimateProjectCSSLocalEntryBytes(retainedKey, retainedEntry);
+  removeProjectCSSLocalFallback(key);
+  while (
+    projectCSSLocalFallback.size >= PROJECT_CSS_LOCAL_FALLBACK_MAX ||
+    projectCSSLocalFallbackBytes + retainedBytes > PROJECT_CSS_LOCAL_FALLBACK_MAX_BYTES
+  ) {
+    const oldestKey = projectCSSLocalFallback.keys().next().value as string | undefined;
+    if (oldestKey === undefined) break;
+    removeProjectCSSLocalFallback(oldestKey);
   }
+  if (retainedBytes > PROJECT_CSS_LOCAL_FALLBACK_MAX_BYTES) return;
+  projectCSSLocalFallback.set(retainedKey, {
+    css: retainedEntry.css,
+    hash: retainedEntry.hash,
+    candidatesHash: retainedEntry.candidatesHash,
+    expiresAt: Date.now() + PROJECT_CSS_LOCAL_TTL_MS,
+    retainedBytes,
+  });
+  projectCSSLocalFallbackBytes += retainedBytes;
 }
 
 async function cacheProjectCSSEntryByHash(
   entry: ProjectCSSCacheEntry,
-  candidates: Set<string>,
+  candidates: string[] | Set<string>,
   stylesheet: string,
+  cssPipelineIdentity: string,
 ): Promise<void> {
-  await cacheCSSAsync(entry.css, entry.hash, { candidates, stylesheet });
+  await cacheCSSAsync(entry.css, entry.hash, {
+    candidates,
+    stylesheet,
+    pipelineIdentity: cssPipelineIdentity,
+  });
+}
+
+function isValidProjectCSSCacheEntry(entry: ProjectCSSCacheEntry): boolean {
+  if (!isCSSContentHash(entry.hash) || !isCSSContentHash(entry.candidatesHash)) return false;
+  try {
+    assertCSSOutputContent(entry.css, "Cached project CSS output");
+    assertCSSContentIdentity(entry.css, entry.hash);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ============================================================================
@@ -188,40 +269,60 @@ async function cacheProjectCSSEntryByHash(
 
 export async function tryGetProjectCSSFromLocalFallback(
   context: ProjectCSSRequestContext,
-  candidates: Set<string>,
+  candidates: string[] | Set<string>,
 ): Promise<{ css: string; hash: string; fromCache: true } | undefined> {
+  if (context.cacheEpoch !== projectCSSCacheEpoch) return undefined;
   const localCached = projectCSSLocalFallback.get(context.cacheKey);
   const localState = evaluateProjectCSSLocalCacheState(localCached, context.candidatesHash);
 
   if (localState === "expired" || localState === "mismatch") {
-    projectCSSLocalFallback.delete(context.cacheKey);
+    removeProjectCSSLocalFallback(context.cacheKey);
     return undefined;
   }
 
   if (localState !== "hit" || !localCached) return undefined;
+  if (!isValidProjectCSSCacheEntry(localCached)) {
+    removeProjectCSSLocalFallback(context.cacheKey);
+    return undefined;
+  }
 
   tailwindLog.debug("Project CSS cache hit (local)", {
     projectSlug: context.projectSlug,
     hash: localCached.hash,
   });
+  projectCSSLocalFallback.delete(context.cacheKey);
+  projectCSSLocalFallback.set(context.cacheKey, localCached);
 
-  await cacheProjectCSSEntryByHash(localCached, candidates, context.stylesheet);
+  await cacheProjectCSSEntryByHash(
+    localCached,
+    candidates,
+    context.stylesheet,
+    context.cssPipelineIdentity,
+  );
   return { css: localCached.css, hash: localCached.hash, fromCache: true };
 }
 
 export async function tryGetProjectCSSFromDistributedCache(
   context: ProjectCSSRequestContext,
-  candidates: Set<string>,
+  candidates: string[] | Set<string>,
 ): Promise<{ css: string; hash: string; fromCache: true } | undefined> {
+  if (context.cacheEpoch !== projectCSSCacheEpoch) return undefined;
   if (!projectCSSBackend) return undefined;
 
   try {
     const raw = await projectCSSBackend.get(context.cacheKey);
+    if (context.cacheEpoch !== projectCSSCacheEpoch) return undefined;
     if (!raw) return undefined;
 
     const entry = parseProjectCSSCacheEntry(raw);
     if (!entry) {
       tailwindLog.debug("Project CSS cache entry was malformed", {
+        cacheKey: context.cacheKey,
+      });
+      return undefined;
+    }
+    if (!isValidProjectCSSCacheEntry(entry)) {
+      tailwindLog.warn("Rejected project CSS cache entry with invalid content identity", {
         cacheKey: context.cacheKey,
       });
       return undefined;
@@ -242,7 +343,12 @@ export async function tryGetProjectCSSFromDistributedCache(
     });
 
     setProjectCSSLocalFallback(context.cacheKey, entry);
-    await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
+    await cacheProjectCSSEntryByHash(
+      entry,
+      candidates,
+      context.stylesheet,
+      context.cssPipelineIdentity,
+    );
     return { css: entry.css, hash: entry.hash, fromCache: true };
   } catch (error) {
     tailwindLog.debug("Failed to read from project CSS cache", {
@@ -260,24 +366,45 @@ export async function tryGetProjectCSSFromDistributedCache(
 export async function storeProjectCSS(
   context: ProjectCSSRequestContext,
   entry: ProjectCSSCacheEntry,
-  candidates: Set<string>,
+  candidates: string[] | Set<string>,
 ): Promise<void> {
-  if (projectCSSBackend) {
-    projectCSSBackend.set(context.cacheKey, JSON.stringify(entry), PROJECT_CSS_CACHE_TTL_SECONDS)
-      .catch((error) => {
-        tailwindLog.debug("Failed to store in project CSS cache", {
-          cacheKey: context.cacheKey,
-          error,
-        });
-      });
+  assertCSSContentIdentity(entry.css, entry.hash);
+  if (entry.candidatesHash !== context.candidatesHash) {
+    throw new TypeError("Project CSS candidates hash does not match its request context");
   }
+  if (context.cacheEpoch !== projectCSSCacheEpoch) return;
+  if (projectCSSBackend) {
+    try {
+      await projectCSSBackend.set(
+        context.cacheKey,
+        JSON.stringify(entry),
+        PROJECT_CSS_CACHE_TTL_SECONDS,
+      );
+      if (context.cacheEpoch !== projectCSSCacheEpoch) {
+        await projectCSSBackend.del(context.cacheKey);
+        return;
+      }
+    } catch (error) {
+      tailwindLog.debug("Failed to store in project CSS cache", {
+        cacheKey: context.cacheKey,
+        error,
+      });
+    }
+  }
+
+  if (context.cacheEpoch !== projectCSSCacheEpoch) return;
 
   setProjectCSSLocalFallback(context.cacheKey, entry);
 
   // Await the hash-level cache write so other pods can serve
   // /_vf/css/{hash}.css immediately. Without awaiting, the browser's
   // CSS request may hit a different pod before the write completes.
-  await cacheProjectCSSEntryByHash(entry, candidates, context.stylesheet);
+  await cacheProjectCSSEntryByHash(
+    entry,
+    candidates,
+    context.stylesheet,
+    context.cssPipelineIdentity,
+  );
 }
 
 /**
@@ -295,13 +422,17 @@ export function isProjectCSSInitialized(): boolean {
  * Invalidate project CSS cache for a specific project.
  */
 export function invalidateProjectCSS(projectSlug: string): void {
+  const projectPrefix = getProjectCSSCacheScopePrefix(
+    assertCSSPipelineIdentity(projectSlug, "Project CSS project scope"),
+  );
+  projectCSSCacheEpoch++;
   for (const key of projectCSSLocalFallback.keys()) {
-    if (key.startsWith(`${projectSlug}:`)) {
-      projectCSSLocalFallback.delete(key);
+    if (key.startsWith(projectPrefix)) {
+      removeProjectCSSLocalFallback(key);
     }
   }
 
-  invalidateProjectCSSAsync(projectSlug).catch((error) => {
+  invalidateProjectCSSBackend(projectSlug, projectPrefix).catch((error) => {
     tailwindLog.debug("Failed to invalidate project CSS cache", { projectSlug, error });
   });
 }
@@ -310,12 +441,26 @@ export function invalidateProjectCSS(projectSlug: string): void {
  * Invalidate project CSS cache for a specific project (async version).
  */
 export async function invalidateProjectCSSAsync(projectSlug: string): Promise<void> {
-  if (!projectCSSBackend?.delByPattern) return;
+  const projectPrefix = getProjectCSSCacheScopePrefix(
+    assertCSSPipelineIdentity(projectSlug, "Project CSS project scope"),
+  );
+  projectCSSCacheEpoch++;
+  for (const key of projectCSSLocalFallback.keys()) {
+    if (key.startsWith(projectPrefix)) removeProjectCSSLocalFallback(key);
+  }
+  await invalidateProjectCSSBackend(projectSlug, projectPrefix);
+}
 
+async function invalidateProjectCSSBackend(
+  projectSlug: string,
+  projectPrefix: string,
+): Promise<void> {
+  if (!projectCSSBackend?.delByPattern) return;
   try {
-    const deleted = await projectCSSBackend.delByPattern(`${projectSlug}:*`);
+    const deleted = await projectCSSBackend.delByPattern(`${projectPrefix}*`);
     tailwindLog.debug("Cleared project CSS cache", { projectSlug, deleted });
   } catch (error) {
     tailwindLog.debug("Failed to clear project CSS cache", { projectSlug, error });
+    throw error;
   }
 }

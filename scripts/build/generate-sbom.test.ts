@@ -8,8 +8,25 @@ import {
   dependencyIndexForAllManifests,
   dependencySummaryMarkdown,
   sbomOutputsForAllManifests,
+  SENSITIVE_DEPENDENCY_BOUNDARIES,
   SUPPORTED_LOCK_VERSIONS,
 } from "./generate-sbom.ts";
+
+Deno.test("SBOM sensitivity ratchet owns the explicit Node WebSocket dependencies", () => {
+  const boundary = SENSITIVE_DEPENDENCY_BOUNDARIES.find((candidate) =>
+    candidate.sourceLocation === "extensions/ext-node-websocket-ws/deno.json"
+  );
+  assertEquals(boundary?.label, "Node WebSocket transport");
+  assertEquals(boundary?.expectedComponents, ["@types/ws", "ws"]);
+});
+
+Deno.test("SBOM sensitivity ratchet owns the explicit Redis runtime dependencies", () => {
+  const boundary = SENSITIVE_DEPENDENCY_BOUNDARIES.find((candidate) =>
+    candidate.sourceLocation === "extensions/ext-redis/deno.json"
+  );
+  assertEquals(boundary?.label, "Redis distributed runtime");
+  assertEquals(boundary?.expectedComponents, ["@redis/client", "redis"]);
+});
 
 describe("componentsFromLock", () => {
   it("emits a CycloneDX library component per npm package, deduplicated", () => {

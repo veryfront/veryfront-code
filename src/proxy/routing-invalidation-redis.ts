@@ -27,8 +27,8 @@ type SignatureDomain = "event" | "ack";
 export interface RoutingInvalidationRedisClient {
   connect(): Promise<void>;
   publish(channel: string, message: string): Promise<number>;
-  subscribe(channel: string, listener: RedisListener): Promise<number>;
-  unsubscribe(channel: string): Promise<number>;
+  subscribe(channel: string, listener: RedisListener): Promise<number | void>;
+  unsubscribe(channel: string): Promise<number | void>;
   close(): Promise<void>;
   destroy(): void;
   on?(event: "error", listener: (error: unknown) => void): unknown;
@@ -261,16 +261,7 @@ function parseAcknowledgement(message: string): RoutingInvalidationAcknowledgeme
 async function createDefaultClient(redisUrl: string): Promise<RoutingInvalidationRedisClient> {
   const { NodeRedis } = await getRedisModule();
   if (!NodeRedis) throw new Error("Redis client module is unavailable");
-
-  const createClient = NodeRedis.createClient as unknown as (options: {
-    url: string;
-    socket: {
-      connectTimeout: number;
-      reconnectStrategy: (retries: number) => number | Error;
-    };
-  }) => RoutingInvalidationRedisClient;
-
-  return createClient({
+  return NodeRedis.createClient({
     url: redisUrl,
     socket: {
       connectTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
