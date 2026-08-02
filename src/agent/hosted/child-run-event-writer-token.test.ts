@@ -101,7 +101,7 @@ Deno.test("run event writer capability preserves the configured API base path", 
   );
 });
 
-Deno.test("exchangeHostedChildRunEventWriterToken rejects responses without no-store", async () => {
+Deno.test("mintChildRunEventAppendToken rejects responses without no-store", async () => {
   await assertRejects(
     () =>
       createHostedRunEventWriterCapability({
@@ -115,7 +115,7 @@ Deno.test("exchangeHostedChildRunEventWriterToken rejects responses without no-s
   );
 });
 
-Deno.test("exchangeHostedChildRunEventWriterToken rejects control-plane errors without reading their body", async () => {
+Deno.test("mintChildRunEventAppendToken rejects control-plane errors without reading their body", async () => {
   let bodyRead = false;
   const response = new Response("parent-writer-token-must-not-leak", { status: 503 });
   const originalJson = response.json.bind(response);
@@ -150,7 +150,7 @@ for (
     { run_event_token: "child-writer-token", extra: true },
   ]
 ) {
-  Deno.test(`exchangeHostedChildRunEventWriterToken rejects invalid response ${JSON.stringify(body)}`, async () => {
+  Deno.test(`mintChildRunEventAppendToken rejects invalid response ${JSON.stringify(body)}`, async () => {
     await assertRejects(
       () =>
         createHostedRunEventWriterCapability({
@@ -168,7 +168,7 @@ for (
   });
 }
 
-Deno.test("exchangeHostedChildRunEventWriterToken maps aborts to a sanitized error", async () => {
+Deno.test("mintChildRunEventAppendToken maps aborts to a sanitized error", async () => {
   const controller = new AbortController();
   controller.abort("parent-writer-token-must-not-leak");
 
@@ -194,7 +194,7 @@ Deno.test("exchangeHostedChildRunEventWriterToken maps aborts to a sanitized err
   );
 });
 
-Deno.test("exchangeHostedChildRunEventWriterToken applies a bounded timeout", async () => {
+Deno.test("mintChildRunEventAppendToken applies a bounded timeout", async () => {
   const error = await assertRejects(
     () =>
       createHostedRunEventWriterCapability({
@@ -220,7 +220,7 @@ Deno.test("exchangeHostedChildRunEventWriterToken applies a bounded timeout", as
   );
 });
 
-Deno.test("exchangeHostedChildRunEventWriterToken keeps the first cancellation classification", async () => {
+Deno.test("mintChildRunEventAppendToken keeps the first cancellation classification", async () => {
   const controller = new AbortController();
   const callerAbort = setTimeout(
     () => controller.abort("parent-writer-token-must-not-leak"),

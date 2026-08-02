@@ -1,6 +1,7 @@
 interface ValidatedBaseUrl {
   origin: string;
   prefix: string;
+  prefixPathname: string;
 }
 
 export type VeryfrontApiRequestUrlResolver = (pathOrUrl: string) => string;
@@ -46,7 +47,23 @@ function validateBaseUrl(value: string): ValidatedBaseUrl {
   return {
     origin: url.origin,
     prefix: `${url.origin}${pathname}`,
+    prefixPathname: pathname,
   };
+}
+
+function assertWithinConfiguredBasePath(
+  baseUrl: ValidatedBaseUrl,
+  requestUrl: URL,
+): void {
+  if (
+    baseUrl.prefixPathname &&
+    requestUrl.pathname !== baseUrl.prefixPathname &&
+    !requestUrl.pathname.startsWith(`${baseUrl.prefixPathname}/`)
+  ) {
+    throw new TypeError(
+      "Veryfront API request path must remain within the configured API base path",
+    );
+  }
 }
 
 function resolveRequestUrl(baseUrl: ValidatedBaseUrl, pathOrUrl: string): string {
@@ -74,6 +91,7 @@ function resolveRequestUrl(baseUrl: ValidatedBaseUrl, pathOrUrl: string): string
     if (absolute.origin !== baseUrl.origin) {
       throw new TypeError("Veryfront API request origin must match the configured API origin");
     }
+    assertWithinConfiguredBasePath(baseUrl, absolute);
     return absolute.href;
   }
 
@@ -82,5 +100,6 @@ function resolveRequestUrl(baseUrl: ValidatedBaseUrl, pathOrUrl: string): string
   if (resolved.origin !== baseUrl.origin) {
     throw new TypeError("Veryfront API request origin must match the configured API origin");
   }
+  assertWithinConfiguredBasePath(baseUrl, resolved);
   return resolved.href;
 }
