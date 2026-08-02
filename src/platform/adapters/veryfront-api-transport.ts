@@ -12,6 +12,7 @@ import {
   InvalidResponseBodyError,
   InvalidResponseBodyJsonError,
   InvalidResponseBodyJsonNestingError,
+  JsonNonValueBytesTooLargeError,
   JsonStringValueTooLargeError,
   maximumJsonStringDocumentBytes,
   readResponseJsonStringBytesWithinLimit,
@@ -331,6 +332,7 @@ async function defaultOnResponse(
         init.jsonStringFieldWithinLimit.maximumBytes,
         maximumDocumentBytes,
         abortSignal,
+        maxResponseBytes,
       );
     } catch (cause) {
       if (cause instanceof JsonStringValueTooLargeError) {
@@ -388,6 +390,7 @@ async function defaultOnResponse(
 function isDeterministicResponseProtocolError(error: unknown): boolean {
   return error instanceof InvalidResponseBodyError ||
     error instanceof InvalidResponseBodyJsonNestingError ||
+    error instanceof JsonNonValueBytesTooLargeError ||
     error instanceof JsonStringValueTooLargeError ||
     error instanceof ResponseBodyTooLargeError;
 }

@@ -523,6 +523,42 @@ Deno.test("ApiCacheBackend reserves JSON escape bytes outside its response polic
   }
 });
 
+Deno.test("ApiCacheBackend keeps unused string headroom outside its response policy", async () => {
+  const { ApiCacheBackend } = await importBackend();
+  const globals = globalThis as Record<string, unknown>;
+  const originalAdapter = globals.__vf_multi_project_adapter;
+  const originalFetch = globalThis.fetch;
+  const body = '{"value":"","x":0}';
+  let fetchCalls = 0;
+  assertEquals(new TextEncoder().encode(body).byteLength, 18);
+  globals.__vf_multi_project_adapter = {
+    getCurrentRequestContext: () => ({
+      token: "request-token",
+      projectSlug: "project-slug",
+    }),
+  };
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(new Response(body));
+  }) as typeof fetch;
+
+  try {
+    const cache = new ApiCacheBackend({
+      apiBaseUrl: "https://api.example.test",
+      // The empty value uses none of its 12 bytes of wire headroom. The extra
+      // metadata must still fail the independent 12-byte response policy.
+      maxResponseBytes: 12,
+      circuitBreakerName: "api-cache-independent-non-value-budget-test",
+    });
+    assertEquals(await cache.getWithinLimit("key", 2), null);
+    assertEquals(fetchCalls, 1);
+  } finally {
+    if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+    else globals.__vf_multi_project_adapter = originalAdapter;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("ApiCacheBackend rejects unsafe combined response limits before fetching", async () => {
   const { ApiCacheBackend } = await importBackend();
   const globals = globalThis as Record<string, unknown>;
