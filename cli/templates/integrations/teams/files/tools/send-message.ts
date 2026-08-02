@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { sendChannelMessage, sendChatMessage } from "../../lib/teams-client.ts";
+import { sendChannelMessage, sendChatMessage } from "../lib/teams-client.ts";
 
 export default tool({
-  id: "send-message",
+  id: "teams-send-message",
   description:
     "Send a message to a Microsoft Teams chat or channel. For chats, use the chatId. For channels, use both teamId and channelId.",
   inputSchema: defineSchema((v) => v

@@ -1,9 +1,9 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
+import { getAnthropicAdminClient } from '../lib/anthropic-admin-client';
 
 export const listMembers = tool({
-  id: 'list_members',
+  id: 'anthropic-list-members',
   description:
     'List all members in the Anthropic organization. Returns member details including email, role, status, and activity information.',
   inputSchema: defineSchema((v) => v.object({}))(),

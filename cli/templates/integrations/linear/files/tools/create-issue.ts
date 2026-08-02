@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createIssue } from "../../lib/linear-client.ts";
+import { createIssue } from "../lib/linear-client.ts";
 
 export default tool({
-  id: "create-issue",
+  id: "linear-create-issue",
   description:
     "Create a new Linear issue in a specified team. You can optionally set priority, assign to someone, add to a project, and attach labels.",
   inputSchema: defineSchema((v) => v.object({

@@ -1,6 +1,6 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { getRetention } from "../../lib/mixpanel-client.ts";
+import { getRetention } from "../lib/mixpanel-client.ts";
 
 function formatRate(rate: number): string {
   return `${(rate * 100).toFixed(2)}%`;
@@ -20,7 +20,7 @@ function averageRetention(retention: RetentionCohort[], day: number): string {
 }
 
 export default tool({
-  id: "get-retention",
+  id: "mixpanel-get-retention",
   description:
     "Analyze user retention cohorts in Mixpanel. Understand how many users return after performing an initial event.",
   inputSchema: defineSchema((v) => v.object({

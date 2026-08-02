@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listProjects } from "../../lib/sentry-client.ts";
+import { listProjects } from "../lib/sentry-client.ts";
 
 export default tool({
-  id: "list-projects",
+  id: "sentry-list-projects",
   description:
     "List all projects in your Sentry organization. Returns project details including name, platform, status, and team information.",
   inputSchema: defineSchema((v) => v.object({}))(),

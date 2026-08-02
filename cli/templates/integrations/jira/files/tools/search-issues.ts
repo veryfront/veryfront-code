@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { extractDescriptionText, searchIssues } from "../../lib/jira-client.ts";
+import { extractDescriptionText, searchIssues } from "../lib/jira-client.ts";
 
 export default tool({
-  id: "search-issues",
+  id: "jira-search-issues",
   description:
     'Search for Jira issues using JQL (Jira Query Language). Returns matching issues with key details. Common JQL examples: "assignee = currentUser() AND status != Done", "project = PROJ AND type = Bug", "created >= -7d".',
   inputSchema: defineSchema((v) =>

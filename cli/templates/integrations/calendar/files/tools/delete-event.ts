@@ -1,10 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createCalendarClient } from "../../lib/calendar-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createCalendarClient } from "../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "delete-event",
+  id: "calendar-delete-event",
   description: "Delete a Google Calendar event by ID",
   inputSchema: defineSchema((v) =>
     v.object({

@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { trackEvent } from "../../lib/mixpanel-client.ts";
+import { trackEvent } from "../lib/mixpanel-client.ts";
 
 export default tool({
-  id: "track-event",
+  id: "mixpanel-track-event",
   description:
     "Track a custom event in Mixpanel. Capture user actions, page views, or any custom analytics event with properties.",
   inputSchema: defineSchema((v) => v.object({

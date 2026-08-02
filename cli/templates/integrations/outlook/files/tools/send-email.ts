@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { sendEmail } from "../../lib/outlook-client.ts";
+import { sendEmail } from "../lib/outlook-client.ts";
 
 export default tool({
-  id: "send-email",
+  id: "outlook-send-email",
   description:
     "Send a new email message. Supports multiple recipients, CC, BCC, and importance levels.",
   inputSchema: defineSchema((v) => v.object({

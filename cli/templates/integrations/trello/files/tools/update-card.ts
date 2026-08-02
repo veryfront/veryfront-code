@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { updateCard } from "../../lib/trello-client.ts";
+import { updateCard } from "../lib/trello-client.ts";
 
 export default tool({
-  id: "update-card",
+  id: "trello-update-card",
   description: "Update an existing Trello card.",
   inputSchema: defineSchema((v) => v.object({
     cardId: v.string().describe("The ID of the card to update"),

@@ -1,10 +1,10 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createGitHubClient } from "../../lib/github-client.ts";
-import { requireUserIdFromContext } from "../../lib/user-id.ts";
+import { createGitHubClient } from "../lib/github-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "get-issue",
+  id: "github-get-issue",
   description: "Get details of a GitHub issue",
   inputSchema: defineSchema((v) =>
     v.object({

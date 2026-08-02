@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listUsers } from "../../lib/linear-client.ts";
+import { listUsers } from "../lib/linear-client.ts";
 
 export default tool({
-  id: "list-users",
+  id: "linear-list-users",
   description:
     "List users in the Linear workspace. Use this to find assignee user IDs before assigning issues.",
   inputSchema: defineSchema((v) => v.object({

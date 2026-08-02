@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "get-thread",
+  id: "gmail-get-thread",
   description: "Get a Gmail thread by ID.",
   inputSchema: defineSchema((v) => v.object({
     threadId: v.string().min(1).describe("Gmail thread ID"),

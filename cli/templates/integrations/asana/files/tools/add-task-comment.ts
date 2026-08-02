@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { addTaskComment } from "../../lib/asana-client.ts";
+import { addTaskComment } from "../lib/asana-client.ts";
 
 export default tool({
-  id: "add-task-comment",
+  id: "asana-add-task-comment",
   description: "Add a comment to an Asana task.",
   inputSchema: defineSchema((v) => v.object({
     taskGid: v.string().describe("Asana task GID"),

@@ -4,7 +4,7 @@ import { createDriveClient } from "../lib/drive-client.ts";
 import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
-  id: "create-folder",
+  id: "drive-create-folder",
   description:
     "Create a new folder in Google Drive. Can optionally specify a parent folder. Returns the new folder ID and details.",
   inputSchema: defineSchema((v) =>

@@ -4,7 +4,7 @@ import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
-  id: "update-label",
+  id: "gmail-update-label",
   description: "Update a Gmail user label.",
   inputSchema: defineSchema((v) => v.object({
     labelId: v.string().min(1).describe("Gmail label ID"),

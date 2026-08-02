@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { addMergeRequestComment } from "../../lib/gitlab-client.ts";
+import { addMergeRequestComment } from "../lib/gitlab-client.ts";
 
 export default tool({
-  id: "add-merge-request-comment",
+  id: "gitlab-add-merge-request-comment",
   description: "Add a Markdown comment/note to a GitLab merge request.",
   inputSchema: defineSchema((v) =>
     v.object({

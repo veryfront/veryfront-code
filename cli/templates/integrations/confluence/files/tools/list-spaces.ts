@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { listSpaces } from "../../lib/confluence-client.ts";
+import { listSpaces } from "../lib/confluence-client.ts";
 
 export default tool({
-  id: "list-spaces",
+  id: "confluence-list-spaces",
   description: "List all accessible Confluence spaces. Returns space keys, names, and links.",
   inputSchema: defineSchema((v) => v.object({
     type: v

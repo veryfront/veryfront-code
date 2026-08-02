@@ -1,9 +1,9 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatDate, listCustomers } from "../../lib/stripe-client.ts";
+import { formatDate, listCustomers } from "../lib/stripe-client.ts";
 
 export default tool({
-  id: "list-customers",
+  id: "stripe-list-customers",
   description: "List Stripe customers. Supports filtering by email and creation date range.",
   inputSchema: defineSchema((v) => v.object({
     limit: v
