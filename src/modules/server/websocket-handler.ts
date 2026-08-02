@@ -35,7 +35,25 @@ export function setupWebSocketHandlers(
 
   function cleanup(): void {
     context.clients.delete(socket);
-    context.rateLimiter.cleanup(socket);
+    try {
+      context.rateLimiter.cleanup(socket);
+    } catch (error) {
+      logger.debug("Error cleaning up HMR rate-limit state", error);
+    }
+  }
+
+  /**
+   * Release server-side state before asking the peer to close. A client that
+   * stalls the close handshake must not be able to keep its registration and
+   * rate-limit entry alive by never letting `onclose` fire.
+   */
+  function closeAndCleanup(code: number, reason: string): void {
+    cleanup();
+    try {
+      socket.close(code, reason);
+    } catch (error) {
+      logger.debug("Error closing HMR WebSocket client", error);
+    }
   }
 
   socket.onmessage = (event) => {
@@ -49,13 +67,13 @@ export function setupWebSocketHandlers(
           size: messageSize,
           max: context.maxMessageSize,
         });
-        socket.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
+        closeAndCleanup(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
         return;
       }
 
       if (!context.rateLimiter.check(socket)) {
         logger.warn("HMR rate limit exceeded, closing connection");
-        socket.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
+        closeAndCleanup(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
         return;
       }
 
