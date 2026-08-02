@@ -19,6 +19,7 @@
  * @module observability/tracing/api-shim
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { runSyncWithContextFallback } from "./context-callback.ts";
 
 // ---------------------------------------------------------------------------
@@ -331,24 +332,27 @@ function createEmptyTelemetryState(
 }
 
 let telemetryState = createEmptyTelemetryState();
-let _activeContext: Context = createNoopContext();
+
+/**
+ * Async-scoped fallback context used until a real context accessor is installed.
+ *
+ * Async-local storage keeps an activation visible across the awaits of the work
+ * it wraps without leaking into concurrent work, so span attributes recorded
+ * after an await still reach the span that is active for that request.
+ */
+const fallbackContextStorage = new AsyncLocalStorage<Context>();
+let _rootContext: Context = createNoopContext();
 
 function resetFallbackContext(): void {
-  _activeContext = createNoopContext();
+  _rootContext = createNoopContext();
 }
 
-function activateFallbackContext(ctx: Context): () => void {
-  const generation = telemetryState.generation;
-  const previous = _activeContext;
-  _activeContext = ctx;
-  let active = true;
-
-  return () => {
-    if (!active) return;
-    active = false;
-    if (generation !== telemetryState.generation) return;
-    if (_activeContext === ctx) _activeContext = previous;
-  };
+function getFallbackContext(): Context {
+  try {
+    return fallbackContextStorage.getStore() ?? _rootContext;
+  } catch (_) {
+    return _rootContext;
+  }
 }
 
 function assertOptionalMethod(
@@ -537,9 +541,9 @@ export function getTracer(name: string, version?: string): Tracer {
 export const context = {
   active(): Context {
     try {
-      return telemetryState.contextAccessor?.active() ?? _activeContext;
+      return telemetryState.contextAccessor?.active() ?? getFallbackContext();
     } catch (_) {
-      return _activeContext;
+      return getFallbackContext();
     }
   },
   with<T>(ctx: Context, fn: () => T): T {
@@ -551,15 +555,9 @@ export const context = {
       );
     }
 
-    const restore = activateFallbackContext(ctx);
-    try {
-      return fn();
-    } finally {
-      // A process-global fallback cannot preserve context across awaits without
-      // cross-contaminating concurrent work. Real async propagation is supplied
-      // by the installed context accessor; the fallback is synchronous only.
-      restore();
-    }
+    // run() invokes fn exactly once and propagates its result or failure
+    // unchanged, so application outcomes never depend on activation.
+    return fallbackContextStorage.run(ctx, fn);
   },
   setGlobalContextManager(_mgr: unknown): void {
     // no-op in shim; real SDK sets this via the real OTel API

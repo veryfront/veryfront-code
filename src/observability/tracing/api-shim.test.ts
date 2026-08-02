@@ -283,7 +283,7 @@ describe("observability/tracing/api-shim", () => {
       assertEquals(context.active() === base, true);
     });
 
-    it("restores fallback context synchronously for async callbacks", async () => {
+    it("keeps the fallback context active across the awaits it wraps", async () => {
       const base = context.active();
       const scoped = makeScopedContext();
       let synchronousContext: Context | undefined;
@@ -295,8 +295,32 @@ describe("observability/tracing/api-shim", () => {
       });
 
       assertEquals(synchronousContext === scoped, true);
+      // The activation stays scoped to its own async work, so ambient reads
+      // outside it are unaffected while it runs.
       assertEquals(context.active() === base, true);
-      assertEquals(await applicationPromise === base, true);
+      assertEquals(await applicationPromise === scoped, true);
+    });
+
+    it("isolates concurrent fallback activations from each other", async () => {
+      const first = makeScopedContext();
+      const second = makeScopedContext();
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      });
+
+      const firstScope = context.with(first, async () => {
+        await firstGate;
+        return context.active();
+      });
+      const secondScope = context.with(second, async () => {
+        await Promise.resolve();
+        return context.active();
+      });
+
+      assertEquals(await secondScope === second, true);
+      releaseFirst();
+      assertEquals(await firstScope === first, true);
     });
 
     it("does not restore a stale span context when an async scope settles after reset", async () => {
