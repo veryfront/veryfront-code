@@ -140,8 +140,9 @@ independent write access to the host paths being served.
 
 ## Host outbound HTTP policy
 
-Framework-owned fetches of tenant-selected remote modules and remote MCP
-endpoints pass through a DNS-pinned HTTP boundary. It admits only public
+Framework-owned fetches of tenant-selected remote modules, OpenAPI and remote
+MCP endpoints, OAuth provider endpoints, and project-configured model and
+embedding provider base URLs pass through a DNS-pinned HTTP boundary. It admits only public
 `http:` and `https:` destinations, rejects URL credentials, blocks loopback,
 private, link-local, metadata, and other non-global addresses, and repeats both
 the network and caller-specific allowlist checks before every redirect hop.
@@ -152,6 +153,11 @@ override. It disables the private-network destination check for these host
 fetches and must remain unset in a shared runtime. Project environment overlays
 cannot enable it. URL scheme, URL-credential, redirect, and caller allowlist
 checks remain active when the override is enabled.
+
+Cloud credentials are bound to their endpoint provenance: a request-scoped
+Cloud base URL must carry a request-scoped token, and gateway fetches admit only
+their configured origin with redirects rejected. A caller-selected endpoint
+cannot inherit a host or request credential.
 
 ## Internal worker isolation
 

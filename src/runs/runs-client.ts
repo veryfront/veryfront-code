@@ -424,6 +424,13 @@ export class VeryfrontRunsClient {
   }
 
   private resolveAuthToken(): string {
+    if (this.config.apiUrl && !this.config.authToken) {
+      throw API_CLIENT_ERROR.create({
+        detail:
+          "Runs apiUrl requires an explicit authToken. A caller-selected endpoint cannot use request- or host-owned credentials.",
+        status: 401,
+      });
+    }
     const token = this.requestToken ?? this.config.authToken ??
       getVeryfrontCloudBootstrap().apiToken;
     if (token) {

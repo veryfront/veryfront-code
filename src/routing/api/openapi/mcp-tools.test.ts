@@ -253,7 +253,7 @@ describe("routing/api/openapi/mcp-tools", () => {
               },
             },
           }),
-          { baseUrl: "http://localhost:3000" },
+          { baseUrl: "http://93.184.216.34:3000" },
         );
 
         const first = tools[0];
@@ -262,6 +262,37 @@ describe("routing/api/openapi/mcp-tools", () => {
 
         assertExists(requestHeaders);
         assertEquals(requestHeaders.get("X-End-User-Id"), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("blocks an internal configured API base URL before invoking fetch", async () => {
+      const originalFetch = globalThis.fetch;
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(Response.json({ unexpected: true }));
+      }) as typeof fetch;
+
+      try {
+        const tools = generateTools(
+          makeSpec({
+            "/api/users": {
+              get: {
+                operationId: "getUsers",
+                responses: { "200": { description: "OK" } },
+              },
+            },
+          }),
+          { baseUrl: "http://169.254.169.254" },
+        );
+        const first = tools[0];
+        assertExists(first);
+
+        const result = await first.execute({});
+        assertEquals(fetchCalls, 0);
+        assertEquals((result as { error?: boolean }).error, true);
       } finally {
         globalThis.fetch = originalFetch;
       }

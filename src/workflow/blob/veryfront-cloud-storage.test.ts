@@ -345,10 +345,11 @@ describe("VeryfrontCloudBlobStorage", () => {
     }
   });
 
-  it("resolves request-scoped auth and project slug without explicit config overrides", async () => {
+  it("keeps explicit blob endpoints paired with their explicit credential", async () => {
     const service = createMockUploadService();
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://api.test",
+      apiToken: "vf_scoped_token",
       prefix: ".vf-test/",
       now: () => FIXED_NOW,
     });
@@ -369,7 +370,7 @@ describe("VeryfrontCloudBlobStorage", () => {
         call.method === "POST" && call.url === "https://api.test/projects/request-project/uploads"
       );
       assertExists(createCall);
-      assertEquals(createCall.headers.get("Authorization"), "Bearer vf_request_token");
+      assertEquals(createCall.headers.get("Authorization"), "Bearer vf_scoped_token");
     } finally {
       service.restore();
     }

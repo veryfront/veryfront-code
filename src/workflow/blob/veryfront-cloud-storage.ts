@@ -3,7 +3,6 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 import {
-  getVeryfrontCloudAuthToken,
   getVeryfrontCloudBootstrap,
   getVeryfrontCloudProjectSlug,
 } from "#veryfront/platform/cloud/resolver.ts";
@@ -352,8 +351,15 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
   }
 
   private resolveConfig(): ResolvedConfig {
-    const apiBaseUrl = this.config.apiBaseUrl ?? getVeryfrontCloudBootstrap().apiBaseUrl;
-    const apiToken = this.config.apiToken ?? getVeryfrontCloudAuthToken();
+    const bootstrap = getVeryfrontCloudBootstrap();
+    const apiBaseUrl = this.config.apiBaseUrl ?? bootstrap.apiBaseUrl;
+    if (this.config.apiBaseUrl && !this.config.apiToken) {
+      throw CONFIG_INVALID.create({
+        detail:
+          "VeryfrontCloudBlobStorage apiBaseUrl requires an explicit apiToken. A caller-selected endpoint cannot use request- or host-owned credentials.",
+      });
+    }
+    const apiToken = this.config.apiToken ?? bootstrap.apiToken;
     const projectSlug = this.config.projectSlug ?? getVeryfrontCloudProjectSlug();
 
     if (!apiToken) {
