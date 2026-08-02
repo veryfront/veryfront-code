@@ -27,6 +27,15 @@ export const MAX_CHUNKED_MODEL_CALL_CONTEXT_EVENT_BYTES = 240 * 1024;
 export const DEFAULT_MODEL_CALL_CONTEXT_PERSISTENCE_TIMEOUT_MS = 30_000;
 
 const encoder = new TextEncoder();
+const MODEL_CALL_CONTEXT_RUN_EVENT_KEYS = new Set([
+  "type",
+  "contextId",
+  "partIndex",
+  "partCount",
+  "totalByteLength",
+  "sha256",
+  "serializedSegment",
+]);
 
 /** Durable lossless envelope for a model-call context segment. */
 export interface ModelCallContextRunEvent extends ConversationRunEvent {
@@ -42,6 +51,7 @@ export interface ModelCallContextRunEvent extends ConversationRunEvent {
 /** Failure to durably persist a required model-call context before dispatch. */
 export class ModelCallContextPersistenceError extends Error {
   override name = "ModelCallContextPersistenceError";
+  declare readonly writerOutcome?: ModelCallContextWriterOutcome;
 }
 
 export type {
@@ -132,19 +142,13 @@ export function assertValidModelCallContextRunEvent(
     throw new ModelCallContextPersistenceError("Invalid model-call context event type");
   }
   const event = value as ModelCallContextRunEvent;
-  const validKeys = new Set([
-    "type",
-    "contextId",
-    "partIndex",
-    "partCount",
-    "totalByteLength",
-    "sha256",
-    "serializedSegment",
-  ]);
-  const valid = Object.keys(event).every((key) => validKeys.has(key)) &&
-    Object.keys(event).length === validKeys.size && isUuid(event.contextId) &&
-    Number.isInteger(event.partIndex) && event.partIndex >= 0 && event.partIndex < 32 &&
-    Number.isInteger(event.partCount) && event.partCount >= 1 && event.partCount <= 32 &&
+  const eventKeys = Object.keys(event);
+  const valid = eventKeys.every((key) => MODEL_CALL_CONTEXT_RUN_EVENT_KEYS.has(key)) &&
+    eventKeys.length === MODEL_CALL_CONTEXT_RUN_EVENT_KEYS.size && isUuid(event.contextId) &&
+    Number.isInteger(event.partIndex) && event.partIndex >= 0 &&
+    event.partIndex < MAX_MODEL_CALL_CONTEXT_PARTS &&
+    Number.isInteger(event.partCount) && event.partCount >= 1 &&
+    event.partCount <= MAX_MODEL_CALL_CONTEXT_PARTS &&
     event.partIndex < event.partCount &&
     Number.isInteger(event.totalByteLength) && event.totalByteLength >= 1 &&
     event.totalByteLength <= MAX_MODEL_CALL_CONTEXT_BYTES &&
@@ -308,31 +312,34 @@ function getNonQuiescentOutcome(
   return undefined;
 }
 
+function createWriterOutcomeError(
+  message: string,
+  writerOutcome: ModelCallContextWriterOutcome,
+): ModelCallContextPersistenceError {
+  return Object.assign(new ModelCallContextPersistenceError(message), { writerOutcome });
+}
+
 function assertQuiescent(
   snapshot: ConversationRunMirrorSnapshot,
   phase: "before" | "after",
 ): void {
   const outcome = getNonQuiescentOutcome(snapshot, phase);
   if (outcome) {
-    const error = new ModelCallContextPersistenceError(
+    throw createWriterOutcomeError(
       "Required model-call context was not durably flushed",
+      outcome,
     );
-    Object.assign(error, { writerOutcome: outcome });
-    throw error;
   }
 }
 
 function assertEnabled(snapshot: ConversationRunMirrorSnapshot): void {
   if (!snapshot.disabled) return;
-  const error = new ModelCallContextPersistenceError(
+  throw createWriterOutcomeError(
     "Required model-call context mirror is disabled",
-  );
-  Object.assign(error, {
-    writerOutcome: snapshot.disableReason === "cursor_mismatch_ambiguous"
+    snapshot.disableReason === "cursor_mismatch_ambiguous"
       ? "ambiguous_durable_replay"
       : "disabled",
-  });
-  throw error;
+  );
 }
 
 async function withRequiredPersistenceDeadline<T>(input: {
@@ -409,11 +416,11 @@ export function createModelCallContextRunEventRecorder(input: {
       ) {
         barrierOutcome = "timeout";
       } else {
-        writerOutcome = (error as { writerOutcome?: ModelCallContextWriterOutcome })
-          .writerOutcome ??
-          ((input.mirror.getSnapshot().appendRequestCount ?? 0) - appendRequestsBefore > 1
-            ? "partial_append_failed"
-            : "append_failed");
+        writerOutcome =
+          (error instanceof ModelCallContextPersistenceError ? error.writerOutcome : undefined) ??
+            ((input.mirror.getSnapshot().appendRequestCount ?? 0) - appendRequestsBefore > 1
+              ? "partial_append_failed"
+              : "append_failed");
       }
       input.mirror.dispose();
       throw error;

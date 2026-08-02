@@ -129,6 +129,10 @@ type DirectStreamResult = {
   stream: ReadableStream<unknown>;
 };
 type DirectTextOptions = GenerateTextOptions | StreamTextOptions;
+type DirectModelOptions = Record<string, unknown> & {
+  prompt: ModelCallMessage[];
+  tools?: ModelCallTool[];
+};
 
 function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | undefined {
   if (typeof system === "string") {
@@ -451,7 +455,7 @@ async function resolveDirectTools(
 function buildDirectModelOptions(
   options: DirectTextOptions,
   tools: ModelCallTool[] | undefined,
-): Record<string, unknown> {
+): DirectModelOptions {
   return {
     prompt: toRuntimePrompt(
       normalizeSystemPrompt(options.system),
@@ -479,16 +483,16 @@ function buildDirectModelOptions(
   };
 }
 
-async function recordModelCall(
+async function recordModelCallContext(
   options: DirectTextOptions,
-  directOptions: Record<string, unknown>,
+  directOptions: DirectModelOptions,
 ): Promise<void> {
   const recorder = resolveModelCallRecorder(options.modelCallRecorder);
   if (!recorder) return;
 
   const context: ModelCallContext = {
-    prompt: directOptions.prompt as ModelCallMessage[],
-    ...(directOptions.tools ? { tools: directOptions.tools as ModelCallTool[] } : {}),
+    prompt: directOptions.prompt,
+    ...(directOptions.tools ? { tools: directOptions.tools } : {}),
   };
   await recorder(structuredClone(context));
 }
@@ -870,7 +874,7 @@ async function* textDeltasFromStream(stream: ReadableStream<unknown>): AsyncIter
 export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeGenerateTextResult> {
   return resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await recordModelCall(options, directOptions);
+    await recordModelCallContext(options, directOptions);
     if (shouldGenerateViaStream(options.model)) {
       return options.model.doStream(directOptions).then(({ stream }) =>
         buildGenerateResultFromStream(stream)
@@ -884,7 +888,7 @@ export function generateText(options: GenerateTextOptions): PromiseLike<RuntimeG
 export function streamText(options: StreamTextOptions): RuntimeStreamResult {
   const directResultPromise = resolveDirectTools(options.tools).then(async (tools) => {
     const directOptions = buildDirectModelOptions(options, tools);
-    await recordModelCall(options, directOptions);
+    await recordModelCallContext(options, directOptions);
     return options.model.doStream(directOptions);
   });
   // Guard against an unhandled rejection when a branch is consumed lazily (or a
