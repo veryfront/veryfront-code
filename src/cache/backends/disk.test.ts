@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { assertEquals, assertMatch, assertRejects, assertThrows } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { DiskCacheBackend } from "./disk.ts";
@@ -141,16 +141,17 @@ Deno.test("DiskCacheBackend", async (t) => {
     const debugCapture = captureDebugLogs();
     try {
       assertEquals(await backend.get(key), null);
-      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 5));
 
       assertEquals(debugCapture.entries.length, 1);
       assertEquals(debugCapture.entries[0]?.message, "[DiskCache] Expired entry cleanup failed");
-      // Without the key the log says only that some cleanup failed, which is
-      // not diagnosable against a cache holding thousands of entries.
-      assertEquals(
-        (debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined)?.key,
-        key,
-      );
+      // Without something identifying the entry the log says only that some
+      // cleanup failed, which is not diagnosable against a cache holding
+      // thousands of entries. The digest identifies it without reproducing the
+      // key, which for a user KV entry can embed a token.
+      const context = debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      assertMatch(String(context?.keyDigest), /^[0-9a-f]{12}$/);
+      assertEquals(JSON.stringify(context).includes(key), false);
     } finally {
       debugCapture.restore();
       (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
@@ -185,10 +186,46 @@ Deno.test("DiskCacheBackend", async (t) => {
         "[DiskCache] Filename digest collision; stored key does not match",
       );
       const context = warnCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
-      assertEquals(context?.requestedKey, requestedKey);
-      assertEquals(context?.storedKey, storedKey);
+      // Digests keep the two entries distinguishable — and equal digests would
+      // mean a genuine SHA-256 collision rather than an overwritten file —
+      // without reproducing key text that can embed a token.
+      assertMatch(String(context?.requestedKeyDigest), /^[0-9a-f]{12}$/);
+      assertMatch(String(context?.storedKeyDigest), /^[0-9a-f]{12}$/);
+      assertEquals(context?.requestedKeyDigest === context?.storedKeyDigest, false);
+      const payload = JSON.stringify(context);
+      assertEquals(payload.includes(requestedKey), false);
+      assertEquals(payload.includes(storedKey), false);
     } finally {
       warnCapture.restore();
+    }
+  });
+
+  await t.step("derives the logged key digest from the entry's own filename", async () => {
+    const isolatedDir = join(Deno.makeTempDirSync(), "digest-correlation");
+    const backend = new DiskCacheBackend(isolatedDir);
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    const key = "digest-correlation-key";
+
+    await backend.set(key, "value", 0);
+    const fileName = await onlyCacheFileName(cacheDir);
+    await new Promise((r) => setTimeout(r, 5));
+
+    const originalDel = backend.del.bind(backend);
+    (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = () =>
+      Promise.reject(new Error("delete rejected"));
+
+    const debugCapture = captureDebugLogs();
+    try {
+      assertEquals(await backend.get(key), null);
+      await new Promise((r) => setTimeout(r, 5));
+
+      // The digest is the prefix of the SHA-256 that names the file, so an
+      // operator can still walk from a log line to the entry on disk.
+      const context = debugCapture.entries[0]?.args[0] as Record<string, unknown> | undefined;
+      assertEquals(fileName.startsWith(String(context?.keyDigest)), true);
+    } finally {
+      debugCapture.restore();
+      (backend as unknown as { del: (entryKey: string) => Promise<void> }).del = originalDel;
     }
   });
 
