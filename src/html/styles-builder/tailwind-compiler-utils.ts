@@ -89,21 +89,26 @@ export function formatCSSErrorMessage(message: string): CSSErrorDescriptor {
     return {
       title: "Plugin Not Available",
       message: `The configured CSS processor could not load: ${pluginName}`,
-      suggestion: "Use a plugin and exact version supported by the explicitly registered provider.",
+      suggestion:
+        `Use a plugin from the explicitly registered provider's allowlist, named either ` +
+        `bare ("${pluginName}") or at its exact audited version ("${pluginName}@<version>"). ` +
+        `No other version resolves.`,
     };
   }
   if (message.includes("@theme") || message.includes("Invalid theme")) {
     return {
       title: "Invalid CSS Theme",
       message,
-      suggestion: "Check the configured processor's theme syntax.",
+      suggestion: "Check the configured processor's theme syntax: @theme { --color-name: value; }",
     };
   }
   if (message.includes("Unexpected") || message.includes("Expected")) {
     return {
       title: "CSS Syntax Error",
       message,
-      suggestion: "Check the stylesheet syntax accepted by the configured CSS processor.",
+      suggestion:
+        "Check for missing semicolons, brackets, or typos, then check the stylesheet syntax " +
+        "accepted by the configured CSS processor.",
     };
   }
   return {
