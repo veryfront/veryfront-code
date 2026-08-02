@@ -457,7 +457,7 @@ function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> 
         return manifest;
       } else {
         if (state === "ready") markManifestDecision("fetch_ready_invalid");
-        markManifestDecision(`fetch_${manifestState}`);
+        else markManifestDecision(`fetch_${manifestState}`);
         markManifestDecision("fetch_not_ready");
         evictReadyManifests(releaseId, active.token);
         cacheNonReadyManifest(releaseId, active.token);
