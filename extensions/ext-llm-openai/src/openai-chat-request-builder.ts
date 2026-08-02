@@ -4,58 +4,24 @@ import {
   toOpenAICompatibleTools,
   unwrapToolInputSchema,
 } from "veryfront/provider/shared";
-import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
+import type {
+  ModelRuntimeCallOptions,
+  ModelRuntimeToolDefinition,
+  OpenAICompatibleChatRequest,
+} from "veryfront/provider/shared";
 import {
-  type OpenAIProviderReasoningOption,
   rejectsOpenAISamplingParams,
   resolveOpenAIReasoningConfig,
 } from "./openai-reasoning-models.ts";
+import { defineOpenAIProviderOptions } from "./openai-provider-options.ts";
 
-export type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-
-export type OpenAICompatibleLanguageOptions = {
-  prompt: RuntimePromptMessage[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  tools?: RuntimeToolDefinition[];
-  toolChoice?: unknown;
-  seed?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-  includeRawChunks?: boolean;
-  abortSignal?: AbortSignal;
-  reasoning?: OpenAIProviderReasoningOption;
-  userId?: string;
+export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   serviceTier?: "auto" | "default" | "flex" | "scale";
   parallelToolCalls?: boolean;
-  responseFormat?:
-    | { type: "text" }
-    | { type: "json" }
-    | {
-      type: "json_schema";
-      name: string;
-      schema: unknown;
-      description?: string;
-      strict?: boolean;
-    };
-};
+}
+
+/** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider` instead. */
+export type RuntimeToolDefinition = ModelRuntimeToolDefinition;
 
 type WarningCollector = {
   push(warning: {
@@ -92,6 +58,7 @@ export function buildOpenAIChatRequest(
   const samplingRejected = rejectsOpenAISamplingParams(modelId);
   const fixedSampling = isFixedSamplingModel(modelId);
   const dropSamplingParams = reasoningEnabled || samplingRejected || fixedSampling;
+  const messages = toOpenAICompatibleMessages(options.prompt);
 
   // OpenAI Chat Completions has no top_k surface.
   if (options.topK !== undefined) {
@@ -130,7 +97,7 @@ export function buildOpenAIChatRequest(
 
   const body: OpenAICompatibleChatRequest = {
     model: modelId,
-    messages: toOpenAICompatibleMessages(options.prompt),
+    messages,
     ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     ...(options.maxOutputTokens !== undefined
       ? isNativeOpenAIModel(modelId)
@@ -142,7 +109,7 @@ export function buildOpenAIChatRequest(
       : {}),
     ...(!dropSamplingParams && options.topP !== undefined ? { top_p: options.topP } : {}),
     ...(options.stopSequences && options.stopSequences.length > 0
-      ? { stop: options.stopSequences }
+      ? { stop: [...options.stopSequences] }
       : {}),
     ...(toOpenAICompatibleTools(options.tools)
       ? { tools: toOpenAICompatibleTools(options.tools) }
@@ -193,13 +160,24 @@ export function buildOpenAIChatRequest(
   ];
   const providerOpts: Record<string, unknown> = {};
   for (const bucketName of bucketNames) {
-    Object.assign(
+    defineOpenAIProviderOptions(
       providerOpts,
       normalizeNativeMaxTokens(readProviderOptions(options.providerOptions, bucketName), modelId),
     );
   }
 
-  Object.assign(body, providerOpts);
+  defineOpenAIProviderOptions(body as Record<string, unknown>, providerOpts);
+  // Provider-native options may tune request behavior, but they must not
+  // replace the runtime-owned transport mode, model, or conversation.
+  body.model = modelId;
+  body.messages = messages;
+  if (stream) {
+    body.stream = true;
+    body.stream_options = { include_usage: true };
+  } else {
+    delete body.stream;
+    delete body.stream_options;
+  }
   return body;
 }
 
