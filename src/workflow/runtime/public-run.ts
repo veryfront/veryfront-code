@@ -129,15 +129,15 @@ interface FrameworkContextMetadata {
 
 function captureFrameworkContextMetadata(
   context: WorkflowContext,
-  fallbackTenant?: unknown,
+  inheritedTenant?: unknown,
 ): FrameworkContextMetadata {
   const hasEnv = Object.hasOwn(context, "env");
   const hasContextTenant = Object.hasOwn(context, "_tenant");
   return {
     hasEnv,
     env: hasEnv ? context.env : undefined,
-    hasTenant: hasContextTenant || fallbackTenant !== undefined,
-    tenant: hasContextTenant ? context._tenant : fallbackTenant,
+    hasTenant: hasContextTenant || inheritedTenant !== undefined,
+    tenant: hasContextTenant ? context._tenant : inheritedTenant,
   };
 }
 

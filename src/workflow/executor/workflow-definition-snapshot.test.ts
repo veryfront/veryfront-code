@@ -17,6 +17,20 @@ function step(overrides: Record<string, unknown> = {}): WorkflowNode {
 }
 
 describe("workflow definition snapshot", () => {
+  it("captures and detaches the current top-level retry contract", () => {
+    const retry = { maxAttempts: 3, backoff: "exponential" as const };
+    const captured = captureWorkflowDefinition({
+      id: "retrying-workflow",
+      retry,
+      steps: [step()],
+    });
+
+    retry.maxAttempts = 2;
+
+    assertEquals(captured.retry, { maxAttempts: 3, backoff: "exponential" });
+    assertEquals(Object.isFrozen(captured.retry), true);
+  });
+
   it("rejects hostile timer and retry values without invoking Proxy hooks", () => {
     let hooks = 0;
     const hostile = new Proxy({}, {

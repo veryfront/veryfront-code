@@ -15,8 +15,11 @@ import {
   findProjectRuntimeTask,
 } from "#veryfront/task/project-runtime.ts";
 import { runTask } from "#veryfront/task/runner.ts";
+import { sleep } from "#veryfront/utils/sleep.ts";
 import { snapshotTriggerTarget, type TriggerTarget } from "./target.ts";
 import { snapshotSerializable } from "./validation.ts";
+
+const WORKFLOW_STATUS_POLL_INTERVAL_MS = 1_000;
 
 /** Options for one local trigger target execution. */
 export interface RunTriggerTargetOptions {
@@ -217,24 +220,17 @@ async function waitForWorkflowResult(
   signal: AbortSignal | undefined,
 ): Promise<unknown> {
   if (signal === undefined) {
-    await handle.settled();
     return await handle.result();
   }
   signal.throwIfAborted();
 
-  let rejectAbort: ((reason: unknown) => void) | undefined;
-  const aborted = new Promise<never>((_resolve, reject) => {
-    rejectAbort = reject;
-  });
-  const onAbort = () => rejectAbort?.(signal.reason ?? new DOMException("Aborted", "AbortError"));
-  signal.addEventListener("abort", onAbort, { once: true });
-  if (signal.aborted) onAbort();
-  try {
-    await Promise.race([handle.settled(), aborted]);
-    return await handle.result();
-  } finally {
-    signal.removeEventListener("abort", onAbort);
-    rejectAbort = undefined;
+  while (true) {
+    const status = await handle.status();
+    signal.throwIfAborted();
+    if (isTerminalWorkflowStatus(status.status)) {
+      return await handle.result();
+    }
+    await sleep(WORKFLOW_STATUS_POLL_INTERVAL_MS, signal);
   }
 }
 
