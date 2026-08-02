@@ -63,9 +63,15 @@ describe("build/utils/path-glob", () => {
     assertMatches("*(ab)c.ts", ["c.ts", "abc.ts", "ababc.ts"], ["ac.ts"]);
     assertMatches("+(ab)c.ts", ["abc.ts", "ababc.ts"], ["c.ts", "ac.ts"]);
     assertMatches("!(test).ts", ["page.ts", "contest.ts"], ["test.ts"]);
+    assertMatches("!(|foo).ts", ["bar.ts"], [".ts", "foo.ts", "foobar.ts"]);
   });
 
-  it("preserves captured extended-glob and globstar compatibility", () => {
+  it("keeps normalized path semantics instead of legacy empty-segment leakage", () => {
+    assertMatches("**/!(a|b)", ["c", "x/c"], ["a", "b", "x/a", "x/b"]);
+    assertMatches("a/*", ["a/b"], ["a", "a/"]);
+  });
+
+  it("preserves captured extended-glob and globstar compatibility where semantics agree", () => {
     const parityCases: ReadonlyArray<{
       pattern: string;
       matches: string[];
@@ -128,12 +134,7 @@ describe("build/utils/path-glob", () => {
     }
   });
 
-  it("sinks negative extglobs that carry an empty alternative", () => {
-    // An empty alternative matches at every position, so the negative
-    // lookahead it compiles to can never succeed. `globToRegExp` builds
-    // `^(?!|foo)[^/]*\.ts\/*$` for `!(|foo).ts`, which matches nothing; the
-    // positive forms below confirm the empty alternative is still parsed
-    // rather than silently dropped.
+  it("treats an empty negative alternative as excluding the zero-length endpoint", () => {
     const emptyAlternativeCases: ReadonlyArray<{
       pattern: string;
       matches: string[];
@@ -141,23 +142,23 @@ describe("build/utils/path-glob", () => {
     }> = [
       {
         pattern: "!(|foo).ts",
-        matches: [],
-        rejects: ["bar.ts", "foo.ts", ".ts", "foobar.ts"],
+        matches: ["bar.ts"],
+        rejects: ["foo.ts", ".ts", "foobar.ts"],
       },
       {
         pattern: "!(foo|).ts",
-        matches: [],
-        rejects: ["bar.ts", "foo.ts", ".ts", "foobar.ts"],
+        matches: ["bar.ts"],
+        rejects: ["foo.ts", ".ts", "foobar.ts"],
       },
       {
         pattern: "!(|).ts",
-        matches: [],
-        rejects: ["bar.ts", ".ts"],
+        matches: ["bar.ts"],
+        rejects: [".ts"],
       },
       {
         pattern: "a!(|b)c",
-        matches: [],
-        rejects: ["abc", "ac", "axc"],
+        matches: ["axc"],
+        rejects: ["abc", "ac"],
       },
       // Control: the same negation without an empty alternative still
       // excludes only the forbidden stem.
