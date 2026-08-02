@@ -351,11 +351,15 @@ describe("platform/adapters/bounded-text-reader", () => {
   });
 
   it("rejects resizable ArrayBuffer-backed bytes before UTF-8 decoding", async () => {
-    const ResizableArrayBuffer = ArrayBuffer as unknown as new (
-      byteLength: number,
-      options: { maxByteLength: number },
-    ) => ArrayBuffer;
-    const buffer = new ResizableArrayBuffer(4, { maxByteLength: 8 });
+    let buffer: ArrayBuffer;
+    try {
+      buffer = Reflect.construct(ArrayBuffer, [4, { maxByteLength: 8 }]);
+    } catch {
+      // Resizable ArrayBuffers are unavailable in this runtime.
+      return;
+    }
+    if (!buffer.resizable) return;
+
     const bytes = new Uint8Array(buffer);
     bytes.set([0x73, 0x61, 0x66, 0x65]);
     const reader = captureBoundedTextReader({

@@ -1122,7 +1122,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   setRequestToken(token: string): void {
     if (token !== this.activeRequestToken) {
       this.activeRequestToken = token;
-      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+      this.invalidateRequestAuthoritySnapshot();
     }
     this.client.setRequestToken(token);
     this.wsManager.setApiToken(token);
@@ -1131,10 +1131,26 @@ export class VeryfrontFSAdapter implements FSAdapter {
   clearRequestToken(): void {
     if (this.activeRequestToken !== this.apiToken) {
       this.activeRequestToken = this.apiToken;
-      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+      this.invalidateRequestAuthoritySnapshot();
     }
     this.client.clearRequestToken();
     this.wsManager.setApiToken(this.apiToken);
+  }
+
+  private invalidateRequestAuthoritySnapshot(): void {
+    this.cache.clear();
+    this.readOps.clearFileListIndex();
+    this.statOps.clearIndex();
+    this.dirOps.clearTree();
+    this.fileListWarmupPromise = null;
+    this.fileListWarmupKey = null;
+    this.branchMissRecoveryPromise = null;
+    this.branchMissRecoveryGeneration++;
+    this.branchMissRecoveryFailures.clear();
+    this.sourceSnapshotCheckedAt = 0;
+    this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotFiles = undefined;
   }
 
   setRequestBranch(branch: string | null): void {

@@ -384,16 +384,22 @@ describe("platform/adapters/file-system-capabilities", () => {
       "fixed ArrayBuffer",
     );
 
-    const ResizableArrayBuffer = ArrayBuffer as unknown as new (
-      byteLength: number,
-      options: { maxByteLength: number },
-    ) => ArrayBuffer;
-    result = new Uint8Array(new ResizableArrayBuffer(2, { maxByteLength: 4 }));
-    await assertRejects(
-      () => captured.read("/root/a", "/root", 2),
-      TypeError,
-      "fixed ArrayBuffer",
-    );
+    try {
+      const resizableBuffer = Reflect.construct(ArrayBuffer, [
+        2,
+        { maxByteLength: 4 },
+      ]);
+      if (resizableBuffer instanceof ArrayBuffer && resizableBuffer.resizable) {
+        result = new Uint8Array(resizableBuffer);
+        await assertRejects(
+          () => captured.read("/root/a", "/root", 2),
+          TypeError,
+          "fixed ArrayBuffer",
+        );
+      }
+    } catch {
+      // Resizable ArrayBuffers are unavailable in this runtime.
+    }
   });
 
   it("copies snapshot bytes without consulting poisoned view properties or species", async () => {

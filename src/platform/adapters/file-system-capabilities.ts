@@ -158,7 +158,7 @@ function requireCapabilityObject(value: unknown, label: string): asserts value i
     isProxyWithoutHooks(value) ||
     isArray(value)
   ) {
-    throw invalidCapability(label, "must be a non-Proxy object");
+    throw invalidCapability(label, "must be a non-array, non-Proxy object");
   }
 }
 

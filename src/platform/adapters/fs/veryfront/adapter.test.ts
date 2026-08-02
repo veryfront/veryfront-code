@@ -228,20 +228,49 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(websocketToken, "static-token");
     });
 
-    it("advances the snapshot generation across request-authority ABA changes", () => {
+    it("invalidates snapshots and cached file lists across request-authority changes", async () => {
       const adapter = createAdapter({
         veryfront: {
           apiBaseUrl: "https://api.example.com",
           apiToken: "static-token",
           projectSlug: "test-project",
-          cache: { enabled: false },
+          cache: { enabled: true },
         },
       });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      seedCachedFiles(adapter, [{ path: "tenant-a.ts", content: "tenant-a" }]);
+
+      const internals = adapter as unknown as {
+        getCachedFileListSync(): Array<{ path: string; content?: string }> | undefined;
+        getCurrentSourceSnapshotIdentity(): string | undefined;
+        initialized: boolean;
+        sourceSnapshotCheckedAt: number;
+        sourceSnapshotIdentity: string | undefined;
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+      };
+      internals.initialized = true;
+      internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
+      internals.sourceSnapshotCheckedAt = Date.now();
+      internals.sourceSnapshotFiles = [{ path: "tenant-a.ts", content: "tenant-a" }];
+      assertEquals(internals.getCachedFileListSync()?.[0]?.path, "tenant-a.ts");
+
+      let refreshCalls = 0;
+      adapter.refreshSourceSnapshot = () => {
+        refreshCalls++;
+        return Promise.resolve();
+      };
       const before = adapter.getSourceSnapshotVersion();
 
       adapter.setRequestToken("tenant-token");
+      assertEquals(internals.getCachedFileListSync(), undefined);
+      await adapter.ensureSourceSnapshotFresh("new-authority");
       adapter.setRequestToken("static-token");
 
+      assertEquals(refreshCalls, 1);
       assertEquals(adapter.getSourceSnapshotVersion() > before, true);
     });
   });
