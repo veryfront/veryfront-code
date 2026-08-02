@@ -21,7 +21,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { type AuthIdentity, isApiKeyIdentity, login } from "../../auth/login.ts";
 import { fetchRemoteProjects, type RemoteProject } from "../../sync/index.ts";
 import { pullCommand } from "../pull/index.ts";
-import { pushCommand, type PushOptions } from "../push/index.ts";
+import { createStagedPushOptions, pushCommand, type PushOptions } from "../push/index.ts";
 import { createProjectSelector } from "./project-selector.ts";
 import { createDevLogController } from "./log-controller.ts";
 
@@ -65,12 +65,7 @@ export function createSelectedProjectPushOptions(
   projectDir: string,
   project: RemoteProject,
 ): PushOptions {
-  return {
-    projectDir,
-    projectSlug: project.slug,
-    force: true,
-    quiet: true,
-  };
+  return createStagedPushOptions(project.slug, projectDir);
 }
 
 export function devCommand(options: DevOptions): Promise<DevCommandResult> {
@@ -329,9 +324,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             }
 
             console.log(`  ${dim("Pushing...")}`);
+            const pushOptions = createSelectedProjectPushOptions(projectDir, project);
             await runSyncAction(
-              () => pushCommand(createSelectedProjectPushOptions(projectDir, project)),
-              `Pushed ${dim("- merge in Studio")}`,
+              () => pushCommand(pushOptions),
+              `Pushed to ${pushOptions.branch} ${dim("- merge in Studio")}`,
             );
           },
         });

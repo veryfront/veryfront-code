@@ -276,6 +276,33 @@ export async function capturePushSourceSnapshot(
   };
 }
 
+/**
+ * Build a timestamped isolation branch name for pushes that are staged for review.
+ *
+ * The lowercase timestamp keeps the name inside {@link PREVIEW_BRANCH_PATTERN} so the
+ * branch can round-trip through preview DNS.
+ */
+export function generateBranchName(): string {
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "").toLowerCase();
+  return `push-${timestamp}`;
+}
+
+/**
+ * Push options for programmatic callers (TUI shortcuts) that stage work for review.
+ *
+ * These callers never prompt, so they must not target main: the branch is what makes
+ * "merge in Studio" true rather than an in-place overwrite of the project's main.
+ */
+export function createStagedPushOptions(projectSlug: string, projectDir: string): PushOptions {
+  return {
+    projectSlug,
+    projectDir,
+    branch: generateBranchName(),
+    force: true,
+    quiet: true,
+  };
+}
+
 function suggestPreviewBranchName(branchName: string): string {
   return branchName
     .toLowerCase()
