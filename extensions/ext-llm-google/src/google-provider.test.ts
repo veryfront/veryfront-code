@@ -1,7 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { assertEquals } from "@std/assert";
 
-import { ProviderOverloadedError, ProviderQuotaError } from "veryfront/provider/shared";
+import { ProviderOverloadedError, ProviderRateLimitError } from "veryfront/provider/shared";
 
 import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./google-provider.ts";
 
@@ -631,7 +631,7 @@ describe("ext-llm-google/google-provider", () => {
       assertEquals(err.retryable, true);
     });
 
-    it("classifies Google 429 RESOURCE_EXHAUSTED as ProviderQuotaError (non-retryable)", async () => {
+    it("classifies Google 429 RESOURCE_EXHAUSTED as ProviderRateLimitError (retryable)", async () => {
       const runtime = createGoogleModelRuntime({
         apiKey: "k",
         baseURL: "https://example.google.test/v1beta",
@@ -644,9 +644,9 @@ describe("ext-llm-google/google-provider", () => {
       }, "gemini-1.5-pro");
       const err = await expectError(
         runtime.doGenerate({ prompt: [userPrompt] }),
-        ProviderQuotaError,
+        ProviderRateLimitError,
       );
-      assertEquals(err.retryable, false);
+      assertEquals(err.retryable, true);
     });
   });
 

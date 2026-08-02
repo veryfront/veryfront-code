@@ -194,6 +194,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           totalTokens: 13,
           cacheCreationInputTokens: 2,
           cacheReadInputTokens: 3,
+          cachedInputTokens: 3,
         },
       },
     ]);
@@ -247,6 +248,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           outputTokens: 5,
           totalTokens: 13,
           cacheReadInputTokens: 3,
+          cachedInputTokens: 3,
           billableInputTokens: 8,
           billableOutputTokens: 5,
           providerInputCostUsd: 0.0004,
@@ -449,7 +451,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
-        inputTokens: undefined,
         outputTokens: 4,
         totalTokens: 4,
       },
@@ -497,7 +498,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
-        inputTokens: undefined,
         outputTokens: 4,
         totalTokens: 4,
       },
@@ -544,7 +544,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         type: "finish",
         finishReason: { unified: "tool-calls", raw: "tool_use" },
         usage: {
-          inputTokens: undefined,
           outputTokens: 4,
           totalTokens: 4,
         },
