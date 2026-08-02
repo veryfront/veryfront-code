@@ -12,6 +12,7 @@ import type {
   ModelCallContextBarrierOutcome,
   ModelCallContextWriterOutcome,
 } from "../../observability/metrics/types.ts";
+import { isVeryfrontError } from "#veryfront/errors";
 
 /** Private durable event type used to persist exact model-call inputs. */
 export const AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CONTEXT";
@@ -412,7 +413,9 @@ export function createModelCallContextRunEventRecorder(input: {
       if (input.abortSignal?.aborted || error instanceof DOMException) {
         barrierOutcome = "aborted";
       } else if (
-        error instanceof ModelCallContextPersistenceError && error.message.includes("timed out")
+        (error instanceof ModelCallContextPersistenceError &&
+          error.message.includes("timed out")) ||
+        (isVeryfrontError(error) && error.slug === "timeout-error")
       ) {
         barrierOutcome = "timeout";
       } else {

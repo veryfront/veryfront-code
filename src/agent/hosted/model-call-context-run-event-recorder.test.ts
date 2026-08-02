@@ -18,6 +18,7 @@ import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-co
 import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { collectAsync, createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 
 const encoder = new TextEncoder();
 const originalFetch = globalThis.fetch;
@@ -425,6 +426,29 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       "timed out",
     );
     assertEquals(target.isDisposed(), true);
+    assertEquals(metrics.barrierOutcomes, ["timeout"]);
+  });
+
+  it("classifies a durable append request timeout as a timeout barrier", async () => {
+    const target = mirror({
+      flush: () =>
+        Promise.reject(
+          TIMEOUT_ERROR.create({ detail: "Append conversation run events timed out" }),
+        ),
+    });
+    const metrics = metricsSink();
+    const recorder = createModelCallContextRunEventRecorder({
+      mirror: target.result,
+      metrics: metrics.result,
+    });
+
+    await assertRejects(
+      () => Promise.resolve(recorder({ messages: [{ role: "system", content: "timeout" }] })),
+      Error,
+      "Append conversation run events timed out",
+    );
+    assertEquals(target.isDisposed(), true);
+    assertEquals(metrics.writerOutcomes, []);
     assertEquals(metrics.barrierOutcomes, ["timeout"]);
   });
 

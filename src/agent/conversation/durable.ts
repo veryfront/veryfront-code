@@ -77,13 +77,16 @@ const AGENT_RUN_API_TIMEOUT_MS = 15_000;
 
 function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   const controller = new AbortController();
-  let abortedByCaller = false;
+  let abortOrigin: "caller" | "timeout" | null = null;
   const timeout = setTimeout(() => {
+    if (abortOrigin) return;
+    abortOrigin = "timeout";
     controller.abort(new DOMException("Conversation run API request timed out", "TimeoutError"));
   }, timeoutMs);
 
   const onAbort = () => {
-    abortedByCaller = true;
+    if (abortOrigin) return;
+    abortOrigin = "caller";
     controller.abort(abortSignal?.reason);
   };
 
@@ -95,7 +98,7 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
 
   return {
     signal: controller.signal,
-    wasAbortedByCaller: () => abortedByCaller,
+    wasAbortedByCaller: () => abortOrigin === "caller",
     cleanup: () => {
       clearTimeout(timeout);
       abortSignal?.removeEventListener("abort", onAbort);
