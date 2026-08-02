@@ -51,7 +51,7 @@ Deno.test("compiled CLI embeds every runtime-resolved sibling module", async () 
   // resolved from a computed URL, so `deno compile` never sees them in the
   // static graph and only DEFAULT_INCLUDES can embed them.
   const siblingTernary = /"\.\/([^"]+)\.ts"\s*:\s*"\.\/\1\.js"/g;
-  let asserted = 0;
+  const runtimeResolvedIncludes: string[] = [];
 
   for await (
     const entry of walk("extensions", {
@@ -70,15 +70,18 @@ Deno.test("compiled CLI embeds every runtime-resolved sibling module", async () 
         true,
         `compile-binary DEFAULT_INCLUDES must embed ${include}, resolved at runtime by ${entry.path}`,
       );
-      asserted += 1;
+      runtimeResolvedIncludes.push(include);
     }
   }
 
-  // Guard against the walk silently matching nothing and passing vacuously.
   assertEquals(
-    asserted >= 3,
-    true,
-    `expected runtime-resolved siblings, found ${asserted}`,
+    runtimeResolvedIncludes.sort(),
+    [
+      "extensions/ext-document-kreuzberg/src/native-progress-extraction-worker.ts",
+      "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
+      "extensions/ext-react-ssr/src/worker-renderer.ts",
+    ],
+    "runtime-resolved sibling inventory changed; update DEFAULT_INCLUDES and this explicit contract together",
   );
 });
 
