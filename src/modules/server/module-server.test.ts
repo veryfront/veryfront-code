@@ -33,7 +33,7 @@ import {
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
@@ -92,7 +92,6 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
     deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
     deleteEnv("VERYFRONT_CACHE_DIR");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
     clearReleaseModuleResponseCache();
     clearImportMapCache();
@@ -689,8 +688,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
     );
 
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "building", manifest_version: 1, manifest: null })
+    registerManifestFetcherForRelease(
+      releaseId,
+      () => Promise.resolve({ state: "building", manifest_version: 1, manifest: null }),
     );
 
     async function serveWithProfile(): Promise<{
@@ -881,7 +881,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
+      registerManifestFetcherForRelease("release-id", () =>
         Promise.resolve({
           state: "ready",
           manifest_version: 1,
@@ -892,8 +892,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
               contentType: "text/javascript",
             },
           }),
-        })
-      );
+        }));
 
       const { serveModule } = await import("./module-server.ts");
       const response = await serveModule(
@@ -943,7 +942,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
+      registerManifestFetcherForRelease(releaseId, () =>
         Promise.resolve({
           state: "partial",
           manifest_version: 1,
@@ -954,8 +953,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
               contentType: "text/javascript",
             },
           }, releaseId),
-        })
-      );
+        }));
 
       const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
       const second = await serveProductionModuleWithProfile(request, projectDir, releaseId);
@@ -1005,13 +1003,12 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
+      registerManifestFetcherForRelease(releaseId, () =>
         Promise.resolve({
           state: "ready",
           manifest_version: 1,
           manifest: manifest({}, releaseId, "source"),
-        })
-      );
+        }));
 
       const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
       const second = await serveProductionModuleWithProfile(request, projectDir, releaseId);
@@ -1935,7 +1932,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
+      registerManifestFetcherForRelease(releaseId, () =>
         Promise.resolve(
           ready
             ? {
@@ -1950,8 +1947,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
               }, releaseId),
             }
             : { state: "building", manifest_version: 1, manifest: null },
-        )
-      );
+        ));
 
       const first = await serveWithProfile();
       ready = true;

@@ -1,10 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRenderAsync,
   registerManifestFetcherForRelease,
 } from "./manifest-cache.ts";
@@ -152,36 +151,20 @@ describe("release asset manifest fetcher ownership", () => {
     assertEquals(await getReadyManifestForRenderAsync("release-1"), null);
   });
 
-  it("does not reserve a real release ID for the global fallback", async () => {
+  it("never invokes another release owner's fetcher", async () => {
     Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
-    configureReleaseAssetManifestFetcher(() => Promise.resolve(readyManifestResponse("other", 1)));
-    registerManifestFetcherForRelease(
-      "*",
-      () => Promise.resolve(readyManifestResponse("*", 2)),
-    );
+    const calls: string[] = [];
+    registerManifestFetcherForRelease("release-a", (releaseId) => {
+      calls.push(releaseId);
+      return Promise.resolve(readyManifestResponse("release-a", 1));
+    });
 
-    const resolved = await getReadyManifestForRenderAsync("*");
-    assertEquals(resolved?.releaseId, "*");
-    assertEquals(resolved?.manifestVersion, 2);
-    assert(resolved !== null);
-  });
-
-  it("does not reuse a cached manifest across fallback owners", async () => {
-    Deno.env.set("VERYFRONT_RELEASE_ASSET_MANIFEST", "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve(readyManifestResponse("release-1", 1))
-    );
+    assertEquals(await getReadyManifestForRenderAsync("release-b"), null);
+    assertEquals(calls, []);
     assertEquals(
-      (await getReadyManifestForRenderAsync("release-1"))?.manifestVersion,
-      1,
+      (await getReadyManifestForRenderAsync("release-a"))?.releaseId,
+      "release-a",
     );
-
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve(readyManifestResponse("release-1", 2))
-    );
-    assertEquals(
-      (await getReadyManifestForRenderAsync("release-1"))?.manifestVersion,
-      2,
-    );
+    assertEquals(calls, ["release-a"]);
   });
 });

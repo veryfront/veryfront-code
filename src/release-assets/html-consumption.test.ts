@@ -16,9 +16,9 @@ import {
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
   getReadyManifestForRenderAsync,
+  registerManifestFetcherForRelease,
 } from "./manifest-cache.ts";
 import {
   RELEASE_ASSET_MANIFEST_ENV_FLAG,
@@ -148,27 +148,24 @@ describe("manifest cache gating", () => {
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalFlag ?? "");
     Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
     resetRequestProfiles();
   });
 
   it("returns null when the flag is off (byte-identical fallback)", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "");
-    configureReleaseAssetManifestFetcher(() => Promise.resolve(readyManifestResponse()));
+    registerManifestFetcherForRelease("r", () => Promise.resolve(readyManifestResponse()));
     assertEquals(getReadyManifestForRender("r"), null);
   });
 
   it("returns null when no fetcher is registered", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(undefined);
     assertEquals(getReadyManifestForRender("r"), null);
   });
 
   it("marks the no-fetcher fallback reason during profiled async reads", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(undefined);
 
     const record = await runWithRequestProfiling(
       { category: "html", method: "GET", pathname: "/" },
@@ -184,7 +181,7 @@ describe("manifest cache gating", () => {
   it("marks ready manifest fetches during profiled async reads", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(() => Promise.resolve(readyManifestResponse()));
+    registerManifestFetcherForRelease("r", () => Promise.resolve(readyManifestResponse()));
 
     const record = await runWithRequestProfiling(
       { category: "html", method: "GET", pathname: "/" },
@@ -200,8 +197,9 @@ describe("manifest cache gating", () => {
   it("rejects partial manifests even when they include a manifest body", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve(manifestResponse("partial", manifest()))
+    registerManifestFetcherForRelease(
+      "r",
+      () => Promise.resolve(manifestResponse("partial", manifest())),
     );
 
     const record = await runWithRequestProfiling(
@@ -220,7 +218,7 @@ describe("manifest cache gating", () => {
   it("marks manifest fetch failures during profiled async reads", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     Deno.env.set("VERYFRONT_ENABLE_SERVER_TIMING", "1");
-    configureReleaseAssetManifestFetcher(() => Promise.reject(new Error("boom")));
+    registerManifestFetcherForRelease("r", () => Promise.reject(new Error("boom")));
 
     const record = await runWithRequestProfiling(
       { category: "html", method: "GET", pathname: "/" },
@@ -237,7 +235,7 @@ describe("manifest cache gating", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     let resolveFetch: () => void = () => {};
     const gate = new Promise<void>((r) => (resolveFetch = r));
-    configureReleaseAssetManifestFetcher(async () => {
+    registerManifestFetcherForRelease("r", async () => {
       await gate;
       return readyManifestResponse();
     });
@@ -254,7 +252,7 @@ describe("manifest cache gating", () => {
 
   it("awaits a ready manifest on the first async read", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() => Promise.resolve(readyManifestResponse()));
+    registerManifestFetcherForRelease("r", () => Promise.resolve(readyManifestResponse()));
 
     const ready = await getReadyManifestForRenderAsync("r");
 
@@ -268,7 +266,7 @@ describe("manifest cache gating", () => {
     const gate = new Promise<void>((resolve) => (resolveFetch = resolve));
     let fetchCount = 0;
 
-    configureReleaseAssetManifestFetcher(async () => {
+    registerManifestFetcherForRelease("r", async () => {
       fetchCount++;
       await gate;
       return readyManifestResponse();
@@ -294,7 +292,7 @@ describe("manifest cache gating", () => {
 
     try {
       let fetchCount = 0;
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("r", async () => {
         fetchCount++;
         return fetchCount === 1 ? manifestResponse("building", null) : readyManifestResponse();
       });
@@ -328,7 +326,7 @@ describe("manifest cache gating", () => {
     const secondGate = new Promise<void>((resolve) => (resolveSecond = resolve));
     let fetchCount = 0;
 
-    configureReleaseAssetManifestFetcher(async () => {
+    registerManifestFetcherForRelease("r", async () => {
       fetchCount++;
       if (fetchCount === 1) {
         await firstGate;
@@ -373,7 +371,7 @@ describe("manifest cache gating", () => {
 
     try {
       let fetchCount = 0;
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("r", async () => {
         fetchCount++;
         return fetchCount === 1
           ? readyManifestResponse(manifest(firstHash, 3))
@@ -424,7 +422,7 @@ describe("manifest cache gating", () => {
 
       try {
         let fetchCount = 0;
-        configureReleaseAssetManifestFetcher(async () => {
+        registerManifestFetcherForRelease("r", async () => {
           fetchCount++;
           return fetchCount === 1
             ? readyManifestResponse(manifest("a".repeat(64), 3))
@@ -455,7 +453,7 @@ describe("manifest cache gating", () => {
 
     try {
       let fetchCount = 0;
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("r", async () => {
         fetchCount++;
         if (fetchCount === 1) {
           return readyManifestResponse(manifest("a".repeat(64), 3));

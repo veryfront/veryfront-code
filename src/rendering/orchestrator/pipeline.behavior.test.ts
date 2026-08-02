@@ -10,8 +10,8 @@ import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts"
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -135,8 +135,10 @@ function releaseManifestWithCss(): ReleaseAssetManifest {
 }
 
 async function primeReadyReleaseCssManifest(): Promise<void> {
-  configureReleaseAssetManifestFetcher(() =>
-    Promise.resolve({ state: "ready", manifest_version: 1, manifest: releaseManifestWithCss() })
+  registerManifestFetcherForRelease(
+    "rel-css",
+    () =>
+      Promise.resolve({ state: "ready", manifest_version: 1, manifest: releaseManifestWithCss() }),
   );
   setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
   getReadyManifestForRender("rel-css");
@@ -150,7 +152,6 @@ describe("RenderPipeline behavior", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
     resetRequestProfiles();
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
 

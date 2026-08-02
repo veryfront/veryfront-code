@@ -64,7 +64,6 @@ export {
 export {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
   getReadyManifestForRenderAsync,
   isReleaseAssetManifestEnabled,

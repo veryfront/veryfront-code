@@ -122,8 +122,6 @@ interface FetcherRegistration {
 
 /** Per-releaseId fetcher registry (keyed by releaseId). */
 const fetcherRegistry = new Map<string, FetcherRegistration>();
-/** Optional fallback for simple single-project/test setups. */
-let fallbackFetcher: FetcherRegistration | undefined;
 
 function isValidReleaseId(value: unknown): value is string {
   return typeof value === "string" &&
@@ -144,7 +142,7 @@ function requireValidReleaseId(value: string): string {
 
 function retireStaleInFlightFetches(): void {
   for (const [releaseId, fetch] of inFlight) {
-    if (resolveFetcher(releaseId)?.token === fetch.ownerToken) continue;
+    if (fetcherRegistry.get(releaseId)?.token === fetch.ownerToken) continue;
     inFlight.delete(releaseId);
     fetch.controller.abort(new Error("Release manifest fetcher ownership changed"));
   }
@@ -198,33 +196,6 @@ export function registerManifestFetcherForRelease(
 export function unregisterManifestFetcherForRelease(releaseId: string): void {
   fetcherRegistry.delete(requireValidReleaseId(releaseId));
   retireStaleInFlightFetches();
-}
-
-/**
- * Register a single global fetcher (for tests / simple single-project setups).
- *
- * In production multi-tenant mode prefer `registerManifestFetcherForRelease`.
- * Passing `undefined` clears the global fallback.
- */
-export function configureReleaseAssetManifestFetcher(
-  fetcher: ReleaseAssetManifestFetcher | undefined,
-): void {
-  if (fetcher) {
-    if (typeof fetcher !== "function") {
-      throw new TypeError("Manifest fetcher must be a function");
-    }
-    fallbackFetcher = { fetcher, token: Symbol("fallback-manifest-fetcher") };
-  } else {
-    fallbackFetcher = undefined;
-  }
-  retireStaleInFlightFetches();
-}
-
-/** Resolve the fetcher for a releaseId: prefer per-releaseId, then global fallback. */
-function resolveFetcher(
-  releaseId: string,
-): FetcherRegistration | undefined {
-  return fetcherRegistry.get(releaseId) ?? fallbackFetcher;
 }
 
 /** True when production manifest consumption is enabled via env flag. */
@@ -298,7 +269,7 @@ export function getReadyManifestForRender(
     markManifestDecision("disabled");
     return null;
   }
-  const activeFetcher = resolveFetcher(releaseId);
+  const activeFetcher = fetcherRegistry.get(releaseId);
   if (!activeFetcher) {
     markManifestDecision("no_fetcher");
     return null;
@@ -352,7 +323,7 @@ export async function getReadyManifestForRenderAsync(
     markManifestDecision("disabled");
     return null;
   }
-  const activeFetcher = resolveFetcher(releaseId);
+  const activeFetcher = fetcherRegistry.get(releaseId);
   if (!activeFetcher) {
     markManifestDecision("no_fetcher");
     return null;
@@ -389,7 +360,7 @@ function scheduleFetch(releaseId: string): void {
 }
 
 function fetchManifest(releaseId: string): Promise<ReleaseAssetManifest | null> {
-  const active = resolveFetcher(releaseId);
+  const active = fetcherRegistry.get(releaseId);
   if (!active) {
     markManifestDecision("no_fetcher");
     return Promise.resolve(null);
@@ -499,7 +470,8 @@ function isCurrentFetchOwner(
   generation: symbol,
   ownerToken: symbol,
 ): boolean {
-  return generation === cacheGeneration && resolveFetcher(releaseId)?.token === ownerToken;
+  return generation === cacheGeneration &&
+    fetcherRegistry.get(releaseId)?.token === ownerToken;
 }
 
 async function invokeManifestFetcher(
@@ -582,5 +554,4 @@ export function clearCachedReleaseAssetManifests(): void {
 export function clearReleaseAssetManifestCache(): void {
   clearCachedReleaseAssetManifests();
   fetcherRegistry.clear();
-  fallbackFetcher = undefined;
 }

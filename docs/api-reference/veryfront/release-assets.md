@@ -10,10 +10,10 @@ order: 25
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   contentTypeForExtension,
   getReadyManifestForRender,
   getReadyManifestForRenderAsync,
+  hasImmutableReleaseAssetDependencies,
 } from "veryfront/release-assets";
 ```
 
@@ -66,25 +66,24 @@ const url = releaseAssetUrl("a".repeat(64), "js");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `clearCachedReleaseAssetManifests` | Clear cached manifest bodies while keeping registered fetchers intact. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L572) |
-| `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L582) |
-| `configureReleaseAssetManifestFetcher` | Register a single global fetcher (for tests / simple single-project setups). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L209) |
+| `clearCachedReleaseAssetManifests` | Clear cached manifest bodies while keeping registered fetchers intact. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L544) |
+| `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L554) |
 | `contentTypeForExtension` | Resolve the content type for an extension, or null if not allowed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L96) |
-| `getReadyManifestForRender` | Return a ready manifest for `releaseId` if one is cached, else null. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L286) |
-| `getReadyManifestForRenderAsync` | Await a ready manifest for `releaseId`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L339) |
+| `getReadyManifestForRender` | Return a ready manifest for `releaseId` if one is cached, else null. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L257) |
+| `getReadyManifestForRenderAsync` | Await a ready manifest for `releaseId`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L310) |
 | `hasImmutableReleaseAssetDependencies` | True only when manifest dependency entries are safe immutable rewrite targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L279) |
 | `isAllowedReleaseAssetContentType` | True when the value is a valid allowlisted release asset content type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L105) |
-| `isReleaseAssetManifestEnabled` | True when production manifest consumption is enabled via env flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L231) |
+| `isReleaseAssetManifestEnabled` | True when production manifest consumption is enabled via env flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L202) |
 | `isValidContentHash` | Validate a content hash is exactly 64 lowercase hex characters. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L114) |
 | `normalizeManifestModuleKey` | Normalize a logical module path to the manifest's key convention. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/html-consumption.ts#L27) |
 | `parseReadyReleaseAssetManifestResponse` | Parse an untrusted ready response without executing accessors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L332) |
 | `parseReleaseAssetManifest` | Parse an untrusted manifest without requiring a registered schema extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-schema.ts#L317) |
-| `registerManifestFetcherForRelease` | Register a project-scoped manifest fetcher for the given releaseId. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L160) |
+| `registerManifestFetcherForRelease` | Register a project-scoped manifest fetcher for the given releaseId. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L158) |
 | `releaseAssetUrl` | Map a 64-hex content hash + extension to its public asset URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L85) |
 | `resolveManifestModuleUrl` | Resolve a module URL through the manifest. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/html-consumption.ts#L42) |
 | `resolveManifestRoutePreloadUrls` | Resolve the route closure module URLs for preload hints from the manifest. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/html-consumption.ts#L64) |
 | `routeForPage` | Derive a route path from a page module logical path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/route-path.ts#L50) |
-| `unregisterManifestFetcherForRelease` | Remove the manifest fetcher for the given releaseId. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L198) |
+| `unregisterManifestFetcherForRelease` | Remove the manifest fetcher for the given releaseId. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L196) |
 
 ### Types
 

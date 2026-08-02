@@ -8,7 +8,7 @@ import {
 } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -278,14 +278,14 @@ describe("Renderer release asset cache isolation", () => {
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
 
   it("checks the manifest-versioned cache prefix after awaiting a ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
     );
 
     const store = createInMemoryStore();
@@ -319,8 +319,9 @@ describe("Renderer release asset cache isolation", () => {
 
   it("persists rendered HTML under the manifest-versioned cache prefix", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
     );
 
     const store = createInMemoryStore();

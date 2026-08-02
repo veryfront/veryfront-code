@@ -25,9 +25,9 @@ import {
 } from "./keys.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
   getReadyManifestForRenderAsync,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
@@ -132,7 +132,6 @@ describe("cache/keys", () => {
 
     afterEach(() => {
       clearReleaseAssetManifestCache();
-      configureReleaseAssetManifestFetcher(undefined);
       try {
         Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST");
       } catch (_) { /* env may be read-only in some test configs */ }
@@ -142,7 +141,7 @@ describe("cache/keys", () => {
       try {
         Deno.env.delete("VERYFRONT_RELEASE_ASSET_MANIFEST");
       } catch (_) { /* ok */ }
-      configureReleaseAssetManifestFetcher(async () => ({
+      registerManifestFetcherForRelease("rel_456", async () => ({
         state: "ready",
         manifest_version: 1,
         manifest: makeManifest(),
@@ -168,7 +167,7 @@ describe("cache/keys", () => {
       const fetchDone = new Promise<void>((r) => {
         resolvePromise = r;
       });
-      configureReleaseAssetManifestFetcher(async () => {
+      registerManifestFetcherForRelease("rel_456", async () => {
         resolvePromise();
         return { state: "ready", manifest_version: 1, manifest: makeManifest() };
       });

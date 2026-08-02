@@ -11,7 +11,7 @@ import {
 } from "./constants.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "./manifest-cache.ts";
 import {
   hasReleaseDependencyImportSpecifiers,
@@ -56,7 +56,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "ready",
         manifest_version: 1,
@@ -67,8 +67,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
             contentType: "text/javascript",
           },
         }),
-      })
-    );
+      }));
 
     const result = await rewriteReleaseDependencyImportsForModule(
       'import React from "file:///tmp/veryfront-http-bundle/http-123abc.mjs";\nexport default React;',
@@ -88,7 +87,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "ready",
         manifest_version: 1,
@@ -99,8 +98,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
             contentType: "text/javascript",
           },
         }),
-      })
-    );
+      }));
 
     const result = await rewriteReleaseDependencyImportsForModule(
       'import React from "https://esm.sh/file:///tmp/veryfront-http-bundle/http-123abc.mjs?external=react&target=es2022";',
@@ -120,7 +118,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const sourceUrl = "https://esm.sh/react@19.2.4";
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "ready",
         manifest_version: 1,
@@ -131,8 +129,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
             contentType: "text/javascript",
           },
         }),
-      })
-    );
+      }));
     const code = 'import React from "file:///unowned/veryfront-http-bundle/http-123abc.mjs";';
     let reads = 0;
 
@@ -152,7 +149,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
   it("rewrites direct HTTP imports using normalized manifest dependency keys", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "ready",
         manifest_version: 1,
@@ -163,8 +160,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
             contentType: "text/javascript",
           },
         }),
-      })
-    );
+      }));
 
     const result = await rewriteReleaseDependencyImportsForModule(
       'import pkg from "https://esm.sh/pkg@1?z=2&a=1";',
@@ -183,7 +179,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const fragmentA = "https://cdn.example.com/pkg.js?z=2&a=1#a";
     const fragmentB = "https://cdn.example.com/pkg.js?z=2&a=1#b";
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "ready",
         manifest_version: 1,
@@ -199,8 +195,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
             contentType: "text/javascript",
           },
         }),
-      })
-    );
+      }));
 
     const result = await rewriteReleaseDependencyImportsForModule(
       `import a from "${fragmentA}";\nimport b from "${fragmentB}";`,
@@ -223,7 +218,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const fragmentless = "https://cdn.example.com/pkg.js";
     const code = `import value from "${fragmentless}#a";`;
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "ready",
         manifest_version: 1,
@@ -234,8 +229,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
             contentType: "text/javascript",
           },
         }),
-      })
-    );
+      }));
 
     const result = await rewriteReleaseDependencyImportsForModule(code, {
       releaseId: "release-id",
@@ -250,7 +244,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const sourceUrl = "https://esm.sh/react@19.2.4?target=es2022";
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "ready",
         manifest_version: 1,
@@ -261,8 +255,7 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
             contentType: "text/javascript",
           },
         }, "source"),
-      })
-    );
+      }));
 
     const result = await rewriteReleaseDependencyImportsForModule(
       `import React from "file:///tmp/veryfront-http-bundle/http-123abc.mjs";`,
@@ -283,13 +276,12 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "building",
         manifest_version: 1,
         manifest: null,
-      })
-    );
+      }));
 
     const result = await rewriteReleaseDependencyImportsForModule(
       'import React from "file:///tmp/veryfront-http-bundle/http-123abc.mjs";\nexport default React;',
@@ -308,13 +300,12 @@ describe("rewriteReleaseDependencyImportsForModule", () => {
   it("preserves the owned bundle import for unsafe embedded source markers", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
+    registerManifestFetcherForRelease("release-id", () =>
       Promise.resolve({
         state: "building",
         manifest_version: 1,
         manifest: null,
-      })
-    );
+      }));
     const bundleUrl = "file:///tmp/veryfront-http-bundle/http-123abc.mjs";
     const code = `import value from "${bundleUrl}";`;
     const unsafeMarkers = [
