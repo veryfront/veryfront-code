@@ -1,25 +1,36 @@
 import type { ModelRuntime } from "./types.ts";
 
-function toRuntimeRecord(model: ModelRuntime): ModelRuntime {
-  return model;
-}
-
 export function getModelRuntimeId(model: ModelRuntime): string | undefined {
-  const runtimeRecord = toRuntimeRecord(model);
-  return typeof runtimeRecord.modelId === "string" ? runtimeRecord.modelId : undefined;
+  const modelId = model.modelId;
+  return typeof modelId === "string" ? modelId : undefined;
 }
 
 export function getModelRuntimeProvider(model: ModelRuntime): string | undefined {
-  const runtimeRecord = toRuntimeRecord(model);
-  return typeof runtimeRecord.provider === "string" ? runtimeRecord.provider : undefined;
-}
-
-export function hasLocalModelRuntimeMarker(model: ModelRuntime): boolean {
-  return toRuntimeRecord(model)._isVfLocalModel === true;
+  const provider = model.provider;
+  return typeof provider === "string" ? provider : undefined;
 }
 
 export function isLocalModelRuntime(model: ModelRuntime): boolean {
-  return hasLocalModelRuntimeMarker(model) ||
-    getModelRuntimeProvider(model) === "local" ||
-    (getModelRuntimeId(model)?.startsWith("local/") ?? false);
+  return model.executionMode === "server-local";
+}
+
+/**
+ * Return whether a runtime supports tool calling.
+ *
+ * Existing runtimes predate capability metadata, so omission preserves their
+ * historical behavior. An explicit `false` is authoritative regardless of
+ * where inference executes.
+ */
+export function supportsModelRuntimeToolCalling(model: ModelRuntime): boolean {
+  const capabilities = model.runtimeCapabilities;
+  if (capabilities === undefined) return true;
+  if (typeof capabilities !== "object" || capabilities === null) {
+    throw new TypeError("Model runtime capabilities must be an object");
+  }
+  const toolCalling = capabilities.toolCalling;
+  if (toolCalling === undefined) return true;
+  if (typeof toolCalling !== "boolean") {
+    throw new TypeError("Model runtime toolCalling capability must be a boolean");
+  }
+  return toolCalling;
 }
