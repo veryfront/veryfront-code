@@ -597,6 +597,34 @@ Deno.test("loadProjectSkill preserves provider-safe catalog identity at load tim
   );
 });
 
+Deno.test("loadProjectSkill preserves provider-safe root-owned catalog identities", async () => {
+  for (const name of ["foo_bar", "ReleaseNotes"] as const) {
+    const sourcePath = `agents/${name}/SKILL.md`;
+    const context = {
+      ...PROJECT_CONTEXT,
+      skillSourcePaths: { [name]: sourcePath },
+    };
+    const { loader } = createLoader({
+      getProjectFile: (options) =>
+        Promise.resolve(
+          options.path === sourcePath
+            ? {
+              path: options.path,
+              content: directorySkill(name, `Use the ${name} root-owned skill.`),
+            }
+            : null,
+        ),
+    });
+
+    const skill = await loader.loadProjectSkill(context, name);
+
+    assertEquals(
+      skill?.instructions,
+      directorySkill(name, `Use the ${name} root-owned skill.`),
+    );
+  }
+});
+
 Deno.test("catalog source paths ignore inherited entries and reject accessors", async () => {
   const { loader, fileCalls } = createLoader();
   const inheritedContext = {

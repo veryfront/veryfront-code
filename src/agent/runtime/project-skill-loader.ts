@@ -194,7 +194,7 @@ type ProjectSkillSource =
 
 function isProviderSafeCatalogSkillSource(source: ProjectSkillSource): boolean {
   return source.kind === "explicit" &&
-    /^agents\/[^/]+\/skills\/[^/]+$/.test(source.skillDir);
+    /^agents\/[^/]+(?:\/skills\/[^/]+)?$/.test(source.skillDir);
 }
 
 function isSafeRuntimeSkillId(skillId: unknown): skillId is string {
