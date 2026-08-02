@@ -18,7 +18,10 @@ import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "./tool-inventory.ts";
 import { getRuntimeProjectSkillCatalog } from "./project-skill-catalog.ts";
-import { createRuntimeProjectSkillLoader } from "./project-skill-loader.ts";
+import {
+  createRuntimeProjectSkillLoader,
+  type RuntimeProjectSkillContext,
+} from "./project-skill-loader.ts";
 
 function eagerAgent(config: Parameters<typeof agent>[0]): ReturnType<typeof agent> {
   return agent({ ...config, __vfToolLoadingMode: "eager" } as Parameters<typeof agent>[0]);
@@ -2415,18 +2418,18 @@ describe("agent runtime refresh hooks", () => {
       catalog.flatMap((skill) => skill.sourcePath ? [[skill.id, skill.sourcePath]] : []),
     );
     const loader = createRuntimeProjectSkillLoader({ getProjectFile, getProjectFiles });
+    const projectSkillContext: RuntimeProjectSkillContext = {
+      projectId: "project-1",
+      authToken: "token",
+      skillSourcePaths,
+    };
     const loadedIds: string[] = [];
     const loadSkill = tool({
       id: "load_root_owned_skill",
       description: "Load one advertised project skill",
       inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
-      execute: async ({ skillId }, context) => {
-        const loaded = await loader.loadProjectSkill({
-          projectId: context.projectId,
-          authToken: context.authToken,
-          branchId: context.branchId,
-          skillSourcePaths,
-        }, skillId);
+      execute: async ({ skillId }) => {
+        const loaded = await loader.loadProjectSkill(projectSkillContext, skillId);
         if (loaded) loadedIds.push(skillId);
         return loaded;
       },
