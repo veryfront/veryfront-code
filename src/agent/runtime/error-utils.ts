@@ -1,19 +1,4 @@
-export function createAbortError(reason?: unknown): Error {
-  if (reason instanceof Error) {
-    return reason;
-  }
-
-  return new DOMException(
-    typeof reason === "string" && reason.length > 0 ? reason : "The operation was aborted",
-    "AbortError",
-  );
-}
-
-export function throwIfAborted(abortSignal?: AbortSignal): void {
-  if (abortSignal?.aborted) {
-    throw createAbortError(abortSignal.reason);
-  }
-}
+export { createAbortError, throwIfAborted } from "#veryfront/utils/abort.ts";
 
 export function stringifyToolError(error: unknown): string {
   if (typeof error === "string" && error.length > 0) {

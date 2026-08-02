@@ -23,6 +23,7 @@ async function createVerifiedClaims(token?: string) {
   try {
     return await verifyControlPlaneRequest(
       new Request("https://example.test/api/control-plane/runs/run-1/stream", {
+        method: "POST",
         headers: { "x-veryfront-control-plane-jws": jws },
       }),
       createCtx(publicKeyPem),

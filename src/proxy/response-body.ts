@@ -15,20 +15,18 @@ export class ProxyResponseBodyError extends Error {
   }
 }
 
-export function cancelProxyResponseBody(response: Response): Promise<void> {
+/**
+ * Discard a response while retaining producer ownership until cancellation
+ * itself settles. Admission-controlled producers must await this operation
+ * before releasing capacity.
+ */
+export async function settleProxyResponseBody(response: Response): Promise<void> {
   try {
-    const cancellation = response.body?.cancel();
-    if (cancellation) {
-      void cancellation.catch(() => {
-        // The response is already being discarded. Cleanup failure must not
-        // replace the boundary error selected by the caller.
-      });
-    }
+    await response.body?.cancel();
   } catch {
-    // The response is already being discarded. Cleanup failure must not
-    // replace the boundary error selected by the caller.
+    // The boundary error remains authoritative, but the cancellation attempt
+    // has reached a terminal state so producer ownership may now be released.
   }
-  return Promise.resolve();
 }
 
 function validateMaximumBytes(maxBytes: number): void {
@@ -46,13 +44,13 @@ async function declaredResponseBytes(
 
   const normalized = contentLength.trim();
   if (!/^\d+$/.test(normalized)) {
-    await cancelProxyResponseBody(response);
+    await settleProxyResponseBody(response);
     throw new ProxyResponseBodyError("invalid-content-length");
   }
 
   const parsed = Number(normalized);
   if (!Number.isSafeInteger(parsed) || parsed > maxBytes) {
-    await cancelProxyResponseBody(response);
+    await settleProxyResponseBody(response);
     throw new ProxyResponseBodyError("too-large");
   }
   return parsed;
@@ -83,7 +81,7 @@ export async function readProxyResponseBytes(
 ): Promise<Uint8Array<ArrayBuffer>> {
   validateMaximumBytes(maxBytes);
   if (signal?.aborted) {
-    await cancelProxyResponseBody(response);
+    await settleProxyResponseBody(response);
     throw abortReason(signal);
   }
   const declaredBytes = await declaredResponseBytes(response, maxBytes);
@@ -98,47 +96,49 @@ export async function readProxyResponseBytes(
   const reader = response.body.getReader();
   let chunkCount = 0;
   let totalBytes = 0;
-  let rejectForAbort: ((reason: Error) => void) | undefined;
-  const aborted = signal
-    ? new Promise<never>((_resolve, reject) => {
-      rejectForAbort = reject;
-    })
-    : undefined;
-  const onAbort = (): void => {
-    const reason = abortReason(signal!);
-    rejectForAbort?.(reason);
+  let abortFailure: Error | undefined;
+  let cancellation: Promise<void> | undefined;
+  const cancelReader = (reason: unknown): Promise<void> => {
     try {
-      const cancellation = reader.cancel(reason);
-      void cancellation.catch(() => {
-        // The abort error remains authoritative.
-      });
+      return reader.cancel(reason).then(
+        () => {},
+        () => {
+          // Preserve the boundary error after cancellation reaches a terminal
+          // state. A pending read is still awaited by the producer below.
+        },
+      );
     } catch {
-      // The abort error remains authoritative.
+      return Promise.resolve();
     }
+  };
+  const onAbort = (): void => {
+    abortFailure ??= abortReason(signal!);
+    cancellation ??= cancelReader(abortFailure);
   };
   signal?.addEventListener("abort", onAbort, { once: true });
 
   try {
-    if (signal?.aborted) {
-      onAbort();
-      await aborted!;
-    }
+    if (signal?.aborted) onAbort();
     while (true) {
-      const read = reader.read();
-      const { done, value } = aborted ? await Promise.race([read, aborted]) : await read;
+      let result: ReadableStreamReadResult<Uint8Array<ArrayBufferLike>>;
+      try {
+        result = await reader.read();
+      } catch (error) {
+        if (abortFailure) {
+          await cancellation;
+          throw abortFailure;
+        }
+        throw error;
+      }
+      if (abortFailure) {
+        await cancellation;
+        throw abortFailure;
+      }
+      const { done, value } = result;
       if (done) break;
       chunkCount++;
       if (chunkCount > MAX_RESPONSE_BODY_CHUNKS) {
-        try {
-          const cancellation = reader.cancel(
-            "Proxy upstream response emitted too many chunks",
-          );
-          void cancellation.catch(() => {
-            // Preserve the work-boundary failure.
-          });
-        } catch {
-          // Preserve the work-boundary failure.
-        }
+        await cancelReader("Proxy upstream response emitted too many chunks");
         throw new ProxyResponseBodyError("too-many-chunks");
       }
       if (!value || value.byteLength === 0) continue;
@@ -148,16 +148,7 @@ export async function readProxyResponseBytes(
         !Number.isSafeInteger(requiredBytes) ||
         requiredBytes > maxBytes
       ) {
-        try {
-          const cancellation = reader.cancel(
-            "Proxy upstream response exceeds the byte limit",
-          );
-          void cancellation.catch(() => {
-            // Preserve the size-boundary failure.
-          });
-        } catch {
-          // Preserve the size-boundary failure.
-        }
+        await cancelReader("Proxy upstream response exceeds the byte limit");
         throw new ProxyResponseBodyError("too-large");
       }
 
@@ -173,6 +164,7 @@ export async function readProxyResponseBytes(
     }
   } finally {
     signal?.removeEventListener("abort", onAbort);
+    if (cancellation) await cancellation;
     try {
       reader.releaseLock();
     } catch {

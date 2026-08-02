@@ -7,11 +7,13 @@ import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
+  CONTROL_PLANE_AGENTS_LIST_PATH,
   isConfigOptionalControlPlaneRunRequest,
   listRuntimeAgents,
   resolveAgentSkills,
   RuntimeAgentListResponseSchema,
   verifyControlPlaneJws,
+  verifyControlPlaneJwsSignature,
 } from "./control-plane.ts";
 
 const encoder = new TextEncoder();
@@ -33,11 +35,14 @@ async function createControlPlaneSignature(
     algorithm: string;
     audience: string;
     projectId: string;
+    requestMethod: string;
+    requestPath: string;
     requestId: string;
     surface: "studio" | "channels" | "a2a" | "mcp";
     requestHash: string;
     iat: number;
     exp: number;
+    includeRequestBinding: boolean;
   }> = {},
 ): Promise<{ jws: string; publicKeyPem: string }> {
   const keyPair = await crypto.subtle.generateKey(
@@ -60,6 +65,10 @@ async function createControlPlaneSignature(
     surface: overrides.surface ?? "studio",
     project_id: overrides.projectId ?? "proj-1",
     request_hash: overrides.requestHash ?? await sha256Base64url(body),
+    ...(overrides.includeRequestBinding === false ? {} : {
+      request_method: overrides.requestMethod ?? "POST",
+      request_path: overrides.requestPath ?? CONTROL_PLANE_AGENTS_LIST_PATH,
+    }),
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
   }));
@@ -169,6 +178,8 @@ describe("channels/control-plane", () => {
         expectedSurface: "studio",
         publicKeyPem,
         maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
       });
 
       assertEquals(claims.surface, "studio");
@@ -190,8 +201,118 @@ describe("channels/control-plane", () => {
           expectedProjectId: "proj-1",
           publicKeyPem,
           maxAgeSeconds: 60,
+          requestMethod: "POST",
+          requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
         })
       );
+    });
+
+    it("binds a signature to its uppercase method and exact pathname without stripping leading segments", async () => {
+      const body = JSON.stringify({ runId: "run_1" });
+      const requestPath = "/tenant/api/control-plane/runs/run_1/resume";
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        requestId: "run_1",
+        requestMethod: "POST",
+        requestPath,
+      });
+
+      const claims = await verifyControlPlaneJws(jws, body, {
+        audience: "demo-project",
+        expectedProjectId: "proj-1",
+        expectedSubject: "run_1",
+        expectedSurface: "studio",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+        requestMethod: "POST",
+        requestPath,
+      });
+      assertEquals(claims.request_method, "POST");
+      assertEquals(claims.request_path, requestPath);
+
+      for (
+        const [requestMethod, replayPath] of [
+          ["DELETE", requestPath],
+          ["POST", "/tenant/api/control-plane/runs/run_1"],
+          ["POST", "/tenant/api/control-plane/runs/run_2/resume"],
+        ] as const
+      ) {
+        await assertRejects(() =>
+          verifyControlPlaneJws(jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod,
+            requestPath: replayPath,
+          })
+        );
+      }
+    });
+
+    it("rejects missing, non-canonical, and oversized request bindings", async () => {
+      const body = "{}";
+      const invalidClaims = [
+        { includeRequestBinding: false },
+        { requestMethod: "post" },
+        { requestPath: "/api/control-plane/runs/run_1/./resume" },
+        { requestPath: `/${"x".repeat(4 * 1024)}` },
+      ] as const;
+
+      for (const overrides of invalidClaims) {
+        const { jws, publicKeyPem } = await createControlPlaneSignature(body, overrides);
+        await assertRejects(() =>
+          verifyControlPlaneJws(jws, body, {
+            audience: "demo-project",
+            expectedProjectId: "proj-1",
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "POST",
+            requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+          })
+        );
+      }
+
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body);
+      await assertRejects(() =>
+        verifyControlPlaneJws(jws, body, {
+          audience: "demo-project",
+          expectedProjectId: "proj-1",
+          publicKeyPem,
+          maxAgeSeconds: 60,
+          requestMethod: "POST",
+          requestPath: "/api/control-plane/./agents/list",
+        })
+      );
+
+      let bindingGetterCalls = 0;
+      const accessorOptions = {
+        audience: "demo-project",
+        expectedProjectId: "proj-1",
+        publicKeyPem,
+        maxAgeSeconds: 60,
+      } as Record<string, unknown>;
+      Object.defineProperties(accessorOptions, {
+        requestMethod: {
+          enumerable: true,
+          get() {
+            bindingGetterCalls += 1;
+            return "POST";
+          },
+        },
+        requestPath: {
+          enumerable: true,
+          get() {
+            bindingGetterCalls += 1;
+            return CONTROL_PLANE_AGENTS_LIST_PATH;
+          },
+        },
+      });
+      await assertRejects(() => verifyControlPlaneJws(jws, body, accessorOptions as never));
+      assertEquals(
+        await verifyControlPlaneJwsSignature(jws, accessorOptions as never),
+        false,
+      );
+      assertEquals(bindingGetterCalls, 0);
     });
 
     it("rejects a control-plane signature with an unsupported algorithm header", async () => {
@@ -210,7 +331,76 @@ describe("channels/control-plane", () => {
           expectedProjectId: "proj-1",
           publicKeyPem,
           maxAgeSeconds: 60,
+          requestMethod: "POST",
+          requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
         })
+      );
+    });
+  });
+
+  describe("verifyControlPlaneJwsSignature", () => {
+    it("accepts an authentic, fresh control-plane signature", async () => {
+      const { jws, publicKeyPem } = await createControlPlaneSignature("ignored body");
+
+      assertEquals(
+        await verifyControlPlaneJwsSignature(jws, {
+          publicKeyPem,
+          maxAgeSeconds: 60,
+          requestMethod: "POST",
+          requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+        }),
+        true,
+      );
+    });
+
+    it("rejects stale, future, forged, and malformed signatures", async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const stale = await createControlPlaneSignature("ignored body", {
+        iat: now - 120,
+        exp: now + 60,
+      });
+      const future = await createControlPlaneSignature("ignored body", {
+        iat: now + 30,
+        exp: now + 90,
+      });
+      const valid = await createControlPlaneSignature("ignored body");
+      const signatureStart = valid.jws.lastIndexOf(".") + 1;
+      const signature = valid.jws.slice(signatureStart);
+      const forged = `${valid.jws.slice(0, signatureStart)}${
+        signature.startsWith("A") ? "B" : "A"
+      }${signature.slice(1)}`;
+
+      for (
+        const { jws, publicKeyPem } of [
+          stale,
+          future,
+          { jws: forged, publicKeyPem: valid.publicKeyPem },
+          { jws: "not-a-jws", publicKeyPem: valid.publicKeyPem },
+        ]
+      ) {
+        assertEquals(
+          await verifyControlPlaneJwsSignature(jws, {
+            publicKeyPem,
+            maxAgeSeconds: 60,
+            requestMethod: "POST",
+            requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+          }),
+          false,
+        );
+      }
+    });
+
+    it("rejects invalid freshness policies", async () => {
+      const { jws, publicKeyPem } = await createControlPlaneSignature("ignored body");
+
+      assertEquals(
+        await verifyControlPlaneJwsSignature(jws, {
+          publicKeyPem,
+          maxAgeSeconds: Number.NaN,
+          requestMethod: "POST",
+          requestPath: CONTROL_PLANE_AGENTS_LIST_PATH,
+        }),
+        false,
       );
     });
   });

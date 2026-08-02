@@ -115,14 +115,18 @@ export async function verifyControlPlaneRequest(
   }
 
   try {
-    const verificationOptions = {
+    const requestMethod = req.method;
+    const requestPath = new URL(req.url).pathname;
+    const verificationOptions = Object.freeze({
       audience: projectSlug,
       expectedProjectId: ctx.projectId,
       expectedSubject: options.expectedSubject,
       expectedSurface: options.expectedSurface,
       publicKeyPem,
       maxAgeSeconds: MAX_CONTROL_PLANE_SIGNATURE_AGE_SECONDS,
-    };
+      requestMethod,
+      requestPath,
+    });
     const claims = await verifyControlPlaneJws(
       controlPlaneJws,
       rawBody,

@@ -7,7 +7,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 /** Default interval between expired-entry cleanup sweeps (1 minute) */
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000;
 
-interface LRUOptions {
+interface LRUOptions<K, V> {
   maxEntries?: number;
   /** Byte cap for stored values. Defaults to the adapter's 50 MiB limit. */
   maxSizeBytes?: number;
@@ -15,6 +15,8 @@ interface LRUOptions {
   cleanupIntervalMs?: number;
   /** Called whenever an entry leaves the cache, including delete/clear/expiry. */
   onEvict?: LRUCacheOptions["onEvict"];
+  /** Compute the retained byte size used for memory-bound eviction. */
+  estimateSizeOf?: (value: V) => number;
 }
 
 export class LRUCache<K, V> {
@@ -23,12 +25,15 @@ export class LRUCache<K, V> {
   private cleanupIntervalMs: number;
   private ttlMs?: number;
 
-  constructor(options: LRUOptions = {}) {
+  constructor(options: LRUOptions<K, V> = {}) {
     const adapterOptions: LRUCacheOptions = {
       maxEntries: options.maxEntries ?? DEFAULT_LRU_MAX_ENTRIES,
       maxSizeBytes: options.maxSizeBytes,
       ttlMs: options.ttlMs,
       onEvict: options.onEvict,
+      estimateSizeOf: options.estimateSizeOf as
+        | ((value: unknown) => number)
+        | undefined,
     };
 
     this.adapter = new LRUCacheAdapter(adapterOptions);

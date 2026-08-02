@@ -60,6 +60,7 @@ async function createVerifiedCacheClaims(options: {
   try {
     return await verifyControlPlaneRequest(
       new Request("https://example.test/api/control-plane/runs/run-1/stream", {
+        method: "POST",
         headers: { "x-veryfront-control-plane-jws": jws },
       }),
       ctx,

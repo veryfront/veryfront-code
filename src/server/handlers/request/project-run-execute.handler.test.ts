@@ -208,6 +208,8 @@ async function signedRequest(
   const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
     requestId: String(body.runId),
     projectId: String(body.projectId),
+    requestMethod: "POST",
+    requestPath: path,
   });
 
   return {

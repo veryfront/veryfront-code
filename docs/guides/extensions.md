@@ -28,9 +28,15 @@ import extRedis from "@veryfront/ext-cache-redis";
 
 export default defineConfig({
   extensions: [
-    extRedis({ url: "redis://localhost:6379", prefix: "myapp:" }),
+    extRedis(),
   ],
 });
+```
+
+Configure the provider through its environment boundary before startup:
+
+```bash
+REDIS_URL=redis://localhost:6379 REDIS_PREFIX=myapp: veryfront dev
 ```
 
 Use a local extension the same way:
@@ -82,7 +88,7 @@ with an error that names the required package.
 | Area          | Example package                              | Contract family   |
 | ------------- | -------------------------------------------- | ----------------- |
 | Auth          | `@veryfront/ext-auth-jwt`                    | `AuthProvider`    |
-| Cache         | `@veryfront/ext-cache-redis`                 | `CacheStore`      |
+| Cache         | `@veryfront/ext-cache-redis`                 | `TokenCacheStore` |
 | Content       | `@veryfront/ext-content-mdx`                 | content parsing   |
 | CSS           | `@veryfront/ext-css-tailwind`                | CSS processing    |
 | Database      | `@veryfront/ext-db-sqlite`                   | database access   |
@@ -106,7 +112,8 @@ Restart `veryfront dev` after editing `veryfront.config.ts`:
 
 - The dev log should print a setup line for each loaded extension.
 - Any contract the extension provides should now be resolvable through the
-  matching consumer (for example, a `CacheStore` extension lets cache-aware
-  code skip its local fallback).
+  matching consumer. For example, setting `CACHE_TYPE=extension` lets the proxy
+  use a registered `TokenCacheStore` to share OAuth tokens across processes
+  without a core Redis dependency.
 - If the factory throws during setup, the dev server prints the setup error
   with the extension name. Fix the error and reload.

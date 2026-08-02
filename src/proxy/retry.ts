@@ -6,22 +6,49 @@ import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts
 
 const CONTROL_PLANE_RUN_STREAM_PATH = /^\/api\/control-plane\/runs\/[^/]+\/stream$/;
 const MAX_ERROR_CAUSE_DEPTH = 8;
+const MAX_UPSTREAM_RETRY_COUNT = 5;
 const RETRYABLE_CONNECTION_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT"]);
 const CONNECTION_REFUSED_CODES = new Set(["ECONNREFUSED"]);
 
 type RequestBodyReplayKind = "bodyless" | "bounded" | "unsupported";
 
-interface ErrorDetails {
-  message?: unknown;
-  code?: unknown;
-  cause?: unknown;
+function isError(value: unknown): value is Error {
+  try {
+    return value instanceof Error;
+  } catch {
+    return false;
+  }
+}
+
+function readOwnErrorDetails(value: object):
+  | Readonly<{
+    message: unknown;
+    code: unknown;
+    cause: unknown;
+  }>
+  | null {
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return null;
+  }
+  const readDataValue = (key: string): unknown => {
+    const descriptor = descriptors[key];
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  };
+  return Object.freeze({
+    message: readDataValue("message"),
+    code: readDataValue("code"),
+    cause: readDataValue("cause"),
+  });
 }
 
 function errorChainMatches(
   error: unknown,
   predicate: (message: string, code: string) => boolean,
 ): boolean {
-  if (!(error instanceof Error)) return false;
+  if (!isError(error)) return false;
 
   const seen = new Set<object>();
   let current: unknown = error;
@@ -30,7 +57,8 @@ function errorChainMatches(
     if (typeof current !== "object" || current === null || seen.has(current)) return false;
     seen.add(current);
 
-    const details = current as ErrorDetails;
+    const details = readOwnErrorDetails(current);
+    if (!details) return false;
     const message = typeof details.message === "string" ? details.message.toLowerCase() : "";
     const code = typeof details.code === "string" ? details.code.toUpperCase() : "";
     if (predicate(message, code)) return true;
@@ -69,11 +97,13 @@ export function isConnectionRefusedError(error: unknown): boolean {
 }
 
 function isIdempotentMethod(method: string): boolean {
-  return method === "GET" || method === "HEAD" || method === "OPTIONS";
+  const normalized = method.toUpperCase();
+  return normalized === "GET" || normalized === "HEAD" || normalized === "OPTIONS";
 }
 
 function isControlPlaneRunStreamPost(request: Request, pathname: string): boolean {
-  return request.method === "POST" && CONTROL_PLANE_RUN_STREAM_PATH.test(pathname);
+  return request.method.toUpperCase() === "POST" &&
+    CONTROL_PLANE_RUN_STREAM_PATH.test(pathname);
 }
 
 function getRequestBodyReplayKind(request: Request): RequestBodyReplayKind {
@@ -89,7 +119,7 @@ function getRequestBodyReplayKind(request: Request): RequestBodyReplayKind {
   if (!/^\d+$/.test(normalizedLength)) return "unsupported";
 
   const length = Number(normalizedLength);
-  if (length === 0) return "bodyless";
+  if (length === 0) return request.body === null ? "bodyless" : "unsupported";
   if (
     request.body === null ||
     !Number.isSafeInteger(length) ||
@@ -98,6 +128,19 @@ function getRequestBodyReplayKind(request: Request): RequestBodyReplayKind {
     return "unsupported";
   }
   return "bounded";
+}
+
+function requireRetryCount(value: number): number {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_UPSTREAM_RETRY_COUNT
+  ) {
+    throw new RangeError(
+      `Upstream retry count must be an integer between 0 and ${MAX_UPSTREAM_RETRY_COUNT}`,
+    );
+  }
+  return value;
 }
 
 /**
@@ -113,9 +156,9 @@ export function getUpstreamRetryCount(
   pathname: string,
   configuredRetryCount: number,
 ): number {
+  const retryCount = requireRetryCount(configuredRetryCount);
   const bodyKind = getRequestBodyReplayKind(request);
   if (bodyKind === "unsupported") return 0;
-  const retryCount = Math.max(0, configuredRetryCount);
   if (isIdempotentMethod(request.method)) return retryCount;
   if (isControlPlaneRunStreamPost(request, pathname)) {
     return Math.min(retryCount, 1);
@@ -149,7 +192,7 @@ export function getReplayableRequestBodies(
   request: Request,
   retryCount: number,
 ): Array<ReadableStream<Uint8Array> | null> {
-  const attemptCount = Math.max(0, retryCount) + 1;
+  const attemptCount = requireRetryCount(retryCount) + 1;
   const bodyKind = getRequestBodyReplayKind(request);
   if (bodyKind === "bodyless") {
     return Array.from({ length: attemptCount }, () => null);
