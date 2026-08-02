@@ -80,6 +80,8 @@ export interface HandlerContext {
    * enabling development-only local-project behavior.
    */
   allowHostProjectCodeExecution?: boolean;
+  /** Whether this request is executing in the shared multi-project proxy runtime. */
+  isProxyMode?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
   /**

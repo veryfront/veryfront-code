@@ -344,6 +344,7 @@ export async function resolveProjectRuntimeContext(
     routeRegistry: input.routeRegistry,
     isLocalProject: adapterRes.isLocalProject,
     allowHostProjectCodeExecution: input.allowHostProjectCodeExecution,
+    isProxyMode: input.isProxyMode,
     moduleServerUrl: input.moduleServerUrl,
     environmentId: input.environmentId ?? input.headers.environmentId,
     skipEnrichedContext: input.skipEnrichedContext ?? shouldSkipEnrichedContext(input.url.pathname),

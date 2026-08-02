@@ -60,6 +60,8 @@ export interface HandlerContextOptions {
   isLocalProject: boolean;
   /** Narrow host-owned capability for project-code execution. */
   allowHostProjectCodeExecution?: boolean;
+  /** Whether this request is executing in the shared multi-project proxy runtime. */
+  isProxyMode: boolean;
   /** Module server URL */
   moduleServerUrl: string | undefined;
   /** Canonical environment ID resolved at the operator-authenticated proxy boundary. */
@@ -129,6 +131,7 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
     allowHostProjectCodeExecution: opts.allowHostProjectCodeExecution,
+    isProxyMode: opts.isProxyMode,
     environmentId: opts.environmentId,
     prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,

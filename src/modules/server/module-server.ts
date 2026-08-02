@@ -302,6 +302,12 @@ export interface ModuleServerOptions {
   /** Explicitly selects host FS for local projects and adapter FS for proxy projects. */
   isLocalProject?: boolean;
   /**
+   * Whether modules are being served by the shared multi-project runtime.
+   * Production release admission fails closed when this is omitted; only an
+   * explicitly standalone runtime may bypass the hosted release manifest.
+   */
+  isProxyMode?: boolean;
+  /**
    * Enables the legacy SSR transform only for an explicitly admitted local
    * project. Never derive this capability from request headers or query data.
    */
@@ -723,6 +729,8 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
       const requiresProductionManifestAdmission = !isSSR &&
         options.mode === "production" &&
+        options.isLocalProject !== true &&
+        options.isProxyMode !== false &&
         typeof options.releaseId === "string" &&
         options.releaseId.length > 0;
 

@@ -758,6 +758,7 @@ describe("resolveProjectRuntimeContext", () => {
 
     assertEquals(observedEnvironmentId, "environment-staging");
     assertEquals(result.handlerContext?.config?.title, "staging:staging-environment");
+    assertEquals(result.handlerContext?.isProxyMode, true);
     assertEquals(result.handlerContext?.securityConfig?.auth, {
       bearer: { token: "staging-secret" },
     });
@@ -815,6 +816,7 @@ describe("resolveProjectRuntimeContext", () => {
     assertEquals(ctx.environmentId, "env-remote");
     assertEquals(ctx.defaultBranchName, "trunk");
     assertEquals(ctx.moduleServerUrl, "https://modules.example.test");
+    assertEquals(ctx.isProxyMode, false);
     assertEquals(ctx.requestContext?.mode, "preview");
     assertEquals(result.environment.resolvedEnvironment, "preview");
   });
@@ -1127,6 +1129,7 @@ describe("resolveProjectRuntimeContext", () => {
       standaloneProduction.handlerContext.allowHostProjectCodeExecution,
       true,
     );
+    assertEquals(standaloneProduction.handlerContext.isProxyMode, false);
   });
 
   it("returns production environment errors before reading source policy config", async () => {

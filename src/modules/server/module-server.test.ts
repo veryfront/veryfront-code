@@ -547,6 +547,38 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
+  it("serves standalone production browser modules without a hosted release manifest", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-standalone-production-module-" });
+
+    try {
+      await Deno.mkdir(`${projectDir}/pages`, { recursive: true });
+      await Deno.writeTextFile(
+        `${projectDir}/pages/index.tsx`,
+        `export default function Page() { return "local-production"; }`,
+      );
+
+      const { serveModule } = await import("./module-server.ts");
+      const response = await serveModule(
+        new Request("http://localhost:3000/_vf_modules/pages/index.js"),
+        {
+          projectId: "test",
+          projectDir,
+          adapter: denoAdapter,
+          dev: false,
+          mode: "production",
+          releaseId: "standalone-dev",
+          isLocalProject: false,
+          isProxyMode: false,
+        },
+      );
+
+      assertEquals(response.status, 200);
+      assertStringIncludes(await response.text(), "local-production");
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("admits the exact resolved source instead of a same-stem manifest entry", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-exact-source-" });
     const releaseId = `rel-browser-exact-${crypto.randomUUID()}`;
