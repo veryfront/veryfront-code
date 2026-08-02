@@ -21,14 +21,21 @@ const getDistributedCodeCache = createDistributedCodeCacheAccessor(
   "SSR-MODULE-LOADER",
 );
 
+let distributedCacheEnabled = false;
+
 /** Initialize distributed caching for SSR modules */
 export async function initializeSSRDistributedCache(): Promise<boolean> {
-  return (await getDistributedCodeCache()) !== null;
+  distributedCacheEnabled = (await getDistributedCodeCache()) !== null;
+  return distributedCacheEnabled;
 }
 
-/** Check if distributed caching is enabled for SSR modules */
+/**
+ * Report whether initialization actually resolved a distributed backend.
+ * Stays false when the process runs on the in-memory backend, where
+ * `initializeSSRDistributedCache` is never called.
+ */
 export function isSSRDistributedCacheEnabled(): boolean {
-  return true;
+  return distributedCacheEnabled;
 }
 
 async function getDistributedCacheKey(cacheKey: string): Promise<string> {
