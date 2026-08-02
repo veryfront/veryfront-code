@@ -12,7 +12,7 @@ import {
   requestStream,
 } from "./runtime-loader/provider-http.ts";
 import { readRecord } from "./runtime-loader/provider-records.ts";
-import type { ModelCallMessage } from "#veryfront/runtime/model-call-context.ts";
+import type { ModelCallMessage, ModelCallTool } from "#veryfront/runtime/model-call-context.ts";
 import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
@@ -59,19 +59,7 @@ export type RuntimePromptMessage =
       }
     >;
   };
-type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
+type RuntimeToolDefinition = ModelCallTool;
 /**
  * TTL for a single prompt-cache breakpoint.
  *

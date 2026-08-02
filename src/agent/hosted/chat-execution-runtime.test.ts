@@ -27,7 +27,10 @@ import {
 import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
-import { AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE } from "./model-call-context-run-event-recorder.ts";
+import {
+  AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE,
+  ModelCallContextPersistenceError,
+} from "./model-call-context-run-event-recorder.ts";
 
 function createRootStreamWatchdog(input?: {
   disposed?: () => void;
@@ -324,6 +327,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
         cleanupCount += 1;
       },
       lifecycleAdapter: createLifecycleAdapter(),
+      modelCallContextMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
       finalMessages,
       conversationId: "conversation-1",
       abortSignal: requestAbortController.signal,
@@ -385,6 +389,34 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(streamCalls, 0);
   });
 
+  it("rejects a durable runtime bootstrap without a model-call context mirror", async () => {
+    let streamCalls = 0;
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        streamCalls += 1;
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+      },
+    };
+
+    await assertRejects(
+      () =>
+        createHostedChatExecutionRuntimeBootstrap({
+          agent,
+          cleanup: async () => {},
+          lifecycleAdapter: createLifecycleAdapter(),
+          finalMessages: [],
+          abortSignal: new AbortController().signal,
+          createRootStreamWatchdog,
+        }),
+      ModelCallContextPersistenceError,
+      "Durable hosted root run requires an authorized private event mirror",
+    );
+    assertEquals(streamCalls, 0);
+  });
+
   it("keeps the root stream watchdog active while stream bootstrap is pending", async () => {
     using time = new FakeTime();
     let keepAliveCount = 0;
@@ -407,6 +439,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
       agent,
       cleanup: async () => {},
       lifecycleAdapter: createLifecycleAdapter(),
+      modelCallContextMirror: createDurableRunMirror({ chunks: [], flushes: [] }),
       finalMessages: [],
       abortSignal: new AbortController().signal,
       streamBootstrapKeepaliveIntervalMs: 1,

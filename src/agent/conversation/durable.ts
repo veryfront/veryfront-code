@@ -964,8 +964,7 @@ async function controlPlaneJson<T>(input: {
     return input.responseSchema.parse(await response.json());
   } catch (error) {
     if (
-      error instanceof DOMException &&
-      error.name === "AbortError" &&
+      timedAbort.signal.aborted &&
       !timedAbort.wasAbortedByCaller()
     ) {
       throw TIMEOUT_ERROR.create({
@@ -1074,6 +1073,8 @@ export async function appendConversationRunEvents(input: {
     input.events as Parameters<typeof normalizeConversationRunEvents>[0],
   );
   const requiresDurableCursor = normalizedEvents.some(isModelCallContextRunEvent);
+  const isPureModelCallContextBatch = normalizedEvents.length > 0 &&
+    normalizedEvents.every(isModelCallContextRunEvent);
   if (requiresDurableCursor && input.expectedPreviousEventId === undefined) {
     timedAbort.cleanup();
     throw new ModelCallContextPersistenceError(
@@ -1127,7 +1128,7 @@ export async function appendConversationRunEvents(input: {
     // intentionally omits it. Preserve the caller's known cursor so the shared
     // queue result remains total; mixed batches return the advanced API value.
     if (
-      requiresDurableCursor && input.expectedPreviousExternalEventSequence !== undefined &&
+      isPureModelCallContextBatch && input.expectedPreviousExternalEventSequence !== undefined &&
       responseBody && typeof responseBody === "object" && !Array.isArray(responseBody)
     ) {
       const body = responseBody as Record<string, unknown>;
@@ -1159,8 +1160,7 @@ export async function appendConversationRunEvents(input: {
     return AppendConversationRunEventsResponseSchema.parse(responseBody);
   } catch (error) {
     if (
-      error instanceof DOMException &&
-      error.name === "AbortError" &&
+      timedAbort.signal.aborted &&
       !timedAbort.wasAbortedByCaller()
     ) {
       throw TIMEOUT_ERROR.create({

@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   appendConversationRunEvents,
   AppendConversationRunEventsError,
@@ -103,6 +104,16 @@ function stubFetchSequence(...steps: Response[]): FetchCall[] {
 
     return next;
   });
+}
+
+function stubFetchUntilAborted(): void {
+  globalThis.fetch =
+    ((_input: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (!signal) throw new Error("expected request abort signal");
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      })) as typeof fetch;
 }
 
 describe("agent/durable", () => {
@@ -595,6 +606,79 @@ describe("agent/durable", () => {
     const body = JSON.parse(String(fetchCalls[0]?.[1]?.body));
     assertEquals(body.expected_previous_event_id, 6);
     assertEquals("expected_previous_external_event_sequence" in body, false);
+  });
+
+  it("rejects a mixed model-call context response without an advanced external cursor", async () => {
+    const [modelCallContextEvent] = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "exact" }],
+    });
+    if (!modelCallContextEvent) throw new Error("expected model-call context event");
+    stubFetchSequence(jsonResponse({
+      latest_event_id: 8,
+      appended_count: 2,
+      run: {
+        run_id: "run_mcc_malformed_mixed",
+        conversation_id: CONVERSATION_ID,
+        latest_event_id: 8,
+      },
+    }, 200));
+
+    await assertRejects(
+      () =>
+        appendConversationRunEvents({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_malformed_mixed",
+          expectedPreviousEventId: 6,
+          expectedPreviousExternalEventSequence: 4,
+          events: [{ type: "STATE_DELTA" }, modelCallContextEvent],
+        }),
+      Error,
+    );
+  });
+
+  it("reports an append deadline as a typed timeout", async () => {
+    using time = new FakeTime();
+    stubFetchUntilAborted();
+
+    const assertion = assertRejects(
+      () =>
+        appendConversationRunEvents({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_mcc_timeout",
+          expectedPreviousEventId: 0,
+          expectedPreviousExternalEventSequence: 0,
+          events: [{ type: "STATE_DELTA" }],
+        }),
+      Error,
+      "Append conversation run events timed out after 15000ms",
+    );
+
+    await time.tickAsync(15_000);
+    await assertion;
+  });
+
+  it("reports a control-plane deadline as a typed timeout", async () => {
+    using time = new FakeTime();
+    stubFetchUntilAborted();
+
+    const assertion = assertRejects(
+      () =>
+        getConversationRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_lookup_timeout",
+        }),
+      Error,
+      "Read conversation durable run projection timed out after 15000ms",
+    );
+
+    await time.tickAsync(15_000);
+    await assertion;
   });
 
   it("fails closed without projection resync on ambiguous durable-ID replay", async () => {

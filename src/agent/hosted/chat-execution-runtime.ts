@@ -312,6 +312,11 @@ export async function createHostedChatExecutionRuntimeBootstrap(
   if (input.conversationId && !streamingMessageId) {
     throw INVALID_ARGUMENT.create({ detail: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
   }
+  if (input.lifecycleAdapter.durableRootRun && !input.modelCallContextMirror) {
+    throw new ModelCallContextPersistenceError(
+      "Durable hosted root run requires an authorized private event mirror",
+    );
+  }
 
   const rootStreamWatchdog = input.createRootStreamWatchdog
     ? input.createRootStreamWatchdog()
@@ -383,11 +388,6 @@ async function createBootstrappedHostedChatRuntime(
   });
   let bootstrap: HostedChatExecutionRuntimeBootstrap;
   try {
-    if (input.rootRunContext.durableRootRun && !input.rootRunContext.privateDurableRunMirror) {
-      throw new ModelCallContextPersistenceError(
-        "Durable hosted root run requires an authorized private event mirror",
-      );
-    }
     bootstrap = await createHostedChatExecutionRuntimeBootstrap({
       agent: input.agent,
       cleanup: input.cleanup,
