@@ -1,12 +1,16 @@
 import type { Tool, ToolDefinition } from "./types.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { INVALID_ARGUMENT, TOOL_ID_CONFLICT } from "#veryfront/errors";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import type { JsonSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
+import { isToolAnnotations, snapshotToolMcpConfig } from "./mcp-metadata.ts";
 
 /**
  * Returns true when `incoming` is considered the same definition as `existing`:
@@ -40,7 +44,7 @@ const toolManager = new ProjectScopedRegistryManager<Tool>("tool", {
   validateRegistration: validateToolRegistration,
 });
 
-class ToolRegistryClass extends ScopedRegistryFacade<Tool> {
+class ToolRegistryInternal extends ScopedRegistryFacade<Tool> {
   override register(id: string, item: Tool): void {
     assertLocalToolId(id);
     if (item.id !== id) assertLocalToolId(item.id);
@@ -66,8 +70,23 @@ class ToolRegistryClass extends ScopedRegistryFacade<Tool> {
   }
 }
 
-/** Shared tool registry value. */
-export const toolRegistry = new ToolRegistryClass(toolManager);
+/** Framework-only tool registry with process-wide maintenance capabilities. */
+export const toolRegistryInternal = new ToolRegistryInternal(toolManager);
+
+/**
+ * Application-facing project-scoped tool registry API.
+ *
+ * Process-wide maintenance methods remain for compatibility; framework
+ * composition roots should use `toolRegistryInternal` for that behavior.
+ */
+class ToolRegistry extends ScopedRegistryView<Tool> {
+  getToolsForProvider(): ToolDefinition[] {
+    return [...this.getAll().values()].map(toolToProviderDefinition);
+  }
+}
+
+/** Project-scoped tool registry value. */
+export const toolRegistry = new ToolRegistry(toolRegistryInternal);
 
 function snapshotProviderSchema(value: unknown, toolId: string): JsonSchema {
   const snapshot = snapshotBoundedJsonValue(value);
@@ -87,24 +106,13 @@ function snapshotProviderMcpMetadata(
   toolId: string,
 ): Pick<ToolDefinition, "annotations" | "title"> {
   if (value === undefined) return {};
-  const snapshot = snapshotBoundedJsonValue(value);
-  if (
-    !snapshot.success ||
-    typeof snapshot.value !== "object" ||
-    snapshot.value === null ||
-    Array.isArray(snapshot.value)
-  ) {
-    throw new TypeError(`Tool "${toolId}" MCP metadata must be a bounded JSON object`);
-  }
-
-  const title = typeof snapshot.value.title === "string" &&
-      snapshot.value.title.length > 0
-    ? snapshot.value.title
+  const snapshot = snapshotToolMcpConfig(value, toolId);
+  const title = typeof snapshot?.title === "string" &&
+      snapshot.title.length > 0
+    ? snapshot.title
     : undefined;
-  const annotations = typeof snapshot.value.annotations === "object" &&
-      snapshot.value.annotations !== null &&
-      !Array.isArray(snapshot.value.annotations)
-    ? snapshot.value.annotations as ToolAnnotations
+  const annotations = isToolAnnotations(snapshot?.annotations)
+    ? snapshot.annotations as ToolAnnotations
     : undefined;
   return {
     ...(title ? { title } : {}),

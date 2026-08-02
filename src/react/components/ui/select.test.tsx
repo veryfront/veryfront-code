@@ -1058,6 +1058,10 @@ describe("Select", () => {
         () => document.getElementById("dynamic-list") === null,
         "dynamic duplicate content suppression",
       );
+      await waitFor(
+        () => openChanges.length === 2 && openChanges[1] === false,
+        "dynamic duplicate close notification",
+      );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
       assertEquals(trigger.getAttribute("aria-expanded"), "false");

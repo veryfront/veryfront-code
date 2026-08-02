@@ -10,7 +10,7 @@ import {
   isToolVisibleTo,
   toolRegistry,
 } from "#veryfront/tool";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
@@ -159,7 +159,7 @@ export function getDiscoveredHostTools(scope?: { agentId?: string }): HostToolSe
   return Object.fromEntries(
     [...toolRegistry.getAll()]
       .filter(([toolId, registryTool]) =>
-        !SKILL_TOOL_IDS.has(toolId) && isToolVisibleTo(registryTool, scope)
+        !isSkillInfrastructureToolId(toolId) && isToolVisibleTo(registryTool, scope)
       )
       .sort(([left], [right]) => left.localeCompare(right)),
   );

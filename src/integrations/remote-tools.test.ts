@@ -141,6 +141,144 @@ describe("integrations/remote-tools", () => {
     ]);
   });
 
+  it("prefers explicit authenticated tool context over host credentials", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    let authorizationHeader: string | null = null;
+    let projectSlugHeader: string | null = null;
+
+    const definitions = await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        authorizationHeader = request.headers.get("Authorization");
+        projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+        return Response.json({ tools: [] });
+      },
+      () =>
+        getRemoteIntegrationToolDefinitions({
+          authToken: "request-token",
+          projectSlug: "canonical-project",
+        }),
+    );
+
+    assertEquals(authorizationHeader, "Bearer request-token");
+    assertEquals(projectSlugHeader, "canonical-project");
+    assertEquals(definitions, []);
+  });
+
+  it("does not inherit host project scope for an explicit projectless credential", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    let authorizationHeader: string | null = null;
+    let projectSlugHeader: string | null = null;
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        authorizationHeader = request.headers.get("Authorization");
+        projectSlugHeader = request.headers.get("x-veryfront-project-slug");
+        return Response.json({ tools: [] });
+      },
+      () => getRemoteIntegrationToolDefinitions({ authToken: "request-token" }),
+    );
+
+    assertEquals(authorizationHeader, "Bearer request-token");
+    assertEquals(projectSlugHeader, null);
+  });
+
+  it("does not downgrade an invalid explicit credential to the host token", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    let fetchCalls = 0;
+    const definitions = await withMockFetch(async () => {
+      fetchCalls++;
+      return Response.json({ tools: [] });
+    }, () => getRemoteIntegrationToolDefinitions({ authToken: "   " }));
+
+    assertEquals(fetchCalls, 0);
+    assertEquals(definitions, []);
+  });
+
+  it("does not fall back when the hosted resolver owns an absent credential", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
+    });
+
+    const hostedContext = {
+      authToken: undefined,
+    };
+    let fetchCalls = 0;
+    const outcome = await runWithRequestContext(
+      {
+        projectSlug: "ambient-request-project",
+        token: "ambient-request-token",
+        productionMode: false,
+      },
+      () =>
+        withMockFetch(
+          async () => {
+            fetchCalls += 1;
+            return Response.json({ tools: [] });
+          },
+          async () => ({
+            definitions: await getRemoteIntegrationToolDefinitions(hostedContext),
+            execution: await executeRemoteIntegrationTool(
+              "github__list_repos",
+              {},
+              hostedContext,
+            ),
+          }),
+        ),
+    );
+
+    assertEquals(Object.hasOwn(hostedContext, "authToken"), true);
+    assertEquals(Object.hasOwn(hostedContext, "projectId"), false);
+    assertEquals(Object.hasOwn(hostedContext, "projectSlug"), false);
+    assertEquals(fetchCalls, 0);
+    assertEquals(outcome, {
+      definitions: [],
+      execution: { error: "no_api_token", message: "No API token available" },
+    });
+  });
+
+  it("discards failed tool-discovery response bodies before failing closed", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "environment-token",
+    });
+
+    let bodyCancelled = false;
+    const definitions = await withMockFetch(
+      async () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              bodyCancelled = true;
+            },
+          }),
+          { status: 401, statusText: "Unauthorized" },
+        ),
+      () => getRemoteIntegrationToolDefinitions(),
+    );
+
+    assertEquals(definitions, []);
+    assertEquals(bodyCancelled, true);
+  });
+
   it("filters remote tool discovery through the active source integration policy", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
@@ -494,17 +632,22 @@ describe("integrations/remote-tools", () => {
     assertEquals(result, { ok: true });
   });
 
-  it("forwards run and agent context without caller-supplied end-user identity", async () => {
+  it("forwards explicit authenticated project, run, and agent context", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
-      VERYFRONT_API_TOKEN: "env-token",
+      VERYFRONT_API_TOKEN: "environment-token",
+      VERYFRONT_PROJECT_SLUG: "environment-project",
     });
 
     let requestBody: Record<string, unknown> | undefined;
+    let authorizationHeader: string | null = null;
+    let projectSlugHeader: string | null = null;
 
     await withMockFetch(
       async (input: string | URL | Request, init?: RequestInit) => {
         const request = input instanceof Request ? input : new Request(input, init);
+        authorizationHeader = request.headers.get("Authorization");
+        projectSlugHeader = request.headers.get("x-veryfront-project-slug");
         requestBody = await request.json();
 
         return Response.json({ structuredContent: { ok: true } });
@@ -513,10 +656,17 @@ describe("integrations/remote-tools", () => {
         await executeRemoteIntegrationTool(
           "gmail__list_emails",
           { maxResults: 10 },
-          { runId: "run-123", agentId: "agent-123" },
+          {
+            runId: "run-123",
+            agentId: "agent-123",
+            authToken: "request-token",
+            projectSlug: "canonical-project",
+          },
         ),
     );
 
+    assertEquals(authorizationHeader, "Bearer request-token");
+    assertEquals(projectSlugHeader, "canonical-project");
     assertEquals(requestBody, {
       name: "gmail__list_emails",
       arguments: { maxResults: 10 },

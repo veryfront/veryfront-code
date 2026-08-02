@@ -14,8 +14,8 @@ import {
   validatePlatformCompatibility,
 } from "#veryfront/platform/core-platform.ts";
 import { registerTool } from "#veryfront/mcp";
-import { assertLocalToolId, toolRegistry } from "#veryfront/tool/registry.ts";
-import { skillRegistry } from "#veryfront/skill/registry.ts";
+import { assertLocalToolId, toolRegistry, toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
 import {
   createExecuteSkillScriptTool,
@@ -146,7 +146,7 @@ export function agent(config: AgentConfig): Agent {
   const shouldAttachAllowedSkillIds = skillsConfig !== undefined;
 
   const resolveSkillSnapshot = () =>
-    skillRegistry.resolveSelectorForAgent(skillsConfig, { agentId: id });
+    skillRegistryInternal.resolveSelectorForAgent(skillsConfig, { agentId: id });
 
   if (Array.isArray(skillsConfig) && skillsConfig.length > 0) {
     resolveSkillSnapshot();
@@ -179,7 +179,7 @@ export function agent(config: AgentConfig): Agent {
   ensureBuiltinSchemaValidator();
   for (const registration of SKILL_TOOL_REGISTRATIONS) {
     if (!toolRegistry.has(registration.id)) {
-      toolRegistry.registerShared(registration.id, registration.create());
+      toolRegistryInternal.registerShared(registration.id, registration.create());
     }
   }
 

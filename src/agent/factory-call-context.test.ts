@@ -1,9 +1,11 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { ModelRuntime } from "#veryfront/provider";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
-import { tool, toolRegistry } from "#veryfront/tool";
+import { registerSkill } from "#veryfront/skill/registry.ts";
+import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "./index.ts";
 import { agentRegistry } from "./composition/index.ts";
@@ -69,8 +71,8 @@ async function captureFactorySystemPrompt(
 describe("agent/factory call context", () => {
   afterEach(() => {
     agentRegistry.clearAll();
-    skillRegistry.clearAll();
-    toolRegistry.clearAll();
+    skillRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
   });
 
   it("includes project and environment context in the project-runtime path (issue #73)", async () => {

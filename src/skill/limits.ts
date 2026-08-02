@@ -19,6 +19,8 @@ export const SKILL_ALLOWED_TOOL_MAX_PATTERNS = 100;
 export const SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH = 256;
 
 export const SKILL_SUBDIR_MAX_ENTRIES = 1_000;
+export const SKILL_SELECTOR_MAX_DEFINITIONS = SKILL_SUBDIR_MAX_ENTRIES;
+export const SKILL_SELECTOR_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES;
 // load_skill merges references/, resources/, and assets/ into one read-only
 // capability list, so its aggregate budget is three bounded subdirectories.
 export const SKILL_LOADABLE_REFERENCE_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES * 3;
@@ -46,6 +48,10 @@ export const SKILL_SCRIPT_PROVIDER_TERMINATION_GRACE_MS = 1_000;
 /** Combined UTF-8 byte ceiling for stdout and stderr returned by a skill tool. */
 export const SKILL_SCRIPT_MAX_OUTPUT_BYTES = 1_048_576;
 export const SKILL_SCRIPT_MAX_CONTENT_BYTES = 1_048_576;
+/** Maximum number of text files retained in one executable script snapshot. */
+export const SKILL_SCRIPT_SNAPSHOT_MAX_FILES = SKILL_SUBDIR_MAX_ENTRIES;
+/** Aggregate UTF-8 ceiling for one executable script snapshot. */
+export const SKILL_SCRIPT_SNAPSHOT_MAX_BYTES = 16 * 1_048_576;
 export const SKILL_SCRIPT_MAX_ARGS = 64;
 export const SKILL_SCRIPT_MAX_ARG_LENGTH = 4_096;
 export const SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL = 65_536;

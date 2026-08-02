@@ -272,6 +272,23 @@ describe("tool factory", () => {
       );
     });
 
+    it("rejects transparent MCP config proxies before descriptor inspection", () => {
+      const mcp = new Proxy({ enabled: true }, {});
+
+      assertThrows(
+        () =>
+          tool({
+            id: "proxied-mcp-config",
+            description: "desc",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+            mcp,
+          }),
+        Error,
+        "MCP configuration must contain only data properties",
+      );
+    });
+
     it("snapshots raw schemas and metadata at construction", () => {
       const inputSchema: JsonSchema = {
         type: "object",

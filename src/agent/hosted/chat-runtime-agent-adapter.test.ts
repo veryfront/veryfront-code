@@ -123,6 +123,10 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       runId: "run-1",
       conversationId: "conversation-1",
       authToken: "run-token-1",
+      resolveProjectContext: () => ({
+        projectId: "project-1",
+        projectSlug: "project-one",
+      }),
       maxOutputTokens: 1200,
       runStream: async (operation) => {
         runnerCalled = true;
@@ -153,6 +157,8 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     assertEquals(capturedInput?.context?.runId, "run-1");
     assertEquals(capturedInput?.context?.conversationId, "conversation-1");
     assertEquals(capturedInput?.context?.authToken, "run-token-1");
+    assertEquals(capturedInput?.context?.projectId, "project-1");
+    assertEquals(capturedInput?.context?.projectSlug, "project-one");
     assertEquals(capturedInput?.maxOutputTokens, 1200);
     const expectedChunks = [
       { type: "start", messageId: "assistant-message" },
@@ -169,6 +175,37 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       { type: "finish", finishReason: "stop" },
     ] as unknown as ChatUiMessageChunk[];
     assertEquals(chunks, expectedChunks);
+  });
+
+  it("resolves project context for each stream invocation", async () => {
+    const observedProjectContexts: Array<{ projectId?: unknown; projectSlug?: unknown }> = [];
+    const runtimeAgent: HostedChatRuntimeAgentAdapterInput["runtimeAgent"] = {
+      stream(input) {
+        observedProjectContexts.push({
+          projectId: input.context?.projectId,
+          projectSlug: input.context?.projectSlug,
+        });
+        return Promise.resolve({
+          toDataStreamResponse: () => createSseResponse([{ type: "message-finish" }]),
+        });
+      },
+    };
+    let projectContext = { projectId: "project-1", projectSlug: "project-one" };
+    const adapter = createHostedChatRuntimeAgentAdapter({
+      runtimeAgent,
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      resolveProjectContext: () => projectContext,
+    });
+    const abortSignal = new AbortController().signal;
+
+    await adapter.stream({ messages: [], abortSignal });
+    projectContext = { projectId: "project-2", projectSlug: "project-two" };
+    await adapter.stream({ messages: [], abortSignal });
+
+    assertEquals(observedProjectContexts, [
+      { projectId: "project-1", projectSlug: "project-one" },
+      { projectId: "project-2", projectSlug: "project-two" },
+    ]);
   });
 
   it("bridges host-published tool data events into the UI message stream", async () => {

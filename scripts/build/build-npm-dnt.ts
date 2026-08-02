@@ -320,6 +320,9 @@ await build({
 		// needs to vet client-page modules for /_veryfront/rsc/module hydration;
 		// without it the endpoint 404s and client pages render without hydrating.
 		pkg.dependencies["@veryfront/ext-parser-babel"] = version;
+		// Skill discovery parses YAML through the extension contract; ship the
+		// first-party implementation while keeping @std/yaml out of core.
+		pkg.dependencies["@veryfront/ext-yaml"] = version;
 		pkg.files = ["esm", "script", "bin", "assets", "tsconfig.json", "LICENSE", "NOTICE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);

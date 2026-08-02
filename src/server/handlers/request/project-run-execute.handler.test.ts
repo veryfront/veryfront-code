@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -13,7 +14,6 @@ import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { toolRegistry } from "#veryfront/tool";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
@@ -1265,7 +1265,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   it("executes discovered project tool steps from control-plane workflow runs", async () => {
     await stopEsbuild();
     agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
 
     try {
       const adapter = createMockAdapter();
@@ -1365,7 +1365,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       assertEquals(response.artifacts, undefined);
     } finally {
       agentRegistry.clearAll();
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       await stopEsbuild();
     }
   });

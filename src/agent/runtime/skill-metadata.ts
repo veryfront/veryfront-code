@@ -5,7 +5,7 @@ import {
   type ResolvedSkillSelectorSnapshot,
   resolveSkillSelector,
 } from "#veryfront/skill/selector.ts";
-import { SKILL_NAME_REGEX, SKILL_PROVIDER_SAFE_ID_REGEX } from "#veryfront/skill/types.ts";
+import { isValidProviderSafeSkillId, isValidSkillName } from "#veryfront/skill/types.ts";
 import {
   SKILL_ALLOWED_TOOL_MAX_PATTERNS,
   SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
@@ -399,10 +399,10 @@ function isRuntimeSkillIdValid(input: {
   shortName?: string;
 }): boolean {
   if (input.ownerAgentId !== undefined || input.shortName !== undefined) {
-    return SKILL_PROVIDER_SAFE_ID_REGEX.test(input.id);
+    return isValidProviderSafeSkillId(input.id);
   }
 
-  return SKILL_NAME_REGEX.test(input.id);
+  return isValidSkillName(input.id);
 }
 
 /** Normalizes runtime skill reference path. */

@@ -1,3 +1,4 @@
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -320,7 +321,7 @@ describe("WorkflowClient", () => {
         assertEquals(completedRun?.status, "completed");
         assertEquals(completedRun?.output, { "tenant-step": { result: "ok" } });
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
         await scopedClient.destroy();
       }
     });

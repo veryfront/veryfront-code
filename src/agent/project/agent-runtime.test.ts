@@ -1,3 +1,4 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
@@ -23,7 +24,7 @@ import {
   normalizeSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
 import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import { tool } from "#veryfront/tool";
@@ -143,7 +144,7 @@ Deno.test("project agent runtime keeps factory skill catalogs out of hosted inst
       "Handle incidents carefully.",
     );
   } finally {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   }
 });
 
