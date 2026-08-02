@@ -72,18 +72,93 @@ describe("provider/runtime-loader helpers", () => {
     );
 
     const privateDiagnostic = "private tool payload path";
+    let toJsonCalls = 0;
     const error = captureThrownError(
       () =>
         stringifyJsonValue({
           toJSON() {
+            toJsonCalls += 1;
             throw new Error(privateDiagnostic);
           },
         }),
       TypeError,
       "must be JSON-serializable",
     );
+    assertEquals(toJsonCalls, 0);
     assertEquals(error.message.includes(privateDiagnostic), false);
     assertEquals(error.cause, undefined);
+  });
+
+  it("rejects Proxy values without invoking traps at any compound node", () => {
+    let trapCalls = 0;
+    const hostile = new Proxy({ safe: true }, {
+      getPrototypeOf() {
+        trapCalls += 1;
+        throw new Error("private getPrototypeOf trap");
+      },
+      ownKeys() {
+        trapCalls += 1;
+        throw new Error("private ownKeys trap");
+      },
+      getOwnPropertyDescriptor() {
+        trapCalls += 1;
+        throw new Error("private descriptor trap");
+      },
+    });
+
+    for (const value of [hostile, { nested: [hostile] }]) {
+      assertThrows(
+        () => stringifyJsonValue(value),
+        TypeError,
+        "must be JSON-serializable",
+      );
+      assertThrows(
+        () => snapshotJsonValue(value),
+        TypeError,
+        "must not contain Proxy values",
+      );
+    }
+    assertEquals(trapCalls, 0);
+
+    const { proxy, revoke } = Proxy.revocable({ safe: true }, {});
+    revoke();
+    assertThrows(
+      () => stringifyJsonValue({ nested: proxy }),
+      TypeError,
+      "must be JSON-serializable",
+    );
+    assertThrows(
+      () => snapshotJsonValue({ nested: proxy }),
+      TypeError,
+      "must not contain Proxy values",
+    );
+  });
+
+  it("serializes only owned snapshots without invoking getters or toJSON", () => {
+    let getterCalls = 0;
+    let toJsonCalls = 0;
+    const accessor = Object.defineProperty({}, "secret", {
+      enumerable: true,
+      get() {
+        getterCalls += 1;
+        return "private";
+      },
+    });
+    const customSerialization = {
+      toJSON() {
+        toJsonCalls += 1;
+        return { leaked: true };
+      },
+    };
+
+    assertThrows(() => stringifyJsonValue(accessor), TypeError, "must be JSON-serializable");
+    assertThrows(
+      () => stringifyJsonValue({ nested: customSerialization }),
+      TypeError,
+      "must be JSON-serializable",
+    );
+    assertEquals(getterCalls, 0);
+    assertEquals(toJsonCalls, 0);
   });
 
   it("compares provider JSON values semantically without hiding invalid values", () => {

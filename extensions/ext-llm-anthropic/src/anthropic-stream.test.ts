@@ -4,6 +4,7 @@ import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provide
 import {
   addAnthropicUsage,
   extractAnthropicUsage,
+  MAX_ANTHROPIC_RETAINED_CONTENT_BYTES,
   MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS,
   streamAnthropicCompatibleParts,
 } from "./anthropic-stream.ts";
@@ -155,6 +156,10 @@ async function waitForCondition(
 
 function data(payload: unknown): string {
   return `event: ${(payload as { type: string }).type}\r\ndata: ${JSON.stringify(payload)}\r\n\r\n`;
+}
+
+function utf8StringWithByteLength(byteLength: number): string {
+  return `${"é".repeat(Math.floor(byteLength / 2))}${byteLength % 2 === 0 ? "" : "x"}`;
 }
 
 describe("ext-llm-anthropic/anthropic-stream", () => {
@@ -438,6 +443,47 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       () => collectParts(streamFromText(events.join(""))),
       ProviderRequestError,
       `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items`,
+    );
+  });
+
+  it("accepts the exact aggregate UTF-8 byte limit and rejects limit plus one", async () => {
+    const contentBlock = { type: "text", text: "" };
+    const initialBytes = new TextEncoder().encode(JSON.stringify(contentBlock)).byteLength;
+    const remainingBytes = MAX_ANTHROPIC_RETAINED_CONTENT_BYTES - initialBytes;
+    const quarter = Math.floor(remainingBytes / 4);
+    const chunkBytes = [quarter, quarter, quarter, remainingBytes - quarter * 3];
+    const lifecycle = (lastChunkExtraBytes: number) =>
+      [
+        data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+        data({ type: "content_block_start", index: 0, content_block: contentBlock }),
+        ...chunkBytes.map((byteLength, index) =>
+          data({
+            type: "content_block_delta",
+            index: 0,
+            delta: {
+              type: "text_delta",
+              text: utf8StringWithByteLength(
+                byteLength + (index === chunkBytes.length - 1 ? lastChunkExtraBytes : 0),
+              ),
+            },
+          })
+        ),
+        data({ type: "content_block_stop", index: 0 }),
+        data({ type: "message_delta", delta: { stop_reason: "end_turn" } }),
+        data({ type: "message_stop" }),
+      ].join("");
+
+    const exactParts = await collectParts(streamFromText(lifecycle(0)));
+    assertEquals(exactParts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: { inputTokens: 1, totalTokens: 1 },
+    });
+
+    await assertRejects(
+      () => collectParts(streamFromText(lifecycle(1))),
+      ProviderRequestError,
+      `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_BYTES} UTF-8 bytes`,
     );
   });
 
