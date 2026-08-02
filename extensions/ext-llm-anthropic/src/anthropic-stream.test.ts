@@ -146,7 +146,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         delta: { type: "thinking_delta", thinking: " more" },
       }),
       data({ type: "content_block_stop", index: 0 }),
-      "data: {malformed\r\n\r\n",
       data({
         type: "content_block_start",
         index: 1,
@@ -566,6 +565,23 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       () => collectParts(streamFromText('data: {"type":')),
       ProviderRequestError,
       "trailing SSE event was malformed",
+    );
+  });
+
+  it("aborts the stream when a malformed event follows valid ones", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "Done." },
+          }),
+          "data: {malformed\r\n\r\n",
+          data({ type: "message_stop" }),
+        ].join(""))),
+      ProviderRequestError,
+      "SSE event framing was malformed",
     );
   });
 });

@@ -44,7 +44,6 @@ describe("ext-llm-google/google-stream", () => {
           },
         }],
       }),
-      "data: {malformed\r\n\r\n",
       data({
         candidates: [{
           content: {
@@ -138,6 +137,21 @@ describe("ext-llm-google/google-stream", () => {
       () => collectParts(streamFromText('data: {"candidates":')),
       ProviderRequestError,
       "trailing SSE event was malformed",
+    );
+  });
+
+  it("aborts the stream when a malformed event follows valid ones", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            candidates: [{ content: { role: "model", parts: [{ text: "Done." }] } }],
+          }),
+          "data: {malformed\r\n\r\n",
+          data({ candidates: [{ finishReason: "STOP" }] }),
+        ].join(""))),
+      ProviderRequestError,
+      "SSE event framing was malformed",
     );
   });
 });
