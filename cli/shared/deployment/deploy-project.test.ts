@@ -1213,6 +1213,41 @@ describe("deployment verification", () => {
 });
 
 describe("release asset manifest", () => {
+  it("rejects ready empty manifests before deployment", async () => {
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () => Promise.resolve(readyManifest({})),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          expectedRoutes: ["/", "/about"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "Missing routes: /, /about",
+    );
+  });
+
+  it("rejects ready manifests with empty route module coverage", async () => {
+    const controlPlane = helperControlPlane({
+      getReleaseAssetManifest: () =>
+        Promise.resolve(readyManifest({ "/": { modules: [], css: [] } })),
+    });
+
+    await assertRejects(
+      () =>
+        waitForReleaseAssetManifest(controlPlane, PROJECT_SLUG, "release-1", {
+          expectedRoutes: ["/"],
+          pollIntervalMs: 100,
+          timeoutMs: 100,
+        }),
+      Error,
+      "Missing routes: /",
+    );
+  });
+
   it("accepts empty manifests when no page routes are expected", async () => {
     const base = readyManifest({});
     const controlPlane = helperControlPlane({
