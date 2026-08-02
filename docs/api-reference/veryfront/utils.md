@@ -12,8 +12,8 @@ import {
   __registerTraceContextGetter,
   assertCSSPipelineIdentity,
   assertStyleProfileHash,
+  awaitAbortable,
   base64urlEncode,
-  base64urlEncodeBytes,
 } from "veryfront/utils";
 ```
 
@@ -101,12 +101,14 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `__registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L649) |
 | `assertCSSPipelineIdentity` | Validate and return an immutable string snapshot for cache or wire use. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L71) |
 | `assertStyleProfileHash` | Validate and return the canonical style-scope profile SHA-256 identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L90) |
+| `awaitAbortable` | Await a value while allowing cancellation to win even when the producer ignores its signal. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/abort.ts#L24) |
 | `base64urlEncode` | Encode a string as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L52) |
 | `base64urlEncodeBytes` | Encode raw bytes as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L57) |
 | `computeCodeHash` | Compute code hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L29) |
 | `computeHash` | Compute the lowercase hex SHA-256 digest of a UTF-8 string. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L12) |
 | `computeHashBytes` | Compute the lowercase hex SHA-256 digest of raw bytes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L18) |
 | `computeIntegrity` | Compute integrity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L28) |
+| `createAbortError` | Convert an arbitrary abort reason into the framework's stable Error shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/abort.ts#L2) |
 | `createLockfileManager` | Create lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L76) |
 | `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L779) |
 | `createSubscriberSet` | Create a subscriber set: the canonical subscribe/notify observable used across modules. Notification iterates a snapshot, so a listener that unsubscribes (itself or others) mid-notify is safe, and listener errors are isolated (routed to `onListenerError` when provided, otherwise swallowed). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/subscriber-set.ts#L19) |
@@ -121,6 +123,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `hasBunRuntime` | Check whether Bun runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L45) |
 | `hasDenoRuntime` | Check whether Deno runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L31) |
 | `hasNodeProcess` | Check whether node process is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L38) |
+| `hasProjectIdentityControlCharacters` | Whether a string contains a Unicode Cc control code point. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts#L38) |
+| `isCanonicalProjectSlug` | Whether a normalized value is a canonical hosted project slug. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/project-identity.ts#L66) |
 | `isCompiledBinary` | Detect if the code is running in a compiled Deno binary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/platform.ts#L11) |
 | `isCSSPipelineIdentity` | Whether a value is safe to compare, encode, and persist as a CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L50) |
 | `isEnabled` | Check whether request performance timing is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L143) |
@@ -133,6 +137,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `memoizeHash` | FNV-1a hash algorithm for fast cache key generation. 10-15x faster than JSON.stringify() and uses 70-80% less memory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L90) |
 | `normalizePath` | Normalizes path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L11) |
 | `parallelMap` | Run parallel map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/parallel.ts#L52) |
+| `redactForSerialization` | Returns a JSON-safe redacted snapshot of `context`. Sensitive keys are masked, nested values are traversed, BigInts become decimal strings, non-finite numbers become `null`, and unsupported or unreadable values fail closed. Objects with `toJSON` are snapshotted exactly once before redaction. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L425) |
 | `redactSensitive` | Returns a redacted copy of `context` while preserving the established source and runtime value shapes. Any property whose key is `isSensitiveKey` is replaced with `REDACTED`; nested records and arrays are traversed, while primitives and scalar-serializing objects retain their original types. The input is never mutated. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L412) |
 | `refreshLoggerConfig` | Re-read logger configuration from environment variables. Call after loading .env files so the logger picks up any overrides. The active preset (cli/server) is preserved across refreshes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L184) |
 | `registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L649) |
@@ -145,6 +150,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `sleep` | Resolve after `ms` milliseconds; rejects with `abortSignal.reason` if aborted first. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/sleep.ts#L2) |
 | `startRequest` | Request payload for start. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L36) |
 | `startTimer` | Starts timer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L44) |
+| `throwIfAborted` | Throw the normalized abort reason when a signal has already been aborted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/abort.ts#L14) |
 | `timeAsync` | Time async. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L57) |
 
 ### Classes
@@ -166,6 +172,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `LockfileManager` | Public API contract for lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L39) |
 | `LogEntry` | Structured log entry for JSON output. Fields are designed for easy Grafana/Loki filtering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L32) |
 | `Logger` | Public API contract for logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L93) |
+| `RedactedValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/redact.ts#L230) |
 | `RequestContext` | Context for request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/request-context.ts#L14) |
 | `SafeJsonParseResult` | Tagged-union result of `safeJsonParse`; narrow via the `ok` discriminant. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/json.ts#L8) |
 | `SubscriberSet` | Listener registry returned by `createSubscriberSet`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/subscriber-set.ts#L2) |

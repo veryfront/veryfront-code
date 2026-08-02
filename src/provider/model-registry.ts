@@ -31,6 +31,7 @@ import type { ModelRuntime } from "./types.ts";
 
 /** Public API contract for model provider factory. */
 export type ModelProviderFactory = (modelId: string) => ModelRuntime;
+/** Idempotent teardown returned by {@link registerModelProvider}. */
 export type ModelProviderRegistrationDisposer = () => void;
 
 const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(

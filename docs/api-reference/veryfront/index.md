@@ -80,9 +80,9 @@ export function getServerData(ctx: DataContext) {
 | `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config-core.ts#L18) |
 | `mergeConfigs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config-core.ts#L19) |
 | `notFound` | Render the 404 page from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L45) |
-| `parseFormData` | Parse and validate multipart or URL-encoded form data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L133) |
-| `parseJsonBody` | Parse and validate a JSON request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L67) |
-| `parseQueryParams` | Parse and validate query parameters from a bounded request URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L189) |
+| `parseFormData` | Parse and validate multipart or URL-encoded form data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L139) |
+| `parseJsonBody` | Parse and validate a JSON request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L68) |
+| `parseQueryParams` | Parse and validate query parameters from a bounded request URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L195) |
 | `redirect` | Redirect the request from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L34) |
 | `sanitizeData` | Sanitize JSON-like data by HTML-encoding string values and removing keys that can mutate an object's prototype chain. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/sanitizers.ts#L8) |
 | `serverError` | Create a 500 Internal Server Error response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L139) |
@@ -100,8 +100,8 @@ export function getServerData(ctx: DataContext) {
 | `APIRoute` | Route module shape with method handlers and an optional default handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/routing/api/module-loader/types.ts#L28) |
 | `DataContext` | Context passed to `getServerData()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/schemas/data.schema.ts#L54) |
 | `InferGetServerDataProps` | Utility type to infer props from a page with data | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/types.ts#L28) |
-| `MDXFrontmatter` | Parsed frontmatter values from an MDX page. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/index.ts#L89) |
-| `PageContext` | Runtime page context passed to page components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/index.ts#L106) |
+| `MDXFrontmatter` | Parsed frontmatter values from an MDX page. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/index.ts#L90) |
+| `PageContext` | Runtime page context passed to page components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/index.ts#L107) |
 | `PageWithData` | Page with data fetching capabilities | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/types.ts#L16) |
 | `StartServerOptions` | Server options. Defaults to development mode with HMR. Set `mode: "production"` for a production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L138) |
 | `StaticPathsResult` | Return type for `getStaticPaths()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/schemas/data.schema.ts#L61) |
