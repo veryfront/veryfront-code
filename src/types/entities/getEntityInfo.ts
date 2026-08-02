@@ -186,6 +186,9 @@ export async function getEntityBySlug(
     "types.getEntityBySlug",
     async () => {
       const normalizedSlug = normalizeSlug(slug);
+      if (escapesProjectRoot(normalizedSlug) || escapesProjectRoot(pagesDirectory)) {
+        return null;
+      }
       const isVeryfrontRoute = normalizedSlug.startsWith(".veryfront/") ||
         normalizedSlug === ".veryfront";
       const resolveFile = adapter?.fs.resolveFile;
@@ -315,6 +318,8 @@ export async function getLayoutEntity(
       } else if (layoutName.startsWith("@/")) {
         resolvedLayoutName = layoutName.substring(2);
       }
+
+      if (escapesProjectRoot(resolvedLayoutName)) return null;
 
       if (/\.(mdx|md|tsx|jsx|ts|js)$/.test(resolvedLayoutName)) {
         const directPath = pathHelper.join(projectDir, resolvedLayoutName);
@@ -460,6 +465,12 @@ function getSlugFromPath(filePath: string): string {
 
   const parentDir = parts[parts.length - 2];
   return parentDir === "pages" ? "" : parentDir ?? "";
+}
+
+// Route inputs are joined onto the project directory, and join() collapses "..",
+// so an unchecked parent segment resolves outside the project root.
+function escapesProjectRoot(relativePath: string): boolean {
+  return relativePath.split(/[/\\]/).some((segment) => segment === "..");
 }
 
 function normalizeSlug(slug: string): string {
