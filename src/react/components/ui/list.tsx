@@ -20,6 +20,27 @@ import { cx as cn } from "./cva.ts";
 // unmounts its button before the already-collected ancestor click runs.
 const primaryActionElements = new WeakSet<EventTarget>();
 
+function eventCameFromPrimaryAction(
+  event: React.MouseEvent<HTMLDivElement>,
+): boolean {
+  const composedPath = event.nativeEvent.composedPath;
+  if (typeof composedPath === "function") {
+    return composedPath.call(event.nativeEvent).some((target) => primaryActionElements.has(target));
+  }
+
+  // Older DOM implementations do not expose composedPath(). Retain the same
+  // provenance check by walking from the original target. This also works when
+  // the primary button synchronously unmounts before the row handler runs,
+  // because the detached target keeps its ancestry inside the detached button.
+  let target: EventTarget | null = event.target;
+  while (target) {
+    if (primaryActionElements.has(target)) return true;
+    target = (target as EventTarget & { parentNode?: EventTarget | null })
+      .parentNode ?? null;
+  }
+  return false;
+}
+
 /** Props accepted by {@link List}. */
 export interface ListProps extends React.HTMLAttributes<HTMLDivElement> {
   ref?: React.Ref<HTMLDivElement>;
@@ -149,10 +170,7 @@ export function ListItem({
 
   function handleClick(event: React.MouseEvent<HTMLDivElement>): void {
     const primaryActionElement = primaryActionElementRef.current;
-    const cameFromPrimaryAction = event.nativeEvent.composedPath().some((target) =>
-      primaryActionElements.has(target)
-    );
-    if (cameFromPrimaryAction) {
+    if (eventCameFromPrimaryAction(event)) {
       return;
     }
     if (onClick) onClick(event);

@@ -350,6 +350,57 @@ describe("ListItem", () => {
     }
   });
 
+  it("retains primary-action provenance without Event.composedPath", () => {
+    const dom = createDom();
+    const restore = installDom(dom);
+    const composedPathDescriptor = Object.getOwnPropertyDescriptor(
+      dom.window.Event.prototype,
+      "composedPath",
+    );
+    Object.defineProperty(dom.window.Event.prototype, "composedPath", {
+      configurable: true,
+      value: undefined,
+    });
+    const root = createRoot(document.getElementById("root")!);
+    let primaryActivations = 0;
+    let legacyRowClicks = 0;
+
+    try {
+      flushSync(() => {
+        root.render(
+          <ListItem
+            title="Conversation"
+            onActivate={() => {
+              primaryActivations += 1;
+            }}
+            onClick={() => {
+              legacyRowClicks += 1;
+            }}
+          />,
+        );
+      });
+      const primaryLabel = document.querySelector<HTMLSpanElement>("button span");
+      assert(primaryLabel);
+
+      flushSync(() => primaryLabel.click());
+      assertEquals(primaryActivations, 1);
+      assertEquals(legacyRowClicks, 0);
+    } finally {
+      flushSync(() => root.unmount());
+      if (composedPathDescriptor) {
+        Object.defineProperty(
+          dom.window.Event.prototype,
+          "composedPath",
+          composedPathDescriptor,
+        );
+      } else {
+        delete (dom.window.Event.prototype as unknown as Record<string, unknown>)
+          .composedPath;
+      }
+      restore();
+    }
+  });
+
   it("preserves React 19 callback-ref cleanup for the primary action", () => {
     const dom = createDom();
     const restore = installDom(dom);
