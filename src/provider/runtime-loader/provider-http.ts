@@ -27,7 +27,13 @@ const TRANSIENT_PROVIDER_STATUSES = new Set([
   522,
   523,
   524,
+  // 525-527 and 530 are Cloudflare origin/TLS failures — transient from the
+  // caller's perspective, like the rest of the 52x family.
+  525,
+  526,
+  527,
   529,
+  530,
   598,
   599,
 ]);
@@ -223,11 +229,20 @@ export async function buildProviderError(
     });
   }
 
-  // Google uses RESOURCE_EXHAUSTED for both short-window rate limits and
-  // quota conditions. HTTP 429 is therefore retryable by default; callers
-  // can honor Retry-After instead of treating an ambiguous status as a
-  // permanent account failure.
+  // Google 429 RESOURCE_EXHAUSTED is almost always the daily free-tier
+  // quota — surface as a hard quota error so callers don't hot-loop on
+  // retries that can't possibly succeed until midnight UTC. Other Google
+  // 429 statuses are short-window rate limits and stay retryable so
+  // callers can honor Retry-After.
   if (provider === "google" && status === 429) {
+    if (errorCode === "RESOURCE_EXHAUSTED") {
+      return new ProviderQuotaError({
+        provider,
+        status,
+        message,
+        retryable: false,
+      });
+    }
     if (truncated || parsedBody === undefined) {
       return new ProviderRequestError({ provider, status, message, retryable: false });
     }

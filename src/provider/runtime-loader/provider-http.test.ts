@@ -139,7 +139,7 @@ describe("provider-http", () => {
       assertEquals(err.retryable, false);
     });
 
-    it("google 429 RESOURCE_EXHAUSTED -> retryable rate limit with Retry-After", async () => {
+    it("google 429 RESOURCE_EXHAUSTED -> non-retryable quota", async () => {
       const err = await buildProviderError(
         "google",
         jsonResponse(
@@ -148,9 +148,8 @@ describe("provider-http", () => {
           { "retry-after": "7" },
         ),
       );
-      assertEquals(err instanceof ProviderRateLimitError, true);
-      assertEquals(err.retryable, true);
-      assertEquals(err.retryAfterMs, 7000);
+      assertEquals(err instanceof ProviderQuotaError, true);
+      assertEquals(err.retryable, false);
     });
 
     it("fails closed when an oversized Google 429 body is truncated", async () => {
@@ -183,7 +182,9 @@ describe("provider-http", () => {
     });
 
     it("generic and reverse-proxy transient 5xx -> retryable overloaded", async () => {
-      for (const status of [500, 502, 504, 520, 521, 522, 523, 524, 529, 598, 599]) {
+      for (
+        const status of [500, 502, 504, 520, 521, 522, 523, 524, 525, 526, 527, 529, 530, 598, 599]
+      ) {
         const err = await buildProviderError("openai", jsonResponse(status, "gateway error"));
         assertEquals(err instanceof ProviderOverloadedError, true, `status ${status}`);
         assertEquals(err.retryable, true, `status ${status}`);
