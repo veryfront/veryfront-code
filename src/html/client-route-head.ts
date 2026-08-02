@@ -93,18 +93,14 @@ export function applyPreparedClientRouteHeadDescriptors(
         element.getAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE) === "1"
       );
       if (directive) {
-        for (const match of matches) {
-          if (match !== directive) match.element.remove();
-        }
+        // Route handoff owns only framework-marked nodes. A matching element
+        // inserted by application or third-party code must remain untouched.
         continue;
       }
       const reusable = matches.find(({ element }) =>
         element.getAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE) === "true" ||
         element.getAttribute(HEAD_SHELL_PROVENANCE_ATTRIBUTE) === "true"
       );
-      for (const match of matches) {
-        if (match !== reusable) match.element.remove();
-      }
       if (reusable) {
         writeRouteDescriptor(reusable.element, descriptor);
         continue;
@@ -169,9 +165,8 @@ function updateRouteMetaTag(
   let metaTag = matches.find((element) =>
     element.getAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE) === "true"
   );
-  for (const element of matches) {
-    if (element !== metaTag) element.remove();
-  }
+  // Do not repurpose or remove matching metadata without a Veryfront owner
+  // marker. Multiple tags are preferable to destroying application state.
   if (!metaTag) {
     metaTag = targetDocument.createElement("meta");
     metaTag.setAttribute(attributeName, attributeValue);
