@@ -373,7 +373,7 @@ function normalizeManagedHeadAttributesFromProps(
     }
 
     if (BOOLEAN_HEAD_ATTRIBUTES.has(name)) {
-      if (value !== false && value !== null && value !== undefined) attributeMap.set(name, "");
+      if (value !== false && value !== undefined) attributeMap.set(name, "");
       continue;
     }
     if (typeof value === "boolean") {
@@ -382,7 +382,7 @@ function normalizeManagedHeadAttributesFromProps(
       }
       continue;
     }
-    if (value === null || value === undefined) continue;
+    if (value === undefined) continue;
     if (
       typeof value !== "string" && typeof value !== "number" &&
       typeof value !== "bigint"
