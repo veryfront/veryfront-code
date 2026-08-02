@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { DEPENDENCY_ARTIFACT_BUILD_CAPABILITY } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "../types.ts";
@@ -64,7 +65,7 @@ describe("server/handlers/monitoring/health", () => {
 
       assertExists(result.response);
       const body = await result.response.json() as { capabilities?: string[] };
-      assertEquals(body.capabilities, ["dependency-artifact-build-v1"]);
+      assertEquals(body.capabilities, [DEPENDENCY_ARTIFACT_BUILD_CAPABILITY]);
     });
   });
 });

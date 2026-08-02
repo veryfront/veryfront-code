@@ -113,7 +113,7 @@ export function parseDependencyArtifactBuildTaskInput(
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
       value.artifact_id,
     ) ||
-    !Number.isInteger(value.attempt_count) ||
+    !Number.isSafeInteger(value.attempt_count) ||
     (value.attempt_count as number) <= 0
   ) {
     throw new DependencyArtifactBuildError(
@@ -340,7 +340,26 @@ function defaultRecordMetric(metric: DependencyArtifactBuildMetric): void {
 function mergeLimits(
   overrides?: Partial<DependencyArtifactBuildLimits>,
 ): DependencyArtifactBuildLimits {
-  return { ...DEFAULT_LIMITS, ...overrides };
+  const limits = { ...DEFAULT_LIMITS, ...overrides };
+  if (
+    !Number.isSafeInteger(limits.maxAssetBytes) ||
+    limits.maxAssetBytes <= 0 ||
+    !Number.isSafeInteger(limits.maxTotalBytes) ||
+    limits.maxTotalBytes <= 0 ||
+    !Number.isSafeInteger(limits.maxModules) ||
+    limits.maxModules <= 0 ||
+    !Number.isSafeInteger(limits.maxDepth) ||
+    limits.maxDepth < 0 ||
+    !Number.isSafeInteger(limits.timeoutMs) ||
+    limits.timeoutMs < 0 ||
+    limits.timeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new DependencyArtifactBuildError(
+      "invalid_limits",
+      "Dependency artifact build limits are invalid",
+    );
+  }
+  return limits;
 }
 
 interface UpstreamDeadline {
@@ -696,6 +715,25 @@ function uniqueAssets(assets: readonly DependencyArtifactAsset[]): DependencyArt
   return [...new Map(assets.map((asset) => [asset.contentHash, asset])).values()];
 }
 
+async function reportFailedResult(
+  client: DependencyArtifactBuildClient,
+  input: DependencyArtifactBuildTaskInput,
+  result: Extract<DependencyArtifactBuildResultBody, { outcome: "failed" }>,
+): Promise<void> {
+  try {
+    await client.reportResult({
+      artifactId: input.artifact_id,
+      attemptCount: input.attempt_count,
+      result,
+    });
+  } catch (reportingError) {
+    logger.warn("Dependency artifact failure result could not be reported", {
+      failure_code: result.failure_code,
+      error: reportingError,
+    });
+  }
+}
+
 export async function runDependencyArtifactBuild(
   input: DependencyArtifactBuildTaskInput,
   client: DependencyArtifactBuildClient,
@@ -732,11 +770,7 @@ export async function runDependencyArtifactBuild(
           : "Dependency artifact policy denied the build",
         ...(input.policy.decision === "too_young" ? { retry_after: input.policy.retry_after } : {}),
       };
-      await client.reportResult({
-        artifactId: input.artifact_id,
-        attemptCount: input.attempt_count,
-        result: failedResult,
-      });
+      await reportFailedResult(client, input, failedResult);
       const durationMs = Math.max(0, now() - startedAt);
       recordMetric({
         event: "failure",
@@ -821,18 +855,7 @@ export async function runDependencyArtifactBuild(
       failure_code: code,
       failure_message: sanitizedFailureMessage(error),
     };
-    try {
-      await client.reportResult({
-        artifactId: input.artifact_id,
-        attemptCount: input.attempt_count,
-        result,
-      });
-    } catch (reportingError) {
-      logger.warn("Dependency artifact failure result could not be reported", {
-        failure_code: code,
-        error: reportingError,
-      });
-    }
+    await reportFailedResult(client, input, result);
     const durationMs = Math.max(0, now() - startedAt);
     recordMetric({
       event: "failure",

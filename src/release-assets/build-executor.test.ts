@@ -960,7 +960,7 @@ describe("release asset build executor", () => {
     ]);
   });
 
-  it("preserves permissive auxiliary references in the legacy release fallback", async () => {
+  it("keeps final import validation when reusing the dependency materializer", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
     const files = [{
@@ -983,10 +983,10 @@ describe("release asset build executor", () => {
         Promise.resolve({
           code: code.replace(
             "https://esm.sh/legacy-package@1",
-            "file:///tmp/veryfront-http-bundle/http-legacy.mjs",
+            "file:///virtual/veryfront-http-bundle/http-legacy.mjs",
           ),
           dependencies: [{
-            specifier: "file:///tmp/veryfront-http-bundle/http-legacy.mjs",
+            specifier: "file:///virtual/veryfront-http-bundle/http-legacy.mjs",
             manifestKey: "https://esm.sh/legacy-package@1",
             code: legacyCode,
           }],
@@ -994,15 +994,9 @@ describe("release asset build executor", () => {
       ),
     };
 
-    await runReleaseAssetBuild(input, await tmp());
+    const result = await runReleaseAssetBuild(input, await tmp());
 
-    const manifest = parseReleaseAssetManifest(rec.manifest);
-    assertExists(manifest);
-    const dependencyHash = manifest.dependencies["https://esm.sh/legacy-package@1"]?.contentHash;
-    assertExists(dependencyHash);
-    const dependencyUpload = rec.uploads.find((upload) => upload.hash === dependencyHash);
-    assertExists(dependencyUpload);
-    assertEquals(dependencyUpload.text, legacyCode);
+    assertCoverageFailure(result, rec, "dependency-finalize-failed");
   });
 
   it("rewrites nested vendored HTTP dependency imports to immutable assets", async () => {

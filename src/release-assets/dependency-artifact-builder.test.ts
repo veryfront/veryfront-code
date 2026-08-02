@@ -255,6 +255,24 @@ describe("release-assets/dependency-artifact-builder", () => {
     }
   });
 
+  it("rejects JavaScript imports of CSS assets before upload", async () => {
+    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+    const cssUrl = "https://esm.sh/fixture-package@1.2.3/styles.css";
+    const calls: string[] = [];
+    const { client, events } = recordingClient();
+
+    const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
+      fetch: fixtureFetch({
+        [rootUrl]: response('import "./styles.css"; export const value = 1;'),
+        [cssUrl]: response("body { color: red; }", "text/css"),
+      }, calls),
+    });
+
+    assertEquals(failureCodeOf(result), "unsupported_asset_reference");
+    assertEquals(calls, [rootUrl, cssUrl]);
+    assertEquals(events.map((event) => event.kind), ["result"]);
+  });
+
   it("enforces policy before starting any network work", async () => {
     let fetchCalls = 0;
     const { client, events } = recordingClient();
@@ -283,6 +301,31 @@ describe("release-assets/dependency-artifact-builder", () => {
       (events[0]?.result as { retry_after?: string }).retry_after,
       "2026-08-02T00:00:00.000Z",
     );
+  });
+
+  it("preserves policy failure identity when result reporting is unavailable", async () => {
+    let fetchCalls = 0;
+    const metrics: string[] = [];
+    const { client } = recordingClient();
+    client.reportResult = () => Promise.reject(new Error("result API unavailable"));
+
+    const result = await runDependencyArtifactBuild(
+      buildTaskInput({
+        policy: { decision: "deny", reason_code: "package_denied" },
+      }),
+      client,
+      {
+        fetch: (async () => {
+          fetchCalls++;
+          return response("export {};");
+        }) as typeof fetch,
+        recordMetric: (metric) => metrics.push(`${metric.event}:${metric.failureCode ?? ""}`),
+      },
+    );
+
+    assertEquals(fetchCalls, 0);
+    assertEquals(failureCodeOf(result), "package_denied");
+    assertEquals(metrics, ["claim:", "failure:package_denied"]);
   });
 
   it("rejects HTML success responses and oversized assets", async () => {
@@ -420,6 +463,31 @@ describe("release-assets/dependency-artifact-builder", () => {
     }
   });
 
+  it("rejects invalid build limits before starting network work", async () => {
+    const invalidLimits = [
+      { maxAssetBytes: Number.NaN },
+      { maxTotalBytes: Number.POSITIVE_INFINITY },
+      { maxModules: 0 },
+      { maxDepth: -1 },
+      { maxDepth: 1.5 },
+    ];
+
+    for (const limits of invalidLimits) {
+      let fetchCalls = 0;
+      const { client } = recordingClient();
+      const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
+        limits,
+        fetch: (async () => {
+          fetchCalls++;
+          return response("export {};");
+        }) as typeof fetch,
+      });
+
+      assertEquals(failureCodeOf(result), "invalid_limits");
+      assertEquals(fetchCalls, 0);
+    }
+  });
+
   it("uploads hash-verified assets before publishing one ready graph", async () => {
     const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
     const childUrl = "https://esm.sh/fixture-package@1.2.3/es2022/child.mjs";
@@ -535,6 +603,19 @@ describe("release-assets/dependency-artifact-builder", () => {
           "Invalid dependency artifact build input",
         );
       }
+    }
+
+    try {
+      parseDependencyArtifactBuildTaskInput({
+        ...buildTaskInput(),
+        attempt_count: Number.MAX_SAFE_INTEGER + 1,
+      });
+      throw new Error("expected validation failure");
+    } catch (error) {
+      assertStringIncludes(
+        error instanceof Error ? error.message : String(error),
+        "Invalid dependency artifact build input",
+      );
     }
   });
 });

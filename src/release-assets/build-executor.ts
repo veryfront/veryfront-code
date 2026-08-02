@@ -1674,11 +1674,7 @@ async function finalizeDependencyModules(
       contentType: asset.contentType,
     };
     finalized.set(asset.sourceId, entry);
-    if (!pendingBytes.has(asset.contentHash)) {
-      pendingBytes.set(asset.contentHash, {
-        bytes: asset.bytes,
-        contentType: asset.contentType,
-      });
+    if (rememberPendingAsset(pendingBytes, entry, asset.bytes)) {
       uploadQueue.push(entry);
     }
   }
