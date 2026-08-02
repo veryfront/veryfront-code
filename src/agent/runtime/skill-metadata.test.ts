@@ -24,9 +24,7 @@ import {
   buildStrictRuntimeLoadedSkillResponse,
   getRuntimeSkillFrontmatterSchema,
   hasRuntimeSkillAllowedToolsPolicy,
-  MAX_RUNTIME_SKILL_MODEL_LENGTH,
   MAX_RUNTIME_SKILL_STEPS,
-  MAX_RUNTIME_SKILL_THINKING_TOKENS,
   normalizeRuntimeSkillReferencePath,
   normalizeStrictRuntimeSkillReferencePath,
   parseRuntimeSkillDocument,
@@ -37,7 +35,6 @@ import {
   resolveRuntimeSkillsForAgent,
 } from "./skill-metadata.ts";
 import { buildStrictRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
-import * as runtimeSkillMetadata from "./skill-metadata.ts";
 
 Deno.test("strict runtime parsing honors one explicit Skill document parser generation", () => {
   const sources: string[] = [];

@@ -1901,7 +1901,10 @@ describe("agent runtime refresh hooks", () => {
           toolName: "load_skill",
           result: {
             skillId: "supplier-invoice-processing",
+            instructions: "# Supplier invoice processing",
             allowedTools: ["invoke_agent"],
+            references: [],
+            scripts: [],
             maxSteps: 160,
           },
         }],

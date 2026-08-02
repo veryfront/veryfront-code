@@ -1,5 +1,5 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import "#veryfront/skill/_test-setup.ts";
 import "#veryfront/skill/_test-setup.ts";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";

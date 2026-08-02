@@ -5,7 +5,6 @@ import {
   buildStrictRuntimeAvailableSkillsPromptBlock,
   formatRuntimeSkillMetadata,
   MAX_RUNTIME_SKILL_AVAILABLE_TOOL_NAMES,
-  MAX_RUNTIME_SKILL_PROMPT_ENTRIES,
 } from "./skill-prompt.ts";
 import * as runtimeSkillPrompt from "./skill-prompt.ts";
 import type { Skill } from "#veryfront/skill/types.ts";
