@@ -1,8 +1,13 @@
 import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
 import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
+import {
+  applyClientRouteHeadEntries,
+  updateRouteMetaTags,
+  updateRouteTitle,
+} from "#veryfront/html/client-route-head.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { applyHeadDirectives, executeScripts, manageFocus, updateMetaTags } from "./dom-utils.ts";
+import { applyHeadDirectives, executeScripts, manageFocus } from "./dom-utils.ts";
 import type { RouteData } from "./page-loader.ts";
 
 const logger = rendererLogger.component("veryfront");
@@ -21,6 +26,8 @@ export class PageTransition {
   updatePage(data: RouteData, isPopState: boolean, scrollY: number): void {
     const rootElement = document.getElementById("root");
     if (!rootElement || !data.html) {
+      retireClientHeadOwnership(document);
+      applyClientRouteHeadEntries(data.managedHead, document);
       this.updateDocumentMetadata(document, data);
       return;
     }
@@ -29,9 +36,8 @@ export class PageTransition {
   }
 
   private updateDocumentMetadata(targetDocument: Document, data: RouteData): void {
-    const title = data.frontmatter?.title;
-    if (title) targetDocument.title = title;
-    updateMetaTags(data.frontmatter ?? {}, targetDocument);
+    updateRouteTitle(data.frontmatter?.title, targetDocument);
+    updateRouteMetaTags(data.frontmatter ?? {}, targetDocument);
   }
 
   private performTransition(
@@ -59,17 +65,15 @@ export class PageTransition {
       // legacy head directive, otherwise stale canonical/style/script nodes
       // survive indefinitely.
       retireClientHeadOwnership(rootElement.ownerDocument);
-      // Commit destination metadata only after old React ownership is retired;
-      // otherwise the delayed retirement removes the title/meta just written by
-      // updatePage. Do this before inserting route directives so document-level
-      // selectors cannot accidentally mutate directive nodes in the new body.
-      this.updateDocumentMetadata(rootElement.ownerDocument, data);
       rootElement.innerHTML = trustedHtml;
       rootElement.style.opacity = "1";
 
-      // Route head directives intentionally run last and may refine the
-      // frontmatter baseline.
+      // Route head directives retain precedence over frontmatter metadata.
+      // Commit the marked frontmatter baseline afterwards; it fills missing
+      // singleton slots but never mutates or overrides a directive-owned node.
       applyHeadDirectives(rootElement);
+      applyClientRouteHeadEntries(data.managedHead, rootElement.ownerDocument);
+      this.updateDocumentMetadata(rootElement.ownerDocument, data);
       executeScripts(rootElement);
       this.setupViewportPrefetch(rootElement);
       manageFocus(rootElement);

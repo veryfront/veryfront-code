@@ -141,6 +141,20 @@ describe("managed head protocol", () => {
       null,
     );
     assertEquals(
+      descriptorFromHeadProps("meta", {
+        httpEquiv: "Content-Type",
+        content: "text/html; charset=windows-1252",
+      }),
+      null,
+    );
+    assertEquals(
+      descriptorFromManagedHeadRecord("meta", {
+        "HTTP-EQUIV": "content-type",
+        content: "text/html; charset=ISO-8859-1",
+      }),
+      null,
+    );
+    assertEquals(
       descriptorFromHeadProps("base", { href: "https://example.com/" }),
       null,
     );
@@ -208,6 +222,7 @@ describe("managed head protocol", () => {
       "bad name": "ignored",
       onload: "ignored",
       "data-vf-shell-head": "spoofed",
+      "data-vf-route-head": "spoofed",
     });
 
     assertEquals(descriptor?.attributes, [

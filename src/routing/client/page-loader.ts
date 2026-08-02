@@ -186,6 +186,7 @@ export class PageLoader {
     const {
       content,
       pageData,
+      managedHead,
       dependencyPinningCacheKey,
     } = parsePageDataFromHTML(html);
     this.assertDependencySnapshot(
@@ -194,7 +195,7 @@ export class PageLoader {
       "HTML body",
     );
 
-    return { html: content, ...pageData };
+    return { ...pageData, html: content, managedHead };
   }
 
   loadPage(path: string): Promise<RouteData> {

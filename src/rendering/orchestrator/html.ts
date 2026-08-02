@@ -42,9 +42,23 @@ import {
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
+
+function hasCollectedHeadEntries(
+  head: HTMLGenerationContext["collectedHead"],
+): boolean {
+  return head !== undefined && (
+    head.title !== undefined ||
+    head.description !== undefined ||
+    head.metas.length > 0 ||
+    head.links.length > 0 ||
+    head.styles.length > 0 ||
+    head.scripts.length > 0
+  );
+}
 
 function toShellFrontmatter(
   frontmatter: MDXFrontmatter,
@@ -56,26 +70,33 @@ function toShellFrontmatter(
   return frontmatter as unknown as NonNullable<RenderMetadata["frontmatter"]>;
 }
 
-function injectHeadScriptsAfterCharset(html: string, scripts: string): string {
+function injectHeadScriptsAfterImportMap(html: string, scripts: string): string {
   const headOpen = html.indexOf("<head>");
   const headClose = headOpen < 0 ? -1 : html.indexOf("</head>", headOpen);
-  if (headOpen >= 0 && headClose >= 0) {
-    let cursor = headOpen + "<head>".length;
-    while (cursor < headClose) {
-      const metaStart = html.indexOf("<meta", cursor);
-      if (metaStart < 0 || metaStart >= headClose) break;
-      const metaEnd = html.indexOf(">", metaStart + "<meta".length);
-      if (metaEnd < 0 || metaEnd >= headClose) break;
-      const tag = html.slice(metaStart, metaEnd + 1).toLowerCase();
-      if (tag.includes(" charset=")) {
-        return html.slice(0, metaEnd + 1) +
-          `\n  ${scripts}` +
-          html.slice(metaEnd + 1);
-      }
-      cursor = metaEnd + 1;
-    }
+  if (headOpen < 0 || headClose < 0) {
+    throw new Error("Generated HTML shell is missing a complete head element");
   }
-  return html.replace("<head>", `<head>\n  ${scripts}`);
+
+  const lower = html.toLowerCase();
+  let cursor = headOpen + "<head>".length;
+  while (cursor < headClose) {
+    const scriptStart = lower.indexOf("<script", cursor);
+    if (scriptStart < 0 || scriptStart >= headClose) break;
+    const scriptOpenEnd = lower.indexOf(">", scriptStart + "<script".length);
+    if (scriptOpenEnd < 0 || scriptOpenEnd >= headClose) break;
+    const openingTag = lower.slice(scriptStart, scriptOpenEnd + 1);
+    if (/\stype\s*=\s*["']importmap["']/.test(openingTag)) {
+      const scriptClose = lower.indexOf("</script>", scriptOpenEnd + 1);
+      if (scriptClose < 0 || scriptClose >= headClose) break;
+      const insertionPoint = scriptClose + "</script>".length;
+      return html.slice(0, insertionPoint) +
+        `\n  ${scripts}` +
+        html.slice(insertionPoint);
+    }
+    cursor = scriptOpenEnd + 1;
+  }
+
+  throw new Error("Generated HTML shell is missing its framework import map");
 }
 
 /**
@@ -239,10 +260,10 @@ export class HTMLGenerator {
     } catch (error) {
       if (!(error instanceof StreamTimeoutError)) throw error;
 
-      logger.warn("Stream timed out, using partial content", {
+      logger.warn("Stream timed out; discarding partial content", {
         partialLength: error.partialContent.length,
       });
-      reactContent = error.partialContent.trim();
+      throw error;
     }
 
     if (isFullHTMLDocument(reactContent)) {
@@ -300,6 +321,12 @@ export class HTMLGenerator {
   private async handleFullHTMLDocument(
     context: HTMLGenerationContext,
   ): Promise<string> {
+    if (hasCollectedHeadEntries(context.collectedHead)) {
+      throw NOT_SUPPORTED.create({
+        detail:
+          "React <Head> cannot be combined with a component-authored full HTML document; declare that document head directly",
+      });
+    }
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
     const htmlOptions = await profilePhase(
       "html.build_options",
@@ -506,10 +533,10 @@ export class HTMLGenerator {
     const { scripts, other } = buildCollectedHeadElements(emissionHead);
     if (!scripts && !other) return { start: modifiedStart, end };
 
-    // Keep the encoding declaration first, then inject blocking scripts before
-    // the remaining metadata and CSS.
+    // The framework import map must precede every module script. Keep collected
+    // scripts ahead of CSS while inserting them only after that map is closed.
     if (scripts) {
-      modifiedStart = injectHeadScriptsAfterCharset(modifiedStart, scripts);
+      modifiedStart = injectHeadScriptsAfterImportMap(modifiedStart, scripts);
     }
 
     // Inject other head elements at BOTTOM of <head> (before closing tag)

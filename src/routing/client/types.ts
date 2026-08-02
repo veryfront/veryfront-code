@@ -7,10 +7,17 @@ export interface FrontmatterData {
 
 export type ComponentMap = Record<string, unknown>;
 
+export interface ClientRouteHeadEntry {
+  tagName: string;
+  attributes: Array<[string, string]>;
+  content?: string;
+}
+
 export interface PageData {
   frontmatter?: FrontmatterData;
   components?: ComponentMap;
   props?: Record<string, unknown>;
+  managedHead?: ClientRouteHeadEntry[];
   [key: string]: unknown;
 }
 
@@ -19,6 +26,7 @@ export interface RouteData {
   frontmatter?: FrontmatterData;
   components?: ComponentMap;
   pageData?: PageData;
+  managedHead?: ClientRouteHeadEntry[];
   /** Dependency snapshot identity returned by route-data transports. */
   dependencyPinningCacheKey?: string;
 }

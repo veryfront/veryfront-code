@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type {
   ClientRouter,
@@ -54,6 +54,8 @@ interface RouterHarness {
   fetchCalls: FetchCall[];
   historyCalls: HistoryCall[];
   store: FakeNavigationStore;
+  document: RuntimeDocument;
+  headElements: RuntimeElement[];
   setNextPageData(data: PageDataPayload): void;
   /** router.params at the moment RouterProvider was built — what the new page renders with. */
   renderedRouterParams(): Record<string, string> | null;
@@ -73,19 +75,87 @@ interface HarnessOptions {
   routerRuntimeExportsNavigationStore?: boolean;
 }
 
-function makeElement(): RuntimeElement {
-  return {
+type TestRuntimeElement = RuntimeElement & {
+  readonly tagName: string;
+  readonly attributes: Array<{ name: string; value: string }>;
+  parentElement: TestRuntimeElement | null;
+  children: TestRuntimeElement[];
+  querySelector(selector: string): TestRuntimeElement | null;
+  querySelectorAll(selector: string): TestRuntimeElement[];
+  setRemoveHandler(handler: () => void): void;
+};
+
+function matchesSelector(element: TestRuntimeElement, selector: string): boolean {
+  return selector.split(",").some((rawPart) => {
+    const part = rawPart.trim();
+    const tag = part.match(/^[a-z]+/i)?.[0]?.toUpperCase();
+    if (tag && element.tagName !== tag) return false;
+    const id = part.match(/#([A-Za-z0-9_-]+)/)?.[1];
+    if (id && element.id !== id) return false;
+    for (const match of part.matchAll(/\[([^=\]]+)(?:="([^"]*)")?\]/g)) {
+      const name = match[1] ?? "";
+      const expected = match[2];
+      if (expected === undefined) {
+        if (!element.hasAttribute(name)) return false;
+      } else if (element.getAttribute(name) !== expected) {
+        return false;
+      }
+    }
+    return Boolean(tag || id || part.includes("["));
+  });
+}
+
+function makeElement(tagName = "div"): TestRuntimeElement {
+  const attributes = new Map<string, string>();
+  let removeHandler = () => {};
+  const element: TestRuntimeElement = {
     style: {},
     id: "",
     textContent: "",
-    setAttribute() {},
-    getAttribute() {
-      return null;
+    innerHTML: "",
+    target: "",
+    tagName: tagName.toUpperCase(),
+    parentElement: null,
+    children: [] as TestRuntimeElement[],
+    get attributes() {
+      return [...attributes].map(([name, value]) => ({ name, value }));
+    },
+    setAttribute(name: string, value: string) {
+      attributes.set(name.toLowerCase(), value);
+      if (name.toLowerCase() === "id") element.id = value;
+    },
+    getAttribute(name: string) {
+      if (name.toLowerCase() === "id" && element.id) return element.id;
+      return attributes.get(name.toLowerCase()) ?? null;
+    },
+    hasAttribute(name: string) {
+      return attributes.has(name.toLowerCase());
+    },
+    removeAttribute(name: string) {
+      attributes.delete(name.toLowerCase());
     },
     prepend() {},
-    remove() {},
-    appendChild() {},
-  } as unknown as RuntimeElement;
+    remove() {
+      removeHandler();
+    },
+    appendChild(node: unknown) {
+      if (!(node && typeof node === "object" && "tagName" in node)) return;
+      element.children.push(node as TestRuntimeElement);
+    },
+    contains: () => false,
+    closest: () => null,
+    scrollIntoView() {},
+    querySelector(selector: string) {
+      return element.children.find((child) => matchesSelector(child, selector)) ?? null;
+    },
+    querySelectorAll(selector: string) {
+      return element.children.filter((child) => matchesSelector(child, selector));
+    },
+    setRemoveHandler(handler: () => void) {
+      removeHandler = handler;
+    },
+  };
+  return element;
 }
 
 function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
@@ -105,20 +175,38 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
   };
 
   const rootElement = { __reactRoot: { render() {} } } as unknown as RuntimeElement;
+  const headElement = makeElement("head");
+  const headElements = headElement.children;
+  headElement.appendChild = (node: unknown) => {
+    const child = node as TestRuntimeElement;
+    child.parentElement = headElement;
+    child.setRemoveHandler(() => {
+      const index = headElements.indexOf(child);
+      if (index !== -1) headElements.splice(index, 1);
+      child.parentElement = null;
+    });
+    headElements.push(child);
+  };
+  let fallbackTitle = "";
   const document = {
     readyState: "complete",
-    title: "",
+    get title() {
+      return headElement.querySelector("title")?.textContent ?? fallbackTitle;
+    },
+    set title(value: string) {
+      fallbackTitle = value;
+    },
     body: { prepend() {}, setAttribute() {}, removeAttribute() {}, appendChild() {} },
-    head: { appendChild() {} },
-    createElement: () => makeElement(),
-    querySelector: () => null,
-    querySelectorAll: () => [] as RuntimeElement[],
+    head: headElement,
+    createElement: (tagName: string) => makeElement(tagName),
+    querySelector: (selector: string) => headElement.querySelector(selector),
+    querySelectorAll: (selector: string) => headElement.querySelectorAll(selector),
     getElementById: (id: string) => {
       if (id === "veryfront-hydration-data") {
         return { textContent: hydrationJson } as unknown as RuntimeElement;
       }
       if (id === "root") return rootElement;
-      return null;
+      return headElements.find((element) => element.id === id) ?? null;
     },
     addEventListener,
   } as unknown as RuntimeDocument;
@@ -273,6 +361,8 @@ function createRouterHarness(options: HarnessOptions = {}): RouterHarness {
     fetchCalls,
     historyCalls,
     store,
+    document,
+    headElements,
     setNextPageData: (data) => {
       nextPageData = data;
     },
@@ -422,6 +512,63 @@ describe("hydration-script-builder/runtime/router", () => {
 
     assertEquals(harness.router.params, {});
     assertEquals(harness.renderedRouterParams(), {});
+  });
+
+  it("hands app-router metadata through route ownership across navigations", async () => {
+    const harness = createRouterHarness();
+    const shellTitle = harness.document.createElement("title");
+    shellTitle.textContent = "Page A";
+    shellTitle.setAttribute("data-vf-shell-head", "true");
+    const shellDescription = harness.document.createElement("meta");
+    shellDescription.setAttribute("name", "description");
+    shellDescription.setAttribute("content", "Page A description");
+    shellDescription.setAttribute("data-vf-shell-head", "true");
+    const thirdParty = harness.document.createElement("meta");
+    thirdParty.id = "third-party-description";
+    thirdParty.setAttribute("name", "description");
+    thirdParty.setAttribute("content", "Third party");
+    harness.document.head.appendChild(shellTitle);
+    harness.document.head.appendChild(shellDescription);
+    harness.document.head.appendChild(thirdParty);
+    harness.window.__veryfrontHydrationComplete?.();
+
+    await harness.runtime.renderPageFromData({
+      pagePath: "page-b",
+      params: {},
+      frontmatter: {
+        title: "Page B",
+        description: "Page B description",
+      },
+    }, "/page-b");
+
+    assertEquals(shellTitle.getAttribute("data-vf-shell-head"), "true");
+    assertEquals(harness.headElements.includes(shellTitle), false);
+    assertEquals(harness.headElements.includes(shellDescription), false);
+    assertEquals(
+      harness.document.querySelector('title[data-vf-route-head="true"]')?.textContent,
+      "Page B",
+    );
+    assertEquals(
+      harness.document.querySelector(
+        'meta[data-vf-route-head="true"][name="description"]',
+      )?.getAttribute("content"),
+      "Page B description",
+    );
+    assertStrictEquals(harness.document.getElementById("third-party-description"), thirdParty);
+    assertEquals(thirdParty.getAttribute("content"), "Third party");
+
+    await harness.runtime.renderPageFromData({
+      pagePath: "page-c",
+      params: {},
+      frontmatter: {},
+    }, "/page-c");
+
+    assertEquals(
+      [...harness.document.querySelectorAll('[data-vf-route-head="true"]')].length,
+      0,
+    );
+    assertStrictEquals(harness.document.getElementById("third-party-description"), thirdParty);
+    assertEquals(thirdParty.getAttribute("content"), "Third party");
   });
 
   it("refreshes params from history state on popstate navigation", async () => {

@@ -75,5 +75,31 @@ describe("html/metadata-extraction", () => {
       assertEquals(meta.scripts.length, 1);
       assertEquals(meta.styles.length, 1);
     });
+
+    it("does not mutate or alias structured frontmatter across repeated extraction", () => {
+      const frontmatter = {
+        meta: [{ name: "robots", content: "index" }],
+        links: [{ rel: "canonical", href: "https://example.com/page" }],
+        icons: [{ rel: "icon", href: "/favicon.svg" }],
+        scripts: [{ src: "/app.js" }],
+        styles: [{ href: "/app.css" }],
+        og: { title: "Shared title" },
+        twitter: { card: "summary" },
+      };
+      const sourceBefore = JSON.stringify(frontmatter);
+
+      const first = extractHTMLMetadata(frontmatter);
+      const second = extractHTMLMetadata(frontmatter);
+
+      assertEquals(JSON.stringify(frontmatter), sourceBefore);
+      assertEquals(JSON.stringify(second), JSON.stringify(first));
+      assertEquals(first.meta?.length, 3);
+      assertEquals(first.meta === frontmatter.meta, false);
+      assertEquals(first.links === frontmatter.links, false);
+      assertEquals(first.icons === frontmatter.icons, false);
+      assertEquals(first.scripts === frontmatter.scripts, false);
+      assertEquals(first.styles === frontmatter.styles, false);
+      assertEquals(first.meta?.[0] === frontmatter.meta[0], false);
+    });
   });
 });

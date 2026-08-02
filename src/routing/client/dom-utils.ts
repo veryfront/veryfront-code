@@ -1,14 +1,25 @@
 import { rendererLogger } from "#veryfront/utils";
-import type { FrontmatterData, PageData } from "./types.ts";
+import type { ClientRouteHeadEntry, PageData } from "./types.ts";
+export {
+  updateRouteMetaTags as updateMetaTags,
+  updateRouteTitle,
+} from "#veryfront/html/client-route-head.ts";
 import {
+  descriptorFromManagedHeadRecord,
   HEAD_LEGACY_MANAGED_ATTRIBUTE,
+  HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_REACT_OWNER_ATTRIBUTE,
+  HEAD_ROUTE_MANAGED_ATTRIBUTE,
+  HEAD_SHELL_PROVENANCE_ATTRIBUTE,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
+  isHeadFrameworkAttribute,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
 
 const logger = rendererLogger.component("veryfront");
+const MAX_PARSED_ROUTE_HEAD_ENTRIES = 100;
+const PARSED_ROUTE_HEAD_CONTENT_PROPERTY = "__veryfront_parsed_route_head_content";
 
 export function isInternalLink(target: HTMLAnchorElement): boolean {
   const href = target.getAttribute("href");
@@ -30,49 +41,6 @@ export function findAnchorElement(element: HTMLElement | null): HTMLAnchorElemen
   }
 
   return current instanceof HTMLAnchorElement ? current : null;
-}
-
-export function updateMetaTags(
-  frontmatter: FrontmatterData,
-  targetDocument: Document = document,
-): void {
-  if (frontmatter.description) {
-    updateMetaTag(
-      targetDocument,
-      'meta[name="description"]',
-      "name",
-      "description",
-      frontmatter.description,
-    );
-  }
-
-  if (frontmatter.ogTitle) {
-    updateMetaTag(
-      targetDocument,
-      'meta[property="og:title"]',
-      "property",
-      "og:title",
-      frontmatter.ogTitle,
-    );
-  }
-}
-
-function updateMetaTag(
-  targetDocument: Document,
-  selector: string,
-  attributeName: string,
-  attributeValue: string,
-  content: string,
-): void {
-  let metaTag = targetDocument.querySelector(selector);
-
-  if (!metaTag) {
-    metaTag = targetDocument.createElement("meta");
-    metaTag.setAttribute(attributeName, attributeValue);
-    targetDocument.head.appendChild(metaTag);
-  }
-
-  metaTag.setAttribute("content", content);
 }
 
 export function executeScripts(container: HTMLElement): void {
@@ -153,11 +121,6 @@ function processHeadWrapper(
 
     const tagName = node.tagName.toLowerCase();
 
-    if (tagName === "title") {
-      targetDocument.title = node.textContent ?? "";
-      continue;
-    }
-
     const clone = targetDocument.createElement(tagName);
 
     for (const { name, value } of node.attributes) {
@@ -168,19 +131,28 @@ function processHeadWrapper(
       clone.textContent = node.textContent;
     }
 
+    if (headSingletonKey(clone) === "meta:charset") continue;
     replaceExistingHeadSingleton(targetDocument, clone);
     clone.setAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE, "1");
+    clone.setAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE, "true");
     targetDocument.head.appendChild(clone);
   }
 }
 
 function headSingletonKey(element: Element): string | undefined {
   const tagName = element.tagName.toLowerCase();
+  if (tagName === "title") return "title";
   if (tagName !== "meta" && tagName !== "link") return undefined;
 
   const attributes = Object.create(null) as Record<string, string>;
   if (!element.attributes) return undefined;
   for (const { name, value } of element.attributes) attributes[name.toLowerCase()] = value;
+  if (
+    tagName === "meta" &&
+    attributes["http-equiv"]?.trim().toLowerCase() === "content-type"
+  ) {
+    return "meta:charset";
+  }
   return tagName === "meta"
     ? headMetaSingletonKeyFromRecord(attributes)
     : headLinkSingletonKeyFromRecord(attributes);
@@ -232,6 +204,7 @@ export function extractPageDataFromScript(): PageData | null {
 export function parsePageDataFromHTML(html: string): {
   content: string;
   pageData: PageData;
+  managedHead: ClientRouteHeadEntry[];
   dependencyPinningCacheKey?: string;
 } {
   const doc = new DOMParser().parseFromString(html, "text/html");
@@ -240,6 +213,37 @@ export function parsePageDataFromHTML(html: string): {
   if (!root) logger.warn("[Veryfront] No root element found in HTML");
 
   const content = root?.innerHTML ?? "";
+
+  const managedElements = [
+    ...doc.querySelectorAll(
+      `[${HEAD_PROVENANCE_ATTRIBUTE}="true"], [${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true"]`,
+    ),
+  ];
+  if (managedElements.length > MAX_PARSED_ROUTE_HEAD_ENTRIES) {
+    throw new TypeError("Fetched document exceeds the managed-head entry limit");
+  }
+  const managedHead = managedElements.flatMap((element): ClientRouteHeadEntry[] => {
+    const tagName = element.tagName.toLowerCase();
+    const record = Object.create(null) as Record<string, unknown>;
+    for (const { name, value } of element.attributes) {
+      if (!isHeadFrameworkAttribute(name)) record[name] = value;
+    }
+    const supportsText = tagName === "title" || tagName === "script" || tagName === "style";
+    if (supportsText) {
+      record[PARSED_ROUTE_HEAD_CONTENT_PROPERTY] = element.textContent ?? "";
+    }
+    const descriptor = descriptorFromManagedHeadRecord(
+      tagName,
+      record,
+      supportsText ? { contentProperty: PARSED_ROUTE_HEAD_CONTENT_PROPERTY } : undefined,
+    );
+    if (!descriptor) return [];
+    return [{
+      tagName: descriptor.tagName,
+      attributes: descriptor.attributes.map(([name, value]) => [name, value]),
+      ...(descriptor.content !== undefined && { content: descriptor.content }),
+    }];
+  });
 
   const pageDataScript = doc.querySelector("script[data-veryfront-page]");
   let pageData: PageData = {};
@@ -273,5 +277,5 @@ export function parsePageDataFromHTML(html: string): {
     }
   }
 
-  return { content, pageData, dependencyPinningCacheKey };
+  return { content, pageData, managedHead, dependencyPinningCacheKey };
 }

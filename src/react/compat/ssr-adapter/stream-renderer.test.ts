@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import type { ReactDOMServer } from "./server-loader.ts";
@@ -98,6 +98,14 @@ function withDeadline<T>(promise: Promise<T>, timeoutMs = 100): Promise<T> {
       },
     );
   });
+}
+
+function blockEventLoopFor(durationMs: number): void {
+  const deadline = performance.now() + durationMs;
+  while (performance.now() < deadline) {
+    // Intentionally starve timers to prove setup deadlines are absolute rather
+    // than dependent on the timeout callback winning the event-loop race.
+  }
 }
 
 describe("react/compat/ssr-adapter/stream-renderer", () => {
@@ -233,6 +241,45 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
     assertEquals(cancelled, true);
   });
 
+  it("enforces the readable setup deadline after timer starvation", async () => {
+    let signal: AbortSignal | undefined;
+    let cancelCount = 0;
+    let cancelReason: unknown;
+    const observed: Error[] = [];
+    __setSSRStreamTimeoutForTests(1);
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: async (_element, options) => {
+          signal = options?.signal;
+          blockEventLoopFor(5);
+          const stream = new ReadableStream<Uint8Array>({
+            cancel(reason) {
+              cancelCount += 1;
+              cancelReason = reason;
+            },
+          }) as ReadableStream<Uint8Array> & { allReady: Promise<void> };
+          stream.allReady = Promise.resolve();
+          return stream as ReadableSSRStream;
+        },
+      }),
+    );
+
+    let rejection: unknown;
+    try {
+      await renderToStreamAdapter(React.createElement("div"), {
+        onError: (error) => observed.push(error),
+      });
+    } catch (error) {
+      rejection = error;
+    }
+
+    assertEquals(rejection instanceof Error, true);
+    assertStrictEquals(rejection, signal?.reason);
+    assertStrictEquals(cancelReason, rejection);
+    assertEquals(cancelCount, 1);
+    assertEquals(observed, []);
+  });
+
   it("returns a pipeable stream result when renderToPipeableStream is ready", async () => {
     __injectReactDOMServerForTests(
       createMockServer({
@@ -330,6 +377,42 @@ describe("react/compat/ssr-adapter/stream-renderer", () => {
       "SSR timeout",
     );
     assertEquals(abortCalled, true);
+  });
+
+  it("enforces the pipeable setup deadline after timer starvation", async () => {
+    let abortCount = 0;
+    const observed: Error[] = [];
+    __setSSRStreamTimeoutForTests(1);
+    __injectReactDOMServerForTests(
+      createMockServer({
+        renderToReadableStream: undefined,
+        renderToPipeableStream: (_element, options) => {
+          blockEventLoopFor(5);
+          options?.onShellReady?.();
+          return createPipeableSSRStream(
+            () => {},
+            () => {
+              abortCount += 1;
+            },
+          );
+        },
+      }),
+    );
+
+    let rejection: unknown;
+    try {
+      await renderToStreamAdapter(React.createElement("div"), {
+        onError: (error) => observed.push(error),
+      });
+    } catch (error) {
+      rejection = error;
+    }
+
+    assertEquals(rejection instanceof Error, true);
+    assertEquals((rejection as Error).message.includes("SSR timeout"), true);
+    assertEquals(abortCount, 1);
+    assertEquals(observed.length, 1);
+    assertStrictEquals(observed[0], rejection);
   });
 
   it("handles a synchronous pipeable shell-ready callback", async () => {

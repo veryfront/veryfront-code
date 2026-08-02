@@ -9,6 +9,7 @@ export const HEAD_LEGACY_MANAGED_ATTRIBUTE = "data-veryfront-managed";
 export const HEAD_CONTENT_HASH_ATTRIBUTE = "data-vf-hash";
 export const HEAD_REACT_MANAGED_ATTRIBUTE = "data-vf-react-head";
 export const HEAD_REACT_OWNER_ATTRIBUTE = "data-vf-react-head-owner";
+export const HEAD_ROUTE_MANAGED_ATTRIBUTE = "data-vf-route-head";
 export const HEAD_SHELL_PROVENANCE_ATTRIBUTE = "data-vf-shell-head";
 export const HEAD_MANAGER_RETIRE_SYMBOL = Symbol.for(
   "veryfront.client-head-manager.retire.v1",
@@ -105,6 +106,7 @@ export function isHeadFrameworkAttribute(name: string): boolean {
     case HEAD_CONTENT_HASH_ATTRIBUTE:
     case HEAD_REACT_MANAGED_ATTRIBUTE:
     case HEAD_REACT_OWNER_ATTRIBUTE:
+    case HEAD_ROUTE_MANAGED_ATTRIBUTE:
     case HEAD_SHELL_PROVENANCE_ATTRIBUTE:
       return true;
     default:
@@ -443,6 +445,11 @@ function scriptKeys(
   return keys;
 }
 
+function declaresDocumentEncoding(attributes: ReadonlyMap<string, string>): boolean {
+  return attributes.has("charset") ||
+    attributes.get("http-equiv")?.trim().toLowerCase() === "content-type";
+}
+
 function createManagedHeadDescriptor(
   tagName: string,
   attributes: readonly ManagedHeadAttribute[],
@@ -498,7 +505,7 @@ export function descriptorFromHeadProps(
   // The HTML shell is the single authority for the document encoding. It
   // always emits UTF-8 early in <head>; allowing a component-level charset
   // would create a second declaration and ambiguous client ownership.
-  if (tagName === "meta" && attributeMap.has("charset")) return null;
+  if (tagName === "meta" && declaresDocumentEncoding(attributeMap)) return null;
   if (
     (tagName === "meta" || tagName === "link") &&
     attributes.length === 0
@@ -549,7 +556,7 @@ export function descriptorFromManagedHeadRecord(
   );
   if (!attributes) return null;
   const attributeMap = new Map(attributes);
-  if (tagName === "meta" && attributeMap.has("charset")) return null;
+  if (tagName === "meta" && declaresDocumentEncoding(attributeMap)) return null;
   if ((tagName === "meta" || tagName === "link") && attributes.length === 0) return null;
 
   let content: string | undefined;

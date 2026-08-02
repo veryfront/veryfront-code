@@ -190,7 +190,19 @@ describe("DOM Utils", () => {
         appendChild: (element: MockMetaElement) => {
           headElements.push(element);
         },
-        querySelectorAll: () => [],
+        querySelectorAll: (selector: string) =>
+          headElements.filter((element) => {
+            if (selector === '[data-veryfront-managed="1"]') {
+              return element.getAttribute("data-veryfront-managed") === "1";
+            }
+            if (selector.includes('name="description"')) {
+              return element.getAttribute("name") === "description";
+            }
+            if (selector.includes('property="og:title"')) {
+              return element.getAttribute("property") === "og:title";
+            }
+            return false;
+          }),
       };
 
       (globalThis as GlobalWithDOM).document = {
@@ -288,24 +300,18 @@ describe("DOM Utils", () => {
       }
     });
 
-    it("should update existing meta tag content", () => {
+    it("updates an existing route-owned meta tag", () => {
       const mocks = setupMockDocument();
       try {
+        const attributes = new Map<string, string>([
+          ["name", "description"],
+          ["content", "Old description"],
+          ["data-vf-route-head", "true"],
+        ]);
         const existingMeta: MockMetaElement = {
           tagName: "META",
-          getAttribute: (name: string) => {
-            if (name === "name") return "description";
-            if (name === "content") return "Old description";
-            return null;
-          },
-          setAttribute: (name: string, value: string) => {
-            if (name !== "content") return;
-            existingMeta.getAttribute = (n: string) => {
-              if (n === "name") return "description";
-              if (n === "content") return value;
-              return null;
-            };
-          },
+          getAttribute: (name: string) => attributes.get(name) ?? null,
+          setAttribute: (name: string, value: string) => attributes.set(name, value),
         };
 
         mocks.headElements.push(existingMeta);
@@ -316,6 +322,33 @@ describe("DOM Utils", () => {
           "New description",
           "Should update existing meta tag",
         );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("preserves an unowned meta tag and creates separate route metadata", () => {
+      const mocks = setupMockDocument();
+      try {
+        const attributes = new Map<string, string>([
+          ["name", "description"],
+          ["content", "Third-party description"],
+        ]);
+        const thirdPartyMeta: MockMetaElement = {
+          tagName: "META",
+          getAttribute: (name: string) => attributes.get(name) ?? null,
+          setAttribute: (name: string, value: string) => attributes.set(name, value),
+        };
+        mocks.headElements.push(thirdPartyMeta);
+
+        updateMetaTags({ description: "Route description" });
+
+        assertEquals(thirdPartyMeta.getAttribute("content"), "Third-party description");
+        assertEquals(mocks.headElements.length, 2);
+        const routeMeta = mocks.headElements.find((element) =>
+          element.getAttribute("data-vf-route-head") === "true"
+        );
+        assertEquals(routeMeta?.getAttribute("content"), "Route description");
       } finally {
         mocks.cleanup();
       }
@@ -509,19 +542,35 @@ describe("DOM Utils", () => {
       const domMocks = setupDOMMocks();
       const originalDocument = (globalThis as GlobalWithDOM).document;
       const headElements: MockHeadElement[] = [];
+      let documentTitle = "Original Title";
 
       const mockHead = {
         appendChild: (element: MockHeadElement) => {
           headElements.push(element);
+          if (element.tagName === "TITLE") {
+            documentTitle = element.textContent ?? "";
+          }
         },
         querySelectorAll: (selector: string) => {
-          if (selector !== '[data-veryfront-managed="1"]') return [];
-          return headElements.filter((el) => el.getAttribute?.("data-veryfront-managed") === "1");
+          if (selector === "title") {
+            return headElements.filter((element) => element.tagName === "TITLE");
+          }
+          if (selector === '[data-veryfront-managed="1"]') {
+            return headElements.filter((element) =>
+              element.getAttribute?.("data-veryfront-managed") === "1"
+            );
+          }
+          return [];
         },
       };
 
       (globalThis as GlobalWithDOM).document = {
-        title: "Original Title",
+        get title() {
+          return documentTitle;
+        },
+        set title(value: string) {
+          documentTitle = value;
+        },
         head: mockHead,
         createElement: (tag: string) => {
           const attributes = new Map<string, string>();
@@ -539,7 +588,7 @@ describe("DOM Utils", () => {
 
       return {
         headElements,
-        getTitle: () => (globalThis as GlobalWithDOM).document.title,
+        getTitle: () => documentTitle,
         cleanup: () => {
           (globalThis as GlobalWithDOM).document = originalDocument;
           domMocks.cleanup();
@@ -600,6 +649,30 @@ describe("DOM Utils", () => {
           "1",
           "Should mark as managed",
         );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("drops route directives that attempt to redefine document encoding", () => {
+      const mocks = setupMockDocument();
+      try {
+        const charset = new MockElement("META");
+        charset.setAttribute("CHARSET", "ISO-8859-1");
+        const httpEquiv = new MockElement("META");
+        httpEquiv.setAttribute("HTTP-EQUIV", "Content-Type");
+        httpEquiv.setAttribute("content", "text/html; charset=windows-1252");
+        const vfHead = {
+          childNodes: [charset, httpEquiv],
+          parentElement: { removeChild: () => {} },
+        };
+        const container = {
+          querySelectorAll: () => [vfHead],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(mocks.headElements.length, 0);
       } finally {
         mocks.cleanup();
       }
