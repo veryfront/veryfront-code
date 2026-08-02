@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_CONFIG, loadConfig } from "./config.ts";
 
@@ -85,9 +85,44 @@ describe("observability/metrics/config", () => {
       };
 
       const result = loadConfig({}, adapterWithEnv(mockEnv));
-      // Both are provided; the general endpoint is applied first,
-      // then metrics endpoint overrides if truthy
-      assertEquals(result.endpoint !== undefined, true);
+      assertEquals(result.endpoint, "http://metrics:4318");
+    });
+
+    it("rejects malformed caller configuration instead of retaining invalid values", () => {
+      assertThrows(
+        () => loadConfig({ enabled: "yes" } as never, emptyEnvAdapter),
+        TypeError,
+        "enabled",
+      );
+      assertThrows(
+        () => loadConfig({ exporter: "invalid" } as never, emptyEnvAdapter),
+        TypeError,
+        "exporter",
+      );
+      assertThrows(
+        () => loadConfig({ prefix: "   " }, emptyEnvAdapter),
+        TypeError,
+        "prefix",
+      );
+      assertThrows(
+        () => loadConfig({ collectInterval: 0 }, emptyEnvAdapter),
+        RangeError,
+        "collectInterval",
+      );
+    });
+
+    it("contains adapter environment failures without consulting another environment", () => {
+      const result = loadConfig(
+        { enabled: false, prefix: "configured" },
+        adapterWithEnv({
+          get() {
+            throw new Error("environment unavailable");
+          },
+        }),
+      );
+
+      assertEquals(result.enabled, false);
+      assertEquals(result.prefix, "configured");
     });
   });
 });

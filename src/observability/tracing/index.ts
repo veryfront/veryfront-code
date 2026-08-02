@@ -54,8 +54,8 @@ export function startSpan(name: string, options: SpanOptions = {}): Span | null 
 }
 
 /** End an active tracing span. */
-export function endSpan(span: Span | null, error?: Error): void {
-  getSpanOps()?.endSpan(span, error);
+export function endSpan(span: Span | null, ...failure: [] | [error: unknown]): void {
+  getSpanOps()?.endSpan(span, ...failure);
 }
 
 /** Sets span attributes. */
@@ -121,7 +121,10 @@ export async function withSpan<T>(
     name,
     fn,
     (n) => spanOps.startSpan(n, options),
-    (s, e) => spanOps.endSpan(s, e),
+    (s: Span | null, ...failure: [] | [error: unknown]) => {
+      if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
+      else spanOps.endSpan(s);
+    },
   );
 }
 
@@ -140,7 +143,10 @@ export function withSpanSync<T>(
     name,
     fn,
     (n) => spanOps.startSpan(n, options),
-    (s, e) => spanOps.endSpan(s, e),
+    (s: Span | null, ...failure: [] | [error: unknown]) => {
+      if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
+      else spanOps.endSpan(s);
+    },
   );
 }
 

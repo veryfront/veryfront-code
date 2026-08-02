@@ -1,10 +1,11 @@
 import { serverLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
+import { getGlobalTelemetryAPISnapshot } from "./api-shim.ts";
 import { loadConfig } from "./config.ts";
 import { ContextPropagation } from "./context-propagation.ts";
 import { SpanOperations } from "./span-operations.ts";
-import type { OpenTelemetryAPI, TracingConfig, TracingState } from "./types.ts";
+import type { OpenTelemetryAPI, TextMapPropagator, TracingConfig, TracingState } from "./types.ts";
 
 const logger = serverLogger.component("tracing");
 
@@ -23,39 +24,67 @@ export class TracingManager {
 
   private spanOps: SpanOperations | null = null;
   private contextProp: ContextPropagation | null = null;
+  private configuredEnabled = false;
+  private providerRevision = -1;
+  private serviceName = "veryfront";
+  private initializationPromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
 
-  async initialize(config: Partial<TracingConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
+  initialize(config: Partial<TracingConfig> = {}, adapter?: RuntimeAdapter): Promise<void> {
+    if (this.initializationPromise) return this.initializationPromise;
     if (this.state.initialized) {
       logger.debug("Already initialized");
-      return;
+      return Promise.resolve();
     }
 
     const finalConfig = loadConfig(config, adapter);
+    const generation = this.lifecycleGeneration;
     this.state.initialized = true;
+    this.configuredEnabled = finalConfig.enabled;
+    this.serviceName = finalConfig.serviceName ?? "veryfront";
 
     if (!finalConfig.enabled) {
       logger.debug("Tracing disabled");
-      return;
+      return Promise.resolve();
     }
 
-    try {
-      await this.initializeTracer(finalConfig);
+    const attempt = (async (): Promise<void> => {
+      try {
+        const runtime = await this.createTracerRuntime();
+        if (generation !== this.lifecycleGeneration) return;
 
-      logger.info("OpenTelemetry tracing initialized", {
-        exporter: finalConfig.exporter,
-        serviceName: finalConfig.serviceName,
-        endpoint: finalConfig.endpoint,
-      });
-    } catch (error) {
-      logger.error(
-        "[tracing] Failed to initialize OpenTelemetry tracing - running in degraded mode",
-        error,
-      );
-      this.state.degraded = true;
-    }
+        this.state.api = runtime.api;
+        this.state.propagator = runtime.propagator;
+        this.refreshProvider(true);
+
+        logger.info("OpenTelemetry tracing initialized", {
+          exporter: finalConfig.exporter,
+          serviceName: finalConfig.serviceName,
+          endpoint: finalConfig.endpoint,
+        });
+      } catch (error) {
+        if (generation !== this.lifecycleGeneration) return;
+        logger.error(
+          "[tracing] Failed to initialize OpenTelemetry tracing - running in degraded mode",
+          error,
+        );
+        this.state.degraded = true;
+      }
+    })();
+
+    const tracked = attempt.finally(() => {
+      if (this.initializationPromise === tracked) {
+        this.initializationPromise = null;
+      }
+    });
+    this.initializationPromise = tracked;
+    return tracked;
   }
 
-  private async initializeTracer(config: TracingConfig): Promise<void> {
+  private async createTracerRuntime(): Promise<{
+    api: OpenTelemetryAPI;
+    propagator: TextMapPropagator;
+  }> {
     // Use the shim API — delegates to the real SDK when ext-observability-opentelemetry is wired.
     const shimApi = await import("./api-shim.ts");
     const api: OpenTelemetryAPI = {
@@ -75,27 +104,57 @@ export class TracingManager {
       SpanKind: shimApi.SpanKind,
       SpanStatusCode: { OK: shimApi.SpanStatusCode.OK, ERROR: shimApi.SpanStatusCode.ERROR },
     };
-    this.state.api = api;
-
-    this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
 
     // No-op propagator used only when ext-observability-opentelemetry is NOT installed.
     // When the extension is active, it registers W3CTraceContextPropagator
     // on the shim directly; we intentionally do NOT wrap shimApi.propagation
     // here (doing so would cause infinite recursion when the global
     // propagator is the wrapper itself).
-    const propagator = {
+    const propagator: TextMapPropagator = {
       inject: (_ctx: import("./api-shim.ts").Context, _carrier: unknown) => {},
       extract: (ctx: import("./api-shim.ts").Context, _carrier: unknown) => ctx,
       fields: () => [] as string[],
     };
-    this.state.propagator = propagator;
+    return { api, propagator };
+  }
 
-    this.spanOps = this.state.tracer ? new SpanOperations(api, this.state.tracer) : null;
-    this.contextProp = new ContextPropagation(api, propagator);
+  private refreshProvider(force = false): void {
+    if (!this.state.initialized || !this.configuredEnabled || !this.state.api) return;
+
+    const snapshot = getGlobalTelemetryAPISnapshot();
+    if (!force && snapshot.tracerProviderRevision === this.providerRevision) return;
+    this.providerRevision = snapshot.tracerProviderRevision;
+
+    if (!snapshot.tracerProviderInstalled) {
+      this.state.tracer = null;
+      this.spanOps = null;
+      this.contextProp = null;
+      return;
+    }
+
+    try {
+      const tracer = this.state.api.trace.getTracer(this.serviceName, VERSION);
+      this.state.tracer = tracer;
+      this.spanOps = new SpanOperations(this.state.api, tracer);
+      this.contextProp = this.state.propagator
+        ? new ContextPropagation(this.state.api, this.state.propagator)
+        : null;
+      this.state.degraded = false;
+    } catch (error) {
+      this.state.tracer = null;
+      this.spanOps = null;
+      this.contextProp = null;
+      this.state.degraded = true;
+      try {
+        logger.warn("Failed to refresh OpenTelemetry tracer provider", error);
+      } catch (_) {
+        /* expected: telemetry lifecycle remains fail-open */
+      }
+    }
   }
 
   isEnabled(): boolean {
+    this.refreshProvider();
     return this.state.initialized && this.state.tracer !== null;
   }
 
@@ -104,25 +163,42 @@ export class TracingManager {
   }
 
   getSpanOperations(): SpanOperations | null {
+    this.refreshProvider();
     return this.spanOps;
   }
 
   getContextPropagation(): ContextPropagation | null {
+    this.refreshProvider();
     return this.contextProp;
   }
 
   getState(): TracingState {
-    return this.state;
+    this.refreshProvider();
+    return { ...this.state };
   }
 
   shutdown(): void {
-    if (!this.state.initialized) return;
+    if (!this.state.initialized && !this.initializationPromise) return;
 
     try {
       logger.info("Tracing shutdown initiated");
     } catch (error) {
       logger.warn("Error during tracing shutdown", error);
     }
+    this.lifecycleGeneration++;
+    this.initializationPromise = null;
+    this.state = {
+      initialized: false,
+      degraded: false,
+      tracer: null,
+      api: null,
+      propagator: null,
+    };
+    this.spanOps = null;
+    this.contextProp = null;
+    this.configuredEnabled = false;
+    this.providerRevision = -1;
+    this.serviceName = "veryfront";
   }
 }
 

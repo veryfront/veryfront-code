@@ -3,17 +3,26 @@
  * @module
  */
 
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { serverLogger as logger } from "#veryfront/utils";
 import { VERSION } from "#veryfront/utils/version.ts";
-import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
+import {
+  getGlobalMetricsAPI,
+  getMetricsApiRevision,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import type { OtelInstruments } from "./types.ts";
 
-// In-flight or completed init promise; null means init has not started.
-// Using a promise (rather than a boolean flag) prevents a race where a second
-// concurrent caller sees the flag set to true but instruments are not yet ready.
+// A single in-flight attempt is shared by callers for a provider revision.
 let initPromise: Promise<void> | null = null;
+let initializingRevision = -1;
+let initializedRevision = -1;
+let lifecycleGeneration = 0;
 const otel: OtelInstruments = {};
+
+function clearOtelInstruments(): void {
+  for (const key of Object.keys(otel) as (keyof OtelInstruments)[]) {
+    delete otel[key];
+  }
+}
 
 export function safeLogWarn(message: string, error?: unknown): void {
   try {
@@ -23,72 +32,94 @@ export function safeLogWarn(message: string, error?: unknown): void {
   }
 }
 
-async function doInitOtelInstruments(): Promise<void> {
-  if (!isDeno) return;
-
+async function createOtelInstruments(): Promise<OtelInstruments | null> {
   try {
     // The metrics API is injected by ext-observability-opentelemetry via setGlobalMetricsAPI().
     // When the extension is not active, the meter is unavailable and we return.
     const metricsApi = getGlobalMetricsAPI();
-    if (!metricsApi) return;
+    if (!metricsApi) return {};
 
     const meter = metricsApi.getMeter("veryfront", VERSION);
+    const candidate: OtelInstruments = { meter };
 
-    otel.meter = meter;
-    otel.ssrHistogram = meter.createHistogram("veryfront.ssr.duration", {
+    candidate.ssrHistogram = meter.createHistogram("veryfront.ssr.duration", {
       description: "SSR render duration (ms)",
       unit: "ms",
     });
-    otel.requestCounter = meter.createCounter("veryfront.http.requests", {
+    candidate.requestCounter = meter.createCounter("veryfront.http.requests", {
       description: "Requests handled",
     });
-    otel.jitResolvedCounter = meter.createCounter("veryfront.jit.http.resolved", {
+    candidate.jitResolvedCounter = meter.createCounter("veryfront.jit.http.resolved", {
       description: "JIT HTTP resolved",
     });
-    otel.jitBlockedCounter = meter.createCounter("veryfront.jit.http.blocked", {
+    candidate.jitBlockedCounter = meter.createCounter("veryfront.jit.http.blocked", {
       description: "JIT HTTP blocked",
     });
-    otel.cacheGetCounter = meter.createCounter("veryfront.cache.gets", {
+    candidate.cacheGetCounter = meter.createCounter("veryfront.cache.gets", {
       description: "Cache gets",
     });
-    otel.cacheHitCounter = meter.createCounter("veryfront.cache.hits", {
+    candidate.cacheHitCounter = meter.createCounter("veryfront.cache.hits", {
       description: "Cache hits",
     });
-    otel.cacheMissCounter = meter.createCounter("veryfront.cache.misses", {
+    candidate.cacheMissCounter = meter.createCounter("veryfront.cache.misses", {
       description: "Cache misses",
     });
-    otel.cacheSetCounter = meter.createCounter("veryfront.cache.sets", {
+    candidate.cacheSetCounter = meter.createCounter("veryfront.cache.sets", {
       description: "Cache sets",
     });
-    otel.cacheInvalidateCounter = meter.createCounter("veryfront.cache.invalidations", {
+    candidate.cacheInvalidateCounter = meter.createCounter("veryfront.cache.invalidations", {
       description: "Cache invalidations",
     });
-    otel.moduleServeCounter = meter.createCounter("veryfront.module.serve.total", {
+    candidate.moduleServeCounter = meter.createCounter("veryfront.module.serve.total", {
       description: "Module server responses by status",
     });
-    otel.moduleTransformCounter = meter.createCounter("veryfront.module.transform.total", {
+    candidate.moduleTransformCounter = meter.createCounter("veryfront.module.transform.total", {
       description: "Module transforms",
     });
-    otel.moduleTransformDurationHistogram = meter.createHistogram(
+    candidate.moduleTransformDurationHistogram = meter.createHistogram(
       "veryfront.module.transform.duration",
       {
         description: "Module transform duration (ms)",
         unit: "ms",
       },
     );
-    otel.routeManifestLookupCounter = meter.createCounter("veryfront.route_manifest.lookup.total", {
-      description: "Route module manifest LRU lookups by hit status",
-    });
+    candidate.routeManifestLookupCounter = meter.createCounter(
+      "veryfront.route_manifest.lookup.total",
+      {
+        description: "Route module manifest LRU lookups by hit status",
+      },
+    );
+    return candidate;
   } catch (e) {
     safeLogWarn("[metrics] OpenTelemetry init failed", e);
+    return null;
   }
 }
 
 export function ensureOtelInstruments(): Promise<void> {
-  if (!initPromise) {
-    initPromise = doInitOtelInstruments();
-  }
-  return initPromise;
+  const providerRevision = getMetricsApiRevision();
+  if (initializedRevision === providerRevision) return Promise.resolve();
+  if (initPromise && initializingRevision === providerRevision) return initPromise;
+
+  clearOtelInstruments();
+  initializingRevision = providerRevision;
+  const generation = lifecycleGeneration;
+  const attempt = createOtelInstruments()
+    .then((candidate) => {
+      if (
+        !candidate || generation !== lifecycleGeneration ||
+        getMetricsApiRevision() !== providerRevision
+      ) return;
+      Object.assign(otel, candidate);
+      initializedRevision = providerRevision;
+    })
+    .finally(() => {
+      if (initPromise !== attempt) return;
+      initPromise = null;
+      initializingRevision = -1;
+    });
+  initPromise = attempt;
+  return attempt;
 }
 
 export async function safeOtelOperation(
@@ -108,9 +139,9 @@ export function getOtelInstruments(): OtelInstruments {
 }
 
 export function resetOtelInstruments(): void {
+  lifecycleGeneration++;
   initPromise = null;
-
-  for (const key of Object.keys(otel) as (keyof OtelInstruments)[]) {
-    delete otel[key];
-  }
+  initializingRevision = -1;
+  initializedRevision = -1;
+  clearOtelInstruments();
 }

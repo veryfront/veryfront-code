@@ -3,12 +3,12 @@ import { endSpan, setSpanAttributes, type SpanOptions, startSpan } from "../trac
 import type { BatchOptions, InstrumentOptions } from "./types.ts";
 
 /** Instrument an async operation. */
-export function instrument<T extends (...args: unknown[]) => Promise<unknown>>(
-  fn: T,
+export function instrument<TArgs extends unknown[], TResult>(
+  fn: (...args: TArgs) => Promise<TResult>,
   spanName: string,
   options?: InstrumentOptions,
-): T {
-  return (async (...args: Parameters<T>): Promise<ReturnType<T>> => {
+): (...args: TArgs) => Promise<TResult> {
+  return async (...args: TArgs): Promise<TResult> => {
     const span = createSpan(spanName, args, options);
     const startTime = performance.now();
 
@@ -16,21 +16,21 @@ export function instrument<T extends (...args: unknown[]) => Promise<unknown>>(
       const result = await fn(...args);
       recordDuration(span, startTime);
       endSpan(span);
-      return result as ReturnType<T>;
+      return result;
     } catch (error) {
-      endSpan(span, error as Error);
+      endSpan(span, error);
       throw error;
     }
-  }) as T;
+  };
 }
 
 /** Instrument a synchronous operation. */
-export function instrumentSync<T extends (...args: unknown[]) => unknown>(
-  fn: T,
+export function instrumentSync<TArgs extends unknown[], TResult>(
+  fn: (...args: TArgs) => TResult,
   spanName: string,
   options?: InstrumentOptions,
-): T {
-  return ((...args: Parameters<T>): ReturnType<T> => {
+): (...args: TArgs) => TResult {
+  return (...args: TArgs): TResult => {
     const span = createSpan(spanName, args, options);
     const startTime = performance.now();
 
@@ -38,12 +38,12 @@ export function instrumentSync<T extends (...args: unknown[]) => unknown>(
       const result = fn(...args);
       recordDuration(span, startTime);
       endSpan(span);
-      return result as ReturnType<T>;
+      return result;
     } catch (error) {
-      endSpan(span, error as Error);
+      endSpan(span, error);
       throw error;
     }
-  }) as T;
+  };
 }
 
 /** Instrument a batch operation. */
@@ -54,6 +54,9 @@ export async function instrumentBatch<T>(
   options?: BatchOptions,
 ): Promise<void> {
   const batchSize = options?.batchSize ?? 10;
+  if (!Number.isSafeInteger(batchSize) || batchSize <= 0) {
+    throw new RangeError("instrumentBatch batchSize must be a positive integer");
+  }
   const totalBatches = Math.ceil(items.length / batchSize);
 
   const batchSpan = startSpan(operationName, {
@@ -84,22 +87,29 @@ export async function instrumentBatch<T>(
         await Promise.all(batch.map((item, index) => processor(item, start + index)));
         endSpan(batchItemSpan);
       } catch (error) {
-        endSpan(batchItemSpan, error as Error);
+        endSpan(batchItemSpan, error);
         throw error;
       }
     }
 
     endSpan(batchSpan);
   } catch (error) {
-    endSpan(batchSpan, error as Error);
+    endSpan(batchSpan, error);
     throw error;
   }
 }
 
 function createSpan(spanName: string, args: unknown[], options?: InstrumentOptions): Span | null {
+  let attributes: SpanOptions["attributes"] = {};
+  try {
+    attributes = options?.attributes?.(args) ?? {};
+  } catch (_) {
+    /* expected: instrumentation metadata must not block the wrapped operation */
+  }
+
   const spanOptions: SpanOptions = {
     kind: options?.kind ?? "internal",
-    attributes: options?.attributes?.(args) ?? {},
+    attributes,
   };
 
   return startSpan(spanName, spanOptions);

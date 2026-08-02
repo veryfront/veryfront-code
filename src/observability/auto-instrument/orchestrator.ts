@@ -8,34 +8,48 @@ import { mergeConfig } from "./configurator.ts";
 const logger = serverLogger.component("auto-instrument");
 
 let initialized = false;
+let initializationPromise: Promise<void> | null = null;
+let lifecycleGeneration = 0;
 
 /** Initialize automatic instrumentation wrappers. */
-export async function initAutoInstrumentation(
+export function initAutoInstrumentation(
   config: AutoInstrumentConfig = {},
   adapter?: RuntimeAdapter,
 ): Promise<void> {
+  if (initializationPromise) return initializationPromise;
   if (initialized) {
     logger.debug("Already initialized");
-    return;
+    return Promise.resolve();
   }
 
   const finalConfig = mergeConfig(config);
+  const generation = lifecycleGeneration;
 
-  try {
-    if (finalConfig.tracing?.enabled) {
-      await initTracing(finalConfig.tracing, adapter);
+  const attempt = (async (): Promise<void> => {
+    try {
+      if (finalConfig.tracing?.enabled) {
+        await initTracing(finalConfig.tracing, adapter);
+      }
+
+      if (finalConfig.metrics?.enabled) {
+        await initMetrics(finalConfig.metrics, adapter);
+      }
+
+      if (generation === lifecycleGeneration) logInitialization(finalConfig);
+    } catch (error) {
+      if (generation === lifecycleGeneration) {
+        logger.warn("Failed to initialize auto-instrumentation", error);
+      }
+    } finally {
+      if (generation === lifecycleGeneration) initialized = true;
     }
+  })();
 
-    if (finalConfig.metrics?.enabled) {
-      await initMetrics(finalConfig.metrics, adapter);
-    }
-
-    logInitialization(finalConfig);
-  } catch (error) {
-    logger.warn("Failed to initialize auto-instrumentation", error);
-  } finally {
-    initialized = true;
-  }
+  const tracked = attempt.finally(() => {
+    if (initializationPromise === tracked) initializationPromise = null;
+  });
+  initializationPromise = tracked;
+  return tracked;
 }
 
 /** Check whether auto instrumentation is enabled. */
@@ -48,7 +62,9 @@ export function isAutoInstrumentEnabled(): boolean {
  * @internal
  */
 export function __resetAutoInstrumentForTests(): void {
+  lifecycleGeneration++;
   initialized = false;
+  initializationPromise = null;
 }
 
 function logInitialization(config: AutoInstrumentConfig): void {

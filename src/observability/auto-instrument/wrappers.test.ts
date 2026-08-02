@@ -5,6 +5,16 @@ import { instrument, instrumentBatch, instrumentSync } from "./wrappers.ts";
 
 describe("observability/auto-instrument/wrappers", () => {
   describe("instrument (async wrapper)", () => {
+    it("does not block the wrapped operation when attribute collection fails", async () => {
+      const wrapped = instrument(() => Promise.resolve("application result"), "test.attributes", {
+        attributes: () => {
+          throw new Error("telemetry attributes failed");
+        },
+      });
+
+      assertEquals(await wrapped(), "application result");
+    });
+
     it("should wrap an async function and preserve its result", async () => {
       const fn = (x: number): Promise<number> => Promise.resolve(x * 2);
       const wrapped = instrument(fn, "test.double");
@@ -59,6 +69,16 @@ describe("observability/auto-instrument/wrappers", () => {
   });
 
   describe("instrumentSync (sync wrapper)", () => {
+    it("does not block the wrapped operation when attribute collection fails", () => {
+      const wrapped = instrumentSync(() => "application result", "test.attributes", {
+        attributes: () => {
+          throw new Error("telemetry attributes failed");
+        },
+      });
+
+      assertEquals(wrapped(), "application result");
+    });
+
     it("should wrap a sync function and preserve its result", () => {
       const fn = (x: number): number => x * 3;
       const wrapped = instrumentSync(fn, "test.triple");
@@ -104,6 +124,14 @@ describe("observability/auto-instrument/wrappers", () => {
   });
 
   describe("instrumentBatch", () => {
+    it("rejects invalid batch sizes instead of silently skipping work", async () => {
+      await assertRejects(
+        () => instrumentBatch("test.invalid-size", [1], async () => {}, { batchSize: -1 }),
+        RangeError,
+        "batchSize",
+      );
+    });
+
     it("should process all items", async () => {
       const results: number[] = [];
       // deno-lint-ignore require-await

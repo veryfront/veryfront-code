@@ -343,17 +343,50 @@ describe("middleware/core/pipeline/MiddlewarePipeline", () => {
       pipeline.onTeardown(() => {
         cleanupCount++;
       });
+      pipeline.use(() => {
+        throw new Error("middleware blew up");
+      });
+      // The pipeline turns a middleware failure into a 500, so the rejection
+      // has to come from the error response itself failing to build.
+      const adapter = {
+        env: {
+          get() {
+            throw new Error("adapter unavailable");
+          },
+        },
+      };
+
+      await assertRejects(
+        () =>
+          pipeline.execute(
+            new Request("http://localhost/"),
+            undefined,
+            undefined,
+            adapter as unknown as Parameters<MiddlewarePipeline["execute"]>[3],
+          ),
+        Error,
+        "adapter unavailable",
+      );
+      assertEquals(cleanupCount, 1);
+    });
+
+    it("should keep execution working when the tracer provider fails", async () => {
+      const pipeline = new MiddlewarePipeline();
+      let cleanupCount = 0;
+
+      pipeline.onTeardown(() => {
+        cleanupCount++;
+      });
       setGlobalTracerProvider({
         getTracer() {
           throw new Error("tracing unavailable");
         },
       });
 
-      await assertRejects(
-        () => pipeline.execute(new Request("http://localhost/")),
-        Error,
-        "tracing unavailable",
-      );
+      const response = await pipeline.execute(new Request("http://localhost/"));
+
+      assertEquals(response.status, 404);
+      assertEquals(await response.text(), "Not Found");
       assertEquals(cleanupCount, 1);
     });
 

@@ -97,6 +97,9 @@ export const SpanNames = {
   CACHE_REGISTRY_SCAN_REDIS: "cache.registry.scan_redis",
   CACHE_REGISTRY_GET_REDIS_KEYS: "cache.registry.get_redis_keys",
   CACHE_REGISTRY_DELETE_REDIS_KEYS: "cache.registry.delete_redis_keys",
+  CACHE_REGISTRY_LIST_DISTRIBUTED_KEYS: "cache.registry.list_distributed_keys",
+  CACHE_REGISTRY_GET_DISTRIBUTED_KEYS: "cache.registry.get_distributed_keys",
+  CACHE_REGISTRY_DELETE_DISTRIBUTED_KEYS: "cache.registry.delete_distributed_keys",
   CACHE_KEYS_GET_ALL_ASYNC: "cache.keys.get_all_async",
   CACHE_KEYS_DELETE_ALL_ASYNC: "cache.keys.delete_all_async",
   CACHE_MULTI_TIER_GET: "cache.multi_tier.get",
@@ -105,6 +108,7 @@ export const SpanNames = {
   HTML_GENERATE_SHELL_PARTS: "html.generate_shell_parts",
   HTML_WRAP_IN_SHELL: "html.wrap_in_shell",
   HTML_GENERATE_TAILWIND_CSS: "html.generate_tailwind_css",
+  HTML_GENERATE_CSS: "html.generate_css",
   HTML_GET_CSS_BY_HASH: "html.get_css_by_hash",
   HTML_REGENERATE_CSS_BY_HASH: "html.regenerate_css_by_hash",
 

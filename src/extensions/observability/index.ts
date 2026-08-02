@@ -15,3 +15,11 @@ export type {
   NodeTelemetryProvider,
 } from "./node-telemetry-provider.ts";
 export { NodeTelemetryProviderName } from "./node-telemetry-provider.ts";
+export type {
+  ApplicationErrorContext,
+  ApplicationErrorReporter,
+  ApplicationErrorReporterInitializationContext,
+  ApplicationErrorReporterInitializer,
+  ApplicationErrorReporterSession,
+} from "./application-error-reporter.ts";
+export { ApplicationErrorReporterInitializerName } from "./application-error-reporter.ts";
