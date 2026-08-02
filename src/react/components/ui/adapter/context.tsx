@@ -7,7 +7,7 @@
  *   one code path.
  * - `UIAdapterProvider` accepts a **partial** map that merges over the builtin
  *   (and over any inherited parent adapter), so an app can override just
- *   `popover` and leave everything else zero-dependency.
+ *   `disclosure` and leave everything else zero-dependency.
  *
  * @module react/components/ui/adapter/context
  */

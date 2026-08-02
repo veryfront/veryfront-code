@@ -77,9 +77,9 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `CheckboxGroup` | Vertical group of checkboxes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L91) |
 | `CodeBlock` | Render escaped source or delegate to explicit syntax/diagram capabilities. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L270) |
 | `CodeBlockRendererProvider` | Provide extension-owned syntax and diagram renderers to a React subtree. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L80) |
-| `Collapsible` | Collapsible root whose open-state mechanics come from the active adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L27) |
-| `CollapsibleContent` | Collapsible content retained in the DOM and hidden while closed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L51) |
-| `CollapsibleTrigger` | Toggle through the active disclosure adapter. `asChild` composes onto one child. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L45) |
+| `Collapsible` | Collapsible root whose open-state mechanics come from the active adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L89) |
+| `CollapsibleContent` | Collapsible content retained in the DOM and hidden while closed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L120) |
+| `CollapsibleTrigger` | Toggle through the active disclosure adapter. `asChild` composes onto one child. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L114) |
 | `ColorModeProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L60) |
 | `ColorModeScript` | Inline script to prevent flash of wrong color mode on SSR. Render this in &lt;head&gt; before any content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L152) |
 | `ColorModeToggle` | Simple toggle button for color mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L176) |

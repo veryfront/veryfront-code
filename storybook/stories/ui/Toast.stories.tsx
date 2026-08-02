@@ -105,7 +105,7 @@ function CustomTrigger() {
       onClick={() =>
         toast.custom((id) => (
           <div className="pointer-events-auto flex items-center gap-3 rounded-lg bg-[var(--foreground)] px-4 py-3 text-sm text-[var(--background)] shadow-lg">
-            🎉 Fully custom toast
+            Fully custom toast
             <button type="button" className="underline" onClick={() => dismiss(id)}>close</button>
           </div>
         ))}

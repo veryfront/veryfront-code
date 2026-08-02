@@ -194,6 +194,49 @@ function runDisclosureConformance(
         unmount();
       }
     });
+
+    it("preserves ids declared directly on public Collapsible parts", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosurePartIdProbe />
+        </Wrap>,
+      );
+      try {
+        const trigger = host.querySelector("button")!;
+        const content = host.querySelector<HTMLElement>("[role=region]")!;
+        assert(trigger.id === "part-trigger", "keeps the declared trigger id");
+        assert(content.id === "part-content", "keeps the declared content id");
+        assert(
+          trigger.getAttribute("aria-controls") === content.id,
+          "controls declared content id",
+        );
+        assert(
+          content.getAttribute("aria-labelledby") === trigger.id,
+          "declared content is named by declared trigger",
+        );
+      } finally {
+        unmount();
+      }
+    });
+
+    it("preserves an id declared on a composed trigger child", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosureComposedIdProbe />
+        </Wrap>,
+      );
+      try {
+        const trigger = host.querySelector("a")!;
+        const content = host.querySelector<HTMLElement>("[role=region]")!;
+        assert(trigger.id === "composed-trigger", "keeps the composed child id");
+        assert(
+          content.getAttribute("aria-labelledby") === trigger.id,
+          "content is named by the composed trigger",
+        );
+      } finally {
+        unmount();
+      }
+    });
   });
 }
 
@@ -250,6 +293,26 @@ function DisclosureCustomIdProbe(): React.ReactElement {
     <Collapsible triggerId="custom-trigger" contentId="custom-content">
       <CollapsibleTrigger id="custom-trigger">Toggle</CollapsibleTrigger>
       <CollapsibleContent id="custom-content" role="region">Body</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function DisclosurePartIdProbe(): React.ReactElement {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger id="part-trigger">Toggle</CollapsibleTrigger>
+      <CollapsibleContent id="part-content" role="region">Body</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function DisclosureComposedIdProbe(): React.ReactElement {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger asChild>
+        <a id="composed-trigger" href="#details">Toggle</a>
+      </CollapsibleTrigger>
+      <CollapsibleContent role="region">Body</CollapsibleContent>
     </Collapsible>
   );
 }

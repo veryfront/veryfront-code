@@ -1,5 +1,5 @@
 /**
- * `Slot` — forked from @radix-ui/react-slot (MIT, © WorkOS), inlined so
+ * `Slot` - forked from @radix-ui/react-slot (MIT, © WorkOS), inlined so
  * `veryfront/chat` takes no external Radix dependency. Merges its props onto a
  * single child element (the `asChild` pattern): className is concatenated,
  * style is shallow-merged, event handlers are chained (child first by default),
