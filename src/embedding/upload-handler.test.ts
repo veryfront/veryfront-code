@@ -3,7 +3,6 @@ import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
-import { serverLogger } from "#veryfront/utils";
 import { createUploadHandler } from "./upload-handler.ts";
 import type { RagSearchOptions, RagSearchResult, RagStore } from "./types.ts";
 
