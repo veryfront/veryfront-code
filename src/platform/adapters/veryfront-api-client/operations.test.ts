@@ -39,6 +39,55 @@ function assertMethodExists<T extends object>(obj: T, key: keyof T): void {
   assertEquals(typeof value, "function");
 }
 
+async function withoutAbortSignalAny<T>(operation: () => Promise<T>): Promise<T> {
+  const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+  Object.defineProperty(AbortSignal, "any", {
+    configurable: true,
+    value: undefined,
+    writable: true,
+  });
+  try {
+    return await operation();
+  } finally {
+    if (descriptor === undefined) Reflect.deleteProperty(AbortSignal, "any");
+    else Object.defineProperty(AbortSignal, "any", descriptor);
+  }
+}
+
+function observeAbortListenerBalance(signal: AbortSignal): {
+  readonly counts: { added: number; removed: number };
+  restore(): void;
+} {
+  const addDescriptor = Object.getOwnPropertyDescriptor(signal, "addEventListener");
+  const removeDescriptor = Object.getOwnPropertyDescriptor(signal, "removeEventListener");
+  const addEventListener = signal.addEventListener.bind(signal);
+  const removeEventListener = signal.removeEventListener.bind(signal);
+  const counts = { added: 0, removed: 0 };
+  Object.defineProperty(signal, "addEventListener", {
+    configurable: true,
+    value: ((...args: Parameters<AbortSignal["addEventListener"]>) => {
+      if (args[0] === "abort") counts.added++;
+      return addEventListener(...args);
+    }) as AbortSignal["addEventListener"],
+  });
+  Object.defineProperty(signal, "removeEventListener", {
+    configurable: true,
+    value: ((...args: Parameters<AbortSignal["removeEventListener"]>) => {
+      if (args[0] === "abort") counts.removed++;
+      return removeEventListener(...args);
+    }) as AbortSignal["removeEventListener"],
+  });
+  return {
+    counts,
+    restore() {
+      if (addDescriptor === undefined) Reflect.deleteProperty(signal, "addEventListener");
+      else Object.defineProperty(signal, "addEventListener", addDescriptor);
+      if (removeDescriptor === undefined) Reflect.deleteProperty(signal, "removeEventListener");
+      else Object.defineProperty(signal, "removeEventListener", removeDescriptor);
+    },
+  };
+}
+
 describe("VeryfrontAPIOperations", () => {
   const originalFetch = globalThis.fetch;
 
@@ -546,13 +595,7 @@ describe("VeryfrontAPIOperations", () => {
     });
 
     it("propagates caller cancellation when AbortSignal.any is unavailable", async () => {
-      const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any");
-      Object.defineProperty(AbortSignal, "any", {
-        configurable: true,
-        value: undefined,
-        writable: true,
-      });
-      try {
+      await withoutAbortSignalAny(async () => {
         let observedSignal: AbortSignal | undefined;
         let markStarted!: () => void;
         const started = new Promise<void>((resolve) => {
@@ -575,21 +618,98 @@ describe("VeryfrontAPIOperations", () => {
           retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
         });
         const controller = new AbortController();
-        const cancellation = new Error("compat cancellation");
-        const request = transport.request("/cancelled", { signal: controller.signal });
-        await started;
+        const observation = observeAbortListenerBalance(controller.signal);
+        try {
+          const cancellation = new Error("compat cancellation");
+          const request = transport.request("/cancelled", { signal: controller.signal });
+          await started;
 
-        controller.abort(cancellation);
+          controller.abort(cancellation);
 
-        assertEquals(observedSignal?.reason, cancellation);
-        await assertRejects(() => request, Error, "compat cancellation");
-      } finally {
-        if (anyDescriptor === undefined) {
-          Reflect.deleteProperty(AbortSignal, "any");
-        } else {
-          Object.defineProperty(AbortSignal, "any", anyDescriptor);
+          assertEquals(observedSignal?.reason, cancellation);
+          await assertRejects(() => request, Error, "compat cancellation");
+          assertEquals(observation.counts, { added: 1, removed: 1 });
+        } finally {
+          observation.restore();
         }
-      }
+      });
+    });
+
+    it("detaches compatibility listeners after a successful request", async () => {
+      await withoutAbortSignalAny(async () => {
+        globalThis.fetch = (() => Promise.resolve(new Response("{}"))) as typeof fetch;
+        const caller = new AbortController();
+        const observation = observeAbortListenerBalance(caller.signal);
+        try {
+          const transport = createVeryfrontApiTransport<unknown>({
+            baseUrl: "https://api.example.com",
+            getToken: () => "token",
+            retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+            timeoutMs: 1_000,
+          });
+
+          await transport.request("/ok", { signal: caller.signal });
+
+          assertEquals(observation.counts, { added: 1, removed: 1 });
+        } finally {
+          observation.restore();
+        }
+      });
+    });
+
+    it("detaches compatibility listeners after a non-abort failure", async () => {
+      await withoutAbortSignalAny(async () => {
+        globalThis.fetch = (() => Promise.reject(new Error("network failed"))) as typeof fetch;
+        const caller = new AbortController();
+        const observation = observeAbortListenerBalance(caller.signal);
+        try {
+          const transport = createVeryfrontApiTransport<unknown>({
+            baseUrl: "https://api.example.com",
+            getToken: () => "token",
+            retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+            timeoutMs: 1_000,
+          });
+
+          await assertRejects(
+            () => transport.request("/failed", { signal: caller.signal }),
+            VeryfrontError,
+            "network failed",
+          );
+
+          assertEquals(observation.counts, { added: 1, removed: 1 });
+        } finally {
+          observation.restore();
+        }
+      });
+    });
+
+    it("balances compatibility listeners across retry attempts", async () => {
+      await withoutAbortSignalAny(async () => {
+        let fetchCalls = 0;
+        globalThis.fetch = (() => {
+          fetchCalls++;
+          return fetchCalls === 1
+            ? Promise.reject(new Error("retryable failure"))
+            : Promise.resolve(new Response("{}"));
+        }) as typeof fetch;
+        const caller = new AbortController();
+        const observation = observeAbortListenerBalance(caller.signal);
+        try {
+          const transport = createVeryfrontApiTransport<unknown>({
+            baseUrl: "https://api.example.com",
+            getToken: () => "token",
+            retry: { maxRetries: 1, initialDelay: 0, maxDelay: 0 },
+            timeoutMs: 1_000,
+          });
+
+          await transport.request("/retried", { signal: caller.signal });
+
+          assertEquals(fetchCalls, 2);
+          assertEquals(observation.counts, { added: 2, removed: 2 });
+        } finally {
+          observation.restore();
+        }
+      });
     });
 
     it("reserves worst-case JSON escape bytes outside the non-value response budget", async () => {

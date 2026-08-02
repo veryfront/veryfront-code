@@ -181,10 +181,19 @@ export function createVeryfrontApiTransport<T>(
             headers.set("Authorization", `Bearer ${token}`);
             injectContext(headers);
             const start = performance.now();
-            const signal = combineRequestSignals(attemptSignal, requestInit.signal);
-            const res = await fetch(url, { method, headers, body: requestInit.body, signal });
-            afterFetch?.(res.status, performance.now() - start);
-            return onResponse(res, requestInit, url, signal);
+            const combined = combineRequestSignals(attemptSignal, requestInit.signal);
+            try {
+              const res = await fetch(url, {
+                method,
+                headers,
+                body: requestInit.body,
+                signal: combined.signal,
+              });
+              afterFetch?.(res.status, performance.now() - start);
+              return await onResponse(res, requestInit, url, combined.signal);
+            } finally {
+              combined.dispose();
+            }
           };
           return wrapFetch ? wrapFetch(doFetch, url, method, attempt) : doFetch();
         },
@@ -222,17 +231,41 @@ export function createVeryfrontApiTransport<T>(
   };
 }
 
+interface CombinedRequestSignal {
+  readonly signal: AbortSignal | undefined;
+  dispose(): void;
+}
+
 function combineRequestSignals(
   attemptSignal: AbortSignal | undefined,
   callerSignal: AbortSignal | undefined,
-): AbortSignal | undefined {
-  if (!attemptSignal) return callerSignal;
-  if (!callerSignal) return attemptSignal;
+): CombinedRequestSignal {
+  if (!attemptSignal || !callerSignal) {
+    return {
+      signal: attemptSignal ?? callerSignal,
+      dispose() {},
+    };
+  }
   if (typeof AbortSignal.any === "function") {
-    return AbortSignal.any([attemptSignal, callerSignal]);
+    return {
+      signal: AbortSignal.any([attemptSignal, callerSignal]),
+      dispose() {},
+    };
   }
 
   const controller = new AbortController();
+  let attemptListenerAttached = false;
+  let callerListenerAttached = false;
+  const detach = () => {
+    if (attemptListenerAttached) {
+      attemptListenerAttached = false;
+      attemptSignal.removeEventListener("abort", abortFromAttempt);
+    }
+    if (callerListenerAttached) {
+      callerListenerAttached = false;
+      callerSignal.removeEventListener("abort", abortFromCaller);
+    }
+  };
   const abortFromAttempt = () => {
     detach();
     controller.abort(attemptSignal.reason);
@@ -241,10 +274,6 @@ function combineRequestSignals(
     detach();
     controller.abort(callerSignal.reason);
   };
-  const detach = () => {
-    attemptSignal.removeEventListener("abort", abortFromAttempt);
-    callerSignal.removeEventListener("abort", abortFromCaller);
-  };
 
   if (attemptSignal.aborted) {
     abortFromAttempt();
@@ -252,9 +281,15 @@ function combineRequestSignals(
     abortFromCaller();
   } else {
     attemptSignal.addEventListener("abort", abortFromAttempt, { once: true });
+    attemptListenerAttached = true;
     callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+    callerListenerAttached = true;
+    // Close the check-to-listen window for signals aborted by an unusual
+    // host implementation while listeners were being attached.
+    if (attemptSignal.aborted) abortFromAttempt();
+    else if (callerSignal.aborted) abortFromCaller();
   }
-  return controller.signal;
+  return { signal: controller.signal, dispose: detach };
 }
 
 /** Canonical transport: span tracing, request metrics, API_CLIENT_ERROR mapping. */
