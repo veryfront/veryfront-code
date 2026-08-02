@@ -17,6 +17,10 @@ import {
 } from "./default-chat-runtime.ts";
 import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import {
+  createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
   schemaVersion: 1,
@@ -77,6 +81,12 @@ function restoreEnv(key: string, value: string | undefined): void {
 
 Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime", async () => {
   let capturedContext: DefaultHostedChatRuntimeTaskContext | undefined;
+  let capturedCapability: unknown;
+  const runEventWriterCapability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com",
+    runId: "run-1",
+    runEventAppendToken: "root-writer-token",
+  });
 
   const runtime = await createDefaultHostedChatRuntime({
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
@@ -84,7 +94,6 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
       projectId: "project-1",
       branchId: "branch-1",
       authToken: "token-1",
-      runEventAppendToken: "root-writer-token",
       instructions: "Base instructions",
       model: "sonnet",
       allowedTools: ["sleep"],
@@ -104,11 +113,12 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     },
     buildLocalTools: (taskContext) => {
       capturedContext = taskContext;
+      capturedCapability = getActiveHostedRunEventWriterCapability();
       return { sleep: localTool("Sleep") };
     },
     createRemoteToolSource: emptyRemoteSource,
     preloadLatestConversationUserText: false,
-  });
+  }, runEventWriterCapability);
 
   assertEquals(runtime.runtimeKind, "framework");
   assertEquals(runtime.modelId, "anthropic/claude-sonnet-4-6");
@@ -116,7 +126,10 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.projectId, "project-1");
   assertEquals(capturedContext.branchId, "branch-1");
   assertEquals(capturedContext.model, "anthropic/claude-sonnet-4-6");
-  assertEquals(capturedContext.runEventAppendToken, "root-writer-token");
+  assertEquals("runEventAppendToken" in capturedContext, false);
+  assertEquals("runEventWriterCapability" in capturedContext, false);
+  assertEquals(JSON.stringify(capturedContext).includes("root-writer-token"), false);
+  assertEquals(capturedCapability, runEventWriterCapability);
   assertEquals(capturedContext.userId, "user-1");
   assertEquals(capturedContext.submittedFormInputResult, {
     values: { topic: "Support FAQ assistant" },

@@ -37,15 +37,15 @@ import {
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
 import {
-  exchangeHostedChildRunEventWriterToken,
   HostedChildRunEventWriterTokenExchangeError,
+  type HostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 
 /** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
   durableChildRun?: HostedChildRunIdentifiers;
-  /** @internal Exact-run credential used only for durable child event persistence. */
-  runEventAppendToken?: string;
+  /** @internal Non-serializable exact-run authority for nested durable children. */
+  runEventWriterCapability?: HostedRunEventWriterCapability;
 };
 
 /** Result returned from hosted durable child invoke. */
@@ -420,7 +420,6 @@ export type HostedDurableChildBootstrapCallbacks = {
 /** Public API contract for hosted durable child runtime dependencies. */
 export type HostedDurableChildRuntimeDependencies = {
   bootstrapChildRun?: typeof bootstrapHostedChildRun;
-  exchangeChildRunEventWriterToken?: typeof exchangeHostedChildRunEventWriterToken;
   createLifecycleAdapter?: typeof createConversationChildLifecycleAdapter;
   runLifecycle?: typeof runHostedChildExecutionLifecycle;
   shouldSkipTerminalPersistence?: typeof shouldSkipHostedChildTerminalPersistence;
@@ -432,8 +431,8 @@ export type ExecuteHostedDurableChildForkInput<
   TLocalResult extends ChildRunExecutionResult,
 > = {
   authToken: string;
-  /** @internal Verified active-parent credential used only to mint the child writer token. */
-  runEventAppendToken?: string;
+  /** @internal Non-serializable active-run authority used only for direct children. */
+  runEventWriterCapability?: HostedRunEventWriterCapability;
   apiUrl: string;
   forkInput: HostedChildForkToolInput;
   executionOptions: {
@@ -622,7 +621,7 @@ async function executeHostedDurableChildLifecycle<
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult> & {
     bootstrapContext: HostedDurableChildBootstrapContext;
     identifiers: HostedChildRunIdentifiers;
-    childRunEventAppendToken: string;
+    childRunEventWriterCapability: HostedRunEventWriterCapability;
   },
 ): Promise<TResult> {
   const { bootstrapContext, identifiers } = input;
@@ -639,7 +638,7 @@ async function executeHostedDurableChildLifecycle<
     execute: () =>
       input.executeLocal({
         durableChildRun: identifiers,
-        runEventAppendToken: input.childRunEventAppendToken,
+        runEventWriterCapability: input.childRunEventWriterCapability,
       }),
     getExecutionSnapshot: input.getExecutionSnapshot,
     onLifecycleError: input.onLifecycleError,
@@ -715,11 +714,7 @@ function createDurableChildLifecycleAdapter<
   });
 }
 
-/**
- * Reports a bootstrap failure through the observability-only callback. The callback must
- * never abort child finalization or the setup-failure result, so its own failure is
- * routed to the lifecycle-error sink instead of propagating.
- */
+/** Report an observability callback failure without changing durable setup control flow. */
 async function notifyBootstrapError(
   callbacks: {
     onBootstrapError?: HostedDurableChildBootstrapCallbacks["onBootstrapError"];
@@ -733,7 +728,7 @@ async function notifyBootstrapError(
     try {
       await callbacks.onCallbackError?.(callbackError);
     } catch {
-      // The reporting sink itself failed; there is no further channel to report to.
+      // Observability must not alter durable setup or terminal persistence.
     }
   }
 }
@@ -788,26 +783,28 @@ export async function executeHostedDurableChildFork<
     });
   }
 
-  let childRunEventAppendToken: string;
+  let childRunEventWriterCapability: HostedRunEventWriterCapability;
   try {
-    if (!input.runEventAppendToken) {
+    if (!input.runEventWriterCapability) {
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
-    const exchangeChildRunEventWriterToken = input.runtime?.exchangeChildRunEventWriterToken ??
-      exchangeHostedChildRunEventWriterToken;
-    childRunEventAppendToken = await exchangeChildRunEventWriterToken({
-      apiUrl: input.apiUrl,
-      parentRunId: bootstrapContext.parentRunId,
-      childRunId: identifiers.childRunId,
-      runEventAppendToken: input.runEventAppendToken,
-      abortSignal: input.executionOptions.abortSignal,
-    });
-  } catch {
-    const setupError = new HostedChildRunEventWriterTokenExchangeError();
+    childRunEventWriterCapability = await input.runEventWriterCapability
+      .mintChildRunEventAppendToken(
+        identifiers.childRunId,
+        input.executionOptions.abortSignal,
+      );
+  } catch (error) {
+    const setupError = new HostedChildRunEventWriterTokenExchangeError(
+      error instanceof HostedChildRunEventWriterTokenExchangeError
+        ? error.classification
+        : input.executionOptions.abortSignal?.aborted
+        ? "aborted"
+        : "failed",
+    );
     await notifyBootstrapError(
       {
         onBootstrapError: input.bootstrap?.onBootstrapError,
-        onCallbackError: input.onLifecycleError,
+        onCallbackError: () => input.onLifecycleError?.(setupError),
       },
       {
         error: setupError,
@@ -827,11 +824,11 @@ export async function executeHostedDurableChildFork<
         bootstrapContext,
         identifiers,
       }).failed?.(terminalState);
-    } catch (lifecycleError) {
-      if (input.onLifecycleError) {
-        await input.onLifecycleError(lifecycleError);
-      } else {
-        throw lifecycleError;
+    } catch {
+      try {
+        await input.onLifecycleError?.(setupError);
+      } catch {
+        // The structured setup failure remains authoritative and sanitized.
       }
     }
 
@@ -849,6 +846,6 @@ export async function executeHostedDurableChildFork<
     ...input,
     bootstrapContext,
     identifiers,
-    childRunEventAppendToken,
+    childRunEventWriterCapability,
   });
 }

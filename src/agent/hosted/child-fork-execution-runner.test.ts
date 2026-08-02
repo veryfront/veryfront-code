@@ -254,7 +254,6 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
   let activeDuringIteration = false;
   const result = await executeHostedChildForkWithPreparedTools({
     authToken: "token",
-    runEventAppendToken: "child-writer-token",
     apiUrl: "https://api.example.com",
     description: "Check the app",
     kind: "invoke_agent",
@@ -277,10 +276,10 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
     createRunContext: (input) => {
       createRunContextCalls += 1;
       assertEquals(input.authToken, "token");
-      assertEquals(input.runEventAppendToken, "child-writer-token");
+      assertEquals("runEventAppendToken" in input, false);
+      assertEquals("runEventWriterCapability" in input, false);
       assertEquals(input.apiUrl, "https://api.example.com");
       const context = createHostedDurableChildForkRunContext({
-        authToken: input.authToken,
         apiUrl: input.apiUrl,
         instrumentation: input.instrumentation,
         pendingToolLogContext: {

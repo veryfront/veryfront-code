@@ -64,6 +64,7 @@ import {
   createModelCallContextRunEventRecorder,
   ModelCallContextPersistenceError,
 } from "./model-call-context-run-event-recorder.ts";
+import type { HostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
@@ -98,8 +99,6 @@ export type HostedChildForkExecutionRunContextFactoryInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
   authToken: string;
-  /** @internal Exact-child credential used only by the durable mirror. */
-  runEventAppendToken?: string;
   apiUrl: string;
   durableChildRun?: HostedChildRunIdentifiers;
   conversationId?: string;
@@ -114,8 +113,6 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
   authToken: string;
-  /** @internal Exact-child credential used only by the durable mirror. */
-  runEventAppendToken?: string;
   apiUrl: string;
   projectId?: string | null;
   description: string;
@@ -167,6 +164,7 @@ function createForkRunContext<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: HostedChildForkExecutionRunContextFactoryInput<TAttributes>,
+  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): HostedDurableChildForkRunContext {
   const sourceInstrumentation = input.instrumentation;
   const sourceTrace = sourceInstrumentation?.trace;
@@ -185,8 +183,6 @@ function createForkRunContext<
       : undefined;
 
   return createHostedDurableChildForkRunContext({
-    authToken: input.authToken,
-    runEventAppendToken: input.runEventAppendToken,
     apiUrl: input.apiUrl,
     durableChildRun: input.durableChildRun,
     instrumentation,
@@ -196,7 +192,7 @@ function createForkRunContext<
       description: input.description,
     },
     pendingToolLogWriter: input.pendingToolLogWriter,
-  });
+  }, runEventWriterCapability);
 }
 
 function defaultResolveSystem(input: {
@@ -261,6 +257,7 @@ export async function executeHostedChildForkToolInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
+  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): Promise<ChildRunExecutionResult> {
   const requestedProjectReference = input.forkInput.project_reference;
   if (requestedProjectReference) {
@@ -321,7 +318,7 @@ export async function executeHostedChildForkToolInput<
       runtimeConfig.thinkingConfig,
     ),
     resultMode: forkInput.result_mode,
-  });
+  }, runEventWriterCapability);
 }
 
 /** Execute hosted child fork with prepared tools. */
@@ -329,12 +326,11 @@ export async function executeHostedChildForkWithPreparedTools<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
+  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): Promise<ChildRunExecutionResult> {
   const startTime = input.startTime ?? Date.now();
-  const createRunContext = input.createRunContext ?? createForkRunContext;
-  const runContext = createRunContext({
+  const runContextInput = {
     authToken: input.authToken,
-    runEventAppendToken: input.runEventAppendToken,
     apiUrl: input.apiUrl,
     durableChildRun: input.durableChildRun,
     conversationId: input.conversationId,
@@ -342,7 +338,10 @@ export async function executeHostedChildForkWithPreparedTools<
     description: input.description,
     instrumentation: input.instrumentation,
     pendingToolLogWriter: input.pendingToolLogWriter,
-  });
+  };
+  const runContext = input.createRunContext
+    ? input.createRunContext(runContextInput)
+    : createForkRunContext(runContextInput, runEventWriterCapability);
 
   let closeTooling: (() => Promise<void>) | undefined;
   let closeRuntime: (() => Promise<void>) | undefined;

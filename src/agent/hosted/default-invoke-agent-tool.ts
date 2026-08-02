@@ -74,12 +74,15 @@ import {
   type HostedProjectReferenceResolver,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
+import {
+  getActiveHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 /** Context for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   authToken: string;
-  /** @internal Active exact-run credential inherited only by durable child setup. */
-  runEventAppendToken?: string;
   clientProfile?: RuntimeClientProfile | null;
   model?: string;
   conversationId?: string;
@@ -419,7 +422,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     childConfig?: DefaultHostedChildAgentExecutionConfig;
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
     durableChildRun?: HostedChildRunIdentifiers;
-    runEventAppendToken?: string;
+    runEventWriterCapability?: HostedRunEventWriterCapability;
   },
 ): Promise<ChildRunExecutionResult> {
   const baseConfig = options.getConfig();
@@ -437,15 +440,12 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   const invocationContext = forkInput.context?.veryfront_invocation_context as
     | HostedChildInvocationContext
     | undefined;
-  const scopedOptions = (invocationContext || runtimeOptions.durableChildRun)
+  const scopedOptions = invocationContext
     ? {
       ...options,
       context: {
         ...options.context,
-        ...(invocationContext ? { veryfrontInvocationContext: invocationContext } : {}),
-        ...(runtimeOptions.durableChildRun
-          ? { runEventAppendToken: runtimeOptions.runEventAppendToken }
-          : {}),
+        veryfrontInvocationContext: invocationContext,
       },
     }
     : options;
@@ -455,7 +455,6 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   return executeHostedChildForkToolInput<DefaultHostedInvokeAgentTraceAttributes>({
     apiUrl: config.apiUrl,
     authToken: scopedOptions.context.authToken,
-    runEventAppendToken: runtimeOptions.runEventAppendToken,
     projectId: scopedOptions.context.projectId || null,
     forkInput,
     toolCallId: execution.toolCallId,
@@ -480,16 +479,20 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
       });
     },
     prepareToolAssembly: ({ runtimeConfig, requestedTools, abortSignal }) =>
-      prepareForkToolAssembly(scopedOptions, config, {
-        childAgentId: runtimeOptions.childAgentId,
-        childConfig: runtimeOptions.childConfig,
-        provider: runtimeConfig.provider,
-        forkModel: runtimeConfig.forkModel,
-        effectivePrompt: runtimeConfig.effectivePrompt,
-        requestedTools,
-        abortSignal,
-        durableChildRun: runtimeOptions.durableChildRun,
-      }),
+      runWithHostedRunEventWriterCapability(
+        runtimeOptions.runEventWriterCapability,
+        () =>
+          prepareForkToolAssembly(scopedOptions, config, {
+            childAgentId: runtimeOptions.childAgentId,
+            childConfig: runtimeOptions.childConfig,
+            provider: runtimeConfig.provider,
+            forkModel: runtimeConfig.forkModel,
+            effectivePrompt: runtimeConfig.effectivePrompt,
+            requestedTools,
+            abortSignal,
+            durableChildRun: runtimeOptions.durableChildRun,
+          }),
+      ),
     resolveProviderOptions: options.resolveProviderOptions,
     resolveReasoning: options.resolveReasoning,
     forkContext: scopedOptions.context,
@@ -523,7 +526,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     shouldRethrowError: options.shouldRethrowError,
     instrumentation,
     sourceIntegrationPolicy: execution.sourceIntegrationPolicy,
-  });
+  }, runtimeOptions.runEventWriterCapability);
 }
 
 function getToolCallId(executionContext?: ToolExecutionContext): string {
@@ -577,6 +580,7 @@ export async function executeDefaultHostedInvokeAgentTool<
   input: DefaultHostedInvokeAgentInput,
   childAgentId: string,
   executionContext?: ToolExecutionContext,
+  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): Promise<DefaultHostedInvokeAgentToolResult> {
   let executionSnapshot: ChildRunExecutionSnapshot | null = null;
   const config = options.getConfig();
@@ -635,7 +639,7 @@ export async function executeDefaultHostedInvokeAgentTool<
           executionSnapshot = snapshot;
         },
         durableChildRun: runtimeOptions.durableChildRun,
-        runEventAppendToken: runtimeOptions.runEventAppendToken,
+        runEventWriterCapability: runtimeOptions.runEventWriterCapability,
       },
     );
 
@@ -660,7 +664,7 @@ export async function executeDefaultHostedInvokeAgentTool<
       ChildRunExecutionResult
     >({
       authToken: options.context.authToken,
-      runEventAppendToken: options.context.runEventAppendToken,
+      runEventWriterCapability,
       apiUrl: config.apiUrl,
       forkInput,
       executionOptions: {
@@ -777,6 +781,7 @@ export function createDefaultHostedInvokeAgentTool<
   TContext extends DefaultHostedInvokeAgentContext,
 >(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
+  runEventWriterCapability = getActiveHostedRunEventWriterCapability(),
 ) {
   return createHostedChildInvokeTool<
     DefaultHostedInvokeAgentInput,
@@ -795,6 +800,7 @@ export function createDefaultHostedInvokeAgentTool<
         input,
         resolveChildAgentId(options, input),
         executionOptions,
+        runEventWriterCapability,
       ),
   });
 }

@@ -652,7 +652,6 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   const context = veryfrontCloudAgentServiceInternals.buildHostedChildToolContext(
     {
       authToken: "token-1",
-      runEventAppendToken: "active-child-writer-token",
       projectId: "project-1",
       branchId: "branch-1",
       agentId: "orchestrator",
@@ -697,7 +696,7 @@ Deno.test("hosted nested delegates inherit child scope and durable lineage", () 
   assertEquals(context.conversationId, "child-conversation");
   assertEquals(context.parentRunId, "child-run");
   assertEquals(context.parentMessageId, "child-message");
-  assertEquals(context.runEventAppendToken, "active-child-writer-token");
+  assertEquals("runEventAppendToken" in context, false);
 });
 
 Deno.test("hosted nested delegates clear inherited skill catalog state for empty child selectors", () => {

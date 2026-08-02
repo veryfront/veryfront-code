@@ -29,6 +29,10 @@ import type {
   HostedChatRuntimeCreationResult,
 } from "./chat-runtime-contract.ts";
 import {
+  type HostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
+import {
   type HostedChatRuntimeToolAssemblyResult,
   type HostedHostToolPolicy,
   prepareHostedChatRuntimeToolAssembly,
@@ -76,8 +80,6 @@ export type DefaultHostedChatRuntimeCreationOptions =
 /** Context for default hosted chat runtime task. */
 export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverContext & {
   authToken: string;
-  /** @internal Active exact-run credential inherited only by durable child setup. */
-  runEventAppendToken?: string;
   runId?: string;
   agentId?: string;
   projectId: string;
@@ -161,7 +163,6 @@ function createDefaultTaskContext(
 ): DefaultHostedChatRuntimeTaskContext {
   return {
     authToken: input.options.authToken,
-    runEventAppendToken: input.options.runEventAppendToken,
     runId: input.options.runId,
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
@@ -371,6 +372,7 @@ function runWithDefaultHostedRequestContext<TResult>(
 /** Create default hosted chat runtime. */
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
+  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): Promise<HostedChatRuntimeCreationResult> {
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
@@ -386,10 +388,10 @@ export async function createDefaultHostedChatRuntime(
       const cleanup = input.cleanup ?? (() => Promise.resolve());
 
       try {
-        const toolAssembly = await buildToolAssembly({
-          ...input,
-          taskContext,
-        });
+        const toolAssembly = await runWithHostedRunEventWriterCapability(
+          runEventWriterCapability,
+          () => buildToolAssembly({ ...input, taskContext }),
+        );
         const runtimeAgentConfig = createRuntimeAgentConfig({
           options: input.options,
           taskContext,

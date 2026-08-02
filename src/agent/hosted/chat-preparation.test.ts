@@ -321,7 +321,6 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
   assertEquals(result.creationOptions, {
     projectId: "project-1",
     authToken: "token-1",
-    runEventAppendToken: "root-writer-token",
     instructions: [
       {
         role: "system",
@@ -372,6 +371,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
       initialSkills: [skill],
     },
   });
+  assertEquals(JSON.stringify(result.creationOptions).includes("root-writer-token"), false);
 
   await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
   assertEquals(parentEvents, [{ type: "state_delta" }]);

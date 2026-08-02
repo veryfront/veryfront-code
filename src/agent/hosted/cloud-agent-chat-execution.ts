@@ -64,6 +64,10 @@ import {
   setFilteredTraceAttributes,
 } from "./cloud-agent-child-tools.ts";
 import { getServerResolvedToolExposureCheckpoint } from "./runtime-request-config.ts";
+import {
+  createHostedRunEventWriterCapability,
+  type HostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
@@ -135,6 +139,7 @@ export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentSer
 export function createAgentRuntime(
   context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
+  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
   const projectRuntime = getProjectAgentRuntime(context);
@@ -192,7 +197,7 @@ export function createAgentRuntime(
       setAttributes: (attributes) => setFilteredTraceAttributes(context, attributes),
     },
     logger: context.infrastructure.logger,
-  });
+  }, runEventWriterCapability);
 }
 
 function setPrepareChatExecutionStartAttributes(
@@ -347,11 +352,19 @@ export async function prepareChatExecutionWithinProjectRuntime(
       abortController.signal,
     ),
     createRuntime: (creationOptions) =>
-      context.trace("chat.createRuntime", () =>
-        createAgentRuntime(context, {
+      context.trace("chat.createRuntime", () => {
+        const runEventWriterCapability = req.runEventAppendToken && creationOptions.runId
+          ? createHostedRunEventWriterCapability({
+            apiUrl: config.VERYFRONT_API_URL,
+            runId: creationOptions.runId,
+            runEventAppendToken: req.runEventAppendToken,
+          })
+          : undefined;
+        return createAgentRuntime(context, {
           ...creationOptions,
           userId: req.userId,
-        })),
+        }, runEventWriterCapability);
+      }),
   });
 
   setPrepareChatExecutionResultAttributes(context, {

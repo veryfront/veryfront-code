@@ -6,9 +6,12 @@ import {
 } from "./child-mirror.ts";
 import {
   type ConversationRunChunkMirror,
-  createHostedConversationRunChunkMirror,
   type HostedConversationRunChunkMirrorInstrumentation,
 } from "../conversation/run-chunk-mirror.ts";
+import {
+  createHostedConversationRunChunkMirrorFromCapability,
+  type HostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 import {
   createHostedChildPendingToolLifecycle,
   createHostedChildPendingToolLifecycleLogger,
@@ -93,9 +96,6 @@ export interface HostedChildForkRunContextInput {
 
 /** Input payload for hosted durable child fork run context. */
 export interface HostedDurableChildForkRunContextInput {
-  authToken: string;
-  /** @internal Exact-child credential used only by the durable mirror. */
-  runEventAppendToken?: string;
   apiUrl: string;
   durableChildRun?: HostedChildRunIdentifiers;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
@@ -170,17 +170,17 @@ export function createHostedChildForkRunContext(
 /** Context for create hosted durable child fork run. */
 export function createHostedDurableChildForkRunContext(
   input: HostedDurableChildForkRunContextInput,
+  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): HostedDurableChildForkRunContext {
-  const durableRunMirror = input.durableChildRun && input.runEventAppendToken
-    ? createHostedConversationRunChunkMirror({
-      authToken: input.runEventAppendToken,
+  const durableRunMirror = input.durableChildRun
+    ? createHostedConversationRunChunkMirrorFromCapability(runEventWriterCapability, {
       apiUrl: input.apiUrl,
       conversationId: input.durableChildRun.childConversationId,
       runId: input.durableChildRun.childRunId,
       latestEventId: input.durableChildRun.latestEventId,
       latestExternalEventSequence: input.durableChildRun.latestExternalEventSequence,
       instrumentation: input.instrumentation,
-    })
+    }) ?? null
     : null;
 
   return {
