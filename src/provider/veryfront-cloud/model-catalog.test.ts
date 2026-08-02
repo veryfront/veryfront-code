@@ -310,6 +310,46 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
   });
 
+  it("keeps adaptive Anthropic thinking out of provider-neutral reasoning", () => {
+    for (
+      const modelId of [
+        "anthropic/claude-opus-4-7",
+        "anthropic/claude-opus-4-8",
+        "veryfront-cloud/anthropic/claude-opus-4-8",
+      ]
+    ) {
+      assertEquals(
+        resolveVeryfrontCloudReasoningOption(modelId, {
+          enabled: true,
+          budgetTokens: 2048,
+        }),
+        undefined,
+      );
+    }
+
+    assertEquals(
+      resolveVeryfrontCloudReasoningOption("anthropic/claude-opus-4-8", {
+        enabled: false,
+      }),
+      { enabled: false },
+    );
+  });
+
+  it("preserves provider-neutral reasoning for non-adaptive models", () => {
+    assertEquals(
+      resolveVeryfrontCloudReasoningOption("anthropic/claude-sonnet-4-6", {
+        enabled: true,
+        effort: "high",
+        budgetTokens: 2048,
+      }),
+      {
+        enabled: true,
+        effort: "high",
+        budgetTokens: 2048,
+      },
+    );
+  });
+
   it("omits disabled, missing-budget, and non-Anthropic thinking options", () => {
     assertEquals(
       resolveVeryfrontCloudThinkingProviderOptions("anthropic/claude-sonnet-4-6", {
