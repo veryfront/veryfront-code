@@ -47,11 +47,26 @@ export const DEFAULT_INCLUDES = [
   "src/utils/clsx.ts",
   "dist/framework-src",
 ];
+
+export const PROXY_INCLUDES = [
+  // The proxy runtime is loaded after provider activation. Providers are
+  // statically referenced by cli/proxy-main.ts so --include does not embed the
+  // workspace file tree for each extension.
+  "src/proxy/main.ts",
+];
+
+export type CompileBinaryProfile = "full" | "proxy";
+
 interface CompileBinaryOptions {
   entrypoint: string;
   extraIncludes: string[];
   output: string;
+  profile?: CompileBinaryProfile;
   target?: string;
+}
+
+function includesForProfile(profile: CompileBinaryProfile): string[] {
+  return profile === "proxy" ? PROXY_INCLUDES : DEFAULT_INCLUDES;
 }
 
 export function createCompileArgs(options: CompileBinaryOptions): string[] {
@@ -62,8 +77,21 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
     "--unstable-worker-options",
   ];
 
+  if (options.profile === "proxy") {
+    // The workspace lock contains every framework dependency, and Deno embeds
+    // every locked npm package in a compiled binary. Use the graph-specific
+    // frozen lock so the proxy carries only its statically anchored providers.
+    // Refresh it with `deno task build:proxy-lock` after provider changes.
+    args.push(
+      "--node-modules-dir=none",
+      "--lock",
+      "scripts/build/proxy-deno.lock",
+      "--frozen",
+    );
+  }
+
   for (const include of [
-    ...DEFAULT_INCLUDES,
+    ...includesForProfile(options.profile ?? "full"),
     ...options.extraIncludes,
   ]) {
     args.push("--include", include);
@@ -96,7 +124,7 @@ function normalizeOutputPath(path: string): string {
 
 if (import.meta.main) {
   const args = parseArgs(Deno.args, {
-    string: ["entrypoint", "include", "output", "target"],
+    string: ["entrypoint", "include", "output", "profile", "target"],
     collect: ["include"],
     default: { entrypoint: "cli/main.ts" },
   });
@@ -106,12 +134,17 @@ if (import.meta.main) {
   }
 
   const extraIncludes = (args.include as string[]).map(String);
+  const profile = args.profile ?? "full";
+  if (profile !== "full" && profile !== "proxy") {
+    throw new Error(`Invalid --profile ${profile}; expected full or proxy`);
+  }
 
   try {
     await compileBinary({
       entrypoint: String(args.entrypoint),
       extraIncludes,
       output: normalizeOutputPath(args.output),
+      profile,
       target: typeof args.target === "string" ? args.target : undefined,
     });
   } catch (error) {

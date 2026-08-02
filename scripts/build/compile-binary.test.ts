@@ -1,6 +1,10 @@
 import { assertEquals } from "#std/assert";
 import { walk } from "#std/fs/walk";
-import { createCompileArgs, DEFAULT_INCLUDES } from "./compile-binary.ts";
+import {
+  createCompileArgs,
+  DEFAULT_INCLUDES,
+  PROXY_INCLUDES,
+} from "./compile-binary.ts";
 
 Deno.test("compiled CLI embeds the explicit Node WebSocket extension for opt-in activation", () => {
   const args = createCompileArgs({
@@ -101,4 +105,66 @@ Deno.test("compiled CLI embeds the auto-loaded Sentry reporter", () => {
     ),
     true,
   );
+});
+
+Deno.test("proxy binary embeds only the runtime-resolved proxy entrypoint", async () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/proxy-main.ts",
+    extraIncludes: [],
+    output: "/tmp/veryfront-proxy",
+    profile: "proxy",
+  });
+
+  for (const include of PROXY_INCLUDES) {
+    assertEquals(args.includes(include), true, `missing proxy include ${include}`);
+  }
+
+  assertEquals(args.includes("--node-modules-dir=none"), true);
+  assertEquals(args.includes("scripts/build/proxy-deno.lock"), true);
+  assertEquals(args.includes("--frozen"), true);
+  assertEquals(args.includes("extensions/ext-image-sharp/src/index.ts"), false);
+  assertEquals(args.includes("dist/framework-src"), false);
+  assertEquals(args.at(-1), "cli/proxy-main.ts");
+
+  const entrypoint = await Deno.readTextFile("cli/proxy-main.ts");
+  for (
+    const extension of [
+      "ext-auth-jwt",
+      "ext-cache-redis",
+      "ext-redis",
+      "ext-observability-opentelemetry",
+      "ext-observability-sentry",
+    ]
+  ) {
+    assertEquals(
+      entrypoint.includes(`../extensions/${extension}/src/index.ts`),
+      true,
+      `proxy entrypoint must statically embed ${extension}`,
+    );
+  }
+
+  const lock = JSON.parse(
+    await Deno.readTextFile("scripts/build/proxy-deno.lock"),
+  ) as { npm?: Record<string, unknown> };
+  const packages = Object.keys(lock.npm ?? {});
+  for (const unrelated of ["@huggingface/transformers", "esbuild", "sharp"]) {
+    assertEquals(
+      packages.some((name) => name === unrelated || name.startsWith(`${unrelated}@`)),
+      false,
+      `proxy lock must not contain ${unrelated}`,
+    );
+  }
+
+});
+
+Deno.test("full binary remains the default compile profile", () => {
+  const args = createCompileArgs({
+    entrypoint: "cli/main.ts",
+    extraIncludes: [],
+    output: "/tmp/veryfront",
+  });
+
+  assertEquals(args.includes("extensions/ext-image-sharp/src/index.ts"), true);
+  assertEquals(args.includes("dist/framework-src"), true);
+  assertEquals(args.includes("scripts/build/proxy-deno.lock"), false);
 });
