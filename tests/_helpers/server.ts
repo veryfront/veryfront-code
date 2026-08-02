@@ -218,8 +218,12 @@ export async function createTestProductionServer(options: {
     defaultProjectId: options.projectId,
   });
 
+  // Build the adapter explicitly rather than spreading the handle: `ServerHandle`
+  // exposes only `ready` and `stop`, so a spread silently carries over whatever
+  // else the handle grows later and makes it look like part of `TestServer`.
   return {
-    ...server,
+    ready: server.ready,
+    stop: () => server.stop(),
     port,
     hostname,
   };
