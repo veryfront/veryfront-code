@@ -29,6 +29,7 @@ import {
 } from "./common.ts";
 import { bitbucketConfig } from "./atlassian.ts";
 import { OAuthService } from "./base.ts";
+import { INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER } from "#veryfront/integrations/feature-flags.ts";
 
 const SLACK_SETUP_SCOPES = [
   "channels:history",
@@ -41,6 +42,21 @@ const SLACK_SETUP_SCOPES = [
   "mpim:history",
   "mpim:read",
   "users:read",
+];
+
+const PROVIDER_ADAPTER_REQUIRED_CONFIGS = [
+  boxConfig,
+  clickupConfig,
+  freshdeskConfig,
+  intercomConfig,
+  mailchimpConfig,
+  mondayConfig,
+  pipedriveConfig,
+  quickbooksConfig,
+  salesforceConfig,
+  shopifyConfig,
+  trelloConfig,
+  xeroConfig,
 ];
 
 async function readSlackConnectorScopes(): Promise<string[]> {
@@ -83,22 +99,7 @@ describe("oauth provider configs", () => {
   });
 
   it("fails closed when a provider needs a protocol- or tenant-specific adapter", () => {
-    for (
-      const config of [
-        boxConfig,
-        clickupConfig,
-        freshdeskConfig,
-        intercomConfig,
-        mailchimpConfig,
-        mondayConfig,
-        pipedriveConfig,
-        quickbooksConfig,
-        salesforceConfig,
-        shopifyConfig,
-        trelloConfig,
-        xeroConfig,
-      ]
-    ) {
+    for (const config of PROVIDER_ADAPTER_REQUIRED_CONFIGS) {
       assertEquals(config.runtimeSupport, "provider-adapter-required");
       let rejected = false;
       try {
@@ -108,6 +109,13 @@ describe("oauth provider configs", () => {
       }
       assertEquals(rejected, true, `${config.serviceId} must fail before a generic flow starts`);
     }
+  });
+
+  it("keeps provider runtime support aligned with integration availability", () => {
+    assertEquals(
+      PROVIDER_ADAPTER_REQUIRED_CONFIGS.map((config) => config.serviceId).toSorted(),
+      [...INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER].toSorted(),
+    );
   });
 
   it("keeps the Slack runtime scopes aligned with the connector surface", async () => {
