@@ -77,8 +77,8 @@ export class CheckpointManager {
   }
 
   async getAll(runId: string): Promise<Checkpoint[]> {
-    const { getCheckpoints } = this.config.backend;
-    if (getCheckpoints) return getCheckpoints(runId);
+    const { backend } = this.config;
+    if (backend.getCheckpoints) return backend.getCheckpoints(runId);
 
     const latest = await this.getLatest(runId);
     return latest ? [latest] : [];
