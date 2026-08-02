@@ -435,12 +435,20 @@ export class DiskCacheBackend implements CacheBackend {
       const envelope = await this.readEnvelopeWithinValueLimit(key, this.maxValueBytes);
       if (!envelope) return null;
       if (envelope.key !== key) {
-        logger.warn("[DiskCache] Filename digest collision; stored key does not match");
+        // The filename digest collided: this file belongs to a different key, so
+        // a prior write for one of them silently overwrote the other's data.
+        // Carry both keys (tail-truncated) so collisions stay diagnosable in
+        // production instead of reading as an ordinary miss.
+        logger.warn("[DiskCache] Filename digest collision; stored key does not match", {
+          requestedKey: key.slice(-60),
+          storedKey: envelope.key.slice(-60),
+        });
         return null;
       }
       if (envelope.expiresAt !== undefined && Date.now() >= envelope.expiresAt) {
         this.del(key).catch((cleanupError) => {
           logger.debug("[DiskCache] Expired entry cleanup failed", {
+            key: key.slice(-60),
             error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
           });
         });
