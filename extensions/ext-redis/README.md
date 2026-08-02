@@ -13,7 +13,7 @@ Install the extension alongside `veryfront` when a service uses Redis-backed
 runtime features:
 
 ```sh
-deno add jsr:@veryfront/veryfront npm:@veryfront/ext-redis
+deno add npm:veryfront npm:@veryfront/ext-redis
 ```
 
 Installing the package does not activate it. Import its factory and compose it
