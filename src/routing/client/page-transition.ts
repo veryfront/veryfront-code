@@ -46,19 +46,32 @@ export class PageTransition {
 
     const rootElement = document.getElementById("root");
     const preparedHead = prepareClientRouteHeadEntries(data.managedHead, document);
+    const retainedTitle = document.title;
     if (!rootElement || data.html === undefined) {
       retireClientHeadOwnership(document);
       applyPreparedClientRouteHeadDescriptors(preparedHead, document);
-      this.updateDocumentMetadata(document, data);
+      this.updateDocumentMetadata(document, data, retainedTitle);
       return;
     }
 
     const trustedHtml = validateTrustedHtml(String(data.html));
-    this.performTransition(rootElement, data, trustedHtml, preparedHead, isPopState, scrollY);
+    this.performTransition(
+      rootElement,
+      data,
+      trustedHtml,
+      preparedHead,
+      retainedTitle,
+      isPopState,
+      scrollY,
+    );
   }
 
-  private updateDocumentMetadata(targetDocument: Document, data: RouteData): void {
-    updateRouteTitle(data.frontmatter?.title, targetDocument);
+  private updateDocumentMetadata(
+    targetDocument: Document,
+    data: RouteData,
+    retainedTitle: string,
+  ): void {
+    updateRouteTitle(data.frontmatter?.title || retainedTitle, targetDocument);
     updateRouteMetaTags(data.frontmatter ?? {}, targetDocument);
   }
 
@@ -67,6 +80,7 @@ export class PageTransition {
     data: RouteData,
     trustedHtml: string,
     preparedHead: ReturnType<typeof prepareClientRouteHeadEntries>,
+    retainedTitle: string,
     isPopState: boolean,
     scrollY: number,
   ): void {
@@ -83,7 +97,7 @@ export class PageTransition {
         rootElement.innerHTML = trustedHtml;
         applyHeadDirectives(rootElement);
         applyPreparedClientRouteHeadDescriptors(preparedHead, rootElement.ownerDocument);
-        this.updateDocumentMetadata(rootElement.ownerDocument, data);
+        this.updateDocumentMetadata(rootElement.ownerDocument, data, retainedTitle);
         this.setupViewportPrefetch(rootElement);
         manageFocus(rootElement);
         this.handleScroll(isPopState, scrollY);
