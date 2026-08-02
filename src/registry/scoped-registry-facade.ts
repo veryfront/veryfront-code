@@ -56,9 +56,10 @@ export class ScopedRegistryFacade<T> {
 }
 
 /**
- * Project-scoped registry capabilities safe to expose to evaluated project
- * code. Process-wide shared registration, global reset, and aggregate
- * statistics deliberately remain on the internal facade only.
+ * Project-scoped registry view used by application code. Maintenance methods
+ * remain available for public API compatibility; framework composition roots
+ * should prefer the explicitly named internal registry exports when exercising
+ * process-wide behavior.
  */
 export class ScopedRegistryView<T> {
   readonly #registry: ScopedRegistryFacade<T>;
@@ -97,5 +98,20 @@ export class ScopedRegistryView<T> {
 
   clear(): void {
     this.#registry.clear();
+  }
+
+  /** Register a framework-provided item available to all projects. */
+  registerShared(id: string, item: T): void {
+    this.#registry.registerShared(id, item);
+  }
+
+  /** Clear project and shared registry state. */
+  clearAll(): void {
+    this.#registry.clearAll();
+  }
+
+  /** Return aggregate project and shared registry counts. */
+  getStats(): ReturnType<ProjectScopedRegistryManager<T>["getStats"]> {
+    return this.#registry.getStats();
   }
 }

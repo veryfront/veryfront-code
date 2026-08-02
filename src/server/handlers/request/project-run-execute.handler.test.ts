@@ -14,7 +14,6 @@ import { datasets, evalAgent, type EvalReport, metrics } from "veryfront/eval";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { toolRegistry } from "#veryfront/tool";
 import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,

@@ -1,7 +1,7 @@
 import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import {
   combineAgentServiceLifecycle,
   createAgentServiceRuntime,

@@ -24,7 +24,7 @@ import {
   normalizeSourceIntegrationPolicy,
 } from "#veryfront/integrations/source-policy.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { createLoadSkillTool } from "#veryfront/skill/tools.ts";
 import { getEffectiveAgentSystem } from "../runtime/effective-agent-system.ts";
 import { tool } from "#veryfront/tool";

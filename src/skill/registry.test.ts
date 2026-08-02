@@ -250,7 +250,7 @@ describe("src/skill/registry", () => {
       );
     });
 
-    it("rejects relative roots at the registry boundary", () => {
+    it("rejects relative roots without an owning filesystem adapter", () => {
       assertThrows(
         () =>
           registerSkill("relative", {
@@ -259,9 +259,34 @@ describe("src/skill/registry", () => {
             rootPath: "skills/relative",
           }),
         TypeError,
-        "absolute path",
+        "must be absolute unless an fsAdapter",
       );
       assertEquals(getSkill("relative"), undefined);
+    });
+
+    it("accepts bounded adapter-relative roots without parent traversal", () => {
+      const adapter = {} as FileSystemAdapter;
+      registerSkill("relative", {
+        id: "relative",
+        metadata: { name: "relative", description: "Relative adapter root" },
+        rootPath: "skills/relative",
+        fsAdapter: adapter,
+      });
+
+      assertEquals(getSkill("relative")?.rootPath, "skills/relative");
+      assertStrictEquals(skillRegistryInternal.get("relative")?.fsAdapter, adapter);
+
+      assertThrows(
+        () =>
+          registerSkill("traversal", {
+            id: "traversal",
+            metadata: { name: "traversal", description: "Traversal root" },
+            rootPath: "../skills/traversal",
+            fsAdapter: adapter,
+          }),
+        TypeError,
+        "must not contain parent traversal",
+      );
     });
 
     it("rejects non-printable programmatic metadata", () => {

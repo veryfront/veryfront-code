@@ -83,8 +83,8 @@ async function hasSymlinkInPath(
   canonicalPath: string,
   fsAdapter?: FileSystemAdapter,
 ): Promise<boolean> {
-  const resolvedRoot = resolve(skillRoot);
-  const resolvedTarget = resolve(canonicalPath);
+  const resolvedRoot = fsAdapter ? skillRoot : resolve(skillRoot);
+  const resolvedTarget = fsAdapter ? canonicalPath : resolve(canonicalPath);
   const rel = relative(resolvedRoot, resolvedTarget).replaceAll("\\", "/");
 
   if (!rel) return false;
@@ -105,7 +105,7 @@ async function hasSymlinkInPath(
 /**
  * Validate that a requested path is safe within a skill's root directory.
  *
- * @param skillRoot - Absolute path to the skill directory
+ * @param skillRoot - Absolute local path or adapter-relative skill directory
  * @param requestedPath - Relative path requested (e.g. "references/CLAUSES.md")
  * @param allowedSubdirs - Allowed top-level subdirectories (e.g. ["references", "assets"])
  * @param fsAdapter - Optional file system adapter for VFS/cloud-backed projects
@@ -189,7 +189,7 @@ export async function validateSkillPath(
 /**
  * List files in a skill subdirectory.
  *
- * @param skillRoot - Absolute path to the skill directory
+ * @param skillRoot - Absolute local path or adapter-relative skill directory
  * @param subdir - Subdirectory name (e.g. "references", "scripts")
  * @param fsAdapter - Optional file system adapter for VFS/cloud-backed projects
  * @returns Array of relative paths like "references/filename.md"

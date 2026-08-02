@@ -15,7 +15,7 @@ import { getEffectiveAgentSystem } from "./runtime/effective-agent-system.ts";
 import { agentRegistry } from "./composition/index.ts";
 import { agent } from "./factory.ts";
 import type { AgentConfig, AgentResponse } from "./types.ts";
-import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
+import { registerSkill } from "#veryfront/skill/registry.ts";
 import { reset as resetExtensionContracts, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
 import type { ModelRuntime } from "#veryfront/provider";

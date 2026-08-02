@@ -55,6 +55,20 @@ describe("src/skill/path-safety", () => {
       assertEquals(validated, "/project/skills/test/references/guide.md");
     });
 
+    it("preserves adapter-relative roots while checking symlink segments", async () => {
+      const adapter = createSkillTestAdapter({
+        "skills/test/references/guide.md": "Guide",
+      });
+      const validated = await validateSkillPath(
+        "skills/test",
+        "references/guide.md",
+        ["references"],
+        adapter,
+      );
+
+      assertEquals(validated, "skills/test/references/guide.md");
+    });
+
     it("should reject symlinked files in local skills", async () => {
       const tempDir = await makeTempDir({ prefix: "vf-skill-path-" });
       const skillRoot = join(tempDir, "skill");
