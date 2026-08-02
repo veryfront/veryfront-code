@@ -225,11 +225,11 @@ import { captureApplicationError, flushApplicationErrors, initializeSentry } fro
 |------|-------------|--------|
 | `captureApplicationError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L20) |
 | `flushApplicationErrors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/application-errors.ts#L32) |
-| `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L90) |
-| `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L81) |
-| `isSentryEnabled` | Resolve the compatibility-release Sentry flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L43) |
-| `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L124) |
-| `resolveSentryConfigFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L59) |
+| `initializeSentry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L91) |
+| `initializeSentryFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L82) |
+| `isSentryEnabled` | Resolve the compatibility-release Sentry flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L44) |
+| `resetSentryForTests` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L130) |
+| `resolveSentryConfigFromEnv` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/sentry.ts#L60) |
 
 #### Types
 
