@@ -65,6 +65,69 @@ describe("build/utils/path-glob", () => {
     assertMatches("!(test).ts", ["page.ts", "contest.ts"], ["test.ts"]);
   });
 
+  it("preserves captured extended-glob and globstar compatibility", () => {
+    const parityCases: ReadonlyArray<{
+      pattern: string;
+      matches: string[];
+      rejects: string[];
+    }> = [
+      {
+        pattern: "!(foo|bar).ts",
+        matches: ["baz.ts", "quxfoo.ts"],
+        rejects: ["foo.ts", "bar.ts", "foobar.ts"],
+      },
+      {
+        pattern: "src/!(generated|vendor)/**/*.ts",
+        matches: ["src/app/index.ts"],
+        rejects: [
+          "src/generated/index.ts",
+          "src/generated-extra/index.ts",
+          "src/vendor/a.ts",
+          "src/vendorized/a.ts",
+        ],
+      },
+      {
+        pattern: "foo!(@(bar|baz)|qux)end",
+        matches: ["fooend", "foomoreend"],
+        rejects: ["foobarend", "foobazend", "fooquxend", "foobazmoreend"],
+      },
+      {
+        pattern: "@(src|app)/**/!(*.test).@(ts|tsx)",
+        matches: ["src/a.ts", "src/x/a.tsx", "app/test.ts", "app/.ts"],
+        rejects: ["src/a.test.ts", "other/a.ts"],
+      },
+      {
+        pattern: "a/**",
+        matches: ["a/", "a/b", "a/b/c"],
+        rejects: ["a", "b"],
+      },
+      {
+        pattern: "a/**/b/**",
+        matches: ["a/b/", "a/b/c", "a/x/b/c"],
+        rejects: ["a/b", "a/x/b"],
+      },
+      {
+        pattern: "a/**/**",
+        matches: ["a/b", "a/b/c"],
+        rejects: ["a"],
+      },
+      {
+        pattern: "a/**/b",
+        matches: ["a/b", "a/x/b", "a/x/y/b"],
+        rejects: ["a", "a/x"],
+      },
+      {
+        pattern: "{src,app}/**/*.{ts,tsx}",
+        matches: ["src/a.ts", "src/x/a.tsx", "app/a.tsx"],
+        rejects: ["app/a.js", "other/a.ts"],
+      },
+    ];
+
+    for (const testCase of parityCases) {
+      assertMatches(testCase.pattern, testCase.matches, testCase.rejects);
+    }
+  });
+
   it("supports character ranges, negation, POSIX classes, and escapes", () => {
     assertMatches("file[0-2].ts", ["file0.ts", "file2.ts"], ["file3.ts", "file10.ts"]);
     assertMatches("file[!0-2].ts", ["file3.ts", "filex.ts"], ["file0.ts"]);
