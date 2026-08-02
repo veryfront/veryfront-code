@@ -536,6 +536,20 @@ describe("proxy routing invalidation Redis bus", () => {
       TypeError,
       "clock",
     );
+    for (
+      const integritySecret of [
+        "a".repeat(31),
+        `${"a".repeat(32)}\n`,
+        `${"a".repeat(32)}\u0000`,
+        `${"a".repeat(32)}\ud800`,
+      ]
+    ) {
+      await assertRejects(
+        () => startProxyRoutingInvalidationBus({ ...base, integritySecret }),
+        TypeError,
+        "integrity secret",
+      );
+    }
     assertEquals(redis.clients.length, 0);
   });
 

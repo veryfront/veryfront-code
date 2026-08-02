@@ -23,6 +23,7 @@ const MAX_ACTIVE_PUBLISHES = 100;
 const MAX_REPLICA_COUNT = 10_000;
 const MAX_ACKNOWLEDGEMENT_TIMEOUT_MS = 60_000;
 const MAX_REDIS_URL_CODE_UNITS = 4_096;
+const MIN_INTEGRITY_SECRET_BYTES = 32;
 const MAX_INTEGRITY_SECRET_CODE_UNITS = 64 * 1_024;
 const MAX_SIGNED_ENVELOPE_BYTES = 24 * 1024;
 const MAX_SIGNED_PAYLOAD_BYTES = 16 * 1024;
@@ -198,11 +199,28 @@ function requireIntegritySecret(value: unknown): string | null {
   if (value === undefined || value === "") return null;
   if (
     typeof value !== "string" ||
-    value.length > MAX_INTEGRITY_SECRET_CODE_UNITS
+    value.length > MAX_INTEGRITY_SECRET_CODE_UNITS ||
+    hasProjectIdentityControlCharacters(value) ||
+    !isWellFormedUtf16(value) ||
+    new TextEncoder().encode(value).byteLength < MIN_INTEGRITY_SECRET_BYTES
   ) {
     throw new TypeError("Routing invalidation integrity secret is invalid");
   }
   return value;
+}
+
+function isWellFormedUtf16(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function requireFunction<TFunction extends (...args: never[]) => unknown>(
