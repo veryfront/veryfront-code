@@ -348,6 +348,9 @@ if (typeof root.defineConfig !== "function") {
 const { createEvalCliBuiltinExtensions } = await import(
   "./esm/src/extensions/builtin-extensions.js"
 );
+const { getDeferredExtensionState } = await import(
+  "./esm/src/extensions/deferred-extension.js"
+);
 const {
   createEvalReportExporterRegistry,
   EvalReportExporterRegistryName,
@@ -358,6 +361,17 @@ const resolved = createEvalCliBuiltinExtensions(["mlflow"]).find(
   (entry) => entry.extension.name === "ext-eval-report-mlflow",
 );
 if (!resolved) throw new Error("bundled MLflow extension missing");
+
+const logger = {
+  debug() {},
+  info() {},
+  warn() {},
+  error() {},
+};
+const deferred = getDeferredExtensionState(resolved);
+if (!deferred) throw new Error("bundled MLflow extension was not deferred");
+const extension = await deferred.load(logger);
+if (!extension) throw new Error("bundled MLflow extension failed to load");
 
 const context = {
   get(contract) {
@@ -371,19 +385,14 @@ const context = {
     throw new Error(\`unexpected provided contract: \${contract}\`);
   },
   config: {},
-  logger: {
-    debug() {},
-    info() {},
-    warn() {},
-    error() {},
-  },
+  logger,
 };
 
-await resolved.extension.setup?.(context);
+await extension.setup?.(context);
 if (!registry.has("mlflow")) {
   throw new Error("bundled MLflow exporter did not register");
 }
-await resolved.extension.teardown?.();
+await extension.teardown?.();
 if (registry.has("mlflow")) {
   throw new Error("bundled MLflow exporter did not unregister");
 }

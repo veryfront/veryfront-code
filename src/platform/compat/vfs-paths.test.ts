@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta, testGetFrameworkRoot } from "./vfs-paths.ts";
 
@@ -38,7 +38,7 @@ describe("getFrameworkRoot", () => {
     {
       name: "should resolve Windows deno-compile VFS path",
       input: "C:\\Users\\dev\\AppData\\Local\\Temp\\deno-compile-xyz\\src\\platform\\runtime.ts",
-      expected: "C:\\Users\\dev\\AppData\\Local\\Temp\\deno-compile-xyz",
+      expected: "C:/Users/dev/AppData/Local/Temp/deno-compile-xyz",
     },
     {
       name: "should handle mixed slashes",
@@ -59,6 +59,16 @@ describe("getFrameworkRoot", () => {
       name: "should handle empty string",
       input: "",
       expected: "",
+    },
+    {
+      name: "should resolve a published dist path",
+      input: "/opt/veryfront/dist/platform/compat/vfs-paths.js",
+      expected: "/opt/veryfront",
+    },
+    {
+      name: "should resolve an embedded framework source path",
+      input: "/opt/veryfront/dist/framework-src/react/index.ts.src",
+      expected: "/opt/veryfront",
     },
   ];
 
@@ -81,6 +91,11 @@ describe("getFrameworkRootFromMeta", () => {
       input: "file:///tmp/deno-compile-veryfront/src/modules/server/module-server.ts",
       expected: "/tmp/deno-compile-veryfront",
     },
+    {
+      name: "should decode URL-encoded filesystem paths",
+      input: "file:///Users/dev/code/veryfront%20server/src/platform/compat/vfs-paths.ts",
+      expected: "/Users/dev/code/veryfront server",
+    },
   ];
 
   for (const { name, input, expected } of cases) {
@@ -88,6 +103,18 @@ describe("getFrameworkRootFromMeta", () => {
       assertEquals(getFrameworkRootFromMeta(input), expected);
     });
   }
+
+  it("rejects non-file URLs and unknown layouts", () => {
+    assertThrows(
+      () => getFrameworkRootFromMeta("https://example.com/src/platform/file.ts"),
+      TypeError,
+    );
+    assertThrows(
+      () => getFrameworkRootFromMeta("file:///opt/veryfront/platform/file.js"),
+      Error,
+      "Cannot determine framework root",
+    );
+  });
 });
 
 describe("testGetFrameworkRoot (export for testing)", () => {

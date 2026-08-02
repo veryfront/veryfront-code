@@ -52,6 +52,9 @@ if (p.dependencies?.['@veryfront/ext-parser-babel'] !== p.version) process.exit(
 " || fail "root package does not pin @veryfront/ext-parser-babel to its version"
 node --input-type=module -e "
 const m = await import('./node_modules/veryfront/esm/src/extensions/builtin-extensions.js');
+const { getDeferredExtensionState } = await import(
+  './node_modules/veryfront/esm/src/extensions/deferred-extension.js'
+);
 const resolved = m.createOptionalBuiltinExtension({
   name: 'ext-parser-babel',
   origin: 'veryfront/ext-parser-babel',
@@ -61,7 +64,11 @@ const resolved = m.createOptionalBuiltinExtension({
 });
 let codeParser;
 const logger = { debug() {}, info() {}, warn() {}, error() {} };
-await resolved.extension.setup({
+const deferred = getDeferredExtensionState(resolved);
+if (!deferred) throw new Error('Parser extension was not deferred');
+const extension = await deferred.load(logger);
+if (!extension) throw new Error('Parser extension failed to load');
+await extension.setup?.({
   get() {},
   require() { throw new Error('unexpected contract requirement'); },
   provide(name, impl) { if (name === 'CodeParser') codeParser = impl; },
@@ -74,7 +81,7 @@ const ast = await codeParser.parse({
   filePath: 'app/page.tsx',
 });
 if (ast?.type !== 'File') throw new Error('TSX parse failed');
-await resolved.extension.teardown?.();
+await extension.teardown?.();
 " || fail "root optional builtin did not register a working CodeParser"
 
 echo "== 2. root install: transformers optional peer declared"

@@ -93,6 +93,13 @@ with an error that names the required package.
 | Schema        | `@veryfront/ext-schema-zod`                  | schema validation |
 | WebSocket     | `@veryfront/ext-node-websocket-ws`           | Node.js transport |
 
+Veryfront applies explicit disable directives and higher-priority project
+overrides before importing optional first-party built-ins. A package that is
+not installed is skipped. An installed package that fails to load, returns an
+invalid extension, or leaves a required contract unavailable stops activation;
+the currently active extension generation remains in service until the
+replacement passes preflight.
+
 ## Verify it worked
 
 Restart `veryfront dev` after editing `veryfront.config.ts`:

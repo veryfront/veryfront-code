@@ -8,15 +8,32 @@
  */
 
 import type { LLMProvider, LLMProviderRegistry } from "./llm-provider.ts";
+import {
+  assertOptionalRegistrationMethod,
+  assertRegistrationMethod,
+  captureRegistrationId,
+} from "../runtime-validation.ts";
 
 class LLMProviderRegistryImpl implements LLMProviderRegistry {
   private readonly providers = new Map<string, LLMProvider>();
 
   register(provider: LLMProvider): void {
-    if (this.providers.has(provider.id)) {
+    const providerId = captureRegistrationId(provider, "LLMProvider");
+    assertRegistrationMethod(provider, "LLMProvider", "createModel");
+    assertOptionalRegistrationMethod(
+      provider,
+      "LLMProvider",
+      "createEmbedding",
+    );
+    assertOptionalRegistrationMethod(
+      provider,
+      "LLMProvider",
+      "createResponses",
+    );
+    if (this.providers.has(providerId)) {
       return;
     }
-    this.providers.set(provider.id, provider);
+    this.providers.set(providerId, provider);
   }
 
   unregister(id: string): void {

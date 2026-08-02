@@ -1,7 +1,10 @@
 {
   "name": "@veryfront/ext-parser-babel",
   "version": "0.1.0",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./parser-only": "./src/parser-only.ts"
+  },
   "veryfront": {
     "extension": true,
     "contracts": {
@@ -20,6 +23,6 @@
     "veryfront/extensions/parser": "../../src/extensions/parser/index.ts"
   },
   "tasks": {
-    "test": "deno test --no-check --allow-all src/"
+    "test": "deno test --no-check --allow-all --unstable-worker-options src/"
   }
 }

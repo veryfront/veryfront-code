@@ -48,7 +48,8 @@
     "@std/testing/bdd": "jsr:@std/testing@1.0.17/bdd",
     "veryfront/eval": "../../src/eval/index.ts",
     "veryfront/extensions": "../../src/extensions/index.ts",
-    "veryfront/extensions/eval": "../../src/extensions/eval/index.ts"
+    "veryfront/extensions/eval": "../../src/extensions/eval/index.ts",
+    "veryfront/platform/env": "../../src/platform/compat/process/env.ts"
   },
   "tasks": {
     "test": "deno test --no-check --allow-all src/"

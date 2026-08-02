@@ -1,12 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createDenoEnvShim } from "./deno-env.ts";
 
 // deno-env.ts is a shim that populates globalThis.Deno.env when missing.
 // In Deno runtime, Deno.env already exists, so we test the real Deno.env behavior
 // which matches the shim contract.
 
 describe("platform/compat/shims/deno-env", () => {
+  it("filters undefined values from the object snapshot", () => {
+    const source: Record<string, string | undefined> = {
+      PRESENT: "value",
+      MISSING: undefined,
+    };
+    const env = createDenoEnvShim(source);
+
+    assertEquals(env.has("MISSING"), false);
+    assertEquals(env.toObject(), { PRESENT: "value" });
+  });
+
   describe("Deno.env.get/set/delete/has/toObject", () => {
     const testKey = "__VF_TEST_DENO_ENV_SHIM__";
 

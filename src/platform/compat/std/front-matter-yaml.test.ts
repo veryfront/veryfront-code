@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { extract, test } from "./front-matter-yaml.ts";
+import { extract, extractMapping, test } from "./front-matter-yaml.ts";
 
 describe("platform/compat/std/front-matter-yaml", () => {
   describe("test", () => {
@@ -62,7 +62,10 @@ describe("platform/compat/std/front-matter-yaml", () => {
 
     it("should handle complex YAML values", () => {
       const input = "---\ntags:\n  - one\n  - two\nnested:\n  key: value\n---\nBody";
-      const result = extract(input);
+      const result = extract<{
+        tags: string[];
+        nested: { key: string };
+      }>(input);
 
       assertEquals(Array.isArray(result.attrs.tags), true);
       assertEquals(result.attrs.tags[0], "one");
@@ -74,6 +77,34 @@ describe("platform/compat/std/front-matter-yaml", () => {
       const input = "---\ntitle: Hello\n---\nBody";
       const result = extract(input);
       assertEquals(typeof result.frontMatter, "string");
+    });
+
+    it("should preserve legacy scalar and sequence extraction behavior", () => {
+      assertEquals(extract("---\nscalar\n---\nBody"), {
+        attrs: {},
+        body: "Body",
+        frontMatter: "scalar",
+      });
+      assertEquals(extract<unknown[]>("---\n- one\n- two\n---\nBody"), {
+        attrs: ["one", "two"],
+        body: "Body",
+        frontMatter: "- one\n- two",
+      });
+    });
+
+    it("should reject scalar and sequence roots at mapping boundaries", () => {
+      for (
+        const input of [
+          "---\nscalar\n---\nBody",
+          "---\n- one\n- two\n---\nBody",
+        ]
+      ) {
+        assertThrows(
+          () => extractMapping(input),
+          TypeError,
+          "must be a mapping",
+        );
+      }
     });
   });
 });

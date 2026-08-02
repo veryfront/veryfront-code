@@ -15,6 +15,7 @@ type MultiProjectRequestContextType = {
 };
 
 let _getCurrentRequestContext: (() => MultiProjectRequestContextType | null) | null | undefined;
+const registryScopeOwners = new WeakMap<object, object>();
 
 export type { CacheKeyContext };
 
@@ -22,6 +23,64 @@ export interface RegistryScopeContext {
   scopeId: string;
   /** Whether completed discovery is safe to retain for this immutable source. */
   immutable: boolean;
+}
+
+function encodeRegistryScopeSegment(value: string): string {
+  try {
+    return encodeURIComponent(value);
+  } catch (error) {
+    if (!(error instanceof URIError)) throw error;
+
+    // encodeURIComponent rejects lone UTF-16 surrogates. Project identity comes
+    // from external boundaries, so keep this encoder total without collapsing
+    // malformed strings onto the replacement character. `%uXXXX` cannot collide
+    // with a literal sequence because encodeURIComponent escapes its `%` first.
+    let encoded = "";
+    let chunkStart = 0;
+    for (let index = 0; index < value.length; index++) {
+      const codeUnit = value.charCodeAt(index);
+      const isHighSurrogate = codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+      const isLowSurrogate = codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+
+      if (
+        isHighSurrogate && index + 1 < value.length &&
+        value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff
+      ) {
+        index++;
+        continue;
+      }
+      if (!isHighSurrogate && !isLowSurrogate) continue;
+
+      encoded += encodeURIComponent(value.slice(chunkStart, index));
+      encoded += `%u${codeUnit.toString(16).toUpperCase().padStart(4, "0")}`;
+      chunkStart = index + 1;
+    }
+    return encoded + encodeURIComponent(value.slice(chunkStart));
+  }
+}
+
+/**
+ * Check whether a registry scope belongs to a raw project ID.
+ *
+ * The project ID is always encoded before matching. Treating it as a possible
+ * complete scope ID would make a delimiter-bearing project ID ambiguous with a
+ * different project's scope.
+ */
+export function isRegistryScopeForProject(
+  scopeId: string,
+  projectId: string,
+): boolean {
+  return scopeId.startsWith(`${encodeRegistryScopeSegment(projectId)}:`);
+}
+
+/** Build a canonical, delimiter-safe registry scope for a versioned source. */
+export function buildVersionedRegistryScopeId(
+  projectId: string,
+  mode: CacheKeyContext["mode"],
+  versionId: string,
+): string {
+  return `${encodeRegistryScopeSegment(projectId)}:${mode}:` +
+    encodeRegistryScopeSegment(versionId);
 }
 
 const cacheKeyContextStorage = new AsyncLocalStorage<CacheKeyContext | null>();
@@ -140,7 +199,11 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
   const cacheCtx = cacheKeyContextStorage.getStore();
   if (cacheCtx) {
     return {
-      scopeId: `${cacheCtx.projectId}:${cacheCtx.mode}:${cacheCtx.versionId}`,
+      scopeId: buildVersionedRegistryScopeId(
+        cacheCtx.projectId,
+        cacheCtx.mode,
+        cacheCtx.versionId,
+      ),
       immutable: cacheCtx.mode === "production",
     };
   }
@@ -153,7 +216,11 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
     if (reqCtx.productionMode) {
       if (reqCtx.releaseId) {
         return {
-          scopeId: `${projectId}:production:${reqCtx.releaseId}`,
+          scopeId: buildVersionedRegistryScopeId(
+            projectId,
+            "production",
+            reqCtx.releaseId,
+          ),
           immutable: true,
         };
       }
@@ -162,13 +229,18 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
       // discovery, and adapter caches all describe the same content source.
       const environmentName = reqCtx.environmentName || "production";
       return {
-        scopeId: `${projectId}:production:environment:${environmentName}`,
+        scopeId: `${encodeRegistryScopeSegment(projectId)}:production:environment:` +
+          encodeRegistryScopeSegment(environmentName),
         immutable: false,
       };
     }
 
     return {
-      scopeId: `${projectId}:preview:${reqCtx.branch || "main"}`,
+      scopeId: buildVersionedRegistryScopeId(
+        projectId,
+        "preview",
+        reqCtx.branch || "main",
+      ),
       immutable: false,
     };
   }
@@ -178,6 +250,25 @@ export function tryGetRegistryScopeContext(): RegistryScopeContext | null {
 
 export function tryGetRegistryScopeId(): string | null {
   return tryGetRegistryScopeContext()?.scopeId ?? null;
+}
+
+/**
+ * Return an opaque identity for the active hosted request.
+ *
+ * Registry managers use the token only as a WeakMap key so a request keeps the
+ * exact registry generation it first observed, even if that scope is replaced
+ * while the request is still running.
+ */
+export function tryGetRegistryScopeOwner(): object | null {
+  const requestContext = getRequestContextFn()?.();
+  if (!requestContext) return null;
+
+  const existing = registryScopeOwners.get(requestContext);
+  if (existing) return existing;
+
+  const owner = Object.freeze(Object.create(null)) as object;
+  registryScopeOwners.set(requestContext, owner);
+  return owner;
 }
 
 function buildProjectScopedKey(prefix: string, resourceKey: string, ctx: CacheKeyContext): string {

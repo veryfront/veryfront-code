@@ -1099,7 +1099,8 @@
       "jsr:@std/cli@1.0.28",
       "jsr:@std/fs@1.0.23",
       "jsr:@std/path@1.1.4",
-      "jsr:@std/testing@1.0.17"
+      "jsr:@std/testing@1.0.17",
+      "npm:@babel/parser@7.29.2"
     ]
   }
 }

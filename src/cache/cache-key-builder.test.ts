@@ -1,12 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
-import { assertEquals, assertThrows } from "#veryfront/testing/assert";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert";
 import {
   type CacheKeyContext,
   getContentHashKey,
   getCurrentCacheKeyContext,
   getProjectScopedKey,
   getProjectScopedKeyAlways,
+  isRegistryScopeForProject,
   runWithCacheKeyContext,
   tryGetCacheKeyContext,
   tryGetRegistryScopeContext,
@@ -252,6 +253,97 @@ describe("cache-key-builder", () => {
         },
         id: "project-id:production:release-id",
       });
+    });
+
+    it("encodes variable segments so distinct explicit scopes cannot collide", () => {
+      const left = runWithCacheKeyContext(
+        { projectId: "a:preview", mode: "preview", versionId: "x" },
+        () => tryGetRegistryScopeId(),
+      );
+      const right = runWithCacheKeyContext(
+        { projectId: "a", mode: "preview", versionId: "preview:x" },
+        () => tryGetRegistryScopeId(),
+      );
+      const escapedDelimiter = runWithCacheKeyContext(
+        { projectId: ":", mode: "preview", versionId: "x" },
+        () => tryGetRegistryScopeId(),
+      );
+      const literalEscape = runWithCacheKeyContext(
+        { projectId: "%3A", mode: "preview", versionId: "x" },
+        () => tryGetRegistryScopeId(),
+      );
+
+      assertEquals(left, "a%3Apreview:preview:x");
+      assertEquals(right, "a:preview:preview%3Ax");
+      assertNotEquals(left, right);
+      assertEquals(escapedDelimiter, "%3A:preview:x");
+      assertEquals(literalEscape, "%253A:preview:x");
+      assertNotEquals(escapedDelimiter, literalEscape);
+    });
+
+    it("encodes release, branch, and environment scope segments", async () => {
+      const release = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project:id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: "release:id",
+        },
+        async () => tryGetRegistryScopeId(),
+      );
+      const branch = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project:id",
+          token: "<TOKEN>",
+          productionMode: false,
+          branch: "feature:branch",
+        },
+        async () => tryGetRegistryScopeId(),
+      );
+      const environment = await runWithRequestContext(
+        {
+          projectSlug: "project",
+          projectId: "project:id",
+          token: "<TOKEN>",
+          productionMode: true,
+          releaseId: null,
+          environmentName: "environment:name",
+        },
+        async () => tryGetRegistryScopeId(),
+      );
+
+      assertEquals(release, "project%3Aid:production:release%3Aid");
+      assertEquals(branch, "project%3Aid:preview:feature%3Abranch");
+      assertEquals(environment, "project%3Aid:production:environment:environment%3Aname");
+    });
+
+    it("keeps scope encoding total for lone UTF-16 surrogates", () => {
+      const loneSurrogate = runWithCacheKeyContext(
+        { projectId: "\uD800", mode: "preview", versionId: "x" },
+        () => tryGetRegistryScopeId(),
+      );
+      const literalEscape = runWithCacheKeyContext(
+        { projectId: "%uD800", mode: "preview", versionId: "x" },
+        () => tryGetRegistryScopeId(),
+      );
+
+      assertEquals(loneSurrogate, "%uD800:preview:x");
+      assertEquals(literalEscape, "%25uD800:preview:x");
+      assertNotEquals(loneSurrogate, literalEscape);
+    });
+
+    it("matches encoded scope IDs to raw project IDs without scope-ID ambiguity", () => {
+      const scopeId = "project%3Aid:preview:feature%3Abranch";
+
+      assertEquals(isRegistryScopeForProject(scopeId, "project:id"), true);
+      assertEquals(isRegistryScopeForProject(scopeId, "project"), false);
+      assertEquals(isRegistryScopeForProject(scopeId, "project:id-other"), false);
+      assertEquals(
+        isRegistryScopeForProject("project:preview:main", "project:preview:main"),
+        false,
+      );
     });
   });
 

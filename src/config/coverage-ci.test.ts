@@ -2,6 +2,7 @@ import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import {
   buildCoverageCommandArgs,
   buildDenoTestCommandArgs,
+  isUnitCoverageTestFile,
   mergeLcovReports,
   parseShardSpec,
   selectShardFiles,
@@ -44,6 +45,15 @@ Deno.test("selectShardFiles splits files deterministically by sorted order", () 
   ]);
 });
 
+Deno.test("unit coverage shards include TypeScript and TSX unit tests only", () => {
+  assertEquals(isUnitCoverageTestFile("src/cache/backend.test.ts"), true);
+  assertEquals(isUnitCoverageTestFile("src/react/app-shell.test.tsx"), true);
+  assertEquals(isUnitCoverageTestFile("src/cache/backend.integration.test.ts"), false);
+  assertEquals(isUnitCoverageTestFile("src/react/app.integration.test.tsx"), false);
+  assertEquals(isUnitCoverageTestFile("src/workflow/__tests__/legacy.test.ts"), false);
+  assertEquals(isUnitCoverageTestFile("src/cache/backend.ts"), false);
+});
+
 Deno.test("buildDenoTestCommandArgs keeps coverage profiles isolated per shard", () => {
   const args = buildDenoTestCommandArgs({
     coverageDir: "coverage-shard-3",
@@ -53,6 +63,7 @@ Deno.test("buildDenoTestCommandArgs keeps coverage profiles isolated per shard",
   assertEquals(args.includes("--coverage=coverage-shard-3"), true);
   assertEquals(args.includes("--coverage-raw-data-only"), true);
   assertEquals(args.includes("--parallel"), true);
+  assertEquals(args.includes("--fail-fast"), false);
   assertEquals(args.includes("src/example.test.ts"), true);
 });
 

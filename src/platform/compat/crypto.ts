@@ -1,7 +1,7 @@
 import { isDeno } from "./runtime.ts";
 
 interface CryptoCompat {
-  getRandomValues(array: Uint8Array): Uint8Array;
+  getRandomValues<T extends Uint8Array<ArrayBufferLike>>(array: T): T;
   randomUUID(): string;
   subtle: SubtleCrypto;
 }
@@ -9,7 +9,7 @@ interface CryptoCompat {
 class WebCryptoCompat implements CryptoCompat {
   constructor(private readonly cryptoImpl: Crypto) {}
 
-  getRandomValues(array: Uint8Array): Uint8Array {
+  getRandomValues<T extends Uint8Array<ArrayBufferLike>>(array: T): T {
     return this.cryptoImpl.getRandomValues(array);
   }
 

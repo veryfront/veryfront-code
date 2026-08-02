@@ -45,6 +45,15 @@ Deno.test("compiled CLI embeds optional builtin extension source files", async (
   }
 });
 
+Deno.test("compiled CLI embeds the permissionless parser entry", () => {
+  assertEquals(
+    DEFAULT_INCLUDES.includes(
+      "extensions/ext-parser-babel/src/parser-only.ts",
+    ),
+    true,
+  );
+});
+
 Deno.test("compiled CLI embeds the auto-loaded Sentry reporter", () => {
   assertEquals(
     DEFAULT_INCLUDES.includes(
