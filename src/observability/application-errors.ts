@@ -40,12 +40,24 @@ let activeLifecycle: ApplicationErrorReporterLifecycle | undefined;
 let initializationQueue: Promise<void> = Promise.resolve();
 let pendingInitializations = 0;
 
+/**
+ * Publish an unowned reporter directly, taking over from any active lifecycle.
+ *
+ * Direct replacement is a supported sequential handover: an active lifecycle
+ * keeps its session and stays responsible for disposing it, but stops owning
+ * the published reporter, so its capture/flush degrade to no-ops and its
+ * dispose leaves the newly published reporter in place.
+ *
+ * Replacement during an in-flight initialization is rejected instead, because
+ * that initialization publishes unconditionally once it settles and would
+ * silently discard the reporter installed here.
+ */
 export function setApplicationErrorReporter(
   nextReporter: ApplicationErrorReporter | undefined,
 ): void {
-  if (activeLifecycle || pendingInitializations > 0) {
+  if (pendingInitializations > 0) {
     throw new Error(
-      "Wait for application-error initialization and dispose its lifecycle before replacing its reporter",
+      "Wait for the in-flight application-error initialization to settle before replacing its reporter",
     );
   }
   reporter = nextReporter;

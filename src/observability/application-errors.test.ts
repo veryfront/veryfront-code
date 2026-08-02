@@ -183,7 +183,7 @@ it("application error initialization rejects invalid service identities and dire
   assertThrows(
     () => setApplicationErrorReporter(undefined),
     Error,
-    "Wait for application-error initialization",
+    "in-flight application-error initialization",
   );
   await initializationStarted;
   resolveInitialization?.(undefined);
@@ -228,6 +228,85 @@ it("application error lifecycle publishes, flushes, and disposes one owned repor
   assertEquals(flushTimeouts, [50]);
   assertEquals(disposeCalls, 1);
   assertEquals(lifecycle.capture(new Error("stale"), { boundary: "test" }), undefined);
+});
+
+it("direct reporter replacement hands over ownership from an active lifecycle", async () => {
+  let disposeCalls = 0;
+  const lifecycleCaptures: unknown[] = [];
+  const lifecycle = await initializeApplicationErrorReporter({
+    initializer: {
+      initialize: () => ({
+        reporter: {
+          capture(error) {
+            lifecycleCaptures.push(error);
+            return "lifecycle-event";
+          },
+          flush: () => Promise.resolve(true),
+        },
+        dispose() {
+          disposeCalls++;
+        },
+      }),
+    },
+    serviceName: "test-service",
+  });
+
+  // Mirrors the sentry publish path (sentry.ts, node-sentry.ts) installing its
+  // reporter while a lifecycle owns the process reporter.
+  const directCaptures: unknown[] = [];
+  setApplicationErrorReporter({
+    capture(error) {
+      directCaptures.push(error);
+      return "direct-event";
+    },
+    flush: () => Promise.resolve(true),
+  });
+
+  const error = new Error("reported after handover");
+  assertEquals(captureApplicationError(error, { boundary: "test" }), "direct-event");
+  assertEquals(directCaptures, [error]);
+  assertEquals(lifecycleCaptures, []);
+  assertEquals(lifecycle.capture(new Error("detached"), { boundary: "test" }), undefined);
+  assertEquals(await lifecycle.flush(50), true);
+
+  // The detached lifecycle still disposes its own session and must not clear
+  // the reporter it no longer owns.
+  await lifecycle.dispose();
+  assertEquals(disposeCalls, 1);
+  assertEquals(captureApplicationError(error, { boundary: "test" }), "direct-event");
+  assertEquals(directCaptures.length, 2);
+});
+
+it("sentry teardown clears the reporter while a lifecycle is still active", async () => {
+  let disposeCalls = 0;
+  const lifecycle = await initializeApplicationErrorReporter({
+    initializer: {
+      initialize: () => ({
+        reporter: {
+          capture: () => "lifecycle-event",
+          flush: () => Promise.resolve(true),
+        },
+        dispose() {
+          disposeCalls++;
+        },
+      }),
+    },
+    serviceName: "test-service",
+  });
+
+  // Mirrors resetSentryForTests() and the node agent service lifecycle reset().
+  setApplicationErrorReporter(undefined);
+
+  assertEquals(captureApplicationError(new Error("cleared"), { boundary: "test" }), undefined);
+  assertEquals(await flushApplicationErrors(50), true);
+  assertEquals(disposeCalls, 0);
+
+  // A later initialization still disposes the detached session automatically.
+  const next = await initializeApplicationErrorReporter({ serviceName: "test-service" });
+  assertEquals(disposeCalls, 1);
+  assertEquals(next.enabled, false);
+  await lifecycle.dispose();
+  assertEquals(disposeCalls, 1);
 });
 
 it("superseded application error initialization disposes stale state before starting its replacement", async () => {
