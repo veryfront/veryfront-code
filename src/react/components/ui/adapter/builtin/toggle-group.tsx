@@ -18,17 +18,27 @@ interface ToggleGroupState {
 }
 const ToggleGroupContext = React.createContext<ToggleGroupState | null>(null);
 
-function toArray(value: string | string[] | undefined): string[] {
+function normalizeValue(
+  type: "single" | "multiple",
+  value: string | string[] | undefined,
+): string[] {
   if (value == null) return [];
-  return Array.isArray(value) ? value : [value];
+  const values = Array.isArray(value) ? value : [value];
+  return type === "single" ? values.slice(0, 1) : values;
 }
 
 const ToggleGroupRoot: ToggleGroupParts["Root"] = (
   { type = "single", value, defaultValue, onValueChange, disabled, children, ref, ...props },
 ) => {
   const isControlled = value !== undefined;
-  const [internal, setInternal] = React.useState<string[]>(() => toArray(defaultValue));
-  const selected = isControlled ? toArray(value) : internal;
+  const [internal, setInternal] = React.useState<string[]>(() =>
+    normalizeValue(type, defaultValue)
+  );
+  const selected = normalizeValue(type, isControlled ? value : internal);
+
+  React.useEffect(() => {
+    if (!isControlled) setInternal((current) => normalizeValue(type, current));
+  }, [isControlled, type]);
 
   const toggle = React.useCallback((itemValue: string) => {
     let next: string[];
@@ -40,7 +50,11 @@ const ToggleGroupRoot: ToggleGroupParts["Root"] = (
         : [...selected, itemValue];
     }
     if (!isControlled) setInternal(next);
-    onValueChange?.(type === "single" ? (next[0] ?? "") : next);
+    if (type === "single") {
+      (onValueChange as ((value: string) => void) | undefined)?.(next[0] ?? "");
+    } else {
+      (onValueChange as ((value: string[]) => void) | undefined)?.(next);
+    }
   }, [type, selected, isControlled, onValueChange]);
 
   const ctx = React.useMemo<ToggleGroupState>(
@@ -75,7 +89,8 @@ const ToggleGroupItem: ToggleGroupParts["Item"] = (
       disabled={asChild ? undefined : isDisabled}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
         onClick?.(event);
-        if (event.defaultPrevented || isDisabled) return;
+        if (isDisabled) event.preventDefault();
+        if (event.defaultPrevented) return;
         ctx.toggle(value);
       }}
     />

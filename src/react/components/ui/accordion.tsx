@@ -31,6 +31,13 @@ interface AccordionContextValue {
   toggle: (itemValue: string) => void;
 }
 const AccordionContext = React.createContext<AccordionContextValue | null>(null);
+interface AccordionItemContextValue {
+  triggerId: string;
+  contentId: string;
+  setTriggerId: (id: string) => void;
+  setContentId: (id: string) => void;
+}
+const AccordionItemContext = React.createContext<AccordionItemContextValue | null>(null);
 
 function useAccordionContext(): AccordionContextValue {
   const context = React.useContext(AccordionContext);
@@ -38,27 +45,40 @@ function useAccordionContext(): AccordionContextValue {
   return context;
 }
 
-function toArray(value: string | string[] | undefined): string[] {
+function normalizeValue(
+  type: "single" | "multiple",
+  value: string | string[] | undefined,
+): string[] {
   if (value == null) return [];
-  return Array.isArray(value) ? value : [value];
+  const values = Array.isArray(value) ? value : [value];
+  return type === "single" ? values.slice(0, 1) : values;
 }
 
 /** Props accepted by `<Accordion>`. */
-export interface AccordionProps
+interface AccordionBaseProps
   extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange" | "defaultValue"> {
-  /** `single`: at most one section open; `multiple`: any number. @default "single" */
-  type?: "single" | "multiple";
-  /** When `type="single"`, allow closing the open section back to none. */
-  collapsible?: boolean;
-  /** Controlled open value(s). `string` for `single`, `string[]` for `multiple`. */
-  value?: string | string[];
-  /** Initial open value(s) when uncontrolled. */
-  defaultValue?: string | string[];
-  /** Fires with the next open value(s) (same shape as `value`). */
-  onValueChange?: (value: string | string[]) => void;
-  /** React 19: ref is a regular prop. */
+  children?: React.ReactNode;
   ref?: React.Ref<HTMLDivElement>;
 }
+
+export interface SingleAccordionProps extends AccordionBaseProps {
+  type?: "single";
+  /** When `type="single"`, allow closing the open section back to none. */
+  collapsible?: boolean;
+  value?: string;
+  defaultValue?: string;
+  onValueChange?: (value: string) => void;
+}
+
+export interface MultipleAccordionProps extends AccordionBaseProps {
+  type: "multiple";
+  collapsible?: never;
+  value?: string[];
+  defaultValue?: string[];
+  onValueChange?: (value: string[]) => void;
+}
+
+export type AccordionProps = SingleAccordionProps | MultipleAccordionProps;
 
 /** Render a set of togglable sections. */
 export function Accordion({
@@ -73,8 +93,14 @@ export function Accordion({
   ...props
 }: AccordionProps): React.ReactElement {
   const isControlled = value !== undefined;
-  const [internal, setInternal] = React.useState<string[]>(() => toArray(defaultValue));
-  const open = isControlled ? toArray(value) : internal;
+  const [internal, setInternal] = React.useState<string[]>(() =>
+    normalizeValue(type, defaultValue)
+  );
+  const open = normalizeValue(type, isControlled ? value : internal);
+
+  React.useEffect(() => {
+    if (!isControlled) setInternal((current) => normalizeValue(type, current));
+  }, [isControlled, type]);
 
   const toggle = React.useCallback((itemValue: string) => {
     let next: string[];
@@ -85,7 +111,11 @@ export function Accordion({
       next = open.includes(itemValue) ? open.filter((v) => v !== itemValue) : [...open, itemValue];
     }
     if (!isControlled) setInternal(next);
-    onValueChange?.(type === "single" ? (next[0] ?? "") : next);
+    if (type === "single") {
+      (onValueChange as ((value: string) => void) | undefined)?.(next[0] ?? "");
+    } else {
+      (onValueChange as ((value: string[]) => void) | undefined)?.(next);
+    }
   }, [type, collapsible, open, isControlled, onValueChange]);
 
   const ctx = React.useMemo<AccordionContextValue>(() => ({ value: open, toggle }), [open, toggle]);
@@ -127,6 +157,13 @@ export function AccordionItem(
   const { disclosure } = useAdapter();
   const root = useAccordionContext();
   const open = root.value.includes(value);
+  const generatedId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const [triggerId, setTriggerId] = React.useState(`vf-accordion-${generatedId}-trigger`);
+  const [contentId, setContentId] = React.useState(`vf-accordion-${generatedId}-content`);
+  const itemContext = React.useMemo(
+    () => ({ triggerId, contentId, setTriggerId, setContentId }),
+    [triggerId, contentId],
+  );
   return (
     <disclosure.Root
       open={open}
@@ -137,7 +174,9 @@ export function AccordionItem(
       className={className}
       {...props}
     >
-      {children}
+      <AccordionItemContext.Provider value={itemContext}>
+        {children}
+      </AccordionItemContext.Provider>
     </disclosure.Root>
   );
 }
@@ -148,26 +187,37 @@ export interface AccordionTriggerProps extends React.ButtonHTMLAttributes<HTMLBu
   asChild?: boolean;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLButtonElement>;
+  /** Semantic heading level wrapped around the trigger. @default 3 */
+  headingLevel?: 2 | 3 | 4 | 5 | 6;
 }
 
 /** The clickable header that toggles its section (via the disclosure slot). */
 export function AccordionTrigger(
-  { className, children, ...props }: AccordionTriggerProps,
+  { className, children, id, headingLevel = 3, ...props }: AccordionTriggerProps,
 ): React.ReactElement {
   const { disclosure } = useAdapter();
+  const item = React.useContext(AccordionItemContext);
+  if (!item) throw new Error("AccordionTrigger must be used within <AccordionItem>");
+  const realizedId = id ?? item.triggerId;
+  React.useLayoutEffect(() => item.setTriggerId(realizedId), [item, realizedId]);
+  const Heading = `h${headingLevel}` as "h2" | "h3" | "h4" | "h5" | "h6";
   return (
-    <disclosure.Trigger
-      className={cn(
-        "flex w-full items-center justify-between gap-2 py-3 text-left text-base font-medium",
-        "text-[var(--foreground)] transition-colors hover:text-[var(--foreground)]",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
-        "[&>svg]:transition-transform data-[state=open]:[&>svg]:rotate-180",
-        className,
-      )}
-      {...props}
-    >
-      {children}
-    </disclosure.Trigger>
+    <Heading>
+      <disclosure.Trigger
+        id={realizedId}
+        aria-controls={item.contentId}
+        className={cn(
+          "flex w-full items-center justify-between gap-2 py-3 text-left text-base font-medium",
+          "text-[var(--foreground)] transition-colors hover:text-[var(--foreground)]",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
+          "[&>svg]:transition-transform data-[state=open]:[&>svg]:rotate-180",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </disclosure.Trigger>
+    </Heading>
   );
 }
 
@@ -179,12 +229,18 @@ export interface AccordionContentProps extends React.HTMLAttributes<HTMLDivEleme
 
 /** The section body: rendered only while its section is open (via the slot). */
 export function AccordionContent(
-  { className, children, ...props }: AccordionContentProps,
+  { className, children, id, ...props }: AccordionContentProps,
 ): React.ReactElement | null {
   const { disclosure } = useAdapter();
+  const item = React.useContext(AccordionItemContext);
+  if (!item) throw new Error("AccordionContent must be used within <AccordionItem>");
+  const realizedId = id ?? item.contentId;
+  React.useLayoutEffect(() => item.setContentId(realizedId), [item, realizedId]);
   return (
     <disclosure.Content
+      id={realizedId}
       role="region"
+      aria-labelledby={item.triggerId}
       className={cn("pb-3 text-base text-[var(--muted-foreground)]", className)}
       {...props}
     >

@@ -93,4 +93,61 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
       unmount();
     }
   });
+
+  it("wraps triggers in headings and wires custom ids bidirectionally", () => {
+    const { host, unmount } = render(
+      <Accordion>
+        <AccordionItem value="a">
+          <AccordionTrigger id="shipping-trigger" headingLevel={2}>Shipping</AccordionTrigger>
+          <AccordionContent id="shipping-content">Body</AccordionContent>
+        </AccordionItem>
+      </Accordion>,
+    );
+    try {
+      const heading = host.querySelector("h2")!;
+      const trigger = heading.querySelector("button")!;
+      const content = host.querySelector<HTMLElement>("[role=region]")!;
+      assert(trigger.id === "shipping-trigger", "realized trigger id is preserved");
+      assert(content.id === "shipping-content", "realized content id is preserved");
+      assert(trigger.getAttribute("aria-controls") === content.id, "trigger controls region");
+      assert(content.getAttribute("aria-labelledby") === trigger.id, "region names trigger");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("normalizes retained uncontrolled values when mode changes", () => {
+    function Probe(): React.ReactElement {
+      const [multiple, setMultiple] = React.useState(true);
+      const items = (
+        <>
+          <AccordionItem value="a">
+            <AccordionTrigger>A</AccordionTrigger>
+            <AccordionContent>A body</AccordionContent>
+          </AccordionItem>
+          <AccordionItem value="b">
+            <AccordionTrigger>B</AccordionTrigger>
+            <AccordionContent>B body</AccordionContent>
+          </AccordionItem>
+        </>
+      );
+      return (
+        <>
+          <button type="button" data-switch onClick={() => setMultiple(false)}>Switch</button>
+          {multiple
+            ? <Accordion type="multiple" defaultValue={["a", "b"]}>{items}</Accordion>
+            : <Accordion type="single">{items}</Accordion>}
+        </>
+      );
+    }
+    const { host, unmount } = render(<Probe />);
+    try {
+      click(host.querySelector("[data-switch]")!);
+      const triggers = Array.from(host.querySelectorAll("h3 button"));
+      assert(triggers[0]?.getAttribute("aria-expanded") === "true", "first value remains open");
+      assert(triggers[1]?.getAttribute("aria-expanded") === "false", "extra value closes");
+    } finally {
+      unmount();
+    }
+  });
 });

@@ -91,6 +91,72 @@ function runToggleGroupConformance(
         unmount();
       }
     });
+
+    it("blocks native, composed-link, and consumer-cancelled toggles", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <ToggleGroup type="multiple" disabled>
+            <ToggleGroupItem value="native">Native</ToggleGroupItem>
+            <ToggleGroupItem value="link" asChild>
+              <a href="#disabled">Link</a>
+            </ToggleGroupItem>
+          </ToggleGroup>
+          <ToggleGroup type="multiple">
+            <ToggleGroupItem value="cancelled" onClick={(event) => event.preventDefault()}>
+              Cancelled
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </Wrap>,
+      );
+      try {
+        const native = host.querySelector("button")!;
+        const link = host.querySelector("a")!;
+        const cancelled = host.querySelectorAll("button")[1]!;
+        click(native);
+        const linkEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
+        flushSync(() => link.dispatchEvent(linkEvent));
+        click(cancelled);
+        assert(native.getAttribute("aria-pressed") === "false", "disabled button stays off");
+        assert(linkEvent.defaultPrevented, "disabled link prevents navigation");
+        assert(link.getAttribute("aria-pressed") === "false", "disabled link stays off");
+        assert(cancelled.getAttribute("aria-pressed") === "false", "cancelled item stays off");
+      } finally {
+        unmount();
+      }
+    });
+
+    it("normalizes retained uncontrolled state when selection mode changes", () => {
+      function Probe(): React.ReactElement {
+        const [multiple, setMultiple] = React.useState(true);
+        return (
+          <Wrap>
+            <button type="button" data-switch onClick={() => setMultiple(false)}>Switch</button>
+            {multiple
+              ? (
+                <ToggleGroup type="multiple" defaultValue={["a", "b"]}>
+                  <ToggleGroupItem value="a">A</ToggleGroupItem>
+                  <ToggleGroupItem value="b">B</ToggleGroupItem>
+                </ToggleGroup>
+              )
+              : (
+                <ToggleGroup type="single">
+                  <ToggleGroupItem value="a">A</ToggleGroupItem>
+                  <ToggleGroupItem value="b">B</ToggleGroupItem>
+                </ToggleGroup>
+              )}
+          </Wrap>
+        );
+      }
+      const { host, unmount } = render(<Probe />);
+      try {
+        click(host.querySelector("[data-switch]")!);
+        const items = Array.from(host.querySelectorAll<HTMLElement>("[data-state]"));
+        assert(items[0]?.dataset.state === "on", "first retained selection remains");
+        assert(items[1]?.dataset.state === "off", "single mode drops extra retained selections");
+      } finally {
+        unmount();
+      }
+    });
   });
 }
 
@@ -98,95 +164,59 @@ function runToggleGroupConformance(
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
 runToggleGroupConformance("builtin (default)", Identity);
 
-describe("Builtin ToggleGroup event semantics", () => {
-  it("does not toggle disabled native items", () => {
-    const { host, unmount } = render(
-      <ToggleGroup type="multiple" disabled>
-        <ToggleGroupItem value="disabled">Disabled</ToggleGroupItem>
-      </ToggleGroup>,
-    );
-    try {
-      const item = host.querySelector("button")!;
-      click(item);
-      assert(item.getAttribute("aria-pressed") === "false", "disabled group blocks toggles");
-    } finally {
-      unmount();
-    }
-  });
-
-  it("does not toggle disabled asChild items", () => {
-    const { host, unmount } = render(
-      <ToggleGroup type="multiple" disabled>
-        <ToggleGroupItem value="disabled" asChild>
-          <a href="#disabled">Disabled</a>
-        </ToggleGroupItem>
-      </ToggleGroup>,
-    );
-    try {
-      const item = host.querySelector("a")!;
-      assert(item.getAttribute("aria-disabled") === "true", "disabled child is exposed to AT");
-      click(item);
-      assert(item.getAttribute("aria-pressed") === "false", "disabled child blocks toggles");
-    } finally {
-      unmount();
-    }
-  });
-
-  it("does not toggle consumer-cancelled items", () => {
-    const second = render(
-      <ToggleGroup type="multiple">
-        <ToggleGroupItem value="cancelled" onClick={(event) => event.preventDefault()}>
-          Cancelled
-        </ToggleGroupItem>
-      </ToggleGroup>,
-    );
-    try {
-      const item = second.host.querySelector("button")!;
-      click(item);
-      assert(item.getAttribute("aria-pressed") === "false", "preventDefault cancels toggling");
-    } finally {
-      second.unmount();
-    }
-  });
-});
-
 // (2) an INDEPENDENT contract-only engine: a distinct wrapper (`data-alt-group`)
 // + its own selection reducer, same skin + call-site.
-const AltCtx = React.createContext<{ value: string[]; toggle: (v: string) => void } | null>(null);
+const AltCtx = React.createContext<
+  { value: string[]; toggle: (v: string) => void; disabled?: boolean } | null
+>(null);
 const altToggleGroup: ToggleGroupParts = {
   Root: (
-    { type = "single", value, defaultValue, onValueChange, disabled: _d, children, ref, ...props },
+    { type = "single", value, defaultValue, onValueChange, disabled, children, ref, ...props },
   ) => {
     const controlled = value !== undefined;
-    const toArr = (v: string | string[] | undefined) => v == null ? [] : Array.isArray(v) ? v : [v];
-    const [internal, setInternal] = React.useState<string[]>(() => toArr(defaultValue));
-    const selected = controlled ? toArr(value) : internal;
+    const normalize = (v: string | string[] | undefined) => {
+      const values = v == null ? [] : Array.isArray(v) ? v : [v];
+      return type === "single" ? values.slice(0, 1) : values;
+    };
+    const [internal, setInternal] = React.useState<string[]>(() => normalize(defaultValue));
+    const selected = normalize(controlled ? value : internal);
+    React.useEffect(() => {
+      if (!controlled) setInternal((current) => normalize(current));
+    }, [controlled, type]);
     const toggle = React.useCallback((iv: string) => {
       const next = type === "single"
         ? (selected[0] === iv ? [] : [iv])
         : (selected.includes(iv) ? selected.filter((v) => v !== iv) : [...selected, iv]);
       if (!controlled) setInternal(next);
-      onValueChange?.(type === "single" ? (next[0] ?? "") : next);
+      if (type === "single") {
+        (onValueChange as ((value: string) => void) | undefined)?.(next[0] ?? "");
+      } else {
+        (onValueChange as ((value: string[]) => void) | undefined)?.(next);
+      }
     }, [type, selected, controlled, onValueChange]);
     return (
       <div ref={ref} role="group" data-alt-group {...props}>
-        <AltCtx.Provider value={{ value: selected, toggle }}>{children}</AltCtx.Provider>
+        <AltCtx.Provider value={{ value: selected, toggle, disabled }}>{children}</AltCtx.Provider>
       </div>
     );
   },
-  Item: ({ value, asChild, onClick, ref, ...props }) => {
+  Item: ({ value, asChild, onClick, ref, disabled, ...props }) => {
     const ctx = React.useContext(AltCtx);
     const isOn = ctx?.value.includes(value) ?? false;
+    const isDisabled = Boolean(disabled || ctx?.disabled);
     const Comp = asChild ? Slot : "button";
     return (
       <Comp
         {...(asChild ? {} : { type: "button" as const })}
         ref={ref}
         aria-pressed={isOn}
+        aria-disabled={asChild && isDisabled ? true : undefined}
+        disabled={asChild ? undefined : isDisabled}
         data-state={isOn ? "on" : "off"}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
-          ctx?.toggle(value);
+          if (isDisabled) e.preventDefault();
+          if (!e.defaultPrevented) ctx?.toggle(value);
         }}
         {...props}
       />

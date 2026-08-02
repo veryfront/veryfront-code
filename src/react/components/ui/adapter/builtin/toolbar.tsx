@@ -8,24 +8,37 @@
  * @module react/components/ui/adapter/builtin/toolbar
  */
 import * as React from "react";
-import { Slot } from "../../slot.tsx";
+import { composeRefs, Slot } from "../../slot.tsx";
 import type { ToolbarParts } from "../contract.ts";
 
 function enabledItems(root: HTMLElement): HTMLElement[] {
+  return scopedItems(root).filter(
+    (el) =>
+      el.closest<HTMLElement>("[data-toolbar-root]") === root &&
+      !el.hasAttribute("disabled") &&
+      el.getAttribute("aria-disabled") !== "true" &&
+      !el.closest('[hidden], [inert], [aria-hidden="true"]') &&
+      !isEditable(el),
+  );
+}
+
+function scopedItems(root: HTMLElement): HTMLElement[] {
   return Array.from(root.querySelectorAll<HTMLElement>("[data-toolbar-item]")).filter(
-    (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-disabled") !== "true",
+    (element) => element.closest<HTMLElement>("[data-toolbar-root]") === root,
+  );
+}
+
+function isEditable(element: Element): boolean {
+  return Boolean(
+    element.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])"),
   );
 }
 
 const ToolbarRoot: ToolbarParts["Root"] = (
-  { orientation = "horizontal", children, onKeyDown, ref, ...props },
+  { orientation = "horizontal", children, onKeyDown, onFocusCapture, ref, ...props },
 ) => {
   const innerRef = React.useRef<HTMLDivElement | null>(null);
-  const setRef = React.useCallback((node: HTMLDivElement | null) => {
-    innerRef.current = node;
-    if (typeof ref === "function") ref(node);
-    else if (ref) (ref as React.RefObject<HTMLDivElement | null>).current = node;
-  }, [ref]);
+  const composedRef = React.useMemo(() => composeRefs(innerRef, ref), [ref]);
 
   // Keep the current roving stop across rerenders. Fall back to the first enabled
   // item only when the active/tabbable item disappeared or became disabled.
@@ -38,7 +51,7 @@ const ToolbarRoot: ToolbarParts["Root"] = (
       : null;
     const resting = items.find((element) => element === focused || element.tabIndex === 0) ??
       items[0];
-    items.forEach((el) => {
+    scopedItems(root).forEach((el) => {
       el.tabIndex = el === resting ? 0 : -1;
     });
   });
@@ -48,6 +61,8 @@ const ToolbarRoot: ToolbarParts["Root"] = (
     if (event.defaultPrevented) return;
     const root = innerRef.current;
     if (!root) return;
+    const eventTarget = event.target as Element;
+    if (eventTarget.closest("[data-toolbar-root]") !== root || isEditable(eventTarget)) return;
     const items = enabledItems(root);
     if (items.length === 0) return;
 
@@ -73,14 +88,27 @@ const ToolbarRoot: ToolbarParts["Root"] = (
     next.focus();
   };
 
+  const handleFocusCapture = (event: React.FocusEvent<HTMLDivElement>) => {
+    onFocusCapture?.(event);
+    if (event.defaultPrevented) return;
+    const root = innerRef.current;
+    const target = event.target as HTMLElement;
+    if (!root || target.closest("[data-toolbar-root]") !== root) return;
+    const items = enabledItems(root);
+    if (!items.includes(target)) return;
+    items.forEach((item) => item.tabIndex = item === target ? 0 : -1);
+  };
+
   return (
     <div
       {...props}
-      ref={setRef}
+      ref={composedRef}
       role="toolbar"
+      data-toolbar-root=""
       aria-orientation={orientation}
       data-orientation={orientation}
       onKeyDown={handleKeyDown}
+      onFocusCapture={handleFocusCapture}
     >
       {children}
     </div>

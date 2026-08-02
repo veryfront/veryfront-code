@@ -9,6 +9,10 @@
  */
 import * as React from "react";
 import { cva, cx as cn, type VariantProps } from "./cva.ts";
+import { composeRefs } from "./slot.tsx";
+
+/** Largest delay accepted by browser and server JavaScript timer hosts. */
+export const MAX_TOAST_DURATION_MS = 2_147_483_647;
 
 export const toastVariants = cva(
   "pointer-events-auto relative flex w-full items-start gap-3 rounded-lg border border-[var(--edge)] bg-[var(--popover)] p-4 pr-8 text-sm text-[var(--foreground)] shadow-lg",
@@ -63,18 +67,47 @@ export interface ToastFn {
   custom: (render: (id: string) => React.ReactNode) => string;
 }
 
-/** Arm an auto-dismiss timer: calls `onClose` after `duration` ms (Infinity/0 disables). */
-export function useAutoDismiss(duration: number | undefined, onClose?: () => void): void {
+/** Arm a pausable auto-dismiss timer. Infinity and zero disable it. */
+export function useAutoDismiss(
+  duration: number | undefined,
+  onClose?: () => void,
+  options: { paused?: boolean; ownerDocument?: Document } = {},
+): void {
   const onCloseRef = React.useRef(onClose);
   onCloseRef.current = onClose;
+  const [documentHidden, setDocumentHidden] = React.useState(
+    () => options.ownerDocument?.visibilityState === "hidden",
+  );
+  const remainingRef = React.useRef(duration ?? 0);
+
+  React.useEffect(() => {
+    const document = options.ownerDocument;
+    if (!document) return;
+    const update = () => setDocumentHidden(document.visibilityState === "hidden");
+    update();
+    document.addEventListener("visibilitychange", update);
+    return () => document.removeEventListener("visibilitychange", update);
+  }, [options.ownerDocument]);
+
+  React.useEffect(() => {
+    remainingRef.current = duration ?? 0;
+  }, [duration]);
+
   React.useEffect(() => {
     if (duration == null || duration === Infinity || duration === 0) return;
-    if (!Number.isFinite(duration) || duration < 0) {
-      throw new RangeError("Toast duration must be a non-negative finite number or Infinity");
+    if (!Number.isFinite(duration) || duration < 0 || duration > MAX_TOAST_DURATION_MS) {
+      throw new RangeError(
+        `Toast duration must be between 0 and ${MAX_TOAST_DURATION_MS}, or Infinity`,
+      );
     }
-    const timer = setTimeout(() => onCloseRef.current?.(), duration);
-    return () => clearTimeout(timer);
-  }, [duration]);
+    if (options.paused || documentHidden) return;
+    const startedAt = Date.now();
+    const timer = setTimeout(() => onCloseRef.current?.(), remainingRef.current);
+    return () => {
+      clearTimeout(timer);
+      remainingRef.current = Math.max(0, remainingRef.current - (Date.now() - startedAt));
+    };
+  }, [duration, options.paused, documentHidden]);
 }
 
 /** Props accepted by `<Toast>`. */
@@ -100,18 +133,44 @@ export function Toast({
   className,
   children,
   ref,
+  onMouseEnter,
+  onMouseLeave,
+  onFocus,
+  onBlur,
   ...props
 }: ToastProps): React.ReactElement {
-  useAutoDismiss(duration, onClose);
+  const [node, setNode] = React.useState<HTMLLIElement | null>(null);
+  const [interactionPaused, setInteractionPaused] = React.useState(false);
+  const composedRef = React.useMemo(() => composeRefs<HTMLLIElement>(setNode, ref), [ref]);
+  useAutoDismiss(duration, onClose, {
+    paused: interactionPaused,
+    ownerDocument: node?.ownerDocument,
+  });
 
   return (
     <li
-      ref={ref}
+      ref={composedRef}
       role="status"
       aria-live="polite"
       aria-atomic="true"
       data-variant={variant ?? "default"}
       className={cn(toastVariants({ variant }), className)}
+      onMouseEnter={(event) => {
+        onMouseEnter?.(event);
+        setInteractionPaused(true);
+      }}
+      onMouseLeave={(event) => {
+        onMouseLeave?.(event);
+        setInteractionPaused(false);
+      }}
+      onFocus={(event) => {
+        onFocus?.(event);
+        setInteractionPaused(true);
+      }}
+      onBlur={(event) => {
+        onBlur?.(event);
+        if (!event.currentTarget.contains(event.relatedTarget)) setInteractionPaused(false);
+      }}
       {...props}
     >
       {children}

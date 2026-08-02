@@ -15,23 +15,13 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { useAdapter } from "./adapter/context.tsx";
+import type {
+  MultipleToggleGroupRootProps,
+  SingleToggleGroupRootProps,
+} from "./adapter/contract.ts";
 
 /** Props accepted by `<ToggleGroup>`. */
-export interface ToggleGroupProps
-  extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange" | "defaultValue"> {
-  /** `single`: one value (a segmented control); `multiple`: a set. @default "single" */
-  type?: "single" | "multiple";
-  /** Controlled selection. `string` for `single`, `string[]` for `multiple`. */
-  value?: string | string[];
-  /** Initial selection when uncontrolled. */
-  defaultValue?: string | string[];
-  /** Fires with the next selection (same shape as `value`). */
-  onValueChange?: (value: string | string[]) => void;
-  /** Disable every item. */
-  disabled?: boolean;
-  /** React 19: ref is a regular prop. */
-  ref?: React.Ref<HTMLDivElement>;
-}
+export type ToggleGroupProps = SingleToggleGroupRootProps | MultipleToggleGroupRootProps;
 
 /** Render a group of toggles with shared selection (via the adapter engine). */
 export function ToggleGroup(

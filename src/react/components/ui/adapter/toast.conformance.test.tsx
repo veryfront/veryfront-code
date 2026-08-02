@@ -14,10 +14,11 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ToastProvider, useToast } from "../toast.tsx";
+import { ToastProvider, ToastViewport, useToast } from "../toast.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import type { ToastFn, ToastOptions } from "../toast-parts.tsx";
 import type { ToastParts, ToastState } from "./contract.ts";
@@ -169,6 +170,177 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
   return <>{children}</>;
 }
 runToastConformance("builtin", BuiltinWrap);
+
+describe("Builtin Toast viewport and timer lifecycle", () => {
+  it("renders no portal during SSR and removes the portal viewport on cleanup", async () => {
+    const html = renderToString(
+      <ToastProvider>
+        <span>app</span>
+      </ToastProvider>,
+    );
+    assert(html === "<span>app</span>", "SSR output stays portal-free and hydration-stable");
+
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(dom);
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() =>
+        root.render(
+          <ToastProvider>
+            <span>app</span>
+          </ToastProvider>,
+        )
+      );
+      await waitFor(() =>
+        document.body.querySelectorAll('[aria-label="Notifications"]').length === 1
+      );
+      flushSync(() => root.unmount());
+      assert(
+        document.body.querySelectorAll('[aria-label="Notifications"]').length === 0,
+        "portal viewport is removed on unmount",
+      );
+    } finally {
+      restore();
+    }
+  });
+
+  it("requires explicit manual ownership and never renders an automatic duplicate", async () => {
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(dom);
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() =>
+        root.render(
+          <ToastProvider viewport="manual">
+            <ToastViewport data-manual />
+          </ToastProvider>,
+        )
+      );
+      assert(document.querySelectorAll('[aria-label="Notifications"]').length === 1, "one owner");
+      assert(document.querySelector("[data-manual]"), "manual viewport is realized");
+      flushSync(() => root.unmount());
+    } finally {
+      restore();
+    }
+
+    assertThrows(
+      () =>
+        renderToString(
+          <ToastProvider viewport="inline">
+            <ToastViewport />
+          </ToastProvider>,
+        ),
+      Error,
+      'viewport="manual"',
+    );
+  });
+
+  it("pauses auto-dismiss while hovered and while the document is hidden", async () => {
+    let api: ToastState | null = null;
+    function Probe(): null {
+      api = useToast();
+      return null;
+    }
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(dom);
+    const root = createRoot(document.getElementById("root")!);
+    let visibility = "visible";
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => visibility,
+    });
+    try {
+      flushSync(() =>
+        root.render(
+          <ToastProvider viewport="inline">
+            <Probe />
+          </ToastProvider>,
+        )
+      );
+      flushSync(() => api!.toast({ title: "Paused", duration: 60 }));
+      const toast = document.querySelector<HTMLElement>('[role="status"]')!;
+      flushSync(() =>
+        toast.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }))
+      );
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      assert(document.body.textContent?.includes("Paused"), "hover pauses timer");
+      visibility = "hidden";
+      document.dispatchEvent(new dom.window.Event("visibilitychange"));
+      flushSync(() =>
+        toast.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true }))
+      );
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      assert(document.body.textContent?.includes("Paused"), "hidden document keeps timer paused");
+      visibility = "visible";
+      document.dispatchEvent(new dom.window.Event("visibilitychange"));
+      await waitFor(() => !document.body.textContent?.includes("Paused"));
+    } finally {
+      root.unmount();
+      restore();
+    }
+  });
+
+  it("pauses auto-dismiss while focus remains inside the toast", async () => {
+    let api: ToastState | null = null;
+    function Probe(): null {
+      api = useToast();
+      return null;
+    }
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(dom);
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() =>
+        root.render(
+          <ToastProvider viewport="inline">
+            <Probe />
+          </ToastProvider>,
+        )
+      );
+      flushSync(() =>
+        api!.toast({
+          title: "Focused",
+          duration: 60,
+          action: { label: "Action", onClick: () => undefined },
+        })
+      );
+      const action = [...document.querySelectorAll("button")].find((button) =>
+        button.textContent === "Action"
+      )!;
+      action.focus();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      assert(document.body.textContent?.includes("Focused"), "focus pauses timer");
+      action.blur();
+      await waitFor(() => !document.body.textContent?.includes("Focused"));
+    } finally {
+      root.unmount();
+      restore();
+    }
+  });
+
+  it("rejects delays above the host timer range and unrealistic queue capacities", () => {
+    assertThrows(
+      () =>
+        renderToString(
+          <ToastProvider duration={2_147_483_648}>
+            <span />
+          </ToastProvider>,
+        ),
+      RangeError,
+      "2147483647",
+    );
+    assertThrows(
+      () =>
+        renderToString(
+          <ToastProvider maxToasts={51}>
+            <span />
+          </ToastProvider>,
+        ),
+      RangeError,
+      "between 1 and 50",
+    );
+  });
+});
 
 // ---------------------------------------------------------------------------
 // Independent 2nd ToastParts: a byte-for-byte-different queue (useReducer,

@@ -52,11 +52,11 @@ function render(element: React.ReactElement): { host: HTMLElement; unmount: () =
 }
 
 /** Click a node with a bubbling MouseEvent (reaches React in jsdom). */
-function click(node: Element): void {
+function click(node: Element): MouseEvent {
   const MouseEventCtor = (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
-  flushSync(() =>
-    node.dispatchEvent(new MouseEventCtor("click", { bubbles: true, cancelable: true }))
-  );
+  const event = new MouseEventCtor("click", { bubbles: true, cancelable: true });
+  flushSync(() => node.dispatchEvent(event));
+  return event;
 }
 
 function runDisclosureConformance(
@@ -120,6 +120,41 @@ function runDisclosureConformance(
         second.unmount();
       }
     });
+
+    it("prevents disabled asChild link navigation", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosureAsChildProbe />
+        </Wrap>,
+      );
+      try {
+        const link = host.querySelector("a")!;
+        const event = click(link);
+        assert(event.defaultPrevented, "disabled composed link prevents its default action");
+        assert(link.getAttribute("aria-expanded") === "false", "disabled link stays closed");
+      } finally {
+        unmount();
+      }
+    });
+
+    it("keeps realized trigger and content ids wired in both directions", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosureCustomIdProbe />
+        </Wrap>,
+      );
+      try {
+        const trigger = host.querySelector("button")!;
+        const content = host.querySelector<HTMLElement>("[role=region]")!;
+        assert(trigger.getAttribute("aria-controls") === "custom-content", "controls realized id");
+        assert(
+          content.getAttribute("aria-labelledby") === "custom-trigger",
+          "region names trigger",
+        );
+      } finally {
+        unmount();
+      }
+    });
   });
 }
 
@@ -139,6 +174,28 @@ function DisclosureProbe(
   );
 }
 
+function DisclosureAsChildProbe(): React.ReactElement {
+  const { disclosure } = useAdapter();
+  return (
+    <disclosure.Root disabled>
+      <disclosure.Trigger asChild>
+        <a href="#navigated">Toggle</a>
+      </disclosure.Trigger>
+      <disclosure.Content>Body</disclosure.Content>
+    </disclosure.Root>
+  );
+}
+
+function DisclosureCustomIdProbe(): React.ReactElement {
+  const { disclosure } = useAdapter();
+  return (
+    <disclosure.Root>
+      <disclosure.Trigger id="custom-trigger">Toggle</disclosure.Trigger>
+      <disclosure.Content id="custom-content" role="region">Body</disclosure.Content>
+    </disclosure.Root>
+  );
+}
+
 // (1) builtin: no provider.
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
 runDisclosureConformance("builtin (default)", Identity);
@@ -146,13 +203,23 @@ runDisclosureConformance("builtin (default)", Identity);
 // (3) an INDEPENDENT contract-only engine: proves the seam. Different impl than
 // the builtin (its own context + a `<section>` wrapper), same skin + call-site.
 const AltCtx = React.createContext<
-  { open: boolean; toggle: () => void; contentId: string; disabled?: boolean } | null
+  {
+    open: boolean;
+    toggle: () => void;
+    triggerId: string;
+    contentId: string;
+    setTriggerId: (id: string) => void;
+    setContentId: (id: string) => void;
+    disabled?: boolean;
+  } | null
 >(null);
 const altDisclosure: DisclosureParts = {
   Root: ({ open, defaultOpen, onOpenChange, disabled, children, ref, ...props }) => {
     const controlled = open !== undefined;
     const [internal, setInternal] = React.useState(defaultOpen ?? false);
-    const contentId = `alt-disclosure-${React.useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+    const baseId = `alt-disclosure-${React.useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+    const [triggerId, setTriggerId] = React.useState(`${baseId}-trigger`);
+    const [contentId, setContentId] = React.useState(`${baseId}-content`);
     const isOpen = controlled ? open : internal;
     const toggle = React.useCallback(() => {
       if (!controlled) setInternal((v) => !v);
@@ -160,27 +227,43 @@ const altDisclosure: DisclosureParts = {
     }, [controlled, isOpen, onOpenChange]);
     return (
       <section ref={ref} data-state={isOpen ? "open" : "closed"} {...props}>
-        <AltCtx.Provider value={{ open: isOpen, toggle, contentId, disabled }}>
+        <AltCtx.Provider
+          value={{
+            open: isOpen,
+            toggle,
+            triggerId,
+            contentId,
+            setTriggerId,
+            setContentId,
+            disabled,
+          }}
+        >
           {children}
         </AltCtx.Provider>
       </section>
     );
   },
-  Trigger: ({ asChild, onClick, children, ref, disabled, ...props }) => {
+  Trigger: ({ asChild, onClick, children, ref, disabled, id, ...props }) => {
     const ctx = React.useContext(AltCtx);
     const Comp = asChild ? Slot : "button";
     const isDisabled = Boolean(ctx?.disabled || disabled);
+    const realizedId = id ?? ctx?.triggerId;
+    React.useLayoutEffect(() => {
+      if (realizedId) ctx?.setTriggerId(realizedId);
+    }, [ctx, realizedId]);
     return (
       <Comp
         {...(asChild ? {} : { type: "button" as const })}
         ref={ref}
+        id={realizedId}
         aria-expanded={ctx?.open ?? false}
         aria-controls={ctx?.contentId}
         disabled={asChild ? undefined : isDisabled}
         aria-disabled={asChild && isDisabled ? true : undefined}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
-          if (!e.defaultPrevented && !isDisabled) ctx?.toggle();
+          if (isDisabled) e.preventDefault();
+          if (!e.defaultPrevented) ctx?.toggle();
         }}
         {...props}
       >
@@ -190,11 +273,16 @@ const altDisclosure: DisclosureParts = {
   },
   Content: ({ children, ref, id, hidden, ...props }) => {
     const ctx = React.useContext(AltCtx);
+    const realizedId = id ?? ctx?.contentId;
+    React.useLayoutEffect(() => {
+      if (realizedId) ctx?.setContentId(realizedId);
+    }, [ctx, realizedId]);
     return (
       <div
         {...props}
         ref={ref}
-        id={id ?? ctx?.contentId}
+        id={realizedId}
+        aria-labelledby={props["aria-labelledby"] ?? ctx?.triggerId}
         data-state={ctx?.open ? "open" : "closed"}
         hidden={Boolean(hidden || !ctx?.open)}
       >

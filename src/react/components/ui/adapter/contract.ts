@@ -65,24 +65,41 @@ export interface DisclosureParts {
  */
 export interface ToggleGroupParts {
   /** Owns the selection state machine + provides context. */
-  Root: React.FC<
-    & React.HTMLAttributes<HTMLDivElement>
-    & {
-      type?: "single" | "multiple";
-      value?: string | string[];
-      defaultValue?: string | string[];
-      onValueChange?: (value: string | string[]) => void;
-      disabled?: boolean;
-      children: React.ReactNode;
-      ref?: React.Ref<HTMLDivElement>;
-    }
-  >;
+  Root: React.FC<ToggleGroupRootProps>;
   /** A pressable item; sets `aria-pressed` / `data-state`, toggles on click. */
   Item: React.FC<
     & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "value">
     & { value: string; asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
   >;
 }
+
+interface ToggleGroupRootBase
+  extends Omit<React.HTMLAttributes<HTMLDivElement>, "defaultValue" | "onChange"> {
+  disabled?: boolean;
+  children: React.ReactNode;
+  ref?: React.Ref<HTMLDivElement>;
+}
+
+/** Single-selection adapter root. */
+export interface SingleToggleGroupRootProps extends ToggleGroupRootBase {
+  type?: "single";
+  value?: string;
+  defaultValue?: string;
+  onValueChange?: (value: string) => void;
+}
+
+/** Multiple-selection adapter root. */
+export interface MultipleToggleGroupRootProps extends ToggleGroupRootBase {
+  type: "multiple";
+  value?: string[];
+  defaultValue?: string[];
+  onValueChange?: (value: string[]) => void;
+}
+
+/** Discriminated selection contract implemented by every ToggleGroup adapter. */
+export type ToggleGroupRootProps =
+  | SingleToggleGroupRootProps
+  | MultipleToggleGroupRootProps;
 
 /**
  * Role-tagged slots an adapter provides for the Toolbar primitive: a
@@ -128,6 +145,7 @@ export interface ToastParts {
     children: React.ReactNode;
     duration?: number;
     maxToasts?: number;
+    viewport?: "portal" | "inline" | "manual";
   }>;
   /** Read the imperative `{ toast, dismiss }` API. Throws outside a `ToastProvider`. */
   useToast: () => ToastState;

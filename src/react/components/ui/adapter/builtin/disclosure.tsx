@@ -14,7 +14,15 @@ import { useDisclosure } from "../../disclosure.ts";
 import type { DisclosureParts } from "../contract.ts";
 
 const DisclosureContext = React.createContext<
-  { open: boolean; toggle: () => void; contentId: string; disabled?: boolean } | null
+  {
+    open: boolean;
+    toggle: () => void;
+    triggerId: string;
+    contentId: string;
+    setTriggerId: (id: string) => void;
+    setContentId: (id: string) => void;
+    disabled?: boolean;
+  } | null
 >(null);
 
 function stableDomId(value: string): string {
@@ -32,10 +40,20 @@ const DisclosureRoot: DisclosureParts["Root"] = (
 ) => {
   const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
   const toggle = React.useCallback(() => setOpen(!isOpen), [isOpen, setOpen]);
-  const contentId = `vf-disclosure-${stableDomId(React.useId())}-content`;
+  const generatedId = stableDomId(React.useId());
+  const [triggerId, setTriggerId] = React.useState(`vf-disclosure-${generatedId}-trigger`);
+  const [contentId, setContentId] = React.useState(`vf-disclosure-${generatedId}-content`);
   const ctx = React.useMemo(
-    () => ({ open: isOpen, toggle, contentId, disabled }),
-    [isOpen, toggle, contentId, disabled],
+    () => ({
+      open: isOpen,
+      toggle,
+      triggerId,
+      contentId,
+      setTriggerId,
+      setContentId,
+      disabled,
+    }),
+    [isOpen, toggle, triggerId, contentId, disabled],
   );
   return (
     <div {...props} ref={ref} data-state={isOpen ? "open" : "closed"}>
@@ -45,16 +63,19 @@ const DisclosureRoot: DisclosureParts["Root"] = (
 };
 
 const DisclosureTrigger: DisclosureParts["Trigger"] = (
-  { asChild, onClick, children, ref, disabled, ...props },
+  { asChild, onClick, children, ref, disabled, id, ...props },
 ) => {
   const ctx = useDisclosureContext("Disclosure Trigger");
   const Comp = asChild ? Slot : "button";
   const isDisabled = Boolean(ctx.disabled || disabled);
+  const realizedId = id ?? ctx.triggerId;
+  React.useLayoutEffect(() => ctx.setTriggerId(realizedId), [ctx, realizedId]);
   return (
     <Comp
       {...props}
       {...(asChild ? {} : { type: "button" as const })}
       ref={ref}
+      id={realizedId}
       aria-expanded={ctx.open}
       aria-controls={ctx.contentId}
       aria-disabled={asChild && isDisabled ? true : undefined}
@@ -62,7 +83,8 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
       disabled={asChild ? undefined : isDisabled}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         onClick?.(e);
-        if (!e.defaultPrevented && !isDisabled) ctx.toggle();
+        if (isDisabled) e.preventDefault();
+        if (!e.defaultPrevented) ctx.toggle();
       }}
     >
       {children}
@@ -74,11 +96,14 @@ const DisclosureContent: DisclosureParts["Content"] = (
   { children, ref, id, hidden, ...props },
 ) => {
   const ctx = useDisclosureContext("Disclosure Content");
+  const realizedId = id ?? ctx.contentId;
+  React.useLayoutEffect(() => ctx.setContentId(realizedId), [ctx, realizedId]);
   return (
     <div
       {...props}
       ref={ref}
-      id={id ?? ctx.contentId}
+      id={realizedId}
+      aria-labelledby={props["aria-labelledby"] ?? ctx.triggerId}
       data-state={ctx.open ? "open" : "closed"}
       hidden={Boolean(hidden || !ctx.open)}
     >

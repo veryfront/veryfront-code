@@ -10,9 +10,11 @@
  * @module react/components/ui/adapter/builtin/toast
  */
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import { cx as cn } from "../../cva.ts";
 import {
+  MAX_TOAST_DURATION_MS,
   Toast,
   ToastClose,
   ToastDescription,
@@ -32,7 +34,11 @@ interface ToastRecord extends ToastOptions {
 
 interface BuiltinToastContextValue extends ToastState {
   toasts: ToastRecord[];
+  viewport: "portal" | "inline" | "manual";
 }
+
+const DEFAULT_MAX_TOASTS = 5;
+const MAX_TOASTS = 50;
 
 const [ToastContext, useToastContext] = createStrictContext<BuiltinToastContextValue>(
   "useToast",
@@ -41,18 +47,23 @@ const [ToastContext, useToastContext] = createStrictContext<BuiltinToastContextV
 
 /** Builtin provider: owns the queue, exposes `{ toast, dismiss }`, mounts the viewport. */
 function BuiltinToastProvider(
-  { children, duration = 5000, maxToasts = 100 }: {
+  { children, duration = 5000, maxToasts = DEFAULT_MAX_TOASTS, viewport = "portal" }: {
     children: React.ReactNode;
     duration?: number;
     maxToasts?: number;
+    viewport?: "portal" | "inline" | "manual";
   },
 ): React.ReactElement {
   assertDuration(duration, "ToastProvider duration");
-  if (!Number.isSafeInteger(maxToasts) || maxToasts < 1) {
-    throw new RangeError("ToastProvider maxToasts must be a positive safe integer");
+  if (!Number.isSafeInteger(maxToasts) || maxToasts < 1 || maxToasts > MAX_TOASTS) {
+    throw new RangeError(`ToastProvider maxToasts must be an integer between 1 and ${MAX_TOASTS}`);
   }
   const [toasts, setToasts] = React.useState<ToastRecord[]>([]);
   const idRef = React.useRef(0);
+
+  React.useLayoutEffect(() => {
+    setToasts((list) => list.length > maxToasts ? list.slice(-maxToasts) : list);
+  }, [maxToasts]);
 
   const dismiss = React.useCallback((id: string) => {
     setToasts((list) => list.filter((t) => t.id !== id));
@@ -72,22 +83,28 @@ function BuiltinToastProvider(
   }, [enqueue]);
 
   const value = React.useMemo<BuiltinToastContextValue>(
-    () => ({ toasts, toast, dismiss }),
-    [toasts, toast, dismiss],
+    () => ({ toasts, toast, dismiss, viewport }),
+    [toasts, toast, dismiss, viewport],
   );
 
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <ToastViewport />
+      {viewport === "inline" ? <ToastViewportContents /> : null}
+      {viewport === "portal" ? <ToastViewportPortal /> : null}
     </ToastContext.Provider>
   );
 }
 BuiltinToastProvider.displayName = "BuiltinToastProvider";
 
 function assertDuration(value: number, label: string): void {
-  if (value !== Infinity && (!Number.isFinite(value) || value < 0)) {
-    throw new RangeError(`${label} must be a non-negative finite number or Infinity`);
+  if (
+    value !== Infinity &&
+    (!Number.isFinite(value) || value < 0 || value > MAX_TOAST_DURATION_MS)
+  ) {
+    throw new RangeError(
+      `${label} must be between 0 and ${MAX_TOAST_DURATION_MS}, or Infinity`,
+    );
   }
 }
 
@@ -112,6 +129,27 @@ export function ToastViewport({
   ref,
   ...props
 }: ToastViewportProps): React.ReactElement {
+  const { viewport } = useToastContext();
+  if (viewport !== "manual") {
+    throw new Error('ToastViewport requires <ToastProvider viewport="manual">');
+  }
+  return <ToastViewportContents className={className} ref={ref} {...props} />;
+}
+ToastViewport.displayName = "ToastViewport";
+
+function ToastViewportPortal(): React.ReactPortal | null {
+  const [host, setHost] = React.useState<HTMLElement | null>(null);
+  React.useEffect(() => {
+    setHost(globalThis.document?.body ?? null);
+  }, []);
+  return host ? createPortal(<ToastViewportContents />, host) : null;
+}
+
+function ToastViewportContents({
+  className,
+  ref,
+  ...props
+}: ToastViewportProps): React.ReactElement {
   const { toasts, dismiss } = useToastContext();
   return (
     <ol
@@ -127,7 +165,6 @@ export function ToastViewport({
     </ol>
   );
 }
-ToastViewport.displayName = "ToastViewport";
 
 /** Renders one queued toast: a `toast.custom` node, or the built-in surface. */
 function ToastItem(
@@ -210,8 +247,23 @@ function CustomToastItem(
     children: React.ReactNode;
   },
 ): React.ReactElement {
-  useAutoDismiss(duration, onClose);
-  return <li className="pointer-events-auto">{children}</li>;
+  const [node, setNode] = React.useState<HTMLLIElement | null>(null);
+  const [paused, setPaused] = React.useState(false);
+  useAutoDismiss(duration, onClose, { paused, ownerDocument: node?.ownerDocument });
+  return (
+    <li
+      ref={setNode}
+      className="pointer-events-auto"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+      onFocus={() => setPaused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setPaused(false);
+      }}
+    >
+      {children}
+    </li>
+  );
 }
 
 /** The builtin (zero-dependency) Toast engine, as `ToastParts`. */

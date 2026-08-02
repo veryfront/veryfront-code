@@ -59,8 +59,8 @@ export {
   type ToastVariant,
 } from "./toast-parts.tsx";
 
-// The builtin viewport is engine-specific; re-export it (and `Toaster`) for
-// advanced placement on the builtin.
+// The builtin viewport is engine-specific. Set `viewport="manual"` on the
+// provider before rendering this export (or its `Toaster` alias).
 export {
   ToastViewport,
   ToastViewport as Toaster,
@@ -73,8 +73,10 @@ export interface ToastProviderProps {
   children: React.ReactNode;
   /** Default milliseconds before a toast auto-dismisses, unless the call overrides it. @default 5000 */
   duration?: number;
-  /** Maximum queued notifications; oldest entries are evicted first. @default 100 */
+  /** Maximum queued notifications (1 to 50); oldest entries are evicted first. @default 5 */
   maxToasts?: number;
+  /** Viewport ownership. Portal is hydration-safe; manual requires rendering ToastViewport. @default "portal" */
+  viewport?: "portal" | "inline" | "manual";
 }
 
 /**
@@ -82,10 +84,14 @@ export interface ToastProviderProps {
  * the viewport. Wrap the part of the app that needs notifications.
  */
 export function ToastProvider(
-  { children, duration, maxToasts }: ToastProviderProps,
+  { children, duration, maxToasts, viewport }: ToastProviderProps,
 ): React.ReactElement {
   const { toast } = useAdapter();
-  return <toast.Provider duration={duration} maxToasts={maxToasts}>{children}</toast.Provider>;
+  return (
+    <toast.Provider duration={duration} maxToasts={maxToasts} viewport={viewport}>
+      {children}
+    </toast.Provider>
+  );
 }
 ToastProvider.displayName = "ToastProvider";
 
