@@ -10,6 +10,7 @@ import {
   streamGoogleCompatibleParts,
 } from "./google-stream.ts";
 import { buildGoogleGenerateContentRequest } from "./google-request-builder.ts";
+import { MAX_GOOGLE_PROVIDER_METADATA_BYTES } from "./google-thought-signatures.ts";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -67,6 +68,10 @@ function createWarningCollector() {
 }
 
 describe("ext-llm-google/google-stream", () => {
+  it("uses the provider metadata byte ceiling for retained stream state", () => {
+    assertEquals(MAX_GOOGLE_RETAINED_STATE_BYTES, MAX_GOOGLE_PROVIDER_METADATA_BYTES);
+  });
+
   it("preserves thought, text, tool-call, usage, and finish events", async () => {
     const parts = await collectParts(streamFromText([
       data({
@@ -1149,6 +1154,48 @@ describe("ext-llm-google/google-stream", () => {
       () => collectParts(streamFromBytes(...events(1))),
       ProviderRequestError,
       `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_BYTES} UTF-8 bytes`,
+    );
+  });
+
+  it("maps final replay metadata budget failures to the typed stream error", async () => {
+    const signedPart = { text: "", thought: true, thoughtSignature: "signature" };
+    const signedPartBytes = new TextEncoder().encode(JSON.stringify(signedPart)).byteLength;
+    const ordinaryPartBytes = new TextEncoder().encode(JSON.stringify({ text: "" })).byteLength;
+    const quarter = Math.floor(MAX_GOOGLE_RETAINED_STATE_BYTES / 4);
+    const serializedPartBytes = [
+      quarter,
+      quarter,
+      quarter,
+      MAX_GOOGLE_RETAINED_STATE_BYTES - quarter * 3,
+    ];
+    const encoder = new TextEncoder();
+    const events = serializedPartBytes.map((byteLength, index) =>
+      encoder.encode(data({
+        candidates: [{
+          content: {
+            parts: [
+              index === 0
+                ? {
+                  ...signedPart,
+                  text: "x".repeat(byteLength - signedPartBytes),
+                }
+                : {
+                  text: "x".repeat(byteLength - ordinaryPartBytes),
+                },
+            ],
+          },
+        }],
+      }))
+    );
+    events.push(
+      encoder.encode(data({ candidates: [{ finishReason: "STOP" }] })),
+      encoder.encode("data: [DONE]\r\n\r\n"),
+    );
+
+    await assertRejects(
+      () => collectParts(streamFromBytes(...events)),
+      ProviderRequestError,
+      "provider metadata could not be retained safely",
     );
   });
 

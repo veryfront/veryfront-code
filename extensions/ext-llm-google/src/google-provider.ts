@@ -196,7 +196,7 @@ function readGoogleGenerateCandidate(
 
   const candidates = record.candidates;
   if (candidates !== undefined && !Array.isArray(candidates)) {
-    throw invalidGoogleResponse(context, "candidates array missing or empty");
+    throw invalidGoogleResponse(context, "candidates was not an array");
   }
   if (!Array.isArray(candidates) || candidates.length === 0) {
     const promptFeedback = readRecord(record.promptFeedback);

@@ -11,10 +11,11 @@ const GOOGLE_METADATA_KEY = "google";
 const RAW_ASSISTANT_PARTS_KEY = "rawAssistantParts";
 const GROUNDING_METADATA_KEY = "groundingMetadata";
 const MAX_GOOGLE_RAW_ASSISTANT_PARTS = 4_096;
+export const MAX_GOOGLE_PROVIDER_METADATA_BYTES = 8 * 1024 * 1024;
 const GOOGLE_PROVIDER_METADATA_SNAPSHOT_OPTIONS = {
   maxDepth: 64,
   maxNodes: 65_536,
-  maxBytes: 8 * 1024 * 1024,
+  maxBytes: MAX_GOOGLE_PROVIDER_METADATA_BYTES,
 } as const;
 
 function snapshotGoogleProviderMetadata(value: unknown): JsonSnapshotValue {

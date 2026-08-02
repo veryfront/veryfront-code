@@ -588,6 +588,19 @@ describe("ext-llm-google/google-provider", () => {
       );
     });
 
+    it("distinguishes a non-array candidates field from an empty candidates array", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        fetch: () => Promise.resolve(googleJsonResponse({ candidates: {} })),
+      }, "gemini-2.0-flash");
+
+      await expectInvalidSuccessfulResponse(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        "google",
+        "candidates was not an array",
+      );
+    });
+
     it("rejects malformed generation candidate content", async () => {
       const runtime = createGoogleModelRuntime({
         apiKey: "k",
@@ -636,7 +649,7 @@ describe("ext-llm-google/google-provider", () => {
       );
     });
 
-    it("preserves signed thought and parallel function-call parts without exposing thought text", async () => {
+    it("preserves signed thought text and parallel function-call parts", async () => {
       const rawAssistantParts = [
         {
           text: "Private chain of thought.",

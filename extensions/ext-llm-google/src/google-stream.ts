@@ -19,12 +19,13 @@ import {
 import { mergeGoogleGroundingMetadata } from "./google-grounding-metadata.ts";
 import {
   createGoogleProviderMetadata,
+  MAX_GOOGLE_PROVIDER_METADATA_BYTES,
   readGoogleThoughtSignature,
 } from "./google-thought-signatures.ts";
 
 export const MAX_GOOGLE_SSE_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_GOOGLE_SSE_BUFFER_CODE_UNITS = 8 * 1024 * 1024;
-export const MAX_GOOGLE_RETAINED_STATE_BYTES = 16 * 1024 * 1024;
+export const MAX_GOOGLE_RETAINED_STATE_BYTES = MAX_GOOGLE_PROVIDER_METADATA_BYTES;
 export const MAX_GOOGLE_RETAINED_STATE_ITEMS = 8_192;
 const GOOGLE_RETAINED_STATE_ENCODER = new TextEncoder();
 
@@ -804,10 +805,20 @@ export async function* streamGoogleCompatibleParts(
     };
   }
 
-  const providerMetadata = createGoogleProviderMetadata(
-    rawAssistantParts,
-    groundingMetadata,
-  );
+  let providerMetadata: Record<string, unknown> | undefined;
+  try {
+    providerMetadata = createGoogleProviderMetadata(
+      rawAssistantParts,
+      groundingMetadata,
+    );
+  } catch {
+    // The stream accounts for retained raw parts and correlation state under
+    // the same byte ceiling as replay metadata. The final owned snapshot also
+    // includes JSON container overhead and grounding metadata, so translate
+    // any remaining snapshot-boundary failure into the stream's typed error
+    // contract instead of leaking an implementation TypeError.
+    throw invalidGoogleStream(context, "provider metadata could not be retained safely");
+  }
   yield {
     type: "finish",
     finishReason,
