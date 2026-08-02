@@ -1,8 +1,34 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import {
   createHostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
   HostedChildRunEventWriterTokenExchangeError,
+  runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+
+Deno.test("explicit authority-less scopes clear and restore ambient writer authority", async () => {
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.com/",
+    runId: "run_parent",
+    runEventAppendToken: "parent-writer-token",
+  });
+
+  await runWithHostedRunEventWriterCapability(capability, async () => {
+    assertEquals(getActiveHostedRunEventWriterCapability(), capability);
+
+    await runWithHostedRunEventWriterCapability(undefined, async () => {
+      const detachedCapability = getActiveHostedRunEventWriterCapability();
+      assertEquals(detachedCapability, undefined);
+      assertEquals(detachedCapability?.mintChildRunEventAppendToken, undefined);
+    });
+
+    assertEquals(getActiveHostedRunEventWriterCapability(), capability);
+    await Promise.resolve();
+    assertEquals(getActiveHostedRunEventWriterCapability(), capability);
+  });
+
+  assertEquals(getActiveHostedRunEventWriterCapability(), undefined);
+});
 
 Deno.test("run event writer capability delegates parent to child to grandchild exactly once without exposing credentials", async () => {
   const requests: Request[] = [];

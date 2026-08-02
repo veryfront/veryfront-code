@@ -40,7 +40,7 @@ type CapabilityState = {
 
 const capabilityState = new WeakMap<HostedRunEventWriterCapability, CapabilityState>();
 const requestRunEventWriterTokens = new WeakMap<object, string>();
-const capabilityStorage = new AsyncLocalStorage<HostedRunEventWriterCapability>();
+const capabilityStorage = new AsyncLocalStorage<HostedRunEventWriterCapability | undefined>();
 
 function isNoStoreResponse(response: Response): boolean {
   return response.headers.get("Cache-Control")?.split(",").some((directive) =>
@@ -196,5 +196,5 @@ export function runWithHostedRunEventWriterCapability<T>(
   capability: HostedRunEventWriterCapability | undefined,
   operation: () => T,
 ): T {
-  return capability ? capabilityStorage.run(capability, operation) : operation();
+  return capabilityStorage.run(capability, operation);
 }
