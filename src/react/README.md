@@ -309,8 +309,7 @@ const response = buildResponse(html, {
 
 - All React 18 features
 - RSC (React Server Components)
-- Server Actions with a required generation-owned authorization provider; see
-  [Authorize React Server Actions](../../docs/guides/extensions.md#authorize-react-server-actions)
+- Server Actions
 - Improved Suspense
 - Enhanced streaming
 
