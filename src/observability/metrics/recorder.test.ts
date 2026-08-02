@@ -136,6 +136,12 @@ function createMockInstruments(): MetricsInstruments & {
     streamLifecycleSemanticIdleDuration: null,
     streamLifecycleToolInputDuration: null,
     streamLifecycleToolExecutionDuration: null,
+    modelCallContextWriterOutcomeCounter: null,
+    modelCallContextBarrierOutcomeCounter: null,
+    modelCallContextLogicalByteLength: null,
+    modelCallContextPartCount: null,
+    modelCallContextAppendRequestCount: null,
+    modelCallContextRecorderBarrierDuration: null,
 
     _httpRequestCounter: httpRequestCounter,
     _httpRequestDuration: httpRequestDuration,
@@ -541,6 +547,12 @@ describe("observability/metrics/recorder", () => {
         streamLifecycleSemanticIdleDuration: null,
         streamLifecycleToolInputDuration: null,
         streamLifecycleToolExecutionDuration: null,
+        modelCallContextWriterOutcomeCounter: null,
+        modelCallContextBarrierOutcomeCounter: null,
+        modelCallContextLogicalByteLength: null,
+        modelCallContextPartCount: null,
+        modelCallContextAppendRequestCount: null,
+        modelCallContextRecorderBarrierDuration: null,
       };
       const nullRecorder = new MetricsRecorder(nullInstruments, runtimeState);
 
