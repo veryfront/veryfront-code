@@ -14,11 +14,7 @@ async function serve(pathname: string): Promise<Response> {
   );
 }
 
-describe({
-  name: "serveModule source size bounds",
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("serveModule source size bounds", () => {
   beforeAll(async () => {
     projectDir = await Deno.makeTempDir({ prefix: "vf-source-bounds-" });
     await Deno.mkdir(`${projectDir}/components`, { recursive: true });

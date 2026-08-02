@@ -56,7 +56,22 @@ describe("modules/server/module-source-reader", () => {
           () => Promise.resolve(""),
           10,
         ),
+      TypeError,
+      "target must be a regular file",
+    );
+  });
+
+  it("rejects invalid stat metadata with a distinct diagnostic", async () => {
+    await assertRejects(
+      () =>
+        readBoundedModuleSource(
+          { stat: () => Promise.resolve({ isFile: true, size: Number.NaN }) },
+          "/module.ts",
+          () => Promise.resolve("source"),
+          10,
+        ),
       RangeError,
+      "stat size must be a non-negative safe integer",
     );
   });
 

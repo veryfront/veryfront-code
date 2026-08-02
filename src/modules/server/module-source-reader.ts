@@ -27,12 +27,13 @@ export async function readBoundedModuleSource(
   }
 
   const stat = await fs.stat(path);
-  if (
-    !stat.isFile ||
-    !Number.isSafeInteger(stat.size) ||
-    stat.size < 0 ||
-    stat.size > maxBytes
-  ) {
+  if (!stat.isFile) {
+    throw new TypeError("Module source target must be a regular file");
+  }
+  if (!Number.isSafeInteger(stat.size) || stat.size < 0) {
+    throw new RangeError("Module source stat size must be a non-negative safe integer");
+  }
+  if (stat.size > maxBytes) {
     throw new RangeError(`Module source exceeds ${maxBytes} bytes`);
   }
 

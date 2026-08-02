@@ -16,18 +16,14 @@ async function serve(pathname: string): Promise<Response> {
   );
 }
 
-describe({
-  name: "serveModule path traversal",
-  sanitizeResources: false,
-  sanitizeOps: false,
-}, () => {
+describe("serveModule path traversal", () => {
   beforeAll(async () => {
     root = await Deno.makeTempDir({ prefix: "vf-traversal-" });
     projectDir = `${root}/project`;
     await Deno.mkdir(`${projectDir}/components`, { recursive: true });
     await Deno.writeTextFile(
-      `${projectDir}/components/App.tsx`,
-      "export default function App() { return null; }\n",
+      `${projectDir}/components/data.json`,
+      JSON.stringify({ ok: true }),
     );
     // Sits beside the project root, reachable only by escaping it.
     await Deno.writeTextFile(`${root}/secret.tsx`, `export const secret = "${SECRET}";\n`);
@@ -60,7 +56,7 @@ describe({
   }
 
   it("still serves a legitimate in-project module", async () => {
-    const response = await serve("/_vf_modules/components/App.js");
+    const response = await serve("/_vf_modules/components/data.json");
     assertEquals(response.status, 200);
   });
 });

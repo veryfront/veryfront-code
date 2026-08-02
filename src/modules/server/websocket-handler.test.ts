@@ -98,7 +98,7 @@ describe("modules/server/websocket-handler", () => {
     socket.emitClose();
 
     assertEquals(context.clients.size, 0);
-    assertEquals(cleanups.every((entry) => entry === socket as unknown as WebSocket), true);
+    assertEquals(cleanups, [socket as unknown as WebSocket]);
   });
 
   it("keeps a well-behaved client registered until it disconnects", () => {

@@ -11,6 +11,7 @@ export function setupWebSocketHandlers(
   context: WebSocketContext,
 ): void {
   context.clients.add(socket);
+  let cleanupComplete = false;
 
   function sendConnectedMessage(): void {
     logger.debug("HMR client connected", { totalClients: context.clients.size });
@@ -34,6 +35,8 @@ export function setupWebSocketHandlers(
   }
 
   function cleanup(): void {
+    if (cleanupComplete) return;
+    cleanupComplete = true;
     context.clients.delete(socket);
     try {
       context.rateLimiter.cleanup(socket);
