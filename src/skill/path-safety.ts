@@ -27,6 +27,7 @@ import {
   SKILL_SUBDIR_MAX_ENTRIES,
 } from "./limits.ts";
 import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
+import { isCanonicalAdapterRelativeSkillRoot } from "./types.ts";
 import type { SkillOperationBudget } from "./operation-budget.ts";
 const SAFE_SKILL_PATH_SEGMENT_REGEX = /^[A-Za-z0-9._-]+$/;
 const apply = Reflect.apply;
@@ -221,8 +222,11 @@ async function hasSymlinkInPath(
   fsAdapter?: FileSystemAdapter,
   maxDirectoryEntries = SKILL_SUBDIR_MAX_ENTRIES,
 ): Promise<boolean> {
-  const resolvedRoot = resolve(skillRoot);
-  const resolvedTarget = resolve(canonicalPath);
+  // Adapter paths belong to the adapter's namespace. Resolving an
+  // adapter-relative path against the host cwd would both change its meaning
+  // and send a path the adapter never advertised back into the adapter.
+  const resolvedRoot = fsAdapter ? skillRoot : resolve(skillRoot);
+  const resolvedTarget = fsAdapter ? canonicalPath : resolve(canonicalPath);
   const rel = apply(
     stringReplaceAll,
     relative(resolvedRoot, resolvedTarget),
@@ -314,6 +318,23 @@ function requireBoundedPath(
     throw new TypeError(`Skill ${label} must be an absolute path`);
   }
   return value;
+}
+
+function requireBoundedSkillRoot(
+  value: unknown,
+  fsAdapter: FileSystemAdapter | undefined,
+): string {
+  const root = requireBoundedPath(
+    value,
+    "root",
+    SKILL_ROOT_PATH_MAX_LENGTH,
+    fsAdapter === undefined,
+  );
+  if (!fsAdapter || isAbsolute(root)) return root;
+  if (!isCanonicalAdapterRelativeSkillRoot(root)) {
+    throw new TypeError("Skill adapter-relative root must be a canonical relative path");
+  }
+  return root;
 }
 
 function normalizeAllowedSubdirs(
@@ -472,7 +493,7 @@ async function assertSafeSkillDirectory(
  * enumeration is not entry-capped. {@link validateStrictSkillPath} applies
  * the runtime filesystem ceilings.
  *
- * @param skillRoot - Absolute path to the skill directory
+ * @param skillRoot - Absolute local path, or an adapter-relative path when an fsAdapter is supplied
  * @param requestedPath - Relative path requested (e.g. "references/CLAUSES.md")
  * @param allowedSubdirs - Allowed top-level subdirectories (e.g. ["references", "assets"])
  * @param fsAdapter - Optional file system adapter for VFS/cloud-backed projects
@@ -539,12 +560,7 @@ async function validateSkillPathWithLimits(
   allowedSubdirMaxEntries: number,
   directoryMaxEntries: number,
 ): Promise<string> {
-  const boundedRoot = requireBoundedPath(
-    skillRoot,
-    "root",
-    SKILL_ROOT_PATH_MAX_LENGTH,
-    true,
-  );
+  const boundedRoot = requireBoundedSkillRoot(skillRoot, fsAdapter);
   const boundedRequestedPath = requireBoundedPath(
     requestedPath,
     "relative path",
@@ -629,7 +645,7 @@ async function validateSkillPathWithLimits(
  * iteration order. {@link listStrictSkillSubdir} applies the runtime
  * filesystem ceilings and deterministic ordering.
  *
- * @param skillRoot - Absolute path to the skill directory
+ * @param skillRoot - Absolute local path, or an adapter-relative path when an fsAdapter is supplied
  * @param subdir - Subdirectory name (e.g. "references", "scripts")
  * @param fsAdapter - Optional file system adapter for VFS/cloud-backed projects
  * @returns Array of relative paths like "references/filename.md"
@@ -677,12 +693,7 @@ async function listSkillSubdirWithLimits(
   maxDirectoryEntries: number,
   sortDeterministically: boolean,
 ): Promise<string[]> {
-  const boundedRoot = requireBoundedPath(
-    skillRoot,
-    "root",
-    SKILL_ROOT_PATH_MAX_LENGTH,
-    true,
-  );
+  const boundedRoot = requireBoundedSkillRoot(skillRoot, fsAdapter);
   assertSafePathSegment(subdir, "subdirectory");
   const dirPath = join(boundedRoot, subdir);
 

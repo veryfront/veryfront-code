@@ -264,7 +264,7 @@ describe("src/skill/registry", () => {
       assertEquals(getSkill("relative"), undefined);
     });
 
-    it("accepts bounded adapter-relative roots without parent traversal", () => {
+    it("accepts only canonical adapter-relative roots", () => {
       const adapter = {} as FileSystemAdapter;
       registerSkill("relative", {
         id: "relative",
@@ -285,8 +285,21 @@ describe("src/skill/registry", () => {
             fsAdapter: adapter,
           }),
         TypeError,
-        "must not contain parent traversal",
+        "canonical relative path",
       );
+      for (const rootPath of ["./skills/relative", "skills//relative", "skills\\relative"]) {
+        assertThrows(
+          () =>
+            registerSkill("non-canonical", {
+              id: "non-canonical",
+              metadata: { name: "non-canonical", description: "Non-canonical root" },
+              rootPath,
+              fsAdapter: adapter,
+            }),
+          TypeError,
+          "canonical relative path",
+        );
+      }
     });
 
     it("rejects non-printable programmatic metadata", () => {

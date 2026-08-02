@@ -79,6 +79,32 @@ Do work.`,
     assertEquals(result.scripts, ["scripts/run.sh"]);
   });
 
+  it("load_skill preserves an adapter-relative skill root", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "skills/cloud-skill/SKILL.md": `---
+name: cloud-skill
+description: Cloud-backed skill
+---
+# Instructions
+Use the cloud-backed skill.`,
+      "skills/cloud-skill/references/guide.md": "Guide",
+    });
+    registerSkill("cloud-skill", {
+      id: "cloud-skill",
+      metadata: {
+        name: "cloud-skill",
+        description: "Cloud-backed skill",
+      },
+      rootPath: "skills/cloud-skill",
+      fsAdapter,
+    });
+
+    const result = await createLoadSkillTool().execute({ skillId: "cloud-skill" });
+
+    assertEquals(result.instructions, "# Instructions\nUse the cloud-backed skill.");
+    assertEquals(result.references, ["references/guide.md"]);
+  });
+
   it("load_skill should list resources as loadable references via fsAdapter", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---

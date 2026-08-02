@@ -4,6 +4,7 @@ import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspect
 import { snapshotAllowedToolPatterns } from "./allowed-tools.ts";
 import { SKILL_ID_MAX_LENGTH, SKILL_ROOT_PATH_MAX_LENGTH } from "./limits.ts";
 import {
+  isCanonicalAdapterRelativeSkillRoot,
   isValidProviderSafeSkillId,
   type Skill,
   SKILL_COMPATIBILITY_MAX_LENGTH,
@@ -27,24 +28,6 @@ const mapForEach = Map.prototype.forEach;
 const NativeRangeError = RangeError;
 const NativeTypeError = TypeError;
 const ownKeys = Reflect.ownKeys;
-const stringCharCodeAt = String.prototype.charCodeAt;
-
-function hasParentPathSegment(path: string): boolean {
-  let segmentStart = 0;
-  for (let index = 0; index <= path.length; index += 1) {
-    const code = index === path.length ? 47 : apply(stringCharCodeAt, path, [index]) as number;
-    if (code !== 47 && code !== 92) continue;
-    if (
-      index - segmentStart === 2 &&
-      apply(stringCharCodeAt, path, [segmentStart]) === 46 &&
-      apply(stringCharCodeAt, path, [segmentStart + 1]) === 46
-    ) {
-      return true;
-    }
-    segmentStart = index + 1;
-  }
-  return false;
-}
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(hasOwnProperty, object, [key]) as boolean;
@@ -277,8 +260,8 @@ export function normalizeSkillDefinition(id: string, value: Skill): Skill {
       "Skill rootPath must be absolute unless an fsAdapter owns the path namespace",
     );
   }
-  if (!isAbsolute(rootPath) && hasParentPathSegment(rootPath)) {
-    throw new NativeTypeError("Adapter-relative Skill rootPath must not contain parent traversal");
+  if (!isAbsolute(rootPath) && !isCanonicalAdapterRelativeSkillRoot(rootPath)) {
+    throw new NativeTypeError("Adapter-relative Skill rootPath must be a canonical relative path");
   }
   const ownerAgentId = optionalBoundedIdentity(
     ownDataValue(value, "ownerAgentId"),

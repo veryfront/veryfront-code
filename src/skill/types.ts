@@ -13,6 +13,7 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 const apply = Reflect.apply;
 const NativeRegExp = RegExp;
 const regExpExec = RegExp.prototype.exec;
+const stringCharCodeAt = String.prototype.charCodeAt;
 
 // ── Constants ───────────────────────────────────────────────────────────
 
@@ -66,6 +67,32 @@ export function isValidStrictSkillName(value: unknown): value is string {
 export function isValidProviderSafeSkillId(value: unknown): value is string {
   return typeof value === "string" &&
     apply(regExpExec, INTERNAL_SKILL_PROVIDER_SAFE_ID_REGEX, [value]) !== null;
+}
+
+/** Whether an adapter-owned Skill root is a canonical relative path. */
+export function isCanonicalAdapterRelativeSkillRoot(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) return false;
+
+  let segmentStart = 0;
+  for (let index = 0; index <= value.length; index += 1) {
+    const code = index === value.length ? 47 : apply(stringCharCodeAt, value, [index]) as number;
+    if (code === 92) return false;
+    if (code !== 47) continue;
+
+    const segmentLength = index - segmentStart;
+    if (
+      segmentLength === 0 ||
+      (segmentLength === 1 &&
+        apply(stringCharCodeAt, value, [segmentStart]) === 46) ||
+      (segmentLength === 2 &&
+        apply(stringCharCodeAt, value, [segmentStart]) === 46 &&
+        apply(stringCharCodeAt, value, [segmentStart + 1]) === 46)
+    ) {
+      return false;
+    }
+    segmentStart = index + 1;
+  }
+  return true;
 }
 
 const SKILL_ALLOWED_TOOL_PATTERN_SOURCE =

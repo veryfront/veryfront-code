@@ -1,5 +1,10 @@
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const ReflectApply = Reflect.apply;
+const ReflectDefineProperty = Reflect.defineProperty;
+const ReflectOwnKeys = Reflect.ownKeys;
 const MISSING_OWN_DATA_PROPERTY = Symbol("veryfront.missing-own-data-property");
 
 export type OwnDataPropertyValue =
@@ -14,6 +19,25 @@ function rejectProxy(value: object, label: string): void {
   if (isProxyWithoutHooks(value)) throw invalidDataProperties(label);
 }
 
+function hasOwn(value: object, key: PropertyKey): boolean {
+  return ReflectApply(ObjectPrototypeHasOwnProperty, value, [key]) as boolean;
+}
+
+function getOwnPropertyDescriptor(
+  value: object,
+  key: PropertyKey,
+  label: string,
+): PropertyDescriptor | undefined {
+  try {
+    return ReflectApply(ObjectGetOwnPropertyDescriptor, undefined, [
+      value,
+      key,
+    ]) as PropertyDescriptor | undefined;
+  } catch {
+    throw invalidDataProperties(label);
+  }
+}
+
 /** Read one own data property without invoking accessors or proxy getters. */
 export function getOwnDataProperty(
   value: object,
@@ -21,14 +45,9 @@ export function getOwnDataProperty(
   label: string,
 ): OwnDataPropertyValue {
   rejectProxy(value, label);
-  let descriptor: PropertyDescriptor | undefined;
-  try {
-    descriptor = Reflect.getOwnPropertyDescriptor(value, key);
-  } catch {
-    throw invalidDataProperties(label);
-  }
+  const descriptor = getOwnPropertyDescriptor(value, key, label);
   if (descriptor === undefined) return MISSING_OWN_DATA_PROPERTY;
-  if (!("value" in descriptor)) throw invalidDataProperties(label);
+  if (!hasOwn(descriptor, "value")) throw invalidDataProperties(label);
   return descriptor.value;
 }
 
@@ -42,7 +61,7 @@ export function isMissingOwnDataProperty(
 function ownKeys(value: object, label: string): PropertyKey[] {
   rejectProxy(value, label);
   try {
-    return Reflect.ownKeys(value);
+    return ReflectApply(ReflectOwnKeys, undefined, [value]) as PropertyKey[];
   } catch {
     throw invalidDataProperties(label);
   }
@@ -56,15 +75,10 @@ export function getEnumerableOwnStringDataEntries(
   const entries: Array<[string, unknown]> = [];
   for (const key of ownKeys(value, label)) {
     if (typeof key !== "string") continue;
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = Reflect.getOwnPropertyDescriptor(value, key);
-    } catch {
-      throw invalidDataProperties(label);
-    }
+    const descriptor = getOwnPropertyDescriptor(value, key, label);
     if (descriptor === undefined) throw invalidDataProperties(label);
     if (!descriptor.enumerable) continue;
-    if (!("value" in descriptor)) throw invalidDataProperties(label);
+    if (!hasOwn(descriptor, "value")) throw invalidDataProperties(label);
     entries.push([key, descriptor.value]);
   }
   return entries;
@@ -82,21 +96,21 @@ export function snapshotEnumerableOwnDataObject<T extends object>(
 ): T {
   const snapshot = {};
   for (const key of ownKeys(value, label)) {
-    let descriptor: PropertyDescriptor | undefined;
-    try {
-      descriptor = Reflect.getOwnPropertyDescriptor(value, key);
-    } catch {
-      throw invalidDataProperties(label);
-    }
+    const descriptor = getOwnPropertyDescriptor(value, key, label);
     if (descriptor === undefined) throw invalidDataProperties(label);
     if (!descriptor.enumerable) continue;
-    if (!("value" in descriptor)) throw invalidDataProperties(label);
-    Reflect.defineProperty(snapshot, key, {
-      value: descriptor.value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
+    if (!hasOwn(descriptor, "value")) throw invalidDataProperties(label);
+    const defined = ReflectApply(ReflectDefineProperty, undefined, [
+      snapshot,
+      key,
+      {
+        value: descriptor.value,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      },
+    ]) as boolean;
+    if (!defined) throw invalidDataProperties(label);
   }
   return snapshot as T;
 }

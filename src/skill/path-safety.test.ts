@@ -97,11 +97,43 @@ describe("src/skill/path-safety", () => {
       );
     });
 
-    it("requires an absolute root while preserving the public allowed-directory contract", async () => {
+    it("requires local roots to be absolute and preserves adapter-relative namespaces", async () => {
       await assertRejects(
         () => validateSkillPath("relative/skill", "references/guide.md", ["references"]),
         TypeError,
         "absolute",
+      );
+      const relativeAdapter = createSkillTestAdapter({
+        "skills/relative/SKILL.md": "# Relative",
+        "skills/relative/references/guide.md": "Guide",
+      });
+      assertEquals(
+        await validateStrictSkillPath(
+          "skills/relative",
+          "SKILL.md",
+          [],
+          relativeAdapter,
+        ),
+        "skills/relative/SKILL.md",
+      );
+      assertEquals(
+        await listStrictSkillSubdir(
+          "skills/relative",
+          "references",
+          relativeAdapter,
+        ),
+        ["references/guide.md"],
+      );
+      await assertRejects(
+        () =>
+          validateStrictSkillPath(
+            "../skills/relative",
+            "SKILL.md",
+            [],
+            relativeAdapter,
+          ),
+        TypeError,
+        "canonical relative path",
       );
       const adapter = createSkillTestAdapter({
         "/project/skills/test/references/guide.md": "Guide",
