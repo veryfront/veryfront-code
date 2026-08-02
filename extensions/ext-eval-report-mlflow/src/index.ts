@@ -17,6 +17,7 @@ import {
   EvalReportExporterRegistryName,
   type EvalReportExportReceipt,
 } from "veryfront/extensions/eval";
+import { getEnv } from "veryfront/platform/env";
 
 const DEFAULT_EXPORTER_ID = "mlflow";
 const ENV_TRACKING_URI = "MLFLOW_TRACKING_URI";
@@ -154,12 +155,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readEnv(name: string): string | undefined {
-  try {
-    const value = Deno.env.get(name);
-    return value && value.length > 0 ? value : undefined;
-  } catch {
-    return undefined;
-  }
+  const value = getEnv(name);
+  return value && value.length > 0 ? value : undefined;
 }
 
 function normalizeConfig(config: unknown): EvalReportMlflowExtensionConfig {

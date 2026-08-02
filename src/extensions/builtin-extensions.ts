@@ -15,6 +15,7 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.
 import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 import { AnthropicProvider } from "@veryfront/ext-llm-anthropic";
 import { GoogleProvider } from "@veryfront/ext-llm-google";
+import extEvalReportMlflow from "@veryfront/ext-eval-report-mlflow";
 import extZod from "@veryfront/ext-schema-zod";
 export { ensureBuiltinSchemaValidator } from "./builtin-schema-validator.ts";
 
@@ -96,6 +97,9 @@ export const OPTIONAL_BUILTIN_EXTENSIONS = Object.freeze(([
     origin: "veryfront/ext-eval-report-mlflow",
     sourceDirectory: "ext-eval-report-mlflow",
     evalExporterId: "mlflow",
+    // MLflow is deliberately shipped inside the root npm package rather than
+    // published as a standalone extension package.
+    factory: extEvalReportMlflow,
   },
 ] satisfies OptionalBuiltinExtensionDefinition[]).map((definition) => Object.freeze(definition)));
 

@@ -9,7 +9,7 @@
  */
 
 import type { ImportSpecifier, ModuleLexer } from "veryfront/extensions/bundler";
-import { init, parse } from "es-module-lexer";
+import { init, parse } from "npm:es-module-lexer@2.3.1";
 
 /** es-module-lexer-backed {@link ModuleLexer} implementation. */
 export class EsModuleLexer implements ModuleLexer {

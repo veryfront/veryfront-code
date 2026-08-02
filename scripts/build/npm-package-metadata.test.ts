@@ -725,6 +725,8 @@ describe("npm supply-chain policy", () => {
     const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
 
     assertStringIncludes(source, 'createEvalCliBuiltinExtensions(["mlflow"])');
+    assertStringIncludes(source, "getDeferredExtensionState(resolved)");
+    assertStringIncludes(source, "await deferred.load(logger)");
     assertStringIncludes(source, 'registry.has("mlflow")');
     assertStringIncludes(
       source,
