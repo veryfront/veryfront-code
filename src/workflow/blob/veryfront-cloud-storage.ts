@@ -1,6 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { agentLogger as logger } from "#veryfront/utils";
+import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   getVeryfrontCloudBootstrap,
@@ -16,6 +17,10 @@ import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
 const DEFAULT_PREFIX = ".veryfront/blobs/";
 const DATA_SUFFIX = ".blob";
 const META_SUFFIX = ".meta.json";
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_RESPONSE_BYTES = 128 * 1024 * 1024;
+const ERROR_RESPONSE_BYTES = 8 * 1024;
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
   v.object({
@@ -91,6 +96,10 @@ export interface VeryfrontCloudBlobStorageConfig {
   downloadTtl?: number;
   /** Time source for tests. */
   now?: () => Date;
+  /** Full-operation outbound deadline, including response-body consumption. */
+  requestTimeoutMs?: number;
+  /** Maximum decoded API or signed-download response body size. */
+  maxResponseBytes?: number;
 }
 
 interface ResolvedConfig {
@@ -101,6 +110,82 @@ interface ResolvedConfig {
   defaultTtl?: number;
   downloadTtl?: number;
   now: () => Date;
+  requestTimeoutMs: number;
+  maxResponseBytes: number;
+}
+
+function requirePositiveInteger(value: number, name: string, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value <= 0 || value > maximum) {
+    throw CONFIG_INVALID.create({
+      detail: `${name} must be a positive integer no greater than ${maximum}`,
+    });
+  }
+  return value;
+}
+
+function createRequestScope(timeoutMs: number): { signal: AbortSignal; dispose(): void } {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(new DOMException("Blob request timed out", "TimeoutError")),
+    timeoutMs,
+  );
+  return { signal: controller.signal, dispose: () => clearTimeout(timeout) };
+}
+
+async function readResponseBytes(
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal,
+): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  let complete = false;
+  const read = async (): Promise<ReadableStreamReadResult<Uint8Array>> =>
+    await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+      const onAbort = () => reject(signal.reason);
+      signal.addEventListener("abort", onAbort, { once: true });
+      if (signal.aborted) onAbort();
+      reader.read().then(resolve, reject).finally(() =>
+        signal.removeEventListener("abort", onAbort)
+      );
+    });
+  try {
+    for (;;) {
+      signal.throwIfAborted();
+      const { done, value } = await read();
+      if (done) {
+        complete = true;
+        break;
+      }
+      if (length > maximumBytes - value.byteLength) {
+        throw new RangeError(`Blob response exceeds ${maximumBytes} bytes`);
+      }
+      chunks.push(value);
+      length += value.byteLength;
+    }
+  } finally {
+    if (!complete) void reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
+async function readErrorBody(response: Response, signal: AbortSignal): Promise<string> {
+  try {
+    return (await readResponseTextPrefix(response, ERROR_RESPONSE_BYTES, signal, {
+      fatalUtf8: true,
+    })).text;
+  } catch {
+    return "";
+  }
 }
 
 function normalizePrefix(prefix: string | undefined): string {
@@ -388,6 +473,16 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       defaultTtl: this.config.defaultTtl,
       downloadTtl: this.config.downloadTtl,
       now: this.config.now ?? (() => new Date()),
+      requestTimeoutMs: requirePositiveInteger(
+        this.config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
+        "requestTimeoutMs",
+        DEFAULT_REQUEST_TIMEOUT_MS,
+      ),
+      maxResponseBytes: requirePositiveInteger(
+        this.config.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES,
+        "maxResponseBytes",
+        MAX_RESPONSE_BYTES,
+      ),
     };
   }
 
@@ -427,21 +522,29 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const headers = new Headers(upload.required_headers);
     if (!headers.has("Content-Type")) headers.set("Content-Type", mimeType);
 
-    const response = await guardedOutboundFetch(upload.file_upload_url, {
-      method: "PUT",
-      headers,
-      body,
-      redirect: "error",
-    });
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      throw API_ERROR.create({
-        detail:
-          `Veryfront Cloud upload failed for "${path}": ${response.status} ${response.statusText}${
-            errorBody ? ` - ${errorBody}` : ""
-          }`,
+    const scope = createRequestScope(resolved.requestTimeoutMs);
+    let response: Response;
+    try {
+      response = await guardedOutboundFetch(upload.file_upload_url, {
+        method: "PUT",
+        headers,
+        body,
+        redirect: "error",
+        signal: scope.signal,
       });
+
+      if (!response.ok) {
+        const errorBody = await readErrorBody(response, scope.signal);
+        throw API_ERROR.create({
+          detail:
+            `Veryfront Cloud upload failed for "${path}": ${response.status} ${response.statusText}${
+              errorBody ? ` - ${errorBody}` : ""
+            }`,
+        });
+      }
+      void response.body?.cancel().catch(() => {});
+    } finally {
+      scope.dispose();
     }
   }
 
@@ -510,20 +613,32 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const download = await this.getDownloadUrl(path, resolved);
     if (!download) return null;
 
-    const response = await guardedOutboundFetch(download.signedUrl, { redirect: "error" });
-    if (response.status === 404) return null;
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      throw API_ERROR.create({
-        detail:
-          `Veryfront Cloud download failed for "${path}": ${response.status} ${response.statusText}${
-            errorBody ? ` - ${errorBody}` : ""
-          }`,
+    const scope = createRequestScope(resolved.requestTimeoutMs);
+    try {
+      const response = await guardedOutboundFetch(download.signedUrl, {
+        redirect: "error",
+        signal: scope.signal,
       });
+      if (response.status === 404) {
+        void response.body?.cancel().catch(() => {});
+        return null;
+      }
+      if (!response.ok) {
+        const errorBody = await readErrorBody(response, scope.signal);
+        throw API_ERROR.create({
+          detail:
+            `Veryfront Cloud download failed for "${path}": ${response.status} ${response.statusText}${
+              errorBody ? ` - ${errorBody}` : ""
+            }`,
+        });
+      }
+      const bytes = await readResponseBytes(response, resolved.maxResponseBytes, scope.signal);
+      return new Blob([
+        bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer,
+      ]).stream();
+    } finally {
+      scope.dispose();
     }
-
-    return response.body;
   }
 
   private async downloadUploadText(
@@ -549,38 +664,49 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const headers = new Headers(options.headers);
     headers.set("Authorization", `Bearer ${resolved.apiToken}`);
 
-    const response = await guardedOutboundFetch(
-      joinUrl(resolved.apiBaseUrl, path),
-      { method, headers, body: options.body, redirect: "error" },
-      {
-        authorizeUrl: (target) => {
-          if (target.origin !== new URL(resolved.apiBaseUrl).origin) {
-            throw new OutboundRequestBlockedError(
-              "Veryfront Cloud Blob request blocked: destination origin is not authorized",
-            );
-          }
+    const scope = createRequestScope(resolved.requestTimeoutMs);
+    try {
+      const response = await guardedOutboundFetch(
+        joinUrl(resolved.apiBaseUrl, path),
+        { method, headers, body: options.body, redirect: "error", signal: scope.signal },
+        {
+          authorizeUrl: (target) => {
+            if (target.origin !== new URL(resolved.apiBaseUrl).origin) {
+              throw new OutboundRequestBlockedError(
+                "Veryfront Cloud Blob request blocked: destination origin is not authorized",
+              );
+            }
+          },
         },
-      },
-    );
+      );
 
-    if (options.allowNotFound && response.status === 404) {
-      return null;
+      if (options.allowNotFound && response.status === 404) {
+        void response.body?.cancel().catch(() => {});
+        return null;
+      }
+
+      if (!response.ok) {
+        const errorBody = await readErrorBody(response, scope.signal);
+        throw API_ERROR.create({
+          detail:
+            `Veryfront Cloud request failed: ${method} ${path} -> ${response.status} ${response.statusText}${
+              errorBody ? ` - ${errorBody}` : ""
+            }`,
+        });
+      }
+
+      if (options.expectEmptyBody || response.status === 204) {
+        void response.body?.cancel().catch(() => {});
+        return null;
+      }
+
+      return JSON.parse(
+        new TextDecoder().decode(
+          await readResponseBytes(response, resolved.maxResponseBytes, scope.signal),
+        ),
+      );
+    } finally {
+      scope.dispose();
     }
-
-    if (!response.ok) {
-      const errorBody = await response.text().catch(() => "");
-      throw API_ERROR.create({
-        detail:
-          `Veryfront Cloud request failed: ${method} ${path} -> ${response.status} ${response.statusText}${
-            errorBody ? ` - ${errorBody}` : ""
-          }`,
-      });
-    }
-
-    if (options.expectEmptyBody || response.status === 204) {
-      return null;
-    }
-
-    return response.json();
   }
 }

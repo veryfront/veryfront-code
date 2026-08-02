@@ -402,4 +402,57 @@ describe("VeryfrontCloudBlobStorage", () => {
       "Invalid blob id",
     );
   });
+
+  it("times out and cancels a stalled signed-download body", async () => {
+    let cancelled = false;
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.origin === "https://93.184.216.34") {
+        return Promise.resolve(Response.json({
+          signed_url: "https://93.184.216.35/download",
+          expires_at: FIXED_NOW.toISOString(),
+        }));
+      }
+      return Promise.resolve(
+        new Response(
+          new ReadableStream({
+            pull: () => new Promise<void>(() => {}),
+            cancel() {
+              cancelled = true;
+            },
+          }),
+        ),
+      );
+    }) as typeof fetch;
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_test",
+      projectSlug: "project",
+      requestTimeoutMs: 5,
+    });
+
+    await assertRejects(() => storage.getText("blob-id"), Error, "timed out");
+    assertEquals(cancelled, true);
+  });
+
+  it("rejects oversized signed-download bodies", async () => {
+    globalThis.fetch = ((input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.origin === "https://93.184.216.34") {
+        return Promise.resolve(Response.json({
+          signed_url: "https://93.184.216.35/download",
+          expires_at: FIXED_NOW.toISOString(),
+        }));
+      }
+      return Promise.resolve(new Response(new Uint8Array([1, 2, 3, 4, 5])));
+    }) as typeof fetch;
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_test",
+      projectSlug: "project",
+      maxResponseBytes: 4,
+    });
+
+    await assertRejects(() => storage.getBytes("blob-id"), RangeError, "exceeds 4 bytes");
+  });
 });
