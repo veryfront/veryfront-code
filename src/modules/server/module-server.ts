@@ -332,7 +332,6 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         adapter,
         context: "module-loading",
         contextOptions: { allowedImportDirs },
-        throwOnError: false,
         onSecurityEvent: (event) => {
           if (event.type !== "validation-failed") return;
           logger.warn("Security validation failed", {

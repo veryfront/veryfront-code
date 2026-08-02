@@ -40,7 +40,7 @@ export class MetricsHandler extends BaseHandler {
 
       return Promise.resolve(this.respond(response));
     } catch (e) {
-      this.logWarn("metrics failed", { error: this.getErrorMessage(e) }, ctx);
+      this.logWarn("metrics failed", { error: this.getErrorMessage(e) });
 
       const response = ResponseBuilder.error(
         HTTP_INTERNAL_SERVER_ERROR,

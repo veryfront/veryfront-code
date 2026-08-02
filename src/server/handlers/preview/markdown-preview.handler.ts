@@ -17,7 +17,7 @@ import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts"
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { tryNotFoundFallback } from "../request/ssr/not-found-fallback.ts";
 import { generateMarkdownHtml } from "./markdown-html-generator.ts";
-import { validatePathSync } from "#veryfront/security";
+import { validateLexicalPath, validatePath, ValidationPresets } from "#veryfront/security";
 
 const logger = serverLogger.component("markdown-preview-handler");
 
@@ -47,7 +47,7 @@ export class MarkdownPreviewHandler extends BaseHandler {
 
     const filePath = pathname.replace(/^\//, "");
 
-    const pathResult = validatePathSync(filePath, {
+    const pathResult = validateLexicalPath(filePath, {
       baseDir: ctx.projectDir,
     });
 
@@ -105,6 +105,15 @@ export class MarkdownPreviewHandler extends BaseHandler {
     filePath: string,
     url: URL,
   ): Promise<HandlerResult> {
+    const pathResult = await validatePath(filePath, {
+      ...ValidationPresets.internal(ctx.projectDir),
+      adapter: ctx.adapter,
+    });
+    if (!pathResult.valid) {
+      logger.warn("Physical path validation blocked markdown preview", { filePath });
+      return this.continue();
+    }
+
     try {
       const resolveFile = ctx.adapter.fs.resolveFile;
       const resolvedPath = resolveFile ? await resolveFile.call(ctx.adapter.fs, filePath) : null;

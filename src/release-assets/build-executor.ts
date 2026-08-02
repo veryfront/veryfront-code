@@ -53,7 +53,7 @@ import { getReactUrls } from "#veryfront/transforms/esm/react-cdn.ts";
 import { PLATFORM_UTILITIES } from "#veryfront/html/utils.ts";
 import { extractCandidatesFromFiles } from "#veryfront/html/styles-builder/candidate-extractor.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
-import { validatePathSync } from "#veryfront/security/path-validation.ts";
+import { validateLexicalPath } from "#veryfront/security/path-validation.ts";
 import {
   CSS_IMPORTING_SOURCE_EXTENSIONS,
   resolveCssImportPath,
@@ -1371,9 +1371,11 @@ function portableReleaseFilePathKey(filePath: string): string {
 }
 
 function resolveMaterializedReleasePath(tempDir: string, filePath: string): string {
-  const result = validatePathSync(filePath, {
+  // The build owns a newly-created temporary root and materializes only regular
+  // file contents beneath it; no caller-controlled filesystem links are
+  // admitted. Lexical containment is therefore the correct boundary here.
+  const result = validateLexicalPath(filePath, {
     baseDir: tempDir,
-    level: "strict",
     allowAbsolute: false,
   });
   const resolvedPath = result.canonicalPath ? normalize(result.canonicalPath) : null;

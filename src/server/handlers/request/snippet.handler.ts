@@ -9,7 +9,7 @@ import {
   SECURITY_VIOLATION,
   VeryfrontError,
 } from "#veryfront/errors";
-import { validatePathSync } from "#veryfront/security";
+import { validatePath, ValidationPresets } from "#veryfront/security";
 import {
   createHandlerDependencyPinningSource,
   getHandlerDependencyPinningIdentity,
@@ -26,12 +26,12 @@ export class SnippetHandler extends BaseHandler {
     patterns: [{ pattern: /^\/(@\/|@components\/)/, method: "GET" }],
   };
 
-  handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
+  async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const url = new URL(req.url);
     const { pathname } = url;
 
     if (!pathname.startsWith("/@/") && !pathname.startsWith("/@components/")) {
-      return Promise.resolve(this.continue());
+      return this.continue();
     }
 
     logger.debug("Handling snippet request", {
@@ -41,8 +41,9 @@ export class SnippetHandler extends BaseHandler {
 
     const filePath = this.resolveFilePath(pathname);
 
-    const pathResult = validatePathSync(filePath, {
-      baseDir: ctx.projectDir,
+    const pathResult = await validatePath(filePath, {
+      ...ValidationPresets.internal(ctx.projectDir),
+      adapter: ctx.adapter,
     });
 
     if (!pathResult.valid) {
@@ -50,7 +51,7 @@ export class SnippetHandler extends BaseHandler {
       const error = SECURITY_VIOLATION.create({
         detail: "Invalid snippet path",
       });
-      return Promise.resolve({ response: createErrorResponse(error) });
+      return { response: createErrorResponse(error) };
     }
 
     logger.debug("Resolved file path", { filePath });

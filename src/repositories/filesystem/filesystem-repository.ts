@@ -18,8 +18,6 @@ export interface SecureFsRepositoryConfig {
   context: RepositoryContext;
   /** Security context for validation (default: "internal") */
   securityContext?: SecurityContext;
-  /** Whether to throw on validation errors (default: true) */
-  throwOnError?: boolean;
 }
 
 /**
@@ -51,7 +49,6 @@ export class SecureFsRepository implements FileSystemRepository {
       baseDir: config.baseDir,
       adapter: config.adapter,
       context: config.securityContext ?? "internal",
-      throwOnError: config.throwOnError ?? true,
     });
     if (this.secureFs.maxWholeFileReadBytes !== undefined) {
       Object.defineProperty(this, "maxWholeFileReadBytes", {

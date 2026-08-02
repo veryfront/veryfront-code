@@ -24,6 +24,8 @@ function createMockAdapter(_baseDir: string): RuntimeAdapter {
       mkdir: (path: string, opts?: { recursive?: boolean }) => Deno.mkdir(path, opts),
       readDir: (path: string) => Deno.readDir(path),
       stat: (path: string) => Deno.stat(path),
+      lstat: (path: string) => Deno.lstat(path),
+      realPath: (path: string) => Deno.realPath(path),
       remove: (path: string, opts?: { recursive?: boolean }) => Deno.remove(path, opts),
       makeTempDir: (prefix: string) => Deno.makeTempDir({ prefix }),
       watch: (paths: string | string[], options?: { recursive?: boolean }) =>

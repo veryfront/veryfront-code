@@ -60,7 +60,7 @@ describe("ValidationPresets", () => {
 
   describe("build", () => {
     it("should use permissive level", () => {
-      assertEquals(ValidationPresets.build("/base").level, "permissive");
+      assertEquals(ValidationPresets.build("/base").level, "normal");
     });
 
     it("should follow symlinks", () => {

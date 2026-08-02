@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import {
@@ -9,6 +9,7 @@ import {
 } from "#veryfront/observability/tracing/api-shim.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { metrics } from "#veryfront/metrics";
+import { VeryfrontError } from "#veryfront/errors";
 import { BaseHandler } from "./base-handler.ts";
 import type {
   HandlerContext,
@@ -26,6 +27,14 @@ class TestHandler extends BaseHandler {
 
   async handle(_req: Request, _ctx: HandlerContext): Promise<HandlerResult> {
     return this.continue();
+  }
+
+  testShouldHandle(req: Request, ctx: HandlerContext): boolean {
+    return this.shouldHandle(req, ctx);
+  }
+
+  testGetErrorMessage(error: unknown): string {
+    return this.getErrorMessage(error);
   }
 
   // Expose withProxyContext for testing
@@ -51,6 +60,72 @@ function createMinimalCtx(
     ...overrides,
   } as unknown as HandlerContext;
 }
+
+describe("BaseHandler route matching", () => {
+  it("treats exact: false as the documented legacy prefix form", () => {
+    const handler = new TestHandler();
+    handler.metadata.patterns = [{ pattern: "/api", exact: false }];
+    const ctx = createMinimalCtx();
+
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api/items"), ctx),
+      true,
+    );
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/other"), ctx),
+      false,
+    );
+  });
+
+  it("lets an explicit prefix option override the legacy exact alias", () => {
+    const handler = new TestHandler();
+    const ctx = createMinimalCtx();
+
+    handler.metadata.patterns = [{ pattern: "/api", exact: false, prefix: false }];
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api/items"), ctx),
+      false,
+    );
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api"), ctx),
+      true,
+    );
+
+    handler.metadata.patterns = [{ pattern: "/api", exact: true, prefix: true }];
+    assertEquals(
+      handler.testShouldHandle(new Request("http://localhost/api/items"), ctx),
+      true,
+    );
+  });
+
+  it("matches global and sticky regular expressions deterministically", () => {
+    const ctx = createMinimalCtx();
+    for (const pattern of [/^\/api/g, /^\/api/y]) {
+      const handler = new TestHandler();
+      handler.metadata.patterns = [{ pattern }];
+      const request = new Request("http://localhost/api");
+
+      assertEquals(handler.testShouldHandle(request, ctx), true);
+      assertEquals(handler.testShouldHandle(request, ctx), true);
+      assertEquals(pattern.lastIndex, 0);
+    }
+  });
+});
+
+describe("BaseHandler error boundaries", () => {
+  it("returns a stable fallback for unreadable thrown values", () => {
+    const unreadableError = new Proxy({}, {
+      get() {
+        throw new Error("error fields must not be read directly");
+      },
+      getPrototypeOf() {
+        throw new Error("error prototype must not be read directly");
+      },
+    });
+
+    assertEquals(new TestHandler().testGetErrorMessage(unreadableError), "Unknown error");
+  });
+});
 
 describe("BaseHandler.withProxyContext", () => {
   afterEach(() => {
@@ -79,26 +154,32 @@ describe("BaseHandler.withProxyContext", () => {
     assertEquals(called, true, "fn should run in local dev mode");
   });
 
-  it("runs fn() without proxy context when requireToken is true but no token", async () => {
+  it("does not misclassify a standalone cache-isolation slug as proxy context", async () => {
     const handler = new TestHandler();
     let called = false;
+    const warnings: unknown[][] = [];
+    const originalWarn = console.warn;
 
-    await handler.testWithProxyContext(
-      createMinimalCtx({ projectSlug: "my-project" }),
-      async () => {
-        called = true;
-        return { continue: true } as HandlerResult;
-      },
-      { requireToken: true },
-    );
+    console.warn = (...args: unknown[]) => warnings.push(args);
+    try {
+      await handler.testWithProxyContext(
+        createMinimalCtx({ projectSlug: "my-project" }),
+        async () => {
+          called = true;
+          return { continue: true } as HandlerResult;
+        },
+        { requireToken: true },
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
 
-    // fn() should still run so embedded framework modules can be served,
-    // but without project-scoped credentials (no setRequestToken call)
     assertEquals(
       called,
       true,
-      "fn should run without proxy context so embedded modules work",
+      "fn should run directly for a standalone filesystem",
     );
+    assertEquals(warnings, []);
   });
 
   it("runs fn() when requireToken is true and token is present", async () => {
@@ -166,6 +247,84 @@ describe("BaseHandler.withProxyContext", () => {
     );
 
     assertEquals(called, true, "fn should run with proxyToken");
+  });
+
+  for (const mode of ["multi-project", "contextual"] as const) {
+    it(`rejects missing required credentials before ${mode} filesystem work`, async () => {
+      const handler = new TestHandler();
+      let callbackCalled = false;
+      const fs = mode === "multi-project"
+        ? {
+          isMultiProjectMode: () => true,
+          runWithContext: async (_slug: string, _token: string, fn: () => Promise<unknown>) =>
+            await fn(),
+        }
+        : {
+          isContextualMode: () => true,
+          setRequestBranch() {},
+          setRequestToken() {},
+        };
+      const ctx = createMinimalCtx({
+        projectSlug: "remote-project",
+        adapter: { fs } as unknown as HandlerContext["adapter"],
+      });
+
+      const error = await assertRejects(
+        () =>
+          handler.testWithProxyContext(
+            ctx,
+            () => {
+              callbackCalled = true;
+              return Promise.resolve("forbidden");
+            },
+            { requireToken: true },
+          ),
+        VeryfrontError,
+      );
+
+      assert(error instanceof VeryfrontError);
+      assertEquals(error.slug, "authentication-required");
+      assertEquals(callbackCalled, false);
+    });
+  }
+
+  it("rejects an incomplete multi-project filesystem adapter explicitly", async () => {
+    const handler = new TestHandler();
+    const ctx = createMinimalCtx({
+      projectSlug: "my-project",
+      proxyToken: "vf_proxy_token",
+      adapter: {
+        fs: {
+          isMultiProjectMode: () => true,
+        },
+      } as unknown as HandlerContext["adapter"],
+    });
+
+    await assertRejects(
+      () => handler.testWithProxyContext(ctx, () => Promise.resolve("unused")),
+      TypeError,
+      "requires a runWithContext adapter method",
+    );
+  });
+
+  it("rejects incomplete contextual filesystem capabilities without legacy inference", async () => {
+    const handler = new TestHandler();
+    const ctx = createMinimalCtx({
+      projectSlug: "my-project",
+      proxyToken: "vf_proxy_token",
+      adapter: {
+        fs: {
+          isContextualMode: () => true,
+          setRequestToken() {},
+        },
+      } as unknown as HandlerContext["adapter"],
+    });
+
+    await assertRejects(
+      () => handler.testWithProxyContext(ctx, () => Promise.resolve("unused")),
+      TypeError,
+      "requires a setRequestBranch adapter method",
+    );
   });
 
   it("emits metrics with project and environment labels in multi-project request context", async () => {

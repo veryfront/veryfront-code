@@ -103,7 +103,6 @@ export class CSSHandler extends BaseHandler {
         `CSS not found and JIT regeneration failed: ${cssHash}. ` +
           `Server restart or cache expiry. Reload page to regenerate.`,
         {},
-        ctx,
       );
 
       // Return 404 instead of 200 with comment - this is more honest

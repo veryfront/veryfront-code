@@ -3,7 +3,7 @@
  * Type definitions for response construction
  */
 
-export type { CORSConfig } from "../cors/index.ts";
+export type { CORSConfig, SyncCORSConfig } from "../cors/index.ts";
 
 import type { SecurityConfig } from "#veryfront/types";
 export type { SecurityConfig } from "#veryfront/types";
@@ -30,5 +30,6 @@ export interface ResponseBuilderConfig {
   cspUserHeader?: string | null;
   adapter?: import("#veryfront/platform/adapters/base.ts").RuntimeAdapter;
   nonce?: string; // Optional pre-generated nonce for CSP consistency
-  isVeryfrontDomain?: boolean; // When true, skips X-Frame-Options to allow iframe embedding
+  /** Select the explicit hosted-Studio `frame-ancestors` allowlist. */
+  isVeryfrontDomain?: boolean;
 }
