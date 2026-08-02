@@ -1,12 +1,17 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
 import {
   __resetPoolForTests,
   isDataIsolationEnabled,
-  isSSRIsolationEnabled,
   isWorkerIsolationEnabled,
   WorkerPool,
 } from "./worker-pool.ts";
@@ -356,7 +361,6 @@ describe("Feature flag caching", () => {
     __resetPoolForTests();
     assertEquals(isWorkerIsolationEnabled(), false);
     assertEquals(isDataIsolationEnabled(), false);
-    assertEquals(isSSRIsolationEnabled(), false);
   });
 
   it("returns true for API isolation when both flags set", () => {
@@ -373,11 +377,15 @@ describe("Feature flag caching", () => {
     assertEquals(isDataIsolationEnabled(), true);
   });
 
-  it("returns true for SSR isolation when both flags set", () => {
+  it("fails closed when the removed SSR isolation flag is enabled", () => {
     __resetPoolForTests();
     Deno.env.set("WORKER_ISOLATION_ENABLED", "1");
     Deno.env.set("WORKER_ISOLATION_SSR", "1");
-    assertEquals(isSSRIsolationEnabled(), true);
+    assertThrows(
+      () => isWorkerIsolationEnabled(),
+      Error,
+      "WORKER_ISOLATION_SSR is unsupported",
+    );
   });
 
   it("caches flag results across calls", () => {

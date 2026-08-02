@@ -11,7 +11,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { getEnvBoolean, getEnvNumber, unrefTimer } from "#veryfront/platform/compat/process.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SECURITY_VIOLATION } from "#veryfront/errors";
+import { NOT_SUPPORTED, SECURITY_VIOLATION } from "#veryfront/errors";
 import { ProjectWorker } from "./project-worker.ts";
 import { buildWorkerEnvAllowlist, buildWorkerPermissions } from "./worker-permissions.ts";
 import type { WorkerPoolConfig, WorkerRequest, WorkerResponse } from "./worker-types.ts";
@@ -424,14 +424,17 @@ export class WorkerPool {
 let _flagsResolved = false;
 let _apiIsolation = false;
 let _dataIsolation = false;
-let _ssrIsolation = false;
 
 function resolveFlags(): void {
   if (_flagsResolved) return;
   const master = getEnvBoolean("WORKER_ISOLATION_ENABLED", false);
+  if (master && getEnvBoolean("WORKER_ISOLATION_SSR", false)) {
+    throw NOT_SUPPORTED.create({
+      detail: "WORKER_ISOLATION_SSR is unsupported; SSR uses the bounded main-process renderer",
+    });
+  }
   _apiIsolation = master && getEnvBoolean("WORKER_ISOLATION_API", false);
   _dataIsolation = master && getEnvBoolean("WORKER_ISOLATION_DATA", false);
-  _ssrIsolation = master && getEnvBoolean("WORKER_ISOLATION_SSR", false);
   _flagsResolved = true;
 }
 
@@ -451,15 +454,6 @@ export function isWorkerIsolationEnabled(): boolean {
 export function isDataIsolationEnabled(): boolean {
   resolveFlags();
   return _dataIsolation;
-}
-
-/**
- * Whether worker isolation is enabled for SSR rendering.
- * Controlled by WORKER_ISOLATION_SSR=1 (requires WORKER_ISOLATION_ENABLED=1).
- */
-export function isSSRIsolationEnabled(): boolean {
-  resolveFlags();
-  return _ssrIsolation;
 }
 
 /** Lazy singleton — created on first use when isolation is enabled */
@@ -491,5 +485,4 @@ export function __resetPoolForTests(): void {
   _flagsResolved = false;
   _apiIsolation = false;
   _dataIsolation = false;
-  _ssrIsolation = false;
 }

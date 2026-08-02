@@ -4,6 +4,10 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  decodeConversationRecord,
+  encodeConversationRecord,
+} from "#veryfront/react/components/chat/chat/persistence/conversation-codec.ts";
 import { useChat } from "./use-chat.ts";
 import type { UseChatResult } from "./types.ts";
 
@@ -70,6 +74,17 @@ function sseResponse(): Response {
     status: 200,
     headers: { "content-type": "text/event-stream" },
   });
+}
+
+function persistMessages(messages: UseChatResult["messages"]): UseChatResult["messages"] {
+  const encoded = encodeConversationRecord({
+    id: "persisted-chat",
+    title: "Persisted chat",
+    messages,
+    createdAt: 1,
+    updatedAt: 2,
+  });
+  return decodeConversationRecord(encoded.serialized).value.messages;
 }
 
 describe("react/agent/useChat status lifecycle", () => {
@@ -144,6 +159,131 @@ describe("react/agent/useChat status lifecycle", () => {
       flushSync(() => root.unmount());
       await settle();
       globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("keeps a default-model assistant response persistable", async () => {
+    const restoreDom = installDom();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = () => Promise.resolve(sseResponse());
+    let latest: UseChatResult | null = null;
+
+    function Capture(): null {
+      latest = useChat({ api: "/api/ag-ui" });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      await latest!.sendMessage({ text: "Hello" });
+      await settle();
+
+      const persisted = persistMessages(latest!.messages);
+      const assistant = persisted.find((message) => message.role === "assistant");
+      assert(assistant, "the streamed assistant response should be retained");
+      assertEquals(Object.hasOwn(assistant.metadata ?? {}, "model"), false);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      globalThis.fetch = originalFetch;
+      restoreDom();
+    }
+  });
+
+  it("keeps a successful client tool output persistable", async () => {
+    const restoreDom = installDom();
+    let latest: UseChatResult | null = null;
+
+    function Capture(): null {
+      latest = useChat({
+        initialMessages: [{
+          id: "assistant-tool",
+          role: "assistant",
+          parts: [{
+            type: "tool-search",
+            toolCallId: "call-1",
+            toolName: "search",
+            state: "input-available",
+            input: { query: "Veryfront" },
+          }],
+        }],
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest!.addToolOutput({
+          tool: "search",
+          toolCallId: "call-1",
+          output: { matches: 1 },
+        })
+      );
+
+      const persisted = persistMessages(latest!.messages);
+      const part = persisted[0]?.parts[0];
+      assert(
+        part && "toolCallId" in part && "state" in part,
+        "the tool call should be retained",
+      );
+      assertEquals(part.state, "output-available");
+      assertEquals(part.output, { matches: 1 });
+      assertEquals(Object.hasOwn(part, "errorText"), false);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
+      restoreDom();
+    }
+  });
+
+  it("keeps a failed client tool output persistable", async () => {
+    const restoreDom = installDom();
+    let latest: UseChatResult | null = null;
+
+    function Capture(): null {
+      latest = useChat({
+        initialMessages: [{
+          id: "assistant-tool",
+          role: "assistant",
+          parts: [{
+            type: "tool-search",
+            toolCallId: "call-1",
+            toolName: "search",
+            state: "input-available",
+            input: { query: "Veryfront" },
+          }],
+        }],
+      });
+      return null;
+    }
+
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() => root.render(<Capture />));
+      flushSync(() =>
+        latest!.addToolOutput({
+          tool: "search",
+          toolCallId: "call-1",
+          errorText: "Search unavailable",
+        })
+      );
+
+      const persisted = persistMessages(latest!.messages);
+      const part = persisted[0]?.parts[0];
+      assert(
+        part && "toolCallId" in part && "state" in part,
+        "the tool call should be retained",
+      );
+      assertEquals(part.state, "output-error");
+      assertEquals(part.errorText, "Search unavailable");
+      assertEquals(Object.hasOwn(part, "output"), false);
+    } finally {
+      flushSync(() => root.unmount());
+      await settle();
       restoreDom();
     }
   });

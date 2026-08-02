@@ -9,6 +9,7 @@ import type {
   UseConversationChatOptions as ComponentsChatOptions,
   UseConversationChatResult as ComponentsChatResult,
 } from "veryfront/components/chat";
+import type { ConversationStorageLimits } from "./index.ts";
 import type {
   UseConversationChatOptions as ReactComponentsChatOptions,
   UseConversationChatResult as ReactComponentsChatResult,
@@ -26,8 +27,10 @@ const _componentsChatOptions: ComponentsChatOptions = {};
 const _reactComponentsChatOptions: ReactComponentsChatOptions = _componentsChatOptions;
 const _componentsChatResult = null as unknown as ComponentsChatResult;
 const _reactComponentsChatResult: ReactComponentsChatResult = _componentsChatResult;
+const _storageLimits: ConversationStorageLimits = chatModule.CONVERSATION_STORAGE_LIMITS;
 void _reactComponentsChatOptions;
 void _reactComponentsChatResult;
+void _storageLimits;
 
 const expectedRuntimeExports = [
   // Canonical component names.
@@ -117,6 +120,8 @@ const expectedRuntimeExports = [
   "isReasoningPart",
   "isSkillToolPart",
   "isToolPart",
+  "CONVERSATION_STORAGE_LIMITS",
+  "ConversationStoreError",
   "localConversationStore",
   "memoryConversationStore",
   "normalizeChatMessageMetadata",
@@ -179,6 +184,11 @@ describe("chat/index.ts exports", () => {
     assertEquals(chatModule.useStreaming, useStreamingModule.useStreaming);
     assertEquals(chatModule.useVoiceInput, useVoiceInputModule.useVoiceInput);
     assertEquals(chatModule.AgentCard, agentCardModule.AgentCard);
+    assertEquals(
+      chatModule.CONVERSATION_STORAGE_LIMITS,
+      chatUI.CONVERSATION_STORAGE_LIMITS,
+    );
+    assertEquals(chatModule.ConversationStoreError, chatUI.ConversationStoreError);
     assertEquals(
       chatModule.ChatErrorBoundary,
       errorBoundaryModule.ChatErrorBoundary,

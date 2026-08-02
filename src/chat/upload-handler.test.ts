@@ -190,6 +190,21 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 401, "authorize:false should block the upload");
       }));
 
+    it("fails closed when an authorize callback accidentally returns undefined", () =>
+      withTempDir(async (dir) => {
+        const { POST } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          authorize: (() => undefined) as unknown as () => boolean,
+        });
+        const res = await POST(
+          new Request("http://localhost:3000/api/uploads", {
+            method: "POST",
+            body: "body parsing must not run",
+          }),
+        );
+        assertEquals(res.status, 401, "a missing authorization decision must deny access");
+      }));
+
     it("lets authorize short-circuit with its own Response", () =>
       withTempDir(async (dir) => {
         const { POST } = createChatUploadHandler({

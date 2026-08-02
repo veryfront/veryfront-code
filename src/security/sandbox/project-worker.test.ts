@@ -39,7 +39,6 @@ const TEST_WORKER_SCRIPT_URL = `data:application/typescript,${
         return;
       }
       if (msg.type === "clear-cache") return;
-      if (msg.type === "render-ssr") return;
       self.postMessage({
         type: "error",
         id: msg.id,
@@ -431,15 +430,6 @@ testSuite("ProjectWorker - real worker request isolation", () => {
           request: serializedRequest,
           url: serializedRequest.url,
         },
-      },
-      {
-        type: "render-ssr",
-        id: "ssr",
-        pageModulePath: modulePath,
-        layoutModulePaths: [],
-        pageProps: {},
-        layoutProps: [],
-        delivery: "string",
       },
     ];
 
@@ -1351,50 +1341,6 @@ testSuite("ProjectWorker - real worker request isolation", () => {
         Deno.env.set(WORKER_INTERNAL_EGRESS_OVERRIDE_ENV, previousOverride);
       }
       await Deno.remove(projectDir, { recursive: true });
-    }
-  });
-});
-
-testSuite("ProjectWorker - executeStream", () => {
-  it("throws when worker is not started", () => {
-    const worker = createTestWorker("test-stream");
-    let threw = false;
-    try {
-      worker.executeStream({
-        type: "render-ssr",
-        id: "test-id",
-        pageModulePath: "/nonexistent.ts",
-        layoutModulePaths: [],
-        pageProps: {},
-        layoutProps: [],
-        delivery: "stream",
-        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
-      });
-    } catch {
-      threw = true;
-    }
-    assert(threw, "should throw when worker is not available");
-  });
-
-  it("returns a ReadableStream when worker is started", () => {
-    const worker = createTestWorker("test-stream");
-    worker.start();
-    try {
-      const stream = worker.executeStream({
-        type: "render-ssr",
-        id: "test-id",
-        pageModulePath: "/nonexistent.ts",
-        layoutModulePaths: [],
-        pageProps: {},
-        layoutProps: [],
-        delivery: "stream",
-        sourceIntegrationPolicy: TEST_SOURCE_INTEGRATION_POLICY,
-      });
-      assert(stream instanceof ReadableStream, "should return a ReadableStream");
-      // Cancel the stream to clean up
-      stream.cancel();
-    } finally {
-      worker.terminate();
     }
   });
 });
