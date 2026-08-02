@@ -12,6 +12,7 @@ function createOptions(overrides: Partial<HTMLWrapOptions> = {}): HTMLWrapOption
     links: [],
     scripts: [],
     bootstrapScripts: [],
+    bootstrapModules: [],
     ...overrides,
   };
 }
@@ -111,6 +112,16 @@ describe("html-wrapper", () => {
       expect(result).toContain('<script src="/vendor.js" async></script>');
     });
 
+    it("should include bootstrap modules in body", () => {
+      const result = wrapInHTML(
+        "<div>Test</div>",
+        createOptions({ bootstrapModules: ["/app.mjs", "/vendor.mjs"] }),
+      );
+
+      expect(result).toContain('<script src="/app.mjs" type="module" async></script>');
+      expect(result).toContain('<script src="/vendor.mjs" type="module" async></script>');
+    });
+
     it("should add nonce to head scripts when provided", () => {
       const result = wrapInHTML(
         "<div>Test</div>",
@@ -182,6 +193,7 @@ describe("html-wrapper", () => {
           links: [{ rel: breakout, href: breakout }],
           scripts: [{ src: breakout, type: breakout }],
           bootstrapScripts: [breakout],
+          bootstrapModules: [breakout],
           nonce: breakout,
         }),
       );
@@ -190,7 +202,7 @@ describe("html-wrapper", () => {
       const { document } = dom.window;
       try {
         expect(document.title).toBe(title);
-        expect(document.querySelectorAll("script")).toHaveLength(2);
+        expect(document.querySelectorAll("script")).toHaveLength(3);
         expect(document.querySelector("[data-injected]")).toBeNull();
 
         const meta = document.querySelectorAll("meta")[2];
@@ -201,12 +213,17 @@ describe("html-wrapper", () => {
         expect(link?.getAttribute("rel")).toBe(breakout);
         expect(link?.getAttribute("href")).toBe(breakout);
 
-        const [headScript, bootstrapScript] = [...document.querySelectorAll("script")];
+        const [headScript, bootstrapScript, bootstrapModule] = [
+          ...document.querySelectorAll("script"),
+        ];
         expect(headScript?.getAttribute("src")).toBe(breakout);
         expect(headScript?.getAttribute("type")).toBe(breakout);
         expect(headScript?.getAttribute("nonce")).toBe(breakout);
         expect(bootstrapScript?.getAttribute("src")).toBe(breakout);
         expect(bootstrapScript?.getAttribute("nonce")).toBe(breakout);
+        expect(bootstrapModule?.getAttribute("src")).toBe(breakout);
+        expect(bootstrapModule?.getAttribute("type")).toBe("module");
+        expect(bootstrapModule?.getAttribute("nonce")).toBe(breakout);
       } finally {
         dom.window.close();
       }

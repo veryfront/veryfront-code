@@ -1,8 +1,7 @@
 /**
  * Input — ported from Veryfront Studio (`inputStyles` cva + optional leading
  * icon), semantic classes remapped to veryfront's `[var(--token)]` vocabulary.
- * Studio's `type="date"` DateInput branch is omitted for v1. Private to the
- * chat module.
+ * Studio's `type="date"` DateInput branch is intentionally omitted.
  *
  * @module react/components/ui/input
  */
@@ -18,8 +17,7 @@ const inputVariants = cva(
     "focus-visible:outline-none",
     "disabled:cursor-not-allowed disabled:opacity-50",
     "bg-[var(--input-bg)] border border-[var(--background)] dark:border-transparent",
-    // veryfront has no --status-error token yet; fall back to --destructive.
-    "data-[invalid=true]:border-[var(--destructive)]",
+    "data-[invalid=true]:border-[var(--status-error)]",
   ],
   {
     variants: {

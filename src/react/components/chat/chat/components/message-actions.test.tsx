@@ -1,4 +1,4 @@
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
@@ -40,6 +40,20 @@ function installDom(): { restore: () => void; window: JSDOM["window"] } {
       dom.window.close();
     },
   };
+}
+
+/**
+ * Unmount and drain the one-shot tasks the runtime leaves behind.
+ *
+ * The `execCommand` copy fallback selects a textarea, and jsdom queues that
+ * `select` event on a bare `setTimeout` it never registers with the window, so
+ * `window.close()` cannot clear it. React's scheduler likewise holds a
+ * `setImmediate` until it next runs. Both complete on their own, but the test
+ * has to yield once more or Deno's leak sanitizer sees them still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("MessageActionBar", () => {
@@ -90,7 +104,7 @@ describe("MessageActionBar", () => {
   it("renders the composed copied-state leaf after copying", async () => {
     const dom = installDom();
     const writes: string[] = [];
-    Object.defineProperty(globalThis.navigator, "clipboard", {
+    Object.defineProperty(dom.window.navigator, "clipboard", {
       configurable: true,
       value: { writeText: (value: string) => Promise.resolve(writes.push(value)) },
     });
@@ -128,7 +142,65 @@ describe("MessageActionBar", () => {
       assert(rootElement.querySelector('[data-testid="custom-copied"]'));
       assertStringIncludes(rootElement.innerHTML, "vf-copied");
 
-      flushSync(() => root.unmount());
+      flushSync(() => {
+        root.render(
+          <MessageActionBar content="Updated answer">
+            <MessageActionBar.Copy icon={<span data-testid="custom-copy">copy</span>} />
+            <MessageActionBar.Copied icon={<span data-testid="custom-copied">copied</span>} />
+          </MessageActionBar>,
+        );
+      });
+      assert(rootElement.querySelector('[data-testid="custom-copy"]'));
+      assert(!rootElement.querySelector('[data-testid="custom-copied"]'));
+
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("keeps the copy action available when every clipboard mechanism fails", async () => {
+    const dom = installDom();
+    Object.defineProperty(dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("denied")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: () => false,
+    });
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <MessageActionBar content="Answer">
+            <MessageActionBar.Copy icon={<span data-testid="custom-copy">copy</span>} />
+            <MessageActionBar.Copied icon={<span data-testid="custom-copied">copied</span>} />
+          </MessageActionBar>,
+        );
+      });
+
+      const copy = rootElement.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy to clipboard"]',
+      );
+      assert(copy, "copy action renders");
+      copy.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync(() => {});
+
+      assert(rootElement.querySelector('[data-testid="custom-copy"]'));
+      assert(!rootElement.querySelector('[data-testid="custom-copied"]'));
+      assertEquals(copy.getAttribute("aria-label"), "Unable to copy. Try again");
+      assertEquals(
+        rootElement.querySelector('[role="status"]')?.textContent,
+        "Unable to copy to clipboard",
+      );
+      assertEquals(document.querySelectorAll("textarea").length, 0);
+
+      await unmount(root);
     } finally {
       dom.restore();
     }

@@ -37,5 +37,6 @@ export interface HTMLWrapOptions {
   links: Array<{ rel: string; href: string }>;
   scripts: Array<{ src: string; type?: string }>;
   bootstrapScripts: string[];
+  bootstrapModules?: string[];
   nonce?: string;
 }

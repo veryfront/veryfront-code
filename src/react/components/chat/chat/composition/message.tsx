@@ -132,10 +132,13 @@ function MessageRoot(
       [getBranches, message.id],
     );
 
-    const { copied, copy } = useClipboard();
+    const clipboard = useClipboard();
+    const isCurrentCopy = clipboard.text === textContent;
+    const copied = isCurrentCopy && clipboard.copied;
+    const copyFailed = isCurrentCopy && clipboard.failed;
     const onCopy = React.useCallback(
-      () => copy(textContent),
-      [copy, textContent],
+      (ownerDocument?: Document) => clipboard.copy(textContent, ownerDocument),
+      [clipboard.copy, textContent],
     );
 
     const contextValue = React.useMemo<MessageContextValue>(
@@ -154,6 +157,7 @@ function MessageRoot(
           : undefined,
         onCopy,
         copied,
+        copyFailed,
         onEdit: editMessage
           ? (content: string) => {
             editMessage(message.id, content);
@@ -177,6 +181,7 @@ function MessageRoot(
         switchBranch,
         onCopy,
         copied,
+        copyFailed,
         editMessage,
         onFeedbackProp,
         overrides.feedback,
@@ -387,7 +392,7 @@ export interface MessageContentProps {
   className?: string;
   /** Swap the code block used in the answer markdown (forwarded to `Markdown`). */
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  /** Override markdown element renderers (merged over the built-in defaults). */
+  /** Element overrides forwarded to the installed rich-Markdown renderer. */
   markdownComponents?: Components;
   /**
    * Compose the body yourself. Receives each grouped part in order; return a
@@ -520,10 +525,15 @@ function ActionButton(
   }: MessageActionProps & {
     label: string;
     defaultIcon: React.ReactNode;
-    action: () => void;
+    action: (ownerDocument: Document) => void;
   },
 ): React.ReactElement {
-  const handleClick = (e: React.MouseEvent<HTMLElement>) => onClick ? onClick(e, action) : action();
+  const handleClick = (event: React.MouseEvent<HTMLElement>): void => {
+    const ownerDocument = event.currentTarget.ownerDocument;
+    const next = (): void => action(ownerDocument);
+    if (onClick) onClick(event, next);
+    else next();
+  };
 
   if (asChild) {
     return (
@@ -557,15 +567,17 @@ ActionButton.displayName = "Message.ActionButton";
 export function MessageCopyAction(
   props: MessageActionProps,
 ): React.ReactElement | null {
-  const { onCopy, copied, textContent } = useMessageContext();
+  const { onCopy, copied, copyFailed, textContent } = useMessageContext();
   if (!textContent) return null;
+  const label = copied ? "Copied!" : copyFailed ? "Unable to copy. Try again" : "Copy to clipboard";
   return (
     <ActionButton
       ref={props.ref}
       {...props}
-      label={copied ? "Copied!" : "Copy to clipboard"}
+      aria-live="polite"
+      label={label}
       defaultIcon={copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-      action={() => void onCopy()}
+      action={(ownerDocument) => void onCopy(ownerDocument)}
     />
   );
 }
@@ -583,7 +595,7 @@ export function MessageRegenerateAction(
       {...props}
       label="Regenerate response"
       defaultIcon={<RefreshCwIcon className="size-3.5" />}
-      action={onRegenerate}
+      action={() => onRegenerate()}
     />
   );
 }

@@ -5,11 +5,28 @@ import {
   checkVersionCompatibility,
   detectReactVersion,
   getReactVersionInfo,
+  getReactVersionInfoForProject,
   getRecommendedSSRMethod,
   hasFeature,
   parseVersion,
 } from "./index.ts";
+import { checkVersionCompatibilityForInfo } from "./compatibility-checker.ts";
+import { detectFeatures } from "./feature-detector.ts";
+import type { ReactVersionInfo } from "./types.ts";
 import { __resetReactVersionCacheForTests } from "./version-cache.ts";
+
+function reactVersionInfo(version: string, major: number, minor: number): ReactVersionInfo {
+  return {
+    version,
+    major,
+    minor,
+    patch: 0,
+    isReact17: major === 17,
+    isReact18: major === 18,
+    isReact19: major === 19,
+    features: detectFeatures(major, minor),
+  };
+}
 
 describe("React Version Detector", () => {
   describe("Version Parsing", () => {
@@ -87,11 +104,14 @@ describe("React Version Detector", () => {
       assertEquals(info.features.enhancedStreaming, true);
     });
 
-    it("all versions have basic SSR capabilities", () => {
+    it("reports basic and legacy SSR capabilities for the detected version", () => {
       const info = getReactVersionInfo();
       assertEquals(info.features.renderToString, true);
       assertEquals(info.features.renderToStaticMarkup, true);
-      assertEquals(info.features.renderToNodeStream, true);
+      assertEquals(
+        info.features.renderToNodeStream,
+        info.major < 19 && !info.isReact19,
+      );
     });
 
     it("hasFeature checks individual features", () => {
@@ -109,7 +129,10 @@ describe("React Version Detector", () => {
       const info = getReactVersionInfo();
       if (info.major < 18) return;
 
-      assertEquals(info.features.serverComponents, info.minor >= 3);
+      assertEquals(
+        info.features.serverComponents,
+        info.major > 18 || (info.major === 18 && info.minor >= 3),
+      );
     });
   });
 
@@ -150,6 +173,17 @@ describe("React Version Detector", () => {
   });
 
   describe("Version Compatibility Checking", () => {
+    it("rejects unavailable required React 19 capabilities deterministically", () => {
+      const res = checkVersionCompatibilityForInfo(
+        reactVersionInfo("18.2.0", 18, 2),
+        ["useFormStatus", "useOptimistic"],
+      );
+
+      assertEquals(res.compatible, false);
+      assertEquals(res.warnings, []);
+      assertEquals(res.errors.length, 2);
+    });
+
     it("returns valid compatibility report structure", () => {
       const res = checkVersionCompatibility(["suspense", "renderToString"]);
       assertEquals(typeof res.compatible, "boolean");
@@ -163,12 +197,13 @@ describe("React Version Detector", () => {
       assertEquals(res.errors.length, 0);
     });
 
-    it("generates warnings for React 19 features on older versions", () => {
+    it("fails closed for required React 19 features on older versions", () => {
       const info = getReactVersionInfo();
       if (info.isReact19) return;
 
       const res = checkVersionCompatibility(["useFormStatus"]);
-      assertEquals(res.warnings.some((w) => w.includes("useFormStatus")), true);
+      assertEquals(res.compatible, false);
+      assertEquals(res.errors.some((error) => error.includes("useFormStatus")), true);
     });
 
     it("generates errors for React 18 features on React 17", () => {
@@ -193,12 +228,13 @@ describe("React Version Detector", () => {
       assert(res.errors.length >= 3);
     });
 
-    it("categorizes React 19 features as warnings not errors", () => {
+    it("categorizes missing required React 19 features as errors", () => {
       const info = getReactVersionInfo();
       if (info.isReact19) return;
 
       const res = checkVersionCompatibility(["useOptimistic", "serverActions"]);
-      assert(res.warnings.length >= 2);
+      assertEquals(res.compatible, false);
+      assert(res.errors.length >= 2);
     });
   });
 
@@ -208,6 +244,41 @@ describe("React Version Detector", () => {
       const b = getReactVersionInfo();
       assertEquals(a.version, b.version);
       assertEquals(a, b);
+    });
+
+    it("returns immutable cached version metadata", () => {
+      const info = getReactVersionInfo();
+
+      assertEquals(Object.isFrozen(info), true);
+      assertEquals(Object.isFrozen(info.features), true);
+      assertEquals(Reflect.set(info.features, "streaming", false), false);
+    });
+
+    it("reads current project metadata without a process-lifetime cache", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-react-version-project-" });
+      try {
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "17.0.2" } }),
+        );
+
+        assertEquals(
+          (await getReactVersionInfoForProject(projectDir)).version,
+          "17.0.2",
+        );
+
+        await Deno.writeTextFile(
+          `${projectDir}/package.json`,
+          JSON.stringify({ dependencies: { react: "18.2.0" } }),
+        );
+        assertEquals(
+          (await getReactVersionInfoForProject(projectDir)).version,
+          "18.2.0",
+        );
+      } finally {
+        __resetReactVersionCacheForTests();
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
 
     it("cache reset function exists for testing", () => {

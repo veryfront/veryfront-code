@@ -24,6 +24,7 @@ const expectedRuntimeExports = [
   "CheckboxField",
   "CheckboxGroup",
   "CodeBlock",
+  "CodeBlockRendererProvider",
   "Collapsible",
   "CollapsibleContent",
   "CollapsibleTrigger",

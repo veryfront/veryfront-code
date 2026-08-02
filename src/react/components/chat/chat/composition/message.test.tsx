@@ -1,4 +1,7 @@
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatDynamicToolPart, ChatMessage } from "#veryfront/agent/react";
@@ -285,5 +288,70 @@ describe("Message.Tokens", () => {
       { label: "Output", index: 2 },
       { label: "Total", index: 3 },
     ]);
+  });
+});
+
+describe("Message.CopyAction", () => {
+  it("retains document provenance when an interceptor calls next asynchronously", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+    );
+    const window = dom.window;
+    const previous = {
+      window: globalThis.window,
+      document: globalThis.document,
+      navigator: globalThis.navigator,
+      self: globalThis.self,
+      Node: globalThis.Node,
+      Element: globalThis.Element,
+      HTMLElement: globalThis.HTMLElement,
+      Event: globalThis.Event,
+      MouseEvent: globalThis.MouseEvent,
+    };
+    const writes: string[] = [];
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          writes.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+    Object.assign(globalThis, {
+      window,
+      document: window.document,
+      navigator: window.navigator,
+      self: window,
+      Node: window.Node,
+      Element: window.Element,
+      HTMLElement: window.HTMLElement,
+      Event: window.Event,
+      MouseEvent: window.MouseEvent,
+    });
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root fixture exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <Message.Root message={assistantMessage}>
+            <Message.CopyAction onClick={(_event, next) => queueMicrotask(next)} />
+          </Message.Root>,
+        );
+      });
+      const button = rootElement.querySelector("button");
+      assert(button, "copy action renders");
+      button.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync(() => {});
+
+      assertEquals(writes, ["Answer body."]);
+      flushSync(() => root.unmount());
+    } finally {
+      Object.assign(globalThis, previous);
+      dom.window.close();
+    }
   });
 });

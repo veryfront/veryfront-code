@@ -8,10 +8,83 @@
  * lands in the (absent) portal, so we assert on what SSR can see (the trigger)
  * and prove the sub-parts + hook contract structurally.
  */
+import { flushSync } from "react-dom";
+import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { assert, assertStringIncludes } from "#veryfront/testing/assert";
+import { type ReactElement, useState } from "react";
+import { JSDOM } from "npm:jsdom@28.0.0";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { ChatActions, useChatActions } from "./chat-actions.tsx";
+
+function installDom(dom: JSDOM): () => void {
+  const window = dom.window;
+  const replacements: Record<string, unknown> = {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    self: window,
+    Node: window.Node,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    HTMLButtonElement: window.HTMLButtonElement,
+    KeyboardEvent: window.KeyboardEvent,
+    MouseEvent: window.MouseEvent,
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+  };
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+
+  for (const [key, value] of Object.entries(replacements)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, {
+      configurable: true,
+      enumerable: true,
+      value,
+      writable: true,
+    });
+  }
+
+  return () => {
+    for (const key of Object.keys(replacements)) {
+      const descriptor = previous.get(key);
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+    dom.window.close();
+  };
+}
+
+async function waitFor(
+  condition: () => boolean,
+  message: string,
+  timeoutMs = 3_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error(message);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+function keydown(
+  window: JSDOM["window"],
+  target: EventTarget,
+  key: string,
+): KeyboardEvent {
+  const event = new window.KeyboardEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    key,
+  });
+  target.dispatchEvent(event);
+  return event;
+}
 
 describe("ChatActions — render-or-compose", () => {
   it("preset (no children) renders the default `+` trigger button", () => {
@@ -78,5 +151,88 @@ describe("ChatActions — render-or-compose", () => {
       threw = true;
     }
     assert(threw, "useChatActions must throw outside a ChatActions");
+  });
+
+  it("keeps settings open while toggling and owns submenu keyboard navigation", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+
+    function StatefulActions(): ReactElement {
+      const [autoSubmit, setAutoSubmit] = useState(false);
+      const [autoFixErrors, setAutoFixErrors] = useState(false);
+      return (
+        <div data-vf-chat="">
+          <ChatActions
+            defaultOpen
+            settings={{
+              autoSubmit,
+              autoFixErrors,
+              onAutoSubmitChange: setAutoSubmit,
+              onAutoFixErrorsChange: setAutoFixErrors,
+            }}
+          />
+        </div>
+      );
+    }
+
+    try {
+      flushSync(() => root.render(<StatefulActions />));
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "top-level actions menu did not portal",
+      );
+      const trigger = document.querySelector<HTMLElement>(
+        '[role="menuitem"][aria-haspopup="menu"]',
+      );
+      assert(trigger);
+
+      const openEvent = keydown(dom.window, trigger, "ArrowRight");
+      assertEquals(openEvent.defaultPrevented, true);
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 2,
+        "settings submenu did not open",
+      );
+      const items = [...document.querySelectorAll<HTMLElement>(
+        '[role="menuitemcheckbox"]',
+      )];
+      assertEquals(items.length, 2);
+      await waitFor(
+        () => document.activeElement === items[0],
+        "settings submenu did not focus its first item",
+      );
+
+      flushSync(() => {
+        items[0]!.dispatchEvent(
+          new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+        );
+        items[0]!.click();
+      });
+      assertEquals(items[0]!.getAttribute("aria-checked"), "true");
+      assertEquals(document.querySelectorAll('[role="menu"]').length, 2);
+
+      keydown(dom.window, items[0]!, "ArrowDown");
+      assertEquals(document.activeElement, items[1]);
+      const closeEvent = keydown(dom.window, items[1]!, "Escape");
+      assertEquals(closeEvent.defaultPrevented, true);
+      await waitFor(
+        () => document.querySelectorAll('[role="menu"]').length === 1,
+        "Escape did not close only the settings submenu",
+      );
+      assertEquals(document.activeElement, trigger);
+      assertEquals(
+        document.querySelector('[aria-label="Add attachments and settings"]')
+          ?.getAttribute("aria-expanded"),
+        "true",
+      );
+    } finally {
+      await unmount(root);
+      restore();
+    }
   });
 });

@@ -1,5 +1,17 @@
 import * as React from "react";
 import type { ChatDynamicToolPart, ChatToolPart, ChatToolState } from "#veryfront/agent/react";
+import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
+
+const TOOL_VALUE_LIMITS = Object.freeze({
+  maxContainerEntries: 500,
+  maxDepth: 12,
+  maxNodes: 2_000,
+  maxStringChars: 64 * 1024,
+});
+
+function formatToolValue(value: unknown): string {
+  return JSON.stringify(toChatJsonValue(value, TOOL_VALUE_LIMITS), null, 2);
+}
 
 export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Tool name */
@@ -24,15 +36,18 @@ export interface ToolInvocationProps extends React.HTMLAttributes<HTMLDivElement
 }
 
 export const ToolInvocation = React.forwardRef<HTMLDivElement, ToolInvocationProps>(
-  ({ className, name, input, state, errorText, dynamic, children, ...props }, ref) => (
+  (
+    { className, name, input, output: _output, state, errorText, dynamic, children, ...props },
+    ref,
+  ) => (
     <div
+      {...props}
       ref={ref}
       className={className}
       data-tool-invocation=""
       data-tool-name={name}
       data-state={state}
       data-dynamic={dynamic || undefined}
-      {...props}
     >
       <div data-tool-header="">
         <span data-tool-name="">{name}</span>
@@ -42,7 +57,7 @@ export const ToolInvocation = React.forwardRef<HTMLDivElement, ToolInvocationPro
 
       {input !== undefined && (
         <div data-tool-input="">
-          <pre>{JSON.stringify(input, null, 2)}</pre>
+          <pre>{formatToolValue(input)}</pre>
         </div>
       )}
 
@@ -65,10 +80,10 @@ export interface ToolResultProps extends React.HTMLAttributes<HTMLDivElement> {
 
 export const ToolResult = React.forwardRef<HTMLDivElement, ToolResultProps>(
   ({ className, output, renderOutput, ...props }, ref) => {
-    const content = renderOutput ? renderOutput(output) : JSON.stringify(output, null, 2);
+    const content = renderOutput ? renderOutput(output) : formatToolValue(output);
 
     return (
-      <div ref={ref} className={className} data-tool-result="" {...props}>
+      <div {...props} ref={ref} className={className} data-tool-result="">
         {typeof content === "string" ? <pre>{content}</pre> : content}
       </div>
     );
@@ -94,7 +109,7 @@ function isDynamicTool(tool: ToolPart): tool is ChatDynamicToolPart {
 
 export const ToolList = React.forwardRef<HTMLDivElement, ToolListProps>(
   ({ className, tools, renderTool, ...props }, ref) => (
-    <div ref={ref} className={className} data-tool-list="" {...props}>
+    <div {...props} ref={ref} className={className} data-tool-list="">
       {tools.map((tool) => {
         if (renderTool) {
           return <React.Fragment key={tool.toolCallId}>{renderTool(tool)}</React.Fragment>;
