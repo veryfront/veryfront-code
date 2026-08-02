@@ -16,6 +16,7 @@ const DEFAULT_PROVIDER_JSON_TIMEOUT_MS = 5 * 60_000;
 const DEFAULT_PROVIDER_STREAM_HEADERS_TIMEOUT_MS = 30_000;
 const DEFAULT_PROVIDER_JSON_MAX_BYTES = 32 * 1024 * 1024;
 const MAX_PROVIDER_JSON_MAX_BYTES = 256 * 1024 * 1024;
+const MAX_PROVIDER_JSON_BODY_READS = 65_536;
 const TRANSIENT_PROVIDER_STATUSES = new Set([
   500,
   502,
@@ -539,8 +540,17 @@ async function readSuccessfulJsonText(
   try {
     let byteLength = 0;
     let bytes = new Uint8Array(0);
+    let readCount = 0;
 
     while (true) {
+      readCount++;
+      if (readCount > MAX_PROVIDER_JSON_BODY_READS) {
+        throw providerProtocolError(
+          options,
+          `JSON response exceeded ${MAX_PROVIDER_JSON_BODY_READS} body reads`,
+          response.status,
+        );
+      }
       const { done, value } = await waitForAbortable(
         () => reader.read(),
         abortSignal,
