@@ -216,13 +216,18 @@ describe("utils/response-body", () => {
       shared.set(encoded);
       unsafeChunks.push(shared);
     }
-    const resizableBuffer = new ArrayBuffer(encoded.byteLength, {
-      maxByteLength: encoded.byteLength * 2,
-    });
-    if (resizableBuffer.resizable) {
-      const resizable = new Uint8Array(resizableBuffer);
-      resizable.set(encoded);
-      unsafeChunks.push(resizable);
+    try {
+      const resizableBuffer = Reflect.construct(ArrayBuffer, [
+        encoded.byteLength,
+        { maxByteLength: encoded.byteLength * 2 },
+      ]);
+      if (resizableBuffer instanceof ArrayBuffer && resizableBuffer.resizable) {
+        const resizable = new Uint8Array(resizableBuffer);
+        resizable.set(encoded);
+        unsafeChunks.push(resizable);
+      }
+    } catch {
+      // Resizable ArrayBuffers are unavailable in this runtime.
     }
 
     for (const chunk of unsafeChunks) {
