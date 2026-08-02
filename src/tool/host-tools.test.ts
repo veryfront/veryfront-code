@@ -36,6 +36,7 @@ describe("tool/host-tools", () => {
 
   it("preserves caller-provided execution context", async () => {
     let receivedProjectId = "";
+    let receivedUserId = "";
     let receivedToolCallId = "";
     let receivedAbortSignal: AbortSignal | undefined;
     const abortController = new AbortController();
@@ -46,6 +47,7 @@ describe("tool/host-tools", () => {
         inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
         execute: (_input: unknown, context?: ToolExecutionContext) => {
           receivedProjectId = String(context?.projectId);
+          receivedUserId = String(context?.userId);
           receivedToolCallId = String(context?.toolCallId);
           receivedAbortSignal = context?.abortSignal;
           return { ok: true };
@@ -55,11 +57,17 @@ describe("tool/host-tools", () => {
 
     const result = await tools.read_file?.execute(
       { path: "README.md" },
-      { projectId: "proj_123", toolCallId: "call_123", abortSignal: abortController.signal },
+      {
+        projectId: "proj_123",
+        userId: "user_123",
+        toolCallId: "call_123",
+        abortSignal: abortController.signal,
+      },
     );
 
     assertEquals(result, { ok: true });
     assertEquals(receivedProjectId, "proj_123");
+    assertEquals(receivedUserId, "user_123");
     assertEquals(receivedToolCallId, "call_123");
     assertEquals(receivedAbortSignal, abortController.signal);
   });

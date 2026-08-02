@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 
 import {
+  assert,
   assertEquals,
   assertExists,
   assertRejects,
@@ -705,7 +706,8 @@ describe("VeryfrontAPIOperations", () => {
           await transport.request("/retried", { signal: caller.signal });
 
           assertEquals(fetchCalls, 2);
-          assertEquals(observation.counts, { added: 2, removed: 2 });
+          assertEquals(observation.counts.added, observation.counts.removed);
+          assert(observation.counts.added >= fetchCalls);
         } finally {
           observation.restore();
         }

@@ -16,7 +16,9 @@ The module provides:
 
 - An app session that lets you identify the signed-in user (`getSessionUserId`
   in the examples below).
-- A token store backing `OAuthService` (Redis, KV, or your own implementation).
+- A shared token store backing every handler in the flow. Production stores
+  that persist refresh tokens must implement `RefreshCapableTokenStore` using
+  atomic compare-and-set and a distributed refresh lease.
 - Provider credentials (client id, client secret, callback URL) set as
   environment variables. See the matching provider config object in
   [`veryfront/oauth`](../api-reference/veryfront/oauth.md).
@@ -24,28 +26,33 @@ The module provides:
 ## Quick setup
 
 Two routes handle the full OAuth flow: redirect to the provider and handle the
-callback. Both handlers require a `getUserId` function that returns the
-authenticated user's id from your session; unauthenticated requests receive
-a 401.
+callback. The init handler requires a `getUserId` function that returns the
+authenticated user's id from your session; unauthenticated requests receive a
+401. The callback recovers that identity from the one-shot state row.
 
 ```ts
 // app/api/auth/github/route.ts
 import { createOAuthInitHandler, githubConfig } from "veryfront/oauth";
 import { getSessionUserId } from "../../../../lib/auth.ts";
+import { tokenStore } from "../../../../lib/token-store.ts";
 
 export const GET = createOAuthInitHandler(githubConfig, {
   // Return the signed-in user's id, or null/undefined to reject the request.
   getUserId: (request) => getSessionUserId(request),
+  tokenStore,
 });
 ```
 
 ```ts
 // app/api/auth/github/callback/route.ts
 import { createOAuthCallbackHandler, githubConfig } from "veryfront/oauth";
+import { tokenStore } from "../../../../../lib/token-store.ts";
 
 // The callback reads the initiating user id from the stored OAuth state row,
 // so it does not need its own getUserId function.
-export const GET = createOAuthCallbackHandler(githubConfig);
+export const GET = createOAuthCallbackHandler(githubConfig, {
+  tokenStore,
+});
 ```
 
 Set your credentials via environment variables:
@@ -53,6 +60,7 @@ Set your credentials via environment variables:
 ```bash
 GITHUB_CLIENT_ID=your-client-id
 GITHUB_CLIENT_SECRET=your-client-secret
+APP_URL=https://your-app.example.com
 ```
 
 Link users to `/api/auth/github` to start the flow. After authorization, they're
@@ -72,11 +80,10 @@ end-user integrations: GitHub, Slack, Notion, Figma, Linear, GitLab, Airtable,
 Asana, Gmail, Google Calendar (`calendarConfig`), Sheets, Google Drive, Jira,
 Confluence, Outlook, Teams, SharePoint, and OneDrive.
 
-Some provider configs are retained for source compatibility but correspond to
-feature-gated integrations. They are hidden from the default CLI/MCP/runtime
-integration surface unless `VERYFRONT_EXPERIMENTAL_INTEGRATIONS` enables the
-matching integration name (for example, `salesforce` for `salesforceConfig`) or
-`all`.
+Some provider configs are retained for source compatibility but require a
+provider-specific runtime adapter. Those configs cannot be passed to the
+generic handlers. An integration becomes scaffoldable only after its adapter
+implements the provider's complete wire protocol.
 
 Each provider exports a config object (e.g., `githubConfig`, `gmailConfig`).
 Use the matching export from
@@ -136,45 +143,42 @@ variables in your deployment environment.
 
 ## Token storage
 
-By default, tokens are stored in memory (lost on restart). For production,
-implement a persistent store. The `TokenStore` interface is keyed by
-`(serviceId, userId)` so each user's tokens live in their own slot, and OAuth
-state rows are consumed atomically (one-shot):
+The handlers use an in-memory store only in an explicit development or test
+environment. Outside those environments, constructing a handler without a
+store fails immediately. Use one shared store for init, callback, status,
+disconnect, and provider API calls:
+
+```ts
+// lib/configure-oauth-storage.ts (import once during application startup)
+import type { RefreshCapableTokenStore } from "veryfront/oauth";
+import { createApplicationOAuthTokenStore } from "./storage/oauth.ts";
+import { configureTokenStore } from "./token-store.ts";
+
+const oauthStore: RefreshCapableTokenStore = createApplicationOAuthTokenStore();
+configureTokenStore(oauthStore);
+```
+
+`createApplicationOAuthTokenStore` represents the factory exported by your
+storage extension; it is not a core Veryfront dependency.
+
+The application adapter must provide the complete contract:
+
+- key tokens by `(serviceId, userId)` and issue a new opaque revision for every
+  successful write;
+- implement compare-and-set as one backing-store operation;
+- serialize refresh for one token slot with a bounded, crash-recoverable,
+  distributed lease;
+- expire state rows after a short TTL and consume each row with one atomic
+  read-and-delete operation.
+
+Pass that store to each handler:
 
 ```ts
 import { createOAuthCallbackHandler, githubConfig } from "veryfront/oauth";
-import type { OAuthTokens, StoredOAuthState, TokenStore } from "veryfront/oauth";
-
-const redisTokenStore: TokenStore = {
-  async getTokens(serviceId, userId) {
-    const data = await redis.get(`oauth:tokens:${serviceId}:${userId}`);
-    return data ? (JSON.parse(data) as OAuthTokens) : null;
-  },
-  async setTokens(serviceId, userId, tokens) {
-    await redis.set(
-      `oauth:tokens:${serviceId}:${userId}`,
-      JSON.stringify(tokens),
-    );
-  },
-  async clearTokens(serviceId, userId) {
-    await redis.del(`oauth:tokens:${serviceId}:${userId}`);
-  },
-  async setState(state, meta) {
-    // Set with a short TTL (e.g. 10 minutes) so abandoned flows don't pile up.
-    await redis.set(`oauth:state:${state}`, JSON.stringify(meta), "EX", 600);
-  },
-  async consumeState(state) {
-    // Atomic read + delete: the state row must be usable exactly once.
-    const key = `oauth:state:${state}`;
-    const data = await redis.get(key);
-    if (!data) return null;
-    await redis.del(key);
-    return JSON.parse(data) as StoredOAuthState;
-  },
-};
+import { tokenStore } from "../../../../../lib/token-store.ts";
 
 export const GET = createOAuthCallbackHandler(githubConfig, {
-  tokenStore: redisTokenStore,
+  tokenStore,
 });
 ```
 
@@ -192,15 +196,19 @@ Check if a user is connected, or disconnect them. These handlers also require
 // app/api/auth/github/status/route.ts
 import { createOAuthStatusHandler, githubConfig } from "veryfront/oauth";
 import { getSessionUserId } from "../../../../../lib/auth.ts";
+import { tokenStore } from "../../../../../lib/token-store.ts";
 export const GET = createOAuthStatusHandler(githubConfig, {
   getUserId: (request) => getSessionUserId(request),
+  tokenStore,
 });
 
 // app/api/auth/github/disconnect/route.ts
 import { createOAuthDisconnectHandler, githubConfig } from "veryfront/oauth";
 import { getSessionUserId } from "../../../../../lib/auth.ts";
+import { tokenStore } from "../../../../../lib/token-store.ts";
 export const POST = createOAuthDisconnectHandler(githubConfig, {
   getUserId: (request) => getSessionUserId(request),
+  tokenStore,
 });
 ```
 
@@ -210,6 +218,8 @@ For providers not included, create your own config:
 
 ```ts
 import { createOAuthCallbackHandler, createOAuthInitHandler } from "veryfront/oauth";
+import { getSessionUserId } from "../../../../lib/auth.ts";
+import { tokenStore } from "../../../../lib/token-store.ts";
 
 const myProvider = {
   providerId: "my-provider",
@@ -226,10 +236,13 @@ const myProvider = {
 // app/api/auth/my-provider/route.ts
 export const GET = createOAuthInitHandler(myProvider, {
   getUserId: (request) => getSessionUserId(request),
+  tokenStore,
 });
 
 // app/api/auth/my-provider/callback/route.ts
-export const GET = createOAuthCallbackHandler(myProvider);
+export const GET = createOAuthCallbackHandler(myProvider, {
+  tokenStore,
+});
 ```
 
 ## Calling provider APIs on behalf of a user
@@ -264,7 +277,7 @@ A working setup:
 
   ```ts
   const tokens = await tokenStore.getTokens(githubConfig.serviceId, userId);
-  console.log(tokens.accessToken ? "ok" : "missing");
+  console.log(tokens?.accessToken ? "ok" : "missing");
   ```
 
 - Calling `gmail.fetch(userId, ...)` (or any provider service) returns the

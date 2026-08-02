@@ -134,12 +134,12 @@ describe("catalog", () => {
       assertEquals(ids.includes("stripe"), false);
     });
 
-    it("includes feature-gated integrations when explicitly enabled", () => {
+    it("includes eligible experiments but not provider-adapter-only integrations", () => {
       Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce,stripe");
 
       const ids = getAllIntegrations().map((i) => i.id);
 
-      assertEquals(ids.includes("salesforce"), true);
+      assertEquals(ids.includes("salesforce"), false);
       assertEquals(ids.includes("stripe"), true);
     });
   });
@@ -213,7 +213,7 @@ describe("catalog", () => {
     });
 
     it("adds headers for feature-gated categories when enabled", () => {
-      Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+      Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "attio");
 
       const headers = getIntegrationSelectOptionsWithHeaders()
         .filter((o) => o.isHeader)

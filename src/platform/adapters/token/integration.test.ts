@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   getTokenStorageAdapter,
@@ -106,6 +106,30 @@ describe("platform/adapters/token/integration", () => {
       const adapter1 = await getTokenStorageAdapter();
       const adapter2 = await getTokenStorageAdapter();
       assertEquals(adapter1, adapter2);
+    });
+
+    it("coalesces concurrent singleton creation", async () => {
+      const [adapter1, adapter2, adapter3] = await Promise.all([
+        getTokenStorageAdapter(),
+        getTokenStorageAdapter(),
+        getTokenStorageAdapter(),
+      ]);
+      assertEquals(adapter1, adapter2);
+      assertEquals(adapter2, adapter3);
+    });
+
+    it("prevents pending creation from republishing an adapter after reset", async () => {
+      const pending = getTokenStorageAdapter();
+      resetTokenStorageAdapter();
+
+      await assertRejects(
+        () => pending,
+        Error,
+        "invalidated",
+      );
+
+      const replacement = await getTokenStorageAdapter();
+      assertEquals(await getTokenStorageAdapter(), replacement);
     });
 
     it("should create new instance after reset", async () => {

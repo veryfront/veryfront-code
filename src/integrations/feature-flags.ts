@@ -34,6 +34,26 @@ export const SUPPORTED_INTEGRATION_NAMES = [
 ] as const;
 
 /**
+ * Declared connectors whose OAuth wire protocol is not implemented by the
+ * generic runtime. A feature flag must not make these scaffoldable: doing so
+ * would generate routes that fail as soon as their provider config is loaded.
+ */
+export const INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER = [
+  "box",
+  "clickup",
+  "freshdesk",
+  "intercom",
+  "mailchimp",
+  "monday",
+  "pipedrive",
+  "quickbooks",
+  "salesforce",
+  "shopify",
+  "trello",
+  "xero",
+] as const;
+
+/**
  * Every integration the framework recognizes. Declared === registered: this is
  * the full catalog, so it derives from the canonical {@link ALL_INTEGRATION_NAMES}
  * registry rather than maintaining a parallel copy that can drift out of sync.
@@ -42,6 +62,9 @@ export const DECLARED_INTEGRATION_NAMES = ALL_INTEGRATION_NAMES;
 
 const supportedIntegrations = new Set<string>(SUPPORTED_INTEGRATION_NAMES);
 const declaredIntegrations = new Set<string>(DECLARED_INTEGRATION_NAMES);
+const providerAdapterRequiredIntegrations = new Set<string>(
+  INTEGRATIONS_REQUIRING_PROVIDER_ADAPTER,
+);
 
 function normalizeIntegrationName(name: string): string {
   return name.trim().toLowerCase();
@@ -59,8 +82,15 @@ export function isSupportedIntegration(name: string | null | undefined): boolean
   return typeof name === "string" && supportedIntegrations.has(normalizeIntegrationName(name));
 }
 
+export function requiresProviderAdapter(name: string | null | undefined): boolean {
+  return typeof name === "string" &&
+    providerAdapterRequiredIntegrations.has(normalizeIntegrationName(name));
+}
+
 export function isExperimentalIntegrationEnabled(name: string | null | undefined): boolean {
-  if (typeof name !== "string" || !isDeclaredIntegration(name)) return false;
+  if (
+    typeof name !== "string" || !isDeclaredIntegration(name) || requiresProviderAdapter(name)
+  ) return false;
 
   const value = readEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
   if (!value) return false;

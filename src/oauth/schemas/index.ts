@@ -7,6 +7,13 @@
 export {
   type AuthorizationUrlOptions,
   AuthorizationUrlOptionsSchema,
+  getAuthorizationUrlOptionsSchema,
+  getOAuthProviderConfigSchema,
+  getOAuthServiceConfigSchema,
+  getOAuthStateSchema,
+  getOAuthTokensSchema,
+  getTokenExchangeOptionsSchema,
+  getTokenExchangeResultSchema,
   type OAuthProviderConfig,
   OAuthProviderConfigSchema,
   type OAuthServiceConfig,

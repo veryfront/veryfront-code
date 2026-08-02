@@ -24,13 +24,13 @@ describe("cli/templates/integration-loader feature gates", () => {
     assertEquals(validateIntegrations(["persona"]).valid, false);
   });
 
-  it("allows a feature-gated integration when explicitly enabled", () => {
+  it("allows eligible experiments but keeps provider-adapter-only integrations unavailable", () => {
     Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce,sap,persona");
 
-    assertEquals(getAvailableIntegrations().includes("salesforce"), true);
+    assertEquals(getAvailableIntegrations().includes("salesforce"), false);
     assertEquals(getAvailableIntegrations().includes("sap"), true);
     assertEquals(getAvailableIntegrations().includes("persona"), true);
-    assertEquals(validateIntegrations(["salesforce"]).valid, true);
+    assertEquals(validateIntegrations(["salesforce"]).valid, false);
     assertEquals(validateIntegrations(["sap"]).valid, true);
     assertEquals(validateIntegrations(["persona"]).valid, true);
   });
