@@ -792,6 +792,24 @@ describe("PageTransition", () => {
     );
 
     it(
+      "should keep the current route when the destination reported no html",
+      withMocks(async (mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        mocks.mockRoot.innerHTML = "Previous content";
+        const data: RouteData = { html: undefined, frontmatter: {} };
+
+        pageTransition.updatePage(data, false, 0);
+        await delay(200);
+
+        assertEquals(
+          mocks.mockRoot.innerHTML,
+          "Previous content",
+          "A destination without route content must leave the live app mounted",
+        );
+      }),
+    );
+
+    it(
       "should clear the route when html is an empty string",
       withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});

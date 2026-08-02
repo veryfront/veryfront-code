@@ -236,6 +236,33 @@ describe("routing/client/page-loader", () => {
       }
     });
 
+    it("reports no route html when a 200 response carries no app root", async () => {
+      const originalFetch = globalThis.fetch;
+      const restoreDOMParser = installJSDOMParser();
+      // A proxy interstitial or custom error page: a 200 that is a complete
+      // document but never mounts the app.
+      const interstitial = `<!doctype html><html><head><title>Just a moment</title></head><body>
+          <div class="interstitial"><h1>Checking your browser</h1></div>
+        </body></html>`;
+      globalThis.fetch = (input: URL | RequestInfo) =>
+        Promise.resolve(
+          String(input).startsWith("/_veryfront/data")
+            ? new Response("Not Found", { status: 404 })
+            : new Response(interstitial, { headers: { "content-type": "text/html" } }),
+        );
+
+      try {
+        const data = await new PageLoader().fetchPageData("/about");
+
+        // `html: ""` would be read downstream as an intentionally empty route
+        // and would clear the mounted app; absent html skips the transition.
+        assertEquals(data.html, undefined);
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreDOMParser();
+      }
+    });
+
     it("places the JSON suffix before query parameters and preserves application pins while off", async () => {
       const originalFetch = globalThis.fetch;
       let requestedUrl = "";

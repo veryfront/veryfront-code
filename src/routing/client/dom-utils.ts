@@ -284,7 +284,7 @@ export function snapshotClientRouteHead(
 }
 
 export function parsePageDataFromHTML(html: string): {
-  content: string;
+  content: string | undefined;
   pageData: PageData;
   managedHead: ClientRouteHeadEntry[];
   dependencyPinningCacheKey?: string;
@@ -294,7 +294,10 @@ export function parsePageDataFromHTML(html: string): {
   const root = doc.getElementById("root");
   if (!root) logger.warn("[Veryfront] No root element found in HTML");
 
-  const content = root?.innerHTML ?? "";
+  // A response without an app root (proxy interstitial, custom error page)
+  // carries no route content. It stays `undefined` so consumers skip the
+  // transition; `""` is reserved for a route that is deliberately empty.
+  const content = root ? root.innerHTML ?? "" : undefined;
 
   const pageDataScript = doc.querySelector("script[data-veryfront-page]");
   let pageData: PageData = {};
