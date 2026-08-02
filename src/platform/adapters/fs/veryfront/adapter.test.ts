@@ -251,11 +251,13 @@ describe("VeryfrontFSAdapter", () => {
         sourceSnapshotCheckedAt: number;
         sourceSnapshotIdentity: string | undefined;
         sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        sourceSnapshotRefreshPromise: Promise<void> | null;
       };
       internals.initialized = true;
       internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
       internals.sourceSnapshotCheckedAt = Date.now();
       internals.sourceSnapshotFiles = [{ path: "tenant-a.ts", content: "tenant-a" }];
+      internals.sourceSnapshotRefreshPromise = new Promise(() => {});
       assertEquals(internals.getCachedFileListSync()?.[0]?.path, "tenant-a.ts");
 
       let refreshCalls = 0;
@@ -267,6 +269,7 @@ describe("VeryfrontFSAdapter", () => {
 
       adapter.setRequestToken("tenant-token");
       assertEquals(internals.getCachedFileListSync(), undefined);
+      assertEquals(internals.sourceSnapshotRefreshPromise, null);
       await adapter.ensureSourceSnapshotFresh("new-authority");
       adapter.setRequestToken("static-token");
 

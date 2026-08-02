@@ -1149,6 +1149,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.branchMissRecoveryFailures.clear();
     this.sourceSnapshotCheckedAt = 0;
     this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotRefreshPromise = null;
     this.sourceSnapshotIdentity = undefined;
     this.sourceSnapshotFiles = undefined;
   }
