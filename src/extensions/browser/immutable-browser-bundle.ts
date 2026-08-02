@@ -3,6 +3,10 @@
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
 const textEncoder = new TextEncoder();
+const arrayIsArray = Array.isArray;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const reflectOwnKeys = Reflect.ownKeys;
 
 export interface ImmutableBrowserBundleValidationOptions {
   readonly bundleLabel: string;
@@ -69,14 +73,14 @@ export function snapshotImmutableBrowserBundleProvider(
   let descriptors: Record<PropertyKey, PropertyDescriptor>;
   let isArray: boolean;
   try {
-    isArray = Array.isArray(value);
-    descriptors = Object.getOwnPropertyDescriptors(value);
+    isArray = arrayIsArray(value);
+    descriptors = objectGetOwnPropertyDescriptors(value);
   } catch (cause) {
     throw new TypeError(`${options.providerLabel} could not be inspected`, { cause });
   }
   if (isArray) throw new TypeError(`${options.providerLabel} must be an object`);
 
-  const keys = Reflect.ownKeys(descriptors);
+  const keys = reflectOwnKeys(descriptors);
   if (keys.length !== 1 || keys[0] !== "browserBundle") {
     throw new TypeError(
       `${options.providerLabel} must contain only the "browserBundle" property`,
@@ -92,7 +96,7 @@ export function snapshotImmutableBrowserBundleProvider(
     );
   }
 
-  return Object.freeze({
+  return objectFreeze({
     browserBundle: validateImmutableBrowserBundle(descriptor.value, options),
   });
 }

@@ -8,6 +8,14 @@
 
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
+const arrayIsArray = Array.isArray;
+const objectFreeze = Object.freeze;
+const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
+const objectGetPrototypeOf = Object.getPrototypeOf;
+const objectHasOwn = Object.hasOwn;
+const objectPrototype = Object.prototype;
+const reflectOwnKeys = Reflect.ownKeys;
+
 export const IsolatedSsrRendererProviderName = "IsolatedSsrRendererProvider";
 export const MAX_ISOLATED_SSR_RENDERER_READ_ROOTS = 16;
 export const MAX_ISOLATED_SSR_RENDERER_URL_CHARACTERS = 4_096;
@@ -94,24 +102,24 @@ export function snapshotIsolatedSsrRendererProvider(
     if (isProxyWithoutHooks(value)) {
       throw new TypeError("Isolated SSR renderer provider must not be a proxy");
     }
-    isArray = Array.isArray(value);
-    descriptors = Object.getOwnPropertyDescriptors(value);
+    isArray = arrayIsArray(value);
+    descriptors = objectGetOwnPropertyDescriptors(value);
   } catch (cause) {
     throw new TypeError("Isolated SSR renderer provider could not be inspected", { cause });
   }
   if (isArray) {
     throw new TypeError("Isolated SSR renderer provider must be an object");
   }
-  const prototype = Object.getPrototypeOf(value);
-  if (prototype !== Object.prototype && prototype !== null) {
+  const prototype = objectGetPrototypeOf(value);
+  if (prototype !== objectPrototype && prototype !== null) {
     throw new TypeError("Isolated SSR renderer provider must be a plain object");
   }
 
-  const keys = Reflect.ownKeys(descriptors);
+  const keys = reflectOwnKeys(descriptors);
   if (
     keys.length !== 2 ||
-    !Object.hasOwn(descriptors, "moduleUrl") ||
-    !Object.hasOwn(descriptors, "readRootUrls") ||
+    !objectHasOwn(descriptors, "moduleUrl") ||
+    !objectHasOwn(descriptors, "readRootUrls") ||
     keys.some((key) => key !== "moduleUrl" && key !== "readRootUrls")
   ) {
     throw new TypeError(
@@ -132,7 +140,7 @@ export function snapshotIsolatedSsrRendererProvider(
     !rootsDescriptor?.enumerable ||
     rootsDescriptor.get ||
     rootsDescriptor.set ||
-    !Array.isArray(rootsDescriptor.value)
+    !arrayIsArray(rootsDescriptor.value)
   ) {
     throw new TypeError(
       "Isolated SSR renderer provider readRootUrls must be an array data property",
@@ -145,17 +153,20 @@ export function snapshotIsolatedSsrRendererProvider(
     if (isProxyWithoutHooks(roots)) {
       throw new TypeError("Isolated SSR renderer provider readRootUrls must not be a proxy");
     }
-    rootDescriptors = Object.getOwnPropertyDescriptors(roots);
+    rootDescriptors = objectGetOwnPropertyDescriptors(roots);
   } catch (cause) {
     throw new TypeError("Isolated SSR renderer provider readRootUrls could not be inspected", {
       cause,
     });
   }
-  const rootKeys = Reflect.ownKeys(rootDescriptors);
+  const rootKeys = reflectOwnKeys(rootDescriptors);
+  const rootLength = rootDescriptors.length?.value;
   if (
-    roots.length === 0 ||
-    roots.length > MAX_ISOLATED_SSR_RENDERER_READ_ROOTS ||
-    rootKeys.length !== roots.length + 1
+    typeof rootLength !== "number" ||
+    !Number.isSafeInteger(rootLength) ||
+    rootLength === 0 ||
+    rootLength > MAX_ISOLATED_SSR_RENDERER_READ_ROOTS ||
+    rootKeys.length !== rootLength + 1
   ) {
     throw new TypeError(
       "Isolated SSR renderer provider readRootUrls must be a dense bounded array",
@@ -163,7 +174,7 @@ export function snapshotIsolatedSsrRendererProvider(
   }
 
   const readRootUrls: string[] = [];
-  for (let index = 0; index < roots.length; index++) {
+  for (let index = 0; index < rootLength; index++) {
     const descriptor = rootDescriptors[String(index)];
     if (!descriptor?.enumerable || descriptor.get || descriptor.set) {
       throw new TypeError(
@@ -179,9 +190,9 @@ export function snapshotIsolatedSsrRendererProvider(
     );
   }
 
-  return Object.freeze({
+  return objectFreeze({
     moduleUrl: validateIsolatedSsrRendererModuleUrl(moduleDescriptor.value),
-    readRootUrls: Object.freeze(readRootUrls),
+    readRootUrls: objectFreeze(readRootUrls),
   });
 }
 
