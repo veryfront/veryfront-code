@@ -3,6 +3,7 @@ import { pathToModuleUrl } from "./path-utils.ts";
 
 const MAX_COMPONENT_CACHE_SIZE = 500;
 const MAX_PENDING_COMPONENT_LOADS = 512;
+const MAX_COMPONENT_IMPORT_IDENTITIES = 2;
 const MAX_LOGGED_COMPONENT_PATH_LENGTH = 256;
 const componentCache = new Map<string, ComponentType<unknown>>();
 interface PendingComponentLoad {
@@ -10,12 +11,14 @@ interface PendingComponentLoad {
   token: symbol;
 }
 
+interface ComponentImportIdentity {
+  exhausted: boolean;
+  index: number;
+}
+
 const loadingPromises = new Map<string, PendingComponentLoad>();
-let cacheGeneration = 0;
-// JavaScript runtimes retain failed module loads by URL. A monotonic global
-// revision lets a retry bypass that negative entry without retaining one
-// failure counter for every attacker- or application-supplied path.
-let importRevision = 0;
+const importIdentities = new Map<string, ComponentImportIdentity>();
+let cacheGeneration = Symbol("component-cache-generation");
 
 const REACT_EXOTIC_COMPONENT_TYPES = new Set([
   Symbol.for("react.forward_ref"),
@@ -61,13 +64,34 @@ function storeCachedComponent(
   componentCache.set(moduleUrl, Component);
 }
 
-function moduleUrlForAttempt(moduleUrl: string, revision: number, generation: number): string {
-  if (revision === 0 && generation === 0) return moduleUrl;
+function readImportIdentity(moduleUrl: string): ComponentImportIdentity | undefined {
+  const identity = importIdentities.get(moduleUrl);
+  if (!identity) return undefined;
+
+  importIdentities.delete(moduleUrl);
+  importIdentities.set(moduleUrl, identity);
+  return identity;
+}
+
+function storeImportIdentity(moduleUrl: string, identity: ComponentImportIdentity): void {
+  importIdentities.delete(moduleUrl);
+  if (importIdentities.size >= MAX_COMPONENT_CACHE_SIZE) {
+    const oldestKey = importIdentities.keys().next().value;
+    if (oldestKey !== undefined) importIdentities.delete(oldestKey);
+  }
+  importIdentities.set(moduleUrl, identity);
+}
+
+function moduleUrlForIdentity(moduleUrl: string, identityIndex: number): string {
+  if (identityIndex === 0) return moduleUrl;
 
   // A fragment changes module identity without changing the HTTP request, so
-  // signed release-asset URLs and their query parameters remain intact.
+  // signed release-asset URLs and their query parameters remain intact. The
+  // identity index is deliberately drawn from a fixed-size pool: runtimes keep
+  // failed dynamic imports forever, so minting a fresh URL after every failure
+  // would leak module-registry entries for the lifetime of the page.
   const separator = moduleUrl.includes("#") ? "&" : "#";
-  return `${moduleUrl}${separator}__veryfront_generation=${generation}&__veryfront_revision=${revision}`;
+  return `${moduleUrl}${separator}__veryfront_retry=${identityIndex}`;
 }
 
 function logLoadFailure(path: string, error: unknown): void {
@@ -96,6 +120,9 @@ export function loadComponent(path: string): Promise<ComponentType<unknown> | nu
   const existingLoad = loadingPromises.get(moduleUrl);
   if (existingLoad) return existingLoad.promise;
 
+  const retainedIdentity = readImportIdentity(moduleUrl);
+  if (retainedIdentity?.exhausted) return Promise.resolve(null);
+
   if (loadingPromises.size >= MAX_PENDING_COMPONENT_LOADS) {
     logLoadFailure(
       path,
@@ -105,8 +132,8 @@ export function loadComponent(path: string): Promise<ComponentType<unknown> | nu
   }
 
   const generation = cacheGeneration;
-  const revision = importRevision;
-  const importUrl = moduleUrlForAttempt(moduleUrl, revision, generation);
+  const identityIndex = retainedIdentity?.index ?? 0;
+  const importUrl = moduleUrlForIdentity(moduleUrl, identityIndex);
   const loadToken = Symbol("component-load");
   const loadPromise = (async (): Promise<ComponentType<unknown> | null> => {
     try {
@@ -120,13 +147,22 @@ export function loadComponent(path: string): Promise<ComponentType<unknown> | nu
         generation !== cacheGeneration || loadingPromises.get(moduleUrl)?.token !== loadToken
       ) return null;
 
+      if (identityIndex > 0) {
+        storeImportIdentity(moduleUrl, { exhausted: false, index: identityIndex });
+      }
       storeCachedComponent(moduleUrl, Component);
       return Component;
     } catch (error) {
       if (
         generation === cacheGeneration && loadingPromises.get(moduleUrl)?.token === loadToken
       ) {
-        importRevision = Math.max(importRevision, revision + 1);
+        const nextIdentityIndex = identityIndex + 1;
+        storeImportIdentity(moduleUrl, {
+          exhausted: nextIdentityIndex >= MAX_COMPONENT_IMPORT_IDENTITIES,
+          index: nextIdentityIndex >= MAX_COMPONENT_IMPORT_IDENTITIES
+            ? identityIndex
+            : nextIdentityIndex,
+        });
       }
       logLoadFailure(path, error);
       return null;
@@ -155,8 +191,7 @@ export function getCachedComponent(path: string): ComponentType<unknown> | null 
 }
 
 export function clearComponentCache(): void {
-  cacheGeneration++;
-  importRevision = 0;
+  cacheGeneration = Symbol("component-cache-generation");
   componentCache.clear();
   loadingPromises.clear();
 }

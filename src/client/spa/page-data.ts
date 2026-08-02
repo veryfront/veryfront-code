@@ -8,6 +8,8 @@ const MAX_PAGE_DATA_LAYOUTS = 256;
 const MAX_PAGE_DATA_PROVIDERS = 512;
 const MAX_PAGE_DATA_PARAMS = 512;
 const MAX_PAGE_DATA_TEXT_LENGTH = MAX_SPA_RESOURCE_KEY_LENGTH;
+const MAX_PAGE_DATA_VALUE_DEPTH = 64;
+const MAX_PAGE_DATA_VALUE_ENTRIES = 65_536;
 const PAGE_DATA_TYPES = new Set<PageDataResponse["pageType"]>([
   "mdx",
   "md",
@@ -52,6 +54,88 @@ function readOwnEnumerableDataEntries(
 
 function copyRecord(value: unknown, fieldName: string): Record<string, unknown> {
   return Object.fromEntries(readOwnEnumerableDataEntries(value ?? {}, fieldName));
+}
+
+interface PageDataValueCapture {
+  activeContainers: WeakSet<object>;
+  remainingEntries: number;
+}
+
+function consumeValueEntries(capture: PageDataValueCapture, count: number): void {
+  if (count > capture.remainingEntries) {
+    throw new TypeError(
+      `Page data values must contain at most ${MAX_PAGE_DATA_VALUE_ENTRIES} entries`,
+    );
+  }
+  capture.remainingEntries -= count;
+}
+
+function copyJsonValue(
+  value: unknown,
+  fieldName: string,
+  capture: PageDataValueCapture,
+  depth: number,
+): unknown {
+  if (
+    value === null || typeof value === "string" || typeof value === "boolean"
+  ) return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError(`${fieldName} must contain only finite numbers`);
+    }
+    return value;
+  }
+  if (typeof value !== "object") {
+    throw new TypeError(`${fieldName} must contain only JSON values`);
+  }
+  if (depth >= MAX_PAGE_DATA_VALUE_DEPTH) {
+    throw new TypeError(
+      `Page data values must be nested at most ${MAX_PAGE_DATA_VALUE_DEPTH} levels`,
+    );
+  }
+  if (capture.activeContainers.has(value)) {
+    throw new TypeError(`${fieldName} must not contain circular references`);
+  }
+
+  capture.activeContainers.add(value);
+  try {
+    if (Array.isArray(value)) {
+      const entries = copyDenseArray(
+        value,
+        fieldName,
+        Math.min(MAX_PAGE_DATA_VALUE_ENTRIES, capture.remainingEntries),
+      );
+      consumeValueEntries(capture, entries.length);
+      const result = entries.map((entry) => copyJsonValue(entry, fieldName, capture, depth + 1));
+      Object.freeze(result);
+      return result;
+    }
+
+    const entries = readOwnEnumerableDataEntries(value, fieldName);
+    consumeValueEntries(capture, entries.length);
+    const result = Object.fromEntries(
+      entries.map(([key, entry]) => [
+        key,
+        copyJsonValue(entry, fieldName, capture, depth + 1),
+      ]),
+    );
+    Object.freeze(result);
+    return result;
+  } finally {
+    capture.activeContainers.delete(value);
+  }
+}
+
+function copyJsonRecord(
+  value: unknown,
+  fieldName: string,
+  capture: PageDataValueCapture,
+): Record<string, unknown> {
+  const copied = copyJsonValue(value ?? {}, fieldName, capture, 0);
+  if (typeof copied !== "object" || copied === null || Array.isArray(copied)) {
+    throw new TypeError(`${fieldName} must be an object`);
+  }
+  return copied as Record<string, unknown>;
 }
 
 function copyDenseArray(value: unknown, fieldName: string, maxLength: number): unknown[] {
@@ -105,23 +189,27 @@ function requireBoundedText(
 }
 
 function copyLayouts(value: unknown): PageDataResponse["layouts"] {
-  return copyDenseArray(value, "layouts", MAX_PAGE_DATA_LAYOUTS).map((entry, index) => {
+  const layouts = copyDenseArray(value, "layouts", MAX_PAGE_DATA_LAYOUTS).map((entry, index) => {
     const layout = copyRecord(entry, `layouts[${index}]`);
     const kind = layout.kind;
     if (kind !== "mdx" && kind !== "tsx") {
       throw new TypeError(`layouts[${index}].kind is invalid`);
     }
-    return {
+    return Object.freeze({
       kind,
       path: requireBoundedText(layout.path, `layouts[${index}].path`),
-    };
+    });
   });
+  Object.freeze(layouts);
+  return layouts;
 }
 
 function copyProviders(value: unknown): string[] {
-  return copyDenseArray(value, "providers", MAX_PAGE_DATA_PROVIDERS).map(
+  const providers = copyDenseArray(value, "providers", MAX_PAGE_DATA_PROVIDERS).map(
     (provider, index) => requireBoundedText(provider, `providers[${index}]`),
   );
+  Object.freeze(providers);
+  return providers;
 }
 
 function copyParams(value: unknown): Record<string, string | string[]> {
@@ -130,7 +218,7 @@ function copyParams(value: unknown): Record<string, string | string[]> {
     throw new TypeError(`params must contain at most ${MAX_PAGE_DATA_PARAMS} entries`);
   }
 
-  return Object.fromEntries(
+  const copied = Object.fromEntries(
     params.map(([key, parameter]) => {
       const canonicalKey = requireBoundedText(key, "params key");
       if (typeof parameter === "string") {
@@ -146,32 +234,38 @@ function copyParams(value: unknown): Record<string, string | string[]> {
       );
       return [
         canonicalKey,
-        segments.map((segment, index) =>
+        Object.freeze(segments.map((segment, index) =>
           requireBoundedText(
             segment,
             `params.${canonicalKey}[${index}]`,
             true,
           )
-        ),
+        )),
       ];
     }),
   );
+  Object.freeze(copied);
+  return copied;
 }
 
 function copyLayoutProps(
   value: unknown,
+  capture: PageDataValueCapture,
 ): Record<string, Record<string, unknown>> {
   const entries = readOwnEnumerableDataEntries(value ?? {}, "layoutProps");
   if (entries.length > MAX_PAGE_DATA_LAYOUTS) {
     throw new TypeError(`layoutProps must contain at most ${MAX_PAGE_DATA_LAYOUTS} entries`);
   }
 
-  return Object.fromEntries(
+  consumeValueEntries(capture, entries.length);
+  const copied = Object.fromEntries(
     entries.map(([path, props]) => [
       requireBoundedText(path, "layoutProps path"),
-      copyRecord(props, `layoutProps.${path}`),
+      copyJsonRecord(props, "layoutProps entry", capture),
     ]),
   );
+  Object.freeze(copied);
+  return copied;
 }
 
 /**
@@ -185,6 +279,10 @@ function copyLayoutProps(
  */
 export function snapshotPageData(data: PageDataResponse): PageDataResponse {
   const value = copyRecord(data, "SPA page data");
+  const valueCapture: PageDataValueCapture = {
+    activeContainers: new WeakSet(),
+    remainingEntries: MAX_PAGE_DATA_VALUE_ENTRIES,
+  };
   const pageType = value.pageType;
   if (
     typeof pageType !== "string" || !PAGE_DATA_TYPES.has(pageType as PageDataResponse["pageType"])
@@ -198,20 +296,21 @@ export function snapshotPageData(data: PageDataResponse): PageDataResponse {
     pageType: pageType as PageDataResponse["pageType"],
     layouts: copyLayouts(value.layouts ?? []),
     providers: copyProviders(value.providers ?? []),
-    frontmatter: copyRecord(value.frontmatter ?? {}, "frontmatter"),
-    props: copyRecord(value.props ?? {}, "props"),
+    frontmatter: copyJsonRecord(value.frontmatter ?? {}, "frontmatter", valueCapture),
+    props: copyJsonRecord(value.props ?? {}, "props", valueCapture),
     params: copyParams(value.params),
-    layoutProps: copyLayoutProps(value.layoutProps),
+    layoutProps: copyLayoutProps(value.layoutProps, valueCapture),
   };
 
   const redirectValue = value.redirect;
   if (redirectValue !== undefined) {
     const redirect = requireRecord(redirectValue, "redirect");
-    snapshot.redirect = {
+    snapshot.redirect = Object.freeze({
       destination: requireBoundedText(redirect.destination, "redirect.destination"),
       ...(typeof redirect.permanent === "boolean" ? { permanent: redirect.permanent } : {}),
-    };
+    });
   }
 
+  Object.freeze(snapshot);
   return snapshot;
 }

@@ -125,6 +125,51 @@ describe("client/spa/component-loader", () => {
     }, { prefix: "vf-client-loader-" });
   });
 
+  it("bounds failed dynamic-import identities for the lifetime of the page", async () => {
+    const globalRecord = globalThis as unknown as {
+      __veryfrontComponentImportAttempts?: number;
+      __veryfrontReleaseAssetModules?: unknown;
+    };
+    const previousAttempts = globalRecord.__veryfrontComponentImportAttempts;
+    const previousModules = globalRecord.__veryfrontReleaseAssetModules;
+    const originalError = console.error;
+    const moduleSource = `
+      globalThis.__veryfrontComponentImportAttempts =
+        (globalThis.__veryfrontComponentImportAttempts ?? 0) + 1;
+      throw new Error("deterministic import failure");
+    `;
+
+    globalRecord.__veryfrontComponentImportAttempts = 0;
+    globalRecord.__veryfrontReleaseAssetModules = {
+      "pages/always-fails.tsx": `data:text/javascript,${encodeURIComponent(moduleSource)}`,
+    };
+    console.error = () => {};
+    clearComponentCache();
+
+    try {
+      for (let attempt = 0; attempt < 20; attempt++) {
+        assertStrictEquals(await loadComponent("pages/always-fails.tsx"), null);
+      }
+      clearComponentCache();
+      assertStrictEquals(await loadComponent("pages/always-fails.tsx"), null);
+
+      assertEquals(globalRecord.__veryfrontComponentImportAttempts, 2);
+    } finally {
+      console.error = originalError;
+      clearComponentCache();
+      if (previousAttempts === undefined) {
+        delete globalRecord.__veryfrontComponentImportAttempts;
+      } else {
+        globalRecord.__veryfrontComponentImportAttempts = previousAttempts;
+      }
+      if (previousModules === undefined) {
+        delete globalRecord.__veryfrontReleaseAssetModules;
+      } else {
+        globalRecord.__veryfrontReleaseAssetModules = previousModules;
+      }
+    }
+  });
+
   it("does not let an invalidated in-flight import repopulate the cache", async () => {
     await withTempDir(async (tempDir) => {
       await writeModule(

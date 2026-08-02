@@ -48,6 +48,70 @@ describe("client/spa/page-data", () => {
     assertEquals(reads, 0);
   });
 
+  it("deeply snapshots and freezes page-authored data", () => {
+    const pageData = validPageData();
+    pageData.frontmatter = {
+      social: { image: "original.png" },
+    };
+    pageData.props = {
+      profile: { name: "Original", tags: ["stable"] },
+    };
+    pageData.layoutProps = {
+      "layouts/main.tsx": {
+        theme: { color: "blue" },
+      },
+    };
+
+    const snapshot = snapshotPageData(pageData);
+    const sourceFrontmatter = pageData.frontmatter.social as Record<string, unknown>;
+    const sourceProfile = pageData.props.profile as Record<string, unknown>;
+    const sourceTags = sourceProfile.tags as string[];
+    const sourceLayoutTheme = pageData.layoutProps["layouts/main.tsx"]!.theme as Record<
+      string,
+      unknown
+    >;
+    sourceFrontmatter.image = "mutated.png";
+    sourceProfile.name = "Mutated";
+    sourceTags.push("mutated");
+    sourceLayoutTheme.color = "red";
+
+    assertEquals(snapshot.frontmatter, {
+      social: { image: "original.png" },
+    });
+    assertEquals(snapshot.props, {
+      profile: { name: "Original", tags: ["stable"] },
+    });
+    assertEquals(snapshot.layoutProps, {
+      "layouts/main.tsx": {
+        theme: { color: "blue" },
+      },
+    });
+    assertEquals(Object.isFrozen(snapshot), true);
+    assertEquals(Object.isFrozen(snapshot.frontmatter.social), true);
+    assertEquals(Object.isFrozen((snapshot.props.profile as Record<string, unknown>).tags), true);
+    assertEquals(
+      Object.isFrozen(snapshot.layoutProps["layouts/main.tsx"]!.theme),
+      true,
+    );
+  });
+
+  it("rejects deeply nested accessors without invoking them", () => {
+    let reads = 0;
+    const nested: Record<string, unknown> = {};
+    Object.defineProperty(nested, "secret", {
+      enumerable: true,
+      get() {
+        reads++;
+        return "unsafe";
+      },
+    });
+    const pageData = validPageData();
+    pageData.props = { nested };
+
+    assertThrows(() => snapshotPageData(pageData), TypeError);
+    assertEquals(reads, 0);
+  });
+
   it("rejects sparse or accessor-backed arrays at admission", () => {
     const sparse = validPageData();
     sparse.providers = new Array(1);
