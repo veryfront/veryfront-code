@@ -113,6 +113,119 @@ describe("runtime-bridge", () => {
     });
   });
 
+  it("records exactly one ordered context for each evolving skill-backed dispatch", async () => {
+    const contexts: unknown[] = [];
+    const order: string[] = [];
+    let providerDispatches = 0;
+    const model = createGenerateModel("test", "test/evolving-skill-context", async () => {
+      providerDispatches += 1;
+      order.push(`dispatch:${providerDispatches}`);
+      return {
+        content: [{ type: "text", text: "done" }],
+        finishReason: "stop",
+        usage: {},
+      };
+    });
+    const recorder = (context: unknown) => {
+      contexts.push(context);
+      order.push(`record:${contexts.length}`);
+    };
+    const tools = {
+      load_skill: {
+        description: "Load one available skill",
+        inputSchema: { jsonSchema: { type: "object" } },
+      },
+    };
+    const system = "Available skills:\n- repo-review: Review a repository carefully.";
+
+    await generateText({
+      model,
+      system,
+      messages: [{ role: "user", content: "Review this change." }],
+      tools,
+      modelCallRecorder: recorder,
+    });
+    await generateText({
+      model,
+      system,
+      messages: [
+        { role: "user", content: "Review this change." },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "load-1",
+            toolName: "load_skill",
+            input: { id: "repo-review" },
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "load-1",
+            toolName: "load_skill",
+            output: {
+              type: "json",
+              value: { instructions: "Inspect behavior, tests, and regressions." },
+            },
+          }],
+        },
+        { role: "assistant", content: "REMOVE THIS TRAILING PREFILL" },
+      ],
+      tools,
+      modelCallRecorder: recorder,
+    });
+
+    const resolvedTools = [{
+      type: "function",
+      name: "load_skill",
+      description: "Load one available skill",
+      inputSchema: { type: "object" },
+    }];
+    assertEquals(contexts, [
+      {
+        prompt: [
+          { role: "system", content: system },
+          { role: "user", content: [{ type: "text", text: "Review this change." }] },
+        ],
+        tools: resolvedTools,
+      },
+      {
+        prompt: [
+          { role: "system", content: system },
+          { role: "user", content: [{ type: "text", text: "Review this change." }] },
+          {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "load-1",
+              toolName: "load_skill",
+              input: { id: "repo-review" },
+            }],
+          },
+          {
+            role: "tool",
+            content: [{
+              type: "tool-result",
+              toolCallId: "load-1",
+              toolName: "load_skill",
+              output: {
+                type: "json",
+                value: { instructions: "Inspect behavior, tests, and regressions." },
+              },
+            }],
+          },
+        ],
+        tools: resolvedTools,
+      },
+    ]);
+    assertEquals(providerDispatches, 2);
+    assertEquals(contexts.length, providerDispatches);
+    assertEquals(order, ["record:1", "dispatch:1", "record:2", "dispatch:2"]);
+    assertEquals(JSON.stringify(contexts).includes("REMOVE THIS TRAILING PREFILL"), false);
+  });
+
   it("records before stream-backed generate and direct stream dispatch", async () => {
     for (const mode of ["generate", "stream"] as const) {
       const order: string[] = [];

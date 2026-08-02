@@ -69,6 +69,13 @@ export interface MetricsInstruments {
   streamLifecycleSemanticIdleDuration: Histogram | null;
   streamLifecycleToolInputDuration: Histogram | null;
   streamLifecycleToolExecutionDuration: Histogram | null;
+
+  modelCallContextWriterOutcomeCounter: Counter | null;
+  modelCallContextBarrierOutcomeCounter: Counter | null;
+  modelCallContextLogicalByteLength: Histogram | null;
+  modelCallContextPartCount: Histogram | null;
+  modelCallContextAppendRequestCount: Histogram | null;
+  modelCallContextRecorderBarrierDuration: Histogram | null;
 }
 
 /** Configuration used by metrics. */

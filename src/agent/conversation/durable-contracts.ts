@@ -269,6 +269,14 @@ export interface ConversationRunEventQueueController {
     pendingEventCount: number;
     consecutiveFailures: number;
     disabled: boolean;
+    appendRequestCount?: number;
+    disableReason?:
+      | "cursor_resyncs_exhausted"
+      | "cursor_mismatch_ambiguous"
+      | "non_appendable"
+      | "ignorable_append_rejection"
+      | "payload_too_large"
+      | "auth_rejected";
   };
 }
 

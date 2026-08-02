@@ -978,6 +978,7 @@ describe("agent/durable", () => {
       pendingEventCount: 2,
       consecutiveFailures: 0,
       disabled: false,
+      appendRequestCount: 0,
     });
 
     const result = await controller.flush();
@@ -996,6 +997,7 @@ describe("agent/durable", () => {
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: false,
+      appendRequestCount: 2,
     });
   });
 
@@ -1053,6 +1055,8 @@ describe("agent/durable", () => {
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: true,
+      appendRequestCount: 1,
+      disableReason: "auth_rejected",
     });
 
     const stopController = createConversationRunEventQueueController({
@@ -1098,6 +1102,8 @@ describe("agent/durable", () => {
       pendingEventCount: 0,
       consecutiveFailures: 0,
       disabled: true,
+      appendRequestCount: 1,
+      disableReason: "non_appendable",
     });
   });
 
@@ -1146,6 +1152,7 @@ describe("agent/durable", () => {
       pendingEventCount: 2,
       consecutiveFailures: 1,
       disabled: false,
+      appendRequestCount: 1,
     });
   });
 
@@ -1185,6 +1192,7 @@ describe("agent/durable", () => {
       pendingEventCount: 2,
       consecutiveFailures: 0,
       disabled: false,
+      appendRequestCount: 1,
     });
   });
 

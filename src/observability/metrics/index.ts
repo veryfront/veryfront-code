@@ -211,3 +211,35 @@ export function recordStreamLifecycleDuration(
 ): void {
   getRecorder()?.recordStreamLifecycleDuration(kind, durationMs, attributes);
 }
+
+/** Record a bounded required model-call context writer outcome (internal). */
+export function recordModelCallContextWriterOutcome(outcome: string): void {
+  try {
+    getRecorder()?.recordModelCallContextWriterOutcome(outcome);
+  } catch {
+    // Metrics are fail-open; required persistence remains fail-closed.
+  }
+}
+
+/** Record a bounded required model-call context barrier terminal outcome (internal). */
+export function recordModelCallContextBarrierOutcome(outcome: string): void {
+  try {
+    getRecorder()?.recordModelCallContextBarrierOutcome(outcome);
+  } catch {
+    // Metrics are fail-open; required persistence remains fail-closed.
+  }
+}
+
+/** Record numeric-only required model-call context measurements (internal). */
+export function recordModelCallContextMeasurements(input: {
+  logicalByteLength: number;
+  partCount: number;
+  appendRequestCount: number;
+  durationMs: number;
+}): void {
+  try {
+    getRecorder()?.recordModelCallContextMeasurements(input);
+  } catch {
+    // Metrics are fail-open; required persistence remains fail-closed.
+  }
+}

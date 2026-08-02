@@ -1,6 +1,14 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
 import { agentLogger } from "#veryfront/utils";
 
+export type ConversationRunMirrorDisableReason =
+  | "cursor_resyncs_exhausted"
+  | "cursor_mismatch_ambiguous"
+  | "non_appendable"
+  | "ignorable_append_rejection"
+  | "payload_too_large"
+  | "auth_rejected";
+
 /** Public API contract for conversation run mirror snapshot. */
 export interface ConversationRunMirrorSnapshot {
   latestEventId: number;
@@ -11,26 +19,24 @@ export interface ConversationRunMirrorSnapshot {
   hasFlushTimer: boolean;
   hasRetryTimer: boolean;
   inFlight: boolean;
+  appendRequestCount?: number;
+  disableReason?: ConversationRunMirrorDisableReason;
 }
 
 /** State for conversation run mirror stopped. */
 export interface ConversationRunMirrorStoppedState {
+  outcome: "stopped";
   latestEventId: number;
   latestExternalEventSequence: number;
   pendingEventCount: 0;
   consecutiveFailures: number;
   disabled: true;
-  disableReason?:
-    | "cursor_resyncs_exhausted"
-    | "cursor_mismatch_ambiguous"
-    | "non_appendable"
-    | "ignorable_append_rejection"
-    | "payload_too_large"
-    | "auth_rejected";
+  disableReason?: ConversationRunMirrorDisableReason;
 }
 
 /** State for conversation run mirror retry scheduled. */
 export interface ConversationRunMirrorRetryScheduledState {
+  outcome: "retry_scheduled";
   latestEventId: number;
   latestExternalEventSequence: number;
   pendingEventCount: number;

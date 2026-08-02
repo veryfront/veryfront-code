@@ -507,6 +507,7 @@ export async function flushConversationRunEventBatches(input: {
   consecutiveFailures?: number;
   maxCursorResyncsPerFlush: number;
   abortSignal?: AbortSignal;
+  onAppendRequest?: () => void;
 }): Promise<
   | {
     outcome: "flushed";
@@ -552,6 +553,7 @@ export async function flushConversationRunEventBatches(input: {
       ? "durable_event_id" as const
       : "external_sequence" as const;
     try {
+      input.onAppendRequest?.();
       const response = await appendConversationRunEvents({
         authToken: input.authToken,
         apiUrl: input.apiUrl,
@@ -625,6 +627,7 @@ export async function flushConversationRunEventQueue(input: {
   maxCursorResyncsPerFlush: number;
   consecutiveFailures?: number;
   abortSignal?: AbortSignal;
+  onAppendRequest?: () => void;
 }): Promise<
   | {
     outcome: "flushed";
@@ -677,6 +680,7 @@ export async function flushConversationRunEventQueue(input: {
       consecutiveFailures,
       maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
       abortSignal: input.abortSignal,
+      onAppendRequest: input.onAppendRequest,
     });
 
     latestEventId = flushed.latestEventId;
@@ -737,6 +741,10 @@ export function createConversationRunEventQueueController(input: {
   let pendingEvents: unknown[] = [];
   let consecutiveFailures = 0;
   let disabled = false;
+  let appendRequestCount = 0;
+  let disableReason: ReturnType<
+    ConversationRunEventQueueController["getSnapshot"]
+  >["disableReason"];
   let flushTail: Promise<unknown> | null = null;
 
   async function flushOnce() {
@@ -779,6 +787,9 @@ export function createConversationRunEventQueueController(input: {
         maxBatchPayloadBytes: input.maxBatchPayloadBytes,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
         consecutiveFailures,
+        onAppendRequest: () => {
+          appendRequestCount += 1;
+        },
       });
     } catch (error) {
       pendingEvents = [...queuedEvents, ...pendingEvents];
@@ -803,6 +814,7 @@ export function createConversationRunEventQueueController(input: {
     if (flushed.outcome === "stopped") {
       pendingEvents = [];
       disabled = true;
+      disableReason = flushed.disableReason;
       return {
         outcome: "stopped" as const,
         latestEventId,
@@ -858,6 +870,8 @@ export function createConversationRunEventQueueController(input: {
         pendingEventCount: pendingEvents.length,
         consecutiveFailures,
         disabled,
+        appendRequestCount,
+        ...(disableReason ? { disableReason } : {}),
       };
     },
   };

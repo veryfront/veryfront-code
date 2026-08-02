@@ -25,6 +25,9 @@ import {
   toHostedChatExecutionFinalState,
 } from "./chat-execution-runtime.ts";
 import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import { streamText } from "../../runtime/runtime-bridge.ts";
+import { createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
+import { AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE } from "./model-call-context-run-event-recorder.ts";
 
 function createRootStreamWatchdog(input?: {
   disposed?: () => void;
@@ -515,6 +518,85 @@ describe("agent/hosted-chat-execution-runtime", () => {
       "gen_ai.agent.id": "agent-1",
       "gen_ai.request.model": "openai/gpt-5.4",
     });
+  });
+
+  it("persists one root context before real stream dispatch and keeps lazy consumption scoped", async () => {
+    const order: string[] = [];
+    const persisted: unknown[] = [];
+    let providerDispatches = 0;
+    let lazyScopeActive = false;
+    const mirror = createDurableRunMirror({ chunks: [], flushes: [] });
+    mirror.appendEvents = async (events) => {
+      order.push("append");
+      persisted.push(...events);
+    };
+    mirror.flush = async () => {
+      order.push("flush");
+      return mirror.getSnapshot();
+    };
+    const model = createStreamModel("test", "test/hosted-root", async () => {
+      providerDispatches += 1;
+      order.push("dispatch");
+      return {
+        stream: ReadableStream.from([
+          { type: "text-delta", delta: "root ok" },
+          { type: "finish", finishReason: "stop", usage: {} },
+        ]),
+      };
+    });
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        const result = streamText({
+          model,
+          system: "Hosted root instructions",
+          messages: [{ role: "user", content: "Run root" }],
+        });
+        return {
+          steps: Promise.resolve([{}]),
+          toUIMessageStream: () =>
+            (async function* () {
+              lazyScopeActive = getActiveModelCallRecorder() !== undefined;
+              for await (const part of result.fullStream) {
+                if (part.type === "text-delta") {
+                  yield { type: "text-delta", id: "root", delta: part.text } as const;
+                }
+              }
+            })(),
+        };
+      },
+    };
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {},
+      lifecycleAdapter: createLifecycleAdapter({ durableRunMirror: mirror }),
+      finalMessages: [],
+      conversationId: "conversation-1",
+      abortSignal: new AbortController().signal,
+      modelCallContextMirror: mirror,
+      createRootStreamWatchdog,
+    });
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "test/hosted-root",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap,
+    });
+
+    for await (const _chunk of runtime.agentUIStream) {
+      // Consume the lazy UI stream to the actual provider stream boundary.
+    }
+
+    assertEquals(order.slice(0, 3), ["append", "flush", "dispatch"]);
+    assertEquals(providerDispatches, 1);
+    assertEquals(
+      persisted.filter((event) =>
+        (event as { type?: string }).type === AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE
+      ).length,
+      1,
+    );
+    assertEquals(lazyScopeActive, true);
   });
 
   it("finalizes the agent run span when bootstrapping hosted chat execution fails", async () => {

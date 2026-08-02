@@ -17,6 +17,16 @@ import {
 } from "veryfront/release-assets";
 ```
 
+## Examples
+
+### Resolve an immutable release asset URL
+
+```ts
+import { releaseAssetUrl } from "veryfront/release-assets";
+
+const url = releaseAssetUrl("abc123", "app.js");
+```
+
 ## Exports
 
 ### Components

@@ -8,11 +8,15 @@ import {
   createModelCallContextRunEvents,
   MAX_CHUNKED_MODEL_CALL_CONTEXT_EVENT_BYTES,
   MAX_MODEL_CALL_CONTEXT_BYTES,
+  type ModelCallContextMetricsSink,
   ModelCallContextPersistenceError,
   scopeAsyncIterableWithModelCallRecorder,
 } from "./model-call-context-run-event-recorder.ts";
 import type { ModelCallRecorder } from "../../runtime/model-call-context.ts";
 import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import { streamText } from "../../runtime/runtime-bridge.ts";
+import { collectAsync, createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 
 const encoder = new TextEncoder();
 
@@ -28,6 +32,7 @@ function snapshot(
     hasFlushTimer: false,
     hasRetryTimer: false,
     inFlight: false,
+    appendRequestCount: 0,
     ...overrides,
   };
 }
@@ -37,6 +42,8 @@ function mirror(input: {
   resolved?: ConversationRunMirrorSnapshot;
   current?: ConversationRunMirrorSnapshot;
   flush?: () => Promise<ConversationRunMirrorSnapshot>;
+  append?: (events: unknown[]) => Promise<void>;
+  snapshot?: () => ConversationRunMirrorSnapshot;
 } = {}) {
   const appended: unknown[][] = [];
   let reads = 0;
@@ -45,9 +52,11 @@ function mirror(input: {
     handleChunk: async () => {},
     appendEvents: async (events) => {
       appended.push(events);
+      await input.append?.(events);
     },
     flush: input.flush ?? (async () => input.resolved ?? snapshot()),
     getSnapshot: () => {
+      if (input.snapshot) return input.snapshot();
       reads += 1;
       return reads === 1 ? input.before ?? snapshot() : input.current ?? snapshot();
     },
@@ -56,6 +65,18 @@ function mirror(input: {
     },
   };
   return { result, appended, isDisposed: () => disposed };
+}
+
+function metricsSink() {
+  const writerOutcomes: string[] = [];
+  const barrierOutcomes: string[] = [];
+  const measurements: Array<Record<string, number>> = [];
+  const result: ModelCallContextMetricsSink = {
+    writerOutcome: (outcome) => writerOutcomes.push(outcome),
+    barrierOutcome: (outcome) => barrierOutcomes.push(outcome),
+    measurements: (input) => measurements.push(input),
+  };
+  return { result, writerOutcomes, barrierOutcomes, measurements };
 }
 
 describe("agent/hosted/model-call-context-run-event-recorder", () => {
@@ -137,10 +158,141 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
 
   it("appends and verifies both resolved and immediate snapshots before returning", async () => {
     const target = mirror();
-    const recorder = createModelCallContextRunEventRecorder({ mirror: target.result });
+    const metrics = metricsSink();
+    const recorder = createModelCallContextRunEventRecorder({
+      mirror: target.result,
+      metrics: metrics.result,
+    });
     await recorder({ prompt: [{ role: "system", content: "persist me" }] });
     assertEquals(target.appended.length, 1);
     assertEquals(target.isDisposed(), false);
+    assertEquals(metrics.writerOutcomes, ["recorded"]);
+    assertEquals(metrics.barrierOutcomes, []);
+    assertEquals(metrics.measurements.length, 1);
+    assertEquals((metrics.measurements[0]?.logicalByteLength ?? 0) > 0, true);
+    assertEquals(metrics.measurements[0]?.partCount, 1);
+    assertEquals(metrics.measurements[0]?.appendRequestCount, 0);
+    assertEquals((metrics.measurements[0]?.durationMs ?? -1) >= 0, true);
+  });
+
+  it("reports every bounded writer outcome without sensitive values", async () => {
+    const cases: Array<{
+      outcome: string;
+      target: ReturnType<typeof mirror>;
+    }> = [
+      { outcome: "disabled", target: mirror({ before: snapshot({ disabled: true }) }) },
+      {
+        outcome: "append_failed",
+        target: mirror({ append: () => Promise.reject(new Error("append")) }),
+      },
+      {
+        outcome: "retry_scheduled",
+        target: mirror({ resolved: snapshot({ hasRetryTimer: true }) }),
+      },
+      { outcome: "stopped", target: mirror({ resolved: snapshot({ disabled: true }) }) },
+      {
+        outcome: "ambiguous_durable_replay",
+        target: mirror({
+          resolved: snapshot({ disabled: true, disableReason: "cursor_mismatch_ambiguous" }),
+        }),
+      },
+      {
+        outcome: "pending_after_flush",
+        target: mirror({ resolved: snapshot({ pendingEventCount: 1 }) }),
+      },
+      {
+        outcome: "successor_in_flight",
+        target: mirror({ resolved: snapshot({ inFlight: true }) }),
+      },
+      {
+        outcome: "partial_append_failed",
+        target: mirror({
+          append: () => Promise.reject(new Error("later append")),
+          snapshot: (() => {
+            let reads = 0;
+            return () => snapshot({ appendRequestCount: reads++ === 0 ? 0 : 2 });
+          })(),
+        }),
+      },
+    ];
+
+    for (const testCase of cases) {
+      const metrics = metricsSink();
+      const recorder = createModelCallContextRunEventRecorder({
+        mirror: testCase.target.result,
+        metrics: metrics.result,
+      });
+      await assertRejects(() =>
+        Promise.resolve(
+          recorder({ prompt: [{ role: "system", content: "SENSITIVE_SENTINEL" }] }),
+        )
+      );
+      assertEquals(metrics.writerOutcomes, [testCase.outcome]);
+      assertEquals(JSON.stringify(metrics).includes("SENSITIVE_SENTINEL"), false);
+    }
+  });
+
+  it("keeps persistence fail-open when the metrics sink throws", async () => {
+    const target = mirror();
+    const fail = () => {
+      throw new Error("metrics unavailable");
+    };
+    await createModelCallContextRunEventRecorder({
+      mirror: target.result,
+      metrics: { writerOutcome: fail, barrierOutcome: fail, measurements: fail },
+    })({ prompt: [{ role: "system", content: "persisted" }] });
+    assertEquals(target.appended.length, 1);
+  });
+
+  it("retains the pre-dispatch context when provider streaming fails", async () => {
+    const target = mirror();
+    let dispatches = 0;
+    const model = createStreamModel("test", "test/failing-hosted-stream", async () => {
+      dispatches += 1;
+      return {
+        stream: new ReadableStream({
+          start(controller) {
+            controller.error(new Error("provider stream failed"));
+          },
+        }),
+      };
+    });
+    const recorder = createModelCallContextRunEventRecorder({ mirror: target.result });
+
+    await assertRejects(
+      () =>
+        runWithModelCallRecorder(recorder, () =>
+          collectAsync(
+            streamText({
+              model,
+              system: "Child instructions",
+              messages: [{ role: "user", content: "fail after dispatch" }],
+            }).fullStream,
+          )),
+      Error,
+      "provider stream failed",
+    );
+
+    assertEquals(dispatches, 1);
+    assertEquals(target.appended.length, 1);
+    const event = target.appended[0]?.[0] as Record<string, unknown>;
+    assertEquals(Object.keys(event).sort(), [
+      "contextId",
+      "partCount",
+      "partIndex",
+      "serializedSegment",
+      "sha256",
+      "totalByteLength",
+      "type",
+    ]);
+    assertEquals("error" in event, false);
+    assertEquals("lifecycle" in event, false);
+    assertEquals(JSON.parse(String(event.serializedSegment)), {
+      prompt: [
+        { role: "system", content: "Child instructions" },
+        { role: "user", content: [{ type: "text", text: "fail after dispatch" }] },
+      ],
+    });
   });
 
   for (
@@ -165,9 +317,11 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
 
   it("fails closed when the required append exceeds its deadline", async () => {
     const target = mirror({ flush: () => new Promise(() => {}) });
+    const metrics = metricsSink();
     const recorder = createModelCallContextRunEventRecorder({
       mirror: target.result,
       timeoutMs: 5,
+      metrics: metrics.result,
     });
     await assertRejects(
       () => Promise.resolve(recorder({ prompt: [{ role: "system", content: "timeout" }] })),
@@ -175,14 +329,17 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       "timed out",
     );
     assertEquals(target.isDisposed(), true);
+    assertEquals(metrics.barrierOutcomes, ["timeout"]);
   });
 
   it("fails closed immediately when the active run aborts", async () => {
     const target = mirror({ flush: () => new Promise(() => {}) });
     const controller = new AbortController();
+    const metrics = metricsSink();
     const recorder = createModelCallContextRunEventRecorder({
       mirror: target.result,
       abortSignal: controller.signal,
+      metrics: metrics.result,
     });
     const recording = Promise.resolve(
       recorder({ prompt: [{ role: "system", content: "abort" }] }),
@@ -190,5 +347,6 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     controller.abort();
     await assertRejects(() => recording, DOMException, "aborted");
     assertEquals(target.isDisposed(), true);
+    assertEquals(metrics.barrierOutcomes, ["aborted"]);
   });
 });

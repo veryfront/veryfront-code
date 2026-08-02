@@ -3,6 +3,11 @@ import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
 import type { ModelCallContext, ModelCallRecorder } from "../../runtime/model-call-context.ts";
 import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import {
+  recordModelCallContextBarrierOutcome,
+  recordModelCallContextMeasurements,
+  recordModelCallContextWriterOutcome,
+} from "../../observability/metrics/index.ts";
 
 /** Private durable event type used to persist exact model-call inputs. */
 export const AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CONTEXT";
@@ -33,6 +38,45 @@ export interface ModelCallContextRunEvent extends ConversationRunEvent {
 /** Failure to durably persist a required model-call context before dispatch. */
 export class ModelCallContextPersistenceError extends Error {
   override name = "ModelCallContextPersistenceError";
+}
+
+export type ModelCallContextWriterOutcome =
+  | "recorded"
+  | "disabled"
+  | "append_failed"
+  | "retry_scheduled"
+  | "stopped"
+  | "ambiguous_durable_replay"
+  | "pending_after_flush"
+  | "successor_in_flight"
+  | "partial_append_failed";
+
+export type ModelCallContextBarrierOutcome = "timeout" | "aborted";
+
+/** Content-free, fail-open projection of required persistence telemetry. */
+export interface ModelCallContextMetricsSink {
+  writerOutcome(outcome: ModelCallContextWriterOutcome): void;
+  barrierOutcome(outcome: ModelCallContextBarrierOutcome): void;
+  measurements(input: {
+    logicalByteLength: number;
+    partCount: number;
+    appendRequestCount: number;
+    durationMs: number;
+  }): void;
+}
+
+const defaultMetricsSink: ModelCallContextMetricsSink = {
+  writerOutcome: recordModelCallContextWriterOutcome,
+  barrierOutcome: recordModelCallContextBarrierOutcome,
+  measurements: recordModelCallContextMeasurements,
+};
+
+function emitMetric(operation: () => void): void {
+  try {
+    operation();
+  } catch {
+    // Metrics must never alter required persistence or provider dispatch.
+  }
 }
 
 /** Keep a recorder active for every operation that consumes a lazy hosted stream. */
@@ -155,6 +199,7 @@ function splitSerializedContext(input: {
   contextId: string;
   totalByteLength: number;
   sha256: string;
+  chunkEventByteLimit: number;
 }): string[] {
   const parts: string[] = [];
   let start = 0;
@@ -177,7 +222,7 @@ function splitSerializedContext(input: {
         sha256: input.sha256,
         serializedSegment: input.serialized.slice(start, candidateEnd),
       });
-      if (jsonByteLength(candidate) < MAX_CHUNKED_MODEL_CALL_CONTEXT_EVENT_BYTES) {
+      if (jsonByteLength(candidate) < input.chunkEventByteLimit) {
         best = candidateEnd;
         low = midpoint + 1;
       } else {
@@ -199,6 +244,13 @@ function splitSerializedContext(input: {
 /** Serialize, hash, and losslessly envelope one exact model-call context. */
 export async function createModelCallContextRunEvents(
   context: ModelCallContext,
+  internalLimits: {
+    singleEventByteLimit: number;
+    chunkEventByteLimit: number;
+  } = {
+    singleEventByteLimit: MAX_SINGLE_MODEL_CALL_CONTEXT_EVENT_BYTES,
+    chunkEventByteLimit: MAX_CHUNKED_MODEL_CALL_CONTEXT_EVENT_BYTES,
+  },
 ): Promise<ModelCallContextRunEvent[]> {
   const serialized = JSON.stringify(context);
   const totalByteLength = encoder.encode(serialized).byteLength;
@@ -215,7 +267,7 @@ export async function createModelCallContextRunEvents(
     sha256: digest,
     serializedSegment: serialized,
   });
-  if (jsonByteLength(single) <= MAX_SINGLE_MODEL_CALL_CONTEXT_EVENT_BYTES) {
+  if (jsonByteLength(single) <= internalLimits.singleEventByteLimit) {
     return [single];
   }
 
@@ -224,6 +276,7 @@ export async function createModelCallContextRunEvents(
     contextId,
     totalByteLength,
     sha256: digest,
+    chunkEventByteLimit: internalLimits.chunkEventByteLimit,
   });
   const events = segments.map((serializedSegment, partIndex) =>
     buildEvent({
@@ -241,14 +294,35 @@ export async function createModelCallContextRunEvents(
   return events;
 }
 
-function assertQuiescent(snapshot: ConversationRunMirrorSnapshot): void {
-  if (
-    snapshot.disabled || snapshot.pendingEventCount !== 0 || snapshot.inFlight ||
-    snapshot.hasFlushTimer || snapshot.hasRetryTimer
-  ) {
-    throw new ModelCallContextPersistenceError(
+function getNonQuiescentOutcome(
+  snapshot: ConversationRunMirrorSnapshot,
+  phase: "before" | "after",
+): ModelCallContextWriterOutcome | undefined {
+  if (snapshot.disabled) {
+    if (snapshot.disableReason === "cursor_mismatch_ambiguous") {
+      return "ambiguous_durable_replay";
+    }
+    return phase === "before" ? "disabled" : "stopped";
+  }
+  if (snapshot.hasRetryTimer) return "retry_scheduled";
+  if (snapshot.inFlight) return "successor_in_flight";
+  if (snapshot.pendingEventCount !== 0 || snapshot.hasFlushTimer) {
+    return "pending_after_flush";
+  }
+  return undefined;
+}
+
+function assertQuiescent(
+  snapshot: ConversationRunMirrorSnapshot,
+  phase: "before" | "after",
+): void {
+  const outcome = getNonQuiescentOutcome(snapshot, phase);
+  if (outcome) {
+    const error = new ModelCallContextPersistenceError(
       "Required model-call context was not durably flushed",
     );
+    Object.assign(error, { writerOutcome: outcome });
+    throw error;
   }
 }
 
@@ -289,24 +363,70 @@ export function createModelCallContextRunEventRecorder(input: {
   mirror: ConversationRunChunkMirror;
   abortSignal?: AbortSignal;
   timeoutMs?: number;
+  metrics?: ModelCallContextMetricsSink;
 }): ModelCallRecorder {
   return async (context) => {
+    const metrics = input.metrics ?? defaultMetricsSink;
+    const startedAt = performance.now();
+    const before = input.mirror.getSnapshot();
+    const appendRequestsBefore = before.appendRequestCount ?? 0;
+    let logicalByteLength = 0;
+    let partCount = 0;
+    let writerOutcome: ModelCallContextWriterOutcome | undefined;
+    let barrierOutcome: ModelCallContextBarrierOutcome | undefined;
     try {
-      assertQuiescent(input.mirror.getSnapshot());
+      assertQuiescent(before, "before");
       await withRequiredPersistenceDeadline({
         abortSignal: input.abortSignal,
         timeoutMs: input.timeoutMs ?? DEFAULT_MODEL_CALL_CONTEXT_PERSISTENCE_TIMEOUT_MS,
         operation: async () => {
           const events = await createModelCallContextRunEvents(context);
+          logicalByteLength = events[0]?.totalByteLength ?? 0;
+          partCount = events.length;
           await input.mirror.appendEvents(events);
           const resolvedSnapshot = await input.mirror.flush();
-          assertQuiescent(resolvedSnapshot);
-          assertQuiescent(input.mirror.getSnapshot());
+          assertQuiescent(resolvedSnapshot, "after");
+          assertQuiescent(input.mirror.getSnapshot(), "after");
         },
       });
+      writerOutcome = "recorded";
     } catch (error) {
+      if (input.abortSignal?.aborted || error instanceof DOMException) {
+        barrierOutcome = "aborted";
+      } else if (
+        error instanceof ModelCallContextPersistenceError && error.message.includes("timed out")
+      ) {
+        barrierOutcome = "timeout";
+      } else {
+        writerOutcome = (error as { writerOutcome?: ModelCallContextWriterOutcome })
+          .writerOutcome ??
+          ((input.mirror.getSnapshot().appendRequestCount ?? 0) - appendRequestsBefore > 1
+            ? "partial_append_failed"
+            : "append_failed");
+      }
       input.mirror.dispose();
       throw error;
+    } finally {
+      const appendRequestCount = Math.max(
+        0,
+        (input.mirror.getSnapshot().appendRequestCount ?? 0) - appendRequestsBefore,
+      );
+      const finalWriterOutcome = writerOutcome;
+      const finalBarrierOutcome = barrierOutcome;
+      if (finalWriterOutcome) {
+        emitMetric(() => metrics.writerOutcome(finalWriterOutcome));
+      }
+      if (finalBarrierOutcome) {
+        emitMetric(() => metrics.barrierOutcome(finalBarrierOutcome));
+      }
+      emitMetric(() =>
+        metrics.measurements({
+          logicalByteLength,
+          partCount,
+          appendRequestCount,
+          durationMs: performance.now() - startedAt,
+        })
+      );
     }
   };
 }
