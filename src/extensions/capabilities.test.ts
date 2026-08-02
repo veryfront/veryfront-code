@@ -55,6 +55,29 @@ describe("capabilities", () => {
       );
     });
 
+    it("snapshots scoped permissions without invoking array methods", () => {
+      const paths = ["./src"];
+      Object.defineProperty(paths, "some", {
+        value: () => {
+          throw new Error("must not execute extension-owned array methods");
+        },
+      });
+      assertEquals(
+        mapToDenoPermissions([{ type: "fs:read", paths }]),
+        ["--allow-read=./src"],
+      );
+    });
+
+    it("rejects empty and comma-delimited permission scopes", () => {
+      for (const path of ["", "./src,./secrets"]) {
+        assertThrows(
+          () => mapToDenoPermissions([{ type: "fs:read", paths: [path] }]),
+          TypeError,
+          "non-empty strings without commas",
+        );
+      }
+    });
+
     it("should map net:outbound to --allow-net with hosts", () => {
       const caps: Capability[] = [{ type: "net:outbound", hosts: ["api.example.com"] }];
       const perms = mapToDenoPermissions(caps);

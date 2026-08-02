@@ -16,6 +16,7 @@ import {
 const isInteger = Number.isInteger;
 const joinArray = Array.prototype.join;
 const mapGet = Map.prototype.get;
+const stringIndexOf = String.prototype.indexOf;
 
 /**
  * Format capabilities as human-readable strings for logging.
@@ -145,6 +146,60 @@ export function assertSystemReadCapability(capability: Capability): void {
   resolveSystemReadScopes(capability);
 }
 
+/** Snapshot a dense scoped-permission array without invoking extension code. */
+function resolveStringScopes(
+  capability: Capability,
+  scopeKey: string,
+): string[] {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = getExtensionOwnPropertyDescriptor(capability, scopeKey);
+  } catch (cause) {
+    throw new TypeError(`${capability.type}.${scopeKey} could not be inspected`, { cause });
+  }
+  if (descriptor === undefined) return [];
+  if (!isDataPropertyDescriptor(descriptor) || descriptor.enumerable !== true) {
+    throw new TypeError(
+      `${capability.type} scoped permissions must be an enumerable own data property`,
+    );
+  }
+
+  const value = descriptor.value;
+  if (!isExtensionArray(value)) {
+    throw new TypeError(`${capability.type} scoped permissions must be a string array`);
+  }
+  const length = readOwnDataProperty(
+    value,
+    "length",
+    `${capability.type}.${scopeKey}.length`,
+    false,
+  );
+  if (!isInteger(length) || (length as number) < 0) {
+    throw new TypeError(`${capability.type} scoped permissions must be a dense string array`);
+  }
+
+  const scopes: string[] = [];
+  for (let index = 0; index < (length as number); index++) {
+    const scope = readOwnDataProperty(
+      value,
+      String(index),
+      `${capability.type}.${scopeKey}[${index}]`,
+      true,
+    );
+    if (
+      typeof scope !== "string" ||
+      scope.length === 0 ||
+      applyExtensionMethod(stringIndexOf, scope, [","]) !== -1
+    ) {
+      throw new TypeError(
+        `${capability.type} scoped permissions must contain non-empty strings without commas`,
+      );
+    }
+    scopes[scopes.length] = scope;
+  }
+  return scopes;
+}
+
 const DENO_PERMISSION_MAP: ReadonlyMap<string, PermissionMapping> = new Map<
   string,
   PermissionMapping
@@ -193,17 +248,7 @@ export function mapToDenoPermissions(capabilities: Capability[]): string[] {
     if (mapping.resolveScopes) {
       scopes = mapping.resolveScopes(cap);
     } else if (mapping.scopeKey) {
-      const configuredScopes = cap[mapping.scopeKey];
-      if (configuredScopes === undefined) {
-        scopes = [];
-      } else if (
-        !Array.isArray(configuredScopes) ||
-        configuredScopes.some((scope) => typeof scope !== "string")
-      ) {
-        throw new TypeError(`${cap.type} scoped permissions must be a string array`);
-      } else {
-        scopes = configuredScopes;
-      }
+      scopes = resolveStringScopes(cap, mapping.scopeKey);
     } else {
       scopes = [];
     }
