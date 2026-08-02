@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "../../../compat/path/index.ts";
+import { runtimeUsesWindowsPaths } from "../../../compat/path/portable.ts";
 import { FileSnapshotChangedError } from "../../file-snapshot-error.ts";
 
 interface SnapshotStat {
@@ -27,6 +28,13 @@ export interface NativeSnapshotOperations {
   realpath(path: string): Promise<string>;
   lstat(path: string): Promise<SnapshotStat>;
   open(path: string, flags: number | string): Promise<SnapshotHandle>;
+}
+
+/** Whether the runtime can enforce a no-follow native snapshot open. */
+export function supportsNativeFileSnapshots(
+  platform: "posix" | "windows" = runtimeUsesWindowsPaths() ? "windows" : "posix",
+): boolean {
+  return platform === "posix";
 }
 
 function toSnapshotStat(stats: import("node:fs").BigIntStats): SnapshotStat {

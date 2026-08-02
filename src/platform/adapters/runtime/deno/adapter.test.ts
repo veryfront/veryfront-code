@@ -90,7 +90,10 @@ if (!isDeno) {
 
       it("should expose bounded snapshot and exclusive-create capabilities", () => {
         assertFunction(denoAdapter.fs.readFileBytesWithinLimit);
-        assertFunction(denoAdapter.fs.readFileSnapshotWithinLimit);
+        assertEquals(
+          typeof denoAdapter.fs.readFileSnapshotWithinLimit,
+          Deno.build.os === "windows" ? "undefined" : "function",
+        );
         assertFunction(denoAdapter.fs.createFileBytesExclusive);
       });
 

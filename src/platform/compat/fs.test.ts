@@ -50,7 +50,6 @@ describe("Filesystem Compat", () => {
       const methods = [
         "readTextFile",
         "readFileBytesWithinLimit",
-        "readFileSnapshotWithinLimit",
         "createFileBytesExclusive",
         "writeTextFile",
         "rename",
@@ -63,6 +62,10 @@ describe("Filesystem Compat", () => {
       for (const method of methods) {
         assertEquals(typeof fs[method], "function");
       }
+      assertEquals(
+        typeof fs.readFileSnapshotWithinLimit,
+        Deno.build.os === "windows" ? "undefined" : "function",
+      );
     });
   });
 
