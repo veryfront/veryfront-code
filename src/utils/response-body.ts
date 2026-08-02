@@ -152,6 +152,17 @@ export class JsonStringValueTooLargeError extends RangeError {
   }
 }
 
+/** Raised when JSON bytes outside the selected string exceed their policy budget. */
+export class JsonNonValueBytesTooLargeError extends RangeError {
+  readonly maximumBytes: number;
+
+  constructor(maximumBytes: number) {
+    super(`JSON content outside the selected string exceeds ${maximumBytes} bytes`);
+    this.name = "JsonNonValueBytesTooLargeError";
+    this.maximumBytes = maximumBytes;
+  }
+}
+
 /** Raised when a response exceeds its independent whole-body transport ceiling. */
 export class ResponseBodyTooLargeError extends RangeError {
   readonly maximumBytes: number;
@@ -235,6 +246,30 @@ function isJsonWhitespace(codeUnit: number): boolean {
 
 function isJsonDigit(codeUnit: number): boolean {
   return codeUnit >= 0x30 && codeUnit <= 0x39;
+}
+
+function decodedJsonSourceCodeUnitByteLength(
+  text: string,
+  index: number,
+  codeUnit: number,
+): number {
+  if (codeUnit <= 0x7f) return 1;
+  if (codeUnit <= 0x7ff) return 2;
+  if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+    const lowSurrogate = text.charCodeAt(index + 1);
+    if (!(lowSurrogate >= 0xdc00 && lowSurrogate <= 0xdfff)) {
+      throw new InvalidResponseBodyUtf8Error();
+    }
+    return 4;
+  }
+  if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+    const highSurrogate = text.charCodeAt(index - 1);
+    if (!(highSurrogate >= 0xd800 && highSurrogate <= 0xdbff)) {
+      throw new InvalidResponseBodyUtf8Error();
+    }
+    return 0;
+  }
+  return 3;
 }
 
 function isJsonValueDelimiter(codeUnit: number): boolean {
@@ -405,38 +440,64 @@ class TopLevelJsonStringReader {
   private selectedSeen = false;
   private selectedValue: Uint8Array | null | undefined;
   private selectedWriter: BoundedUtf8Writer | undefined;
+  private totalSourceBytes = 0;
+  private selectedSourceBytes = 0;
 
   constructor(
     private readonly fieldName: string,
     private readonly maximumValueBytes: number,
     private readonly preserveLoneSurrogates: boolean,
+    private readonly maximumNonValueBytes?: number,
   ) {}
 
   feed(text: string): void {
     for (let index = 0; index < text.length; index++) {
       const codeUnit = text.charCodeAt(index);
+      const sourceByteLength = decodedJsonSourceCodeUnitByteLength(text, index, codeUnit);
       if (this.mode === "string") {
+        const selected = this.stringRole === "selected-value" && codeUnit !== 0x22;
         this.consumeString(codeUnit);
+        this.recordSourceBytes(sourceByteLength, selected);
         continue;
       }
       if (this.mode === "escape") {
+        const selected = this.stringRole === "selected-value";
         this.consumeEscape(codeUnit);
+        this.recordSourceBytes(sourceByteLength, selected);
         continue;
       }
       if (this.mode === "unicode") {
+        const selected = this.stringRole === "selected-value";
         this.consumeUnicode(codeUnit);
+        this.recordSourceBytes(sourceByteLength, selected);
         continue;
       }
       if (this.mode === "literal") {
         this.consumeLiteral(codeUnit);
+        this.recordSourceBytes(sourceByteLength, false);
         continue;
       }
       if (this.mode === "number") {
-        if (this.consumeNumber(codeUnit)) continue;
+        if (this.consumeNumber(codeUnit)) {
+          this.recordSourceBytes(sourceByteLength, false);
+          continue;
+        }
         index--;
         continue;
       }
       this.consumeNormal(codeUnit);
+      this.recordSourceBytes(sourceByteLength, false);
+    }
+  }
+
+  private recordSourceBytes(sourceByteLength: number, selected: boolean): void {
+    this.totalSourceBytes += sourceByteLength;
+    if (selected) this.selectedSourceBytes += sourceByteLength;
+    if (
+      this.maximumNonValueBytes !== undefined &&
+      this.totalSourceBytes - this.selectedSourceBytes > this.maximumNonValueBytes
+    ) {
+      throw new JsonNonValueBytesTooLargeError(this.maximumNonValueBytes);
     }
   }
 
@@ -838,7 +899,8 @@ function cancelResponseBody(response: Response, reason: unknown): void {
 /**
  * Read one top-level JSON string as exact UTF-8 bytes without retaining or
  * parsing the complete response envelope. Other JSON fields are validated and
- * discarded incrementally.
+ * discarded incrementally. When supplied, `maximumNonValueBytes` independently
+ * bounds every source byte outside the selected string's encoded contents.
  */
 export async function readResponseJsonStringBytesWithinLimit(
   response: Response,
@@ -846,6 +908,7 @@ export async function readResponseJsonStringBytesWithinLimit(
   maximumValueBytes: number,
   maximumResponseBytes: number,
   abortSignal?: AbortSignal,
+  maximumNonValueBytes?: number,
 ): Promise<Uint8Array | null> {
   return await readResponseJsonStringEncodedWithinLimit(
     response,
@@ -854,6 +917,7 @@ export async function readResponseJsonStringBytesWithinLimit(
     maximumResponseBytes,
     false,
     abortSignal,
+    maximumNonValueBytes,
   );
 }
 
@@ -861,6 +925,7 @@ export async function readResponseJsonStringBytesWithinLimit(
  * Read one top-level JSON string losslessly while bounding its logical UTF-8
  * size. Escaped lone surrogates retain the same UTF-16 code units JSON.parse
  * would return; the byte-oriented helper intentionally uses replacement bytes.
+ * `maximumNonValueBytes` has the same independent envelope semantics as above.
  */
 export async function readResponseJsonStringWithinLimit(
   response: Response,
@@ -868,6 +933,7 @@ export async function readResponseJsonStringWithinLimit(
   maximumValueBytes: number,
   maximumResponseBytes: number,
   abortSignal?: AbortSignal,
+  maximumNonValueBytes?: number,
 ): Promise<string | null> {
   const encoded = await readResponseJsonStringEncodedWithinLimit(
     response,
@@ -876,6 +942,7 @@ export async function readResponseJsonStringWithinLimit(
     maximumResponseBytes,
     true,
     abortSignal,
+    maximumNonValueBytes,
   );
   return encoded === null ? null : decodePreservedJsonStringBytes(encoded);
 }
@@ -887,6 +954,7 @@ async function readResponseJsonStringEncodedWithinLimit(
   maximumResponseBytes: number,
   preserveLoneSurrogates: boolean,
   abortSignal?: AbortSignal,
+  maximumNonValueBytes?: number,
 ): Promise<Uint8Array | null> {
   if (typeof fieldName !== "string" || fieldName.length === 0) {
     throw new TypeError("JSON field name must be a non-empty string");
@@ -901,6 +969,13 @@ async function readResponseJsonStringEncodedWithinLimit(
     "Response body byte limit",
     false,
   );
+  const nonValueLimit = maximumNonValueBytes === undefined
+    ? undefined
+    : validateJsonStringReadLimit(
+      maximumNonValueBytes,
+      "JSON non-value byte limit",
+      true,
+    );
   abortSignal?.throwIfAborted();
 
   const contentLengthHeader = response.headers.get("content-length");
@@ -928,6 +1003,7 @@ async function readResponseJsonStringEncodedWithinLimit(
     fieldName,
     valueLimit,
     preserveLoneSurrogates,
+    nonValueLimit,
   );
   const body = response.body;
   if (!body) return parser.finish();

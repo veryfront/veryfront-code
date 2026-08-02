@@ -14,6 +14,7 @@ import {
   type LogEntry,
 } from "#veryfront/utils/logger/index.ts";
 import { VeryfrontError } from "#veryfront/errors/types.ts";
+import { JsonNonValueBytesTooLargeError } from "#veryfront/utils/response-body.ts";
 import {
   createVeryfrontApiTransport,
   type TransportRequestInit,
@@ -530,6 +531,39 @@ describe("VeryfrontAPIOperations", () => {
       });
 
       assertEquals(result, new Uint8Array([0, 0]));
+    });
+
+    it("does not let unused string headroom enlarge the non-value response budget", async () => {
+      const body = '{"content":"","x":0}';
+      assertEquals(new TextEncoder().encode(body).byteLength, 20);
+      let fetchCalls = 0;
+      globalThis.fetch = (() => {
+        fetchCalls++;
+        return Promise.resolve(new Response(body));
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+
+      const error = await assertRejects(
+        () =>
+          transport.request("/bounded", {
+            // The selected value is empty, so all 20 bytes count against the
+            // independent 14-byte non-value policy despite the 26-byte hard cap.
+            maxResponseBytes: 14,
+            jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 2 },
+          }),
+        VeryfrontError,
+        "invalid bounded JSON content",
+      );
+
+      assertEquals(
+        (error as VeryfrontError).cause instanceof JsonNonValueBytesTooLargeError,
+        true,
+      );
+      assertEquals(fetchCalls, 1);
     });
 
     it("retries a body read aborted by the per-attempt timeout", async () => {

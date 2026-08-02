@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   InvalidResponseBodyUtf8Error,
+  JsonNonValueBytesTooLargeError,
   JsonStringValueTooLargeError,
   maximumJsonStringDocumentBytes,
   readResponseJsonStringBytesWithinLimit,
@@ -25,6 +26,47 @@ describe("utils/response-body", () => {
         ),
       RangeError,
       "safe integer range",
+    );
+  });
+
+  it("meters selected source bytes separately from the JSON envelope budget", async () => {
+    const maximumValueBytes = 4;
+    const maximumNonValueBytes = 18;
+    const maximumDocumentBytes = maximumJsonStringDocumentBytes(
+      maximumValueBytes,
+      maximumNonValueBytes,
+    );
+    for (
+      const body of [
+        '{"value":"😀","x":0}',
+        '{"value":"\\ud83d\\ude00","x":0}',
+      ]
+    ) {
+      assertEquals(
+        await readResponseJsonStringWithinLimit(
+          new Response(body),
+          "value",
+          maximumValueBytes,
+          maximumDocumentBytes,
+          undefined,
+          maximumNonValueBytes,
+        ),
+        "😀",
+      );
+    }
+
+    await assertRejects(
+      () =>
+        readResponseJsonStringWithinLimit(
+          new Response('{"value":"😀","x":0} '),
+          "value",
+          maximumValueBytes,
+          maximumDocumentBytes,
+          undefined,
+          maximumNonValueBytes,
+        ),
+      JsonNonValueBytesTooLargeError,
+      "18 bytes",
     );
   });
 

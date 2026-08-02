@@ -245,6 +245,7 @@ export class ApiCacheBackend implements CacheBackend {
                 boundedJsonString.maximumBytes,
                 boundedJsonString.maximumDocumentBytes,
                 controller.signal,
+                this.maxResponseBytes,
               ) as T;
             } catch (error) {
               if (error instanceof JsonStringValueTooLargeError) {
