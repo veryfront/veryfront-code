@@ -226,6 +226,7 @@ describe("agent runtime refresh hooks", () => {
 
   it("continues suppressed unavailable tool calls with a user recovery turn after assistant text", async () => {
     const observedPrompts: Array<Array<{ role?: string; content?: unknown }>> = [];
+    const observedRuntimeMessages: Message[][] = [];
     let callCount = 0;
     let finishedResponse: AgentResponse | undefined;
     const model: ModelRuntime = {
@@ -276,6 +277,10 @@ describe("agent runtime refresh hooks", () => {
       system: "Recover from stale tools.",
       maxSteps: 2,
       resolveModelTransport: async () => ({ model }),
+      resolveRuntimeState({ messages }) {
+        observedRuntimeMessages.push(messages);
+        return {};
+      },
     });
 
     await (await assistant.stream({
@@ -286,6 +291,12 @@ describe("agent runtime refresh hooks", () => {
     })).toDataStreamResponse().text();
 
     assertEquals(callCount, 2);
+    const runtimeMessages = observedRuntimeMessages[1] ?? [];
+    assertEquals(runtimeMessages.at(-1)?.role, "user");
+    assertEquals(
+      isRuntimeGeneratedUserMessage(runtimeMessages.at(-1) ?? {}),
+      true,
+    );
     const retryPrompt = observedPrompts[1] ?? [];
     assertEquals(retryPrompt.at(-1)?.role, "user");
     assertEquals(
