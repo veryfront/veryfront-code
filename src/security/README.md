@@ -150,17 +150,33 @@ The worker pool provides:
   metadata, and other non-global destinations by default; and
 - deterministic cleanup of workers, streams, timers, and egress brokers.
 
-Worker isolation is disabled unless `WORKER_ISOLATION_ENABLED` and the relevant
-`WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, or `WORKER_ISOLATION_SSR` flag
-are enabled. Defined invalid flags and pool limits are startup errors; they are
-not silently replaced with defaults.
+The `WORKER_ISOLATION_ENABLED` and surface-specific
+`WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, and `WORKER_ISOLATION_SSR`
+flags opt trusted local projects into worker execution. They cannot disable the
+shared-runtime boundary: remote API routes always require prepared worker
+source and fail closed when that source or an execution scope is unavailable.
+Defined invalid flags and pool limits are startup errors; they are not silently
+replaced with defaults.
 
-`WORKER_ISOLATION_SSR=1` additionally requires explicit registration of
-`@veryfront/ext-react-ssr`. That extension supplies a local, offline renderer
+OpenAPI metadata is currently attached to handler functions. Because reading
+it requires route evaluation, runtime OpenAPI generation is available only for
+explicitly trusted local projects; remote requests fail closed before route
+discovery or import.
+
+Executable primitive discovery and root project middleware use the same
+explicit host-execution capability. Local development and dedicated
+single-project runtimes grant it at their host-owned entrypoints. Shared proxy
+runtimes reject these operations before reading or evaluating tenant modules;
+they must provide an isolated project runtime before enabling either surface.
+
+`WORKER_ISOLATION_SSR=1` additionally requires explicit registration of an
+`IsolatedSsrRendererProvider`. The provider supplies a local, offline renderer
 bundle through the isolated-SSR contract. Core does not import React, and there
-is no host-rendering or remote-import fallback; an SSR request fails closed with
-an installation hint when the extension is absent. API and data workers do not
-resolve or receive the renderer contract.
+is no host-rendering or remote-import fallback. The current HTTP renderer does
+not yet produce a generation-owned isolated page and layout graph, so remote
+SSR and server-executing RSC endpoints return `503 Service Unavailable` before
+resolving a renderer. API and data workers do not resolve or receive the
+renderer contract.
 
 Deno Workers share the host process. Worker retirement is lifecycle hygiene,
 not a hard per-worker memory or CPU boundary. A project can still create

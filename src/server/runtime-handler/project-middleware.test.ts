@@ -25,9 +25,13 @@ interface ActiveFsContext {
 function createAdapter(
   storage = new AsyncLocalStorage<ActiveFsContext>(),
   middlewareSource?: string,
-  options: { requireContextForFileAccess?: boolean } = {},
+  options: {
+    requireContextForFileAccess?: boolean;
+    onFileAccess?: () => void;
+  } = {},
 ): RuntimeAdapter {
   const assertContext = () => {
+    options.onFileAccess?.();
     if (options.requireContextForFileAccess && !storage.getStore()) {
       throw new Error("[test] No request context available");
     }
@@ -384,25 +388,35 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(await response?.text(), "recovered");
   });
 
-  it("rejects malformed shared production middleware before routing", async () => {
+  it("rejects shared production middleware before reading or evaluating it", async () => {
+    const marker = `__vf_project_middleware_${crypto.randomUUID().replaceAll("-", "")}`;
+    const host = globalThis as unknown as Record<string, unknown>;
+    let fileAccesses = 0;
     const adapter = createAdapter(
       undefined,
-      "export const middleware = () => new Response('untrusted');",
+      `globalThis.${marker} = Deno.env.get("HOST_SECRET"); export default [];`,
+      { onFileAccess: () => fileAccesses++ },
     );
     const runtime = new ProjectMiddlewareRuntime();
     let routeCalls = 0;
 
-    await assertRejects(
-      () =>
-        execute(runtime, createContext(adapter), undefined, () => {
-          routeCalls++;
-          return Promise.resolve(new Response("route"));
-        }),
-      TypeError,
-      "Invalid middleware export",
-    );
+    try {
+      await assertRejects(
+        () =>
+          execute(runtime, createContext(adapter), undefined, () => {
+            routeCalls++;
+            return Promise.resolve(new Response("route"));
+          }),
+        TypeError,
+        "requires explicit trusted-local execution",
+      );
 
-    assertEquals(routeCalls, 0);
+      assertEquals(fileAccesses, 0);
+      assertEquals(host[marker], undefined);
+      assertEquals(routeCalls, 0);
+    } finally {
+      delete host[marker];
+    }
   });
 
   it("keeps the compiled middleware cache bounded", async () => {
@@ -554,7 +568,7 @@ describe("ProjectMiddlewareRuntime", () => {
     assertEquals(routeCalls, 0);
   });
 
-  it("uses the same middleware runtime for local, standalone, and unauthenticated contexts", async () => {
+  it("separates shared middleware cache entries from host-execution entries", async () => {
     const adapter = createAdapter();
     let loads = 0;
     const runtime = new ProjectMiddlewareRuntime({
@@ -578,7 +592,7 @@ describe("ProjectMiddlewareRuntime", () => {
     await execute(runtime, createContext(adapter, { isLocalProject: true }), undefined, next);
     await execute(runtime, createContext(adapter, { proxyToken: undefined }), undefined, next);
 
-    assertEquals(loads, 1);
+    assertEquals(loads, 2);
     assertEquals(routeCalls, 3);
   });
 

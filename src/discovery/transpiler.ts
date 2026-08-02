@@ -18,6 +18,7 @@ import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
 import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { getDiscoveryRuntimeModules } from "./runtime-modules.ts";
+import { isExplicitHostProjectCodeExecutionAllowed } from "#veryfront/security/project-locality.ts";
 
 type TranspileCacheEntry = {
   /** Content hashes of every file esbuild bundled into the module besides the entry. */
@@ -178,6 +179,12 @@ export async function importModule(
   file: string,
   context: FileDiscoveryContext,
 ): Promise<unknown> {
+  if (!isExplicitHostProjectCodeExecutionAllowed(context)) {
+    throw new TypeError(
+      "Discovery module host loading requires explicit trusted-local execution",
+    );
+  }
+
   // Ensure veryfront modules are available as globals for compiled binaries
   await ensureVeryfrontGlobals();
 

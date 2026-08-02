@@ -18,6 +18,8 @@ export interface ScheduleDiscoveryOptions {
   config?: VeryfrontConfig;
   /** Explicit schedule directory override relative to `projectDir`. */
   schedulesDir?: string;
+  /** Explicit host-owned capability for a trusted local or dedicated runtime. */
+  allowHostProjectCodeExecution?: boolean;
 }
 
 /** Valid schedules and bounded per-file discovery diagnostics. */
@@ -41,5 +43,6 @@ export async function discoverSchedules(
     sourceKind: "schedule",
     validate: isScheduleDefinition,
     normalize: normalizeScheduleDefinition,
+    allowHostProjectCodeExecution: options.allowHostProjectCodeExecution,
   });
 }

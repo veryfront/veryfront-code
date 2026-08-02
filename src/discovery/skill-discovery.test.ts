@@ -3,7 +3,12 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
-import { discoverAll } from "./index.ts";
+import { discoverAll as discoverAllRaw } from "./index.ts";
+import type { DiscoveryConfig } from "./types.ts";
+
+function discoverAll(config: DiscoveryConfig) {
+  return discoverAllRaw({ ...config, allowHostProjectCodeExecution: true });
+}
 
 describe("src/discovery/skill-discovery", () => {
   beforeEach(() => {

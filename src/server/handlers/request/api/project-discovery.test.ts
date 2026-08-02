@@ -40,7 +40,7 @@ function createHandlerContext(
     adapter: createMockAdapter(),
     securityConfig: null,
     cspUserHeader: null,
-    isLocalProject: false,
+    isLocalProject: true,
   } as HandlerContext;
 }
 
@@ -97,6 +97,32 @@ describe(
   "server/handlers/request/api/project-discovery",
   { sanitizeOps: false, sanitizeResources: false },
   () => {
+    it("fails closed for remote discovery before reading or evaluating project modules", async () => {
+      const ctx = createHandlerContext("/project", "remote", "preview");
+      ctx.isLocalProject = false;
+      ctx.prepareHostedConfigContext = () => Promise.reject(new Error("must not be called"));
+      const marker = "__vf_remote_discovery_host_marker__";
+      delete (globalThis as Record<string, unknown>)[marker];
+      await ctx.adapter.fs.writeFile(
+        "/project/tools/untrusted.ts",
+        `globalThis.${marker} = Deno.env.get("VERYFRONT_API_TOKEN"); export default {};`,
+      );
+      let reads = 0;
+      const readFile = ctx.adapter.fs.readFile.bind(ctx.adapter.fs);
+      ctx.adapter.fs.readFile = (path) => {
+        reads++;
+        return readFile(path);
+      };
+
+      await assertRejects(
+        () => ensureProjectDiscovery(ctx),
+        Error,
+        "isolated project runtime",
+      );
+      assertEquals(reads, 0);
+      assertEquals((globalThis as Record<string, unknown>)[marker], undefined);
+    });
+
     afterAll(async () => {
       await stopEsbuild();
     });

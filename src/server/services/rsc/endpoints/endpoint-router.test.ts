@@ -213,6 +213,40 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
   });
 
+  describe("remote execution isolation", () => {
+    for (const endpoint of ["render", "render/page", "stream", "stream/page", "payload"]) {
+      it(`fails closed for remote ${endpoint} execution`, async () => {
+        const result = await handleRSCEndpoint(
+          makeParams({
+            pathname: `/_veryfront/rsc/${endpoint}`,
+            config: rscEnabledConfig,
+            isLocalProject: false,
+          }),
+        );
+
+        assertEquals(result?.status, 503);
+        assertEquals(result?.headers.get("cache-control"), "no-store");
+      });
+    }
+
+    it("fails closed for remote server actions before authorization or import", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          isLocalProject: false,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            body: "{}",
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 503);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
+    });
+  });
+
   describe("render endpoint", () => {
     it("renders components from the request filesystem adapter", async () => {
       const pagePath = "/virtual/project/app/page.tsx";
@@ -241,7 +275,7 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           contentSourceId: "preview-main",
           adapter,
           config: rscEnabledConfig,
-          isLocalProject: false,
+          isLocalProject: true,
           mode: "development",
         }),
       );
@@ -1859,7 +1893,8 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
           }),
         );
 
-        assertEquals(renderB?.status, 200);
+        assertEquals(renderB?.status, 503);
+        assertEquals(renderB?.headers.get("cache-control"), "no-store");
       } finally {
         __resetRSCHandlerForTests();
         setEnv(DEPENDENCY_PINNING_ENV_FLAG, originalFlag ?? "");

@@ -36,7 +36,12 @@ function formatWebhook(webhook: WebhookDefinition): string {
 async function handleWebhookList(_args: ParsedArgs): Promise<void> {
   const projectDir = Deno.cwd();
   await withProjectSourceContext(projectDir, async ({ adapter, config }) => {
-    const result = await discoverWebhooks({ projectDir, adapter, config });
+    const result = await discoverWebhooks({
+      projectDir,
+      adapter,
+      config,
+      allowHostProjectCodeExecution: true,
+    });
     await outputTriggerList({
       command: "webhooks",
       items: result.items,
@@ -68,7 +73,12 @@ export async function handleWebhookCommand(args: ParsedArgs): Promise<void> {
 
   await withProjectSourceContext(projectDir, async (context) => {
     const { adapter, config, configCacheKey, projectId } = context;
-    const result = await discoverWebhooks({ projectDir, adapter, config });
+    const result = await discoverWebhooks({
+      projectDir,
+      adapter,
+      config,
+      allowHostProjectCodeExecution: true,
+    });
     if (result.errors.length > 0) {
       throw new Error(`Webhook discovery failed: ${result.errors[0]?.message}`);
     }

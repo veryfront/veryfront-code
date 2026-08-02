@@ -6,13 +6,19 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { discoverSourceTriggers } from "./discovery.ts";
+import { discoverSourceTriggers as discoverSourceTriggersRaw } from "./discovery.ts";
 import { runTriggerTarget } from "./local-runner.ts";
 
 interface FixtureTrigger {
   id: string;
   marker: string;
 }
+
+const discoverSourceTriggers: typeof discoverSourceTriggersRaw = (options) =>
+  discoverSourceTriggersRaw({
+    ...options,
+    allowHostProjectCodeExecution: true,
+  });
 
 function normalizePath(path: string): string {
   return path.replace(/^\/project\/?/, "").replace(/^\/+/, "");

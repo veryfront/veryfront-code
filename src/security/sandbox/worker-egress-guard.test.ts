@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   assertWorkerEgressAllowed,
@@ -9,9 +9,36 @@ import {
   guardedWorkerConnectTls,
   isInternalEgressIp,
   isInternalEgressOverrideEnabled,
+  startWorkerEgressBroker,
+  startWorkerEgressSocksProxy,
   WORKER_INTERNAL_EGRESS_OVERRIDE_ENV,
   WorkerEgressBlockedError,
 } from "./worker-egress-guard.ts";
+import type { WorkerEgressFetch } from "./worker-egress-guard.ts";
+
+async function beforeDeadline<T>(
+  operation: Promise<T>,
+  message: string,
+  timeoutMs = 2_000,
+): Promise<T> {
+  let timeout: number | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+  try {
+    return await Promise.race([operation, deadline]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function closeTestConnection(connection: Deno.Conn): void {
+  try {
+    connection.close();
+  } catch {
+    // The proxy may already have closed the peer during admission or shutdown.
+  }
+}
 
 describe("worker-egress-guard", () => {
   it("identifies loopback, metadata, private, and link-local addresses", () => {
@@ -269,6 +296,178 @@ describe("worker-egress-guard", () => {
   });
 });
 
+describe("worker-egress-guard admission and shutdown", () => {
+  it("caps simultaneous SOCKS handshakes and drains admitted handlers on close", async () => {
+    const proxy = startWorkerEgressSocksProxy({ allowInternalEgress: true });
+    const connections: Deno.TcpConn[] = [];
+
+    try {
+      connections.push(
+        ...await beforeDeadline(
+          Promise.all(
+            Array.from(
+              { length: 64 },
+              () =>
+                Deno.connect({
+                  hostname: proxy.config.hostname,
+                  port: proxy.config.port,
+                }),
+            ),
+          ),
+          "SOCKS admission flood did not connect in time",
+        ),
+      );
+
+      const outcomes = await beforeDeadline(
+        Promise.all(
+          connections.map(async (connection): Promise<"admitted" | "rejected"> => {
+            const greeting = new Uint8Array([0x05, 0x01, 0x02]);
+            let written = 0;
+            try {
+              while (written < greeting.length) {
+                written += await connection.write(greeting.subarray(written));
+              }
+              const response = new Uint8Array(2);
+              const read = await connection.read(response);
+              return read === 2 && response[0] === 0x05 && response[1] === 0x02
+                ? "admitted"
+                : "rejected";
+            } catch {
+              return "rejected";
+            }
+          }),
+        ),
+        "SOCKS admission decisions did not settle in time",
+      );
+
+      const admitted = outcomes.filter((outcome) => outcome === "admitted").length;
+      const rejected = outcomes.length - admitted;
+      assert(admitted > 0, "the proxy must admit work below its cap");
+      assert(admitted <= 32, "the proxy admitted more than its structural cap");
+      assert(rejected >= 32, "the proxy did not reject the excess flood");
+
+      proxy.close();
+      await beforeDeadline(proxy.closed, "SOCKS proxy did not drain after close");
+      const endOfStreams = await beforeDeadline(
+        Promise.all(
+          connections.map((connection) => connection.read(new Uint8Array(1)).catch(() => null)),
+        ),
+        "SOCKS connections remained open after proxy drain",
+      );
+      assertEquals(endOfStreams.every((read) => read === null), true);
+    } finally {
+      proxy.close();
+      await proxy.closed;
+      for (const connection of connections) closeTestConnection(connection);
+    }
+  });
+
+  it("rejects broker requests above the per-worker admission cap", async () => {
+    const releaseResponses = Promise.withResolvers<void>();
+    const admissionFilled = Promise.withResolvers<void>();
+    let activeTargets = 0;
+    let peakTargets = 0;
+    const targetServer = Deno.serve(
+      { hostname: "127.0.0.1", port: 0, onListen: () => {} },
+      async () => {
+        activeTargets++;
+        peakTargets = Math.max(peakTargets, activeTargets);
+        if (activeTargets === 32) admissionFilled.resolve();
+        try {
+          await releaseResponses.promise;
+          return new Response("ok");
+        } finally {
+          activeTargets--;
+        }
+      },
+    );
+    const targetAddress = targetServer.addr;
+    if (targetAddress.transport !== "tcp") {
+      await targetServer.shutdown();
+      throw new Error("expected a TCP target server");
+    }
+
+    const broker = startWorkerEgressBroker({ allowInternalEgress: true });
+    const requests = Array.from(
+      { length: 64 },
+      () =>
+        guardedEgressFetch(`http://127.0.0.1:${targetAddress.port}/`, undefined, {
+          options: { httpBroker: broker.config.httpBroker },
+        }),
+    );
+    const settledRequests = Promise.allSettled(requests);
+
+    try {
+      await beforeDeadline(
+        admissionFilled.promise,
+        "broker did not fill its bounded admission window",
+      );
+      releaseResponses.resolve();
+      const results = await beforeDeadline(
+        settledRequests,
+        "broker flood did not settle after releasing admitted requests",
+      );
+      const fulfilled = results.filter(
+        (result): result is PromiseFulfilledResult<Response> => result.status === "fulfilled",
+      );
+      const rejected = results.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+
+      assertEquals(peakTargets, 32);
+      assertEquals(fulfilled.length, 32);
+      assertEquals(rejected.length, 32);
+      assertEquals(
+        rejected.every((result) =>
+          result.reason instanceof WorkerEgressBlockedError &&
+          result.reason.message.includes("admission limit")
+        ),
+        true,
+      );
+      await Promise.all(
+        fulfilled.map((result) => result.value.body?.cancel().catch(() => undefined)),
+      );
+    } finally {
+      releaseResponses.resolve();
+      broker.close();
+      await beforeDeadline(
+        Promise.all([broker.closed, settledRequests]).then(() => undefined),
+        "broker flood did not drain during cleanup",
+      );
+      await targetServer.shutdown();
+    }
+  });
+
+  it("aborts and drains a broker request stalled during SOCKS resolution", async () => {
+    const resolutionStarted = Promise.withResolvers<void>();
+    const broker = startWorkerEgressBroker({
+      resolveHost: () => {
+        resolutionStarted.resolve();
+        return new Promise<string[]>(() => {});
+      },
+    });
+    const pending = guardedEgressFetch("http://stalled.invalid/", undefined, {
+      options: { httpBroker: broker.config.httpBroker },
+    }).then(
+      () => null,
+      (error: unknown) => error,
+    );
+
+    try {
+      await beforeDeadline(
+        resolutionStarted.promise,
+        "stalled broker request did not reach host resolution",
+      );
+      broker.close();
+      await beforeDeadline(broker.closed, "broker did not drain its stalled request");
+      assert(await pending instanceof Error);
+    } finally {
+      broker.close();
+      await broker.closed;
+    }
+  });
+});
+
 describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
   function redirectTo(location: string, status = 302): Response {
     return new Response(null, { status, headers: { location } });
@@ -328,7 +527,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
   it("blocks a public URL that redirects to an internal address", async () => {
     let calls = 0;
-    const fetchImpl: typeof fetch = (input) => {
+    const fetchImpl: WorkerEgressFetch = (input) => {
       calls++;
       const url = input instanceof Request ? input.url : String(input);
       if (url.startsWith("http://93.184.216.34")) {
@@ -346,7 +545,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
   });
 
   it("follows a public -> public redirect chain and returns the final response", async () => {
-    const fetchImpl: typeof fetch = (input) => {
+    const fetchImpl: WorkerEgressFetch = (input) => {
       const url = input instanceof Request ? input.url : String(input);
       if (url === "http://93.184.216.34/a") {
         return Promise.resolve(redirectTo("http://93.184.216.35/b"));
@@ -365,7 +564,8 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
   });
 
   it("returns the redirect unfollowed when redirect mode is 'manual'", async () => {
-    const fetchImpl: typeof fetch = () => Promise.resolve(redirectTo("http://169.254.169.254/x"));
+    const fetchImpl: WorkerEgressFetch = () =>
+      Promise.resolve(redirectTo("http://169.254.169.254/x"));
     const res = await guardedEgressFetch(
       "http://93.184.216.34/a",
       { redirect: "manual" },
@@ -376,7 +576,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
   it("cancels an unexposed redirect body when redirect mode is 'error'", async () => {
     let cancellations = 0;
-    const fetchImpl: typeof fetch = () =>
+    const fetchImpl: WorkerEgressFetch = () =>
       Promise.resolve(
         new Response(
           new ReadableStream({
@@ -402,7 +602,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
   it("throws after exceeding the maximum redirect count", async () => {
     let cancellations = 0;
-    const fetchImpl: typeof fetch = () =>
+    const fetchImpl: WorkerEgressFetch = () =>
       Promise.resolve(
         new Response(
           new ReadableStream({
@@ -422,7 +622,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
   it("strips Authorization and Cookie on a cross-origin redirect", async () => {
     const seen: Array<{ auth: string | null; cookie: string | null }> = [];
-    const fetchImpl: typeof fetch = (input, init) => {
+    const fetchImpl: WorkerEgressFetch = (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       const headers = new Headers(init?.headers);
       seen.push({ auth: headers.get("authorization"), cookie: headers.get("cookie") });
@@ -444,7 +644,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
   it("preserves Authorization on a same-origin redirect", async () => {
     const seen: Array<string | null> = [];
-    const fetchImpl: typeof fetch = (input, init) => {
+    const fetchImpl: WorkerEgressFetch = (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       seen.push(new Headers(init?.headers).get("authorization"));
       if (url === "http://93.184.216.34/a") {
@@ -485,7 +685,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     for (const testCase of cases) {
       const seen: Array<{ method: string | undefined; body: BodyInit | null | undefined }> = [];
       let calls = 0;
-      const fetchImpl: typeof fetch = (_input, init) => {
+      const fetchImpl: WorkerEgressFetch = (_input, init) => {
         seen.push({ method: init?.method, body: init?.body });
         calls++;
         return Promise.resolve(
@@ -511,7 +711,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
   it("removes request body headers when a redirect downgrades to GET", async () => {
     const seenHeaders: Headers[] = [];
     let calls = 0;
-    const fetchImpl: typeof fetch = (_input, init) => {
+    const fetchImpl: WorkerEgressFetch = (_input, init) => {
       seenHeaders.push(new Headers(init?.headers));
       calls++;
       return Promise.resolve(
@@ -551,7 +751,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
   it("blocks a redirect to a non-http(s) scheme (e.g. file://)", async () => {
     let calls = 0;
-    const fetchImpl: typeof fetch = (input) => {
+    const fetchImpl: WorkerEgressFetch = (input) => {
       calls++;
       const url = input instanceof Request ? input.url : String(input);
       if (url.startsWith("http://93.184.216.34")) {
@@ -571,7 +771,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
   it("preserves the abort signal across redirect hops", async () => {
     const controller = new AbortController();
     const seenSignals: Array<AbortSignal | null | undefined> = [];
-    const fetchImpl: typeof fetch = (input, init) => {
+    const fetchImpl: WorkerEgressFetch = (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       seenSignals.push(init?.signal);
       if (url === "http://93.184.216.34/a") {
@@ -595,7 +795,7 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     // compare against request.signal, not controller.signal.
     const request = new Request("http://93.184.216.34/a", { signal: controller.signal });
     let seenSignal: AbortSignal | null | undefined;
-    const fetchImpl: typeof fetch = (_input, init) => {
+    const fetchImpl: WorkerEgressFetch = (_input, init) => {
       seenSignal = init?.signal;
       return Promise.resolve(new Response("ok", { status: 200 }));
     };
