@@ -60,7 +60,7 @@ export function ToggleGroupItem(
         "text-[var(--foreground)] hover:bg-[var(--accent)]",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--background)]",
         "data-[state=on]:bg-[var(--secondary)] data-[state=on]:text-[var(--foreground)]",
-        "disabled:pointer-events-none disabled:opacity-50",
+        "disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50",
         "[&_svg]:size-4 [&_svg]:shrink-0",
         className,
       )}

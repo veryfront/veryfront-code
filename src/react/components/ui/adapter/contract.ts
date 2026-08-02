@@ -1,6 +1,6 @@
 /**
  * UI primitive-adapter contract (RFC 0001: bring-your-own UI primitive
- * adapters). A behavioural primitive is split into a **Skin** (our Tailwind /
+ * adapters). A behavioural primitive is split into a **Skin** (Tailwind /
  * `cva` / `[var(--token)]` classes, authored once) and **Mechanics** (focus,
  * dismiss, positioning, ARIA, keyboard) supplied by a swappable **adapter**.
  *

@@ -143,6 +143,11 @@ function runToggleGroupConformance(
         assert(linkEvent.defaultPrevented, "disabled link prevents navigation");
         assert(linkAuxEvent.defaultPrevented, "disabled link prevents auxiliary navigation");
         assert(link.getAttribute("href") === null, "disabled link removes navigation");
+        assert(link.getAttribute("aria-disabled") === "true", "disabled link exposes its state");
+        assert(
+          link.classList.contains("aria-disabled:opacity-50"),
+          "disabled composed item carries its disabled visual state",
+        );
         assert(link.getAttribute("aria-pressed") === "false", "disabled link stays off");
         assert(
           disabledWrapperClickCount === 0,
