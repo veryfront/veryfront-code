@@ -87,27 +87,15 @@ export default agent({
 When the conversation grows long, the agent compresses older messages into a
 summary while keeping recent messages intact.
 
-### Redis memory
+### Distributed memory
 
-For production deployments where multiple server instances share state:
-
-```ts
-import { agent, createRedisMemory } from "veryfront/agent";
-import { getEnv } from "veryfront";
-import Redis from "ioredis";
-
-const redis = new Redis(getEnv("REDIS_URL"));
-
-export default agent({
-  system: "You are a support agent.",
-  memory: createRedisMemory("support", {
-    type: "redis",
-    client: redis,
-    keyPrefix: "chat:memory:",
-    ttl: 86400, // 24 hours
-  }),
-});
-```
+Agent configuration currently supports `conversation`, `buffer`, and
+`summary` memory. These stores belong to one agent runtime instance. Do not use
+`memory: { type: "redis" }`: the agent schema rejects it because the runtime
+cannot yet construct a Redis store with an authenticated client. For
+multi-instance deployments, keep a conversation on one runtime instance or
+persist and restore the conversation outside the agent until a distributed
+memory extension is configured explicitly.
 
 ## Memory operations
 

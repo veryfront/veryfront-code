@@ -20,10 +20,7 @@ export const getAgentStatusSchema = defineSchema((v) =>
 
 export const getMemoryConfigSchema = defineSchema((v) =>
   v.object({
-    // Keep the public Redis discriminator until RedisMemory and its core export
-    // move together. Removing only schema support would leave the existing
-    // runtime implementation reachable but impossible to configure safely.
-    type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
+    type: v.enum(["conversation", "buffer", "summary"] as const),
     maxTokens: v.number().int().positive().optional(),
     maxMessages: v.number().int().positive().optional(),
     // Persist history across calls on the agent instance. Defaults to true when
