@@ -12,8 +12,8 @@
  * @module react/components/ui/adapter/toast.conformance.test
  */
 import * as React from "react";
-import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createPortal, flushSync } from "react-dom";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertThrows } from "#veryfront/testing/assert.ts";
@@ -21,7 +21,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ToastProvider, ToastViewport, useToast } from "../toast.tsx";
 import { UIAdapterProvider } from "./context.tsx";
 import type { ToastFn, ToastOptions } from "../toast-parts.tsx";
-import type { ToastParts, ToastState } from "./contract.ts";
+import type { ToastParts, ToastProviderProps, ToastState, ToastViewportProps } from "./contract.ts";
 
 function installDomGlobals(dom: JSDOM): () => void {
   const window = dom.window;
@@ -73,7 +73,7 @@ export function runToastConformance(
     return null;
   }
 
-  function mount(providerProps: { maxToasts?: number } = {}) {
+  function mount(providerProps: Omit<ToastProviderProps, "children"> = {}) {
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
       url: "https://example.com/",
     });
@@ -84,6 +84,9 @@ export function runToastConformance(
         <Wrap>
           <ToastProvider {...providerProps}>
             <Probe />
+            {providerProps.viewport === "manual"
+              ? <ToastViewport data-conformance-manual="" />
+              : null}
           </ToastProvider>
         </Wrap>,
       )
@@ -162,6 +165,65 @@ export function runToastConformance(
         h.cleanup();
       }
     });
+
+    it("honours provider duration and per-toast duration overrides", async () => {
+      const h = mount({ duration: 30, viewport: "inline" });
+      try {
+        flushSync(() => api!.toast({ title: "Default duration" }));
+        await waitFor(() => h.text().includes("Default duration"));
+        await waitFor(() => !h.text().includes("Default duration"));
+
+        let persistentId = "";
+        flushSync(() =>
+          persistentId = api!.toast({ title: "Persistent override", duration: Infinity })
+        );
+        await waitFor(() => h.text().includes("Persistent override"));
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        assert(h.text().includes("Persistent override"), "per-toast duration overrides provider");
+        flushSync(() => api!.dismiss(persistentId));
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("routes a manual viewport through the active adapter", async () => {
+      const h = mount({ viewport: "manual" });
+      try {
+        flushSync(() => api!.toast({ title: "Manual owner", duration: Infinity }));
+        await waitFor(() => h.text().includes("Manual owner"));
+        assert(
+          document.querySelector("[data-conformance-manual]"),
+          "active adapter realizes the manual viewport",
+        );
+      } finally {
+        h.cleanup();
+      }
+    });
+
+    it("shares public provider and per-call validation across adapters", () => {
+      assertThrows(
+        () =>
+          renderToString(
+            <Wrap>
+              <ToastProvider maxToasts={51}>
+                <span />
+              </ToastProvider>
+            </Wrap>,
+          ),
+        RangeError,
+        "between 1 and 50",
+      );
+      const h = mount();
+      try {
+        assertThrows(
+          () => api!.toast({ title: "Invalid", duration: 2_147_483_648 }),
+          RangeError,
+          "2147483647",
+        );
+      } finally {
+        h.cleanup();
+      }
+    });
   });
 }
 
@@ -172,35 +234,41 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
 runToastConformance("builtin", BuiltinWrap);
 
 describe("Builtin Toast viewport and timer lifecycle", () => {
-  it("renders no portal during SSR and removes the portal viewport on cleanup", async () => {
-    const html = renderToString(
+  it("hydrates the stable portal host without errors and removes its viewport on cleanup", async () => {
+    const tree = (
       <ToastProvider>
         <span>app</span>
-      </ToastProvider>,
+      </ToastProvider>
+    );
+    const html = renderToString(
+      tree,
     );
     assert(!html.includes('aria-label="Notifications"'), "SSR renders no portal viewport");
     assert(html.includes("data-vf-toast-portal-host"), "SSR reserves the stable owned host");
 
-    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const dom = new JSDOM(
+      `<!doctype html><html><body><div id="root">${html}</div></body></html>`,
+    );
     const restore = installDomGlobals(dom);
-    const root = createRoot(document.getElementById("root")!);
+    const recoverableErrors: unknown[] = [];
+    const root = hydrateRoot(document.getElementById("root")!, tree, {
+      onRecoverableError: (error) => recoverableErrors.push(error),
+    });
+    let unmounted = false;
     try {
-      flushSync(() =>
-        root.render(
-          <ToastProvider>
-            <span>app</span>
-          </ToastProvider>,
-        )
-      );
       await waitFor(() =>
         document.body.querySelectorAll('[aria-label="Notifications"]').length === 1
       );
+      assert(recoverableErrors.length === 0, "hydration reports no recoverable errors");
       flushSync(() => root.unmount());
+      unmounted = true;
       assert(
         document.body.querySelectorAll('[aria-label="Notifications"]').length === 0,
         "portal viewport is removed on unmount",
       );
     } finally {
+      if (!unmounted) flushSync(() => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
       restore();
     }
   });
@@ -440,84 +508,152 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
 
 // ---------------------------------------------------------------------------
 // Independent 2nd ToastParts: a byte-for-byte-different queue (useReducer,
-// a bare <ul>, no Toast surface / no auto-dismiss timer) satisfying the same
+// a bare <ol>, and its own timer) satisfying the same
 // contract. The skin + suite above are unchanged; passing them here proves the
 // `toast` adapter boundary is a real seam a third engine (Sonner) can fill.
 // ---------------------------------------------------------------------------
 interface AltRecord {
   id: string;
+  duration: number;
   options?: ToastOptions;
   render?: (id: string) => React.ReactNode;
 }
 const AltContext = React.createContext<
-  (ToastState & { toasts: AltRecord[] }) | null
+  (ToastState & { toasts: AltRecord[]; viewport: "portal" | "inline" | "manual" }) | null
 >(null);
 
 function AltProvider(
-  { children, maxToasts = 100 }: {
-    children: React.ReactNode;
-    duration?: number;
-    maxToasts?: number;
-  },
+  { children, duration = 5000, maxToasts = 5, viewport = "portal" }: ToastProviderProps,
 ): React.ReactElement {
   const [toasts, dispatch] = React.useReducer(
-    (list: AltRecord[], action: { type: "add"; rec: AltRecord } | { type: "remove"; id: string }) =>
+    (
+      list: AltRecord[],
+      action:
+        | { type: "add"; rec: AltRecord; maxToasts: number }
+        | { type: "remove"; id: string }
+        | { type: "trim"; maxToasts: number },
+    ) =>
       action.type === "add"
-        ? [...list, action.rec].slice(-maxToasts)
-        : list.filter((t) => t.id !== action.id),
+        ? [...list, action.rec].slice(-action.maxToasts)
+        : action.type === "remove"
+        ? list.filter((t) => t.id !== action.id)
+        : list.slice(-action.maxToasts),
     [],
   );
+  const [portalHost, setPortalHost] = React.useState<HTMLDivElement | null>(null);
   const idRef = React.useRef(0);
+  React.useLayoutEffect(() => dispatch({ type: "trim", maxToasts }), [maxToasts]);
   const dismiss = React.useCallback((id: string) => dispatch({ type: "remove", id }), []);
   const toast = React.useMemo<ToastFn>(() => {
     const add = (rec: Omit<AltRecord, "id">) => {
       const id = `alt-${idRef.current++}`;
-      dispatch({ type: "add", rec: { ...rec, id } });
+      dispatch({ type: "add", rec: { ...rec, id }, maxToasts });
       return id;
     };
-    const fn = ((options: ToastOptions) => add({ options })) as ToastFn;
-    fn.custom = (render: (id: string) => React.ReactNode) => add({ render });
+    const fn = ((options: ToastOptions) =>
+      add({ options, duration: options.duration ?? duration })) as ToastFn;
+    fn.custom = (render: (id: string) => React.ReactNode) =>
+      add({ render, duration });
     return fn;
-  }, []);
-  const value = React.useMemo(() => ({ toast, dismiss, toasts }), [toast, dismiss, toasts]);
+  }, [duration, maxToasts]);
+  const value = React.useMemo(
+    () => ({ toast, dismiss, toasts, viewport }),
+    [toast, dismiss, toasts, viewport],
+  );
   return (
     <AltContext.Provider value={value}>
       {children}
-      <ul aria-label="alt-toasts">
-        {toasts.map((t) => (
-          <li key={t.id}>
-            {t.render ? t.render(t.id) : (
-              <>
-                <span>{t.options?.title}</span>
-                {t.options?.action
-                  ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        t.options!.action!.onClick();
-                        dismiss(t.id);
-                      }}
-                    >
-                      {t.options.action.label}
-                    </button>
-                  )
-                  : null}
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+      {viewport === "inline" ? <AltViewportContents /> : null}
+      {viewport === "portal"
+        ? (
+          <>
+            <div
+              ref={setPortalHost}
+              data-alt-toast-portal-host=""
+              style={{ display: "contents" }}
+            />
+            {portalHost ? createPortal(<AltViewportContents />, portalHost) : null}
+          </>
+        )
+        : null}
     </AltContext.Provider>
   );
 }
 
-function useAltToast(): ToastState {
+function useAltContext(): NonNullable<React.ContextType<typeof AltContext>> {
   const ctx = React.useContext(AltContext);
   if (!ctx) throw new Error("useToast must be used within a <ToastProvider>");
+  return ctx;
+}
+
+function AltViewport(props: ToastViewportProps): React.ReactElement {
+  const ctx = useAltContext();
+  if (ctx.viewport !== "manual") {
+    throw new Error('ToastViewport requires <ToastProvider viewport="manual">');
+  }
+  return <AltViewportContents {...props} />;
+}
+
+function AltViewportContents(props: ToastViewportProps = {}): React.ReactElement {
+  const { toasts, dismiss } = useAltContext();
+  return (
+    <ol aria-label="alt-toasts" {...props}>
+      {toasts.map((record) => (
+        <AltToastItem
+          key={record.id}
+          record={record}
+          dismiss={dismiss}
+        />
+      ))}
+    </ol>
+  );
+}
+
+function AltToastItem(
+  { record, dismiss }: { record: AltRecord; dismiss: (id: string) => void },
+): React.ReactElement {
+  React.useEffect(() => {
+    if (record.duration === 0 || record.duration === Infinity) return;
+    const timer = setTimeout(() => dismiss(record.id), record.duration);
+    return () => clearTimeout(timer);
+  }, [dismiss, record.duration, record.id]);
+  return (
+    <li>
+      {record.render ? record.render(record.id) : (
+        <>
+          <span>{record.options?.title}</span>
+          {record.options?.action
+            ? (
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    record.options!.action!.onClick();
+                  } finally {
+                    dismiss(record.id);
+                  }
+                }}
+              >
+                {record.options.action.label}
+              </button>
+            )
+            : null}
+        </>
+      )}
+    </li>
+  );
+}
+
+function useAltToast(): ToastState {
+  const ctx = useAltContext();
   return { toast: ctx.toast, dismiss: ctx.dismiss };
 }
 
-const altToast: ToastParts = { Provider: AltProvider, useToast: useAltToast };
+const altToast: ToastParts = {
+  Provider: AltProvider,
+  Viewport: AltViewport,
+  useToast: useAltToast,
+};
 
 function AltWrap({ children }: { children: React.ReactNode }): React.ReactElement {
   return (

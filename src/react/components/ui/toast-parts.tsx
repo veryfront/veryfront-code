@@ -14,6 +14,18 @@ import { composeRefs } from "./slot.tsx";
 /** Largest delay accepted by browser and server JavaScript timer hosts. */
 export const MAX_TOAST_DURATION_MS = 2_147_483_647;
 
+/** Enforce the timer-domain duration shared by public and adapter-owned toast lifecycle APIs. */
+export function assertToastDuration(value: number, label: string): void {
+  if (
+    value !== Infinity &&
+    (!Number.isFinite(value) || value < 0 || value > MAX_TOAST_DURATION_MS)
+  ) {
+    throw new RangeError(
+      `${label} must be between 0 and ${MAX_TOAST_DURATION_MS}, or Infinity`,
+    );
+  }
+}
+
 export const toastVariants = cva(
   "pointer-events-auto relative flex w-full items-start gap-3 rounded-lg border border-[var(--edge)] bg-[var(--popover)] p-4 pr-8 text-sm text-[var(--foreground)] shadow-lg",
   {
@@ -95,11 +107,7 @@ export function useAutoDismiss(
 
   React.useEffect(() => {
     if (duration == null || duration === Infinity || duration === 0) return;
-    if (!Number.isFinite(duration) || duration < 0 || duration > MAX_TOAST_DURATION_MS) {
-      throw new RangeError(
-        `Toast duration must be between 0 and ${MAX_TOAST_DURATION_MS}, or Infinity`,
-      );
-    }
+    assertToastDuration(duration, "Toast duration");
     if (options.paused || documentHidden) return;
     const startedAt = Date.now();
     const timer = setTimeout(() => onCloseRef.current?.(), remainingRef.current);

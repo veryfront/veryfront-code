@@ -108,6 +108,7 @@ export function Accordion({
     } else {
       next = open.includes(itemValue) ? open.filter((v) => v !== itemValue) : [...open, itemValue];
     }
+    if (next.length === open.length && next.every((item, index) => item === open[index])) return;
     if (!isControlled) setInternal(next);
     if (type === "single") {
       (onValueChange as ((value: string) => void) | undefined)?.(next[0] ?? "");
@@ -167,10 +168,9 @@ export function AccordionItem(
   const root = useAccordionContext();
   const open = root.value.includes(value);
   const generatedId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
-  const childIds = findAccordionPartIds(children);
-  const triggerId = explicitTriggerId ?? childIds.triggerId ??
+  const triggerId = explicitTriggerId ??
     `vf-accordion-${generatedId}-trigger`;
-  const contentId = explicitContentId ?? childIds.contentId ??
+  const contentId = explicitContentId ??
     `vf-accordion-${generatedId}-content`;
   const itemContext = React.useMemo(
     () => ({ triggerId, contentId }),
@@ -265,21 +265,4 @@ export function AccordionContent(
       {children}
     </disclosure.Content>
   );
-}
-
-function findAccordionPartIds(children: React.ReactNode): {
-  triggerId?: string;
-  contentId?: string;
-} {
-  const result: { triggerId?: string; contentId?: string } = {};
-  const visit = (nodes: React.ReactNode): void => {
-    React.Children.forEach(nodes, (child) => {
-      if (!React.isValidElement<{ id?: string; children?: React.ReactNode }>(child)) return;
-      if (child.type === AccordionTrigger && child.props.id) result.triggerId ??= child.props.id;
-      if (child.type === AccordionContent && child.props.id) result.contentId ??= child.props.id;
-      if (child.type === React.Fragment) visit(child.props.children);
-    });
-  };
-  visit(children);
-  return result;
 }

@@ -59,6 +59,13 @@ function click(node: Element): MouseEvent {
   return event;
 }
 
+function auxClick(node: Element): MouseEvent {
+  const MouseEventCtor = (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
+  const event = new MouseEventCtor("auxclick", { bubbles: true, button: 1, cancelable: true });
+  flushSync(() => node.dispatchEvent(event));
+  return event;
+}
+
 function runDisclosureConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
@@ -124,18 +131,28 @@ function runDisclosureConformance(
     it("prevents disabled asChild link navigation", () => {
       let disabledWrapperClickCount = 0;
       let disabledChildClickCount = 0;
+      let disabledWrapperAuxClickCount = 0;
+      let disabledChildAuxClickCount = 0;
       const { host, unmount } = render(
         <Wrap>
           <DisclosureAsChildProbe
             onClick={() => disabledWrapperClickCount += 1}
             onChildClick={() => disabledChildClickCount += 1}
+            onAuxClick={() => disabledWrapperAuxClickCount += 1}
+            onChildAuxClick={() => disabledChildAuxClickCount += 1}
           />
         </Wrap>,
       );
       try {
         const link = host.querySelector("a")!;
         const event = click(link);
+        const auxiliaryEvent = auxClick(link);
         assert(event.defaultPrevented, "disabled composed link prevents its default action");
+        assert(
+          auxiliaryEvent.defaultPrevented,
+          "disabled composed link prevents auxiliary default action",
+        );
+        assert(link.getAttribute("href") === null, "disabled composed link removes navigation");
         assert(link.getAttribute("aria-expanded") === "false", "disabled link stays closed");
         assert(
           disabledWrapperClickCount === 0,
@@ -144,6 +161,14 @@ function runDisclosureConformance(
         assert(
           disabledChildClickCount === 0,
           "disabled composed trigger skips its child click handler",
+        );
+        assert(
+          disabledWrapperAuxClickCount === 0,
+          "disabled composed trigger skips its wrapper auxiliary handler",
+        );
+        assert(
+          disabledChildAuxClickCount === 0,
+          "disabled composed trigger skips its child auxiliary handler",
         );
       } finally {
         unmount();
@@ -191,16 +216,28 @@ function DisclosureAsChildProbe(
   {
     onClick,
     onChildClick,
+    onAuxClick,
+    onChildAuxClick,
   }: {
     onClick?: React.MouseEventHandler<HTMLButtonElement>;
     onChildClick?: React.MouseEventHandler<HTMLAnchorElement>;
+    onAuxClick?: React.MouseEventHandler<HTMLButtonElement>;
+    onChildAuxClick?: React.MouseEventHandler<HTMLAnchorElement>;
   },
 ): React.ReactElement {
   const { disclosure } = useAdapter();
   return (
     <disclosure.Root disabled>
-      <disclosure.Trigger asChild onClick={onClick}>
-        <a href="#navigated" onClickCapture={onChildClick} onClick={onChildClick}>Toggle</a>
+      <disclosure.Trigger asChild onClick={onClick} onAuxClick={onAuxClick}>
+        <a
+          href="#navigated"
+          onClickCapture={onChildClick}
+          onClick={onChildClick}
+          onAuxClickCapture={onChildAuxClick}
+          onAuxClick={onChildAuxClick}
+        >
+          Toggle
+        </a>
       </disclosure.Trigger>
       <disclosure.Content>Body</disclosure.Content>
     </disclosure.Root>

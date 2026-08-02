@@ -41,7 +41,8 @@
  */
 import * as React from "react";
 import { useAdapter } from "./adapter/context.tsx";
-import type { ToastState } from "./adapter/contract.ts";
+import type { ToastProviderProps, ToastState, ToastViewportProps } from "./adapter/contract.ts";
+import { assertToastDuration, type ToastFn, type ToastOptions } from "./toast-parts.tsx";
 
 // Presentational parts + option types (pure visual, no queue): re-exported so
 // consumers import them from `veryfront/ui` as before.
@@ -57,25 +58,9 @@ export {
   type ToastVariant,
 } from "./toast-parts.tsx";
 
-// The builtin viewport is engine-specific. Set `viewport="manual"` on the
-// provider before rendering this export (or its `Toaster` alias).
-export {
-  ToastViewport,
-  ToastViewport as Toaster,
-  type ToastViewportProps,
-} from "./adapter/builtin/toast.tsx";
+export type { ToastProviderProps, ToastViewportProps } from "./adapter/contract.ts";
 
-/** Props accepted by `<ToastProvider>`. */
-export interface ToastProviderProps {
-  /** Subtree that can enqueue toasts via `useToast()`. */
-  children: React.ReactNode;
-  /** Default milliseconds before a toast auto-dismisses, unless the call overrides it. @default 5000 */
-  duration?: number;
-  /** Maximum queued notifications (1 to 50); oldest entries are evicted first. @default 5 */
-  maxToasts?: number;
-  /** Viewport ownership. Portal is hydration-safe; manual requires rendering ToastViewport. @default "portal" */
-  viewport?: "portal" | "inline" | "manual";
-}
+const MAX_TOASTS = 50;
 
 /**
  * Holds the toast queue (via the active adapter: builtin by default) and mounts
@@ -84,6 +69,15 @@ export interface ToastProviderProps {
 export function ToastProvider(
   { children, duration, maxToasts, viewport }: ToastProviderProps,
 ): React.ReactElement {
+  if (duration !== undefined) assertToastDuration(duration, "ToastProvider duration");
+  if (
+    maxToasts !== undefined &&
+    (!Number.isSafeInteger(maxToasts) || maxToasts < 1 || maxToasts > MAX_TOASTS)
+  ) {
+    throw new RangeError(
+      `ToastProvider maxToasts must be an integer between 1 and ${MAX_TOASTS}`,
+    );
+  }
   const { toast } = useAdapter();
   return (
     <toast.Provider duration={duration} maxToasts={maxToasts} viewport={viewport}>
@@ -93,6 +87,13 @@ export function ToastProvider(
 }
 ToastProvider.displayName = "ToastProvider";
 
+/** Render the active adapter's viewport for `<ToastProvider viewport="manual">`. */
+export function ToastViewport(props: ToastViewportProps): React.ReactElement {
+  const { toast } = useAdapter();
+  return <toast.Viewport {...props} />;
+}
+ToastViewport.displayName = "ToastViewport";
+
 /**
  * Returns `{ toast, dismiss }`. Call `toast(options)` to enqueue (returns the new
  * id), `toast.custom((id) => node)` for a fully custom toast, and `dismiss(id)` to
@@ -100,5 +101,18 @@ ToastProvider.displayName = "ToastProvider";
  */
 export function useToast(): ToastState {
   const { toast } = useAdapter();
-  return toast.useToast();
+  const state = toast.useToast();
+  const enqueue = state.toast;
+  const guardedToast = React.useMemo<ToastFn>(() => {
+    const fn = ((options: ToastOptions) => {
+      if (options.duration !== undefined) assertToastDuration(options.duration, "toast duration");
+      return enqueue(options);
+    }) as ToastFn;
+    fn.custom = enqueue.custom;
+    return fn;
+  }, [enqueue]);
+  return React.useMemo(
+    () => ({ toast: guardedToast, dismiss: state.dismiss }),
+    [guardedToast, state.dismiss],
+  );
 }

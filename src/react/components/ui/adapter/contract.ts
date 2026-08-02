@@ -149,6 +149,24 @@ export interface ToastState {
   dismiss: (id: string) => void;
 }
 
+/** Normalized queue and viewport options every toast adapter provider accepts. */
+export interface ToastProviderProps {
+  /** Subtree that can enqueue toasts through the adapter hook. */
+  children: React.ReactNode;
+  /** Default milliseconds before auto-dismiss, unless the call overrides it. @default 5000 */
+  duration?: number;
+  /** Maximum queued notifications; oldest entries are evicted first. @default 5 */
+  maxToasts?: number;
+  /** Whether the adapter owns a portal/inline viewport or the caller renders it. @default "portal" */
+  viewport?: "portal" | "inline" | "manual";
+}
+
+/** Normalized props for an adapter-owned manual toast viewport. */
+export interface ToastViewportProps extends React.HTMLAttributes<HTMLOListElement> {
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLOListElement>;
+}
+
 /**
  * Toast is imperative (a queue + hook), not a floating surface, so its adapter
  * slot is `Provider` + `useToast` rather than role-tagged render slots. The
@@ -157,12 +175,9 @@ export interface ToastState {
  */
 export interface ToastParts {
   /** Owns the toast queue and mounts its viewport. */
-  Provider: React.FC<{
-    children: React.ReactNode;
-    duration?: number;
-    maxToasts?: number;
-    viewport?: "portal" | "inline" | "manual";
-  }>;
+  Provider: React.FC<ToastProviderProps>;
+  /** Renders the active adapter's viewport when Provider uses manual ownership. */
+  Viewport: React.FC<ToastViewportProps>;
   /** Read the imperative `{ toast, dismiss }` API. Throws outside a `ToastProvider`. */
   useToast: () => ToastState;
 }

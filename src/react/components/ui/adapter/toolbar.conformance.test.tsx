@@ -9,7 +9,7 @@
  */
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
@@ -74,6 +74,14 @@ function keydown(node: Element, key: string): void {
   flushSync(() =>
     node.dispatchEvent(new KeyboardEventCtor("keydown", { bubbles: true, cancelable: true, key }))
   );
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
+  const startedAt = Date.now();
+  while (!condition()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("timed out waiting for toolbar");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
@@ -252,6 +260,40 @@ describe("Builtin Toolbar SSR ownership", () => {
     const items = [...document.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
     assert(root.tabIndex === 0, "toolbar root owns the pre-hydration tab stop");
     assert(items.length === 3 && items.every((item) => item.tabIndex === -1), "items opt out");
+  });
+
+  it("hydrates to one item-owned tab stop without recoverable errors", async () => {
+    const tree = (
+      <Toolbar>
+        <ToolbarButton>A</ToolbarButton>
+        <ToolbarLink href="#b">B</ToolbarLink>
+        <ToolbarButton>C</ToolbarButton>
+      </Toolbar>
+    );
+    const html = renderToString(tree);
+    const dom = new JSDOM(
+      `<!doctype html><html><body><div id="root">${html}</div></body></html>`,
+      { pretendToBeVisual: true },
+    );
+    const restore = installDom(dom);
+    const host = dom.window.document.getElementById("root")!;
+    const recoverableErrors: unknown[] = [];
+    const reactRoot = hydrateRoot(host, tree, {
+      onRecoverableError: (error) => recoverableErrors.push(error),
+    });
+    try {
+      await waitFor(() => host.querySelector<HTMLElement>('[role="toolbar"]')?.tabIndex === -1);
+      const toolbar = host.querySelector<HTMLElement>('[role="toolbar"]')!;
+      const items = [...host.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
+      assert(recoverableErrors.length === 0, "hydration reports no recoverable errors");
+      assert(toolbar.tabIndex === -1, "root releases the hydrated tab stop");
+      assert(items[0]?.tabIndex === 0, "first enabled item owns the hydrated tab stop");
+      assert(items.slice(1).every((item) => item.tabIndex === -1), "other items remain untabbable");
+    } finally {
+      flushSync(() => reactRoot.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      restore();
+    }
   });
 });
 

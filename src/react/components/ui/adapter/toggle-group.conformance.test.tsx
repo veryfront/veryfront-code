@@ -95,6 +95,8 @@ function runToggleGroupConformance(
     it("blocks native, composed-link, and consumer-cancelled toggles", () => {
       let disabledWrapperClickCount = 0;
       let disabledChildClickCount = 0;
+      let disabledWrapperAuxClickCount = 0;
+      let disabledChildAuxClickCount = 0;
       const { host, unmount } = render(
         <Wrap>
           <ToggleGroup type="multiple" disabled>
@@ -103,11 +105,14 @@ function runToggleGroupConformance(
               value="link"
               asChild
               onClick={() => disabledWrapperClickCount += 1}
+              onAuxClick={() => disabledWrapperAuxClickCount += 1}
             >
               <a
                 href="#disabled"
                 onClickCapture={() => disabledChildClickCount += 1}
                 onClick={() => disabledChildClickCount += 1}
+                onAuxClickCapture={() => disabledChildAuxClickCount += 1}
+                onAuxClick={() => disabledChildAuxClickCount += 1}
               >
                 Link
               </a>
@@ -127,9 +132,17 @@ function runToggleGroupConformance(
         click(native);
         const linkEvent = new MouseEvent("click", { bubbles: true, cancelable: true });
         flushSync(() => link.dispatchEvent(linkEvent));
+        const linkAuxEvent = new MouseEvent("auxclick", {
+          bubbles: true,
+          button: 1,
+          cancelable: true,
+        });
+        flushSync(() => link.dispatchEvent(linkAuxEvent));
         click(cancelled);
         assert(native.getAttribute("aria-pressed") === "false", "disabled button stays off");
         assert(linkEvent.defaultPrevented, "disabled link prevents navigation");
+        assert(linkAuxEvent.defaultPrevented, "disabled link prevents auxiliary navigation");
+        assert(link.getAttribute("href") === null, "disabled link removes navigation");
         assert(link.getAttribute("aria-pressed") === "false", "disabled link stays off");
         assert(
           disabledWrapperClickCount === 0,
@@ -138,6 +151,14 @@ function runToggleGroupConformance(
         assert(
           disabledChildClickCount === 0,
           "disabled composed item skips its child click handler",
+        );
+        assert(
+          disabledWrapperAuxClickCount === 0,
+          "disabled composed item skips its wrapper auxiliary handler",
+        );
+        assert(
+          disabledChildAuxClickCount === 0,
+          "disabled composed item skips its child auxiliary handler",
         );
         assert(cancelled.getAttribute("aria-pressed") === "false", "cancelled item stays off");
       } finally {

@@ -155,17 +155,24 @@ describe("Slot", () => {
     try {
       flushSync(() => {
         root.render(
-          <div onClick={() => calls.push("ancestor")}>
+          <div
+            onClick={() => calls.push("ancestor-click")}
+            onAuxClick={() => calls.push("ancestor-aux")}
+          >
             <Slot
               disabled
               onClickCapture={() => calls.push("slot-capture")}
               onClick={() => calls.push("slot")}
+              onAuxClickCapture={() => calls.push("slot-aux-capture")}
+              onAuxClick={() => calls.push("slot-aux")}
             >
               <a
                 href="/target"
                 tabIndex={0}
                 onClickCapture={() => calls.push("child-capture")}
                 onClick={() => calls.push("child")}
+                onAuxClickCapture={() => calls.push("child-aux-capture")}
+                onAuxClick={() => calls.push("child-aux")}
               >
                 Disabled link
               </a>
@@ -186,6 +193,16 @@ describe("Slot", () => {
       assertEquals(click.defaultPrevented, true);
       assertEquals(calls, []);
       assertEquals(dom.window.location.pathname, "/start");
+
+      const auxClick = new dom.window.MouseEvent("auxclick", {
+        bubbles: true,
+        button: 1,
+        cancelable: true,
+      });
+      link.dispatchEvent(auxClick);
+      assertEquals(auxClick.defaultPrevented, true);
+      assertEquals(calls, []);
+      assertEquals(link.getAttribute("href"), null);
 
       const enter = new dom.window.KeyboardEvent("keydown", {
         bubbles: true,

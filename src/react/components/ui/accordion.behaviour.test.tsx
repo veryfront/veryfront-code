@@ -7,7 +7,7 @@
  */
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot } from "react-dom/client";
+import { createRoot, hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
@@ -59,11 +59,15 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
     for (const custom of [false, true]) {
       const html = renderToString(
         <Accordion>
-          <AccordionItem value="shipping">
-            <AccordionTrigger id={custom ? "shipping-trigger" : undefined}>
+          <AccordionItem
+            value="shipping"
+            triggerId={custom ? "shipping-trigger" : undefined}
+            contentId={custom ? "shipping-content" : undefined}
+          >
+            <AccordionTrigger>
               Shipping
             </AccordionTrigger>
-            <AccordionContent id={custom ? "shipping-content" : undefined}>Body</AccordionContent>
+            <AccordionContent>Body</AccordionContent>
           </AccordionItem>
         </Accordion>,
       );
@@ -123,7 +127,11 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
   it("wraps triggers in headings and wires custom ids bidirectionally", () => {
     const { host, unmount } = render(
       <Accordion>
-        <AccordionItem value="a">
+        <AccordionItem
+          value="a"
+          triggerId="shipping-trigger"
+          contentId="shipping-content"
+        >
           <AccordionTrigger id="shipping-trigger" headingLevel={2}>Shipping</AccordionTrigger>
           <AccordionContent id="shipping-content">Body</AccordionContent>
         </AccordionItem>
@@ -139,6 +147,119 @@ describe("Accordion: disclosure-slot behaviour (builtin)", () => {
       assert(content.getAttribute("aria-labelledby") === trigger.id, "region names trigger");
     } finally {
       unmount();
+    }
+  });
+
+  it("keeps AccordionItem as the synchronous id owner through opaque composition", () => {
+    function ExtractedTrigger(): React.ReactElement {
+      return <AccordionTrigger id="opaque-trigger">Shipping</AccordionTrigger>;
+    }
+    function ExtractedContent(): React.ReactElement {
+      return <AccordionContent id="opaque-content">Body</AccordionContent>;
+    }
+
+    const html = renderToString(
+      <Accordion>
+        <AccordionItem
+          value="shipping"
+          triggerId="opaque-trigger"
+          contentId="opaque-content"
+        >
+          <ExtractedTrigger />
+          <ExtractedContent />
+        </AccordionItem>
+      </Accordion>,
+    );
+    const document = new JSDOM(html).window.document;
+    const trigger = document.querySelector("button")!;
+    const content = document.querySelector<HTMLElement>("[role=region]")!;
+    assert(trigger.id === "opaque-trigger", "opaque trigger receives the item-owned id");
+    assert(content.id === "opaque-content", "opaque content receives the item-owned id");
+    assert(trigger.getAttribute("aria-controls") === content.id, "opaque trigger controls content");
+    assert(content.getAttribute("aria-labelledby") === trigger.id, "opaque content names trigger");
+  });
+
+  it("does not notify controlled or uncontrolled consumers for a non-collapsible no-op", () => {
+    for (const controlled of [false, true]) {
+      const values: string[] = [];
+      const item = (
+        <AccordionItem value="a">
+          <AccordionTrigger>A</AccordionTrigger>
+          <AccordionContent>A body</AccordionContent>
+        </AccordionItem>
+      );
+      const { host, unmount } = render(
+        controlled
+          ? <Accordion value="a" onValueChange={(value) => values.push(value)}>{item}</Accordion>
+          : (
+            <Accordion defaultValue="a" onValueChange={(value) => values.push(value)}>
+              {item}
+            </Accordion>
+          ),
+      );
+      try {
+        click(host.querySelector("button")!);
+        assert(
+          values.length === 0,
+          `${controlled ? "controlled" : "uncontrolled"} no-op is silent`,
+        );
+        assert(
+          host.querySelector("button")?.getAttribute("aria-expanded") === "true",
+          "the open item stays open",
+        );
+      } finally {
+        unmount();
+      }
+    }
+  });
+
+  it("hydrates generated id wiring without recoverable errors", async () => {
+    let hydrated = false;
+    const tree = (
+      <Accordion
+        defaultValue="shipping"
+        ref={() => {
+          hydrated = true;
+        }}
+      >
+        <AccordionItem value="shipping">
+          <AccordionTrigger>Shipping</AccordionTrigger>
+          <AccordionContent>Body</AccordionContent>
+        </AccordionItem>
+      </Accordion>
+    );
+    const html = renderToString(tree);
+    const dom = new JSDOM(
+      `<!doctype html><html><body><div id="root">${html}</div></body></html>`,
+      { pretendToBeVisual: true },
+    );
+    const restore = installDom(dom);
+    const host = dom.window.document.getElementById("root")!;
+    const recoverableErrors: unknown[] = [];
+    const root = hydrateRoot(host, tree, {
+      onRecoverableError: (error) => recoverableErrors.push(error),
+    });
+    try {
+      const startedAt = Date.now();
+      while (!hydrated) {
+        if (Date.now() - startedAt > 3000) throw new Error("timed out waiting for accordion");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      const trigger = host.querySelector("button")!;
+      const content = host.querySelector<HTMLElement>("[role=region]")!;
+      assert(recoverableErrors.length === 0, "hydration reports no recoverable errors");
+      assert(
+        trigger.getAttribute("aria-controls") === content.id,
+        "hydrated trigger controls content",
+      );
+      assert(
+        content.getAttribute("aria-labelledby") === trigger.id,
+        "hydrated content names trigger",
+      );
+    } finally {
+      flushSync(() => root.unmount());
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      restore();
     }
   });
 

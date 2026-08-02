@@ -14,7 +14,7 @@ import { createPortal } from "react-dom";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import { cx as cn } from "../../cva.ts";
 import {
-  MAX_TOAST_DURATION_MS,
+  assertToastDuration,
   Toast,
   ToastClose,
   ToastDescription,
@@ -23,7 +23,12 @@ import {
   ToastTitle,
   useAutoDismiss,
 } from "../../toast-parts.tsx";
-import type { ToastParts, ToastState } from "../contract.ts";
+import type {
+  ToastParts,
+  ToastProviderProps,
+  ToastState,
+  ToastViewportProps,
+} from "../contract.ts";
 
 interface ToastRecord extends ToastOptions {
   /** Stable identifier used as the React key and dismiss handle. */
@@ -38,7 +43,6 @@ interface BuiltinToastContextValue extends ToastState {
 }
 
 const DEFAULT_MAX_TOASTS = 5;
-const MAX_TOASTS = 50;
 
 const [ToastContext, useToastContext] = createStrictContext<BuiltinToastContextValue>(
   "useToast",
@@ -47,17 +51,9 @@ const [ToastContext, useToastContext] = createStrictContext<BuiltinToastContextV
 
 /** Builtin provider: owns the queue, exposes `{ toast, dismiss }`, mounts the viewport. */
 function BuiltinToastProvider(
-  { children, duration = 5000, maxToasts = DEFAULT_MAX_TOASTS, viewport = "portal" }: {
-    children: React.ReactNode;
-    duration?: number;
-    maxToasts?: number;
-    viewport?: "portal" | "inline" | "manual";
-  },
+  { children, duration = 5000, maxToasts = DEFAULT_MAX_TOASTS, viewport = "portal" }:
+    ToastProviderProps,
 ): React.ReactElement {
-  assertDuration(duration, "ToastProvider duration");
-  if (!Number.isSafeInteger(maxToasts) || maxToasts < 1 || maxToasts > MAX_TOASTS) {
-    throw new RangeError(`ToastProvider maxToasts must be an integer between 1 and ${MAX_TOASTS}`);
-  }
   const [toasts, setToasts] = React.useState<ToastRecord[]>([]);
   const [portalHost, setPortalHost] = React.useState<HTMLDivElement | null>(null);
   const idRef = React.useRef(0);
@@ -71,7 +67,7 @@ function BuiltinToastProvider(
   }, []);
 
   const enqueue = React.useCallback((record: Omit<ToastRecord, "id">) => {
-    assertDuration(record.duration ?? duration, "toast duration");
+    assertToastDuration(record.duration ?? duration, "toast duration");
     const id = `toast-${idRef.current++}`;
     setToasts((list) => [...list, { duration, ...record, id }].slice(-maxToasts));
     return id;
@@ -109,26 +105,9 @@ function BuiltinToastProvider(
 }
 BuiltinToastProvider.displayName = "BuiltinToastProvider";
 
-function assertDuration(value: number, label: string): void {
-  if (
-    value !== Infinity &&
-    (!Number.isFinite(value) || value < 0 || value > MAX_TOAST_DURATION_MS)
-  ) {
-    throw new RangeError(
-      `${label} must be between 0 and ${MAX_TOAST_DURATION_MS}, or Infinity`,
-    );
-  }
-}
-
 function useBuiltinToast(): ToastState {
   const { toast, dismiss } = useToastContext();
   return { toast, dismiss };
-}
-
-/** Props accepted by `<ToastViewport>`. */
-export interface ToastViewportProps extends React.HTMLAttributes<HTMLOListElement> {
-  /** React 19: ref is a regular prop. */
-  ref?: React.Ref<HTMLOListElement>;
 }
 
 /**
@@ -281,5 +260,6 @@ function CustomToastItem(
 /** The builtin (zero-dependency) Toast engine, as `ToastParts`. */
 export const builtinToast: ToastParts = {
   Provider: BuiltinToastProvider,
+  Viewport: ToastViewport,
   useToast: useBuiltinToast,
 };
