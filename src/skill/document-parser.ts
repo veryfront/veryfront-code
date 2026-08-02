@@ -5,7 +5,7 @@
  * dispatch and captures the decoded value as an owned data-only mapping.
  */
 
-import { resolve, tryResolve } from "../extensions/contracts.ts";
+import { resolve } from "../extensions/contracts.ts";
 import {
   type SkillDocumentParserProvider,
   SkillDocumentParserProviderName,
@@ -402,110 +402,4 @@ export function parseBoundedSkillDocument(
     frontmatter: snapshotSkillFrontmatterMapping(decoded),
     body: envelope.body,
   };
-}
-
-/**
- * Decode a Skill document through the extension boundary without applying the
- * strict document or decoded-value budgets.
- *
- * @deprecated Compatibility-only. New filesystem and hosted boundaries must
- * use {@link parseBoundedSkillDocument}.
- */
-export function parseUnsafeLegacySkillDocument(
-  content: string,
-  provider?: SkillDocumentParserProvider,
-): ParsedSkillContent {
-  if (typeof content !== "string") {
-    throw new NativeTypeError("Skill document content must be a string");
-  }
-
-  const envelope = splitSkillDocumentEnvelope(content);
-  if (envelope.frontmatterSource === undefined) {
-    return { frontmatter: {}, body: envelope.body };
-  }
-  const normalized = call<string>(
-    stringTrim,
-    envelope.frontmatterSource,
-    [],
-  );
-  if (normalized.length === 0) {
-    return { frontmatter: {}, body: envelope.body };
-  }
-
-  const resolved = provider === undefined
-    ? tryResolve<unknown>(SkillDocumentParserProviderName)
-    : provider;
-  if (resolved === undefined) {
-    return parseUnsafeLegacySkillDocumentFallback(content);
-  }
-  const parser = snapshotSkillDocumentParserProvider(resolved);
-  const decoded = parser.parseFrontmatter(envelope.frontmatterSource);
-  if (
-    decoded === null || typeof decoded !== "object" ||
-    call(arrayIsArray, Array, [decoded])
-  ) {
-    throw new NativeTypeError("Skill frontmatter must decode to a mapping");
-  }
-
-  return {
-    frontmatter: decoded as Record<string, unknown>,
-    body: envelope.body,
-  };
-}
-
-/**
- * Historical dependency-free, line-oriented compatibility grammar.
- *
- * This intentionally does not implement YAML. It exists only for deprecated
- * unsafe callers when no parser extension is composed, and can reinterpret
- * malformed or structured YAML as scalar strings.
- */
-export function parseUnsafeLegacySkillDocumentFallback(
-  content: string,
-): ParsedSkillContent {
-  if (typeof content !== "string") {
-    throw new NativeTypeError("Skill document content must be a string");
-  }
-
-  let envelope: ReturnType<typeof splitSkillDocumentEnvelope>;
-  try {
-    envelope = splitSkillDocumentEnvelope(content);
-  } catch {
-    return { frontmatter: {}, body: content };
-  }
-  if (envelope.frontmatterSource === undefined) {
-    return { frontmatter: {}, body: envelope.body };
-  }
-
-  const frontmatter = call<Record<string, unknown>>(objectCreate, Object, [null]);
-  const source = envelope.frontmatterSource;
-  let lineStart = 0;
-  while (lineStart <= source.length) {
-    const lineFeed = findLineFeed(source, lineStart);
-    const lineEnd = lineFeed === -1 ? source.length : lineFeed;
-    const line = call<string>(stringTrim, slice(source, lineStart, lineEnd), []);
-    if (line.length > 0 && charCodeAt(line, 0) !== 0x23) {
-      let colon = -1;
-      for (let index = 0; index < line.length; index += 1) {
-        if (charCodeAt(line, index) === 0x3a) {
-          colon = index;
-          break;
-        }
-      }
-      if (colon !== -1) {
-        const key = call<string>(stringTrim, slice(line, 0, colon), []);
-        const value = call<string>(stringTrim, slice(line, colon + 1), []);
-        call(objectDefineProperty, Object, [frontmatter, key, {
-          configurable: true,
-          enumerable: true,
-          value,
-          writable: true,
-        }]);
-      }
-    }
-    if (lineFeed === -1) break;
-    lineStart = lineFeed + 1;
-  }
-
-  return { frontmatter, body: envelope.body };
 }

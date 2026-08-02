@@ -385,3 +385,4 @@ Deno.test({
     }
   },
 });
+import "#veryfront/skill/_test-setup.ts";
