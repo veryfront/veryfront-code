@@ -96,7 +96,16 @@ export function useChatInput(): UseChatInputResult {
   const ctx = useChatInputContext();
 
   const getFormProps = React.useCallback(
-    (overrides?: AnyProps): AnyProps => mergeProps({ onSubmit: ctx.onSubmit }, overrides),
+    (overrides?: AnyProps): AnyProps =>
+      mergeProps({
+        // Cancel the native submit before delegating, matching the <form> the
+        // built-in <ChatInput> renders — a spread onto a real <form> must never
+        // navigate the page.
+        onSubmit: (e: React.FormEvent) => {
+          e.preventDefault();
+          ctx.onSubmit(e);
+        },
+      }, overrides),
     [ctx.onSubmit],
   );
 

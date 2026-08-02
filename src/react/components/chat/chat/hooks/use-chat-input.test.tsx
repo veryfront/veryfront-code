@@ -58,6 +58,28 @@ describe("useChatInput", () => {
     assert(html.includes("disabled"), "submit is disabled when canSubmit is false");
   });
 
+  it("getFormProps cancels the native submit before delegating to onSubmit", () => {
+    let submitted = false;
+    let formProps: Record<string, unknown> = {};
+    function Capture() {
+      formProps = useChatInput().getFormProps();
+      return null;
+    }
+    renderToString(
+      <ComposerContextProvider value={makeCtx({ onSubmit: () => submitted = true })}>
+        <Capture />
+      </ComposerContextProvider>,
+    );
+
+    let prevented = false;
+    (formProps.onSubmit as (e: unknown) => void)({
+      defaultPrevented: false,
+      preventDefault: () => prevented = true,
+    });
+    assertEquals(prevented, true, "spread onto a real <form>, submit never navigates");
+    assertEquals(submitted, true, "ctx.onSubmit still runs after preventDefault");
+  });
+
   it("throws when used outside a <ChatInput> provider", () => {
     function Orphan() {
       useChatInput();
