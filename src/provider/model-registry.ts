@@ -22,19 +22,64 @@ import {
 } from "#veryfront/config/env.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { createLocalModel } from "./local/model-runtime-adapter.ts";
-import { verifyLocalRuntime } from "./local/local-engine.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
-import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
 import type { ModelRuntime } from "./types.ts";
 
 /** Public API contract for model provider factory. */
 export type ModelProviderFactory = (modelId: string) => ModelRuntime;
+export type ModelProviderRegistrationDisposer = () => void;
 
 const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(
   "model-provider",
 );
+const bootstrapProviders = new Map<string, ModelProviderFactory>();
 let autoInitialized = false;
+
+function normalizeProviderName(name: string): string {
+  if (typeof name !== "string") {
+    throw new TypeError("Model provider name must be a non-empty string without slashes");
+  }
+
+  const normalizedName = name.trim();
+  if (!normalizedName || normalizedName.includes("/")) {
+    throw new TypeError("Model provider name must be a non-empty string without slashes");
+  }
+  return normalizedName;
+}
+
+function requireModelRuntime(value: unknown, modelString: string): ModelRuntime {
+  if (
+    value === null ||
+    (typeof value !== "object" && typeof value !== "function")
+  ) {
+    throw new TypeError(
+      `Model provider for "${modelString}" returned an invalid runtime: expected an object`,
+    );
+  }
+
+  let doGenerate: unknown;
+  let doStream: unknown;
+  try {
+    doGenerate = Reflect.get(value, "doGenerate");
+    doStream = Reflect.get(value, "doStream");
+  } catch (cause) {
+    throw new TypeError(
+      `Model provider for "${modelString}" returned an unreadable runtime`,
+      { cause },
+    );
+  }
+
+  if (typeof doGenerate !== "function" || typeof doStream !== "function") {
+    throw new TypeError(
+      `Model provider for "${modelString}" returned an invalid runtime: ` +
+        "doGenerate and doStream must be functions",
+    );
+  }
+
+  return value as ModelRuntime;
+}
 
 function isOpenAIBaseURL(baseURL: string | undefined): boolean {
   if (!baseURL) return true;
@@ -51,7 +96,11 @@ function getOpenAIEnvProviderName(baseURL: string | undefined): "openai" | "open
 }
 
 /**
- * Register a custom model provider factory for the current project.
+ * Register a custom model provider factory.
+ *
+ * Registration inside a project source context is isolated to that context.
+ * Registration during application bootstrap, outside a project context, is a
+ * default visible to every project unless the project registers an override.
  *
  * @example
  * ```ts
@@ -61,8 +110,26 @@ function getOpenAIEnvProviderName(baseURL: string | undefined): "openai" | "open
 export function registerModelProvider(
   name: string,
   factory: ModelProviderFactory,
-): void {
-  manager.register(name, factory);
+): ModelProviderRegistrationDisposer {
+  const normalizedName = normalizeProviderName(name);
+  if (typeof factory !== "function") {
+    throw new TypeError("Model provider factory must be a function");
+  }
+
+  const ownedFactory: ModelProviderFactory = (modelId) => factory(modelId);
+  if (tryGetRegistryScopeId() !== null) {
+    return manager.registerOwned(normalizedName, ownedFactory);
+  }
+
+  bootstrapProviders.set(normalizedName, ownedFactory);
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    if (bootstrapProviders.get(normalizedName) === ownedFactory) {
+      bootstrapProviders.delete(normalizedName);
+    }
+  };
 }
 
 /**
@@ -83,136 +150,126 @@ function autoInitializeFromEnv(): void {
   // createOpenAI/createAnthropic/createGoogleGenerativeAI are lightweight
   // constructors (no network calls), so instantiating per-resolution is fine.
 
-  if (!manager.has("openai")) {
-    manager.registerShared("openai", (id) => {
-      const config = getOpenAIEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("openai");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-          baseURL: config.baseURL,
-          providerName: getOpenAIEnvProviderName(config.baseURL),
-        });
-      }
-      throw toError(createError({
-        type: "config",
-        message:
-          "OpenAI provider not installed. Add @veryfront/ext-llm-openai to use openai/* models.",
-      }));
-    });
-  }
-
-  if (!manager.has("anthropic")) {
-    manager.registerShared("anthropic", (id) => {
-      const config = getAnthropicEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "ANTHROPIC_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("anthropic");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-          baseURL: config.baseURL,
-        });
-      }
-      throw toError(createError({
-        type: "config",
-        message:
-          "Anthropic provider not installed. Add @veryfront/ext-llm-anthropic to use anthropic/* models.",
-      }));
-    });
-  }
-
-  if (!manager.has("google")) {
-    manager.registerShared("google", (id) => {
-      const config = getGoogleGenAIEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "GOOGLE_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY) not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("google");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-        });
-      }
+  manager.registerShared("openai", (id) => {
+    const config = getOpenAIEnvConfig();
+    if (!config.apiKey) {
       throw toError(
         createError({
           type: "config",
           message:
-            "Google provider not installed. Add @veryfront/ext-llm-google to use google/* models.",
+            "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
         }),
       );
-    });
-  }
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("openai");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+        baseURL: config.baseURL,
+        providerName: getOpenAIEnvProviderName(config.baseURL),
+      });
+    }
+    throw toError(createError({
+      type: "config",
+      message:
+        "OpenAI provider not installed. Add @veryfront/ext-llm-openai to use openai/* models.",
+    }));
+  });
 
-  if (!manager.has("mistral")) {
-    manager.registerShared("mistral", (id) => {
-      const config = getMistralEnvConfig();
-      if (!config.apiKey) {
-        throw toError(
-          createError({
-            type: "config",
-            message:
-              "MISTRAL_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
-          }),
-        );
-      }
-      const registry = ensureBuiltinLLMProviders();
-      const provider = registry.get("openai");
-      if (provider) {
-        return provider.createModel(id, {
-          credential: config.apiKey,
-          baseURL: config.baseURL,
-        });
-      }
-      throw toError(createError({
+  manager.registerShared("anthropic", (id) => {
+    const config = getAnthropicEnvConfig();
+    if (!config.apiKey) {
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "ANTHROPIC_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+        }),
+      );
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("anthropic");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+        baseURL: config.baseURL,
+      });
+    }
+    throw toError(createError({
+      type: "config",
+      message:
+        "Anthropic provider not installed. Add @veryfront/ext-llm-anthropic to use anthropic/* models.",
+    }));
+  });
+
+  manager.registerShared("google", (id) => {
+    const config = getGoogleGenAIEnvConfig();
+    if (!config.apiKey) {
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "GOOGLE_API_KEY (or GOOGLE_GENERATIVE_AI_API_KEY) not set. Set the environment variable or register a custom provider with registerModelProvider().",
+        }),
+      );
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("google");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+      });
+    }
+    throw toError(
+      createError({
         type: "config",
         message:
-          "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models " +
-          "(Mistral uses the OpenAI-compatible wire format and is routed through the openai extension).",
-      }));
-    });
-  }
+          "Google provider not installed. Add @veryfront/ext-llm-google to use google/* models.",
+      }),
+    );
+  });
 
-  // Register the local provider (always available, no API key needed).
+  manager.registerShared("mistral", (id) => {
+    const config = getMistralEnvConfig();
+    if (!config.apiKey) {
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "MISTRAL_API_KEY not set. Set the environment variable or register a custom provider with registerModelProvider().",
+        }),
+      );
+    }
+    const registry = ensureBuiltinLLMProviders();
+    const provider = registry.get("openai");
+    if (provider) {
+      return provider.createModel(id, {
+        credential: config.apiKey,
+        baseURL: config.baseURL,
+        name: "mistral",
+        providerName: "mistral",
+      });
+    }
+    throw toError(createError({
+      type: "config",
+      message:
+        "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models " +
+        "(Mistral uses the OpenAI-compatible wire format and is routed through the openai extension).",
+    }));
+  });
+
+  // The local provider is always available and needs no API key.
   // createLocalModel is a lightweight synchronous constructor — the actual
-  // @huggingface/transformers import and model loading happen lazily on
-  // the first doGenerate/doStream call, so this doesn't add startup overhead.
-  if (!manager.has("local")) {
-    manager.registerShared("local", (id) => {
-      return createLocalModel(id);
-    });
-  }
+  // @huggingface/transformers import and model loading happen lazily on the
+  // first prepare/doGenerate/doStream call, so this adds no startup overhead.
+  manager.registerShared("local", (id) => {
+    return createLocalModel(id);
+  });
 
-  if (!manager.has("veryfront-cloud")) {
-    manager.registerShared("veryfront-cloud", (id) => {
-      return createVeryfrontCloudModel(id);
-    });
-  }
+  manager.registerShared("veryfront-cloud", (id) => {
+    return createVeryfrontCloudModel(id);
+  });
 }
 
 /**
@@ -226,7 +283,9 @@ function autoInitializeFromEnv(): void {
  * ```
  */
 export function resolveModel(modelString: string): ModelRuntime {
-  autoInitializeFromEnv();
+  if (typeof modelString !== "string") {
+    throw new TypeError('Model must be a string in "provider/model" format');
+  }
 
   const slashIndex = modelString.indexOf("/");
   if (slashIndex === -1) {
@@ -242,7 +301,12 @@ export function resolveModel(modelString: string): ModelRuntime {
   const providerName = modelString.slice(0, slashIndex);
   const modelId = modelString.slice(slashIndex + 1);
 
-  if (!providerName || !modelId) {
+  if (
+    !providerName ||
+    !modelId ||
+    providerName !== providerName.trim() ||
+    modelId !== modelId.trim()
+  ) {
     throw toError(
       createError({
         type: "config",
@@ -252,69 +316,78 @@ export function resolveModel(modelString: string): ModelRuntime {
     );
   }
 
-  const factory = manager.get(providerName);
+  autoInitializeFromEnv();
+  const factory = manager.getOwn(providerName) ??
+    bootstrapProviders.get(providerName) ??
+    manager.get(providerName);
   if (!factory) {
     const available = getRegisteredModelProviders().join(", ") || "none";
     throw toError(
       createError({
         type: "agent",
-        message: `Model provider "${providerName}" not registered. Available: ${available}`,
+        message:
+          `Model provider "${providerName}" not registered. Register it during application ` +
+          `composition with registerModelProvider() before resolving models. Available: ${available}`,
       }),
     );
   }
 
-  return factory(modelId);
+  return requireModelRuntime(factory(modelId), modelString);
 }
 
 /**
- * Check if a model provider is registered (project-scoped or shared).
+ * Check whether a model provider is available in the current scope.
+ *
+ * Project overrides, application bootstrap defaults, and framework-provided
+ * shared providers are all considered.
  */
 export function hasModelProvider(name: string): boolean {
+  const normalizedName = normalizeProviderName(name);
   autoInitializeFromEnv();
-  return manager.has(name);
+  return manager.getOwn(normalizedName) !== undefined ||
+    bootstrapProviders.has(normalizedName) ||
+    manager.has(normalizedName);
 }
 
 /**
- * Get list of registered model provider names (project-scoped + shared).
+ * Get provider names available in the current scope.
+ *
+ * The result includes project overrides, application bootstrap defaults, and
+ * framework-provided shared providers without duplicates.
  */
 export function getRegisteredModelProviders(): string[] {
   autoInitializeFromEnv();
-  return manager.getAllIds();
+  return Array.from(new Set([...manager.getAllIds(), ...bootstrapProviders.keys()]));
 }
 
 /**
  * Eagerly verify that the resolved model's runtime is available.
  *
- * For real local-engine models (created by `createLocalModel()`) this
- * eagerly loads the ONNX pipeline to surface `no_ai_available` errors
- * **before** the HTTP response stream is created. Must happen before the
- * ReadableStream so the chat handler can return a proper 503 rather than a
- * 200 with an in-band SSE error.
- *
- * Uses the `_isVfLocalModel` marker set by `createLocalModel()` to
- * distinguish real local-engine models from mock/custom providers that
- * happen to use `provider: "local"`.
+ * Provider runtimes can expose an idempotent `prepare()` hook to perform work
+ * that must fail before an HTTP response stream is created. Runtimes without a
+ * preparation phase require no action.
  */
 export async function ensureModelReady(
   model: ModelRuntime,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
-  if (model.prepare !== undefined) {
-    if (typeof model.prepare !== "function") {
-      throw new TypeError("Model runtime prepare hook must be a function");
-    }
-    await model.prepare();
-    return;
+  const prepare = model.prepare;
+  if (prepare === undefined) return;
+  if (typeof prepare !== "function") {
+    throw new TypeError("Model runtime prepare must be a function");
   }
-  if (!hasLocalModelRuntimeMarker(model)) return;
-  // modelId is "local/<id>" — strip the prefix to get the catalog id.
-  const catalogId = getModelRuntimeId(model)?.replace(/^local\//, "");
-  await verifyLocalRuntime(catalogId);
+  await prepare.call(model, abortSignal);
 }
 
 /**
- * Clear all registered model providers (for testing).
+ * Clear model providers registered in the current project source scope.
+ *
+ * Outside a project context, clears application bootstrap registrations.
+ * Framework-provided shared providers and other projects remain available.
  */
 export function clearModelProviders(): void {
-  manager.clearAll();
-  autoInitialized = false;
+  manager.clear();
+  if (tryGetRegistryScopeId() === null) {
+    bootstrapProviders.clear();
+  }
 }
