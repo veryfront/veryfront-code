@@ -60,6 +60,103 @@ veryfront dev
 
 If the extension factory throws during setup, the dev server reports the setup error. For local extensions, edit the extension source and save `veryfront.config.ts` to force reload during development.
 
+## Authorize React Server Actions
+
+Server Actions require an application-owned authorization provider. Create a
+local extension that publishes the provider through the active extension
+generation:
+
+```ts
+// extensions/server-action-authorization/src/index.ts
+import type { Extension } from "veryfront/extensions";
+import {
+  createRscActionAuthorizationProvider,
+  RscActionAuthorizationProviderName,
+  type RscActionAuthorize,
+} from "veryfront/extensions/auth";
+
+export default function serverActionAuthorization(
+  authorize: RscActionAuthorize,
+): Extension {
+  return {
+    name: "server-action-authorization",
+    version: "1.0.0",
+    capabilities: [],
+    contracts: {
+      provides: [RscActionAuthorizationProviderName],
+    },
+    setup(context) {
+      context.provide(
+        RscActionAuthorizationProviderName,
+        createRscActionAuthorizationProvider(authorize),
+      );
+    },
+  };
+}
+```
+
+Keep application authentication and policy in application code. The request
+snapshot is bodyless; make the decision from authenticated request metadata,
+the action ID, project identity, and the detached JSON-compatible arguments:
+
+```ts
+// lib/authorize-server-action.ts
+import type { RscActionAuthorize } from "veryfront/extensions/auth";
+import { authenticateServerActionRequest } from "./session-policy.ts";
+
+export const authorizeServerAction: RscActionAuthorize = async (
+  request,
+  context,
+) => {
+  const identity = await authenticateServerActionRequest({
+    authorization: request.headers.authorization,
+    signal: request.signal,
+  });
+  return identity !== null && await identity.mayInvoke({
+    actionId: context.id,
+    args: context.args,
+    projectId: context.projectId,
+  });
+};
+```
+
+Enable the extension in executable local or standalone configuration:
+
+```ts
+// veryfront.config.ts
+import { defineConfig } from "veryfront";
+import serverActionAuthorization from "./extensions/server-action-authorization/src/index.ts";
+import { authorizeServerAction } from "./lib/authorize-server-action.ts";
+
+export default defineConfig({
+  extensions: [serverActionAuthorization(authorizeServerAction)],
+});
+```
+
+For shared hosted or proxy runtimes, provision the same contract through the
+platform-owned extension generation; tenant configuration cannot execute the
+factory. Restart or reload, then verify an allowed action succeeds, a policy
+denial returns `403`, and removing the provider makes the endpoint fail closed
+with `503`. CSRF protection remains a separate check and must stay enabled for
+the action endpoint.
+
+Server Action arguments must be JSON-compatible: finite primitives, dense
+arrays, and plain records. Convert `FormData`, class instances, dates, and
+other application objects before calling an action. See the
+[`veryfront/extensions/auth` reference](../api-reference/veryfront/extensions.md#veryfrontextensionsauth)
+for the exact provider DTO, bounds, outcomes, timeout, cancellation, and
+generation-retirement behavior.
+
+### Migrate from the legacy Server Action guard
+
+The old import-map override at
+`rendering/rsc/server-action-guard.ts` is no longer consulted and its former
+default allowed every action. Remove that override, publish
+`RscActionAuthorizationProviderName` as shown above, and deploy the provider
+with the framework upgrade. Until the active generation owns a valid provider,
+Server Action requests intentionally return `503`; there is no core allow-all
+fallback.
+
 ## Enable Node.js WebSocket upgrades
 
 Install the explicit Node.js transport extension:

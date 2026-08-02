@@ -731,6 +731,7 @@ function handleStreamEndpoint(searchParams: URLSearchParams, request: Request): 
 
 function withDependencyPinningVary(response: Response): Response {
   appendVaryHeader(response.headers, RSC_DEPENDENCY_PINNING_HEADER);
+  response.headers.set("cache-control", "no-store");
   return response;
 }
 

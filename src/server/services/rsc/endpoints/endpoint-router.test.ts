@@ -12,6 +12,15 @@ import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
 import { refreshLoggerConfig } from "#veryfront/utils";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
+import { RscActionAuthorizationProviderName } from "#veryfront/extensions/auth/index.ts";
+import {
+  beginContractGeneration,
+  commitContractGeneration,
+  completeContractGenerationRetirement,
+  drainContractGeneration,
+  sealContractGeneration,
+  stageContract,
+} from "#veryfront/extensions/contract-registry-internal.ts";
 import type { Bundler } from "#veryfront/extensions/bundler/bundler.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import {
@@ -29,6 +38,21 @@ import {
   rscDisabledConfig,
   rscEnabledConfig,
 } from "./endpoint-router.test-helpers.ts";
+
+async function withAllowedRscActions<T>(run: () => Promise<T>): Promise<T> {
+  const generation = beginContractGeneration();
+  stageContract(generation, RscActionAuthorizationProviderName, {
+    authorize: () => true,
+  });
+  commitContractGeneration(generation);
+  try {
+    return await run();
+  } finally {
+    sealContractGeneration(generation);
+    await drainContractGeneration(generation);
+    completeContractGenerationRetirement(generation);
+  }
+}
 
 describe("server/services/rsc/endpoints/endpoint-router", () => {
   afterEach(async () => {
@@ -266,23 +290,26 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
 
       let result: Response | null;
       try {
-        result = await handleRSCEndpoint(
-          makeParams({
-            pathname: "/_veryfront/rsc/action",
-            config: rscEnabledConfig,
-            adapter,
-            req: new Request("http://localhost/_veryfront/rsc/action", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ id: "save", args: [] }),
+        result = await withAllowedRscActions(() =>
+          handleRSCEndpoint(
+            makeParams({
+              pathname: "/_veryfront/rsc/action",
+              config: rscEnabledConfig,
+              adapter,
+              req: new Request("http://localhost/_veryfront/rsc/action", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ id: "save", args: [] }),
+              }),
             }),
-          }),
+          )
         );
       } finally {
         console.error = originalConsoleError;
       }
 
       assertEquals(result?.status, 500);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
       const body = await result!.json();
       assertEquals(body, { ok: false, error: "action failed" });
       assertEquals(JSON.stringify(body).includes(sensitiveMessage), false);
@@ -1288,6 +1315,23 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
   });
 
   describe("action endpoint - POST handling", () => {
+    it("fails closed without a generation-owned authorization provider", async () => {
+      const result = await handleRSCEndpoint(
+        makeParams({
+          pathname: "/_veryfront/rsc/action",
+          config: rscEnabledConfig,
+          req: new Request("http://localhost/_veryfront/rsc/action", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ id: "valid-action", args: [] }),
+          }),
+        }),
+      );
+
+      assertEquals(result?.status, 503);
+      assertEquals(result?.headers.get("cache-control"), "no-store");
+    });
+
     it("handles POST action with missing body id", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
@@ -1338,16 +1382,18 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
 
     it("handles POST action with valid id but non-existent file returns error", async () => {
-      const result = await handleRSCEndpoint(
-        makeParams({
-          pathname: "/_veryfront/rsc/action",
-          config: rscEnabledConfig,
-          req: new Request("http://localhost/_veryfront/rsc/action", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ id: "valid-action", args: ["hello"] }),
+      const result = await withAllowedRscActions(() =>
+        handleRSCEndpoint(
+          makeParams({
+            pathname: "/_veryfront/rsc/action",
+            config: rscEnabledConfig,
+            req: new Request("http://localhost/_veryfront/rsc/action", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id: "valid-action", args: ["hello"] }),
+            }),
           }),
-        }),
+        )
       );
       assertEquals(result instanceof Response, true);
       assertEquals(result!.status, 404);

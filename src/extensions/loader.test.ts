@@ -1208,6 +1208,47 @@ describe("ExtensionLoader", () => {
       assertEquals(teardownCount, 1);
     });
 
+    it("retries retirement after a quarantined contract use settles", async () => {
+      const dependency = Object.freeze({ id: "quarantined" });
+      let teardownCount = 0;
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([
+        makeResolved(makeExt("quarantined-use-owner", {
+          contracts: {
+            provides: ["QuarantinedUseDependency"],
+          },
+          setup(context) {
+            context.provide("QuarantinedUseDependency", dependency);
+          },
+          teardown() {
+            teardownCount += 1;
+          },
+        })),
+      ], {});
+      const snapshot = trySnapshotContractForUse(
+        "QuarantinedUseDependency",
+      );
+      if (snapshot === undefined) {
+        throw new Error("Expected a quarantined-use snapshot");
+      }
+      const lease = acquireContractLease(snapshot.reference);
+      lease.setRetirementHandler(() => {});
+      lease.quarantine();
+
+      await assertRejects(
+        () => loader.teardownAll(),
+        Error,
+        "quarantined",
+      );
+      assertEquals(teardownCount, 0);
+      assertEquals(tryResolve("QuarantinedUseDependency"), dependency);
+
+      lease.release();
+      await loader.teardownAll();
+      assertEquals(teardownCount, 1);
+      assertEquals(tryResolve("QuarantinedUseDependency"), undefined);
+    });
+
     it("reports a late retirement-handler failure after final lease release", async () => {
       const retirementStarted = Promise.withResolvers<void>();
       let ownerSignal: AbortSignal | undefined;
