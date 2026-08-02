@@ -27,6 +27,8 @@ export interface HydrationDataStructure {
   /** Production release asset URLs keyed by logical source path. */
   releaseAssetModules?: Record<string, string>;
   frontmatter?: Record<string, unknown>;
+  /** Bounded, nonce-free route head descriptors for deterministic navigation handoff. */
+  managedHeadPayload?: string;
   layoutProps?: Record<string, Record<string, unknown>>;
   /**
    * Whether running in development mode.

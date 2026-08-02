@@ -47,12 +47,13 @@ export interface ChatUploadHandlerConfig {
   /** Storage backend. Defaults to local disk in dev, Veryfront Cloud when deployed. */
   storage?: BlobStorage;
   /**
-   * Gate every request. Return `false` or a `Response` to reject.
+   * Gate every request. Only `true` authorizes; return a `Response` to reject
+   * with a custom response.
    * Required unless `allowUnauthenticated` is explicitly set.
    */
   authorize?: (
     request: Request,
-  ) => boolean | Response | void | Promise<boolean | Response | void>;
+  ) => boolean | Response | Promise<boolean | Response>;
   /**
    * Allow POST, GET, and DELETE without an authorization callback.
    * Use this only for local prototypes or deliberately public upload routes.
@@ -103,7 +104,7 @@ async function reject(
   if (!authorize) return null;
   const result = await authorize(request);
   if (result instanceof Response) return result;
-  if (result === false) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (result !== true) return Response.json({ error: "Unauthorized" }, { status: 401 });
   return null;
 }
 

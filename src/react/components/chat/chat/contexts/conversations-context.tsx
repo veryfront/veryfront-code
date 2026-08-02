@@ -12,17 +12,30 @@ import * as React from "react";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import {
   useConversations,
+  type UseConversationsActiveLoadState,
   type UseConversationsOptions,
+  type UseConversationsPersistenceState,
   type UseConversationsResult,
 } from "../hooks/use-conversations.ts";
 
-const [ConversationsContext, useConversationsContext] = createStrictContext<UseConversationsResult>(
+/**
+ * Value accepted by the low-level context provider. Persistence state is
+ * optional here so existing caller-supplied structural fixtures remain
+ * compatible; {@link ConversationsProvider} always supplies it.
+ */
+export type ConversationsContextValue =
+  & UseConversationsResult
+  & Partial<UseConversationsPersistenceState & UseConversationsActiveLoadState>;
+
+const [ConversationsContext, useConversationsContext] = createStrictContext<
+  ConversationsContextValue
+>(
   "useConversationsContext",
   "a ConversationsProvider",
 );
 
 /** Read the shared conversations state, or `null` when there is no provider. */
-export function useConversationsContextOptional(): UseConversationsResult | null {
+export function useConversationsContextOptional(): ConversationsContextValue | null {
   return React.useContext(ConversationsContext);
 }
 

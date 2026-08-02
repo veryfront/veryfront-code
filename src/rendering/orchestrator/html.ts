@@ -3,13 +3,21 @@ import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
   buildImportMapJson,
+  buildStructuredManagedHeadDescriptors,
+  escapeHTML,
   extractHTMLMetadata,
   generateHTMLShellParts,
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
-import type { MDXFrontmatter } from "#veryfront/types";
+import {
+  HEAD_PROVENANCE_ATTRIBUTE,
+  HEAD_SHELL_PROVENANCE_ATTRIBUTE,
+  headMetaSingletonKeyFromRecord,
+} from "#veryfront/html/managed-head-protocol.ts";
+import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
+import type { RenderMetadata } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
@@ -30,13 +38,68 @@ import {
 } from "./html-project-css.ts";
 import {
   buildHeadElements as buildCollectedHeadElements,
+  extractCommittedHeadFromHTML,
+  mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
 import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
+
+function hasCollectedHeadEntries(
+  head: HTMLGenerationContext["collectedHead"],
+): boolean {
+  return head !== undefined && (
+    head.title !== undefined ||
+    head.description !== undefined ||
+    head.metas.length > 0 ||
+    head.links.length > 0 ||
+    head.styles.length > 0 ||
+    head.scripts.length > 0
+  );
+}
+
+function toShellFrontmatter(
+  frontmatter: MDXFrontmatter,
+): NonNullable<RenderMetadata["frontmatter"]> {
+  // The public RenderMetadata type still exposes the legacy scalar-only
+  // frontmatter index, while the HTML pipeline supports structured meta/link/
+  // script/style fields. This boundary narrows only the type view; the shell
+  // immediately validates and snapshots every structured value before use.
+  return frontmatter as unknown as NonNullable<RenderMetadata["frontmatter"]>;
+}
+
+function injectHeadScriptsAfterImportMap(html: string, scripts: string): string {
+  const headOpen = html.indexOf("<head>");
+  const headClose = headOpen < 0 ? -1 : html.indexOf("</head>", headOpen);
+  if (headOpen < 0 || headClose < 0) {
+    throw new Error("Generated HTML shell is missing a complete head element");
+  }
+
+  const lower = html.toLowerCase();
+  let cursor = headOpen + "<head>".length;
+  while (cursor < headClose) {
+    const scriptStart = lower.indexOf("<script", cursor);
+    if (scriptStart < 0 || scriptStart >= headClose) break;
+    const scriptOpenEnd = lower.indexOf(">", scriptStart + "<script".length);
+    if (scriptOpenEnd < 0 || scriptOpenEnd >= headClose) break;
+    const openingTag = lower.slice(scriptStart, scriptOpenEnd + 1);
+    if (/\stype\s*=\s*["']importmap["']/.test(openingTag)) {
+      const scriptClose = lower.indexOf("</script>", scriptOpenEnd + 1);
+      if (scriptClose < 0 || scriptClose >= headClose) break;
+      const insertionPoint = scriptClose + "</script>".length;
+      return html.slice(0, insertionPoint) +
+        `\n  ${scripts}` +
+        html.slice(insertionPoint);
+    }
+    cursor = scriptOpenEnd + 1;
+  }
+
+  throw new Error("Generated HTML shell is missing its framework import map");
+}
 
 /**
  * Resolve the release ID for manifest consumption from render options.
@@ -173,44 +236,51 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
+    const committedHead = extractCommittedHeadFromHTML(context.html);
+    const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
     let html: string;
-    if (isFullHTMLDocument(context.html)) {
-      html = await this.handleFullHTMLDocument(context);
+    if (isFullHTMLDocument(effectiveContext.html)) {
+      html = await this.handleFullHTMLDocument(effectiveContext);
     } else {
-      html = await this.wrapHTMLFragment(context);
+      html = await this.wrapHTMLFragment(effectiveContext);
     }
-    const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
+    const finalHtml = effectiveContext.options?.studioEmbed ? injectElementSelectors(html) : html;
 
-    if (context.options?.studioEmbed) {
+    if (effectiveContext.options?.studioEmbed) {
       logger.debug("Injected element selectors for Studio");
     }
 
-    return addNonceToHtmlTags(finalHtml, context.options?.nonce);
+    return addNonceToHtmlTags(finalHtml, effectiveContext.options?.nonce);
   }
 
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
-    const fullContext = context as HTMLGenerationContext;
     let reactContent: string;
     try {
       reactContent = (await streamToString(reactStream)).trim();
     } catch (error) {
       if (!(error instanceof StreamTimeoutError)) throw error;
 
-      logger.warn("Stream timed out, using partial content", {
+      logger.warn("Stream timed out; discarding partial content", {
         partialLength: error.partialContent.length,
       });
-      reactContent = error.partialContent.trim();
+      throw error;
     }
+
+    const committedHead = extractCommittedHeadFromHTML(reactContent);
+    const fullContext = {
+      ...context,
+      html: reactContent,
+      ...(committedHead ? { collectedHead: committedHead } : {}),
+    } as HTMLGenerationContext;
 
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
       const fullHtml = addNonceToHtmlTags(
         await this.handleFullHTMLDocument({
           ...fullContext,
-          html: reactContent,
         }),
         context.options?.nonce,
       );
@@ -260,6 +330,12 @@ export class HTMLGenerator {
   private async handleFullHTMLDocument(
     context: HTMLGenerationContext,
   ): Promise<string> {
+    if (hasCollectedHeadEntries(context.collectedHead)) {
+      throw NOT_SUPPORTED.create({
+        detail:
+          "React <Head> cannot be combined with a component-authored full HTML document; declare that document head directly",
+      });
+    }
     const mergedFrontmatter = mergeCollectedFrontmatter(context);
     const htmlOptions = await profilePhase(
       "html.build_options",
@@ -267,9 +343,12 @@ export class HTMLGenerator {
     );
     const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
-      (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
+      mergedFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
     );
+    // Full-document placeholders use the same bounded structured-head contract
+    // as framework shells even though their authored placement is custom.
+    buildStructuredManagedHeadDescriptors(metadata, metadata.title ?? "Veryfront App");
 
     const pagePath = context.pageInfo.entity.path;
     const [isClientPage, releaseAssetManifest] = await Promise.all([
@@ -394,21 +473,24 @@ export class HTMLGenerator {
     projectCSSPromise?: Promise<ProjectCSSResult>,
   ): Promise<{ start: string; end: string }> {
     const head = context.collectedHead;
-    const effectiveTitle = head?.title || mergedFrontmatter.title || "Veryfront App";
-    const effectiveDescription = head?.description || mergedFrontmatter.description || "";
-    const enrichedFrontmatter = {
-      ...mergedFrontmatter,
-      ...(head?.title && { title: head.title }),
-      ...(head?.description && { description: head.description }),
-    };
+    const layoutFrontmatter = (context.layoutBundle?.frontmatter ?? {}) as MDXFrontmatter;
+    const {
+      frontmatter: enrichedFrontmatter,
+      emissionHead,
+      marksViewport,
+    } = mergeCollectedHeadWithShell(
+      mergedFrontmatter,
+      layoutFrontmatter,
+      head,
+    );
 
     const { start, end } = await generateHTMLShellParts(
       {
-        title: effectiveTitle,
-        description: effectiveDescription,
+        title: enrichedFrontmatter.title || "Veryfront App",
+        description: enrichedFrontmatter.description || "",
         slug: context.slug,
-        frontmatter: enrichedFrontmatter,
-        layoutFrontmatter: context.layoutBundle?.frontmatter,
+        frontmatter: toShellFrontmatter(enrichedFrontmatter),
+        layoutFrontmatter: toShellFrontmatter(layoutFrontmatter),
         ssrHash: context.ssrHash,
       },
       htmlOptions,
@@ -418,14 +500,55 @@ export class HTMLGenerator {
       projectCSSPromise,
     );
 
-    const { scripts, other } = buildCollectedHeadElements(head);
-    if (!scripts && !other) return { start, end };
-
     let modifiedStart = start;
 
-    // Inject blocking scripts at TOP of <head> (after opening tag, before meta/CSS)
+    // The shell always emits its own title and viewport, while React Head must
+    // retain exact text/attributes for deterministic client adoption. Replace
+    // or remove only these fixed framework-generated shapes, then let the
+    // collected-head serializer emit the authoritative marked metadata.
+    if (head?.title !== undefined) {
+      const shellTitleOpen = `<title ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">`;
+      const titleStart = modifiedStart.indexOf(shellTitleOpen);
+      const titleEnd = titleStart < 0
+        ? -1
+        : modifiedStart.indexOf("</title>", titleStart + shellTitleOpen.length);
+      if (titleStart >= 0 && titleEnd >= 0) {
+        modifiedStart = modifiedStart.slice(0, titleStart) +
+          `<title ${HEAD_PROVENANCE_ATTRIBUTE}="true">${escapeHTML(head.title)}</title>` +
+          modifiedStart.slice(titleEnd + "</title>".length);
+      }
+    }
+
+    const headDescription = head?.description ??
+      head?.metas.find((meta) => headMetaSingletonKeyFromRecord(meta) === "meta:description")
+        ?.content;
+    if (headDescription !== undefined && headDescription.length > 0) {
+      modifiedStart = modifiedStart.replace(
+        `<meta name="description" content="${
+          escapeHTML(headDescription)
+        }" ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">`,
+        "",
+      );
+    }
+    if (marksViewport) {
+      const viewport = head?.metas.find((meta) =>
+        headMetaSingletonKeyFromRecord(meta) === "meta:viewport"
+      );
+      modifiedStart = modifiedStart.replace(
+        `<meta name="viewport" content="${
+          escapeHTML(viewport?.content ?? "")
+        }" ${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true">`,
+        "",
+      );
+    }
+
+    const { scripts, other } = buildCollectedHeadElements(emissionHead);
+    if (!scripts && !other) return { start: modifiedStart, end };
+
+    // The framework import map must precede every module script. Keep collected
+    // scripts ahead of CSS while inserting them only after that map is closed.
     if (scripts) {
-      modifiedStart = modifiedStart.replace("<head>", `<head>\n  ${scripts}`);
+      modifiedStart = injectHeadScriptsAfterImportMap(modifiedStart, scripts);
     }
 
     // Inject other head elements at BOTTOM of <head> (before closing tag)

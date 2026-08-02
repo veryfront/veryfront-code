@@ -18,6 +18,7 @@ import {
 } from "../../../ui/dropdown-menu.tsx";
 import { AttachmentPill, useAttachmentPill } from "./attachment-pill.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
+import { isSafeUploadUrl, openSafeUploadUrl } from "../upload-url.ts";
 
 /** Public API contract for uploaded file. */
 export interface UploadedFile {
@@ -373,7 +374,7 @@ function AttachmentsPanelItemMenu(
   { file }: { file: UploadedFile },
 ): React.JSX.Element | null {
   const { onRemoveUpload } = useAttachmentsPanel();
-  const canOpen = Boolean(file.url);
+  const canOpen = isSafeUploadUrl(file.url);
   if (!canOpen && !onRemoveUpload) return null;
   return (
     <DropdownMenu>
@@ -391,7 +392,10 @@ function AttachmentsPanelItemMenu(
       <DropdownMenuContent align="end">
         {canOpen && (
           <DropdownMenuItem
-            onSelect={() => globalThis.open?.(file.url, "_blank", "noopener")}
+            onClick={(event) => {
+              const ownerDocument = event.currentTarget.ownerDocument;
+              openSafeUploadUrl(file.url, ownerDocument);
+            }}
           >
             <FileTextIcon />
             Open

@@ -17,7 +17,6 @@ import {
   generateClientModule,
   generatePrefetchScript,
 } from "../../src/build/production-build/client-runtime.ts";
-import { CLIENT_STYLES } from "../../src/build/production-build/templates.ts";
 import { extractCandidates } from "../../src/html/styles-builder/candidate-extractor.ts";
 
 registerContract("Bundler", new EsbuildBundler());
@@ -31,6 +30,14 @@ const templatesPath = join(
   "build",
   "production-build",
   "templates.ts",
+);
+const clientStylesPath = join(
+  projectRoot,
+  "src",
+  "build",
+  "production-build",
+  "templates",
+  "client-styles.css",
 );
 const candidatesPath = join(
   projectRoot,
@@ -108,6 +115,11 @@ console.log("[prebundle-client-scripts] Bundling client prefetch...");
 // deno-lint-ignore no-explicit-any
 const prefetchBundle = await generatePrefetchScript(null as any, { forceSourceBundle: true });
 
+const clientStyles = (await Deno.readTextFile(clientStylesPath)).trimEnd();
+if (clientStyles.trim().length === 0) {
+  throw new Error(`Client styles source is empty: ${clientStylesPath}`);
+}
+
 const output = `/**
  * Embedded templates for production builds
  * These are embedded as strings to avoid file system dependencies in npm bundle
@@ -117,7 +129,7 @@ const output = `/**
  * @module
  */
 
-export const CLIENT_STYLES = ${JSON.stringify(CLIENT_STYLES)};
+export const CLIENT_STYLES = ${JSON.stringify(clientStyles)};
 
 export const CLIENT_ROUTER_BUNDLE: string | undefined = ${JSON.stringify(routerBundle)};
 

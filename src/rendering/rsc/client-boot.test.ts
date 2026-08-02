@@ -1,9 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import {
   buildPageHydrationModuleUrl,
   buildRSCTransportQuery,
+  retireAbandonedHeadOwnerMarkers,
   selectHydrationRoot,
   shouldAttemptRSCTransport,
   shouldHydrateOnly,
@@ -210,6 +212,35 @@ describe("rendering/rsc/client-boot", () => {
       const body = toCandidate(createElement("BODY"));
 
       assertEquals(shouldWrapPageHydrationRoot(wrapper, body), false);
+    });
+  });
+
+  describe("retireAbandonedHeadOwnerMarkers", () => {
+    it("removes only owner markers outside the chosen hydration root", () => {
+      const dom = new JSDOM(`
+        <body>
+          <div data-vf-react-head-owner="1" id="orphan"></div>
+          <main id="root">
+            <div data-vf-react-head-owner="1" id="owned"></div>
+          </main>
+        </body>
+      `);
+      try {
+        const root = dom.window.document.getElementById("root");
+        if (!root) throw new Error("missing fixture root");
+        retireAbandonedHeadOwnerMarkers(
+          [...dom.window.document.body.children],
+          root,
+        );
+
+        assertEquals(dom.window.document.getElementById("orphan"), null);
+        assertEquals(
+          dom.window.document.getElementById("owned")?.isConnected,
+          true,
+        );
+      } finally {
+        dom.window.close();
+      }
     });
   });
 });

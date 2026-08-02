@@ -1,4 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -9,8 +10,13 @@ import {
   isInternalLink,
   manageFocus,
   parsePageDataFromHTML,
+  snapshotClientRouteHead,
   updateMetaTags,
 } from "./dom-utils.ts";
+import {
+  descriptorFromHeadProps,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
 import {
   createMockAnchor,
   createMockElement,
@@ -24,6 +30,60 @@ import {
 import type { FrontmatterData } from "./page-loader.ts";
 
 describe("DOM Utils", () => {
+  describe("snapshotClientRouteHead", () => {
+    it("combines structured and committed payloads without stale response nonces", () => {
+      const structured = serializeManagedHeadPayload([
+        descriptorFromHeadProps("meta", {
+          name: "description",
+          content: "Structured",
+        })!,
+        descriptorFromHeadProps("style", {
+          nonce: "response-a",
+          children: ".structured{}",
+        })!,
+      ]);
+      const committed = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "Committed" })!,
+      ]);
+      const dom = new JSDOM(`<!doctype html><html><head>
+        <meta data-vf-shell-head="true" name="ignored" content="fallback">
+        <script id="veryfront-hydration-data" type="application/json">${
+        JSON.stringify({ managedHeadPayload: structured })
+      }</script>
+      </head><body>
+        <div data-vf-react-head-owner="1" data-vf-ssr-head="${committed}"></div>
+        <div id="root"><div data-veryfront-head="1" data-vf-react-head-owner="1"
+          data-vf-ssr-head="${committed}"></div></div>
+      </body></html>`);
+      try {
+        assertEquals(snapshotClientRouteHead(dom.window.document), [
+          {
+            tagName: "meta",
+            attributes: [["content", "Structured"], ["name", "description"]],
+          },
+          { tagName: "style", attributes: [], content: ".structured{}" },
+          { tagName: "title", attributes: [], content: "Committed" },
+        ]);
+      } finally {
+        dom.window.close();
+      }
+    });
+
+    it("falls back to shell provenance when hydration JSON is malformed", () => {
+      const dom = new JSDOM(`<!doctype html><html><head>
+        <title data-vf-shell-head="true">Fallback title</title>
+        <script id="veryfront-hydration-data" type="application/json">{"managedHead</script>
+      </head><body><div id="root"></div></body></html>`);
+      try {
+        assertEquals(snapshotClientRouteHead(dom.window.document), [
+          { tagName: "title", attributes: [], content: "Fallback title" },
+        ]);
+      } finally {
+        dom.window.close();
+      }
+    });
+  });
+
   describe("isInternalLink", () => {
     it("should return true for internal links", () => {
       const anchor = createMockAnchor("/about");
@@ -178,6 +238,7 @@ describe("DOM Utils", () => {
       tagName: string;
       getAttribute: (name: string) => string | null;
       setAttribute: (name: string, value: string) => void;
+      remove?: () => void;
     };
 
     function setupMockDocument(): { headElements: MockMetaElement[]; cleanup: () => void } {
@@ -189,7 +250,19 @@ describe("DOM Utils", () => {
         appendChild: (element: MockMetaElement) => {
           headElements.push(element);
         },
-        querySelectorAll: () => [],
+        querySelectorAll: (selector: string) =>
+          headElements.filter((element) => {
+            if (selector === '[data-veryfront-managed="1"]') {
+              return element.getAttribute("data-veryfront-managed") === "1";
+            }
+            if (selector.includes('name="description"')) {
+              return element.getAttribute("name") === "description";
+            }
+            if (selector.includes('property="og:title"')) {
+              return element.getAttribute("property") === "og:title";
+            }
+            return false;
+          }),
       };
 
       (globalThis as GlobalWithDOM).document = {
@@ -207,13 +280,18 @@ describe("DOM Utils", () => {
         },
         createElement: (tag: string) => {
           const attributes = new Map<string, string>();
-          return {
+          const element: MockMetaElement = {
             tagName: tag.toUpperCase(),
             setAttribute: (name: string, value: string) => {
               attributes.set(name, value);
             },
             getAttribute: (name: string) => attributes.get(name) ?? null,
+            remove: () => {
+              const index = headElements.indexOf(element);
+              if (index !== -1) headElements.splice(index, 1);
+            },
           };
+          return element;
         },
       } as unknown as Document;
 
@@ -287,24 +365,18 @@ describe("DOM Utils", () => {
       }
     });
 
-    it("should update existing meta tag content", () => {
+    it("updates an existing route-owned meta tag", () => {
       const mocks = setupMockDocument();
       try {
+        const attributes = new Map<string, string>([
+          ["name", "description"],
+          ["content", "Old description"],
+          ["data-vf-route-head", "true"],
+        ]);
         const existingMeta: MockMetaElement = {
           tagName: "META",
-          getAttribute: (name: string) => {
-            if (name === "name") return "description";
-            if (name === "content") return "Old description";
-            return null;
-          },
-          setAttribute: (name: string, value: string) => {
-            if (name !== "content") return;
-            existingMeta.getAttribute = (n: string) => {
-              if (n === "name") return "description";
-              if (n === "content") return value;
-              return null;
-            };
-          },
+          getAttribute: (name: string) => attributes.get(name) ?? null,
+          setAttribute: (name: string, value: string) => attributes.set(name, value),
         };
 
         mocks.headElements.push(existingMeta);
@@ -315,6 +387,38 @@ describe("DOM Utils", () => {
           "New description",
           "Should update existing meta tag",
         );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("adds route metadata without mutating an unowned singleton", () => {
+      const mocks = setupMockDocument();
+      try {
+        const attributes = new Map<string, string>([
+          ["name", "description"],
+          ["content", "Third-party description"],
+        ]);
+        const thirdPartyMeta: MockMetaElement = {
+          tagName: "META",
+          getAttribute: (name: string) => attributes.get(name) ?? null,
+          setAttribute: (name: string, value: string) => attributes.set(name, value),
+          remove: () => {
+            const index = mocks.headElements.indexOf(thirdPartyMeta);
+            if (index !== -1) mocks.headElements.splice(index, 1);
+          },
+        };
+        mocks.headElements.push(thirdPartyMeta);
+
+        updateMetaTags({ description: "Route description" });
+
+        assertEquals(mocks.headElements.includes(thirdPartyMeta), true);
+        assertEquals(thirdPartyMeta.getAttribute("content"), "Third-party description");
+        assertEquals(mocks.headElements.length, 2);
+        const routeMeta = mocks.headElements.find((element) =>
+          element.getAttribute("data-vf-route-head") === "true"
+        );
+        assertEquals(routeMeta?.getAttribute("content"), "Route description");
       } finally {
         mocks.cleanup();
       }
@@ -455,6 +559,39 @@ describe("DOM Utils", () => {
 
       executeScripts(container);
     });
+
+    it("does not activate scripts inside head directives as body scripts", () => {
+      const originalDocument = (globalThis as GlobalWithDOM).document;
+      let createdScripts = 0;
+      try {
+        (globalThis as GlobalWithDOM).document = {
+          createElement: () => {
+            createdScripts++;
+            return {};
+          },
+        } as unknown as Document;
+
+        const container = {
+          querySelectorAll: () => [oldScript],
+        } as unknown as HTMLElement;
+        const wrapper = {
+          tagName: "VF-HEAD",
+          getAttribute: () => null,
+          parentElement: container,
+        };
+        const oldScript = {
+          parentElement: wrapper,
+          attributes: [],
+          parentNode: { replaceChild: () => {} },
+          textContent: "window.__runs++",
+        };
+
+        executeScripts(container);
+        assertEquals(createdScripts, 0);
+      } finally {
+        (globalThis as GlobalWithDOM).document = originalDocument;
+      }
+    });
   });
 
   describe("applyHeadDirectives", () => {
@@ -475,19 +612,35 @@ describe("DOM Utils", () => {
       const domMocks = setupDOMMocks();
       const originalDocument = (globalThis as GlobalWithDOM).document;
       const headElements: MockHeadElement[] = [];
+      let documentTitle = "Original Title";
 
       const mockHead = {
         appendChild: (element: MockHeadElement) => {
           headElements.push(element);
+          if (element.tagName === "TITLE") {
+            documentTitle = element.textContent ?? "";
+          }
         },
         querySelectorAll: (selector: string) => {
-          if (selector !== '[data-veryfront-managed="1"]') return [];
-          return headElements.filter((el) => el.getAttribute?.("data-veryfront-managed") === "1");
+          if (selector === "title") {
+            return headElements.filter((element) => element.tagName === "TITLE");
+          }
+          if (selector === '[data-veryfront-managed="1"]') {
+            return headElements.filter((element) =>
+              element.getAttribute?.("data-veryfront-managed") === "1"
+            );
+          }
+          return [];
         },
       };
 
       (globalThis as GlobalWithDOM).document = {
-        title: "Original Title",
+        get title() {
+          return documentTitle;
+        },
+        set title(value: string) {
+          documentTitle = value;
+        },
         head: mockHead,
         createElement: (tag: string) => {
           const attributes = new Map<string, string>();
@@ -505,7 +658,7 @@ describe("DOM Utils", () => {
 
       return {
         headElements,
-        getTitle: () => (globalThis as GlobalWithDOM).document.title,
+        getTitle: () => documentTitle,
         cleanup: () => {
           (globalThis as GlobalWithDOM).document = originalDocument;
           domMocks.cleanup();
@@ -566,6 +719,30 @@ describe("DOM Utils", () => {
           "1",
           "Should mark as managed",
         );
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("drops route directives that attempt to redefine document encoding", () => {
+      const mocks = setupMockDocument();
+      try {
+        const charset = new MockElement("META");
+        charset.setAttribute("CHARSET", "ISO-8859-1");
+        const httpEquiv = new MockElement("META");
+        httpEquiv.setAttribute("HTTP-EQUIV", "Content-Type");
+        httpEquiv.setAttribute("content", "text/html; charset=windows-1252");
+        const vfHead = {
+          childNodes: [charset, httpEquiv],
+          parentElement: { removeChild: () => {} },
+        };
+        const container = {
+          querySelectorAll: () => [vfHead],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(mocks.headElements.length, 0);
       } finally {
         mocks.cleanup();
       }
@@ -770,6 +947,81 @@ describe("DOM Utils", () => {
       } finally {
         mocks.cleanup();
       }
+    });
+
+    it("retires React Head ownership before legacy directives take authority", () => {
+      const mocks = setupMockDocument();
+      try {
+        const reactManaged = {
+          tagName: "META",
+          getAttribute: (name: string) => {
+            if (name === "data-veryfront-managed") return "1";
+            if (name === "data-vf-react-head") return "true";
+            return null;
+          },
+          parentElement: {
+            removeChild: (child: MockHeadElement) => {
+              const index = mocks.headElements.indexOf(child);
+              if (index !== -1) mocks.headElements.splice(index, 1);
+            },
+          },
+        };
+        mocks.headElements.push(reactManaged);
+
+        const nextMeta = new MockElement("META");
+        nextMeta.setAttribute("name", "description");
+        const wrapper = {
+          childNodes: [nextMeta],
+          parentElement: { removeChild: () => {} },
+        };
+        const container = {
+          querySelectorAll: () => [wrapper],
+        } as unknown as HTMLElement;
+
+        applyHeadDirectives(container);
+
+        assertEquals(mocks.headElements.includes(reactManaged), false);
+        assertEquals(mocks.headElements.length, 1);
+      } finally {
+        mocks.cleanup();
+      }
+    });
+
+    it("applies directives only to the container owner document", () => {
+      const primary = new JSDOM(
+        `<!doctype html><html><head>
+          <title>Primary</title>
+          <meta data-veryfront-managed="1" name="primary" content="keep">
+        </head><body></body></html>`,
+      ).window.document;
+      const secondary = new JSDOM(
+        `<!doctype html><html><head>
+          <title>Secondary</title>
+          <meta data-veryfront-managed="1" name="stale" content="remove">
+        </head><body>
+          <main id="root">
+            <vf-head>
+              <title></title>
+              <meta name="description" content="Secondary description">
+            </vf-head>
+          </main>
+        </body></html>`,
+      ).window.document;
+      const container = secondary.getElementById("root") as HTMLElement;
+
+      applyHeadDirectives(container);
+
+      assertEquals(primary.title, "Primary");
+      assertExists(primary.head.querySelector('meta[name="primary"]'));
+      assertEquals(secondary.title, "");
+      assertEquals(secondary.head.querySelector('meta[name="stale"]'), null);
+      assertEquals(
+        secondary.head.querySelector('meta[name="description"]')?.getAttribute(
+          "content",
+        ),
+        "Secondary description",
+      );
+      assertEquals(container.querySelector("vf-head"), null);
     });
   });
 

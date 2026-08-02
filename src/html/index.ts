@@ -20,6 +20,7 @@ export { processMetadata } from "./metadata-builder.ts";
 export type { ProcessedMetadata } from "./metadata-builder.ts";
 export { extractHTMLMetadata } from "./metadata-extraction.ts";
 export {
+  buildStructuredManagedHeadDescriptors,
   generateLinkTags,
   generateMetaTags,
   generateScriptTags,

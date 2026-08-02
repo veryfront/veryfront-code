@@ -188,7 +188,9 @@ export {
   useAttachments,
   type UseAttachmentsOptions,
   useAttachmentsPanel,
+  type UseAttachmentsRequestState,
   type UseAttachmentsResult,
+  type UseAttachmentsStorageState,
   useModelSelector,
   useSources,
   useStepIndicator,
@@ -203,15 +205,21 @@ export {
   type UseUploadsRegistryResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 
-// Conversation persistence adapters — swappable async stores behind the
-// (upcoming) `useConversations` hook. localStorage default; idb/api are follow-ups.
+// Conversation persistence adapters and hooks. localStorage is the convenience
+// default; custom stores can provide IndexedDB, API, or application persistence.
 export {
+  type ActiveConversationLoadFailure,
   type Conversation,
+  CONVERSATION_STORAGE_LIMITS,
   type ConversationPatch,
   ConversationsContextProvider,
+  type ConversationsContextValue,
   ConversationsProvider,
   type ConversationsProviderProps,
+  type ConversationStorageLimits,
   type ConversationStore,
+  ConversationStoreError,
+  type ConversationStoreOperation,
   type ConversationSummary,
   localConversationStore,
   memoryConversationStore,
@@ -221,11 +229,14 @@ export {
   type UseConversationChatOptions,
   type UseConversationChatResult,
   type UseConversationOptions,
+  type UseConversationPersistenceState,
   type UseConversationResult,
   useConversations,
+  type UseConversationsActiveLoadState,
   useConversationsContext,
   useConversationsContextOptional,
   type UseConversationsOptions,
+  type UseConversationsPersistenceState,
   type UseConversationsResult,
 } from "#veryfront/react/components/chat/chat.tsx";
 

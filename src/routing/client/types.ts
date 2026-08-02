@@ -7,10 +7,15 @@ export interface FrontmatterData {
 
 export type ComponentMap = Record<string, unknown>;
 
+export type ClientRouteHeadEntry = ManagedHeadTransportEntry;
+
 export interface PageData {
   frontmatter?: FrontmatterData;
   components?: ComponentMap;
   props?: Record<string, unknown>;
+  managedHead?: ClientRouteHeadEntry[];
+  /** Scripted destinations use a document navigation to preserve browser ordering and CSP. */
+  requiresFullDocumentNavigation?: boolean;
   [key: string]: unknown;
 }
 
@@ -19,6 +24,8 @@ export interface RouteData {
   frontmatter?: FrontmatterData;
   components?: ComponentMap;
   pageData?: PageData;
+  managedHead?: ClientRouteHeadEntry[];
+  requiresFullDocumentNavigation?: boolean;
   /** Dependency snapshot identity returned by route-data transports. */
   dependencyPinningCacheKey?: string;
 }
@@ -47,3 +54,4 @@ export interface SpaPageData {
    */
   redirect?: { destination: string; permanent?: boolean };
 }
+import type { ManagedHeadTransportEntry } from "#veryfront/html/managed-head-protocol.ts";

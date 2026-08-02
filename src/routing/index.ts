@@ -34,6 +34,7 @@ export {
   NavigationHandlers,
   PageLoader,
   PageTransition,
+  snapshotClientRouteHead,
   ViewportPrefetch,
 } from "./client/index.ts";
 
