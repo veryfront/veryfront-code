@@ -50,6 +50,7 @@ function createClient(
     incr: () => Promise.resolve(1),
     pExpire: () => Promise.resolve(true),
     pTTL: () => Promise.resolve(1_000),
+    info: () => Promise.resolve(""),
     on: () => undefined,
   };
 }
@@ -78,6 +79,7 @@ describe("Redis runtime provider owned clients", () => {
   it("does not manufacture optional hooks omitted by a compatible client", async () => {
     const client = createClient();
     delete (client as Partial<RedisClient>).on;
+    delete (client as Partial<RedisClient>).info;
     const provider = createRedisRuntimeProvider({
       openClient: () => Promise.resolve(client),
     });
@@ -85,6 +87,7 @@ describe("Redis runtime provider owned clients", () => {
     const handle = await provider.openClient();
     assertEquals(handle.client.on, undefined);
     assertEquals(handle.client.ttl, undefined);
+    assertEquals(handle.client.info, undefined);
 
     await handle.close();
     await provider.close();
@@ -93,8 +96,10 @@ describe("Redis runtime provider owned clients", () => {
   it("preserves inherited optional data methods with their original receiver", async () => {
     const client = createClient();
     delete (client as Partial<RedisClient>).on;
+    delete (client as Partial<RedisClient>).info;
     let onReceiver: unknown;
     let ttlReceiver: unknown;
+    let infoReceiver: unknown;
     Object.setPrototypeOf(client, {
       on(this: FakeRedisClient) {
         onReceiver = this;
@@ -102,6 +107,10 @@ describe("Redis runtime provider owned clients", () => {
       ttl(this: FakeRedisClient) {
         ttlReceiver = this;
         return Promise.resolve(42);
+      },
+      info(this: FakeRedisClient) {
+        infoReceiver = this;
+        return Promise.resolve("redis_version:7.4.1");
       },
     });
     const provider = createRedisRuntimeProvider({
@@ -111,8 +120,10 @@ describe("Redis runtime provider owned clients", () => {
     const handle = await provider.openClient();
     handle.client.on?.("error", () => undefined);
     assertEquals(await handle.client.ttl?.("key"), 42);
+    assertEquals(await handle.client.info?.("server"), "redis_version:7.4.1");
     assertEquals(onReceiver === client, true);
     assertEquals(ttlReceiver === client, true);
+    assertEquals(infoReceiver === client, true);
 
     await handle.close();
     await provider.close();

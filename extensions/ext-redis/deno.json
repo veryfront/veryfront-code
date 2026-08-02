@@ -19,16 +19,23 @@
   "imports": {
     "@redis/client": "npm:@redis/client@1.5.8",
     "redis": "npm:redis@5.11.0",
+    "veryfront/errors": "../../src/errors/index.ts",
     "veryfront/errors/general": "../../src/errors/error-registry/general.ts",
     "veryfront/errors/module": "../../src/errors/error-registry/module.ts",
     "veryfront/extensions/distributed": "../../src/extensions/distributed/index.ts",
+    "veryfront/extensions/distributed/agent-memory-support": "../../src/extensions/distributed/agent-memory-support.ts",
+    "veryfront/extensions/distributed/cache-support": "../../src/extensions/distributed/cache-support.ts",
+    "veryfront/extensions/distributed/rate-limit-support": "../../src/extensions/distributed/rate-limit-support.ts",
+    "veryfront/extensions/distributed/routing-invalidation-support": "../../src/extensions/distributed/routing-invalidation-support.ts",
     "veryfront/extensions/types": "../../src/extensions/types.ts",
     "veryfront/platform/env": "../../src/platform/compat/process/env.ts",
+    "veryfront/observability": "../../src/observability/index.ts",
+    "veryfront/observability/otlp-setup": "../../src/observability/tracing/otlp-setup.ts",
     "veryfront/utils/logger": "../../src/utils/logger/index.ts",
     "veryfront/workflow/claude-code/types": "../../src/workflow/claude-code/types.ts"
   },
   "tasks": {
     "check": "deno check --no-lock src/index.ts src/*.test.ts",
-    "test": "deno test --no-lock src/"
+    "test": "deno test --no-lock --allow-all src/"
   }
 }

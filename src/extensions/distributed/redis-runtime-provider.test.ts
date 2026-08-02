@@ -105,6 +105,22 @@ describe("RedisRuntimeProvider", () => {
     );
   });
 
+  it("captures an optional info method with its original receiver", async () => {
+    const client = createClient();
+    let receivedThis: unknown;
+    client.info = function () {
+      receivedThis = this;
+      return Promise.resolve("redis_version:7.4.1");
+    };
+    const provider = createProvider();
+    provider.getClient = () => Promise.resolve(client);
+
+    const captured = await captureRedisRuntimeProvider(provider).getClient();
+
+    assertEquals(await captured.info?.("server"), "redis_version:7.4.1");
+    assertEquals(receivedThis === client, true);
+  });
+
   it("rejects returned module accessors without invoking them", async () => {
     let getterCalls = 0;
     const module = {};

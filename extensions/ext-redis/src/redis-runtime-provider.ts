@@ -64,7 +64,7 @@ const CLIENT_METHODS = [
   "pExpire",
   "pTTL",
 ] as const;
-const OPTIONAL_CLIENT_METHODS = ["ttl", "on"] as const;
+const OPTIONAL_CLIENT_METHODS = ["ttl", "info", "on"] as const;
 
 function readOptionalClientMethod(
   target: object,

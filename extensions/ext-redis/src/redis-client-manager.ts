@@ -1,6 +1,7 @@
 import { INITIALIZATION_ERROR } from "veryfront/errors/general";
 import { DEPENDENCY_MISSING } from "veryfront/errors/module";
 import type { RedisClient, RedisClientOptions } from "veryfront/extensions/distributed";
+export type { RedisClient, RedisClientOptions } from "veryfront/extensions/distributed";
 import { getEnv } from "veryfront/platform/env";
 import { logger as baseLogger } from "veryfront/utils/logger";
 import { requireRedisUrl } from "./connection-config.ts";
@@ -53,6 +54,7 @@ export interface RedisClientOpenLifecycle {
 export interface RedisClientManager {
   getClient(options?: RedisClientOptions): Promise<RedisClient>;
   disconnect(): Promise<void>;
+  isConfigured(options?: RedisClientOptions): boolean;
 }
 
 const setupCleanupClients = new WeakMap<object, RedisClient>();
@@ -648,5 +650,30 @@ export function createRedisClientManager(
     return tracked;
   }
 
-  return { getClient, disconnect };
+  function isConfigured(options: RedisClientOptions = {}): boolean {
+    const capturedOptions = captureClientOptions(options);
+    const configured = capturedOptions.url ?? readEnv("REDIS_URL");
+    if (configured === undefined || configured.length === 0) return false;
+    requireRedisUrl(configured);
+    return true;
+  }
+
+  return { getClient, disconnect, isConfigured };
+}
+
+const defaultManager = createRedisClientManager();
+
+/** Acquire a connection from the extension-owned shared manager. */
+export function getRedisClient(options: RedisClientOptions = {}): Promise<RedisClient> {
+  return defaultManager.getClient(options);
+}
+
+/** Disconnect the shared manager so the next call reconnects from a clean state. */
+export function disconnectRedisClient(): Promise<void> {
+  return defaultManager.disconnect();
+}
+
+/** Report whether the shared manager has an explicit Redis endpoint. */
+export function isRedisConfigured(options: RedisClientOptions = {}): boolean {
+  return defaultManager.isConfigured(options);
 }

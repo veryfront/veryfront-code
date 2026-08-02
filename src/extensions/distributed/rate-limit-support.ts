@@ -1,0 +1,11 @@
+/** Provider-neutral rate-limit helpers shared with store extensions. */
+
+export type {
+  RateLimitEntry,
+  RateLimitStore,
+} from "#veryfront/middleware/builtin/security/types.ts";
+export {
+  requireRateLimitKey,
+  requireRateLimitWindowMs,
+} from "#veryfront/middleware/builtin/security/rate-limit-validation.ts";
+export { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";

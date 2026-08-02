@@ -32,6 +32,18 @@ Core Redis facades fail closed with an actionable install recommendation until
 extension orchestration registers the provider. Workspace and compiled-binary
 availability do not bypass that activation boundary.
 
+## Redis-backed infrastructure primitives
+
+The package also exports bounded Redis implementations for distributed cache,
+render-cache, rate-limit, routing-invalidation, and agent-memory composition.
+These primitives are explicit: constructing one does not activate Redis for
+unrelated framework features, and each owner must close or destroy the
+resource it creates.
+
+Durable workflow storage is intentionally not part of this release. It will be
+published after the provider-neutral workflow recovery contracts land, rather
+than coupling this package to unpublished core APIs.
+
 ## Configuration
 
 The shared client facade reads `REDIS_URL` when an explicit URL is not passed.
