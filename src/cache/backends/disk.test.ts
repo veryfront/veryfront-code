@@ -233,6 +233,25 @@ Deno.test("DiskCacheBackend", async (t) => {
     assertEquals(await backend.get("user:invalid"), null);
   });
 
+  await t.step("does not follow cache-entry symlinks", async () => {
+    const isolatedDir = await Deno.makeTempDir({ prefix: "disk-cache-symlink-" });
+    const outsidePath = join(isolatedDir, "outside.txt");
+    const backend = new DiskCacheBackend(isolatedDir);
+    await backend.set("linked", "safe-value");
+    await Deno.writeTextFile(outsidePath, "outside-value");
+
+    const cacheDir = join(isolatedDir, "veryfront-files");
+    for await (const file of Deno.readDir(cacheDir)) {
+      if (!file.isFile || !file.name.endsWith(".vfcache")) continue;
+      const cachePath = join(cacheDir, file.name);
+      await Deno.remove(cachePath);
+      await Deno.symlink(outsidePath, cachePath);
+      break;
+    }
+
+    assertEquals(await backend.get("linked"), null);
+  });
+
   await t.step("overwrite existing key", async () => {
     const backend = makeBackend();
     await backend.set("overwrite", "v1");

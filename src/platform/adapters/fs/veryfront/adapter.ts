@@ -128,6 +128,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private statOps: StatOperations;
   private initialized = false;
   private exactReadInitializationPromise: Promise<void> | null = null;
+  private exactReadInitializationGeneration = 0;
 
   /** Resolves when file list initialization is complete (for coordinating reads) */
   private fileListReadyResolve: (() => void) | null = null;
@@ -1017,6 +1018,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     this.dirOps.clearTree();
     this.initialized = false;
     this.exactReadInitializationPromise = null;
+    this.exactReadInitializationGeneration++;
     this.fileListWarmupPromise = null;
     this.fileListWarmupKey = null;
     this.branchMissRecoveryPromise = null;
@@ -1227,6 +1229,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       return;
     }
 
+    const generation = ++this.exactReadInitializationGeneration;
     const initialization = (async () => {
       await this.client.initialize();
       if (!this.contentContext) {
@@ -1247,7 +1250,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
     try {
       await initialization;
     } finally {
-      if (this.exactReadInitializationPromise === initialization) {
+      if (this.exactReadInitializationGeneration === generation) {
         this.exactReadInitializationPromise = null;
       }
     }

@@ -1,4 +1,5 @@
 import { join } from "#veryfront/compat/path/index.ts";
+import { constants as fsConstants } from "node:fs";
 import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { logger } from "#veryfront/utils";
 import { utf8ByteLength } from "#veryfront/utils/utf8-byte-length.ts";
@@ -341,19 +342,19 @@ export class DiskCacheBackend implements CacheBackend {
     maximumValueBytes: number | undefined,
     includeValue: boolean,
   ): Promise<DiskCacheEnvelope> {
-    const { lstat, open } = await fsPromises;
-    const before = await lstat(filePath, { bigint: true });
-    if (!before.isFile() || before.size > BigInt(this.maxFileBytes)) {
-      throw new InvalidDiskCacheFileError();
+    const { open } = await fsPromises;
+    let handle: DiskFileHandle;
+    try {
+      handle = await open(filePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+        throw new InvalidDiskCacheFileError();
+      }
+      throw error;
     }
-    const handle = await open(filePath, "r");
     return await closeHandle(handle, async () => {
       const opened = await handle.stat({ bigint: true });
-      if (
-        !opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino ||
-        opened.size !== before.size || opened.mtimeNs !== before.mtimeNs ||
-        opened.ctimeNs !== before.ctimeNs
-      ) {
+      if (!opened.isFile() || opened.size > BigInt(this.maxFileBytes)) {
         throw new InvalidDiskCacheFileError();
       }
 
