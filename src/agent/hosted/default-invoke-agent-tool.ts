@@ -422,7 +422,6 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     childConfig?: DefaultHostedChildAgentExecutionConfig;
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
     durableChildRun?: HostedChildRunIdentifiers;
-    runEventWriterCapability?: HostedRunEventWriterCapability;
   },
 ): Promise<ChildRunExecutionResult> {
   const baseConfig = options.getConfig();
@@ -479,20 +478,16 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
       });
     },
     prepareToolAssembly: ({ runtimeConfig, requestedTools, abortSignal }) =>
-      runWithHostedRunEventWriterCapability(
-        runtimeOptions.runEventWriterCapability,
-        () =>
-          prepareForkToolAssembly(scopedOptions, config, {
-            childAgentId: runtimeOptions.childAgentId,
-            childConfig: runtimeOptions.childConfig,
-            provider: runtimeConfig.provider,
-            forkModel: runtimeConfig.forkModel,
-            effectivePrompt: runtimeConfig.effectivePrompt,
-            requestedTools,
-            abortSignal,
-            durableChildRun: runtimeOptions.durableChildRun,
-          }),
-      ),
+      prepareForkToolAssembly(scopedOptions, config, {
+        childAgentId: runtimeOptions.childAgentId,
+        childConfig: runtimeOptions.childConfig,
+        provider: runtimeConfig.provider,
+        forkModel: runtimeConfig.forkModel,
+        effectivePrompt: runtimeConfig.effectivePrompt,
+        requestedTools,
+        abortSignal,
+        durableChildRun: runtimeOptions.durableChildRun,
+      }),
     resolveProviderOptions: options.resolveProviderOptions,
     resolveReasoning: options.resolveReasoning,
     forkContext: scopedOptions.context,
@@ -526,7 +521,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     shouldRethrowError: options.shouldRethrowError,
     instrumentation,
     sourceIntegrationPolicy: execution.sourceIntegrationPolicy,
-  }, runtimeOptions.runEventWriterCapability);
+  });
 }
 
 function getToolCallId(executionContext?: ToolExecutionContext): string {
@@ -580,200 +575,218 @@ export async function executeDefaultHostedInvokeAgentTool<
   input: DefaultHostedInvokeAgentInput,
   childAgentId: string,
   executionContext?: ToolExecutionContext,
-  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): Promise<DefaultHostedInvokeAgentToolResult> {
-  let executionSnapshot: ChildRunExecutionSnapshot | null = null;
-  const config = options.getConfig();
-  const toolCallId = getToolCallId(executionContext);
-  const abortSignal = getAbortSignal(executionContext);
-  const requestedProjectReference = input.project_reference;
-  let targetProjectId = options.context.projectId;
-  let resolvedInput = input;
-  if (requestedProjectReference) {
-    const resolver = options.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
-      projectReference: requestedProjectReference,
-      authToken: options.context.authToken,
-      apiUrl: config.apiUrl,
-      abortSignal,
-    });
-    targetProjectId = resolvedProject.projectId;
-    await applyRequestedProjectId(options, targetProjectId);
-    resolvedInput = {
-      ...input,
-      project_reference: undefined,
-    };
-  }
-  const childConfig = await options.resolveChildAgentExecutionConfig?.(
+  return await executeDefaultHostedInvokeAgentToolWithCapability(
+    options,
+    input,
     childAgentId,
-    targetProjectId,
+    executionContext,
+    getActiveHostedRunEventWriterCapability(),
   );
-  const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
-  const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
-  const forkInput = configuredInput;
-  const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
-    traceBase: {
-      conversationId: options.context.conversationId,
-      projectId: options.context.projectId,
-      runId: options.context.parentRunId,
-      toolCallId,
-      childAgentId,
-    },
-    executionFailedCode: "INVOKE_AGENT_FAILED",
-    setTraceAttributes: options.setTraceAttributes,
-  });
+}
 
-  const executeLocalInvoke = (runtimeOptions: HostedDurableChildExecutionOptions = {}) =>
-    executeForkTask(
-      options,
-      forkInput,
-      {
-        toolCallId,
+async function executeDefaultHostedInvokeAgentToolWithCapability<
+  TContext extends DefaultHostedInvokeAgentContext,
+>(
+  options: DefaultHostedInvokeAgentToolOptions<TContext>,
+  input: DefaultHostedInvokeAgentInput,
+  childAgentId: string,
+  executionContext: ToolExecutionContext | undefined,
+  runEventWriterCapability: HostedRunEventWriterCapability | undefined,
+): Promise<DefaultHostedInvokeAgentToolResult> {
+  return await runWithHostedRunEventWriterCapability(runEventWriterCapability, async () => {
+    let executionSnapshot: ChildRunExecutionSnapshot | null = null;
+    const config = options.getConfig();
+    const toolCallId = getToolCallId(executionContext);
+    const abortSignal = getAbortSignal(executionContext);
+    const requestedProjectReference = input.project_reference;
+    let targetProjectId = options.context.projectId;
+    let resolvedInput = input;
+    if (requestedProjectReference) {
+      const resolver = options.resolveProjectReference ?? resolveHostedProjectReference;
+      const resolvedProject = await resolver({
+        projectReference: requestedProjectReference,
+        authToken: options.context.authToken,
+        apiUrl: config.apiUrl,
         abortSignal,
-        sourceIntegrationPolicy,
-      },
-      {
-        childAgentId,
-        childConfig,
-        onSettled: (snapshot) => {
-          executionSnapshot = snapshot;
-        },
-        durableChildRun: runtimeOptions.durableChildRun,
-        runEventWriterCapability: runtimeOptions.runEventWriterCapability,
-      },
+      });
+      targetProjectId = resolvedProject.projectId;
+      await applyRequestedProjectId(options, targetProjectId);
+      resolvedInput = {
+        ...input,
+        project_reference: undefined,
+      };
+    }
+    const childConfig = await options.resolveChildAgentExecutionConfig?.(
+      childAgentId,
+      targetProjectId,
     );
-
-  durableInvokeRecorder.annotate();
-
-  if (!config.enableDurableInvokeAgent && !options.requireDurableInvokeAgent) {
-    return executeHostedLocalChildInvoke({
-      forkInput,
-      abortSignal,
-      traceRecorder: durableInvokeRecorder,
-      execute: executeLocalInvoke,
-      getExecutionSnapshot: () => executionSnapshot,
-      resultMode: input.result_mode,
-    });
-  }
-
-  executionSnapshot = null;
-
-  try {
-    return await executeHostedDurableChildFork<
-      HostedDurableChildInvokeResult,
-      ChildRunExecutionResult
-    >({
-      authToken: options.context.authToken,
-      runEventWriterCapability,
-      apiUrl: config.apiUrl,
-      forkInput,
-      executionOptions: {
+    const sourceIntegrationPolicy = getRuntimeSourceIntegrationPolicyFromContext(executionContext);
+    const configuredInput = applyChildAgentExecutionConfig(resolvedInput, childConfig);
+    const forkInput = configuredInput;
+    const durableInvokeRecorder = createHostedDurableChildInvokeTraceRecorder({
+      traceBase: {
+        conversationId: options.context.conversationId,
+        projectId: options.context.projectId,
+        runId: options.context.parentRunId,
         toolCallId,
-        abortSignal,
+        childAgentId,
       },
-      childAgentId,
-      runProjectId: targetProjectId,
-      parentConversationId: options.context.conversationId,
-      parentRunId: options.context.parentRunId,
-      parentMessageId: options.context.parentMessageId,
-      trustedInvocationContext: options.context.veryfrontInvocationContext,
-      getProjectId: () => options.context.projectId,
-      getRuntimeTargetKind: () => options.context.runtimeTargetKind,
-      getRuntimeTargetEnvironmentId: () => options.context.runtimeTargetEnvironmentId,
-      getBranchId: () => options.context.branchId,
-      getContextModel: () => options.context.model,
-      defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
-      resolveModelId: options.resolveModelId,
-      resolveProvider: options.resolveProvider,
-      onRequestedProjectId: (projectId) => applyRequestedProjectId(options, projectId),
-      publishParentRunEvents: options.context.publishParentRunEvents,
-      contextUnavailableMessage:
-        "invoke_agent requires durable conversation context when durable child runs are enabled.",
-      setupFailedCode: DURABLE_INVOKE_SETUP_FAILED,
       executionFailedCode: "INVOKE_AGENT_FAILED",
-      executeLocal: executeLocalInvoke,
-      getExecutionSnapshot: () => executionSnapshot,
-      buildContextUnavailableResult: (message) => {
-        durableInvokeRecorder.annotate({
-          status: "failed",
-          terminalErrorCode: DURABLE_INVOKE_CONTEXT_UNAVAILABLE,
-          terminalErrorMessage: message,
-        });
+      setTraceAttributes: options.setTraceAttributes,
+    });
 
-        return buildHostedDurableChildInvokeFailureResult({
-          terminalErrorCode: DURABLE_INVOKE_CONTEXT_UNAVAILABLE,
-          terminalErrorMessage: message,
-        });
-      },
-      buildSetupFailureResult: (failure) => durableInvokeRecorder.recordSetupFailure(failure),
-      buildTerminalFailureResult: (failure) => durableInvokeRecorder.recordTerminalFailure(failure),
-      buildSuccessResult: (success) =>
-        durableInvokeRecorder.recordSuccess(success, { resultMode: input.result_mode }),
-      runtime: {
-        bootstrapChildRun: bootstrapHostedChildRun,
-        createLifecycleAdapter: createConversationChildLifecycleAdapter,
-        runLifecycle: runHostedChildExecutionLifecycle,
-        shouldSkipTerminalPersistence: shouldSkipHostedChildTerminalPersistence,
-      },
-      bootstrap: {
-        runBootstrap: (operation) =>
-          options.trace("invoke_agent.durableChildSetup", async () => {
-            options.setTraceAttributes({
-              "conversation.id": options.context.conversationId,
-              "run.id": options.context.parentRunId,
-              "tool.call.id": toolCallId,
+    const executeLocalInvoke = (runtimeOptions: HostedDurableChildExecutionOptions = {}) =>
+      executeForkTask(
+        options,
+        forkInput,
+        {
+          toolCallId,
+          abortSignal,
+          sourceIntegrationPolicy,
+        },
+        {
+          childAgentId,
+          childConfig,
+          onSettled: (snapshot) => {
+            executionSnapshot = snapshot;
+          },
+          durableChildRun: runtimeOptions.durableChildRun,
+        },
+      );
+
+    durableInvokeRecorder.annotate();
+
+    if (!config.enableDurableInvokeAgent && !options.requireDurableInvokeAgent) {
+      return executeHostedLocalChildInvoke({
+        forkInput,
+        abortSignal,
+        traceRecorder: durableInvokeRecorder,
+        execute: executeLocalInvoke,
+        getExecutionSnapshot: () => executionSnapshot,
+        resultMode: input.result_mode,
+      });
+    }
+
+    executionSnapshot = null;
+
+    try {
+      return await executeHostedDurableChildFork<
+        HostedDurableChildInvokeResult,
+        ChildRunExecutionResult
+      >({
+        authToken: options.context.authToken,
+        apiUrl: config.apiUrl,
+        forkInput,
+        executionOptions: {
+          toolCallId,
+          abortSignal,
+        },
+        childAgentId,
+        runProjectId: targetProjectId,
+        parentConversationId: options.context.conversationId,
+        parentRunId: options.context.parentRunId,
+        parentMessageId: options.context.parentMessageId,
+        trustedInvocationContext: options.context.veryfrontInvocationContext,
+        getProjectId: () => options.context.projectId,
+        getRuntimeTargetKind: () => options.context.runtimeTargetKind,
+        getRuntimeTargetEnvironmentId: () => options.context.runtimeTargetEnvironmentId,
+        getBranchId: () => options.context.branchId,
+        getContextModel: () => options.context.model,
+        defaultModel: options.defaultModel ?? DEFAULT_USER_AGENT_MODEL,
+        resolveModelId: options.resolveModelId,
+        resolveProvider: options.resolveProvider,
+        onRequestedProjectId: (projectId) => applyRequestedProjectId(options, projectId),
+        publishParentRunEvents: options.context.publishParentRunEvents,
+        contextUnavailableMessage:
+          "invoke_agent requires durable conversation context when durable child runs are enabled.",
+        setupFailedCode: DURABLE_INVOKE_SETUP_FAILED,
+        executionFailedCode: "INVOKE_AGENT_FAILED",
+        executeLocal: executeLocalInvoke,
+        getExecutionSnapshot: () => executionSnapshot,
+        buildContextUnavailableResult: (message) => {
+          durableInvokeRecorder.annotate({
+            status: "failed",
+            terminalErrorCode: DURABLE_INVOKE_CONTEXT_UNAVAILABLE,
+            terminalErrorMessage: message,
+          });
+
+          return buildHostedDurableChildInvokeFailureResult({
+            terminalErrorCode: DURABLE_INVOKE_CONTEXT_UNAVAILABLE,
+            terminalErrorMessage: message,
+          });
+        },
+        buildSetupFailureResult: (failure) => durableInvokeRecorder.recordSetupFailure(failure),
+        buildTerminalFailureResult: (failure) =>
+          durableInvokeRecorder.recordTerminalFailure(failure),
+        buildSuccessResult: (success) =>
+          durableInvokeRecorder.recordSuccess(success, { resultMode: input.result_mode }),
+        runtime: {
+          bootstrapChildRun: bootstrapHostedChildRun,
+          createLifecycleAdapter: createConversationChildLifecycleAdapter,
+          runLifecycle: runHostedChildExecutionLifecycle,
+          shouldSkipTerminalPersistence: shouldSkipHostedChildTerminalPersistence,
+        },
+        bootstrap: {
+          runBootstrap: (operation) =>
+            options.trace("invoke_agent.durableChildSetup", async () => {
+              options.setTraceAttributes({
+                "conversation.id": options.context.conversationId,
+                "run.id": options.context.parentRunId,
+                "tool.call.id": toolCallId,
+              });
+
+              return operation();
+            }),
+          onBootstrapStart: (bootstrapContext) => {
+            options.logger.info("Bootstrapping durable child run", {
+              parentConversationId: bootstrapContext.parentConversationId,
+              parentRunId: bootstrapContext.parentRunId,
+              toolCallId,
+              childAgentId,
+              description: input.description,
             });
-
-            return operation();
-          }),
-        onBootstrapStart: (bootstrapContext) => {
-          options.logger.info("Bootstrapping durable child run", {
-            parentConversationId: bootstrapContext.parentConversationId,
-            parentRunId: bootstrapContext.parentRunId,
-            toolCallId,
-            childAgentId,
-            description: input.description,
-          });
+          },
+          onBootstrapComplete: (bootstrapContext) => {
+            options.logger.info("Durable child bootstrap complete", {
+              parentConversationId: bootstrapContext.parentConversationId,
+              childConversationId: bootstrapContext.identifiers.childConversationId,
+              childRunId: bootstrapContext.identifiers.childRunId,
+              childMessageId: bootstrapContext.identifiers.childMessageId,
+              toolCallId,
+            });
+          },
+          onBootstrapError: ({ error, parentConversationId }) => {
+            options.logger.warn("Durable child-run persistence failed", {
+              parentConversationId,
+              toolCallId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          },
         },
-        onBootstrapComplete: (bootstrapContext) => {
-          options.logger.info("Durable child bootstrap complete", {
-            parentConversationId: bootstrapContext.parentConversationId,
-            childConversationId: bootstrapContext.identifiers.childConversationId,
-            childRunId: bootstrapContext.identifiers.childRunId,
-            childMessageId: bootstrapContext.identifiers.childMessageId,
-            toolCallId,
-          });
-        },
-        onBootstrapError: ({ error, parentConversationId }) => {
-          options.logger.warn("Durable child-run persistence failed", {
-            parentConversationId,
+        onLifecycleError: (error) => {
+          options.logger.warn("Durable child lifecycle adapter failed", {
             toolCallId,
             error: error instanceof Error ? error.message : String(error),
           });
         },
-      },
-      onLifecycleError: (error) => {
-        options.logger.warn("Durable child lifecycle adapter failed", {
-          toolCallId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      },
-      onLifecycleFinalized: ({ identifiers, status }) =>
-        options.trace("invoke_agent.durableChildFinalize", async () => {
-          options.setTraceAttributes({
-            "child.conversation.id": identifiers.childConversationId,
-            "child.run.id": identifiers.childRunId,
-            "child.message.id": identifiers.childMessageId,
-            "agent.run.final_status": status,
-          });
-        }),
-    });
-  } catch (error) {
-    durableInvokeRecorder.recordLocalFailure(
-      error instanceof Error ? error.message : String(error),
-    );
-    throw error;
-  }
+        onLifecycleFinalized: ({ identifiers, status }) =>
+          options.trace("invoke_agent.durableChildFinalize", async () => {
+            options.setTraceAttributes({
+              "child.conversation.id": identifiers.childConversationId,
+              "child.run.id": identifiers.childRunId,
+              "child.message.id": identifiers.childMessageId,
+              "agent.run.final_status": status,
+            });
+          }),
+      });
+    } catch (error) {
+      durableInvokeRecorder.recordLocalFailure(
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
+  });
 }
 
 /** Create default hosted invoke agent tool. */
@@ -781,8 +794,8 @@ export function createDefaultHostedInvokeAgentTool<
   TContext extends DefaultHostedInvokeAgentContext,
 >(
   options: DefaultHostedInvokeAgentToolOptions<TContext>,
-  runEventWriterCapability = getActiveHostedRunEventWriterCapability(),
 ) {
+  const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return createHostedChildInvokeTool<
     DefaultHostedInvokeAgentInput,
     DefaultHostedInvokeAgentToolResult
@@ -795,7 +808,7 @@ export function createDefaultHostedInvokeAgentTool<
     buildFailureResult: buildHostedDurableChildInvokeFailureResult,
     decorateResult: withRootOwnedChildResultHint,
     execute: (input, executionOptions) =>
-      executeDefaultHostedInvokeAgentTool(
+      executeDefaultHostedInvokeAgentToolWithCapability(
         options,
         input,
         resolveChildAgentId(options, input),

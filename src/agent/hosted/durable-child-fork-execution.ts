@@ -37,15 +37,25 @@ import {
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
 import {
+  getActiveHostedRunEventWriterCapability,
   HostedChildRunEventWriterTokenExchangeError,
   type HostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
+
+const CHILD_RUN_FINALIZATION_ERROR = "Unable to finalize durable child run after setup failure";
+
+/** Sanitized failure raised when setup-failure finalization itself cannot be persisted. */
+export class HostedChildRunFinalizationError extends Error {
+  constructor() {
+    super(CHILD_RUN_FINALIZATION_ERROR);
+    this.name = "HostedChildRunFinalizationError";
+  }
+}
 
 /** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
   durableChildRun?: HostedChildRunIdentifiers;
-  /** @internal Non-serializable exact-run authority for nested durable children. */
-  runEventWriterCapability?: HostedRunEventWriterCapability;
 };
 
 /** Result returned from hosted durable child invoke. */
@@ -431,8 +441,6 @@ export type ExecuteHostedDurableChildForkInput<
   TLocalResult extends ChildRunExecutionResult,
 > = {
   authToken: string;
-  /** @internal Non-serializable active-run authority used only for direct children. */
-  runEventWriterCapability?: HostedRunEventWriterCapability;
   apiUrl: string;
   forkInput: HostedChildForkToolInput;
   executionOptions: {
@@ -636,10 +644,10 @@ async function executeHostedDurableChildLifecycle<
     executionFailedCode: input.executionFailedCode,
     abortSignal: input.executionOptions.abortSignal,
     execute: () =>
-      input.executeLocal({
-        durableChildRun: identifiers,
-        runEventWriterCapability: input.childRunEventWriterCapability,
-      }),
+      runWithHostedRunEventWriterCapability(
+        input.childRunEventWriterCapability,
+        () => input.executeLocal({ durableChildRun: identifiers }),
+      ),
     getExecutionSnapshot: input.getExecutionSnapshot,
     onLifecycleError: input.onLifecycleError,
     skipTerminalPersistence,
@@ -741,6 +749,7 @@ export async function executeHostedDurableChildFork<
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult>,
 ): Promise<TResult> {
   throwIfChildRunAborted(input.executionOptions.abortSignal);
+  const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
 
   if (!input.parentConversationId || !input.parentRunId || !input.parentMessageId) {
     return input.buildContextUnavailableResult(input.contextUnavailableMessage);
@@ -785,10 +794,10 @@ export async function executeHostedDurableChildFork<
 
   let childRunEventWriterCapability: HostedRunEventWriterCapability;
   try {
-    if (!input.runEventWriterCapability) {
+    if (!runEventWriterCapability) {
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
-    childRunEventWriterCapability = await input.runEventWriterCapability
+    childRunEventWriterCapability = await runEventWriterCapability
       .mintChildRunEventAppendToken(
         identifiers.childRunId,
         input.executionOptions.abortSignal,
@@ -813,33 +822,54 @@ export async function executeHostedDurableChildFork<
       },
     );
 
-    const terminalState = {
-      status: "failed" as const,
-      terminalErrorCode: input.setupFailedCode,
-      terminalErrorMessage: setupError.message,
-    };
+    const cancelled = setupError.classification === "aborted";
+    const terminalState = cancelled
+      ? {
+        status: "cancelled" as const,
+        terminalErrorCode: "CANCELLED",
+        terminalErrorMessage: "Child run cancelled",
+      }
+      : {
+        status: "failed" as const,
+        terminalErrorCode: input.setupFailedCode,
+        terminalErrorMessage: setupError.message,
+      };
     try {
-      await createDurableChildLifecycleAdapter({
+      const lifecycleAdapter = createDurableChildLifecycleAdapter({
         ...input,
         bootstrapContext,
         identifiers,
-      }).failed?.(terminalState);
+      });
+      if (cancelled) {
+        await lifecycleAdapter.cancelled?.(terminalState);
+      } else {
+        await lifecycleAdapter.failed?.(terminalState);
+      }
     } catch {
       try {
-        await input.onLifecycleError?.(setupError);
+        await input.onLifecycleError?.(new HostedChildRunFinalizationError());
       } catch {
-        // The structured setup failure remains authoritative and sanitized.
+        // The structured terminal result remains authoritative and sanitized.
       }
     }
 
-    return input.buildSetupFailureResult({
+    const failure = {
       targets,
       childConversationId: identifiers.childConversationId,
       childRunId: identifiers.childRunId,
       childMessageId: identifiers.childMessageId,
-      terminalErrorCode: input.setupFailedCode,
-      terminalErrorMessage: setupError.message,
-    });
+      terminalErrorCode: terminalState.terminalErrorCode,
+      terminalErrorMessage: terminalState.terminalErrorMessage,
+    };
+    return cancelled
+      ? input.buildTerminalFailureResult({
+        status: "cancelled",
+        identifiers,
+        targets,
+        terminalErrorCode: terminalState.terminalErrorCode,
+        terminalErrorMessage: terminalState.terminalErrorMessage,
+      })
+      : input.buildSetupFailureResult(failure);
   }
 
   return executeHostedDurableChildLifecycle({

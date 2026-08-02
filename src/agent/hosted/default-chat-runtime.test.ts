@@ -20,6 +20,7 @@ import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-m
 import {
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 
 const unrestrictedSourceIntegrationPolicy = {
@@ -88,37 +89,41 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
     runEventAppendToken: "root-writer-token",
   });
 
-  const runtime = await createDefaultHostedChatRuntime({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    options: {
-      projectId: "project-1",
-      branchId: "branch-1",
-      authToken: "token-1",
-      instructions: "Base instructions",
-      model: "sonnet",
-      allowedTools: ["sleep"],
-      conversationId: "conversation-1",
-      userId: "user-1",
-      parentRunId: "run-1",
-      parentMessageId: "message-1",
-      submittedFormInputResult: {
-        values: { topic: "Support FAQ assistant" },
-        inputRequestId: "input-request-1",
-      },
-    },
-    config: {
-      apiUrl: "https://api.example.com",
-      apiMcpUrl: "https://api.example.com/mcp",
-      studioMcpUrl: "https://studio.example.com/mcp",
-    },
-    buildLocalTools: (taskContext) => {
-      capturedContext = taskContext;
-      capturedCapability = getActiveHostedRunEventWriterCapability();
-      return { sleep: localTool("Sleep") };
-    },
-    createRemoteToolSource: emptyRemoteSource,
-    preloadLatestConversationUserText: false,
-  }, runEventWriterCapability);
+  const runtime = await runWithHostedRunEventWriterCapability(
+    runEventWriterCapability,
+    () =>
+      createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+        options: {
+          projectId: "project-1",
+          branchId: "branch-1",
+          authToken: "token-1",
+          instructions: "Base instructions",
+          model: "sonnet",
+          allowedTools: ["sleep"],
+          conversationId: "conversation-1",
+          userId: "user-1",
+          parentRunId: "run-1",
+          parentMessageId: "message-1",
+          submittedFormInputResult: {
+            values: { topic: "Support FAQ assistant" },
+            inputRequestId: "input-request-1",
+          },
+        },
+        config: {
+          apiUrl: "https://api.example.com",
+          apiMcpUrl: "https://api.example.com/mcp",
+          studioMcpUrl: "https://studio.example.com/mcp",
+        },
+        buildLocalTools: (taskContext) => {
+          capturedContext = taskContext;
+          capturedCapability = getActiveHostedRunEventWriterCapability();
+          return { sleep: localTool("Sleep") };
+        },
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      }),
+  );
 
   assertEquals(runtime.runtimeKind, "framework");
   assertEquals(runtime.modelId, "anthropic/claude-sonnet-4-6");

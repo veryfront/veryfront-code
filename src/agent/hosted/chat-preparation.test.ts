@@ -12,6 +12,7 @@ import {
   prepareHostedChatRuntimeMessages,
 } from "./chat-preparation.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
+import { registerHostedRunEventWriterToken } from "./child-run-event-writer-token.ts";
 
 const userMessage: ChatUiMessage = {
   id: "user-message-1",
@@ -76,9 +77,10 @@ function pendingResponseUntilAbort(signal: AbortSignal | null | undefined): Prom
 }
 
 function createParsedHostedChatRequest(
-  overrides: Partial<ParsedHostedChatRequest> = {},
+  overrides: Partial<ParsedHostedChatRequest> & { runEventAppendToken?: string } = {},
 ): ParsedHostedChatRequest {
-  return {
+  const { runEventAppendToken, ...requestOverrides } = overrides;
+  const request: ParsedHostedChatRequest = {
     agentId: undefined,
     userId: "user-1",
     authToken: "auth-token",
@@ -100,8 +102,10 @@ function createParsedHostedChatRequest(
     runtimeOverrides: undefined,
     durableRootRun: undefined,
     persistLatestUserMessageBeforeDurableRun: false,
-    ...overrides,
+    ...requestOverrides,
   };
+  if (runEventAppendToken) registerHostedRunEventWriterToken(request, runEventAppendToken);
+  return request;
 }
 
 Deno.test("normalizeParsedHostedChatRequest uses the latest user message as parent message id", () => {
@@ -1056,8 +1060,11 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
           content: `${input.agentConfig.id}:${input.instructions}`,
         },
       ],
-      createRuntime: (options) =>
-        Promise.resolve({
+      createRuntime: (options) => {
+        assertEquals("runEventAppendToken" in options, false);
+        assertEquals("runEventWriterCapability" in options, false);
+        assertEquals(JSON.stringify(options).includes("run-event-service-token"), false);
+        return Promise.resolve({
           runtimeKind: "framework",
           modelId: options.model ?? "resolved:configured-model",
           cleanup: () => Promise.resolve(),
@@ -1068,7 +1075,8 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
                 toUIMessageStream: async function* () {},
               }),
           },
-        }),
+        });
+      },
       contextBudget: {
         tokenBudget: 220,
         reserveTokens: 20,

@@ -73,7 +73,7 @@ Deno.test("exchangeHostedChildRunEventWriterToken rejects control-plane errors w
     return originalJson();
   };
 
-  await assertRejects(
+  const error = await assertRejects(
     () =>
       createHostedRunEventWriterCapability({
         apiUrl: "https://api.example.com",
@@ -85,6 +85,10 @@ Deno.test("exchangeHostedChildRunEventWriterToken rejects control-plane errors w
     "Unable to initialize durable child event persistence",
   );
   assertEquals(bodyRead, false);
+  assertEquals(
+    error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
+    "failed",
+  );
 });
 
 for (
@@ -161,6 +165,40 @@ Deno.test("exchangeHostedChildRunEventWriterToken applies a bounded timeout", as
   assertEquals(error instanceof Error && error.message.includes("parent-writer-token"), false);
   assertEquals(
     error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
-    "failed",
+    "timeout",
   );
+});
+
+Deno.test("exchangeHostedChildRunEventWriterToken keeps the first cancellation classification", async () => {
+  const controller = new AbortController();
+  const callerAbort = setTimeout(
+    () => controller.abort("parent-writer-token-must-not-leak"),
+    20,
+  );
+  try {
+    const error = await assertRejects(
+      () =>
+        createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.com",
+          runId: "run_parent",
+          runEventAppendToken: "parent-writer-token",
+          timeoutMs: 1,
+          fetch: (input, init) => {
+            const signal = new Request(input, init).signal;
+            return new Promise<Response>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+            });
+          },
+        }).mintChildRunEventAppendToken("run_child", controller.signal),
+      HostedChildRunEventWriterTokenExchangeError,
+      "Unable to initialize durable child event persistence",
+    );
+
+    assertEquals(
+      error instanceof HostedChildRunEventWriterTokenExchangeError && error.classification,
+      "timeout",
+    );
+  } finally {
+    clearTimeout(callerAbort);
+  }
 });

@@ -8,7 +8,10 @@ import {
   handleHostedChildForkRunContextError,
 } from "./child-fork-run-context.ts";
 import type { ForkPart, ForkRuntimeStep } from "../streaming/fork-runtime-stream.ts";
-import { createHostedRunEventWriterCapability } from "./child-run-event-writer-token.ts";
+import {
+  createHostedRunEventWriterCapability,
+  runWithHostedRunEventWriterCapability,
+} from "./child-run-event-writer-token.ts";
 
 async function* forkParts(parts: ForkPart[]): AsyncGenerator<ForkPart, void, void> {
   for (const part of parts) {
@@ -61,33 +64,36 @@ Deno.test("createHostedChildForkRunContext wires stream mirror state and buffers
 
 Deno.test("createHostedDurableChildForkRunContext wires conversation mirror and child identifiers", () => {
   const traces: string[] = [];
-  const context = createHostedDurableChildForkRunContext(
-    {
-      apiUrl: "https://api.example.com",
-      durableChildRun: {
-        childConversationId: "child-conversation-1",
-        childRunId: "child-run-1",
-        childMessageId: "child-message-1",
-        latestEventId: 5,
-        latestExternalEventSequence: 7,
-      },
-      instrumentation: {
-        trace: (operationName, operation) => {
-          traces.push(operationName);
-          return operation();
-        },
-      },
-      pendingToolLogContext: {
-        conversationId: "conversation-1",
-        parentRunId: "run-1",
-        description: "Check the app",
-      },
-    },
+  const context = runWithHostedRunEventWriterCapability(
     createHostedRunEventWriterCapability({
       apiUrl: "https://api.example.com",
       runId: "child-run-1",
       runEventAppendToken: "child-writer-token",
     }),
+    () =>
+      createHostedDurableChildForkRunContext(
+        {
+          apiUrl: "https://api.example.com",
+          durableChildRun: {
+            childConversationId: "child-conversation-1",
+            childRunId: "child-run-1",
+            childMessageId: "child-message-1",
+            latestEventId: 5,
+            latestExternalEventSequence: 7,
+          },
+          instrumentation: {
+            trace: (operationName, operation) => {
+              traces.push(operationName);
+              return operation();
+            },
+          },
+          pendingToolLogContext: {
+            conversationId: "conversation-1",
+            parentRunId: "run-1",
+            description: "Check the app",
+          },
+        },
+      ),
   );
 
   assertEquals(context.durableRunMirror?.getSnapshot(), {
@@ -128,23 +134,26 @@ Deno.test("createHostedDurableChildForkRunContext authorizes its mirror with onl
         },
       }));
     };
-    const context = createHostedDurableChildForkRunContext(
-      {
-        apiUrl: "https://api.example.com",
-        durableChildRun: {
-          childConversationId: "11111111-1111-4111-a111-111111111111",
-          childRunId: "child-run-1",
-          childMessageId: "child-message-1",
-          latestEventId: 0,
-          latestExternalEventSequence: 0,
-        },
-        pendingToolLogContext: { description: "Check the app" },
-      },
+    const context = runWithHostedRunEventWriterCapability(
       createHostedRunEventWriterCapability({
         apiUrl: "https://api.example.com",
         runId: "child-run-1",
         runEventAppendToken: "child-writer-token",
       }),
+      () =>
+        createHostedDurableChildForkRunContext(
+          {
+            apiUrl: "https://api.example.com",
+            durableChildRun: {
+              childConversationId: "11111111-1111-4111-a111-111111111111",
+              childRunId: "child-run-1",
+              childMessageId: "child-message-1",
+              latestEventId: 0,
+              latestExternalEventSequence: 0,
+            },
+            pendingToolLogContext: { description: "Check the app" },
+          },
+        ),
     );
 
     await context.durableRunMirror?.appendEvents([{

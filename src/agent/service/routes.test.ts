@@ -227,18 +227,21 @@ it("agent service routes bind verified run-event tokens on both production launc
   assertEquals(
     preparedRequests.map((request) => ({
       authToken: request.authToken,
-      runEventAppendToken: request.runEventAppendToken,
+      hasRunEventAppendToken: "runEventAppendToken" in request,
+      serializedToken: JSON.stringify(request).includes("run-event-service-token"),
       serverEnvelopeVerified: request.serverEnvelopeVerified,
     })),
     [
       {
         authToken: createDevToken({ userId: "user-1" }),
-        runEventAppendToken: "run-event-service-token",
+        hasRunEventAppendToken: false,
+        serializedToken: false,
         serverEnvelopeVerified: undefined,
       },
       {
         authToken: createDevToken({ userId: "user-1" }),
-        runEventAppendToken: "run-event-service-token",
+        hasRunEventAppendToken: false,
+        serializedToken: false,
         serverEnvelopeVerified: true,
       },
     ],
@@ -342,7 +345,8 @@ it("a verified writer token does not trust ordinary durable-chat body state", as
 
   assertEquals(response.status, 202);
   assertEquals(preparedRequests[0]?.serverEnvelopeVerified, undefined);
-  assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
+  assertEquals("runEventAppendToken" in (preparedRequests[0] ?? {}), false);
+  assertEquals(JSON.stringify(preparedRequests[0]).includes("verified-event-token"), false);
   assertEquals(preparedRequests[0]?.forwardedProps, undefined);
   assertEquals(resolved, [{ checkpoint: undefined }]);
 });
@@ -382,7 +386,8 @@ it("verified control-plane envelopes accept private state without returning it p
 
   assertEquals(response.status, 202);
   assertEquals(preparedRequests[0]?.serverEnvelopeVerified, true);
-  assertEquals(preparedRequests[0]?.runEventAppendToken, "verified-event-token");
+  assertEquals("runEventAppendToken" in (preparedRequests[0] ?? {}), false);
+  assertEquals(JSON.stringify(preparedRequests[0]).includes("verified-event-token"), false);
   assertEquals(resolved, [{ checkpoint }]);
   const publicBody = await response.text();
   assertEquals(publicBody.includes("AGENT_RUN_TOOL_EXPOSURE_CHECKPOINT"), false);

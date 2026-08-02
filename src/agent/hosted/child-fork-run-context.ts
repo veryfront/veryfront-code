@@ -10,7 +10,7 @@ import {
 } from "../conversation/run-chunk-mirror.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
-  type HostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import {
   createHostedChildPendingToolLifecycle,
@@ -170,8 +170,8 @@ export function createHostedChildForkRunContext(
 /** Context for create hosted durable child fork run. */
 export function createHostedDurableChildForkRunContext(
   input: HostedDurableChildForkRunContextInput,
-  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): HostedDurableChildForkRunContext {
+  const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
   const durableRunMirror = input.durableChildRun
     ? createHostedConversationRunChunkMirrorFromCapability(runEventWriterCapability, {
       apiUrl: input.apiUrl,

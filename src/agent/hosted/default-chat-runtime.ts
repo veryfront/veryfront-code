@@ -29,7 +29,7 @@ import type {
   HostedChatRuntimeCreationResult,
 } from "./chat-runtime-contract.ts";
 import {
-  type HostedRunEventWriterCapability,
+  getActiveHostedRunEventWriterCapability,
   runWithHostedRunEventWriterCapability,
 } from "./child-run-event-writer-token.ts";
 import {
@@ -372,8 +372,8 @@ function runWithDefaultHostedRequestContext<TResult>(
 /** Create default hosted chat runtime. */
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
-  runEventWriterCapability?: HostedRunEventWriterCapability,
 ): Promise<HostedChatRuntimeCreationResult> {
+  const effectiveRunEventWriterCapability = getActiveHostedRunEventWriterCapability();
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
     async () => {
@@ -389,7 +389,7 @@ export async function createDefaultHostedChatRuntime(
 
       try {
         const toolAssembly = await runWithHostedRunEventWriterCapability(
-          runEventWriterCapability,
+          effectiveRunEventWriterCapability,
           () => buildToolAssembly({ ...input, taskContext }),
         );
         const runtimeAgentConfig = createRuntimeAgentConfig({

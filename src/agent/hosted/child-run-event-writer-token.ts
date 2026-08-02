@@ -13,9 +13,9 @@ type Fetch = typeof globalThis.fetch;
 
 /** Internal failure raised when the control plane cannot issue an exact-child writer token. */
 export class HostedChildRunEventWriterTokenExchangeError extends Error {
-  readonly classification: "aborted" | "failed";
+  readonly classification: "aborted" | "timeout" | "failed";
 
-  constructor(classification: "aborted" | "failed" = "failed") {
+  constructor(classification: "aborted" | "timeout" | "failed" = "failed") {
     super(CHILD_RUN_EVENT_WRITER_TOKEN_SETUP_ERROR);
     this.name = "HostedChildRunEventWriterTokenExchangeError";
     this.classification = classification;
@@ -39,6 +39,7 @@ type CapabilityState = {
 };
 
 const capabilityState = new WeakMap<HostedRunEventWriterCapability, CapabilityState>();
+const requestRunEventWriterTokens = new WeakMap<object, string>();
 const capabilityStorage = new AsyncLocalStorage<HostedRunEventWriterCapability>();
 
 function isNoStoreResponse(response: Response): boolean {
@@ -69,8 +70,20 @@ async function exchangeChildRunEventWriterToken(
   childRunId: string,
   abortSignal?: AbortSignal,
 ): Promise<string> {
-  const timeoutSignal = AbortSignal.timeout(state.timeoutMs);
-  const signal = abortSignal ? AbortSignal.any([abortSignal, timeoutSignal]) : timeoutSignal;
+  const controller = new AbortController();
+  let cancellation: "aborted" | "timeout" | undefined;
+  const cancel = (classification: "aborted" | "timeout") => {
+    if (controller.signal.aborted) return;
+    cancellation = classification;
+    controller.abort();
+  };
+  const onAbort = () => cancel("aborted");
+  if (abortSignal?.aborted) {
+    cancel("aborted");
+  } else {
+    abortSignal?.addEventListener("abort", onAbort, { once: true });
+  }
+  const timeoutId = setTimeout(() => cancel("timeout"), state.timeoutMs);
   const url = new URL(
     `/runs/${encodeURIComponent(state.runId)}/children/${
       encodeURIComponent(childRunId)
@@ -87,20 +100,44 @@ async function exchangeChildRunEventWriterToken(
         "Cache-Control": "no-store",
       },
       cache: "no-store",
-      signal,
+      signal: controller.signal,
     });
+    if (cancellation) {
+      throw new HostedChildRunEventWriterTokenExchangeError(cancellation);
+    }
 
     if (!response.ok || !isNoStoreResponse(response)) {
       throw new HostedChildRunEventWriterTokenExchangeError();
     }
 
-    return parseRunEventToken(await response.json());
+    const token = parseRunEventToken(await response.json());
+    if (cancellation) {
+      throw new HostedChildRunEventWriterTokenExchangeError(cancellation);
+    }
+    return token;
   } catch (error) {
     if (error instanceof HostedChildRunEventWriterTokenExchangeError) throw error;
-    throw new HostedChildRunEventWriterTokenExchangeError(
-      abortSignal?.aborted ? "aborted" : "failed",
-    );
+    throw new HostedChildRunEventWriterTokenExchangeError(cancellation ?? "failed");
+  } finally {
+    clearTimeout(timeoutId);
+    abortSignal?.removeEventListener("abort", onAbort);
   }
+}
+
+/** Retain a verified ingress credential without adding it to the parsed request contract. */
+export function registerHostedRunEventWriterToken(request: object, token: string): void {
+  requestRunEventWriterTokens.set(request, token);
+}
+
+/** Create the opaque exact-run capability associated with a verified parsed request. */
+export function createHostedRunEventWriterCapabilityForRequest(
+  request: object,
+  input: Omit<Parameters<typeof createHostedRunEventWriterCapability>[0], "runEventAppendToken">,
+): HostedRunEventWriterCapability | undefined {
+  const token = requestRunEventWriterTokens.get(request);
+  return token
+    ? createHostedRunEventWriterCapability({ ...input, runEventAppendToken: token })
+    : undefined;
 }
 
 /** Create an exact-run capability while keeping its credential in module-private state. */
