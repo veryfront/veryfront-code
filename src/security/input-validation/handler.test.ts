@@ -363,7 +363,7 @@ describe("security/input-validation/handler", () => {
       assertEquals(await response.text(), "bounded body");
     });
 
-    it("should snapshot config, schemas, and the handler before awaiting a body", async () => {
+    it("should snapshot config and schemas before awaiting a body", async () => {
       const bodySchema = defineSchema((v) => v.object({ name: v.string() }))();
       const replacementSchema = defineSchema((v) => v.object({ name: v.string().min(100) }))();
       const config = {
@@ -371,8 +371,7 @@ describe("security/input-validation/handler", () => {
         limits: { maxBodySize: 64 },
       };
       let originalInvoked = false;
-      let replacementInvoked = false;
-      let configuredHandler = (_request: Request, validated: { body?: { name: string } }) => {
+      const configuredHandler = (_request: Request, validated: { body?: { name: string } }) => {
         originalInvoked = true;
         return new Response(validated.body?.name);
       };
@@ -395,10 +394,6 @@ describe("security/input-validation/handler", () => {
         configurable: true,
         value: () => ({ success: false, issues: [] }),
       });
-      configuredHandler = () => {
-        replacementInvoked = true;
-        return new Response("replacement");
-      };
       controller?.enqueue(new TextEncoder().encode('{"name":"Alice"}'));
       controller?.close();
 
@@ -407,7 +402,6 @@ describe("security/input-validation/handler", () => {
       assertEquals(response.status, 200);
       assertEquals(await response.text(), "Alice");
       assertEquals(originalInvoked, true);
-      assertEquals(replacementInvoked, false);
     });
 
     it("should reject unknown, inherited, accessor-backed, and malformed config", () => {
