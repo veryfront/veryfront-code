@@ -671,8 +671,8 @@ Generated OAuth routes call `requireUserIdFromRequest` in `lib/user-id.ts`.
 It resolves nothing on its own: during application startup you must call
 `installRequestIdentityResolver()` from the same module with a resolver backed
 by your server-side session or verified JWT. Until then every OAuth route
-throws, in every runtime mode — there is no development escape hatch, because
-an ambient default identity makes all visitors share one token owner.
+throws in every runtime mode. There is no development escape hatch because an
+ambient default identity makes all visitors share one token owner.
 
 ```ts
 // main.ts (or wherever your app boots)

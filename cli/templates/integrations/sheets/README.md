@@ -361,8 +361,8 @@ export default tool({
 ```
 
 Execution fails closed when the context has no authenticated user id. Pass a
-real user id through `ToolExecutionContext` in development too — there is no
-environment variable that supplies an ambient identity.
+real user id through `ToolExecutionContext` in development too. No environment
+variable supplies an ambient identity.
 
 ### Error Handling
 

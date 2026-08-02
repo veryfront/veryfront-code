@@ -644,6 +644,22 @@ describe("cli/templates", () => {
     }
   });
 
+  it("keeps authenticated identity documentation within ASCII copy rules", async () => {
+    for (
+      const path of [
+        "./integrations/_base/files/SETUP.md",
+        "./integrations/sheets/README.md",
+      ]
+    ) {
+      const source = await Deno.readTextFile(new URL(path, import.meta.url));
+      assertEquals(
+        /[\u2013\u2014]/.test(source),
+        false,
+        `${path} must use ASCII punctuation`,
+      );
+    }
+  });
+
   it("requires an installed resolver and never trusts identity headers", async () => {
     const { installRequestIdentityResolver, requireUserIdFromRequest } = await import(
       "./integrations/_base/files/lib/user-id.ts"
