@@ -48,7 +48,7 @@ export const getPaginationSchema = defineSchema((v) => {
         .pipe(numberSchema),
       numberSchema,
     ]);
-  const pageNumber = v.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+  const pageNumber = v.number().int().positive();
   const pageLimit = v.number().int().positive().max(MAX_PAGE_LIMIT);
 
   return v.object({

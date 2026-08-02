@@ -1,12 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
+import { defineConfig, defineConfigWithEnv, mergeConfigs } from "./define-config.ts";
 import {
-  defineConfig,
-  defineConfigWithEnv,
-  mergeConfigs,
-  validateConfig,
-} from "./define-config.ts";
+  defineConfig as clientDefineConfig,
+  defineConfigWithEnv as clientDefineConfigWithEnv,
+  mergeConfigs as clientMergeConfigs,
+} from "./define-config.client.ts";
 import {
   defineConfig as publicDefineConfig,
   defineConfigWithEnv as publicDefineConfigWithEnv,
@@ -75,6 +75,15 @@ describe("define-config", () => {
       };
       expect(invalidConnector.integrations).toBeDefined();
     });
+
+    it("rejects malformed extension entries at the public authoring boundary", () => {
+      const invalidConfig: VeryfrontConfigInput = {
+        // @ts-expect-error extension entries must be materialized extensions or disable directives
+        extensions: ["not-an-extension"],
+      };
+
+      expect(invalidConfig.extensions).toEqual(["not-an-extension"]);
+    });
   });
 
   describe("public root exports", () => {
@@ -108,6 +117,21 @@ describe("define-config", () => {
     });
   });
 
+  describe("client-safe exports", () => {
+    it("shares pure helpers and preserves the environment factory contract", () => {
+      const compatibleHelper: typeof defineConfigWithEnv = clientDefineConfigWithEnv;
+
+      expect(clientDefineConfig).toBe(defineConfig);
+      expect(clientMergeConfigs).toBe(mergeConfigs);
+      expect(
+        compatibleHelper(
+          (nodeEnv) => clientMergeConfigs({ title: "Client" }, { description: nodeEnv }),
+          { nodeEnv: "production" },
+        ),
+      ).toEqual({ title: "Client", description: "production" });
+    });
+  });
+
   describe("defineConfigWithEnv", () => {
     it("should use development as default environment", () => {
       const testEnv = createTestEnvironmentConfig({ nodeEnv: "development" });
@@ -118,6 +142,14 @@ describe("define-config", () => {
     it("should use NODE_ENV if set", () => {
       const testEnv = createTestEnvironmentConfig({ nodeEnv: "production" });
       const result = defineConfigWithEnv((env) => ({ title: `App-${env}` }), testEnv);
+      expect(result.title).toBe("App-production");
+    });
+
+    it("accepts the minimal environment contract it reads", () => {
+      const result = defineConfigWithEnv(
+        (env) => ({ title: `App-${env}` }),
+        { nodeEnv: "production" },
+      );
       expect(result.title).toBe("App-production");
     });
 
@@ -222,87 +254,6 @@ describe("define-config", () => {
         { title: "Third" } satisfies Partial<VeryfrontConfig>,
       );
       expect(result.title).toBe("Third");
-    });
-  });
-
-  describe("validateConfig", () => {
-    it("should accept valid config", async () => {
-      const config: VeryfrontConfig = { title: "Valid App", dev: { port: 3008 } };
-      await expect(validateConfig(config)).resolves.toBeUndefined();
-    });
-
-    it("should reject null config", async () => {
-      await expect(validateConfig(null)).rejects.toThrow("Configuration must be an object");
-    });
-
-    it("should reject undefined config", async () => {
-      await expect(validateConfig(undefined)).rejects.toThrow("Configuration must be an object");
-    });
-
-    it("should reject non-object config", async () => {
-      const message = "Configuration must be an object";
-      await expect(validateConfig("string")).rejects.toThrow(message);
-      await expect(validateConfig(123)).rejects.toThrow(message);
-      await expect(validateConfig(true)).rejects.toThrow(message);
-    });
-
-    it("should accept config without dev.port", async () => {
-      const config: VeryfrontConfig = { title: "App without port" };
-      await expect(validateConfig(config)).resolves.toBeUndefined();
-    });
-
-    it("should reject invalid dev.port (too low)", async () => {
-      await expect(validateConfig({ dev: { port: 0 } })).rejects.toThrow(
-        "dev.port must be a number between",
-      );
-    });
-
-    it("should reject invalid dev.port (too high)", async () => {
-      await expect(validateConfig({ dev: { port: 99999 } })).rejects.toThrow(
-        "dev.port must be a number between",
-      );
-    });
-
-    it("should reject non-number dev.port", async () => {
-      await expect(validateConfig({ dev: { port: "not a number" } })).rejects.toThrow(
-        "dev.port must be a number between",
-      );
-    });
-
-    it("should accept valid port within range", async () => {
-      const config: VeryfrontConfig = { dev: { port: 3009 } };
-      await expect(validateConfig(config)).resolves.toBeUndefined();
-    });
-
-    it("should reject non-string build.outDir", async () => {
-      await expect(validateConfig({ build: { outDir: 123 } })).rejects.toThrow(
-        "build.outDir must be a string",
-      );
-    });
-
-    it("should accept valid build.outDir", async () => {
-      const config: VeryfrontConfig = { build: { outDir: "custom-dist" } };
-      await expect(validateConfig(config)).resolves.toBeUndefined();
-    });
-
-    it("should accept config without build section", async () => {
-      const config: VeryfrontConfig = { title: "No build config" };
-      await expect(validateConfig(config)).resolves.toBeUndefined();
-    });
-
-    it("should accept empty config object", async () => {
-      const config: VeryfrontConfig = {};
-      await expect(validateConfig(config)).resolves.toBeUndefined();
-    });
-
-    it("should accept config with multiple valid sections", async () => {
-      const config: VeryfrontConfig = {
-        title: "Complete App",
-        description: "Full config",
-        dev: { port: 3010, open: true },
-        build: { outDir: "build" },
-      };
-      await expect(validateConfig(config)).resolves.toBeUndefined();
     });
   });
 });

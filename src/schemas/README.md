@@ -1,10 +1,10 @@
 # Schemas module
 
-This directory contains shared validation schemas used across multiple modules in the veryfront codebase.
+This directory contains shared validation schemas used across multiple modules in the Veryfront codebase.
 
 ## Architecture
 
-The veryfront codebase follows a **schema-first approach** where:
+The Veryfront codebase follows a **schema-first approach** where:
 
 1. **`defineSchema` schemas are the single source of truth** for types
 2. **TypeScript types are inferred** from schemas using `InferSchema<ReturnType<typeof getSchema>>`
@@ -16,7 +16,9 @@ The veryfront codebase follows a **schema-first approach** where:
 - **Schema files**: `{name}.schema.ts` (e.g., `config.schema.ts`)
 - **Shared schema files**: `common.ts`, `primitives.ts` (no `.schema` suffix since they're collections)
 - **Schema getters**: Use `get` + PascalCase (e.g., `getUserSchema`)
-- **Schema exports**: Backward-compat constant (e.g., `export const UserSchema = getUserSchema()`)
+- **Schema exports**: Compatibility constants use `lazySchema` (e.g.,
+  `export const UserSchema = lazySchema(getUserSchema)`) so importing a module
+  does not require a registered `SchemaValidator`
 - **Type exports**: Infer types from schema getters (e.g., `type User = InferSchema<ReturnType<typeof getUserSchema>>`)
 
 ## Directory structure
@@ -106,9 +108,8 @@ unbounded document.
 
 ```typescript
 // schemas/user.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { CommonSchemas, defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { CommonSchemas } from "#veryfront/schemas";
 
 export const getUserSchema = defineSchema((v) =>
   v.object({
@@ -118,7 +119,7 @@ export const getUserSchema = defineSchema((v) =>
     createdAt: v.string().datetime(),
   })
 );
-export const UserSchema = getUserSchema();
+export const UserSchema = lazySchema(getUserSchema);
 
 export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
@@ -127,7 +128,7 @@ export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 
 ```typescript
 // schemas/events.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getEventSchema = defineSchema((v) =>
@@ -143,7 +144,7 @@ export const getEventSchema = defineSchema((v) =>
     }),
   ])
 );
-export const EventSchema = getEventSchema();
+export const EventSchema = lazySchema(getEventSchema);
 
 export type Event = InferSchema<ReturnType<typeof getEventSchema>>;
 ```
@@ -152,7 +153,7 @@ export type Event = InferSchema<ReturnType<typeof getEventSchema>>;
 
 ```typescript
 // schemas/api.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 const getBaseResponseSchema = defineSchema((v) =>
@@ -185,7 +186,7 @@ export const getApiResponseSchema = defineSchema((v) =>
     getErrorResponseSchema(),
   ])
 );
-export const ApiResponseSchema = getApiResponseSchema();
+export const ApiResponseSchema = lazySchema(getApiResponseSchema);
 
 export type ApiResponse = InferSchema<ReturnType<typeof getApiResponseSchema>>;
 ```
@@ -194,7 +195,7 @@ export type ApiResponse = InferSchema<ReturnType<typeof getApiResponseSchema>>;
 
 ```typescript
 // schemas/tree.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 export const getTreeNodeSchema = defineSchema((v) => {
@@ -206,16 +207,21 @@ export const getTreeNodeSchema = defineSchema((v) => {
   );
   return schema;
 });
-export const TreeNodeSchema = getTreeNodeSchema();
+export const TreeNodeSchema = lazySchema(getTreeNodeSchema);
 
 export type TreeNode = InferSchema<ReturnType<typeof getTreeNodeSchema>>;
 ```
 
 ### 5. Runtime validation
 
+Calling a schema getter directly materializes the schema. Use direct getter
+invocation only after application or extension bootstrap has registered a
+`SchemaValidator`. Use `lazySchema(getUserSchema)` for module-scope exports.
+
 ```typescript
 import { getUserSchema } from "./schemas/user.schema.ts";
 
+// This code runs after SchemaValidator registration.
 const UserSchema = getUserSchema();
 
 function createUser(data: unknown) {
@@ -265,7 +271,7 @@ export interface User {
 
 ```typescript
 // schemas/user.schema.ts
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getUserSchema = defineSchema((v) =>
@@ -275,7 +281,7 @@ export const getUserSchema = defineSchema((v) =>
     name: v.string().min(1),
   })
 );
-export const UserSchema = getUserSchema();
+export const UserSchema = lazySchema(getUserSchema);
 
 export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
@@ -292,10 +298,13 @@ export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 
 ## Testing schemas
 
+The `_test-setup.ts` side-effect import registers the test validator before the
+schema getter runs, so direct getter invocation is safe in this example.
+
 ```typescript
 import "#veryfront/schemas/_test-setup.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { expect } from "#std/expect";
 import { getUserSchema } from "./user.schema.ts";
 
 const UserSchema = getUserSchema();
@@ -308,7 +317,7 @@ describe("UserSchema", () => {
       name: "John Doe",
     });
 
-    expect(result.success).toBe(true);
+    assertEquals(result.success, true);
   });
 
   it("rejects invalid email", () => {
@@ -318,7 +327,7 @@ describe("UserSchema", () => {
       name: "John Doe",
     });
 
-    expect(result.success).toBe(false);
+    assertEquals(result.success, false);
   });
 });
 ```

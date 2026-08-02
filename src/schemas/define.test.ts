@@ -5,6 +5,7 @@ import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts"
 import type { JsonSchema, Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
 import { compileJsonSchemaValidator, tryCompileJsonSchemaValidator } from "./json-schema.ts";
+import { createRuntimeJsonSchema } from "#veryfront/agent/runtime/runtime-tool-builder.ts";
 import { lazySchema } from "./lazy.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
@@ -237,5 +238,16 @@ describe("defineSchema", () => {
     assertEquals(compilerInput === schema, false);
     assertEquals(descriptorReads, 1);
     assertEquals(valueReads, 0);
+  });
+
+  it("omits optional runtime validation when raw-schema compilation is unavailable", () => {
+    reset();
+    const { compileJsonSchema: _unsupported, ...legacyAdapter } = createZodAdapter();
+    register<SchemaValidator>("SchemaValidator", legacyAdapter);
+
+    const runtimeSchema = createRuntimeJsonSchema({ type: "object" });
+
+    assertEquals(runtimeSchema.jsonSchema, { type: "object" });
+    assertEquals(runtimeSchema.validate, undefined);
   });
 });
