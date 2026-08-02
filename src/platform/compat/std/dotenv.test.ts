@@ -30,6 +30,7 @@ describe("platform/compat/std/dotenv", () => {
         "EMPTY=",
         "SINGLE='  $EXPORTED  '",
         'DOUBLE="line\\nnext\\tend"',
+        'ESCAPED_BACKSLASH="path\\\\nvalue"',
         'MULTILINE="first',
         'second"',
         "INLINE=kept#comment",
@@ -42,6 +43,7 @@ describe("platform/compat/std/dotenv", () => {
     assertEquals(Object.hasOwn(result, "EMPTY"), true);
     assertEquals(result.SINGLE, "  $EXPORTED  ");
     assertEquals(result.DOUBLE, "line\nnext\tend");
+    assertEquals(result.ESCAPED_BACKSLASH, "path\\nvalue");
     assertEquals(result.MULTILINE, "first\nsecond");
     assertEquals(result.INLINE, "kept");
   });
@@ -60,6 +62,7 @@ describe("platform/compat/std/dotenv", () => {
           "DEFAULT_VALUE=${DOES_NOT_EXIST:-fallback}",
           "NESTED_DEFAULT=${DOES_NOT_EXIST:-${LATER:-other}}",
           String.raw`ESCAPED=\$LATER`,
+          String.raw`DOUBLE_ESCAPED=\\$LATER`,
         ].join("\n"),
       );
 
@@ -69,6 +72,7 @@ describe("platform/compat/std/dotenv", () => {
       assertEquals(result.DEFAULT_VALUE, "fallback");
       assertEquals(result.NESTED_DEFAULT, "present");
       assertEquals(result.ESCAPED, String.raw`\$LATER`);
+      assertEquals(result.DOUBLE_ESCAPED, String.raw`\\present`);
     } finally {
       deleteEnv(hostKey);
     }

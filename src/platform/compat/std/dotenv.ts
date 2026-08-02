@@ -236,9 +236,10 @@ function isEscaped(value: string, index: number): boolean {
 }
 
 function expandDoubleQuotedCharacters(value: string): string {
-  return value.replace(/\\([nrt])/g, (_match, character: string) => {
+  return value.replace(/\\([nrt\\])/g, (_match, character: string) => {
     if (character === "n") return "\n";
     if (character === "r") return "\r";
+    if (character === "\\") return "\\";
     return "\t";
   });
 }
@@ -318,7 +319,7 @@ function expandValue(
   let literalStart = 0;
 
   for (let index = 0; index < source.length;) {
-    if (source[index] !== "$" || (index > 0 && source[index - 1] === "\\")) {
+    if (source[index] !== "$" || isEscaped(source, index)) {
       index++;
       continue;
     }
