@@ -55,6 +55,7 @@ const mdxRootDependencyRewriter = new UnifiedImportRewriter({
   strategies: [mdxRootBareDependencyStrategy],
 });
 import { parallelMap } from "#veryfront/utils/parallel.ts";
+import { Semaphore } from "#veryfront/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 import {
   assertMdxModuleImportCount,
   MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
@@ -292,7 +293,7 @@ export async function transformJsxImports(
         return null;
       }
     },
-    { concurrency: MAX_MDX_MODULE_TRANSFORM_CONCURRENCY },
+    { semaphore: new Semaphore(MAX_MDX_MODULE_TRANSFORM_CONCURRENCY) },
   );
 
   logger.debug(`${LOG_PREFIX_MDX_LOADER} JSX transform phase completed`, {
