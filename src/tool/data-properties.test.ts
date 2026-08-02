@@ -45,14 +45,14 @@ describe("tool own-data-property helpers", () => {
   });
 
   it("uses captured descriptor, key, and definition intrinsics", () => {
-    const originalGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+    const originalGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
     const originalOwnKeys = Reflect.ownKeys;
     const originalDefineProperty = Reflect.defineProperty;
     let hookCalls = 0;
-    Reflect.getOwnPropertyDescriptor = () => {
+    Object.getOwnPropertyDescriptor = (() => {
       hookCalls += 1;
       throw new Error("mutated descriptor intrinsic");
-    };
+    }) as typeof Object.getOwnPropertyDescriptor;
     Reflect.ownKeys = () => {
       hookCalls += 1;
       throw new Error("mutated key intrinsic");
@@ -68,7 +68,7 @@ describe("tool own-data-property helpers", () => {
       assertEquals(snapshotEnumerableOwnDataObject(input, "test value"), { value: 42 });
       assertEquals(hookCalls, 0);
     } finally {
-      Reflect.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
+      Object.getOwnPropertyDescriptor = originalGetOwnPropertyDescriptor;
       Reflect.ownKeys = originalOwnKeys;
       Reflect.defineProperty = originalDefineProperty;
     }

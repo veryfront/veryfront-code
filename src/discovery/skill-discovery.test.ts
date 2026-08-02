@@ -4,7 +4,7 @@ import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testi
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { createSkillTestAdapter } from "#veryfront/skill/testing.ts";
-import { tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import {
   type SkillDocumentParserProvider,
   SkillDocumentParserProviderName,
@@ -18,50 +18,61 @@ describe("src/discovery/skill-discovery", () => {
 
   it("keeps first duplicate skill across discovery roots and registry", async () => {
     // Exercise the product composition path, not the test-only parser setup.
+    const originalParser = tryResolve<SkillDocumentParserProvider>(
+      SkillDocumentParserProviderName,
+    );
     unregister(SkillDocumentParserProviderName);
-    const files = {
-      "/project/skills-a/duplicate/SKILL.md": `---
+    try {
+      const files = {
+        "/project/skills-a/duplicate/SKILL.md": `---
 name: duplicate
 description: First copy
 ---
 Use first.`,
-      "/project/skills-b/duplicate/SKILL.md": `---
+        "/project/skills-b/duplicate/SKILL.md": `---
 name: duplicate
 description: Second copy
 ---
 Use second.`,
-      "/project/skills-b/other/SKILL.md": `---
+        "/project/skills-b/other/SKILL.md": `---
 name: other
 description: Another skill
 ---
 Other instructions.`,
-    };
+      };
 
-    const result = await discoverAll({
-      baseDir: "/project",
-      toolDirs: [],
-      agentDirs: [],
-      resourceDirs: [],
-      promptDirs: [],
-      workflowDirs: [],
-      taskDirs: [],
-      skillDirs: ["skills-a", "skills-b"],
-      fsAdapter: createSkillTestAdapter(files),
-      verbose: false,
-    });
+      const result = await discoverAll({
+        baseDir: "/project",
+        toolDirs: [],
+        agentDirs: [],
+        resourceDirs: [],
+        promptDirs: [],
+        workflowDirs: [],
+        taskDirs: [],
+        skillDirs: ["skills-a", "skills-b"],
+        fsAdapter: createSkillTestAdapter(files),
+        verbose: false,
+      });
 
-    const duplicate = result.skills.get("duplicate");
-    assertExists(
-      tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName),
-    );
-    assertExists(duplicate);
-    assertEquals(duplicate.metadata.description, "First copy");
+      const duplicate = result.skills.get("duplicate");
+      assertExists(
+        tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName),
+      );
+      assertExists(duplicate);
+      assertEquals(duplicate.metadata.description, "First copy");
 
-    const registryDuplicate = skillRegistry.get("duplicate");
-    assertExists(registryDuplicate);
-    assertEquals(registryDuplicate.metadata.description, "First copy");
+      const registryDuplicate = skillRegistry.get("duplicate");
+      assertExists(registryDuplicate);
+      assertEquals(registryDuplicate.metadata.description, "First copy");
 
-    assertEquals(result.skills.has("other"), true);
+      assertEquals(result.skills.has("other"), true);
+    } finally {
+      if (originalParser === undefined) {
+        unregister(SkillDocumentParserProviderName);
+      } else {
+        register(SkillDocumentParserProviderName, originalParser);
+      }
+    }
   });
 
   it("discovers legacy display-style names by canonical directory id", async () => {
