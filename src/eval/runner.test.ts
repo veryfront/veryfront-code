@@ -465,6 +465,28 @@ describe("eval/runner", () => {
     assertEquals(report.records[0]?.error, "AG-UI request failed");
   });
 
+  it("normalizes revoked trace arrays into structured adapter failures", async () => {
+    const definition = evalAgent({
+      id: "eval:revoked-trace",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+    const revokedEvents = Proxy.revocable([], {});
+    revokedEvents.revoke();
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({
+          text: "Paris",
+          trace: { events: revokedEvents.proxy },
+        }),
+      },
+    });
+
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(report.records[0]?.error, "Eval adapter trace events must be an array");
+  });
+
   it("emits eval result and duration metrics through the runtime metrics API", async () => {
     const counterCalls: unknown[] = [];
     const histogramCalls: unknown[] = [];

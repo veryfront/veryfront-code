@@ -11,6 +11,7 @@ import type {
 import {
   assertFiniteEvalNumber,
   createEvalValidationError,
+  isEvalArray,
   isEvalRecord,
   normalizeEvalString,
   normalizeEvalStringList,
@@ -57,7 +58,7 @@ function normalizeRepetitions(repetitions: number | undefined): number {
 
 function normalizeMetrics(metrics: unknown): EvalMetric[] {
   if (metrics === undefined) return [];
-  if (!Array.isArray(metrics) || !metrics.every(isEvalMetric)) {
+  if (!isEvalArray(metrics) || !metrics.every(isEvalMetric)) {
     throw createEvalValidationError("Eval metrics must be an array of valid metric definitions");
   }
   return [...metrics];
@@ -124,11 +125,11 @@ export function isEvalDefinition(value: unknown): value is EvalDefinition {
     typeof value.target === "string" &&
     value.target.trim() !== "" &&
     isEvalDataset(value.dataset) &&
-    Array.isArray(value.metrics) &&
+    isEvalArray(value.metrics) &&
     value.metrics.every(isEvalMetric) &&
     Number.isSafeInteger(value.repetitions) &&
     (value.repetitions as number) >= 1 &&
-    Array.isArray(value.tags) &&
+    isEvalArray(value.tags) &&
     value.tags.every((tag) => typeof tag === "string" && tag.trim() !== "") &&
     isEvalRecord(value.metadata) &&
     (value.input === undefined || typeof value.input === "function") &&

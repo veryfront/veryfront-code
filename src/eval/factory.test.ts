@@ -191,6 +191,32 @@ describe("eval/factory", () => {
       "metadata must be an object",
     );
 
+    const revokedTags = Proxy.revocable([], {});
+    revokedTags.revoke();
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          tags: revokedTags.proxy,
+        }),
+      Error,
+      "tags must be an array of strings",
+    );
+
+    const revokedMetrics = Proxy.revocable([], {});
+    revokedMetrics.revoke();
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metrics: revokedMetrics.proxy,
+        }),
+      Error,
+      "metrics must be an array",
+    );
+
     const normalized = evalAgent({
       id: " eval:trimmed ",
       target: " agent:researcher ",
@@ -200,5 +226,16 @@ describe("eval/factory", () => {
     assertEquals(normalized.id, "eval:trimmed");
     assertEquals(normalized.target, "agent:researcher");
     assertEquals(normalized.tags, ["smoke"]);
+  });
+
+  it("treats revoked nested arrays as invalid definitions", () => {
+    const definition = evalAgent({
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+    });
+    const revokedTags = Proxy.revocable([], {});
+    revokedTags.revoke();
+
+    assertEquals(isEvalDefinition({ ...definition, tags: revokedTags.proxy }), false);
   });
 });

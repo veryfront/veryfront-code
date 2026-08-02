@@ -64,7 +64,7 @@ export function assertCanonicalEvalString(
   }
 }
 
-function isEvalArray(value: unknown): value is unknown[] {
+export function isEvalArray(value: unknown): value is unknown[] {
   // Array.isArray throws on revoked proxies; report those as non-arrays so the
   // caller raises its structured validation error instead of a raw TypeError.
   try {

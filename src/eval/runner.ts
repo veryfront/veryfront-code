@@ -28,6 +28,7 @@ import type {
 import {
   assertFiniteEvalNumber,
   createEvalValidationError,
+  isEvalArray,
   isEvalRecord,
   normalizeEvalExamples,
   normalizeEvalString,
@@ -59,10 +60,10 @@ function normalizeTrace(trace?: Partial<EvalTrace>): EvalTrace {
   if (trace !== undefined && !isEvalRecord(trace)) {
     throw createEvalValidationError("Eval adapter trace must be an object");
   }
-  if (trace?.events !== undefined && !Array.isArray(trace.events)) {
+  if (trace?.events !== undefined && !isEvalArray(trace.events)) {
     throw createEvalValidationError("Eval adapter trace events must be an array");
   }
-  if (trace?.toolCalls !== undefined && !Array.isArray(trace.toolCalls)) {
+  if (trace?.toolCalls !== undefined && !isEvalArray(trace.toolCalls)) {
     throw createEvalValidationError("Eval adapter trace toolCalls must be an array");
   }
   return {
