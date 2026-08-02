@@ -1,17 +1,17 @@
 /**
- * UI primitive-adapter contract (RFC 0001 — bring-your-own UI primitive
+ * UI primitive-adapter contract (RFC 0001: bring-your-own UI primitive
  * adapters). A behavioural primitive is split into a **Skin** (our Tailwind /
  * `cva` / `[var(--token)]` classes, authored once) and **Mechanics** (focus,
  * dismiss, positioning, ARIA, keyboard) supplied by a swappable **adapter**.
  *
  * The contract is **role-tagged component slots + normalized `{open,setOpen}`
- * disclosure state** — deliberately NOT prop-getters (those only fit React
+ * disclosure state**: deliberately NOT prop-getters (those only fit React
  * Aria's hooks; Base UI / Ariakit invert composition via `render`). Every
- * adapter — the zero-dependency `builtin` and any third-party engine (Base UI,
- * Radix, React Aria) — satisfies these exact shapes, so one set of skin classes
+ * adapter: the zero-dependency `builtin` and any third-party engine (Base UI,
+ * Radix, React Aria): satisfies these exact shapes, so one set of skin classes
  * works everywhere.
  *
- * Types only. No runtime, no engine imports — this file is safe to pull into
+ * Types only. No runtime, no engine imports: this file is safe to pull into
  * `veryfront/ui/adapter` from a consumer-authored adapter.
  *
  * @module react/components/ui/adapter/contract
@@ -57,7 +57,7 @@ export interface DisclosureParts {
 }
 
 /**
- * Role-tagged slots an adapter provides for the ToggleGroup primitive — a set of
+ * Role-tagged slots an adapter provides for the ToggleGroup primitive: a set of
  * pressable items with shared `single` / `multiple` selection. The Root owns the
  * selection state machine; the Item self-wires through the adapter's internal
  * context (reads its pressed state, toggles on click). The skin keeps only the
@@ -85,7 +85,7 @@ export interface ToggleGroupParts {
 }
 
 /**
- * Role-tagged slots an adapter provides for the Toolbar primitive — a
+ * Role-tagged slots an adapter provides for the Toolbar primitive: a
  * `role="toolbar"` container sharing one tab stop, with roving-tabindex arrow-key
  * navigation over its items. The Root owns the roving mechanics; each Item
  * registers as a roving stop (engines rove their own item components, so the skin
@@ -134,7 +134,7 @@ export interface ToastParts {
 }
 
 /**
- * The adapter surface. New primitives slot in as keys — the merge machinery in
+ * The adapter surface. New primitives slot in as keys: the merge machinery in
  * `context.tsx` is agnostic to which keys exist.
  */
 export interface UIAdapter {

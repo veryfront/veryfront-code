@@ -20,7 +20,7 @@ function referencesChat(specifier: string): boolean {
 
 // RFC 0001 §6.6 + issue #220: the core `veryfront/ui` depends on NO UI-primitive
 // engine. Reference adapters (Base UI, Radix, React Aria, Ariakit) are vendored
-// CLI templates the consumer owns — the engine is *their* dependency, never
+// CLI templates the consumer owns: the engine is *their* dependency, never
 // core's. This guard fails loudly if an engine import ever leaks into `ui/**`.
 const ENGINE_SPECIFIER =
   /@base-ui|@base-ui-components|(^|\/)react-aria|react-aria-components|@react-aria|@react-stately|@radix-ui|(^|\/)radix-ui|@ariakit|@zag-js|@ark-ui/;
@@ -74,7 +74,7 @@ describe("veryfront/ui module boundary", () => {
     assertEquals(
       offenders,
       [],
-      `ui/** must depend on no primitive engine — vendor a reference adapter instead:\n  - ${
+      `ui/** must depend on no primitive engine: vendor a reference adapter instead:\n  - ${
         offenders.join("\n  - ")
       }`,
     );

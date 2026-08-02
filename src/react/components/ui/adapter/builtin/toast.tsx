@@ -1,9 +1,9 @@
 /**
- * Builtin Toast adapter — the zero-dependency toast engine: a `ToastProvider`
+ * Builtin Toast adapter: the zero-dependency toast engine: a `ToastProvider`
  * that holds a queue and mounts a fixed bottom-right viewport, plus `useToast`.
  * Composes the presentational parts from `toast-parts.tsx` (structured
  * icon/action/cancel toasts, and `toast.custom` nodes). Imports ONLY the parts +
- * the contract types — never the `toast.tsx` skin or the adapter context — so
+ * the contract types: never the `toast.tsx` skin or the adapter context: so
  * Toast can be adapter-routed without an import cycle. A Sonner adapter satisfies
  * the same `ToastParts` contract by mounting `<Toaster/>` instead.
  *
@@ -129,7 +129,7 @@ export function ToastViewport({
 }
 ToastViewport.displayName = "ToastViewport";
 
-/** Renders one queued toast — a `toast.custom` node, or the built-in surface. */
+/** Renders one queued toast: a `toast.custom` node, or the built-in surface. */
 function ToastItem(
   { record, onDismiss }: { record: ToastRecord; onDismiss: () => void },
 ): React.ReactElement {
@@ -202,7 +202,7 @@ function ToastItem(
   );
 }
 
-/** Bare list item for a `toast.custom` node — arms the auto-dismiss timer only. */
+/** Bare list item for a `toast.custom` node: arms the auto-dismiss timer only. */
 function CustomToastItem(
   { duration, onClose, children }: {
     duration?: number;

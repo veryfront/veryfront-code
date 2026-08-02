@@ -1,9 +1,9 @@
 /**
- * Builtin ToggleGroup adapter — the zero-dependency shared-selection machinery
+ * Builtin ToggleGroup adapter: the zero-dependency shared-selection machinery
  * (`single` = segmented control, `multiple` = independent toggles), assembled as
  * `ToggleGroupParts`. Behaviour-preserving move of `toggle-group.tsx`'s logic;
  * the Item sets `aria-pressed` / `data-state` and toggles, but carries NO visual
- * classes — the skin passes those via `className`.
+ * classes: the skin passes those via `className`.
  *
  * @module react/components/ui/adapter/builtin/toggle-group
  */
@@ -75,7 +75,7 @@ const ToggleGroupItem: ToggleGroupParts["Item"] = (
       disabled={asChild ? undefined : isDisabled}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
         onClick?.(event);
-        if (event.defaultPrevented) return;
+        if (event.defaultPrevented || isDisabled) return;
         ctx.toggle(value);
       }}
     />

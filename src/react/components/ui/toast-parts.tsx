@@ -1,5 +1,5 @@
 /**
- * Toast presentational parts — the pure-visual surface + types, with NO queue and
+ * Toast presentational parts: the pure-visual surface + types, with NO queue and
  * NO adapter dependency. The queue/imperative engine lives in an adapter
  * (`adapter/builtin/toast.tsx` by default), which composes these parts; the
  * `toast.tsx` skin re-exports them. Keeping them here (importing only React +
@@ -43,7 +43,7 @@ export interface ToastOptions {
   title?: React.ReactNode;
   /** Secondary supporting line shown under the title. */
   description?: React.ReactNode;
-  /** Leading icon shown before the text (any node — an SVG, emoji, etc.). */
+  /** Leading icon shown before the text (any node: an SVG, emoji, etc.). */
   icon?: React.ReactNode;
   /** Primary action button; pressing it runs `onClick` then dismisses the toast. */
   action?: ToastAction;
@@ -59,7 +59,7 @@ export interface ToastOptions {
 export interface ToastFn {
   /** Enqueue a structured toast; returns its id (for `dismiss`). */
   (options: ToastOptions): string;
-  /** Enqueue a fully custom node — you own the markup, the provider owns the lifecycle (queue + auto-dismiss). */
+  /** Enqueue a fully custom node: you own the markup, the provider owns the lifecycle (queue + auto-dismiss). */
   custom: (render: (id: string) => React.ReactNode) => string;
 }
 

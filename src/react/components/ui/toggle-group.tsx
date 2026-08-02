@@ -1,12 +1,12 @@
 /**
- * ToggleGroup — a set of {@link Toggle}-style buttons with shared selection.
+ * ToggleGroup: a set of {@link Toggle}-style buttons with shared selection.
  * `type="single"` behaves like a segmented control (one value, optionally
  * deselectable); `type="multiple"` is a set of independent toggles (an array of
  * values). Selection is exposed as `data-state="on" | "off"` per item; skinned
  * with the veryfront theme tokens.
  *
  * The selection MECHANICS come from the active adapter's `toggleGroup` slot
- * (`useAdapter().toggleGroup`) — zero-dependency builtin by default, swappable
+ * (`useAdapter().toggleGroup`): zero-dependency builtin by default, swappable
  * via `UIAdapterProvider`. This file owns only the API shape + the item's visual
  * classes; the adapter drives selection + `aria-pressed` / `data-state`.
  *
@@ -19,7 +19,7 @@ import { useAdapter } from "./adapter/context.tsx";
 /** Props accepted by `<ToggleGroup>`. */
 export interface ToggleGroupProps
   extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange" | "defaultValue"> {
-  /** `single` — one value (a segmented control); `multiple` — a set. @default "single" */
+  /** `single`: one value (a segmented control); `multiple`: a set. @default "single" */
   type?: "single" | "multiple";
   /** Controlled selection. `string` for `single`, `string[]` for `multiple`. */
   value?: string | string[];

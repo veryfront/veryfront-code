@@ -1,5 +1,5 @@
 /**
- * Builtin Toolbar adapter — the zero-dependency roving-tabindex machinery
+ * Builtin Toolbar adapter: the zero-dependency roving-tabindex machinery
  * (`role="toolbar"`, arrow-key navigation, Home/End, one tab stop) assembled as
  * `ToolbarParts`. The Root roves focus over its `Item`s; each Item marks itself
  * `data-toolbar-item` so the Root can find it. Behaviour-preserving move of

@@ -120,7 +120,7 @@ function ToastDocsPage() {
     <DocsPage>
       <DocsHero
         title="Toast"
-        lead="Transient notifications — enqueue with useToast(), stacked bottom-right, auto-dismissing."
+        lead="Transient notifications: enqueue with useToast(), stacked bottom-right, auto-dismissing."
       />
 
       <DocsSection title="Default" description="Neutral notification on the popover surface.">
@@ -147,7 +147,7 @@ function ToastDocsPage() {
 
       <DocsSection
         title="Custom"
-        description="toast.custom((id) => node) — you own the markup; the provider owns the queue + lifecycle."
+        description="toast.custom((id) => node): you own the markup; the provider owns the queue + lifecycle."
       >
         <DocsExampleAuto of={Custom} />
       </DocsSection>

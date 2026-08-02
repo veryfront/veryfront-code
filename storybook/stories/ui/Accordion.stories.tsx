@@ -23,10 +23,10 @@ function AccordionDocsPage() {
     <DocsPage>
       <DocsHero
         title="Accordion"
-        lead="Stacked sections that expand and collapse — one at a time or many."
+        lead="Stacked sections that expand and collapse: one at a time or many."
       />
 
-      <DocsSection title="Single" description="type='single' — opening one section closes the others.">
+      <DocsSection title="Single" description="type='single': opening one section closes the others.">
         <DocsExampleAuto of={Single} />
       </DocsSection>
 
@@ -34,7 +34,7 @@ function AccordionDocsPage() {
         <DocsExampleAuto of={Collapsible} />
       </DocsSection>
 
-      <DocsSection title="Multiple" description="type='multiple' — any number of sections stay open.">
+      <DocsSection title="Multiple" description="type='multiple': any number of sections stay open.">
         <DocsExampleAuto of={Multiple} />
       </DocsSection>
 
@@ -100,7 +100,7 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 
 const items = [
-  { value: "shipping", title: "Shipping", body: "Orders ship in 2–3 business days." },
+  { value: "shipping", title: "Shipping", body: "Orders ship in 2-3 business days." },
   { value: "returns", title: "Returns", body: "Free returns within 30 days." },
   { value: "support", title: "Support", body: "Reach us any time at help@example.com." },
 ];

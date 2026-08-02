@@ -1,8 +1,8 @@
 /**
- * Toolbar — a `role="toolbar"` container that groups related controls (icon
+ * Toolbar: a `role="toolbar"` container that groups related controls (icon
  * buttons, links, separators) and shares a single tab stop. Focus moves between
  * items with the arrow keys (Left/Right when horizontal, Up/Down when vertical),
- * with Home/End jumping to the first/last item — a roving-tabindex pattern where
+ * with Home/End jumping to the first/last item: a roving-tabindex pattern where
  * only one item is tabbable at a time. Self-contained (no floating engine);
  * skinned with the veryfront theme tokens.
  *
@@ -48,7 +48,7 @@ export interface ToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
 /**
  * A container that groups controls behind one tab stop with roving focus. The
  * roving MECHANICS come from the active adapter's `toolbar` slot
- * (`useAdapter().toolbar`) — builtin by default, swappable via `UIAdapterProvider`.
+ * (`useAdapter().toolbar`): builtin by default, swappable via `UIAdapterProvider`.
  */
 export function Toolbar(
   { orientation = "horizontal", className, children, ...props }: ToolbarProps,
@@ -118,7 +118,7 @@ export function ToolbarLink({ className, ...props }: ToolbarLinkProps): React.Re
 
 /** Props accepted by `<ToolbarSeparator>`. */
 export interface ToolbarSeparatorProps extends React.HTMLAttributes<HTMLDivElement> {
-  /** Rule direction — `vertical` divides a horizontal toolbar and vice versa. @default "vertical" */
+  /** Rule direction: `vertical` divides a horizontal toolbar and vice versa. @default "vertical" */
   orientation?: "horizontal" | "vertical";
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLDivElement>;

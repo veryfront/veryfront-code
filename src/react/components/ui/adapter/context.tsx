@@ -1,5 +1,5 @@
 /**
- * `UIAdapterProvider` / `useAdapter` — the indirection that lets `veryfront/ui`
+ * `UIAdapterProvider` / `useAdapter`: the indirection that lets `veryfront/ui`
  * skins resolve their behavioural mechanics from a swappable adapter.
  *
  * - With **no provider**, `useAdapter()` returns the zero-dependency

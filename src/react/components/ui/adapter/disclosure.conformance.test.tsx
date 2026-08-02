@@ -1,9 +1,9 @@
 /**
- * Disclosure adapter conformance — the `disclosure` slot (Collapsible archetype).
+ * Disclosure adapter conformance: the `disclosure` slot (Collapsible archetype).
  *
  * Runs one shared behaviour suite against (1) the builtin engine, (2) the builtin
  * re-supplied through `UIAdapterProvider` (the swap path), and (3) an independent,
- * contract-only alternative engine — proving the `disclosure` slot is a real seam
+ * contract-only alternative engine: proving the `disclosure` slot is a real seam
  * a third-party engine can satisfy without the skin (`collapsible.tsx`) changing.
  *
  * @module react/components/ui/adapter/disclosure.conformance.test
@@ -63,7 +63,7 @@ function runDisclosureConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
-  describe(`Disclosure adapter conformance — ${label}`, () => {
+  describe(`Disclosure adapter conformance: ${label}`, () => {
     it("starts closed, toggles content + aria-expanded on trigger click", () => {
       const { host, unmount } = render(
         <Wrap>
@@ -139,11 +139,11 @@ function DisclosureProbe(
   );
 }
 
-// (1) builtin — no provider.
+// (1) builtin: no provider.
 const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{children}</>;
 runDisclosureConformance("builtin (default)", Identity);
 
-// (3) an INDEPENDENT contract-only engine — proves the seam. Different impl than
+// (3) an INDEPENDENT contract-only engine: proves the seam. Different impl than
 // the builtin (its own context + a `<section>` wrapper), same skin + call-site.
 const AltCtx = React.createContext<
   { open: boolean; toggle: () => void; contentId: string; disabled?: boolean } | null

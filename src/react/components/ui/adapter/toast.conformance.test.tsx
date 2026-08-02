@@ -6,7 +6,7 @@
  * `dismiss(id)` removes it, an `action` button runs its handler then dismisses,
  * and `toast.custom((id) => node)` renders an arbitrary node. `runToastConformance`
  * runs the identical suite against the builtin AND a second, INDEPENDENTLY-written
- * `ToastParts` implementation — proving the skin depends on the CONTRACT, not on
+ * `ToastParts` implementation: proving the skin depends on the CONTRACT, not on
  * builtin internals (the runtime analogue of the popover/combobox seam proofs).
  *
  * @module react/components/ui/adapter/toast.conformance.test
@@ -98,7 +98,7 @@ export function runToastConformance(
     };
   }
 
-  describe(`Toast adapter conformance — ${label}`, () => {
+  describe(`Toast adapter conformance: ${label}`, () => {
     it("toast(options) enqueues a rendered toast; dismiss(id) removes it", async () => {
       const h = mount();
       try {
@@ -171,7 +171,7 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
 runToastConformance("builtin", BuiltinWrap);
 
 // ---------------------------------------------------------------------------
-// Independent 2nd ToastParts — a byte-for-byte-different queue (useReducer,
+// Independent 2nd ToastParts: a byte-for-byte-different queue (useReducer,
 // a bare <ul>, no Toast surface / no auto-dismiss timer) satisfying the same
 // contract. The skin + suite above are unchanged; passing them here proves the
 // `toast` adapter boundary is a real seam a third engine (Sonner) can fill.

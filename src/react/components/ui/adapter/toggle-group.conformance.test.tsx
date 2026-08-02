@@ -1,5 +1,5 @@
 /**
- * ToggleGroup adapter conformance — the `toggleGroup` slot. One shared behaviour
+ * ToggleGroup adapter conformance: the `toggleGroup` slot. One shared behaviour
  * suite runs against the builtin engine and an independent, contract-only engine,
  * proving the slot is a real seam a third-party engine satisfies with the skin
  * (`toggle-group.tsx`) unchanged.
@@ -61,7 +61,7 @@ function runToggleGroupConformance(
   label: string,
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
-  describe(`ToggleGroup adapter conformance — ${label}`, () => {
+  describe(`ToggleGroup adapter conformance: ${label}`, () => {
     it("single-select: click sets aria-pressed/data-state; click again clears", () => {
       const { host, unmount } = render(
         <Wrap>
@@ -99,7 +99,7 @@ const Identity: React.FC<{ children: React.ReactNode }> = ({ children }) => <>{c
 runToggleGroupConformance("builtin (default)", Identity);
 
 describe("Builtin ToggleGroup event semantics", () => {
-  it("does not toggle disabled or consumer-cancelled items", () => {
+  it("does not toggle disabled native items", () => {
     const { host, unmount } = render(
       <ToggleGroup type="multiple" disabled>
         <ToggleGroupItem value="disabled">Disabled</ToggleGroupItem>
@@ -112,7 +112,27 @@ describe("Builtin ToggleGroup event semantics", () => {
     } finally {
       unmount();
     }
+  });
 
+  it("does not toggle disabled asChild items", () => {
+    const { host, unmount } = render(
+      <ToggleGroup type="multiple" disabled>
+        <ToggleGroupItem value="disabled" asChild>
+          <a href="#disabled">Disabled</a>
+        </ToggleGroupItem>
+      </ToggleGroup>,
+    );
+    try {
+      const item = host.querySelector("a")!;
+      assert(item.getAttribute("aria-disabled") === "true", "disabled child is exposed to AT");
+      click(item);
+      assert(item.getAttribute("aria-pressed") === "false", "disabled child blocks toggles");
+    } finally {
+      unmount();
+    }
+  });
+
+  it("does not toggle consumer-cancelled items", () => {
     const second = render(
       <ToggleGroup type="multiple">
         <ToggleGroupItem value="cancelled" onClick={(event) => event.preventDefault()}>
@@ -130,7 +150,7 @@ describe("Builtin ToggleGroup event semantics", () => {
   });
 });
 
-// (2) an INDEPENDENT contract-only engine — a distinct wrapper (`data-alt-group`)
+// (2) an INDEPENDENT contract-only engine: a distinct wrapper (`data-alt-group`)
 // + its own selection reducer, same skin + call-site.
 const AltCtx = React.createContext<{ value: string[]; toggle: (v: string) => void } | null>(null);
 const altToggleGroup: ToggleGroupParts = {

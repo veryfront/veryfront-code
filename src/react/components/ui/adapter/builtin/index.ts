@@ -1,5 +1,5 @@
 /**
- * The builtin adapter — today's zero-dependency machinery, assembled as a
+ * The builtin adapter: today's zero-dependency machinery, assembled as a
  * `UIAdapter`. This is the default value of `useAdapter()`, so the "no provider"
  * path and the "provider" path are one code path.
  *

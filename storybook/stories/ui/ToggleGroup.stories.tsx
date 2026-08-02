@@ -18,14 +18,14 @@ function ToggleGroupDocsPage() {
     <DocsPage>
       <DocsHero
         title="ToggleGroup"
-        lead="A set of toggles with shared selection — single (segmented control) or multiple."
+        lead="A set of toggles with shared selection: single (segmented control) or multiple."
       />
 
-      <DocsSection title="Single" description="type='single' — one value at a time, like a segmented control.">
+      <DocsSection title="Single" description="type='single': one value at a time, like a segmented control.">
         <DocsExampleAuto of={Single} />
       </DocsSection>
 
-      <DocsSection title="Multiple" description="type='multiple' — an independent set; selection is an array.">
+      <DocsSection title="Multiple" description="type='multiple': an independent set; selection is an array.">
         <DocsExampleAuto of={Multiple} />
       </DocsSection>
 

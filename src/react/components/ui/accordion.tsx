@@ -1,10 +1,10 @@
 /**
- * Accordion — stacked, togglable sections. `type="single"` keeps at most one
+ * Accordion: stacked, togglable sections. `type="single"` keeps at most one
  * section open (optionally `collapsible` back to none); `type="multiple"` lets
  * any number stay open. The Accordion owns the single/multiple/collapsible
  * coordination; each item's collapse MECHANICS come from the active adapter's
  * `disclosure` slot (`useAdapter().disclosure`), controlled by that coordination
- * — so an engine swap drives every item's collapse. Each header's open state is
+ * - so an engine swap drives every item's collapse. Each header's open state is
  * exposed as `data-state="open" | "closed"`; skinned with the veryfront theme
  * tokens.
  *
@@ -15,7 +15,7 @@
  * <Accordion type="single" collapsible defaultValue="a">
  *   <AccordionItem value="a">
  *     <AccordionTrigger>Shipping</AccordionTrigger>
- *     <AccordionContent>Ships in 2–3 days.</AccordionContent>
+ *     <AccordionContent>Ships in 2-3 days.</AccordionContent>
  *   </AccordionItem>
  * </Accordion>;
  * ```
@@ -46,7 +46,7 @@ function toArray(value: string | string[] | undefined): string[] {
 /** Props accepted by `<Accordion>`. */
 export interface AccordionProps
   extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange" | "defaultValue"> {
-  /** `single` — at most one section open; `multiple` — any number. @default "single" */
+  /** `single`: at most one section open; `multiple`: any number. @default "single" */
   type?: "single" | "multiple";
   /** When `type="single"`, allow closing the open section back to none. */
   collapsible?: boolean;
@@ -118,7 +118,7 @@ export interface AccordionItemProps extends React.HTMLAttributes<HTMLDivElement>
 /**
  * A single togglable section. Its open/collapse MECHANICS come from the active
  * adapter's `disclosure` slot (controlled by the Accordion's single/multiple
- * coordination) — so an engine swap drives every item's collapse while the
+ * coordination), so an engine swap drives every item's collapse while the
  * Accordion keeps owning which sections may be open.
  */
 export function AccordionItem(
@@ -177,7 +177,7 @@ export interface AccordionContentProps extends React.HTMLAttributes<HTMLDivEleme
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** The section body — rendered only while its section is open (via the slot). */
+/** The section body: rendered only while its section is open (via the slot). */
 export function AccordionContent(
   { className, children, ...props }: AccordionContentProps,
 ): React.ReactElement | null {

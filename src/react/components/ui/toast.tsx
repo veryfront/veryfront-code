@@ -1,7 +1,7 @@
 /**
- * Toast — transient notification messages. A `ToastProvider` holds the queue and
+ * Toast: transient notification messages. A `ToastProvider` holds the queue and
  * renders a viewport; `useToast()` enqueues messages from anywhere inside the
- * provider. The queue mechanics come from the active adapter's `toast` slot — the
+ * provider. The queue mechanics come from the active adapter's `toast` slot: the
  * zero-dependency builtin by default, swappable to Sonner / react-hot-toast via
  * `UIAdapterProvider`. The visual surface + option types live in `toast-parts.tsx`
  * (re-exported here); this file is the thin, adapter-routed public entry.
@@ -45,7 +45,7 @@ import * as React from "react";
 import { useAdapter } from "./adapter/context.tsx";
 import type { ToastState } from "./adapter/contract.ts";
 
-// Presentational parts + option types (pure visual, no queue) — re-exported so
+// Presentational parts + option types (pure visual, no queue): re-exported so
 // consumers import them from `veryfront/ui` as before.
 export {
   Toast,
@@ -78,7 +78,7 @@ export interface ToastProviderProps {
 }
 
 /**
- * Holds the toast queue (via the active adapter — builtin by default) and mounts
+ * Holds the toast queue (via the active adapter: builtin by default) and mounts
  * the viewport. Wrap the part of the app that needs notifications.
  */
 export function ToastProvider(

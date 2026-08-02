@@ -1,5 +1,5 @@
 /**
- * Accordion behaviour — proves the disclosure-slot re-plumb works end-to-end:
+ * Accordion behaviour: proves the disclosure-slot re-plumb works end-to-end:
  * the Accordion still owns single/multiple/collapsible coordination while each
  * item's collapse runs through `useAdapter().disclosure`.
  *
@@ -53,7 +53,7 @@ function click(node: Element): void {
   );
 }
 
-describe("Accordion — disclosure-slot behaviour (builtin)", () => {
+describe("Accordion: disclosure-slot behaviour (builtin)", () => {
   it("single mode: opening one section closes the other", () => {
     const { host, unmount } = render(
       <Accordion type="single" collapsible>

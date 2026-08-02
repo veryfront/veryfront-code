@@ -1,5 +1,5 @@
 /**
- * Toolbar adapter conformance — the `toolbar` slot. One shared behaviour suite
+ * Toolbar adapter conformance: the `toolbar` slot. One shared behaviour suite
  * runs against the builtin engine and an independent, contract-only engine,
  * proving the slot is a real seam a third-party engine satisfies with the skin
  * (`toolbar.tsx`) unchanged. Roving-tabindex is DOM focus management, so the
@@ -76,7 +76,7 @@ function keydown(node: Element, key: string): void {
 }
 
 function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
-  describe(`Toolbar adapter conformance — ${label}`, () => {
+  describe(`Toolbar adapter conformance: ${label}`, () => {
     it("renders role=toolbar with one roving tab stop; items click", () => {
       let clicked = false;
       const { host, unmount } = render(
@@ -156,7 +156,7 @@ describe("Builtin Toolbar keyboard lifecycle", () => {
   });
 });
 
-// (2) an INDEPENDENT contract-only engine — its own roving over [data-toolbar-item],
+// (2) an INDEPENDENT contract-only engine: its own roving over [data-toolbar-item],
 // same skin + call-site.
 const altToolbar: ToolbarParts = {
   Root: ({ orientation = "horizontal", children, ref, ...props }) => {

@@ -5,7 +5,7 @@ import * as colorModeModule from "./color-mode.tsx";
 import * as cvaModule from "./cva.ts";
 
 // Exact runtime surface of `veryfront/ui`. Keep this list sorted and in sync
-// with the barrel — a new primitive (or a removed one) must be an intentional,
+// with the barrel: a new primitive (or a removed one) must be an intentional,
 // reviewed change to the public API, not an accidental widening. Type-only
 // exports (e.g. `ButtonProps`) do not appear at runtime and are omitted.
 const expectedRuntimeExports = [

@@ -1,5 +1,5 @@
 /**
- * Builtin Disclosure adapter — the zero-dependency open/close machinery for the
+ * Builtin Disclosure adapter: the zero-dependency open/close machinery for the
  * Collapsible primitive (and each Accordion item), assembled as `DisclosureParts`.
  * Behaviour-preserving move of `collapsible.tsx`'s logic: controlled/uncontrolled
  * open state, stable ARIA wiring, disabled/default-prevented semantics, and
