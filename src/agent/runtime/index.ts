@@ -915,7 +915,7 @@ export class AgentRuntime {
     // BEFORE creating the ReadableStream so no_ai_available errors propagate
     // to the route handler, which returns a 503 instead of swallowing it as an
     // in-band SSE error in a 200 response.
-    await ensureModelReady(languageModel);
+    await ensureModelReady(languageModel, streamAbortSignal);
 
     const agentContext: AgentContext = {
       agentId: this.id,

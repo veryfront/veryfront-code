@@ -148,6 +148,42 @@ describe("ensureModelReady", () => {
     await ensureModelReady(mockModel as any);
   });
 
+  it("awaits an advertised runtime preparation hook", async () => {
+    let prepared = false;
+    const model = {
+      provider: "custom",
+      modelId: "custom/model",
+      prepare: async () => {
+        await Promise.resolve();
+        prepared = true;
+      },
+      doGenerate: async () => ({}),
+      doStream: async () => ({ stream: new ReadableStream() }),
+    };
+
+    await ensureModelReady(model);
+
+    assertEquals(prepared, true);
+  });
+
+  it("forwards cancellation to an advertised runtime preparation hook", async () => {
+    const abortController = new AbortController();
+    let receivedSignal: AbortSignal | undefined;
+    const model = {
+      provider: "custom",
+      modelId: "custom/model",
+      prepare: async (abortSignal?: AbortSignal) => {
+        receivedSignal = abortSignal;
+      },
+      doGenerate: async () => ({}),
+      doStream: async () => ({ stream: new ReadableStream() }),
+    };
+
+    await ensureModelReady(model, abortController.signal);
+
+    assertEquals(receivedSignal, abortController.signal);
+  });
+
   it("throws no_ai_available for local models when runtime unavailable", async () => {
     const prev = Deno.env.get("VERYFRONT_DISABLE_LOCAL_AI");
     Deno.env.set("VERYFRONT_DISABLE_LOCAL_AI", "1");

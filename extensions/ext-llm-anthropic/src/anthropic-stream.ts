@@ -1,11 +1,35 @@
 import {
   mergeUsage,
+  parseFinalSseChunk,
   parseSseChunk,
+  ProviderRequestError,
   readGatewayBillingMode,
   readRecord,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
+
+function invalidAnthropicStream(issue: string): ProviderRequestError {
+  return new ProviderRequestError({
+    provider: "anthropic",
+    status: 200,
+    message: `anthropic request failed: invalid successful stream (${issue})`,
+    retryable: false,
+  });
+}
+
+function parseAnthropicSseBuffer(
+  buffer: string,
+  trailing = false,
+): ReturnType<typeof parseSseChunk> {
+  try {
+    return trailing ? parseFinalSseChunk(buffer) : parseSseChunk(buffer);
+  } catch {
+    throw invalidAnthropicStream(
+      trailing ? "trailing SSE event was malformed" : "SSE event framing was malformed",
+    );
+  }
+}
 
 type AnthropicStreamToolCallState = {
   id: string;
@@ -249,7 +273,7 @@ export async function* streamAnthropicCompatibleParts(
       return;
     }
 
-    const parsed = parseSseChunk(`${buffer}\n\n`);
+    const parsed = parseAnthropicSseBuffer(buffer, true);
     buffer = parsed.remainder;
     for (const event of parsed.events) {
       if (event === "[DONE]") {
@@ -299,7 +323,7 @@ export async function* streamAnthropicCompatibleParts(
       }
 
       buffer += decoder.decode(read.chunk, { stream: true });
-      const parsed = parseSseChunk(buffer);
+      const parsed = parseAnthropicSseBuffer(buffer);
       buffer = parsed.remainder;
 
       for (const event of parsed.events) {

@@ -1,5 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ProviderRequestError } from "veryfront/provider/shared";
 import { streamAnthropicCompatibleParts } from "./anthropic-stream.ts";
 
 type AnthropicStreamOptions = Parameters<typeof streamAnthropicCompatibleParts>[1];
@@ -145,7 +146,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         delta: { type: "thinking_delta", thinking: " more" },
       }),
       data({ type: "content_block_stop", index: 0 }),
-      "data: {malformed\r\n\r\n",
       data({
         type: "content_block_start",
         index: 1,
@@ -194,6 +194,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           totalTokens: 13,
           cacheCreationInputTokens: 2,
           cacheReadInputTokens: 3,
+          cachedInputTokens: 3,
         },
       },
     ]);
@@ -247,6 +248,7 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
           outputTokens: 5,
           totalTokens: 13,
           cacheReadInputTokens: 3,
+          cachedInputTokens: 3,
           billableInputTokens: 8,
           billableOutputTokens: 5,
           providerInputCostUsd: 0.0004,
@@ -449,7 +451,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
-        inputTokens: undefined,
         outputTokens: 4,
         totalTokens: 4,
       },
@@ -497,7 +498,6 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
-        inputTokens: undefined,
         outputTokens: 4,
         totalTokens: 4,
       },
@@ -544,11 +544,43 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         type: "finish",
         finishReason: { unified: "tool-calls", raw: "tool_use" },
         usage: {
-          inputTokens: undefined,
           outputTokens: 4,
           totalTokens: 4,
         },
       },
     ]);
+  });
+
+  it("reports malformed SSE JSON as a typed provider error", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText('data: {"type":\n\n')),
+      ProviderRequestError,
+      "SSE event framing was malformed",
+    );
+  });
+
+  it("reports a malformed trailing SSE buffer as a typed provider error", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText('data: {"type":')),
+      ProviderRequestError,
+      "trailing SSE event was malformed",
+    );
+  });
+
+  it("aborts the stream when a malformed event follows valid ones", async () => {
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "Done." },
+          }),
+          "data: {malformed\r\n\r\n",
+          data({ type: "message_stop" }),
+        ].join(""))),
+      ProviderRequestError,
+      "SSE event framing was malformed",
+    );
   });
 });

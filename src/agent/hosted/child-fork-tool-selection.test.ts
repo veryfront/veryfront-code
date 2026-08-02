@@ -79,6 +79,6 @@ Deno.test("selectHostedChildForkRuntimeTools reports requested tools unavailable
   assertEquals(result, {
     ok: false,
     errorMessage:
-      "Requested fork tools not available in runtime: missing_tool. Available: bash, create_file, update_file.",
+      "Requested fork tools not available in runtime: missing_tool. Available: bash, create_file, update_file, web_search.",
   });
 });

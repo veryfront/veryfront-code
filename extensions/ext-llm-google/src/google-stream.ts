@@ -1,9 +1,33 @@
 import {
+  parseFinalSseChunk,
   parseSseChunk,
+  ProviderRequestError,
   readRecord,
   type RuntimeUsage,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
+
+function invalidGoogleStream(issue: string): ProviderRequestError {
+  return new ProviderRequestError({
+    provider: "google",
+    status: 200,
+    message: `google request failed: invalid successful stream (${issue})`,
+    retryable: false,
+  });
+}
+
+function parseGoogleSseBuffer(
+  buffer: string,
+  trailing = false,
+): ReturnType<typeof parseSseChunk> {
+  try {
+    return trailing ? parseFinalSseChunk(buffer) : parseSseChunk(buffer);
+  } catch {
+    throw invalidGoogleStream(
+      trailing ? "trailing SSE event was malformed" : "SSE event framing was malformed",
+    );
+  }
+}
 
 export function normalizeGoogleFinishReason(
   raw: unknown,
@@ -86,7 +110,7 @@ export async function* streamGoogleCompatibleParts(
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseSseChunk(buffer);
+    const parsed = parseGoogleSseBuffer(buffer);
     buffer = parsed.remainder;
 
     for (const event of parsed.events) {
@@ -166,7 +190,7 @@ export async function* streamGoogleCompatibleParts(
   }
 
   if (buffer.trim().length > 0) {
-    const parsed = parseSseChunk(`${buffer}\n\n`);
+    const parsed = parseGoogleSseBuffer(buffer, true);
     for (const event of parsed.events) {
       if (event === "[DONE]") {
         continue;

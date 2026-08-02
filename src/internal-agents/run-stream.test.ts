@@ -1269,7 +1269,7 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedProviderTools, []);
   });
 
-  it("omits provider tools unsupported by the configured model from the inventory", async () => {
+  it("keeps provider tools supported by the configured OpenAI model in the inventory", async () => {
     const sessionManager = new AgentRunSessionManager();
     let runtimeSystem: unknown;
 
@@ -1310,7 +1310,7 @@ describe("internal-agents/run-stream", () => {
 
     assertEquals(typeof runtimeSystem, "string");
     const prompt = runtimeSystem as string;
-    assertEquals(prompt.includes("- web_search"), false);
+    assertEquals(prompt.includes("- web_search"), true);
   });
 
   it("keeps local tools required without protecting remote placeholders from provider caps", async () => {

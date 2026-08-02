@@ -680,11 +680,11 @@ describe("agent runtime refresh hooks", () => {
     );
   });
 
-  it("omits unsupported provider-native tools from runtime inventory", async () => {
+  it("omits provider-native tools unsupported by the configured model", async () => {
     let capturedSystem = "";
     const model: ModelRuntime = {
-      provider: "openai",
-      modelId: "gpt-4o-mini",
+      provider: "google",
+      modelId: "gemini-3.5-flash",
       async doGenerate(options) {
         capturedSystem = extractSystemPrompt(options);
         return {
@@ -699,7 +699,7 @@ describe("agent runtime refresh hooks", () => {
     };
 
     const assistant = eagerAgent({
-      model: "openai/gpt-4o-mini",
+      model: "google/gemini-3.5-flash",
       system: flattenSystemInstructions(
         withRuntimeToolInventory("Use configured tools.", ["web_search"]),
       ),

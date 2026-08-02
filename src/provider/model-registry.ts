@@ -297,7 +297,15 @@ export function getRegisteredModelProviders(): string[] {
  */
 export async function ensureModelReady(
   model: ModelRuntime,
+  abortSignal?: AbortSignal,
 ): Promise<void> {
+  if (model.prepare !== undefined) {
+    if (typeof model.prepare !== "function") {
+      throw new TypeError("Model runtime prepare hook must be a function");
+    }
+    await model.prepare(abortSignal);
+    return;
+  }
   if (!hasLocalModelRuntimeMarker(model)) return;
   // modelId is "local/<id>" — strip the prefix to get the catalog id.
   const catalogId = getModelRuntimeId(model)?.replace(/^local\//, "");
