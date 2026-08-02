@@ -19,8 +19,12 @@ const fs = createFileSystem();
 const PAGE_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
 const DIRECT_ROUTE_EXTENSIONS = PAGE_FILE_EXTENSIONS;
 const LAYOUT_FILE_EXTENSIONS = ["mdx", "md", "tsx", "jsx", "ts", "js"] as const;
-const DYNAMIC_PAGE_ENTRY_PATTERN = /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/;
-const OPTIONAL_CATCH_ALL_ENTRY_PATTERN = /\[\[\.\.\..+\]\]\.(mdx|md|tsx|jsx|ts|js)$/;
+// Extensions are matched case-insensitively throughout: detectEntityType and the
+// frontmatter branch already lower-case them, so route matching must agree or a
+// file like `page.MDX` is parsed as MDX but never resolves as a route.
+const DYNAMIC_PAGE_ENTRY_PATTERN = /\[.+\]\.(mdx|md|tsx|jsx|ts|js)$/i;
+const OPTIONAL_CATCH_ALL_ENTRY_PATTERN = /\[\[\.\.\..+\]\]\.(mdx|md|tsx|jsx|ts|js)$/i;
+const SUPPORTED_ENTITY_EXTENSION_PATTERN = /\.(mdx|md|tsx|jsx|ts|js)$/i;
 
 type DirectoryEntry = { name: string; isFile: boolean; isDirectory: boolean };
 
@@ -321,7 +325,7 @@ export async function getLayoutEntity(
 
       if (escapesProjectRoot(resolvedLayoutName)) return null;
 
-      if (/\.(mdx|md|tsx|jsx|ts|js)$/.test(resolvedLayoutName)) {
+      if (SUPPORTED_ENTITY_EXTENSION_PATTERN.test(resolvedLayoutName)) {
         const directPath = pathHelper.join(projectDir, resolvedLayoutName);
         const info = await getEntityInfo(directPath, adapter);
         if (info?.entity.isLayout) return info;
@@ -460,8 +464,8 @@ async function readDirectoryEntries(
 function getSlugFromPath(filePath: string): string {
   const parts = filePath.split(pathHelper.sep);
   const fileName = parts[parts.length - 1] ?? "";
-  const slug = fileName.replace(/\.(mdx?|tsx?|jsx?)$/, "");
-  if (slug !== "index") return slug;
+  const slug = fileName.replace(SUPPORTED_ENTITY_EXTENSION_PATTERN, "");
+  if (slug.toLowerCase() !== "index") return slug;
 
   const parentDir = parts[parts.length - 2];
   return parentDir === "pages" ? "" : parentDir ?? "";
