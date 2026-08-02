@@ -1019,6 +1019,16 @@ export function conversationIndexStorageKey(storageKey: string): string {
   ]);
 }
 
+/** Injective key for the logical store's crash-recovery transaction journal. */
+export function conversationTransactionJournalStorageKey(storageKey: string): string {
+  assertStorageKeyComponent(storageKey, "Conversation storage key");
+  return serializeStorageKeyTuple([
+    CONVERSATION_STORAGE_FORMAT,
+    storageKey,
+    "transaction-journal",
+  ]);
+}
+
 /** Injective key for one current-version conversation blob. */
 export function conversationBlobStorageKey(storageKey: string, id: string): string {
   assertStorageKeyComponent(storageKey, "Conversation storage key");

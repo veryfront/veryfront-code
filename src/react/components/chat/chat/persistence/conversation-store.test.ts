@@ -2,9 +2,14 @@ import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/te
 import { describe, it } from "#veryfront/testing/bdd";
 import type { ChatMessage } from "#veryfront/agent/react";
 import {
+  CONVERSATION_STORAGE_FORMAT,
+  CONVERSATION_STORAGE_LIMITS,
+  CONVERSATION_STORAGE_VERSION,
   conversationBlobStorageKey,
   conversationIndexStorageKey,
+  conversationTransactionJournalStorageKey,
   legacyConversationBlobStorageKey,
+  legacyConversationIndexStorageKey,
 } from "./conversation-codec.ts";
 import {
   type Conversation,
@@ -45,6 +50,97 @@ function fakeStorage(): StorageLike {
     setItem: (k, v) => void map.set(k, v),
     removeItem: (k) => void map.delete(k),
   };
+}
+
+interface QuotaStorage extends StorageLike {
+  readonly quotaError: DOMException;
+  usage(): number;
+  setQuota(value: number): void;
+}
+
+function quotaStorage(): QuotaStorage {
+  const map = new Map<string, string>();
+  const quotaError = new DOMException("Storage quota exceeded", "QuotaExceededError");
+  let quota = Number.POSITIVE_INFINITY;
+  const usage = (): number => {
+    let total = 0;
+    for (const [key, value] of map) total += key.length + value.length;
+    return total;
+  };
+  return {
+    quotaError,
+    usage,
+    setQuota(value) {
+      quota = value;
+    },
+    getItem: (key) => map.get(key) ?? null,
+    setItem(key, value) {
+      const previous = map.get(key);
+      const nextUsage = usage() - (previous === undefined ? 0 : key.length + previous.length) +
+        key.length + value.length;
+      if (nextUsage > quota) throw quotaError;
+      map.set(key, value);
+    },
+    removeItem: (key) => void map.delete(key),
+  };
+}
+
+function interruptAfterMutation(base: StorageLike, ordinal: number): StorageLike {
+  const termination = new Error(`simulated termination after mutation ${ordinal}`);
+  let mutations = 0;
+  let terminated = false;
+
+  const assertRunning = (): void => {
+    if (terminated) throw termination;
+  };
+  const mutated = (): void => {
+    mutations += 1;
+    if (mutations === ordinal) {
+      terminated = true;
+      throw termination;
+    }
+  };
+
+  return {
+    getItem(key) {
+      assertRunning();
+      return base.getItem(key);
+    },
+    setItem(key, value) {
+      assertRunning();
+      base.setItem(key, value);
+      mutated();
+    },
+    removeItem(key) {
+      assertRunning();
+      base.removeItem(key);
+      mutated();
+    },
+  };
+}
+
+function transactionJournalRaw(
+  storageKey: string,
+  id: string,
+  over: Record<string, unknown> = {},
+): string {
+  return JSON.stringify({
+    format: CONVERSATION_STORAGE_FORMAT,
+    version: CONVERSATION_STORAGE_VERSION,
+    kind: "transaction-journal",
+    storageKey,
+    operation: "save",
+    id,
+    previous: { index: null, currentBlob: null },
+    padding: "",
+    ...over,
+  });
+}
+
+function assertTransactionReservation(storage: StorageLike, storageKey: string): void {
+  const raw = storage.getItem(conversationTransactionJournalStorageKey(storageKey));
+  assert(raw !== null);
+  assert(raw.startsWith("veryfront.conversation-store.transaction-reservation.v1"));
 }
 
 const immediateLockRunner: ConversationStoreLockRunner = {
@@ -274,6 +370,330 @@ describe("memoryConversationStore isolation", () => {
   });
 });
 
+describe("localConversationStore crash recovery", () => {
+  const savePhases = [
+    { name: "journal write", ordinal: 1, committed: false },
+    { name: "conversation write", ordinal: 2, committed: false },
+    { name: "index write", ordinal: 3, committed: false },
+    { name: "journal commit", ordinal: 4, committed: true },
+  ] as const;
+
+  for (const phase of savePhases) {
+    it(`recovers a save interrupted after its ${phase.name}`, async () => {
+      const storageKey = `save-interruption-${phase.ordinal}`;
+      const base = fakeStorage();
+      const oldConversation = conversation("a", 100);
+      const updatedConversation = conversation("a", 200, {
+        title: "Updated",
+        agentId: "updated-agent",
+        messages: [msg("updated one"), msg("updated two")],
+      });
+      await testLocalConversationStore(storageKey, base).save(oldConversation);
+
+      const interrupted = testLocalConversationStore(
+        storageKey,
+        interruptAfterMutation(base, phase.ordinal),
+      );
+      await assertRejects(
+        () => interrupted.save(updatedConversation),
+        ConversationStoreError,
+      );
+
+      const recovered = testLocalConversationStore(storageKey, base);
+      const summaries = await recovered.list();
+      const expected = phase.committed ? updatedConversation : oldConversation;
+      assertEquals(summaries.map((item) => item.id), ["a"]);
+      assertEquals(summaries[0]?.title, expected.title);
+      assertEquals(summaries[0]?.agentId, expected.agentId);
+      assertEquals(summaries[0]?.updatedAt, expected.updatedAt);
+      assertEquals(summaries[0]?.messageCount, expected.messages.length);
+      assertEquals(await recovered.load("a"), expected);
+      assertTransactionReservation(base, storageKey);
+    });
+  }
+
+  it("removes both orphaned keys when a first save stops between writes", async () => {
+    const storageKey = "first-save-interruption";
+    const base = fakeStorage();
+    const interrupted = testLocalConversationStore(
+      storageKey,
+      interruptAfterMutation(base, 3),
+    );
+
+    await assertRejects(
+      () => interrupted.save(conversation("new", 100)),
+      ConversationStoreError,
+    );
+
+    const recovered = testLocalConversationStore(storageKey, base);
+    assertEquals(await recovered.list(), []);
+    assertEquals(await recovered.load("new"), null);
+    assertEquals(base.getItem(conversationIndexStorageKey(storageKey)), null);
+    assertEquals(base.getItem(conversationBlobStorageKey(storageKey, "new")), null);
+    assertTransactionReservation(base, storageKey);
+  });
+
+  const deletePhases = [
+    { name: "intent write", ordinal: 1 },
+    { name: "conversation removal", ordinal: 2 },
+    { name: "index write", ordinal: 3 },
+    { name: "reservation commit", ordinal: 4 },
+  ] as const;
+
+  for (const phase of deletePhases) {
+    it(`recovers a current-record delete interrupted after its ${phase.name}`, async () => {
+      const storageKey = `delete-interruption-${phase.ordinal}`;
+      const base = fakeStorage();
+      await testLocalConversationStore(storageKey, base).save(conversation("a", 100));
+
+      const interrupted = testLocalConversationStore(
+        storageKey,
+        interruptAfterMutation(base, phase.ordinal),
+      );
+      await assertRejects(() => interrupted.delete("a"), ConversationStoreError);
+
+      const recovered = testLocalConversationStore(storageKey, base);
+      assertEquals(
+        (await recovered.list()).map((item) => item.id),
+        [],
+      );
+      assertEquals(await recovered.load("a"), null);
+      assertTransactionReservation(base, storageKey);
+    });
+  }
+
+  const legacyDeletePhases = [
+    { name: "intent write", ordinal: 1 },
+    { name: "legacy-record removal", ordinal: 2 },
+    { name: "tombstone write", ordinal: 3 },
+    { name: "reservation commit", ordinal: 4 },
+  ] as const;
+
+  for (const phase of legacyDeletePhases) {
+    it(`recovers a legacy delete interrupted after its ${phase.name}`, async () => {
+      const storageKey = `legacy-delete-interruption-${phase.ordinal}`;
+      const id = "legacy";
+      const base = fakeStorage();
+      const legacyConversation = conversation(id, 100);
+      base.setItem(
+        legacyConversationIndexStorageKey(storageKey),
+        JSON.stringify([{
+          id,
+          title: legacyConversation.title,
+          messageCount: legacyConversation.messages.length,
+          createdAt: legacyConversation.createdAt,
+          updatedAt: legacyConversation.updatedAt,
+        }]),
+      );
+      base.setItem(
+        legacyConversationBlobStorageKey(storageKey, id),
+        JSON.stringify(legacyConversation),
+      );
+
+      const interrupted = testLocalConversationStore(
+        storageKey,
+        interruptAfterMutation(base, phase.ordinal),
+      );
+      await assertRejects(() => interrupted.delete(id), ConversationStoreError);
+
+      const recovered = testLocalConversationStore(storageKey, base);
+      assertEquals(
+        (await recovered.list()).map((item) => item.id),
+        [],
+      );
+      assertEquals(await recovered.load(id), null);
+      assertTransactionReservation(base, storageKey);
+    });
+  }
+
+  const currentAndLegacyDeletePhases = [
+    { name: "intent write", ordinal: 1 },
+    { name: "current-record removal", ordinal: 2 },
+    { name: "legacy-record removal", ordinal: 3 },
+    { name: "index write", ordinal: 4 },
+    { name: "reservation commit", ordinal: 5 },
+  ] as const;
+
+  for (const phase of currentAndLegacyDeletePhases) {
+    it(`recovers a mixed-layout delete interrupted after its ${phase.name}`, async () => {
+      const storageKey = `mixed-delete-interruption-${phase.ordinal}`;
+      const id = "mixed";
+      const base = fakeStorage();
+      await testLocalConversationStore(storageKey, base).save(conversation(id, 100));
+      const legacyBlobKey = legacyConversationBlobStorageKey(storageKey, id);
+      base.setItem(legacyBlobKey, JSON.stringify(conversation(id, 50)));
+
+      const interrupted = testLocalConversationStore(
+        storageKey,
+        interruptAfterMutation(base, phase.ordinal),
+      );
+      await assertRejects(() => interrupted.delete(id), ConversationStoreError);
+
+      const recovered = testLocalConversationStore(storageKey, base);
+      assertEquals(await recovered.load(id), null);
+      assertEquals(await recovered.list(), []);
+      assertEquals(base.getItem(legacyBlobKey), null);
+      assertTransactionReservation(base, storageKey);
+    });
+  }
+
+  for (
+    const invalid of [
+      { name: "malformed", raw: "{not-json" },
+      {
+        name: "foreign",
+        raw: transactionJournalRaw("foreign-namespace", "a"),
+      },
+      {
+        name: "unexpected-field",
+        raw: transactionJournalRaw("invalid-journal", "a", { extra: true }),
+      },
+      {
+        name: "malformed-current-before-image",
+        raw: transactionJournalRaw("invalid-journal", "a", {
+          previous: { index: null, currentBlob: "{not-json" },
+        }),
+      },
+      {
+        name: "mismatched-current-before-image",
+        raw: transactionJournalRaw("invalid-journal", "a", {
+          previous: {
+            index: null,
+            currentBlob: JSON.stringify(conversation("different-id", 100)),
+          },
+        }),
+      },
+      {
+        name: "undersized-delete-intent",
+        raw: JSON.stringify({
+          format: CONVERSATION_STORAGE_FORMAT,
+          version: CONVERSATION_STORAGE_VERSION,
+          kind: "transaction-journal",
+          storageKey: "invalid-journal",
+          operation: "delete",
+          id: "a",
+          ensureCurrentIndex: true,
+          padding: "",
+        }),
+      },
+    ]
+  ) {
+    it(`fails closed without altering data for a ${invalid.name} journal`, async () => {
+      const storageKey = "invalid-journal";
+      const base = fakeStorage();
+      const store = testLocalConversationStore(storageKey, base);
+      await store.save(conversation("a", 100));
+      const indexKey = conversationIndexStorageKey(storageKey);
+      const blobKey = conversationBlobStorageKey(storageKey, "a");
+      const journalKey = conversationTransactionJournalStorageKey(storageKey);
+      const indexBefore = base.getItem(indexKey);
+      const blobBefore = base.getItem(blobKey);
+      base.setItem(journalKey, invalid.raw);
+
+      const error = await assertRejects(
+        () => store.list(),
+        ConversationStoreError,
+      ) as ConversationStoreError;
+      assertEquals(error.operation, "list");
+      assert(error.cause instanceof Error);
+      assertEquals(base.getItem(journalKey), invalid.raw);
+      assertEquals(base.getItem(indexKey), indexBefore);
+      assertEquals(base.getItem(blobKey), blobBefore);
+
+      base.removeItem(journalKey);
+      assertEquals((await store.load("a"))?.id, "a");
+    });
+  }
+
+  it("retains a failed recovery journal and reports the exact storage failure", async () => {
+    const storageKey = "recovery-failure";
+    const id = "a";
+    const base = fakeStorage();
+    const oldConversation = conversation(id, 100);
+    await testLocalConversationStore(storageKey, base).save(oldConversation);
+    await assertRejects(
+      () =>
+        testLocalConversationStore(storageKey, interruptAfterMutation(base, 2)).save(
+          conversation(id, 200, { title: "Interrupted update" }),
+        ),
+      ConversationStoreError,
+    );
+
+    const journalKey = conversationTransactionJournalStorageKey(storageKey);
+    const interruptedJournal = base.getItem(journalKey);
+    assert(interruptedJournal !== null);
+    const blobKey = conversationBlobStorageKey(storageKey, id);
+    const recoveryFailure = new Error("recovery write blocked");
+    let blockRecovery = true;
+    const recoveringStorage: StorageLike = {
+      getItem: (key) => base.getItem(key),
+      setItem: (key, value) => {
+        if (blockRecovery && key === blobKey) throw recoveryFailure;
+        base.setItem(key, value);
+      },
+      removeItem: (key) => base.removeItem(key),
+    };
+    const recoveringStore = testLocalConversationStore(storageKey, recoveringStorage);
+
+    const error = await assertRejects(
+      () => recoveringStore.list(),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+    assert(error.cause instanceof AggregateError);
+    assert((error.cause as AggregateError).errors.includes(recoveryFailure));
+    assertEquals(base.getItem(journalKey), interruptedJournal);
+
+    blockRecovery = false;
+    assertEquals((await recoveringStore.load(id))?.title, oldConversation.title);
+    assertTransactionReservation(base, storageKey);
+  });
+
+  it("preserves an AggregateError thrown by storage during recovery", async () => {
+    const storageKey = "aggregate-recovery-failure";
+    const id = "a";
+    const base = fakeStorage();
+    const primary = new Error("primary index failure");
+    const recovery = new AggregateError(
+      [new Error("storage detail")],
+      "storage recovery read failed",
+    );
+    const indexKey = conversationIndexStorageKey(storageKey);
+    const journalKey = conversationTransactionJournalStorageKey(storageKey);
+    let failUpdate = false;
+    let failRecoveryRead = false;
+    const storage: StorageLike = {
+      getItem(key) {
+        if (failRecoveryRead && key === journalKey) throw recovery;
+        return base.getItem(key);
+      },
+      setItem(key, value) {
+        base.setItem(key, value);
+        if (failUpdate && key === indexKey) {
+          failRecoveryRead = true;
+          throw primary;
+        }
+      },
+      removeItem: (key) => base.removeItem(key),
+    };
+    const store = testLocalConversationStore(storageKey, storage);
+    await store.save(conversation(id, 100));
+    failUpdate = true;
+
+    const error = await assertRejects(
+      () => store.save(conversation(id, 200, { title: "Interrupted update" })),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+    assert(error.cause instanceof AggregateError);
+    assertEquals((error.cause as AggregateError).errors, [primary, recovery]);
+    assertEquals(base.getItem(journalKey) === null, false);
+
+    failUpdate = false;
+    failRecoveryRead = false;
+    assertEquals((await store.load(id))?.title, `Conversation ${id}`);
+    assertTransactionReservation(base, storageKey);
+  });
+});
+
 describe("localConversationStore failures", () => {
   it("rejects instead of claiming persistence when browser capabilities are unavailable", async () => {
     const store = localConversationStore("unavailable-default");
@@ -356,6 +776,239 @@ describe("localConversationStore failures", () => {
     assert(storage.getItem(conversationBlobStorageKey("collision", "index")) !== null);
   });
 
+  it("uses reserved headroom to delete a current record at exact quota", async () => {
+    const storageKey = "\0".repeat(
+      CONVERSATION_STORAGE_LIMITS.maxStorageKeyComponentBytes,
+    );
+    const id = "\0".repeat(CONVERSATION_STORAGE_LIMITS.maxIdentifierBytes);
+    const storage = quotaStorage();
+    const store = testLocalConversationStore(storageKey, storage);
+    await store.save(conversation(id, 100, {
+      messages: [{
+        id: "large-message",
+        role: "user",
+        parts: [{ type: "text", text: "x".repeat(200_000) }],
+      }] as ChatMessage[],
+    }));
+    const before = storage.usage();
+    storage.setQuota(before);
+
+    await store.delete(id);
+
+    assert(storage.usage() < before);
+    assertEquals(await store.load(id), null);
+    assertEquals(await store.list(), []);
+    assertTransactionReservation(storage, storageKey);
+  });
+
+  it("uses reserved headroom for an unindexed current record at exact quota", async () => {
+    const storageKey = "\0".repeat(
+      CONVERSATION_STORAGE_LIMITS.maxStorageKeyComponentBytes,
+    );
+    const id = "\0".repeat(CONVERSATION_STORAGE_LIMITS.maxIdentifierBytes);
+    const storage = quotaStorage();
+    const store = testLocalConversationStore(storageKey, storage);
+    await store.save(conversation(id, 100, {
+      messages: [{
+        id: "short-message",
+        role: "user",
+        parts: [{ type: "text", text: "content" }],
+      }] as ChatMessage[],
+    }));
+    storage.removeItem(conversationIndexStorageKey(storageKey));
+    const before = storage.usage();
+    storage.setQuota(before);
+
+    await store.delete(id);
+
+    assert(storage.usage() < before);
+    assertEquals(await store.load(id), null);
+    assertEquals(await store.list(), []);
+    assertTransactionReservation(storage, storageKey);
+  });
+
+  it("does not mutate an unreserved legacy record when delete intent allocation hits quota", async () => {
+    const storageKey = "legacy-delete-at-quota";
+    const id = "legacy";
+    const storage = quotaStorage();
+    const legacyIndexKey = legacyConversationIndexStorageKey(storageKey);
+    const legacyBlobKey = legacyConversationBlobStorageKey(storageKey, id);
+    const record = conversation(id, 100);
+    const legacyIndex = JSON.stringify([{
+      id,
+      title: record.title,
+      messageCount: record.messages.length,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+    }]);
+    const legacyBlob = JSON.stringify(record);
+    storage.setItem(legacyIndexKey, legacyIndex);
+    storage.setItem(legacyBlobKey, legacyBlob);
+    storage.setQuota(storage.usage());
+    const store = testLocalConversationStore(storageKey, storage);
+
+    const error = await assertRejects(
+      () => store.delete(id),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+    assertEquals(error.cause, storage.quotaError);
+    assertEquals(storage.getItem(legacyIndexKey), legacyIndex);
+    assertEquals(storage.getItem(legacyBlobKey), legacyBlob);
+    assertEquals(
+      storage.getItem(conversationTransactionJournalStorageKey(storageKey)),
+      null,
+    );
+  });
+
+  it("rejects an oversized legacy tombstone before making deletion durable", async () => {
+    const storageKey = "legacy-tombstone-boundary";
+    const id = "a";
+    const storage = fakeStorage();
+    const legacyBlobKey = legacyConversationBlobStorageKey(storageKey, id);
+    const legacyIndexKey = legacyConversationIndexStorageKey(storageKey);
+    const currentIndexKey = conversationIndexStorageKey(storageKey);
+    const journalKey = conversationTransactionJournalStorageKey(storageKey);
+    const summaries = Array.from({ length: 129 }, (_, index) => ({
+      id: index === 0 ? id : `filler-${index}`,
+      title: "",
+      messageCount: 0,
+      createdAt: index,
+      updatedAt: index,
+    }));
+    let remainingBytes = CONVERSATION_STORAGE_LIMITS.maxIndexBytes -
+      JSON.stringify(summaries).length;
+    for (let index = 1; index < summaries.length && remainingBytes > 0; index += 1) {
+      const titleBytes = Math.min(
+        remainingBytes,
+        CONVERSATION_STORAGE_LIMITS.maxTitleBytes,
+      );
+      summaries[index]!.title = "x".repeat(titleBytes);
+      remainingBytes -= titleBytes;
+    }
+    assertEquals(remainingBytes, 0, "the fixture must fill the legacy index bound exactly");
+    const legacyIndex = JSON.stringify(summaries);
+    assertEquals(
+      new TextEncoder().encode(legacyIndex).byteLength,
+      CONVERSATION_STORAGE_LIMITS.maxIndexBytes,
+    );
+    const legacyBlob = JSON.stringify(conversation(id, 100));
+    storage.setItem(legacyIndexKey, legacyIndex);
+    storage.setItem(legacyBlobKey, legacyBlob);
+    const store = testLocalConversationStore(storageKey, storage);
+
+    const error = await assertRejects(
+      () => store.delete(id),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+
+    assert(error.cause instanceof TypeError);
+    assertEquals(storage.getItem(legacyIndexKey), legacyIndex);
+    assertEquals(storage.getItem(legacyBlobKey), legacyBlob);
+    assertEquals(storage.getItem(currentIndexKey), null);
+    assertEquals(storage.getItem(journalKey), null);
+    assertEquals((await store.load(id))?.id, id);
+  });
+
+  it('preserves the ambiguous legacy index key while deleting current id "index"', async () => {
+    const storageKey = "ambiguous-index-delete";
+    const id = "index";
+    const storage = fakeStorage();
+    const store = testLocalConversationStore(storageKey, storage);
+    await store.save(conversation(id, 100));
+    const legacyIndexKey = legacyConversationIndexStorageKey(storageKey);
+    const legacyIndex = JSON.stringify([]);
+    assertEquals(legacyIndexKey, legacyConversationBlobStorageKey(storageKey, id));
+    storage.setItem(legacyIndexKey, legacyIndex);
+
+    await store.delete(id);
+
+    assertEquals(storage.getItem(legacyIndexKey), legacyIndex);
+    assertEquals(await store.load(id), null);
+  });
+
+  it("preserves an unattributable corrupt legacy value while deleting the current record", async () => {
+    const storageKey = "corrupt-legacy-delete";
+    const id = "a";
+    const storage = fakeStorage();
+    const store = testLocalConversationStore(storageKey, storage);
+    await store.save(conversation(id, 100));
+    const legacyBlobKey = legacyConversationBlobStorageKey(storageKey, id);
+    storage.setItem(legacyBlobKey, "{not-json");
+
+    await store.delete(id);
+
+    assertEquals(storage.getItem(legacyBlobKey), "{not-json");
+    assertEquals(await store.load(id), null);
+  });
+
+  it("retains a save journal until the idle reservation can be restored", async () => {
+    const storageKey = "reservation-retry";
+    const base = fakeStorage();
+    const journalKey = conversationTransactionJournalStorageKey(storageKey);
+    const reservationFailure = new Error("reservation write blocked");
+    let blockReservation = true;
+    const storage: StorageLike = {
+      getItem: (key) => base.getItem(key),
+      setItem(key, value) {
+        if (
+          blockReservation &&
+          key === journalKey &&
+          value.startsWith("veryfront.conversation-store.transaction-reservation.v1")
+        ) {
+          throw reservationFailure;
+        }
+        base.setItem(key, value);
+      },
+      removeItem: (key) => base.removeItem(key),
+    };
+    const store = testLocalConversationStore(storageKey, storage);
+
+    const error = await assertRejects(
+      () => store.save(conversation("a", 100)),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+    assert(error.cause instanceof AggregateError);
+    assertEquals(
+      (error.cause as AggregateError).errors,
+      [reservationFailure, reservationFailure],
+    );
+    assert(base.getItem(journalKey)?.includes('"operation":"save"'));
+    assertEquals(base.getItem(conversationBlobStorageKey(storageKey, "a")), null);
+    assertEquals(base.getItem(conversationIndexStorageKey(storageKey)), null);
+
+    blockReservation = false;
+    assertEquals(await store.list(), []);
+    assertTransactionReservation(base, storageKey);
+  });
+
+  it("recovers a pending delete before a same-id save writes its replacement", async () => {
+    const storageKey = "delete-then-save";
+    const id = "a";
+    const base = fakeStorage();
+    const blobKey = conversationBlobStorageKey(storageKey, id);
+    const blocked = new Error("delete blocked");
+    let blockRemove = false;
+    const storage: StorageLike = {
+      getItem: (key) => base.getItem(key),
+      setItem: (key, value) => base.setItem(key, value),
+      removeItem(key) {
+        if (blockRemove && key === blobKey) throw blocked;
+        base.removeItem(key);
+      },
+    };
+    const store = testLocalConversationStore(storageKey, storage);
+    await store.save(conversation(id, 100));
+    blockRemove = true;
+    await assertRejects(() => store.delete(id), ConversationStoreError);
+
+    blockRemove = false;
+    await store.save(conversation(id, 200, { title: "Replacement" }));
+
+    assertEquals((await store.load(id))?.title, "Replacement");
+    assertEquals((await store.list())[0]?.title, "Replacement");
+    assertTransactionReservation(base, storageKey);
+  });
+
   it("rejects quota failures and rolls back the conversation blob", async () => {
     const base = fakeStorage();
     const indexKey = conversationIndexStorageKey("quota");
@@ -381,15 +1034,16 @@ describe("localConversationStore failures", () => {
     assertEquals((await store.list())[0]?.title, "Conversation a");
   });
 
-  it("rejects delete failures without losing the stored conversation", async () => {
+  it("finishes deletion when the index write reports failure after applying", async () => {
     const base = fakeStorage();
     const indexKey = conversationIndexStorageKey("delete");
+    const primary = new Error("blocked");
     let rejectIndexWrite = false;
     const storage: StorageLike = {
       getItem: (key) => base.getItem(key),
       setItem: (key, value) => {
         base.setItem(key, value);
-        if (rejectIndexWrite && key === indexKey) throw new Error("blocked");
+        if (rejectIndexWrite && key === indexKey) throw primary;
       },
       removeItem: (key) => base.removeItem(key),
     };
@@ -397,10 +1051,15 @@ describe("localConversationStore failures", () => {
     await store.save(conversation("a", 100));
     rejectIndexWrite = true;
 
-    const error = await assertRejects(() => store.delete("a"), ConversationStoreError);
-    assertEquals((error as ConversationStoreError).operation, "delete");
-    assertEquals((await store.load("a"))?.id, "a");
-    assertEquals((await store.list()).map((summary) => summary.id), ["a"]);
+    const error = await assertRejects(
+      () => store.delete("a"),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+
+    assertEquals(error.cause, primary);
+    assertEquals(await store.load("a"), null);
+    assertEquals(await store.list(), []);
+    assertTransactionReservation(base, "delete");
   });
 
   it("does not roll back a colliding legacy key that the delete did not own", async () => {
@@ -419,6 +1078,7 @@ describe("localConversationStore failures", () => {
     const concurrentForeign = JSON.stringify(
       conversation(foreignId, 200, { title: "Concurrent foreign update" }),
     );
+    const primary = new Error("local index write failed");
     let failDelete = false;
     const storage: StorageLike = {
       getItem: (key) => base.getItem(key),
@@ -427,7 +1087,7 @@ describe("localConversationStore failures", () => {
         if (!failDelete || key !== localIndexKey) return;
         failDelete = false;
         base.setItem(collidingLegacyKey, concurrentForeign);
-        throw new Error("local index write failed");
+        throw primary;
       },
       removeItem: (key) => base.removeItem(key),
     };
@@ -436,31 +1096,126 @@ describe("localConversationStore failures", () => {
     base.setItem(collidingLegacyKey, previousForeign);
     failDelete = true;
 
-    await assertRejects(() => store.delete(localId), ConversationStoreError);
+    const error = await assertRejects(
+      () => store.delete(localId),
+      ConversationStoreError,
+    ) as ConversationStoreError;
 
+    assertEquals(error.cause, primary);
     assertEquals(base.getItem(collidingLegacyKey), concurrentForeign);
+    assertEquals(await store.load(localId), null);
   });
 
-  it("rolls back when the first delete mutation throws after changing storage", async () => {
+  it("finishes deletion when the first removal reports failure after applying", async () => {
     const base = fakeStorage();
     const blobKey = conversationBlobStorageKey("remove-failure", "a");
+    const primary = new Error("remove blocked");
     let failRemove = false;
     const storage: StorageLike = {
       getItem: (key) => base.getItem(key),
       setItem: (key, value) => base.setItem(key, value),
       removeItem: (key) => {
         base.removeItem(key);
-        if (failRemove && key === blobKey) throw new Error("remove blocked");
+        if (failRemove && key === blobKey) throw primary;
       },
     };
     const store = testLocalConversationStore("remove-failure", storage);
     await store.save(conversation("a", 100));
     failRemove = true;
 
-    const error = await assertRejects(() => store.delete("a"), ConversationStoreError);
-    assertEquals((error as ConversationStoreError).operation, "delete");
-    assertEquals((await store.load("a"))?.id, "a");
-    assertEquals((await store.list()).map((summary) => summary.id), ["a"]);
+    const error = await assertRejects(
+      () => store.delete("a"),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+
+    assertEquals(error.cause, primary);
+    assertEquals(await store.load("a"), null);
+    assertEquals(await store.list(), []);
+    assertTransactionReservation(base, "remove-failure");
+  });
+
+  it("retains a delete intent until a blocked removal can be retried", async () => {
+    const storageKey = "blocked-delete-retry";
+    const id = "a";
+    const base = fakeStorage();
+    const blobKey = conversationBlobStorageKey(storageKey, id);
+    const blocked = new Error("remove blocked before applying");
+    let blockRemove = false;
+    const storage: StorageLike = {
+      getItem: (key) => base.getItem(key),
+      setItem: (key, value) => base.setItem(key, value),
+      removeItem(key) {
+        if (blockRemove && key === blobKey) throw blocked;
+        base.removeItem(key);
+      },
+    };
+    const store = testLocalConversationStore(storageKey, storage);
+    await store.save(conversation(id, 100));
+    blockRemove = true;
+
+    const error = await assertRejects(
+      () => store.delete(id),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+    assert(error.cause instanceof AggregateError);
+    assert((error.cause as AggregateError).errors.includes(blocked));
+    const pending = base.getItem(conversationTransactionJournalStorageKey(storageKey));
+    assert(pending?.includes('"operation":"delete"'));
+    assert(base.getItem(blobKey) !== null);
+
+    blockRemove = false;
+    assertEquals(await store.load(id), null);
+    assertTransactionReservation(base, storageKey);
+  });
+
+  it("preserves a legacy removal failure until recovery can retry it", async () => {
+    const storageKey = "blocked-legacy-delete-retry";
+    const id = "legacy";
+    const base = fakeStorage();
+    const legacyBlobKey = legacyConversationBlobStorageKey(storageKey, id);
+    const legacyIndexKey = legacyConversationIndexStorageKey(storageKey);
+    const blocked = new Error("legacy remove blocked before applying");
+    let blockRemove = false;
+    const storage: StorageLike = {
+      getItem: (key) => base.getItem(key),
+      setItem: (key, value) => base.setItem(key, value),
+      removeItem(key) {
+        if (blockRemove && key === legacyBlobKey) throw blocked;
+        base.removeItem(key);
+      },
+    };
+    const record = conversation(id, 100);
+    base.setItem(legacyBlobKey, JSON.stringify(record));
+    base.setItem(
+      legacyIndexKey,
+      JSON.stringify([{
+        id,
+        title: record.title,
+        messageCount: record.messages.length,
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+      }]),
+    );
+    const store = testLocalConversationStore(storageKey, storage);
+    blockRemove = true;
+
+    const error = await assertRejects(
+      () => store.delete(id),
+      ConversationStoreError,
+    ) as ConversationStoreError;
+
+    assert(error.cause instanceof AggregateError);
+    assertEquals((error.cause as AggregateError).errors, [blocked, blocked]);
+    assert(base.getItem(legacyBlobKey) !== null);
+    assert(
+      base.getItem(conversationTransactionJournalStorageKey(storageKey))?.includes(
+        '"operation":"delete"',
+      ),
+    );
+
+    blockRemove = false;
+    assertEquals(await store.load(id), null);
+    assertTransactionReservation(base, storageKey);
   });
 
   it("retains the primary and rollback failures for diagnosis", async () => {
@@ -491,5 +1246,16 @@ describe("localConversationStore failures", () => {
     assertEquals(error.operation, "save");
     assert(error.cause instanceof AggregateError);
     assertEquals((error.cause as AggregateError).errors, [primary, rollback]);
+    assert(
+      base.getItem(conversationTransactionJournalStorageKey("rollback-failure")) !== null,
+    );
+
+    assertEquals((await store.load("a"))?.title, "Conversation a");
+    assertEquals(
+      base.getItem(conversationTransactionJournalStorageKey("rollback-failure"))?.startsWith(
+        "veryfront.conversation-store.transaction-reservation.v1",
+      ),
+      true,
+    );
   });
 });

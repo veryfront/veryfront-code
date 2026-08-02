@@ -9,6 +9,7 @@ import {
   CONVERSATION_STORAGE_VERSION,
   conversationBlobStorageKey,
   conversationIndexStorageKey,
+  conversationTransactionJournalStorageKey,
   decodeConversationIndex,
   decodeConversationRecord,
   encodeConversationIndex,
@@ -95,6 +96,19 @@ describe("conversation persistence keys and envelopes", () => {
     assert(
       conversationIndexStorageKey("tenant") !==
         conversationBlobStorageKey("tenant", "index"),
+    );
+    assert(
+      conversationTransactionJournalStorageKey("tenant") !==
+        conversationIndexStorageKey("tenant"),
+    );
+    assert(
+      conversationTransactionJournalStorageKey("tenant") !==
+        conversationBlobStorageKey("tenant", "transaction-journal"),
+    );
+    assertEquals(
+      JSON.parse(conversationTransactionJournalStorageKey("tenant")),
+      [CONVERSATION_STORAGE_FORMAT, "tenant", "transaction-journal"],
+      "the control slot stays stable across future record-format versions",
     );
   });
 
@@ -617,7 +631,7 @@ describe("local conversation migration", () => {
     assertEquals((await store.list()).map((item) => item.id), ["new"]);
   });
 
-  it("restores an owned legacy blob when deletion cannot commit its tombstone", async () => {
+  it("finishes an owned legacy deletion when the tombstone write reports after applying", async () => {
     const base = fakeStorage();
     const storageKey = "legacy-delete-rollback";
     const id = "old";
@@ -626,6 +640,7 @@ describe("local conversation migration", () => {
     const legacyBlobKey = legacyConversationBlobStorageKey(storageKey, id);
     const legacyIndex = JSON.stringify([summary(id)]);
     const legacyBlob = JSON.stringify(conversation(id));
+    const primary = new Error("tombstone write blocked");
     base.setItem(legacyIndexKey, legacyIndex);
     base.setItem(legacyBlobKey, legacyBlob);
 
@@ -633,7 +648,7 @@ describe("local conversation migration", () => {
       getItem: (key) => base.getItem(key),
       setItem: (key, value) => {
         base.setItem(key, value);
-        if (key === currentIndexKey) throw new Error("tombstone write blocked");
+        if (key === currentIndexKey) throw primary;
       },
       removeItem: (key) => base.removeItem(key),
     };
@@ -643,11 +658,12 @@ describe("local conversation migration", () => {
       () => store.delete(id),
       ConversationStoreError,
     ) as ConversationStoreError;
-    assertEquals(error.operation, "delete");
-    assertEquals(base.getItem(currentIndexKey), null);
+
+    assertEquals(error.cause, primary);
+    assert(base.getItem(currentIndexKey) !== null);
     assertEquals(base.getItem(legacyIndexKey), legacyIndex);
-    assertEquals(base.getItem(legacyBlobKey), legacyBlob);
-    assertEquals((await store.load(id))?.id, id);
+    assertEquals(base.getItem(legacyBlobKey), null);
+    assertEquals(await store.load(id), null);
   });
 
   it("keeps stores separate when their legacy concatenated blob keys collide", async () => {

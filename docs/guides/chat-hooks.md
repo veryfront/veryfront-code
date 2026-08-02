@@ -170,8 +170,11 @@ export default function ConversationList() {
 
 A failed save remains visible in the current React tree. Treat it as
 unsaved until the adapter completes a later save.
-Deletion is confirm-on-success: the conversation remains visible while the
-adapter is deleting it, and a rejected delete leaves it available for retry.
+Deletion is confirm-on-success in the React tree: the conversation remains
+visible while the adapter is deleting it. A delete rejected before its durable
+intent is stored leaves the record unchanged. Once that intent is durable,
+recovery always finishes the deletion; the original storage error is still
+reported, and the next locked operation retries any unfinished work.
 After deletion succeeds, ordinary `save()` calls for that id remain suppressed
 until a later list confirms its absence, preventing late stream callbacks from
 resurrecting it. To intentionally reuse the deleted id when that confirmation
@@ -266,7 +269,16 @@ Use the local adapter only when your data fits these maxima:
 Size limits use UTF-8 bytes. Unavailable, blocked, corrupt, quota-limited,
 or out-of-bounds storage rejects instead of returning a successful result.
 Use the exported `CONVERSATION_STORAGE_LIMITS` object when application code
-needs to inspect the same maxima before saving.
+needs to inspect the same maxima before saving. Browser quota can be lower than
+these codec limits. A save also needs temporary space for its bounded rollback
+journal; a quota rejection leaves the prior record recoverable.
+
+Every successful local save keeps a fixed-size idle reservation in the logical
+store's control slot. A current-format delete replaces that reservation with a
+no-larger compact intent before removing data, so it can start without growing
+the store at quota. Records written before this reservation protocol may still
+need free space to establish it. Deleting a legacy record may also need room for
+the current-format index tombstone used to suppress ambiguous legacy keys.
 
 Conversation metadata, message metadata, tool input/output, and data parts must
 be JSON-safe plain data. The adapter rejects `undefined`, bigint, symbols,
@@ -322,12 +334,18 @@ never calls an injected store's optional `dispose`, including on replacement or
 unmount. The caller owns the store and must dispose it only after the final
 consumer and any pending operations have finished.
 
-Web Locks coordinate cooperating local writers, but Web Storage cannot make
-the conversation blob and shared index crash-atomic as one transaction. It
-also cannot coordinate old tabs or other writers that do not take the same
-lock. Concurrent saves to the same conversation remain last-writer-wins, and a
-stale tab can save after another tab deletes the conversation. Use revisions,
-compare-and-set writes, and durable tombstones in a custom store when the
+Web Locks coordinate cooperating local writers. Before changing the
+conversation blob and shared index, the local adapter records either a bounded
+save before-image or a compact delete intent. The next locked operation rolls an
+interrupted save back or finishes an interrupted delete before exposing stored
+data. Recovery is fail-closed: a malformed control value or an unresolved
+storage failure rejects the operation and retains its recovery state for retry.
+
+Web Storage still does not provide a native multi-key transaction and cannot
+coordinate old tabs or other writers that do not take the same lock. Concurrent
+saves to the same conversation remain last-writer-wins, and a stale tab can save
+after another tab deletes the conversation. Use IndexedDB or a durable custom
+store with revisions, compare-and-set writes, and durable tombstones when the
 application must prevent stale overwrites or deletion resurrection.
 
 ## Inference mode
