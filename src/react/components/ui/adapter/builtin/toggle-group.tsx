@@ -86,7 +86,7 @@ const ToggleGroupItem: ToggleGroupParts["Item"] = (
       aria-disabled={asChild && isDisabled ? true : undefined}
       data-state={isOn ? "on" : "off"}
       data-disabled={isDisabled ? "" : undefined}
-      disabled={asChild ? undefined : isDisabled}
+      disabled={isDisabled}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
         if (isDisabled) {
           event.preventDefault();

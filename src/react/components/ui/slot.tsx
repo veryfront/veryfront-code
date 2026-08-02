@@ -2,10 +2,11 @@
  * `Slot` — forked from @radix-ui/react-slot (MIT, © WorkOS), inlined so
  * `veryfront/chat` takes no external Radix dependency. Merges its props onto a
  * single child element (the `asChild` pattern): className is concatenated,
- * style is shallow-merged, event handlers are chained (child first), and refs
- * are composed.
+ * style is shallow-merged, event handlers are chained (child first by default),
+ * and refs are composed. The `disabled` contract gives composed controls a
+ * capture-phase gate that suppresses Slot, child, and default activation.
  *
- * Scoped to the single-child case Veryfront's UI primitives use — Radix's
+ * Scoped to the single-child case Veryfront's UI primitives use; Radix's
  * `Slottable`/lazy-children handling is intentionally omitted.
  *
  * @module react/components/ui/slot

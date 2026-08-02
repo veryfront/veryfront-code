@@ -141,7 +141,7 @@ describe("Slot", () => {
     }
   });
 
-  it("blocks disabled asChild activation before consumer handlers", () => {
+  it("blocks disabled activation, handlers, and propagation", () => {
     const dom = new JSDOM(
       '<!doctype html><html><body><div id="root"></div></body></html>',
       { pretendToBeVisual: true, url: "https://example.com/start" },
@@ -150,21 +150,27 @@ describe("Slot", () => {
     const rootElement = document.getElementById("root");
     assert(rootElement);
     const root = createRoot(rootElement);
-    let consumerCalls = 0;
+    const calls: string[] = [];
 
     try {
       flushSync(() => {
         root.render(
-          <Slot disabled onClick={() => consumerCalls += 1}>
-            <a
-              href="/target"
-              tabIndex={0}
-              onClickCapture={() => consumerCalls += 1}
-              onClick={() => consumerCalls += 1}
+          <div onClick={() => calls.push("ancestor")}>
+            <Slot
+              disabled
+              onClickCapture={() => calls.push("slot-capture")}
+              onClick={() => calls.push("slot")}
             >
-              Disabled link
-            </a>
-          </Slot>,
+              <a
+                href="/target"
+                tabIndex={0}
+                onClickCapture={() => calls.push("child-capture")}
+                onClick={() => calls.push("child")}
+              >
+                Disabled link
+              </a>
+            </Slot>
+          </div>,
         );
       });
       const link = document.querySelector("a");
@@ -178,7 +184,7 @@ describe("Slot", () => {
       });
       link.dispatchEvent(click);
       assertEquals(click.defaultPrevented, true);
-      assertEquals(consumerCalls, 0);
+      assertEquals(calls, []);
       assertEquals(dom.window.location.pathname, "/start");
 
       const enter = new dom.window.KeyboardEvent("keydown", {
@@ -188,7 +194,7 @@ describe("Slot", () => {
       });
       link.dispatchEvent(enter);
       assertEquals(enter.defaultPrevented, true);
-      assertEquals(consumerCalls, 0);
+      assertEquals(calls, []);
     } finally {
       flushSync(() => root.unmount());
       restore();

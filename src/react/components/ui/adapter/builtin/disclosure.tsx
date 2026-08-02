@@ -88,7 +88,7 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
       aria-controls={ctx.contentId}
       aria-disabled={asChild && isDisabled ? true : undefined}
       data-state={ctx.open ? "open" : "closed"}
-      disabled={asChild ? undefined : isDisabled}
+      disabled={isDisabled}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
         if (isDisabled) {
           e.preventDefault();

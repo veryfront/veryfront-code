@@ -93,7 +93,8 @@ function runToggleGroupConformance(
     });
 
     it("blocks native, composed-link, and consumer-cancelled toggles", () => {
-      let disabledClickCount = 0;
+      let disabledWrapperClickCount = 0;
+      let disabledChildClickCount = 0;
       const { host, unmount } = render(
         <Wrap>
           <ToggleGroup type="multiple" disabled>
@@ -101,9 +102,15 @@ function runToggleGroupConformance(
             <ToggleGroupItem
               value="link"
               asChild
-              onClick={() => disabledClickCount += 1}
+              onClick={() => disabledWrapperClickCount += 1}
             >
-              <a href="#disabled">Link</a>
+              <a
+                href="#disabled"
+                onClickCapture={() => disabledChildClickCount += 1}
+                onClick={() => disabledChildClickCount += 1}
+              >
+                Link
+              </a>
             </ToggleGroupItem>
           </ToggleGroup>
           <ToggleGroup type="multiple">
@@ -124,7 +131,14 @@ function runToggleGroupConformance(
         assert(native.getAttribute("aria-pressed") === "false", "disabled button stays off");
         assert(linkEvent.defaultPrevented, "disabled link prevents navigation");
         assert(link.getAttribute("aria-pressed") === "false", "disabled link stays off");
-        assert(disabledClickCount === 0, "disabled composed item skips its click handler");
+        assert(
+          disabledWrapperClickCount === 0,
+          "disabled composed item skips its wrapper click handler",
+        );
+        assert(
+          disabledChildClickCount === 0,
+          "disabled composed item skips its child click handler",
+        );
         assert(cancelled.getAttribute("aria-pressed") === "false", "cancelled item stays off");
       } finally {
         unmount();
@@ -217,7 +231,7 @@ const altToggleGroup: ToggleGroupParts = {
         ref={ref}
         aria-pressed={isOn}
         aria-disabled={asChild && isDisabled ? true : undefined}
-        disabled={asChild ? undefined : isDisabled}
+        disabled={isDisabled}
         data-state={isOn ? "on" : "off"}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           if (isDisabled) {

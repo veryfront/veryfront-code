@@ -122,10 +122,14 @@ function runDisclosureConformance(
     });
 
     it("prevents disabled asChild link navigation", () => {
-      let disabledClickCount = 0;
+      let disabledWrapperClickCount = 0;
+      let disabledChildClickCount = 0;
       const { host, unmount } = render(
         <Wrap>
-          <DisclosureAsChildProbe onClick={() => disabledClickCount += 1} />
+          <DisclosureAsChildProbe
+            onClick={() => disabledWrapperClickCount += 1}
+            onChildClick={() => disabledChildClickCount += 1}
+          />
         </Wrap>,
       );
       try {
@@ -133,7 +137,14 @@ function runDisclosureConformance(
         const event = click(link);
         assert(event.defaultPrevented, "disabled composed link prevents its default action");
         assert(link.getAttribute("aria-expanded") === "false", "disabled link stays closed");
-        assert(disabledClickCount === 0, "disabled composed trigger skips its click handler");
+        assert(
+          disabledWrapperClickCount === 0,
+          "disabled composed trigger skips its wrapper click handler",
+        );
+        assert(
+          disabledChildClickCount === 0,
+          "disabled composed trigger skips its child click handler",
+        );
       } finally {
         unmount();
       }
@@ -177,13 +188,19 @@ function DisclosureProbe(
 }
 
 function DisclosureAsChildProbe(
-  { onClick }: { onClick?: React.MouseEventHandler<HTMLButtonElement> },
+  {
+    onClick,
+    onChildClick,
+  }: {
+    onClick?: React.MouseEventHandler<HTMLButtonElement>;
+    onChildClick?: React.MouseEventHandler<HTMLAnchorElement>;
+  },
 ): React.ReactElement {
   const { disclosure } = useAdapter();
   return (
     <disclosure.Root disabled>
       <disclosure.Trigger asChild onClick={onClick}>
-        <a href="#navigated">Toggle</a>
+        <a href="#navigated" onClickCapture={onChildClick} onClick={onChildClick}>Toggle</a>
       </disclosure.Trigger>
       <disclosure.Content>Body</disclosure.Content>
     </disclosure.Root>
@@ -265,7 +282,7 @@ const altDisclosure: DisclosureParts = {
         id={realizedId}
         aria-expanded={ctx?.open ?? false}
         aria-controls={ctx?.contentId}
-        disabled={asChild ? undefined : isDisabled}
+        disabled={isDisabled}
         aria-disabled={asChild && isDisabled ? true : undefined}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           if (isDisabled) {

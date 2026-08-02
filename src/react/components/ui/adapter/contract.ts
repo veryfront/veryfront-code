@@ -53,7 +53,11 @@ export interface DisclosureParts {
       ref?: React.Ref<HTMLDivElement>;
     }
   >;
-  /** Toggles the region; `asChild` merges onto the consumer's element. */
+  /**
+   * Toggles the region; `asChild` merges onto the consumer's element. An
+   * effectively disabled composed trigger must prevent activation and suppress
+   * both wrapper and child click handlers.
+   */
   Trigger: React.FC<
     & React.ButtonHTMLAttributes<HTMLButtonElement>
     & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
@@ -74,7 +78,11 @@ export interface DisclosureParts {
 export interface ToggleGroupParts {
   /** Owns the selection state machine + provides context. */
   Root: React.FC<ToggleGroupRootProps>;
-  /** A pressable item; sets `aria-pressed` / `data-state`, toggles on click. */
+  /**
+   * A pressable item; sets `aria-pressed` / `data-state`, toggles on click. An
+   * effectively disabled composed item must prevent activation and suppress
+   * both wrapper and child click handlers.
+   */
   Item: React.FC<
     & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "value">
     & { value: string; asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }
