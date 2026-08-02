@@ -58,6 +58,20 @@ const CHAT_COMPONENTS = [
   "Markdown",
 ];
 
+/** Flat exports for every ChatInput compound leaf, paired with its namespace alias. */
+const CHAT_INPUT_PARTS = {
+  ChatInputRoot: "Root",
+  ChatInputField: "Field",
+  ChatInputSend: "Send",
+  ChatInputStop: "Stop",
+  ChatInputSubmit: "Submit",
+  ChatInputVoice: "Voice",
+  ChatInputModel: "Model",
+  ChatInputAttach: "Attach",
+  ChatInputExport: "Export",
+  ChatInputToolbar: "Toolbar",
+} as const;
+
 /** The spec hooks (RFC #2980). */
 const CHAT_HOOKS = [
   "useChat",
@@ -430,6 +444,17 @@ describe("veryfront/chat coverage — components", () => {
         `${name} is not referenced by any chat *.test.tsx — needs its own component ` +
           `test (or coverage in a shared contract/characterization suite)`,
       );
+    });
+  }
+});
+
+describe("veryfront/chat coverage — ChatInput flat compound exports", () => {
+  for (const [flatName, partName] of Object.entries(CHAT_INPUT_PARTS)) {
+    it(`${flatName}: exported and identical to ChatInput.${partName}`, () => {
+      const flatPart = (chat as Record<string, unknown>)[flatName];
+      const namespacePart = (chat.ChatInput as unknown as Record<string, unknown>)[partName];
+      assert(flatPart != null, `${flatName} is not exported from veryfront/chat`);
+      assert(flatPart === namespacePart, `${flatName} must be the ChatInput.${partName} function`);
     });
   }
 });

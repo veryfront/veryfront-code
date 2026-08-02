@@ -40,6 +40,16 @@ const expectedRuntimeExports = [
   "useToolCall",
   "useReasoning",
   "ChatInput",
+  "ChatInputAttach",
+  "ChatInputExport",
+  "ChatInputField",
+  "ChatInputModel",
+  "ChatInputRoot",
+  "ChatInputSend",
+  "ChatInputStop",
+  "ChatInputSubmit",
+  "ChatInputToolbar",
+  "ChatInputVoice",
   "AgentAvatar",
   "AgentPicker",
   "ChatActions",
@@ -202,6 +212,27 @@ describe("chat/index.ts exports", () => {
       chatModule.ChatErrorBoundary,
       errorBoundaryModule.ChatErrorBoundary,
     );
+  });
+
+  it("exports each ChatInput leaf as the same function through every chat barrel", () => {
+    const parts = [
+      ["ChatInputRoot", "Root"],
+      ["ChatInputField", "Field"],
+      ["ChatInputSend", "Send"],
+      ["ChatInputStop", "Stop"],
+      ["ChatInputSubmit", "Submit"],
+      ["ChatInputVoice", "Voice"],
+      ["ChatInputModel", "Model"],
+      ["ChatInputAttach", "Attach"],
+      ["ChatInputExport", "Export"],
+      ["ChatInputToolbar", "Toolbar"],
+    ] as const;
+    for (const [flatName, partName] of parts) {
+      assertEquals(chatModule[flatName], chatModule.ChatInput[partName]);
+      assertEquals(chatModule[flatName], chatUI[flatName]);
+      assertEquals(chatModule[flatName], componentsChatModule[flatName]);
+      assertEquals(chatModule[flatName], reactComponentsChatModule[flatName]);
+    }
   });
 
   it("exports conversation chat and canonical hooks through both component aliases", () => {

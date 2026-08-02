@@ -187,7 +187,17 @@ export type ChatReactBarrelContracts = [
 type CompoundChatRuntimeExport =
   | "AgentAvatar"
   | "ChatInputContextProvider"
+  | "ChatInputAttach"
   | "ChatEmptyState"
+  | "ChatInputExport"
+  | "ChatInputField"
+  | "ChatInputModel"
+  | "ChatInputRoot"
+  | "ChatInputSend"
+  | "ChatInputStop"
+  | "ChatInputSubmit"
+  | "ChatInputToolbar"
+  | "ChatInputVoice"
   | "ChatMessagesSkeleton"
   | "SkillBadge"
   | "SourcePill"
@@ -217,9 +227,34 @@ const compoundRuntimeParity: [
     typeof import("./components/chat/index.ts"),
     CompoundChatRuntimeExport
   >,
-] = [true, true];
+  ContainsRuntimeExports<typeof import("../chat/index.ts"), CompoundChatRuntimeExport>,
+] = [true, true, true];
 
 void compoundRuntimeParity;
+
+const legacyOwnedRootWithoutSetter = {
+  input: "ready",
+  onChange: () => undefined,
+  sendMessage: () => undefined,
+  children: null,
+} satisfies import("../chat/index.ts").ChatInputRootProps;
+
+const legacyMixedSubmitRoot = {
+  input: "ready",
+  onChange: () => undefined,
+  onSubmit: () => undefined,
+  sendMessage: () => undefined,
+  setInput: () => undefined,
+  children: null,
+} satisfies import("../chat/index.ts").ChatInputRootProps;
+
+const additiveRootCompatibilityAcrossBarrels: [
+  import("./public.ts").ChatInputRootProps,
+  import("./components/chat/index.ts").ChatInputRootProps,
+  import("../chat/index.ts").ChatInputRootProps,
+] = [legacyOwnedRootWithoutSetter, legacyMixedSubmitRoot, legacyMixedSubmitRoot];
+
+void additiveRootCompatibilityAcrossBarrels;
 
 export type CompoundChatPublicTypeContracts = [
   import("./public.ts").AgentAvatarProps,
@@ -238,11 +273,18 @@ export type CompoundChatPublicTypeContracts = [
   import("./public.ts").ChatEmptyStateSuggestionsProps,
   import("./public.ts").ChatMessagesSkeletonProps,
   import("./public.ts").ChatInputActionProps,
+  import("./public.ts").ChatInputAttachProps,
   import("./public.ts").ChatInputContextValue,
+  import("./public.ts").ChatInputExportProps,
   import("./public.ts").ChatInputFieldProps,
+  import("./public.ts").ChatInputModelProps,
+  import("./public.ts").ChatInputProps,
   import("./public.ts").ChatInputRootProps,
+  import("./public.ts").ChatInputSendProps,
+  import("./public.ts").ChatInputStopProps,
   import("./public.ts").ChatInputSubmitProps,
   import("./public.ts").ChatInputToolbarProps,
+  import("./public.ts").ChatInputVoiceProps,
   import("./public.ts").ModelSelectorContentProps,
   import("./public.ts").ModelSelectorContextValue,
   import("./public.ts").ModelSelectorItemProps,
@@ -285,11 +327,18 @@ export type CompoundChatComponentTypeContracts = [
   import("./components/chat/index.ts").ChatEmptyStateSuggestionsProps,
   import("./components/chat/index.ts").ChatMessagesSkeletonProps,
   import("./components/chat/index.ts").ChatInputActionProps,
+  import("./components/chat/index.ts").ChatInputAttachProps,
   import("./components/chat/index.ts").ChatInputContextValue,
+  import("./components/chat/index.ts").ChatInputExportProps,
   import("./components/chat/index.ts").ChatInputFieldProps,
+  import("./components/chat/index.ts").ChatInputModelProps,
+  import("./components/chat/index.ts").ChatInputProps,
   import("./components/chat/index.ts").ChatInputRootProps,
+  import("./components/chat/index.ts").ChatInputSendProps,
+  import("./components/chat/index.ts").ChatInputStopProps,
   import("./components/chat/index.ts").ChatInputSubmitProps,
   import("./components/chat/index.ts").ChatInputToolbarProps,
+  import("./components/chat/index.ts").ChatInputVoiceProps,
   import("./components/chat/index.ts").ModelSelectorContentProps,
   import("./components/chat/index.ts").ModelSelectorContextValue,
   import("./components/chat/index.ts").ModelSelectorItemProps,
@@ -332,10 +381,17 @@ export type CompoundCanonicalChatTypeContracts = [
   import("../chat/index.ts").ChatEmptyStateSuggestionsProps,
   import("../chat/index.ts").ChatMessagesSkeletonProps,
   import("../chat/index.ts").ChatInputActionProps,
+  import("../chat/index.ts").ChatInputAttachProps,
+  import("../chat/index.ts").ChatInputExportProps,
   import("../chat/index.ts").ChatInputFieldProps,
+  import("../chat/index.ts").ChatInputModelProps,
+  import("../chat/index.ts").ChatInputProps,
   import("../chat/index.ts").ChatInputRootProps,
+  import("../chat/index.ts").ChatInputSendProps,
+  import("../chat/index.ts").ChatInputStopProps,
   import("../chat/index.ts").ChatInputSubmitProps,
   import("../chat/index.ts").ChatInputToolbarProps,
+  import("../chat/index.ts").ChatInputVoiceProps,
   import("../chat/index.ts").ModelSelectorContentProps,
   import("../chat/index.ts").ModelSelectorContextValue,
   import("../chat/index.ts").ModelSelectorItemProps,

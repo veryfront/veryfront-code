@@ -1,7 +1,7 @@
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { type ComponentProps, createRef, type FormEvent } from "react";
+import { createElement, createRef, type FormEvent } from "react";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -85,7 +85,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       input: "ready",
       onChange: () => {},
       sendMessage: () => sends += 1,
-    } as unknown as ComponentProps<typeof ChatInput.Root>;
+    };
     renderToString(
       <ChatInput.Root {...invalidOwnedSubmit}>
         <Capture />
@@ -101,6 +101,34 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     assert(error instanceof Error);
     assert(error.message.includes("setInput was not provided"));
     assertEquals(sends, 0, "a configuration error must not partially send");
+  });
+
+  it("preserves legacy mixed submit props and gives sendMessage precedence", () => {
+    let submit: ((e?: FormEvent) => void) | undefined;
+    let explicitSubmits = 0;
+    let sends = 0;
+    let inputSetTo: string | undefined;
+    function Capture(): null {
+      submit = useChatInputContext().onSubmit;
+      return null;
+    }
+
+    renderToString(
+      <ChatInput.Root
+        input="ready"
+        onChange={() => {}}
+        onSubmit={() => explicitSubmits += 1}
+        sendMessage={() => sends += 1}
+        setInput={(value) => inputSetTo = value}
+      >
+        <Capture />
+      </ChatInput.Root>,
+    );
+    submit?.();
+
+    assertEquals(sends, 1, "legacy mixed mode keeps composer-owned submission");
+    assertEquals(explicitSubmits, 0, "sendMessage retains precedence over onSubmit");
+    assertEquals(inputSetTo, "", "composer-owned submission still clears input");
   });
 
   it("disables submit while loading or while any attachment is pending", () => {
@@ -521,6 +549,269 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
     );
     assert(voice.includes('data-action="voice"'));
     assert(voice.includes('aria-describedby="voice-help"'));
+  });
+
+  it("asChild action leaves preserve Button styling, refs, and event composition", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    const actionRef = createRef<HTMLButtonElement>();
+    const childRef = createRef<HTMLAnchorElement>();
+    const order: string[] = [];
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput.Root
+            input="ready"
+            onChange={() => {}}
+            onSubmit={() => order.push("submit")}
+          >
+            <ChatInput.Send
+              asChild
+              ref={actionRef}
+              className="action-class"
+              onClick={(_event, next) => {
+                order.push("wrapper");
+                next();
+              }}
+            >
+              <a
+                ref={childRef}
+                href="/send"
+                className="child-class"
+                onClick={() => order.push("child")}
+              >
+                Send
+              </a>
+            </ChatInput.Send>
+          </ChatInput.Root>,
+        );
+      });
+
+      const link = document.querySelector<HTMLAnchorElement>('a[aria-label="Send"]');
+      assert(link, "Expected the custom send link to render");
+      assert(actionRef.current === (link as unknown as HTMLButtonElement));
+      assertEquals(childRef.current, link);
+      assert(link.className.includes("bg-[var(--primary)]"), "Button variant classes survive");
+      assert(link.className.includes("size-9"), "Button size classes survive");
+      assert(link.className.includes("action-class"), "leaf className survives");
+      assert(link.className.includes("child-class"), "child className survives");
+      for (const leakedAttribute of ["variant", "on", "size", "type", "disabled"]) {
+        assertEquals(
+          link.hasAttribute(leakedAttribute),
+          false,
+          `${leakedAttribute} must not leak to an asChild link`,
+        );
+      }
+
+      flushSync(() => {
+        link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      assertEquals(order, ["child", "wrapper", "submit"]);
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("routes every asChild action leaf through the styled Button contract", () => {
+    const cases = [
+      [
+        "Send",
+        renderToString(
+          <ChatInput.Root input="ready" onChange={() => {}} onSubmit={() => {}}>
+            <ChatInput.Send asChild>
+              <a href="/send">Send</a>
+            </ChatInput.Send>
+          </ChatInput.Root>,
+        ),
+      ],
+      [
+        "Stop",
+        renderToString(
+          <ChatInput.Root input="" onChange={() => {}} isLoading stop={() => {}}>
+            <ChatInput.Stop asChild>
+              <a href="/stop">Stop</a>
+            </ChatInput.Stop>
+          </ChatInput.Root>,
+        ),
+      ],
+      [
+        "Submit (idle)",
+        renderToString(
+          <ChatInput.Root input="ready" onChange={() => {}} onSubmit={() => {}}>
+            <ChatInput.Submit asChild>
+              <a href="/submit">Submit</a>
+            </ChatInput.Submit>
+          </ChatInput.Root>,
+        ),
+      ],
+      [
+        "Submit (streaming)",
+        renderToString(
+          <ChatInput.Root input="" onChange={() => {}} isLoading stop={() => {}}>
+            <ChatInput.Submit asChild>
+              <a href="/stop">Stop</a>
+            </ChatInput.Submit>
+          </ChatInput.Root>,
+        ),
+      ],
+      [
+        "Voice",
+        renderToString(
+          <ChatInput.Root input="" onChange={() => {}} onVoice={() => {}}>
+            <ChatInput.Voice asChild>
+              <a href="/voice">Voice</a>
+            </ChatInput.Voice>
+          </ChatInput.Root>,
+        ),
+      ],
+    ] as const;
+
+    for (const [name, html] of cases) {
+      assert(html.includes("relative inline-flex"), `${name} keeps base Button classes`);
+      assert(html.includes("size-9"), `${name} keeps the icon-lg Button size`);
+      for (const leakedAttribute of ["variant=", " on=", " size=", " type="]) {
+        assert(
+          !html.includes(leakedAttribute),
+          `${name} must not render ${leakedAttribute.trim()}`,
+        );
+      }
+    }
+
+    const nativeButton = renderToString(
+      <ChatInput.Root input="ready" onChange={() => {}} onSubmit={() => {}}>
+        <ChatInput.Send asChild>
+          {createElement("button", null, "Send")}
+        </ChatInput.Send>
+      </ChatInput.Root>,
+    );
+    assert(
+      nativeButton.includes('type="button"'),
+      "a native asChild button keeps the non-submitting Button default",
+    );
+  });
+
+  it("asChild respects child cancellation before invoking the action wrapper", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let wrapperCalls = 0;
+    let submitCalls = 0;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput.Root
+            input="ready"
+            onChange={() => {}}
+            onSubmit={() => submitCalls += 1}
+          >
+            <ChatInput.Send
+              asChild
+              onClick={(_event, next) => {
+                wrapperCalls += 1;
+                next();
+              }}
+            >
+              <a href="/send" onClick={(event) => event.preventDefault()}>Send</a>
+            </ChatInput.Send>
+          </ChatInput.Root>,
+        );
+      });
+
+      const link = document.querySelector<HTMLAnchorElement>('a[aria-label="Send"]');
+      assert(link, "Expected the custom send link to render");
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+      flushSync(() => link.dispatchEvent(event));
+      assert(event.defaultPrevented, "child cancellation is preserved");
+      assertEquals(wrapperCalls, 0, "cancelled child event skips the action wrapper");
+      assertEquals(submitCalls, 0, "cancelled child event skips submit");
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("disabled asChild actions block link, auxiliary, and keyboard activation", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let childActivations = 0;
+    let wrapperActivations = 0;
+    let submitCalls = 0;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatInput.Root
+            input="ready"
+            onChange={() => {}}
+            onSubmit={() => submitCalls += 1}
+          >
+            <ChatInput.Send
+              asChild
+              disabled
+              onAuxClick={() => wrapperActivations += 1}
+              onKeyDown={() => wrapperActivations += 1}
+              onClick={(_event, next) => {
+                wrapperActivations += 1;
+                next();
+              }}
+            >
+              <a
+                href="/send"
+                onAuxClick={() => childActivations += 1}
+                onKeyDown={() => childActivations += 1}
+                onClick={() => childActivations += 1}
+              >
+                Send
+              </a>
+            </ChatInput.Send>
+          </ChatInput.Root>,
+        );
+      });
+
+      const link = document.querySelector<HTMLAnchorElement>('a[aria-label="Send"]');
+      assert(link, "Expected the disabled custom send link to render");
+      assertEquals(link.getAttribute("href"), null, "disabled link navigation is removed");
+      assertEquals(link.getAttribute("aria-disabled"), "true");
+      assertEquals(link.tabIndex, -1);
+      assertEquals(link.hasAttribute("disabled"), false, "invalid anchor attribute is omitted");
+
+      const activations = [
+        new MouseEvent("click", { bubbles: true, cancelable: true }),
+        new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 }),
+        new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "Enter" }),
+        new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: " " }),
+      ];
+      for (const event of activations) {
+        flushSync(() => link.dispatchEvent(event));
+        assert(event.defaultPrevented, `${event.type} activation must be prevented`);
+      }
+      assertEquals(childActivations, 0, "disabled state skips child handlers");
+      assertEquals(wrapperActivations, 0, "disabled state skips action handlers");
+      assertEquals(submitCalls, 0, "disabled state skips submit");
+      root.unmount();
+    } finally {
+      restore();
+    }
   });
 
   describe("ChatInput.Submit", () => {

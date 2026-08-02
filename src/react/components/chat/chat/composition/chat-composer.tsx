@@ -38,23 +38,16 @@ import {
 } from "./chat-input-actions.tsx";
 import { useComposerValue } from "./use-composer-value.ts";
 import type {
+  ChatInputAttachProps,
   ChatInputExportProps,
   ChatInputFieldProps,
+  ChatInputModelProps,
   ChatInputProps,
   ChatInputRootProps,
   ChatInputToolbarProps,
-  WrapClick,
 } from "./chat-composer.types.ts";
 
-export type {
-  ChatInputActionProps,
-  ChatInputExportProps,
-  ChatInputFieldProps,
-  ChatInputProps,
-  ChatInputRootProps,
-  ChatInputSubmitProps,
-  ChatInputToolbarProps,
-} from "./chat-composer.types.ts";
+export type * from "./chat-composer.types.ts";
 export { ChatInputSend, ChatInputStop, ChatInputSubmit, ChatInputVoice };
 
 // ---------------------------------------------------------------------------
@@ -89,7 +82,7 @@ export function ChatInputField(
 
 /** Model selector — shows when models are configured. */
 export function ChatInputModel(
-  { className }: { className?: string },
+  { className }: ChatInputModelProps,
 ): React.ReactElement | null {
   const c = useChatInputContext();
   if (!c.models || c.models.length === 0 || !c.onModelChange) return null;
@@ -111,12 +104,7 @@ export function ChatInputModel(
  * dialog) and adds "Select document" when `onSelectAttachment` is set.
  */
 export function ChatInputAttach(
-  { icon, onClick, ref }: {
-    icon?: React.ReactNode;
-    onClick?: WrapClick;
-    /** React 19: ref is a regular prop (the wrapper this sub-part owns). */
-    ref?: React.Ref<HTMLDivElement>;
-  },
+  { icon, onClick, ref }: ChatInputAttachProps,
 ): React.ReactElement | null {
   const c = useChatInputContext();
   const [menuOpen, setMenuOpen] = React.useState(false);

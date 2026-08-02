@@ -35,35 +35,32 @@ interface ComposerStateBaseProps {
   onRemoveAttachment?: (id: string) => void;
 }
 
-/** Caller-owned submit mode. */
-interface ControlledComposerSubmitProps {
+/**
+ * Submit props accepted during the additive ChatInput migration.
+ *
+ * `sendMessage` takes precedence when both handlers are supplied, matching the
+ * legacy runtime. Composer-owned submission validates that `setInput` exists
+ * before sending, so an incomplete legacy configuration fails without a
+ * partial side effect.
+ */
+interface ComposerSubmitProps {
   /**
    * Explicit submit handler. The caller owns sending and clearing in this mode.
    */
   onSubmit?: (e?: React.FormEvent) => void;
-  sendMessage?: undefined;
+  /**
+   * Send directly through composer-owned submission. `setInput` is validated
+   * before this handler runs and is then used to clear the controlled input.
+   */
+  sendMessage?: (message: { text: string; files?: ChatFilePart[] }) => void;
   /** Update the controlled input value for headless context consumers. */
   setInput?: (value: string) => void;
-}
-
-/** Composer-owned submit mode. */
-interface ComposerOwnedSubmitProps {
-  onSubmit?: never;
-  /**
-   * Send a message directly. The composer builds `onSubmit` itself:
-   * it trims the input, waits while any upload is still in flight, folds the
-   * resolved attachments into `file` parts, sends, then clears the controlled
-   * input and attachments.
-   */
-  sendMessage: (message: { text: string; files?: ChatFilePart[] }) => void;
-  /** Update and clear the controlled value after the composer-owned send. */
-  setInput: (value: string) => void;
 }
 
 /** Composer state the context is built from (shared by `ChatInput` + `ChatInput.Root`). */
 export type ComposerStateProps =
   & ComposerStateBaseProps
-  & (ControlledComposerSubmitProps | ComposerOwnedSubmitProps);
+  & ComposerSubmitProps;
 
 /** Build the ChatInputContext value from composer state props. */
 function missingSetInput(): never {

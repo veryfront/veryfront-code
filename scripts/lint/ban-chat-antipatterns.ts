@@ -103,7 +103,7 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   // Split responsibilities before adding more behavior to this file.
   "src/react/components/chat/chat/components/sidebar.tsx": 628,
   // Composer state and native action leaves live in focused sibling modules.
-  "src/react/components/chat/chat/composition/chat-composer.tsx": 408,
+  "src/react/components/chat/chat/composition/chat-composer.tsx": 394,
   "src/react/components/chat/chat/composition/chat-input-actions.tsx": 165,
   "src/react/components/chat/agent-picker.tsx": 429,
   "src/react/components/chat/chat-actions.tsx": 215,

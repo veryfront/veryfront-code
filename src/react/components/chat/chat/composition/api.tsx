@@ -14,12 +14,27 @@ export {
 export {
   ChatInput,
   type ChatInputActionProps,
+  ChatInputAttach,
+  type ChatInputAttachProps,
+  ChatInputExport,
   type ChatInputExportProps,
+  ChatInputField,
   type ChatInputFieldProps,
+  ChatInputModel,
+  type ChatInputModelProps,
   type ChatInputProps,
+  ChatInputRoot,
   type ChatInputRootProps,
+  ChatInputSend,
+  type ChatInputSendProps,
+  ChatInputStop,
+  type ChatInputStopProps,
+  ChatInputSubmit,
   type ChatInputSubmitProps,
+  ChatInputToolbar,
   type ChatInputToolbarProps,
+  ChatInputVoice,
+  type ChatInputVoiceProps,
 } from "./chat-composer.tsx";
 export { ChatEmpty, type ChatEmptyProps } from "./chat-empty.tsx";
 export {

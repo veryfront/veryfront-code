@@ -6,9 +6,9 @@
 import * as React from "react";
 import { ArrowUpIcon, StopIcon } from "../../../ui/icons/index.ts";
 import { Button } from "../../../ui/button.tsx";
-import { Slot } from "../../../ui/slot.tsx";
 import { cn } from "../../theme.ts";
 import { useChatInputContext } from "../contexts/composer-context.tsx";
+import { getChatInputActionType } from "./chat-input-action-semantics.ts";
 import type { ChatInputActionProps, ChatInputSubmitProps } from "./chat-composer.types.ts";
 
 /** Microphone glyph for the idle-composer voice button. */
@@ -46,12 +46,12 @@ export function ChatInputSend({
   if (c.isLoading) return null;
   if (!c.canSubmit && c.onVoice) return null;
   const run = () => c.onSubmit();
-  const Comp = asChild ? Slot : Button;
   return (
-    <Comp
+    <Button
       {...buttonProps}
       ref={ref}
-      type="button"
+      type={getChatInputActionType(asChild, children)}
+      asChild={asChild}
       variant="icon-primary"
       on="card"
       size="icon-lg"
@@ -61,7 +61,7 @@ export function ChatInputSend({
       className={cn("shrink-0", className)}
     >
       {children ?? icon ?? <ArrowUpIcon />}
-    </Comp>
+    </Button>
   );
 }
 ChatInputSend.displayName = "ChatInput.Send";
@@ -81,12 +81,12 @@ export function ChatInputStop({
   const c = useChatInputContext();
   if (!c.isLoading) return null;
   const run = () => c.onStop?.();
-  const Comp = asChild ? Slot : Button;
   return (
-    <Comp
+    <Button
       {...buttonProps}
       ref={ref}
-      type="button"
+      type={getChatInputActionType(asChild, children)}
+      asChild={asChild}
       variant="icon-ghost"
       size="icon-lg"
       aria-label={ariaLabel ?? "Stop"}
@@ -95,7 +95,7 @@ export function ChatInputStop({
       className={cn("shrink-0", className)}
     >
       {children ?? icon ?? <StopIcon />}
-    </Comp>
+    </Button>
   );
 }
 ChatInputStop.displayName = "ChatInput.Stop";
@@ -139,12 +139,12 @@ export function ChatInputVoice({
   const c = useChatInputContext();
   if (c.isLoading || c.canSubmit || !c.onVoice) return null;
   const run = () => c.onVoice?.();
-  const Comp = asChild ? Slot : Button;
   return (
-    <Comp
+    <Button
       {...buttonProps}
       ref={ref}
-      type="button"
+      type={getChatInputActionType(asChild, children)}
+      asChild={asChild}
       variant="icon-ghost"
       on="card"
       size="icon-lg"
@@ -159,7 +159,7 @@ export function ChatInputVoice({
       )}
     >
       {children ?? icon ?? <MicGlyph />}
-    </Comp>
+    </Button>
   );
 }
 ChatInputVoice.displayName = "ChatInput.Voice";

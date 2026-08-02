@@ -11,6 +11,16 @@ import {
   AgentPicker,
   BranchPicker,
   Chat,
+  ChatInputAttach,
+  ChatInputExport,
+  ChatInputField,
+  ChatInputModel,
+  ChatInputRoot,
+  ChatInputSend,
+  ChatInputStop,
+  ChatInputSubmit,
+  ChatInputToolbar,
+  ChatInputVoice,
   ChatSidebar,
   Message,
   MessageActionBar,
@@ -25,6 +35,16 @@ import type {
   BranchPickerActionProps,
   BranchPickerCountProps,
   ChatAgentInfo,
+  ChatInputAttachProps,
+  ChatInputExportProps,
+  ChatInputFieldProps,
+  ChatInputModelProps,
+  ChatInputRootProps,
+  ChatInputSendProps,
+  ChatInputStopProps,
+  ChatInputSubmitProps,
+  ChatInputToolbarProps,
+  ChatInputVoiceProps,
   ChatMessage,
   MessageActionBarActionProps,
   MessageFeedbackActionProps,
@@ -58,6 +78,54 @@ export function ComposedDemo(): React.ReactElement {
     </Chat.Root>
   );
 }
+
+/** Every ChatInput leaf is independently importable with its matching props type. */
+export function FlatChatInputDemo(): React.ReactElement {
+  return (
+    <ChatInputRoot input="ready" onChange={() => {}} onSubmit={() => {}}>
+      <ChatInputField />
+      <ChatInputToolbar>
+        <ChatInputAttach />
+        <ChatInputModel />
+        <ChatInputExport messages={messages} />
+        <ChatInputVoice />
+        <ChatInputSend />
+        <ChatInputStop />
+        <ChatInputSubmit />
+      </ChatInputToolbar>
+    </ChatInputRoot>
+  );
+}
+
+export type ChatInputFlatPartProps = [
+  ChatInputAttachProps,
+  ChatInputExportProps,
+  ChatInputFieldProps,
+  ChatInputModelProps,
+  ChatInputRootProps,
+  ChatInputSendProps,
+  ChatInputStopProps,
+  ChatInputSubmitProps,
+  ChatInputToolbarProps,
+  ChatInputVoiceProps,
+];
+
+/** Legacy additive-phase shapes remain source compatible for existing consumers. */
+export const legacyOwnedRootWithoutSetter: ChatInputRootProps = {
+  input: "ready",
+  onChange: () => {},
+  sendMessage: () => {},
+  children: <ChatInputField />,
+};
+
+export const legacyMixedSubmitRoot: ChatInputRootProps = {
+  input: "ready",
+  onChange: () => {},
+  onSubmit: () => {},
+  sendMessage: () => {},
+  setInput: () => {},
+  children: <ChatInputField />,
+};
 
 /** A standalone message leaf renders off a single ChatMessage. */
 export function MessageDemo({ message }: { message: ChatMessage }): React.ReactElement {

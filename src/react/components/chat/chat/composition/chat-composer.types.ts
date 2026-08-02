@@ -32,12 +32,23 @@ export interface ChatInputActionProps extends
   children?: React.ReactNode;
   /** @deprecated Pass `children` instead. Kept working for backward compatibility. */
   icon?: React.ReactNode;
+  /** Additional classes merged with the action's Button variant classes. */
   className?: string;
+  /** Merge the action behavior and styling onto one custom child element. */
   asChild?: boolean;
   onClick?: WrapClick;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLButtonElement>;
 }
+
+/** Props accepted by `<ChatInput.Send>`. */
+export type ChatInputSendProps = ChatInputActionProps;
+
+/** Props accepted by `<ChatInput.Stop>`. */
+export type ChatInputStopProps = ChatInputActionProps;
+
+/** Props accepted by `<ChatInput.Voice>`. */
+export type ChatInputVoiceProps = ChatInputActionProps;
 
 /** Props for the unified {@link ChatInputSubmit} control. */
 export interface ChatInputSubmitProps extends ChatInputActionProps {
@@ -48,6 +59,22 @@ export interface ChatInputSubmitProps extends ChatInputActionProps {
    * applies to the idle/send state.
    */
   stopIcon?: React.ReactNode;
+}
+
+/** Props accepted by `<ChatInput.Model>`. */
+export interface ChatInputModelProps {
+  /** Additional classes passed to the model selector. */
+  className?: string;
+}
+
+/** Props accepted by `<ChatInput.Attach>`. */
+export interface ChatInputAttachProps {
+  /** Replace the default attachment glyph. */
+  icon?: React.ReactNode;
+  /** Wrap the attachment action; call `next()` to open the picker. */
+  onClick?: WrapClick;
+  /** React 19: ref is a regular prop (the wrapper this sub-part owns). */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Props accepted by `<ChatInput.Export>`. */
