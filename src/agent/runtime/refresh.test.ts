@@ -701,15 +701,18 @@ describe("agent runtime refresh hooks", () => {
     const assistant = eagerAgent({
       model: "openai/gpt-4o-mini",
       system: flattenSystemInstructions(
-        withRuntimeToolInventory("Use configured tools.", ["web_search"]),
+        withRuntimeToolInventory("Use configured tools.", ["web_search", "web_fetch"]),
       ),
-      providerTools: ["web_search"],
+      providerTools: ["web_search", "web_fetch"],
       resolveModelTransport: async () => ({ model }),
     });
 
     await assistant.generate({ input: "Search the web" });
 
-    assertEquals(capturedSystem.includes("- web_search"), false);
+    // OpenAI exposes a native web_search but no native web_fetch, so only the
+    // supported half may reach the inventory.
+    assertEquals(capturedSystem.includes("- web_search"), true);
+    assertEquals(capturedSystem.includes("- web_fetch"), false);
   });
 
   it("removes provider-native tools from the forced final response after create_agent", async () => {
