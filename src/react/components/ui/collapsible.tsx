@@ -8,6 +8,7 @@
  */
 import * as React from "react";
 import { useAdapter } from "./adapter/context.tsx";
+import { composeRefs } from "./slot.tsx";
 
 /** Props accepted by `<Collapsible>`. */
 export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "onChange"> {
@@ -23,15 +24,62 @@ export interface CollapsibleProps extends Omit<React.HTMLAttributes<HTMLDivEleme
   ref?: React.Ref<HTMLDivElement>;
 }
 
-interface DeclaredPartIds {
-  triggerId?: string;
-  contentId?: string;
-}
-
 interface CollapsibleElementProps {
   id?: string;
   asChild?: boolean;
   children?: React.ReactNode;
+}
+
+type RegisterPart = (registrationKey: string, id: string) => () => void;
+
+interface CollapsibleIdContextValue {
+  explicitTriggerId?: string;
+  explicitContentId?: string;
+  defaultContentId: string;
+  triggerIds: readonly string[];
+  contentIds: readonly string[];
+  registerTrigger: RegisterPart;
+  registerContent: RegisterPart;
+}
+
+const CollapsibleIdContext = React.createContext<CollapsibleIdContextValue | null>(null);
+
+function stableDomId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]/g, "");
+}
+
+function useCollapsibleIds(part: string): CollapsibleIdContextValue {
+  const context = React.useContext(CollapsibleIdContext);
+  if (!context) throw new Error(`${part} must be used within <Collapsible>`);
+  return context;
+}
+
+function useIdRegistry(
+  part: "trigger" | "content",
+  fallbackIds: readonly string[],
+): readonly [readonly string[], RegisterPart] {
+  const registrations = React.useRef(new Map<string, string>());
+  const [registeredIds, setRegisteredIds] = React.useState<readonly string[]>([]);
+  const register = React.useCallback<RegisterPart>((registrationKey, id) => {
+    for (const [existingKey, existingId] of registrations.current) {
+      if (existingKey !== registrationKey && existingId === id) {
+        throw new Error(`Collapsible ${part} ids must be unique: ${id}`);
+      }
+    }
+
+    registrations.current.set(registrationKey, id);
+    setRegisteredIds([...registrations.current.values()]);
+
+    let active = true;
+    return () => {
+      if (!active || registrations.current.get(registrationKey) !== id) return;
+      active = false;
+      registrations.current.delete(registrationKey);
+      setRegisteredIds([...registrations.current.values()]);
+    };
+  }, [part]);
+
+  return [registeredIds.length > 0 ? registeredIds : fallbackIds, register];
 }
 
 function declaredTriggerId(props: CollapsibleElementProps): string | undefined {
@@ -43,64 +91,57 @@ function declaredTriggerId(props: CollapsibleElementProps): string | undefined {
   return props.id ?? childId;
 }
 
-function collectDeclaredPartIds(children: React.ReactNode): DeclaredPartIds {
-  const ids: DeclaredPartIds = {};
-
-  const visit = (nodes: React.ReactNode): void => {
-    React.Children.forEach(nodes, (child) => {
-      if (!React.isValidElement<CollapsibleElementProps>(child)) return;
-      if (child.type === Collapsible) return;
-
-      if (child.type === CollapsibleTrigger) {
-        ids.triggerId ??= declaredTriggerId(child.props);
-        return;
-      }
-      if (child.type === CollapsibleContent) {
-        ids.contentId ??= child.props.id;
-        return;
-      }
-
-      // Inspect transparent fragments and host wrappers only. Function
-      // components are opaque and may discard or replace their children.
-      if (child.type === React.Fragment || typeof child.type === "string") {
-        visit(child.props.children);
-      }
-    });
-  };
-
-  visit(children);
-  return ids;
-}
-
-function resolvePartId(
-  part: "trigger" | "content",
-  rootId: string | undefined,
-  declaredId: string | undefined,
-): string | undefined {
-  if (rootId !== undefined && declaredId !== undefined && rootId !== declaredId) {
-    throw new Error(
-      `Collapsible ${part} id must match the ${part}Id owned by Collapsible`,
-    );
-  }
-  return rootId ?? declaredId;
-}
-
-/** Collapsible root whose open-state mechanics come from the active adapter. */
+/**
+ * Collapsible root whose open-state mechanics come from the active adapter.
+ * Public parts register their realized IDs through context, so opaque wrappers
+ * and multiple triggers retain unique DOM IDs and synchronized ARIA references
+ * without inspecting or rewriting the consumer's React tree.
+ */
 export function Collapsible(
   { children, triggerId, contentId, ...props }: CollapsibleProps,
 ): React.ReactElement {
   const { disclosure } = useAdapter();
-  const declaredIds = collectDeclaredPartIds(children);
-  const resolvedTriggerId = resolvePartId("trigger", triggerId, declaredIds.triggerId);
-  const resolvedContentId = resolvePartId("content", contentId, declaredIds.contentId);
+  const generatedId = stableDomId(React.useId());
+  const defaultContentId = contentId ?? `vf-collapsible-${generatedId}-content`;
+  const triggerFallback = React.useMemo(
+    () => triggerId === undefined ? [] : [triggerId],
+    [triggerId],
+  );
+  const contentFallback = React.useMemo(() => [defaultContentId], [defaultContentId]);
+  const [triggerIds, registerTrigger] = useIdRegistry("trigger", triggerFallback);
+  const [contentIds, registerContent] = useIdRegistry("content", contentFallback);
+  const adapterTriggerId = triggerIds.length === 1 ? triggerIds[0] : undefined;
+  const adapterContentId = contentIds.length === 1 ? contentIds[0] : undefined;
+  const idContext = React.useMemo<CollapsibleIdContextValue>(
+    () => ({
+      explicitTriggerId: triggerId,
+      explicitContentId: contentId,
+      defaultContentId,
+      triggerIds,
+      contentIds,
+      registerTrigger,
+      registerContent,
+    }),
+    [
+      triggerId,
+      contentId,
+      defaultContentId,
+      triggerIds,
+      contentIds,
+      registerTrigger,
+      registerContent,
+    ],
+  );
   return (
-    <disclosure.Root
-      {...props}
-      triggerId={resolvedTriggerId}
-      contentId={resolvedContentId}
-    >
-      {children}
-    </disclosure.Root>
+    <CollapsibleIdContext.Provider value={idContext}>
+      <disclosure.Root
+        {...props}
+        triggerId={adapterTriggerId}
+        contentId={adapterContentId}
+      >
+        {children}
+      </disclosure.Root>
+    </CollapsibleIdContext.Provider>
   );
 }
 
@@ -111,15 +152,97 @@ export interface CollapsibleTriggerProps extends React.ButtonHTMLAttributes<HTML
 }
 
 /** Toggle through the active disclosure adapter. `asChild` composes onto one child. */
-export function CollapsibleTrigger(props: CollapsibleTriggerProps): React.ReactElement {
+export function CollapsibleTrigger(
+  {
+    asChild,
+    children,
+    id,
+    ref,
+    "aria-controls": ariaControls,
+    ...props
+  }: CollapsibleTriggerProps,
+): React.ReactElement {
   const { disclosure } = useAdapter();
-  return <disclosure.Trigger {...props} />;
+  const ids = useCollapsibleIds("CollapsibleTrigger");
+  const generatedId = stableDomId(React.useId());
+  const registrationKey = `trigger-${generatedId}`;
+  const declaredId = declaredTriggerId({ asChild, children, id });
+  if (
+    ids.explicitTriggerId !== undefined &&
+    declaredId !== undefined &&
+    ids.explicitTriggerId !== declaredId
+  ) {
+    throw new Error("Collapsible trigger id must match the triggerId owned by Collapsible");
+  }
+  const realizedId = declaredId ?? ids.explicitTriggerId ??
+    `vf-collapsible-${generatedId}-trigger`;
+  const controlledIds = ariaControls ?? (ids.contentIds.join(" ") || undefined);
+  const registrationRef = React.useCallback<React.RefCallback<HTMLButtonElement>>(
+    (node) => node === null ? undefined : ids.registerTrigger(registrationKey, realizedId),
+    [ids.registerTrigger, registrationKey, realizedId],
+  );
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLButtonElement>(registrationRef, ref),
+    [registrationRef, ref],
+  );
+  return (
+    <disclosure.Trigger
+      {...props}
+      asChild={asChild}
+      id={realizedId}
+      aria-controls={controlledIds}
+      ref={composedRef}
+    >
+      {children}
+    </disclosure.Trigger>
+  );
+}
+
+/** Props accepted by `<CollapsibleContent>`. */
+export interface CollapsibleContentProps extends React.HTMLAttributes<HTMLDivElement> {
+  /** React 19: ref is a regular prop. */
+  ref?: React.Ref<HTMLDivElement>;
 }
 
 /** Collapsible content retained in the DOM and hidden while closed. */
 export function CollapsibleContent(
-  props: React.HTMLAttributes<HTMLDivElement>,
+  {
+    children,
+    id,
+    ref,
+    "aria-labelledby": ariaLabelledBy,
+    ...props
+  }: CollapsibleContentProps,
 ): React.ReactElement {
   const { disclosure } = useAdapter();
-  return <disclosure.Content {...props} />;
+  const ids = useCollapsibleIds("CollapsibleContent");
+  const generatedId = stableDomId(React.useId());
+  const registrationKey = `content-${generatedId}`;
+  if (
+    ids.explicitContentId !== undefined &&
+    id !== undefined &&
+    ids.explicitContentId !== id
+  ) {
+    throw new Error("Collapsible content id must match the contentId owned by Collapsible");
+  }
+  const realizedId = id ?? ids.defaultContentId;
+  const labelledBy = ariaLabelledBy ?? (ids.triggerIds.join(" ") || undefined);
+  const registrationRef = React.useCallback<React.RefCallback<HTMLDivElement>>(
+    (node) => node === null ? undefined : ids.registerContent(registrationKey, realizedId),
+    [ids.registerContent, registrationKey, realizedId],
+  );
+  const composedRef = React.useMemo(
+    () => composeRefs<HTMLDivElement>(registrationRef, ref),
+    [registrationRef, ref],
+  );
+  return (
+    <disclosure.Content
+      {...props}
+      id={realizedId}
+      aria-labelledby={labelledBy}
+      ref={composedRef}
+    >
+      {children}
+    </disclosure.Content>
+  );
 }

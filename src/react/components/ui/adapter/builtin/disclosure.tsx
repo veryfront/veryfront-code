@@ -19,8 +19,6 @@ const DisclosureContext = React.createContext<
     toggle: () => void;
     triggerId: string;
     contentId: string;
-    hasExplicitTriggerId: boolean;
-    hasExplicitContentId: boolean;
     disabled?: boolean;
   } | null
 >(null);
@@ -59,19 +57,9 @@ const DisclosureRoot: DisclosureParts["Root"] = (
       toggle,
       triggerId,
       contentId,
-      hasExplicitTriggerId: explicitTriggerId !== undefined,
-      hasExplicitContentId: explicitContentId !== undefined,
       disabled,
     }),
-    [
-      isOpen,
-      toggle,
-      triggerId,
-      contentId,
-      explicitTriggerId,
-      explicitContentId,
-      disabled,
-    ],
+    [isOpen, toggle, triggerId, contentId, disabled],
   );
   return (
     <div {...props} ref={ref} data-state={isOpen ? "open" : "closed"}>
@@ -93,9 +81,6 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
     throw new Error("Disclosure Trigger id must match its composed child's id");
   }
   const declaredId = id ?? childId;
-  if (ctx.hasExplicitTriggerId && declaredId !== undefined && declaredId !== ctx.triggerId) {
-    throw new Error("Disclosure Trigger id must match the triggerId owned by Disclosure Root");
-  }
   const realizedId = declaredId ?? ctx.triggerId;
   return (
     <Comp
@@ -104,7 +89,7 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
       ref={ref}
       id={realizedId}
       aria-expanded={ctx.open}
-      aria-controls={ctx.contentId}
+      aria-controls={props["aria-controls"] ?? ctx.contentId}
       aria-disabled={asChild && isDisabled ? true : undefined}
       data-state={ctx.open ? "open" : "closed"}
       disabled={isDisabled}
@@ -126,9 +111,6 @@ const DisclosureContent: DisclosureParts["Content"] = (
   { children, ref, id, hidden, ...props },
 ) => {
   const ctx = useDisclosureContext("Disclosure Content");
-  if (ctx.hasExplicitContentId && id !== undefined && id !== ctx.contentId) {
-    throw new Error("Disclosure Content id must match the contentId owned by Disclosure Root");
-  }
   const realizedId = id ?? ctx.contentId;
   return (
     <div

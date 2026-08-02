@@ -4,12 +4,12 @@
  * `cva` / `[var(--token)]` classes, authored once) and **Mechanics** (focus,
  * dismiss, positioning, ARIA, keyboard) supplied by a swappable **adapter**.
  *
- * The contract is **role-tagged component slots + normalized `{open,setOpen}`
- * disclosure state**: deliberately NOT prop-getters (those only fit React
- * Aria's hooks; Base UI / Ariakit invert composition via `render`). Every
- * adapter: the zero-dependency `builtin` and any third-party engine (Base UI,
- * Radix, React Aria): satisfies these exact shapes, so one set of skin classes
- * works everywhere.
+ * The contract is **role-tagged component slots + normalized controlled or
+ * uncontrolled disclosure props** (`open`, `defaultOpen`, `onOpenChange`):
+ * deliberately NOT prop-getters (those only fit React Aria's hooks; Base UI /
+ * Ariakit invert composition via `render`). Every adapter: the zero-dependency
+ * `builtin` and any third-party engine (Base UI, Radix, React Aria): satisfies
+ * these exact shapes, so one set of skin classes works everywhere.
  *
  * Types only. No runtime, no engine imports: this file is safe to pull into
  * `veryfront/ui/adapter` from a consumer-authored adapter.
@@ -33,10 +33,13 @@ export interface DisclosureProps {
 /**
  * Role-tagged slots an adapter provides for a single open/close **disclosure**
  * (the Collapsible primitive; Accordion composes one disclosure per item). The
- * archetype is the overlay disclosure minus the portal/positioning: a trigger
- * toggles a region whose node remains mounted and is hidden while closed. Parts self-wire through the
- * adapter's own internal context, so the skin just renders `Root` > `Trigger` /
- * `Content` (no hook needed), exactly like the Popover skin.
+ * archetype is the overlay disclosure minus the portal/positioning: one or more
+ * triggers toggle a region whose node remains mounted and is hidden while
+ * closed. Public Collapsible parts coordinate their realized IDs without
+ * inspecting the consumer's React tree, then pass synchronized `aria-controls`
+ * and `aria-labelledby` props through these slots. Adapters must preserve those
+ * explicit relationships while supplying their own defaults for direct slot
+ * use.
  */
 export interface DisclosureParts {
   /** Owns open state; renders the wrapper node + provides disclosure context. */

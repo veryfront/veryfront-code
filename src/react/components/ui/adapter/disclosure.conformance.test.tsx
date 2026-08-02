@@ -249,6 +249,14 @@ function runDisclosureConformance(
         const content = host.querySelector<HTMLElement>("[role=region]")!;
         assert(trigger.id === "wrapped-trigger", "keeps the wrapped trigger id");
         assert(content.id === "wrapped-content", "keeps the wrapped content id");
+        assert(
+          trigger.getAttribute("aria-controls") === content.id,
+          "wrapped trigger controls the realized content id",
+        );
+        assert(
+          content.getAttribute("aria-labelledby") === trigger.id,
+          "wrapped content is named by the realized trigger id",
+        );
       } finally {
         unmount();
       }
@@ -263,6 +271,54 @@ function runDisclosureConformance(
       try {
         const trigger = host.querySelector("a")!;
         assert(trigger.id === "wrapped-composed-trigger", "keeps the wrapped child id");
+      } finally {
+        unmount();
+      }
+    });
+
+    it("supports several distinct triggers for one collapsible region", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosureMultipleTriggerProbe />
+        </Wrap>,
+      );
+      try {
+        const triggers = [...host.querySelectorAll("button")];
+        const content = host.querySelector<HTMLElement>("[role=region]")!;
+        assert(triggers.length === 2, "renders both disclosure triggers");
+        assert(triggers[0]!.id === "first-trigger", "keeps the first trigger id");
+        assert(triggers[1]!.id === "second-trigger", "keeps the second trigger id");
+        assert(
+          triggers.every((trigger) => trigger.getAttribute("aria-controls") === content.id),
+          "every trigger controls the same region",
+        );
+        assert(
+          content.getAttribute("aria-labelledby") === "first-trigger second-trigger",
+          "the region is named by every trigger in DOM order",
+        );
+      } finally {
+        unmount();
+      }
+    });
+
+    it("generates unique ids for several id-less triggers", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosureGeneratedMultipleTriggerProbe />
+        </Wrap>,
+      );
+      try {
+        const triggers = [...host.querySelectorAll("button")];
+        const content = host.querySelector<HTMLElement>("[role=region]")!;
+        assert(triggers.length === 2, "renders both id-less triggers");
+        assert(Boolean(triggers[0]!.id), "generates the first trigger id");
+        assert(Boolean(triggers[1]!.id), "generates the second trigger id");
+        assert(triggers[0]!.id !== triggers[1]!.id, "generated trigger ids stay unique");
+        assert(
+          content.getAttribute("aria-labelledby") ===
+            `${triggers[0]!.id} ${triggers[1]!.id}`,
+          "the region references both generated trigger ids",
+        );
       } finally {
         unmount();
       }
@@ -377,6 +433,28 @@ function DisclosureWrappedComposedIdProbe(): React.ReactElement {
     <Collapsible>
       <WrappedComposedCollapsibleTrigger />
       <CollapsibleContent>Body</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function DisclosureMultipleTriggerProbe(): React.ReactElement {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger id="first-trigger">First toggle</CollapsibleTrigger>
+      <CollapsibleTrigger id="second-trigger">Second toggle</CollapsibleTrigger>
+      <CollapsibleContent id="multiple-trigger-content" role="region">
+        Body
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function DisclosureGeneratedMultipleTriggerProbe(): React.ReactElement {
+  return (
+    <Collapsible>
+      <CollapsibleTrigger>First toggle</CollapsibleTrigger>
+      <CollapsibleTrigger>Second toggle</CollapsibleTrigger>
+      <CollapsibleContent role="region">Body</CollapsibleContent>
     </Collapsible>
   );
 }
