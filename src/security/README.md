@@ -129,6 +129,21 @@ create time-of-check/time-of-use races on adapters without descriptor-relative
 filesystem operations. Production deployments must not grant project code
 independent write access to the host paths being served.
 
+## Host outbound HTTP policy
+
+Framework-owned fetches of tenant-selected remote modules and remote MCP
+endpoints pass through a DNS-pinned HTTP boundary. It admits only public
+`http:` and `https:` destinations, rejects URL credentials, blocks loopback,
+private, link-local, metadata, and other non-global addresses, and repeats both
+the network and caller-specific allowlist checks before every redirect hop.
+Cross-origin redirects do not retain authorization or cookie headers.
+
+`VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
+override. It disables the private-network destination check for these host
+fetches and must remain unset in a shared runtime. Project environment overlays
+cannot enable it. URL scheme, URL-credential, redirect, and caller allowlist
+checks remain active when the override is enabled.
+
 ## Internal worker isolation
 
 [`sandbox/`](./sandbox/) is an internal runtime implementation used by Routing,
