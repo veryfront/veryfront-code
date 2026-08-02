@@ -75,6 +75,71 @@ describe("Redis runtime provider owned clients", () => {
     await provider.disconnectClient();
   });
 
+  it("does not manufacture optional hooks omitted by a compatible client", async () => {
+    const client = createClient();
+    delete (client as Partial<RedisClient>).on;
+    const provider = createRedisRuntimeProvider({
+      openClient: () => Promise.resolve(client),
+    });
+
+    const handle = await provider.openClient();
+    assertEquals(handle.client.on, undefined);
+    assertEquals(handle.client.ttl, undefined);
+
+    await handle.close();
+    await provider.close();
+  });
+
+  it("preserves inherited optional data methods with their original receiver", async () => {
+    const client = createClient();
+    delete (client as Partial<RedisClient>).on;
+    let onReceiver: unknown;
+    let ttlReceiver: unknown;
+    Object.setPrototypeOf(client, {
+      on(this: FakeRedisClient) {
+        onReceiver = this;
+      },
+      ttl(this: FakeRedisClient) {
+        ttlReceiver = this;
+        return Promise.resolve(42);
+      },
+    });
+    const provider = createRedisRuntimeProvider({
+      openClient: () => Promise.resolve(client),
+    });
+
+    const handle = await provider.openClient();
+    handle.client.on?.("error", () => undefined);
+    assertEquals(await handle.client.ttl?.("key"), 42);
+    assertEquals(onReceiver === client, true);
+    assertEquals(ttlReceiver === client, true);
+
+    await handle.close();
+    await provider.close();
+  });
+
+  it("omits optional accessors without invoking them", async () => {
+    const client = createClient();
+    let accessorCalls = 0;
+    Object.defineProperty(client, "on", {
+      configurable: true,
+      get() {
+        accessorCalls++;
+        return () => undefined;
+      },
+    });
+    const provider = createRedisRuntimeProvider({
+      openClient: () => Promise.resolve(client),
+    });
+
+    const handle = await provider.openClient();
+    assertEquals(handle.client.on, undefined);
+    assertEquals(accessorCalls, 0);
+
+    await handle.close();
+    await provider.close();
+  });
+
   it("disposes a connection that finishes opening during provider close", async () => {
     const client = createClient();
     let openStartedResolve: (() => void) | undefined;

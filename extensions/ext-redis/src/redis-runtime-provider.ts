@@ -63,14 +63,45 @@ const CLIENT_METHODS = [
   "incr",
   "pExpire",
   "pTTL",
-  "ttl",
-  "on",
 ] as const;
+const OPTIONAL_CLIENT_METHODS = ["ttl", "on"] as const;
+
+function readOptionalClientMethod(
+  target: object,
+  name: string,
+): ((...args: unknown[]) => unknown) | undefined {
+  let owner: object | null = target;
+  const visited = new Set<object>();
+  while (owner) {
+    if (visited.has(owner)) return undefined;
+    visited.add(owner);
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(owner, name);
+    } catch {
+      return undefined;
+    }
+    if (descriptor) {
+      return "value" in descriptor && typeof descriptor.value === "function"
+        ? descriptor.value
+        : undefined;
+    }
+    try {
+      owner = Object.getPrototypeOf(owner);
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
 
 function bindClientMethods<T>(
   target: object,
   methods: readonly string[],
-  properties: readonly string[] = [],
+  options: {
+    optionalMethods?: readonly string[];
+    properties?: readonly string[];
+  } = {},
 ): T {
   const adapter = Object.fromEntries(methods.map((name) => [
     name,
@@ -82,7 +113,15 @@ function bindClientMethods<T>(
       return Reflect.apply(method, target, args);
     },
   ]));
-  for (const property of properties) {
+  for (const name of options.optionalMethods ?? []) {
+    const method = readOptionalClientMethod(target, name);
+    if (!method) continue;
+    Object.defineProperty(adapter, name, {
+      enumerable: true,
+      value: (...args: unknown[]) => Reflect.apply(method, target, args),
+    });
+  }
+  for (const property of options.properties ?? []) {
     Object.defineProperty(adapter, property, {
       enumerable: true,
       get() {
@@ -159,7 +198,10 @@ export function createRedisRuntimeProvider(
     let closePromise: Promise<void> | null = null;
     let exposedClient = exposedClients.get(client);
     if (!exposedClient) {
-      exposedClient = bindClientMethods<RedisClient>(client, CLIENT_METHODS, ["isOpen"]);
+      exposedClient = bindClientMethods<RedisClient>(client, CLIENT_METHODS, {
+        optionalMethods: OPTIONAL_CLIENT_METHODS,
+        properties: ["isOpen"],
+      });
       exposedClients.set(client, exposedClient);
     }
     const closeClient = (force: boolean): Promise<void> => {
@@ -270,7 +312,10 @@ export function createRedisRuntimeProvider(
       const client = await clientManager.getClient(options);
       let exposedClient = exposedClients.get(client);
       if (!exposedClient) {
-        exposedClient = bindClientMethods<RedisClient>(client, CLIENT_METHODS, ["isOpen"]);
+        exposedClient = bindClientMethods<RedisClient>(client, CLIENT_METHODS, {
+          optionalMethods: OPTIONAL_CLIENT_METHODS,
+          properties: ["isOpen"],
+        });
         exposedClients.set(client, exposedClient);
       }
       return exposedClient;
