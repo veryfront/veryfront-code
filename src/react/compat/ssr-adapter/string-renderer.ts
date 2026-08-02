@@ -2,7 +2,7 @@ import * as React from "react";
 import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { SpanNames } from "#veryfront/observability";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { getReactDOMServer } from "./server-loader.ts";
+import { getProjectReact, getReactDOMServer } from "./server-loader.ts";
 import { getSSRAdapterTimeoutMs, getSSRBufferLimitBytes } from "./timeout.ts";
 import type { SSROptions } from "./types.ts";
 import { wrapWithServerRenderContext } from "../../server-render-context.ts";
@@ -143,9 +143,14 @@ export async function renderToStringAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
-  const renderElement = wrapWithServerRenderContext(element, options.renderContext);
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
-  const server = await getReactDOMServer(options.reactVersion);
+  const [server, projectReact] = await Promise.all([
+    getReactDOMServer(options.reactVersion),
+    options.renderContext ? getProjectReact(options.reactVersion) : Promise.resolve(null),
+  ]);
+  const renderElement = projectReact
+    ? wrapWithServerRenderContext(element, options.renderContext, projectReact)
+    : element;
   const canUseReadableStream = server.renderToReadableStream && !isCompiledBinary();
 
   if (canUseReadableStream) {
@@ -232,9 +237,14 @@ export async function renderToStaticMarkupAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
-  const renderElement = wrapWithServerRenderContext(element, options.renderContext);
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
-  const { renderToStaticMarkup } = await getReactDOMServer(options.reactVersion);
+  const [{ renderToStaticMarkup }, projectReact] = await Promise.all([
+    getReactDOMServer(options.reactVersion),
+    options.renderContext ? getProjectReact(options.reactVersion) : Promise.resolve(null),
+  ]);
+  const renderElement = projectReact
+    ? wrapWithServerRenderContext(element, options.renderContext, projectReact)
+    : element;
 
   try {
     const html = renderToStaticMarkup(renderElement, {

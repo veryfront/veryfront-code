@@ -3,9 +3,14 @@ import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/test
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
 import type { ReactDOMServer } from "./server-loader.ts";
-import { __injectReactDOMServerForTests, resetReactCache } from "./server-loader.ts";
+import {
+  __injectReactDOMServerForTests,
+  getProjectReact,
+  resetReactCache,
+} from "./server-loader.ts";
 import { renderToStaticMarkupAdapter, renderToStringAdapter } from "./string-renderer.ts";
 import { resetSSRAdapterTimeoutForTests, setSSRAdapterTimeoutForTests } from "./timeout.ts";
+import { getServerRenderContext } from "../../server-render-context.ts";
 
 type ReadableOptions = NonNullable<
   Parameters<NonNullable<ReactDOMServer["renderToReadableStream"]>>[1]
@@ -89,6 +94,54 @@ describe("react/compat/ssr-adapter/string-renderer", () => {
     );
     assertEquals(stringOptions?.identifierPrefix, "vf");
     assertEquals(staticOptions?.identifierPrefix, "static-vf");
+  });
+
+  it("uses the selected React 18 context across bundles and suspended retries", async () => {
+    const React18 = await getProjectReact("18.3.1");
+    const copiedContextModule = await import(
+      "../../server-render-context.ts?react18-context-copy"
+    );
+    const context = getServerRenderContext(React18);
+    assertStrictEquals(
+      copiedContextModule.getServerRenderContext(React18),
+      context,
+    );
+
+    const started = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let released = false;
+    function SuspendedContextProbe() {
+      started.resolve();
+      if (!released) throw release.promise;
+      const value = React18.useContext(
+        context as React.Context<
+          {
+            nonce?: string;
+          } | null
+        >,
+      );
+      return React18.createElement("span", null, value?.nonce ?? "missing");
+    }
+
+    const rendering = renderToStringAdapter(
+      React18.createElement(
+        React18.Suspense,
+        { fallback: React18.createElement("p", null, "loading") },
+        React18.createElement(SuspendedContextProbe),
+      ),
+      {
+        reactVersion: "18.3.1",
+        renderContext: {
+          nonce: "react-18-nonce",
+          registerHeadPayload: () => "unused",
+        },
+      },
+    );
+    await started.promise;
+    released = true;
+    release.resolve();
+
+    assertEquals(await rendering, "<!--$--><span>react-18-nonce</span><!--/$-->");
   });
 
   it("does not let a throwing error observer replace the render failure", async () => {

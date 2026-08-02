@@ -34,9 +34,17 @@ function makeSpaPageData(overrides: Partial<SpaPageData> = {}): SpaPageData {
 }
 
 function makeHydrationDocument(getJson: () => string): Document {
+  const hydrationElement = {
+    id: "veryfront-hydration-data",
+    tagName: "SCRIPT",
+    get textContent() {
+      return getJson();
+    },
+    getAttribute: (name: string) => name === "type" ? "application/json" : null,
+  };
   return {
-    getElementById: (id: string) =>
-      id === "veryfront-hydration-data" ? { textContent: getJson() } : null,
+    body: { firstElementChild: hydrationElement },
+    querySelectorAll: () => [hydrationElement],
   } as unknown as Document;
 }
 
@@ -52,14 +60,24 @@ function installSnapshotDOMParser(): () => void {
       const hydrationMatch = html.match(
         /<script id="veryfront-hydration-data"[^>]*>(.*?)<\/script>/s,
       );
+      const hydrationElement = hydrationMatch
+        ? {
+          id: "veryfront-hydration-data",
+          tagName: "SCRIPT",
+          textContent: hydrationMatch[1],
+          getAttribute: (name: string) => name === "type" ? "application/json" : null,
+        }
+        : null;
       return {
         getElementById: (id: string) =>
           id === "root"
             ? (rootMatch ? { innerHTML: rootMatch[1] } : null)
             : id === "veryfront-hydration-data"
-            ? (hydrationMatch ? { textContent: hydrationMatch[1] } : null)
+            ? hydrationElement
             : null,
         querySelector: () => null,
+        querySelectorAll: () => hydrationElement ? [hydrationElement] : [],
+        body: { firstElementChild: hydrationElement },
       };
     }
   }
@@ -212,10 +230,11 @@ describe("routing/client/page-loader", () => {
         descriptorFromHeadProps("title", { children: "Destination title" })!,
       ]);
       const fullDocument = `<!doctype html><html><head>
+      </head><body>
         <script id="veryfront-hydration-data" type="application/json">${
         JSON.stringify({ managedHeadPayload: structured })
       }</script>
-      </head><body><div id="root"><main>Destination</main>
+      <div id="root"><main>Destination</main>
         <div data-veryfront-head="1" data-vf-react-head-owner="1"
           data-vf-ssr-head="${committed}"></div></div></body></html>`;
       globalThis.fetch = () => Promise.resolve(Response.json({ html: fullDocument }));

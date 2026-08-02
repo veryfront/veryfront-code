@@ -22,6 +22,10 @@ import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/index.ts";
 import { HTMLGenerator, type HTMLGeneratorConfig } from "./html.ts";
 import { buildHeadElements, mergeFrontmatter } from "./html-head.ts";
+import {
+  deserializeManagedHeadPayload,
+  managedHeadDescriptorToTransportEntry,
+} from "#veryfront/html/managed-head-protocol.ts";
 import { mergeImportedCSS } from "./html-imported-css.ts";
 import { StreamTimeoutError } from "../utils/stream-utils.ts";
 import {
@@ -854,6 +858,78 @@ describe("HTMLGenerator helpers", () => {
         1,
       );
       assertEquals(html.includes("data-vf-shell-head"), false);
+    });
+
+    it("publishes the complete committed React head through the server-owned payload", async () => {
+      const generator = createHTMLGenerator();
+      const html = await generator.generateFullHTML({
+        html: "<main>Complete head</main>",
+        pageInfo: {
+          entity: { path: "/project/app/page.tsx", frontmatter: {} },
+        } as any,
+        pageBundle: {} as any,
+        layoutBundle: undefined,
+        nestedLayouts: [],
+        collectedMetadata: {},
+        slug: "complete-head",
+        ssrHash: "head-hash",
+        collectedHead: {
+          title: "Committed title",
+          metas: [
+            { property: "og:image", content: "https://cdn.example/a.png" },
+            { property: "og:image", content: "https://cdn.example/b.png" },
+          ],
+          links: [
+            { rel: "preload", href: "/font-a.woff2", as: "font" },
+            { rel: "preload", href: "/font-b.woff2", as: "font" },
+          ],
+          styles: [{ id: "route-style", content: ".route{}" }],
+          scripts: [{ id: "route-script", src: "/route.js" }],
+        },
+      });
+
+      const hydrationMatch = html.match(
+        /<body\b[^>]*>\s*<!--[^]*?-->\s*<script id="veryfront-hydration-data" type="application\/json"[^>]*>([^]*?)<\/script>/i,
+      );
+      assertExists(hydrationMatch?.[1]);
+      const hydrationData = JSON.parse(hydrationMatch[1]) as {
+        managedHeadPayload: string;
+      };
+      const entries = deserializeManagedHeadPayload(hydrationData.managedHeadPayload)
+        .map(managedHeadDescriptorToTransportEntry);
+
+      assertEquals(
+        entries.some((entry) => entry.tagName === "title" && entry.content === "Committed title"),
+        true,
+      );
+      assertEquals(
+        entries.filter((entry) =>
+          entry.tagName === "meta" &&
+          entry.attributes.some(([name, value]) => name === "property" && value === "og:image")
+        ).map((entry) => entry.attributes.find(([name]) => name === "content")?.[1]),
+        ["https://cdn.example/a.png", "https://cdn.example/b.png"],
+      );
+      assertEquals(
+        entries.filter((entry) =>
+          entry.tagName === "link" &&
+          entry.attributes.some(([name, value]) => name === "rel" && value === "preload")
+        ).map((entry) => entry.attributes.find(([name]) => name === "href")?.[1]),
+        ["/font-a.woff2", "/font-b.woff2"],
+      );
+      assertEquals(
+        entries.some((entry) =>
+          entry.tagName === "style" && entry.content === ".route{}" &&
+          entry.attributes.some(([name, value]) => name === "id" && value === "route-style")
+        ),
+        true,
+      );
+      assertEquals(
+        entries.some((entry) =>
+          entry.tagName === "script" &&
+          entry.attributes.some(([name, value]) => name === "src" && value === "/route.js")
+        ),
+        true,
+      );
     });
 
     it("preserves empty collected metadata and exact viewport attributes", async () => {

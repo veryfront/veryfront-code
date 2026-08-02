@@ -15,6 +15,7 @@ import {
   HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_SHELL_PROVENANCE_ATTRIBUTE,
   headMetaSingletonKeyFromRecord,
+  serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import type { RenderMetadata } from "#veryfront/types";
@@ -36,6 +37,7 @@ import {
   startProjectCSSPreparation,
 } from "./html-project-css.ts";
 import {
+  buildCollectedHeadDescriptors,
   buildHeadElements as buildCollectedHeadElements,
   mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
@@ -477,6 +479,14 @@ export class HTMLGenerator {
       head,
     );
 
+    const completeManagedHeadPayload = serializeManagedHeadPayload([
+      ...buildStructuredManagedHeadDescriptors(
+        extractHTMLMetadata(enrichedFrontmatter, layoutFrontmatter),
+        enrichedFrontmatter.title || "Veryfront App",
+      ),
+      ...buildCollectedHeadDescriptors(emissionHead),
+    ]);
+
     const { start, end } = await generateHTMLShellParts(
       {
         title: enrichedFrontmatter.title || "Veryfront App",
@@ -491,6 +501,7 @@ export class HTMLGenerator {
       context.options?.props,
       reactContent,
       projectCSSPromise,
+      { managedHeadPayload: completeManagedHeadPayload },
     );
 
     let modifiedStart = start;

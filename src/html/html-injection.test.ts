@@ -175,6 +175,10 @@ describe("html/html-injection", () => {
       const hydrationData = extractHydrationData(html);
       assertEquals(hydrationData.pagePath, "app/page.tsx");
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
+      assertEquals(
+        html.indexOf('id="veryfront-hydration-data"') < html.indexOf("<p>content</p>"),
+        true,
+      );
     });
 
     it("injects a minimal dependency snapshot for non-client full documents", () => {

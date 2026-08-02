@@ -1,4 +1,5 @@
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
+import { isVersionedProdHydrationModulePath } from "./hydration-script-builder/prod-path.ts";
 
 function findTagEnd(html: string, start: number): number {
   let activeQuote: '"' | "'" | null = null;
@@ -130,7 +131,13 @@ function acceptsAmbientNonce(tag: string, tagName: "script" | "style"): boolean 
   return tagName === "style" || findAttribute(tag, "src") === undefined;
 }
 
-function replaceExactInlineNonce(
+function isFrameworkOwnedExternalScript(tag: string): boolean {
+  const src = findAttribute(tag, "src")?.value;
+  return src === "/_veryfront/rsc/client.js" ||
+    (typeof src === "string" && isVersionedProdHydrationModulePath(src));
+}
+
+function replaceExactAuthorizedNonce(
   html: string,
   expectedNonce: string,
   replacementNonce: string | undefined,
@@ -182,7 +189,8 @@ function replaceExactInlineNonce(
 
     const nonce = findAttribute(tag, "nonce");
     const isExternalScript = tagName === "script" && findAttribute(tag, "src") !== undefined;
-    if (!isExternalScript && nonce?.value === expectedNonce) {
+    const isAuthorizedSlot = !isExternalScript || isFrameworkOwnedExternalScript(tag);
+    if (isAuthorizedSlot && nonce?.value === expectedNonce) {
       const replacement = replacementNonce === undefined ? "" : `nonce="${replacementNonce}"`;
       result += `${tag.slice(0, nonce.start)}${replacement}${tag.slice(nonce.end)}`;
       replacements++;
@@ -216,7 +224,7 @@ export interface SealedHtmlNonce {
 export function sealHtmlNonceForCache(html: string, nonce?: string): SealedHtmlNonce {
   if (!nonce) return { html };
   const placeholder = createCacheNoncePlaceholder();
-  const sealed = replaceExactInlineNonce(html, escapeHtml(nonce), placeholder);
+  const sealed = replaceExactAuthorizedNonce(html, escapeHtml(nonce), placeholder);
   return { html: sealed.html, placeholder };
 }
 
@@ -236,7 +244,7 @@ export function bindHtmlNonceFromCache(
   nonce?: string,
 ): string {
   if (!placeholder || !CACHE_NONCE_PLACEHOLDER_PATTERN.test(placeholder)) return html;
-  return replaceExactInlineNonce(
+  return replaceExactAuthorizedNonce(
     html,
     placeholder,
     nonce ? escapeHtml(nonce) : undefined,

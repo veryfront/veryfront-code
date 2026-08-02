@@ -10,6 +10,7 @@ import * as React from "react";
 import * as actualReactDOMServer from "react-dom/server";
 import type { ReactDOMServer } from "../react/compat/ssr-adapter/server-loader.ts";
 import {
+  __injectProjectReactForTests,
   __injectReactDOMServerForTests,
   resetReactCache,
 } from "../react/compat/ssr-adapter/server-loader.ts";
@@ -111,6 +112,7 @@ describe("rendering/ssr-renderer", () => {
 
   it("keeps the CSP nonce through real SSR globals and a suspended retry", async () => {
     __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    __injectProjectReactForTests(React, React.version);
     const renderer = new SSRRenderer(
       "production",
       undefined,
@@ -149,6 +151,7 @@ describe("rendering/ssr-renderer", () => {
 
   it("retains request-bound Head authority after a true stream leaves async storage", async () => {
     __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    __injectProjectReactForTests(React, React.version);
     const renderer = new SSRRenderer(
       "production",
       undefined,
@@ -192,6 +195,7 @@ describe("rendering/ssr-renderer", () => {
 
   it("isolates concurrent suspended streams and their nonces", async () => {
     __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    __injectProjectReactForTests(React, React.version);
     const renderer = new SSRRenderer(
       "production",
       undefined,

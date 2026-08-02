@@ -24,7 +24,8 @@ describe("html/nonce-injection", () => {
   it("rebinds only previously authorized inline cache nonce slots", () => {
     const html = '<script nonce="nonce-a">framework()</script>' +
       '<style nonce="nonce-a">.framework{}</style>' +
-      '<script src="/framework.js" nonce="nonce-a"></script>' +
+      '<script type="module" src="/_veryfront/hydration-runtime.1234abcd.js" nonce="nonce-a"></script>' +
+      '<script src="https://app.example/owned.js" nonce="nonce-a"></script>' +
       '<script nonce="app-owned">application()</script>';
 
     const sealed = sealHtmlNonceForCache(html, "nonce-a");
@@ -33,7 +34,13 @@ describe("html/nonce-injection", () => {
 
     assertEquals(rebound.includes('nonce="nonce-b">framework()'), true);
     assertEquals(rebound.includes('nonce="nonce-b">.framework{}'), true);
-    assertEquals(rebound.includes('src="/framework.js" nonce="nonce-a"'), true);
+    assertEquals(
+      rebound.includes(
+        'src="/_veryfront/hydration-runtime.1234abcd.js" nonce="nonce-b"',
+      ),
+      true,
+    );
+    assertEquals(rebound.includes('src="https://app.example/owned.js" nonce="nonce-a"'), true);
     assertEquals(rebound.includes('nonce="app-owned">application()'), true);
     assertEquals(rebound.includes(sealed.placeholder!), false);
   });

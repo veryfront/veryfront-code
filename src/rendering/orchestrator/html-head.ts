@@ -16,6 +16,7 @@ import {
   isHeadFrameworkAttribute,
   type ManagedHeadAttribute,
   managedHeadContentHash,
+  type ManagedHeadDescriptor,
   normalizeManagedHeadString,
   scriptIdentityKeysFromRecord,
 } from "#veryfront/html/managed-head-protocol.ts";
@@ -364,6 +365,59 @@ export function buildHeadElements(
     scripts: scriptParts.join("\n  "),
     other: otherParts.join("\n  "),
   };
+}
+
+/**
+ * Build the nonce-free transport representation of the committed React head.
+ * The browser binds its active nonce when adopting these descriptors; a nonce
+ * from one cached response must never become part of the portable payload.
+ */
+export function buildCollectedHeadDescriptors(
+  head?: CollectedHead,
+): ManagedHeadDescriptor[] {
+  if (!head) return [];
+
+  const descriptors: ManagedHeadDescriptor[] = [];
+  const append = (descriptor: ManagedHeadDescriptor | null): void => {
+    if (descriptor) descriptors.push(descriptor);
+  };
+
+  if (head.title !== undefined) {
+    append(
+      descriptorFromManagedHeadRecord(
+        "title",
+        { content: head.title },
+        { contentProperty: "content" },
+      ),
+    );
+  }
+
+  const metas = (head.description !== undefined &&
+      !head.metas.some((meta) => headMetaSingletonKeyFromRecord(meta) === "meta:description")
+    ? [{ name: "description", content: head.description }, ...head.metas]
+    : head.metas).filter((meta) => !hasCharsetAttribute(meta));
+  for (const meta of metas) append(descriptorFromManagedHeadRecord("meta", meta));
+  for (const link of head.links) append(descriptorFromManagedHeadRecord("link", link));
+  for (const style of head.styles) {
+    append(
+      descriptorFromManagedHeadRecord(
+        "style",
+        typeof style === "string" ? { content: style } : style,
+        { contentProperty: "content" },
+      ),
+    );
+  }
+  for (const script of head.scripts) {
+    append(
+      descriptorFromManagedHeadRecord(
+        "script",
+        script,
+        { contentProperty: "content" },
+      ),
+    );
+  }
+
+  return descriptors;
 }
 
 export function mergeFrontmatter(context: FrontmatterContextLike): MDXFrontmatter {

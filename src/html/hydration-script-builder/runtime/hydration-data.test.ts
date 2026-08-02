@@ -9,8 +9,15 @@ import {
 } from "./hydration-data.ts";
 
 function stubDocument(textContent: string | null): RuntimeDocument {
+  const hydrationElement = {
+    id: HYDRATION_DATA_ELEMENT_ID,
+    tagName: "SCRIPT",
+    textContent,
+    getAttribute: (name: string) => name === "type" ? "application/json" : null,
+  };
   return {
-    getElementById: (id: string) => id === HYDRATION_DATA_ELEMENT_ID ? { textContent } : null,
+    body: { firstElementChild: hydrationElement },
+    querySelectorAll: () => [hydrationElement],
   } as unknown as RuntimeDocument;
 }
 
@@ -24,7 +31,10 @@ describe("hydration-script-builder/runtime/hydration-data", () => {
     });
 
     it("returns an empty payload when the element is absent", () => {
-      const document = { getElementById: () => null } as unknown as RuntimeDocument;
+      const document = {
+        body: { firstElementChild: null },
+        querySelectorAll: () => [],
+      } as unknown as RuntimeDocument;
       assertEquals(readInitialHydrationData(document), {});
     });
 

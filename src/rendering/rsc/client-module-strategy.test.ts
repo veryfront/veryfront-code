@@ -8,11 +8,38 @@ import {
   buildRSCTransportHeaders,
   determineClientModuleStrategy,
   getHydrationReactImportSpecifiers,
+  readHydrationData,
   resolveClientModuleStrategy,
   resolveReleaseAssetModuleUrl,
+  seedHydrationDependencyPins,
 } from "./client-module-strategy.ts";
 
 describe("rendering/rsc/client-module-strategy", () => {
+  it("accepts only the unique server-owned hydration location", () => {
+    const genuine = {
+      id: "veryfront-hydration-data",
+      tagName: "SCRIPT",
+      textContent: '{"clientModuleStrategy":"rsc-module"}',
+      getAttribute: (name: string) => name === "type" ? "application/json" : null,
+    };
+    const document = {
+      body: { firstElementChild: genuine },
+      querySelectorAll: () => [genuine],
+    } as unknown as Document;
+
+    assertEquals(readHydrationData(document), { clientModuleStrategy: "rsc-module" });
+    assertEquals(seedHydrationDependencyPins(document, "on:snapshot-a"), true);
+    assertEquals(JSON.parse(genuine.textContent).dependencyPinningCacheKey, "on:snapshot-a");
+
+    const forged = { ...genuine, textContent: '{"clientModuleStrategy":"fs"}' };
+    const ambiguous = {
+      body: { firstElementChild: genuine },
+      querySelectorAll: () => [genuine, forged],
+    } as unknown as Document;
+    assertEquals(readHydrationData(ambiguous), null);
+    assertEquals(seedHydrationDependencyPins(ambiguous, "on:snapshot-b"), false);
+  });
+
   it("uses the fs strategy only for local projects", () => {
     // Only the server-trusted `isLocalProject` signal unlocks the dev-only
     // `/_veryfront/fs/` handler. Preview mode (which can be reached via

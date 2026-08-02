@@ -4,6 +4,8 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import { CacheCoordinator } from "./cache-coordinator.ts";
+import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
+import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
 
 function makeResult(html: string): RenderResult {
   return {
@@ -79,6 +81,40 @@ describe("CacheCoordinator", () => {
     assertEquals(hit.cachedResult?.html.includes('nonce="app-owned">application()'), true);
     assertEquals(hit.cachedResult?.html.includes("nonce-a"), false);
     assertEquals(hit.cachedResult?.html.includes("veryfront-cache-nonce"), false);
+    await coordinator.destroy();
+  });
+
+  it("rebinds the real production hydration module without blessing app scripts", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
+    const shell = await wrapInHTMLShell(
+      '<script src="/app-owned.js" nonce="nonce-a"></script><main>cached</main>',
+      { title: "Cached", slug: "cached", frontmatter: {} },
+      {
+        mode: "production",
+        environment: "production",
+        isLocalProject: false,
+        forceProductionScripts: true,
+        projectSlug: "default",
+        config: {},
+        nonce: "nonce-a",
+      },
+    );
+
+    await coordinator.persistResult(makeResult(shell), "production-shell", undefined, "nonce-a");
+    const hit = await coordinator.checkCache("production-shell", undefined, "nonce-b");
+    const cachedHtml = hit.cachedResult?.html ?? "";
+
+    assertEquals(
+      cachedHtml.includes(
+        `src="${getProdHydrationModulePath()}" nonce="nonce-b"`,
+      ),
+      true,
+    );
+    assertEquals(
+      cachedHtml.includes('src="/app-owned.js" nonce="nonce-a"'),
+      true,
+    );
+    assertEquals(cachedHtml.includes("veryfront-cache-nonce"), false);
     await coordinator.destroy();
   });
 
