@@ -1,5 +1,6 @@
 import type { Prompt, PromptConfig, PromptRenderContext } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
+import { COMMON_BLOCKED_PATTERNS } from "#veryfront/agent/middleware/index.ts";
 import { assertPromptConfig, snapshotPromptMCPConfig } from "./validation.ts";
 
 const DateNow = Date.now;
@@ -12,6 +13,7 @@ const ClearTimeout = globalThis.clearTimeout;
 const StringConstructor = String;
 const StringPrototypeReplace = String.prototype.replace;
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const BLOCKED_PROMPT_PATTERNS = COMMON_BLOCKED_PATTERNS.promptInjection;
 
 interface PromptCancellation {
   readonly context: Readonly<PromptRenderContext>;
@@ -183,6 +185,21 @@ function generatePromptId(): string {
   return `prompt_${DateNow()}_${promptIdCounter++}`;
 }
 
+function sanitizeVariableValue(value: string): string {
+  let sanitized = value;
+  for (const pattern of BLOCKED_PROMPT_PATTERNS) {
+    // The shared patterns are non-global, so a plain replace strips only the
+    // first match and is bypassable by repetition. Use a per-call global-flagged
+    // copy to strip every occurrence. A copy (not a mutation) is required because
+    // these same regex objects are consumed with stateful .test() in validator.ts.
+    const globalPattern = pattern.global
+      ? pattern
+      : new RegExp(pattern.source, `${pattern.flags}g`);
+    sanitized = ReflectApply(StringPrototypeReplace, sanitized, [globalPattern, ""]) as string;
+  }
+  return sanitized;
+}
+
 function interpolateVariables(
   template: string,
   variables: Record<string, unknown>,
@@ -192,7 +209,7 @@ function interpolateVariables(
     (match: string, key: string) => {
       if (!ReflectApply(ObjectPrototypeHasOwnProperty, variables, [key])) return match;
       const value = variables[key];
-      return value != null ? StringConstructor(value) : match;
+      return value != null ? sanitizeVariableValue(StringConstructor(value)) : match;
     },
   ]) as string;
 }
