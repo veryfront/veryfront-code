@@ -23,6 +23,7 @@ import {
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
+import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import type { ModelRuntime } from "./types.ts";
 
@@ -256,6 +257,14 @@ function autoInitializeFromEnv(): void {
         "OpenAI-compatible provider not installed. Add @veryfront/ext-llm-openai to use mistral/* models " +
         "(Mistral uses the OpenAI-compatible wire format and is routed through the openai extension).",
     }));
+  });
+
+  // The local provider is always available and needs no API key.
+  // createLocalModel is a lightweight synchronous constructor — the actual
+  // @huggingface/transformers import and model loading happen lazily on the
+  // first prepare/doGenerate/doStream call, so this adds no startup overhead.
+  manager.registerShared("local", (id) => {
+    return createLocalModel(id);
   });
 
   manager.registerShared("veryfront-cloud", (id) => {
