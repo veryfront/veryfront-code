@@ -94,7 +94,6 @@ interface NodeFsPromises {
   >;
   rm(path: string, options?: { recursive?: boolean; force?: boolean }): Promise<void>;
   chmod(path: string, mode: number): Promise<void>;
-  rename(from: string, to: string): Promise<void>;
 }
 
 class NodeFileSystem implements FileSystem {
