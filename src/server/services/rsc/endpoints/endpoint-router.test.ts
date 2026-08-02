@@ -226,6 +226,11 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
 
         assertEquals(result?.status, 503);
         assertEquals(result?.headers.get("cache-control"), "no-store");
+        assertEquals(result?.headers.get("content-type"), "application/problem+json");
+        assertEquals(
+          (await result?.json() as { type?: string }).type,
+          "https://veryfront.com/docs/errors/project-execution-unavailable",
+        );
       });
     }
 

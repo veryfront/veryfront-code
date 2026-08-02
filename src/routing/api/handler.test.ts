@@ -122,6 +122,45 @@ describe("APIRouteHandler", () => {
   });
 
   describe("remote execution isolation", () => {
+    it("rejects shared-runtime API execution before preparing or starting a Worker", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set(
+        "/test/project/app/api/isolation/route.ts",
+        "export function GET() { return new Response('must-not-run'); }",
+      );
+      let hostLoads = 0;
+      let preparations = 0;
+      __injectDepsForTests({
+        loadHandlerModule: () => {
+          hostLoads++;
+          throw new Error("shared tenant reached host import");
+        },
+        prepareHandlerModule: () => {
+          preparations++;
+          throw new Error("shared tenant reached same-process worker preparation");
+        },
+      });
+
+      const handler = await createInitializedHandler("/test/project", adapter);
+      const response = await handler.handle(
+        new Request("http://localhost/api/isolation"),
+        {
+          projectDir: "/test/project",
+          adapter,
+          securityConfig: null,
+          cspUserHeader: null,
+          isLocalProject: false,
+          prepareHostedConfigContext: () =>
+            Promise.reject(new Error("hosted config must not be evaluated")),
+        },
+      );
+
+      assertEquals(response?.status, 503);
+      assertEquals(response?.headers.get("cache-control"), "no-store");
+      assertEquals(hostLoads, 0);
+      assertEquals(preparations, 0);
+    });
+
     it("prepares without host import and executes top-level code in an env-denied worker", async () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set(
@@ -135,8 +174,15 @@ describe("APIRouteHandler", () => {
         `import "data:text/javascript,globalThis.${marker}%3D%27worker-imported%27";`,
         "let envAccess = 'allowed';",
         "try { Deno.env.get('VF_TEST_HOST_ONLY_SECRET'); } catch { envAccess = 'blocked'; }",
-        "export function GET() {",
-        `  return Response.json({ envAccess, marker: globalThis.${marker} });`,
+        "export function GET(request) {",
+        `  return Response.json({`,
+        `    envAccess,`,
+        `    marker: globalThis.${marker},`,
+        `    applicationAuthorization: request.headers.get("authorization"),`,
+        `    applicationCookie: request.headers.get("cookie"),`,
+        `    infrastructureToken: request.headers.get("x-token"),`,
+        `    projectSlug: request.headers.get("x-project-slug"),`,
+        `  });`,
         "}",
       ].join("\n");
       const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(source));
@@ -173,7 +219,14 @@ describe("APIRouteHandler", () => {
         normalizeSourceIntegrationPolicy({ allow: {} }),
         () =>
           handler.handle(
-            new Request("http://localhost/api/isolation"),
+            new Request("http://localhost/api/isolation", {
+              headers: {
+                authorization: "Bearer application-user-token",
+                cookie: "session=application-cookie",
+                "x-project-slug": "tenant-project",
+                "x-token": "platform-service-token",
+              },
+            }),
             remoteCtx,
           ),
       );
@@ -181,8 +234,12 @@ describe("APIRouteHandler", () => {
       assertExists(response);
       assertEquals(response.status, 200);
       assertEquals(await response.json(), {
+        applicationAuthorization: "Bearer application-user-token",
+        applicationCookie: "session=application-cookie",
         envAccess: "blocked",
+        infrastructureToken: null,
         marker: "worker-imported",
+        projectSlug: null,
       });
       assertEquals(hostLoads, 0);
       assertEquals(preparations, 1);
@@ -204,7 +261,13 @@ describe("APIRouteHandler", () => {
       __injectDepsForTests({
         loadHandlerModule: () => {
           hostLoads++;
-          return Promise.resolve({ GET: () => new Response("local") });
+          return Promise.resolve({
+            GET: (request: Request) =>
+              Response.json({
+                authorization: request.headers.get("authorization"),
+                infrastructureToken: request.headers.get("x-token"),
+              }),
+          });
         },
         prepareHandlerModule: () => {
           preparations++;
@@ -214,7 +277,12 @@ describe("APIRouteHandler", () => {
 
       const handler = await createInitializedHandler("/test/project", adapter);
       const response = await handler.handle(
-        new Request("http://localhost/api/local"),
+        new Request("http://localhost/api/local", {
+          headers: {
+            authorization: "Bearer local-application-token",
+            "x-token": "local-infrastructure-token",
+          },
+        }),
         {
           projectDir: "/test/project",
           adapter,
@@ -225,7 +293,10 @@ describe("APIRouteHandler", () => {
       );
 
       assertEquals(response?.status, 200);
-      assertEquals(await response?.text(), "local");
+      assertEquals(await response?.json(), {
+        authorization: "Bearer local-application-token",
+        infrastructureToken: null,
+      });
       assertEquals(hostLoads, 1);
       assertEquals(preparations, 0);
     });

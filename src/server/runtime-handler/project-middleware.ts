@@ -14,6 +14,7 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isWebSocketPath } from "#veryfront/server/runtime-handler/request-utils.ts";
 import { isExplicitlyLocalProject } from "#veryfront/security/project-locality.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 const DEFAULT_MAX_ENTRIES = 100;
 const logger = serverLogger.component("project-middleware");
@@ -124,7 +125,7 @@ export class ProjectMiddlewareRuntime {
 
       const composed = pipeline.compose();
       const middlewareContext = new MiddlewareContext(
-        request,
+        createApplicationRequest(request),
         getProjectEnvSnapshot() ?? {},
       );
       return await composed(middlewareContext, next);

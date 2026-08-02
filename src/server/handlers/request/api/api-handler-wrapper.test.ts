@@ -202,7 +202,8 @@ describe("ApiHandlerWrapper", () => {
 
     const result = await handler.handle(new Request("http://localhost/new-webhook"), ctx);
 
-    assertEquals(result, { continue: true });
+    assertEquals(result.response?.status, 503);
+    assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
     assertEquals(sourceSnapshotRefreshes, 1);
   });
 
@@ -236,8 +237,50 @@ describe("ApiHandlerWrapper", () => {
 
     const result = await handler.handle(new Request("http://localhost/api"), ctx);
 
-    assertEquals(result.response?.status, 404);
-    assertEquals(sourceSnapshotRefreshes, 1);
+    assertEquals(result.response?.status, 503);
+    assertEquals(sourceSnapshotRefreshes, 0);
+  });
+
+  it("never starts shared-runtime API discovery or a same-process Worker", async () => {
+    let projectContextEntries = 0;
+    let filesystemReads = 0;
+    const ctx = createCtx({});
+    const fs = ctx.adapter.fs as unknown as {
+      runWithContext: (
+        slug: string,
+        token: string,
+        fn: () => Promise<unknown>,
+      ) => Promise<unknown>;
+      exists: (path: string) => Promise<boolean>;
+      readDir: (path: string) => AsyncIterable<never>;
+    };
+    fs.runWithContext = async (_slug, _token, fn) => {
+      projectContextEntries++;
+      return await fn();
+    };
+    fs.exists = () => {
+      filesystemReads++;
+      return Promise.resolve(true);
+    };
+    fs.readDir = async function* () {
+      filesystemReads++;
+      yield* [];
+    };
+
+    const handler = new ApiHandlerWrapper("/tmp/project", ctx.adapter);
+    const result = await handler.handle(
+      new Request("http://localhost/api/private"),
+      ctx,
+    );
+
+    assertEquals(result.response?.status, 503);
+    assertEquals(projectContextEntries, 1);
+    assertEquals(filesystemReads, 0);
+    const problem = await result.response!.json();
+    assertEquals(
+      problem.type,
+      "https://veryfront.com/docs/errors/project-execution-unavailable",
+    );
   });
 
   it("forwards environmentName into multi-project request context", async () => {

@@ -61,6 +61,7 @@ import {
   isExplicitlyLocalProject,
   readOwnDataProperty,
 } from "#veryfront/security/project-locality.ts";
+import { isInfrastructureOnlyRequestHeader } from "#veryfront/security/http/application-request.ts";
 
 const apply = Reflect.apply;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -177,10 +178,13 @@ function getHeader(headers: Headers, name: string): string | null {
   return apply(headersGet, headers, [name]) as string | null;
 }
 
-function snapshotHeaders(headers: Headers): [string, string][] {
+function snapshotHeaders(
+  headers: Headers,
+): [string, string][] {
   const result: [string, string][] = [];
   apply(headersForEach, headers, [
     (value: string, name: string) => {
+      if (isInfrastructureOnlyRequestHeader(name)) return;
       apply(arrayPush, result, [[name, value]]);
     },
   ]);
@@ -841,7 +845,9 @@ async function readBodyWithSizeGuard(
   return body;
 }
 
-async function serializeRequest(request: Request): Promise<SerializedRequest> {
+async function serializeRequest(
+  request: Request,
+): Promise<SerializedRequest> {
   const headers = getRequestHeaders(request);
   const url = getRequestUrl(request);
   const method = getRequestMethod(request);

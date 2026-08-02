@@ -75,6 +75,18 @@ async function sha256Hex(value: string): Promise<string> {
 }
 
 /**
+ * Hash arbitrarily sized semantic material with the exact UTF-16 encoding used
+ * by worker identities. This keeps env and policy values out of pool keys
+ * without introducing TextEncoder replacement-character collisions.
+ */
+export function digestWorkerGenerationMaterial(value: string): Promise<string> {
+  if (typeof value !== "string") {
+    throw new TypeError("Worker generation semantic material must be a string");
+  }
+  return sha256Hex(value);
+}
+
+/**
  * Encode every JavaScript UTF-16 code unit without normalization or
  * replacement. TextEncoder would collapse lone surrogate values to U+FFFD,
  * which is unsuitable for an identity key.

@@ -3,7 +3,12 @@ import { join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getConfig } from "#veryfront/config";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
-import { createError, toError } from "#veryfront/errors";
+import {
+  createError,
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+  toError,
+} from "#veryfront/errors";
 import { badGateway, internalServerError, notFound } from "#veryfront/http/responses";
 import type { CORSConfig } from "#veryfront/security";
 import { applyCORSHeaders, handleCORSPreflight } from "#veryfront/security";
@@ -26,6 +31,7 @@ import {
   evictWorkerScopeIfPresent,
   isWorkerIsolationEnabled,
 } from "#veryfront/security/sandbox/worker-pool.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 /** Max entries in the loaded-handler LRU cache */
 const HANDLER_CACHE_MAX_ENTRIES = 256;
@@ -237,6 +243,22 @@ export class APIRouteHandler {
         });
 
         const isLocalProject = ctx?.isLocalProject === true;
+        if (!isLocalProject && ctx?.prepareHostedConfigContext) {
+          const unavailable = createErrorResponseFromDefinition(
+            PROJECT_EXECUTION_UNAVAILABLE,
+            {
+              detail:
+                "Shared runtimes require a dedicated isolated project runtime for API execution",
+              instance: pathname,
+            },
+          );
+          unavailable.headers.set("cache-control", "no-store");
+          return await applyCORSHeaders({
+            request,
+            response: unavailable,
+            config: this.corsConfig ?? undefined,
+          }) ?? unavailable;
+        }
         const useHostRealm = isLocalProject && !isWorkerIsolationEnabled();
         const { route, errorMessage } = await this.loadRoute(match, useHostRealm);
         if (!route) {
@@ -276,16 +298,17 @@ export class APIRouteHandler {
           allowHostProjectCodeExecution: useHostRealm,
         };
 
+        const applicationRequest = createApplicationRequest(request);
         const response = route.kind === "isolated"
           ? isAppRoute
-            ? await executePreparedAppRoute(request, match, pathname, {
+            ? await executePreparedAppRoute(applicationRequest, match, pathname, {
               executionScopeId: this.executionScopeId,
               module: route.module,
               modulePath: match.route.page,
               projectDir: this.projectDir,
               isLocalProject,
             })
-            : await executePreparedPagesRoute(request, match, pathname, {
+            : await executePreparedPagesRoute(applicationRequest, match, pathname, {
               executionScopeId: this.executionScopeId,
               module: route.module,
               modulePath: match.route.page,
@@ -295,7 +318,7 @@ export class APIRouteHandler {
           : isAppRoute
           ? await executeAppRoute(
             route.handler,
-            request,
+            applicationRequest,
             match,
             pathname,
             adapter,
@@ -303,7 +326,7 @@ export class APIRouteHandler {
           )
           : await executePagesRoute(
             route.handler,
-            request,
+            applicationRequest,
             match,
             pathname,
             adapter,

@@ -1834,7 +1834,7 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
         "context",
         "sourceIntegrationPolicy",
       ],
-      [],
+      ["projectEnv"],
       "payload",
     );
     return {
@@ -1853,6 +1853,11 @@ export function snapshotWorkerRequest(value: unknown): WorkerRequest {
       ),
       context: snapshotDataContext(readDataProperty(request, "context")),
       sourceIntegrationPolicy,
+      projectEnv: snapshotProjectEnv(
+        readOptionalDataProperty(request, "projectEnv").present
+          ? readDataProperty(request, "projectEnv")
+          : undefined,
+      ),
     };
   }
 

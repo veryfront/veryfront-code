@@ -164,6 +164,8 @@ export interface FetchDataRequest {
   context: SerializedDataContext;
   /** Exact source-owned integration policy for this project execution. */
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
+  /** Immutable project env snapshot included in worker generation semantics. */
+  projectEnv?: Record<string, string>;
 }
 
 export interface RenderSSRRequest {

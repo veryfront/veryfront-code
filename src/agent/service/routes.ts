@@ -19,6 +19,7 @@ import {
 import { executeHostedDurableChatRun } from "../hosted/durable-chat-run-start.ts";
 import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "./auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 import { isResponseLike } from "./response-like.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 import {
@@ -268,8 +269,8 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   }
 
   const hostedAgUiRuntimeHandler = createAgUiRuntimeHandler({
-    beforeParse: async ({ request }) => {
-      const result = await authenticateAgUiRequest(request);
+    beforeParse: async ({ applicationRequest }) => {
+      const result = await authenticateAgUiRequest(applicationRequest);
       return isResponseLike(result) ? result : undefined;
     },
     validationErrorResponse: ({ response }) => createHostedAgUiValidationErrorResponse(response),
@@ -309,6 +310,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     requestOrCtx?: unknown;
   }): Promise<Response> {
     return trace("handler.durableChatRunExecute", async () => {
+      const applicationRequest = createApplicationRequest(input.request);
       const req = await parseHostedChatRequestFromRequest(input.request, {
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
@@ -321,7 +323,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 
       return executeParsedDurableChatRun({
         req,
-        request: input.request,
+        request: applicationRequest,
         requestOrCtx: input.requestOrCtx,
       });
     });
@@ -333,6 +335,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     runId?: string;
   }): Promise<Response> {
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
+      const applicationRequest = createApplicationRequest(input.request);
       const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(input.request, {
         authenticate: options.authenticateRequest,
         verifyProjectAccess: ({ projectId, authToken }) =>
@@ -350,7 +353,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
 
       return executeParsedDurableChatRun({
         req,
-        request: input.request,
+        request: applicationRequest,
         requestOrCtx: input.requestOrCtx,
       });
     });

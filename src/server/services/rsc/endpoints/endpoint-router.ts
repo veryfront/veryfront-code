@@ -35,6 +35,10 @@ import { handleClientScript, handleDomScript } from "./script-handlers.ts";
 import type { RSCEndpointParams } from "./types.ts";
 import { analyzeComponent } from "#veryfront/rendering/rsc/component-analyzer.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 
 const rscEndpointRouterLog = serverLogger.component("rsc-endpoint-router");
 const rscLog = serverLogger.component("rsc");
@@ -117,13 +121,22 @@ export async function handleRSCEndpoint(
   // generation-owned isolated RSC graph is connected to the worker renderer,
   // remote projects must not fall back to the shared host realm.
   if (!isLocalProject && isRscServerExecutionEndpoint(sub)) {
-    return new Response("Service Unavailable", {
-      status: HttpStatus.SERVICE_UNAVAILABLE,
-      headers: {
-        "cache-control": "no-store",
-        "retry-after": "1",
+    const unavailable = createErrorResponseFromDefinition(
+      PROJECT_EXECUTION_UNAVAILABLE,
+      {
+        detail: "Shared runtimes require a dedicated isolated project runtime for RSC execution",
+        instance: pathname,
       },
-    });
+    );
+    unavailable.headers.set("cache-control", "no-store");
+    unavailable.headers.set("retry-after", "1");
+    return req.method === "HEAD"
+      ? new Response(null, {
+        status: unavailable.status,
+        statusText: unavailable.statusText,
+        headers: unavailable.headers,
+      })
+      : unavailable;
   }
 
   const url = new URL(req.url);
