@@ -1115,12 +1115,6 @@ export async function createRuntimeAgentStreamResponse(
                 error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
               });
             });
-            logger.debug("Internal agent runtime stream response closed", {
-              runId: input.runId,
-              threadId: input.threadId,
-              agentId: agent.id,
-              clientAttached,
-            });
           }
         },
         buildInternalAgentRunTraceAttributes({
@@ -1130,6 +1124,21 @@ export async function createRuntimeAgentStreamResponse(
           status: "running",
         }),
       );
+
+      // `withSpan` ends the run span after its callback settles. Keep the
+      // response open until that lifecycle has completed so observing EOF also
+      // guarantees that the terminal run telemetry is finalized. Cancellation
+      // marks the client detached, in which case the stream is already closed
+      // by its consumer and must not be closed a second time here.
+      if (clientAttached) {
+        controller.close();
+      }
+      logger.debug("Internal agent runtime stream response closed", {
+        runId: input.runId,
+        threadId: input.threadId,
+        agentId: agent.id,
+        clientAttached,
+      });
     },
     cancel() {
       clientAttached = false;

@@ -11,6 +11,22 @@ import {
 } from "./remote-mcp.ts";
 
 describe("tool/remote-mcp", () => {
+  it("normalizes non-Error caller abort reasons", async () => {
+    const controller = new AbortController();
+    controller.abort("caller stopped");
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      fetch: () => Promise.reject("caller stopped"),
+    });
+
+    await assertRejects(
+      () => source.listTools({ abortSignal: controller.signal }),
+      Error,
+      "Remote MCP request was aborted",
+    );
+  });
+
   it("lists tools from a remote MCP server using the standard JSON-RPC contract", async () => {
     let requestUrl = "";
     let requestMethod = "";
@@ -418,6 +434,31 @@ describe("tool/remote-mcp", () => {
       description: "Search documentation",
       parameters: { type: "object", properties: {} },
     }]);
+  });
+
+  it("applies the tools/list response limit to SSE catalogs", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    const padding = "x".repeat(MAX_REMOTE_MCP_CALL_RESPONSE_BYTES + 1_024);
+
+    const tools = await withMockFetch(
+      async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: { tools: [], padding },
+            })
+          }\n\n`,
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+      async () => await source.listTools(),
+    );
+
+    assertEquals(tools, []);
   });
 
   it("throws when the remote MCP server responds with a JSON-RPC error", async () => {

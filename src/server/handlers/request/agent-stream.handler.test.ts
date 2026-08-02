@@ -278,7 +278,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
-    assertEquals(typeof runtimeSystem, "function");
+    assertEquals(typeof runtimeSystem, "string");
     assertEquals(
       runtimeMessages?.[0]?.parts as unknown,
       [
@@ -302,7 +302,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
       ],
     );
-    const prompt = await (runtimeSystem as () => Promise<string>)();
+    const prompt = runtimeSystem as string;
     assertStringIncludes(
       prompt,
       'branch_id: "10000000-1000-4000-8000-100000000006"',
@@ -1918,8 +1918,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("prefers VERYFRONT_API_BASE_URL over VERYFRONT_API_URL", async () => {
-    const configuredApiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
-    const apiBaseUrl = new URL(configuredApiBaseUrl).origin;
+    const apiBaseUrl = "http://veryfront-api.veryfront-staging.svc.cluster.local:80";
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
 
@@ -1982,7 +1981,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
     const fetchUrls: string[] = [];
     Deno.env.set("VERYFRONT_API_URL", "https://wrong-api.example.test");
-    Deno.env.set("VERYFRONT_API_BASE_URL", configuredApiBaseUrl);
+    Deno.env.set("VERYFRONT_API_BASE_URL", apiBaseUrl);
     globalThis.fetch = ((url, init) => {
       fetchUrls.push(String(url));
       assertEquals(
@@ -2072,7 +2071,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
-      `${apiBaseUrl}/mcp`,
+      `${new URL(apiBaseUrl).origin}/mcp`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
     ]);

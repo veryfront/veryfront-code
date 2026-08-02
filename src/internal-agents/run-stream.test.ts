@@ -1308,8 +1308,8 @@ describe("internal-agents/run-stream", () => {
       },
     });
 
-    assertEquals(typeof runtimeSystem, "function");
-    const prompt = await (runtimeSystem as () => Promise<string>)();
+    assertEquals(typeof runtimeSystem, "string");
+    const prompt = runtimeSystem as string;
     assertEquals(prompt.includes("- web_search"), false);
   });
 

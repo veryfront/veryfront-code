@@ -201,6 +201,28 @@ describe("tool factory", () => {
       assertEquals(t.mcp?.cachePolicy, "cache");
     });
 
+    it("rejects MCP config descriptor traps with a framework schema error", () => {
+      const mcp = new Proxy({ enabled: true }, {
+        ownKeys: () => ["enabled"],
+        getOwnPropertyDescriptor: () => {
+          throw new Error("descriptor trap must not escape");
+        },
+      });
+
+      assertThrows(
+        () =>
+          tool({
+            id: "hostile-mcp-config",
+            description: "desc",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+            mcp,
+          }),
+        Error,
+        "MCP configuration must contain only data properties",
+      );
+    });
+
     it("snapshots raw schemas and metadata at construction", () => {
       const inputSchema: JsonSchema = {
         type: "object",

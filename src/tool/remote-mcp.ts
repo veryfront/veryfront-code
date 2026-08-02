@@ -245,13 +245,19 @@ function joinCallToolText(content: JsonRpcCallToolContentItem[]): string {
     .join("\n");
 }
 
-function parseJsonText(text: string): unknown | undefined {
+function parseJsonValue(text: string): unknown | undefined {
   try {
-    const snapshot = snapshotBoundedJsonValue(JSON.parse(text));
-    return snapshot.success ? snapshot.value : undefined;
+    return JSON.parse(text);
   } catch {
     return undefined;
   }
+}
+
+function parseJsonText(text: string): unknown | undefined {
+  const value = parseJsonValue(text);
+  if (value === undefined) return undefined;
+  const snapshot = snapshotBoundedJsonValue(value);
+  return snapshot.success ? snapshot.value : undefined;
 }
 
 function isOauthExpiredMessage(value: unknown): boolean {
@@ -428,7 +434,10 @@ function parseSseEvents(text: string): SseEvent[] {
 
 function parseJsonRpcSsePayload(text: string, expectedId: string): unknown {
   const parsedPayloads = parseSseEvents(text)
-    .map((event) => parseJsonText(event.data.join("\n")))
+    // The response reader has already applied the method-specific byte cap.
+    // tools/list deliberately permits a larger payload than the generic JSON
+    // snapshot limit; its page and per-tool normalizers enforce finer bounds.
+    .map((event) => parseJsonValue(event.data.join("\n")))
     .filter((payload): payload is unknown => payload !== undefined);
 
   const matchingPayload = parsedPayloads.find(
@@ -564,17 +573,18 @@ function mergeAcceptHeader(existingAccept: string | null): string {
 
 interface RemoteMcpRequestSignalScope {
   signal: AbortSignal;
+  didTimeout(): boolean;
   dispose(): void;
 }
 
 function createRequestSignalScope(
   callerSignal: AbortSignal | undefined,
 ): RemoteMcpRequestSignalScope {
-  callerSignal?.throwIfAborted();
-
   const controller = new AbortController();
   const forwardCallerAbort = () => controller.abort(callerSignal?.reason);
+  let timedOut = false;
   const timeoutId = setTimeout(() => {
+    timedOut = true;
     controller.abort(
       new DOMException(
         `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
@@ -591,6 +601,7 @@ function createRequestSignalScope(
   let disposed = false;
   return {
     signal: controller.signal,
+    didTimeout: () => timedOut,
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -683,14 +694,10 @@ async function postJsonRpc(
     );
   } catch (error) {
     if (requestScope.signal.aborted) {
-      const reason = requestScope.signal.reason;
-      if (reason instanceof DOMException && reason.name === "TimeoutError") {
+      if (requestScope.didTimeout()) {
         throw TIMEOUT_ERROR.create({
           detail: `Remote MCP request timed out after ${REMOTE_MCP_REQUEST_TIMEOUT_MS}ms`,
         });
-      }
-      if (reason !== undefined) {
-        throw reason;
       }
       throw NETWORK_ERROR.create({
         detail: "Remote MCP request was aborted",

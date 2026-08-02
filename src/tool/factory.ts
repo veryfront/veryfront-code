@@ -132,7 +132,12 @@ function snapshotMcpConfig(
     if (typeof key !== "string") {
       schemaError(toolId, "MCP configuration must be a bounded JSON object");
     }
-    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      schemaError(toolId, "MCP configuration must contain only data properties");
+    }
     if (!descriptor || !("value" in descriptor)) {
       schemaError(toolId, "MCP configuration must contain only data properties");
     }
