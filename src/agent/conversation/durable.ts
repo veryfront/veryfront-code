@@ -1,5 +1,5 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import { NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { isVeryfrontError, NETWORK_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
 import {
   AppendConversationRunEventsResponseSchema,
   CompleteConversationRunResponseSchema,
@@ -291,6 +291,7 @@ export async function recoverConversationRunAppendFailure(input: {
     | "payload_too_large"
     | "auth_rejected";
   errorMessage?: string;
+  retryCause?: "timeout";
   run?: ConversationRunProjection;
 }> {
   const cursorRecovery = await recoverConversationRunCursorMismatch({
@@ -363,6 +364,9 @@ export async function recoverConversationRunAppendFailure(input: {
     latestEventId: cursorRecovery.latestEventId,
     latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
     errorMessage: input.error instanceof Error ? input.error.message : String(input.error),
+    ...(isVeryfrontError(input.error) && input.error.slug === "timeout-error"
+      ? { retryCause: "timeout" as const }
+      : {}),
     ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
   };
 }
@@ -410,6 +414,7 @@ export async function recoverConversationRunAppendExecution(input: {
     pendingEvents: unknown[];
     consecutiveFailures: number;
     errorMessage: string;
+    retryCause?: "timeout";
   }
 > {
   const recovered = await recoverConversationRunAppendFailure({
@@ -452,6 +457,7 @@ export async function recoverConversationRunAppendExecution(input: {
     pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
     consecutiveFailures: input.consecutiveFailures + 1,
     errorMessage: recovered.errorMessage ?? "Conversation run append failed",
+    ...(recovered.retryCause ? { retryCause: recovered.retryCause } : {}),
   };
 }
 
@@ -524,6 +530,7 @@ export async function flushConversationRunEventBatches(input: {
     pendingEvents: unknown[];
     consecutiveFailures: number;
     errorMessage?: string;
+    retryCause?: "timeout";
   }
   | {
     outcome: "stopped";
@@ -605,7 +612,10 @@ export async function flushConversationRunEventBatches(input: {
         pendingEvents: recovered.pendingEvents,
         consecutiveFailures: recovered.consecutiveFailures,
         ...(recovered.outcome === "retry_scheduled"
-          ? { errorMessage: recovered.errorMessage }
+          ? {
+            errorMessage: recovered.errorMessage,
+            ...(recovered.retryCause ? { retryCause: recovered.retryCause } : {}),
+          }
           : {}),
       };
     }
@@ -658,6 +668,7 @@ export async function flushConversationRunEventQueue(input: {
     pendingEvents: unknown[];
     consecutiveFailures: number;
     errorMessage: string;
+    retryCause?: "timeout";
   }
 > {
   let latestEventId = input.latestEventId;
@@ -719,6 +730,7 @@ export async function flushConversationRunEventQueue(input: {
       pendingEvents: flushed.pendingEvents,
       consecutiveFailures: flushed.consecutiveFailures,
       errorMessage: flushed.errorMessage ?? "Conversation run append failed",
+      ...(flushed.retryCause ? { retryCause: flushed.retryCause } : {}),
     };
   }
 
@@ -857,6 +869,7 @@ export function createConversationRunEventQueueController(input: {
       consecutiveFailures,
       disabled: false as const,
       errorMessage: flushed.errorMessage,
+      ...(flushed.retryCause ? { retryCause: flushed.retryCause } : {}),
     };
   }
 

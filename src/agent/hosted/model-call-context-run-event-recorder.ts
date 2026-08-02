@@ -338,7 +338,10 @@ export function createModelCallContextRunEventRecorder(input: {
           partCount = events.length;
           await input.mirror.appendEvents(events);
           abortSignal.throwIfAborted();
-          const resolvedSnapshot = await input.mirror.flush({ abortSignal });
+          const resolvedSnapshot = await input.mirror.flush({
+            abortSignal,
+            throwOnTimeoutRetry: true,
+          });
           assertQuiescent(resolvedSnapshot, "after");
           assertQuiescent(input.mirror.getSnapshot(), "after");
         },
