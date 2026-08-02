@@ -1,6 +1,9 @@
 import type { Prompt } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
+import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 
 const promptRegistryManager = new ProjectScopedRegistryManager<Prompt>("prompt");
@@ -14,7 +17,7 @@ function createMissingPromptError(id: string): Error {
   );
 }
 
-class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
+class PromptRegistryInternal extends ScopedRegistryFacade<Prompt> {
   getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
     const registeredPrompt = this.get(id);
     if (registeredPrompt) return registeredPrompt.getContent(variables);
@@ -26,5 +29,20 @@ class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
   }
 }
 
-/** Shared prompt registry value. */
-export const promptRegistry = new PromptRegistryClass(promptRegistryManager);
+/** Framework-only prompt registry with process-wide maintenance capabilities. */
+export const promptRegistryInternal = new PromptRegistryInternal(promptRegistryManager);
+
+class PromptRegistry extends ScopedRegistryView<Prompt> {
+  getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
+    const registeredPrompt = this.get(id);
+    if (registeredPrompt) return registeredPrompt.getContent(variables);
+    throw createMissingPromptError(id);
+  }
+
+  list(): string[] {
+    return this.getAllIds();
+  }
+}
+
+/** Project-scoped prompt registry value safe for application code. */
+export const promptRegistry = new PromptRegistry(promptRegistryInternal);

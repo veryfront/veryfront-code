@@ -6512,6 +6512,13 @@
           "npm:ajv@8.18.0",
           "npm:zod@4.3.6"
         ]
+      },
+      "extensions/ext-yaml": {
+        "dependencies": [
+          "jsr:@std/assert@1.0.19",
+          "jsr:@std/testing@1.0.17",
+          "jsr:@std/yaml@1.1.0"
+        ]
       }
     }
   }

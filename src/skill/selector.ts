@@ -28,6 +28,13 @@ function freeze<T>(value: T): Readonly<T> {
   return objectFreeze(value);
 }
 
+// Preserve the established mutable-array API type while enforcing immutability
+// at runtime. This avoids a TypeScript-breaking change for existing consumers.
+function freezeArray<T>(value: T[]): T[] {
+  objectFreeze(value);
+  return value;
+}
+
 function readOwnArrayElement<T>(
   values: readonly T[],
   index: number,
@@ -44,7 +51,7 @@ function readOwnArrayElement<T>(
 export type ResolvedSkillSelectorPolicy =
   | { kind: "all-visible"; source: "omitted" | "true" }
   | { kind: "none" }
-  | { kind: "allowlist"; entries: readonly string[] };
+  | { kind: "allowlist"; entries: string[] };
 
 /** Sanitized unresolved explicit selector entry. */
 export type UnresolvedSkillSelectorEntry = {
@@ -54,10 +61,10 @@ export type UnresolvedSkillSelectorEntry = {
 /** Deterministic resolved selector snapshot shared by skill catalog adapters. */
 export type ResolvedSkillSelectorSnapshot<TDefinition> = {
   readonly policy: ResolvedSkillSelectorPolicy;
-  readonly definitions: readonly TDefinition[];
-  readonly allowedSkillIds: readonly string[];
+  readonly definitions: TDefinition[];
+  readonly allowedSkillIds: string[];
   readonly skillSourcePaths: Readonly<Record<string, string>>;
-  readonly unresolvedEntries: readonly UnresolvedSkillSelectorEntry[];
+  readonly unresolvedEntries: UnresolvedSkillSelectorEntry[];
 };
 
 function freezeSelectorPolicy(
@@ -71,7 +78,7 @@ function freezeSelectorPolicy(
     }
     return freeze({
       kind: "allowlist",
-      entries: freeze(entries),
+      entries: freezeArray(entries),
     });
   }
   return policy.kind === "none"
@@ -85,10 +92,10 @@ export function createNoneSkillSelectorSnapshot<TDefinition>(
 ): ResolvedSkillSelectorSnapshot<TDefinition> {
   return freeze({
     policy: freezeSelectorPolicy(policy),
-    definitions: freeze([]),
-    allowedSkillIds: freeze([]),
+    definitions: freezeArray<TDefinition>([]),
+    allowedSkillIds: freezeArray<string>([]),
     skillSourcePaths: freeze({}),
-    unresolvedEntries: freeze([]),
+    unresolvedEntries: freezeArray<UnresolvedSkillSelectorEntry>([]),
   });
 }
 
@@ -152,10 +159,10 @@ function buildSnapshot<TDefinition>(
 
   return freeze({
     policy: freezeSelectorPolicy(policy),
-    definitions: freeze(definitionSnapshot),
-    allowedSkillIds: freeze(allowedSkillIds),
+    definitions: freezeArray(definitionSnapshot),
+    allowedSkillIds: freezeArray(allowedSkillIds),
     skillSourcePaths: freeze(skillSourcePaths),
-    unresolvedEntries: freeze(unresolvedSnapshot),
+    unresolvedEntries: freezeArray(unresolvedSnapshot),
   });
 }
 

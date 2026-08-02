@@ -57,6 +57,7 @@
     "./extensions/ext-document-kreuzberg",
     "./extensions/ext-db-sqlite",
     "./extensions/ext-parser-babel",
+    "./extensions/ext-yaml",
     "./extensions/ext-sandbox-shell-tools",
     "./extensions/ext-observability-opentelemetry",
     "./extensions/ext-observability-sentry",

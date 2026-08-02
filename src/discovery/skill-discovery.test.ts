@@ -1,3 +1,4 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -7,7 +8,7 @@ import { discoverAll } from "./index.ts";
 
 describe("src/discovery/skill-discovery", () => {
   beforeEach(() => {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   it("keeps first duplicate skill across discovery roots and registry", async () => {

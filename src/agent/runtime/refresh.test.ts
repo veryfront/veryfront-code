@@ -1,3 +1,4 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -179,7 +180,7 @@ describe("agent runtime refresh hooks", () => {
         ["error", "error"],
       );
     } finally {
-      skillRegistry.clearAll();
+      skillRegistryInternal.clearAll();
       await Deno.remove(rootPath, { recursive: true });
     }
   });

@@ -2,15 +2,15 @@ import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { prompt } from "./factory.ts";
-import { promptRegistry } from "./registry.ts";
+import { promptRegistry, promptRegistryInternal } from "./registry.ts";
 
 describe("prompt registry", () => {
   beforeEach(() => {
-    promptRegistry.clearAll();
+    promptRegistryInternal.clearAll();
   });
 
   afterEach(() => {
-    promptRegistry.clearAll();
+    promptRegistryInternal.clearAll();
   });
 
   describe("getContent()", () => {

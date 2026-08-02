@@ -240,17 +240,18 @@ Body`),
 
     it("does not echo invalid canonical identities in validation errors", () => {
       const token = "TOP_SECRET_ID";
-      const error = assertThrows(
-        () =>
-          validateSkillFileMetadata(
-            { name: "safe", description: "Safe" },
-            `safe\u001b[31m${token}`,
-          ),
-        Error,
-      );
+      let error: Error | undefined;
+      try {
+        validateSkillFileMetadata(
+          { name: "safe", description: "Safe" },
+          `safe\u001b[31m${token}`,
+        );
+      } catch (cause) {
+        if (cause instanceof Error) error = cause;
+      }
 
-      assertEquals(error.message.includes("\u001b"), false);
-      assertEquals(error.message.includes(token), false);
+      assertEquals(error?.message.includes("\u001b"), false);
+      assertEquals(error?.message.includes(token), false);
     });
 
     it("should reject whitespace around the directory canonical name", () => {

@@ -1,3 +1,5 @@
+import { skillRegistryInternal } from "#veryfront/skill/registry.ts";
+import "./_test-setup.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
@@ -38,7 +40,7 @@ function createNamedTestSkill(id: string, fsAdapter: FileSystemAdapter): Skill {
 
 describe("src/skill/tools", () => {
   beforeEach(() => {
-    skillRegistry.clearAll();
+    skillRegistryInternal.clearAll();
   });
 
   it("uses snake case runtime ids for skill platform tools", () => {

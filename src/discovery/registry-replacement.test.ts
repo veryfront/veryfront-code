@@ -31,7 +31,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
 
     await adapter.fs.writeFile(
       "/project/prompts/broken.ts",
-      "export default { description: 'not a prompt' };",
+      "throw new Error('broken prompt module');",
     );
 
     const config = {
@@ -55,7 +55,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     );
 
     assertInstanceOf(failure, DiscoveryGenerationError);
-    assertEquals(failure.result.errors[0]?.code, "invalid_export");
+    assertEquals(failure.result.errors[0]?.error instanceof Error, true);
     assertStrictEquals(promptRegistry.get("stable"), stable);
     assertEquals(promptRegistry.get("broken"), undefined);
 
@@ -69,7 +69,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
 
     const recovered = await replaceDiscoveredProjectPrimitives(config);
     assertEquals(recovered.errors, []);
-    assertEquals(promptRegistry.get("stable"), undefined);
+    assertStrictEquals(promptRegistry.get("stable"), stable);
     assertEquals(promptRegistry.get("broken")?.description, "Recovered");
   });
 
@@ -91,7 +91,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     );
     await adapter.fs.writeFile(
       "/project/prompts/broken.ts",
-      "export default { description: 'not a prompt' };",
+      "throw new Error('broken prompt module');",
     );
 
     const result = await replaceDiscoveredProjectPrimitives({
@@ -110,7 +110,7 @@ describe("replaceDiscoveredProjectPrimitives", () => {
     }, { errorPolicy: "publish-valid" });
 
     assertEquals(result.errors.length, 1);
-    assertEquals(promptRegistry.get("stable"), undefined);
+    assertStrictEquals(promptRegistry.get("stable"), stable);
     assertEquals(promptRegistry.get("valid")?.description, "Valid");
     assertEquals(promptRegistry.get("broken"), undefined);
   });

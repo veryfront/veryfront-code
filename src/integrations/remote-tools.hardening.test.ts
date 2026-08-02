@@ -33,6 +33,12 @@ const ENV_KEYS = [
 const originalEnv = new Map(ENV_KEYS.map((key) => [key, getEnv(key)]));
 const encoder = new TextEncoder();
 
+function requestSignalFromInit(init: unknown): AbortSignal | undefined {
+  if (typeof init !== "object" || init === null) return undefined;
+  const signal = (init as { signal?: unknown }).signal;
+  return signal instanceof AbortSignal ? signal : undefined;
+}
+
 function restoreRemoteToolEnv(): void {
   for (const key of ENV_KEYS) {
     const value = originalEnv.get(key);
@@ -206,7 +212,7 @@ describe("integrations/remote-tools hardening", () => {
     const started = Promise.withResolvers<void>();
 
     const operation = withMockFetch(
-      async (_input, init) => await rejectFetchWhenAborted(init?.signal, started),
+      async (_input, init) => await rejectFetchWhenAborted(requestSignalFromInit(init), started),
       () =>
         captureRejection(() => getRemoteIntegrationToolDefinitions({ abortSignal: caller.signal })),
     );
@@ -249,7 +255,7 @@ describe("integrations/remote-tools hardening", () => {
 
     const result = await withMockFetch(
       async (_input, init) => {
-        requestSignal = init?.signal instanceof AbortSignal ? init.signal : undefined;
+        requestSignal = requestSignalFromInit(init);
         return Response.json({ content: [], structuredContent: { ok: true } });
       },
       () =>
@@ -275,8 +281,8 @@ describe("integrations/remote-tools hardening", () => {
 
     const operation = withMockFetch(
       async (_input, init) => {
-        requestSignal = init?.signal instanceof AbortSignal ? init.signal : undefined;
-        return await rejectFetchWhenAborted(init?.signal, started);
+        requestSignal = requestSignalFromInit(init);
+        return await rejectFetchWhenAborted(requestSignalFromInit(init), started);
       },
       () => captureRejection(() => executeRemoteIntegrationTool("github__list_repos", {})),
     );

@@ -17,6 +17,7 @@ export type {
 } from "./code-parser.ts";
 
 export {
+  createSkillDocumentParserProvider,
   type SkillDocumentParserProvider,
   SkillDocumentParserProviderName,
   snapshotSkillDocumentParserProvider,
