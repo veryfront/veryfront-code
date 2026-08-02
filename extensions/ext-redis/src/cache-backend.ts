@@ -1,4 +1,4 @@
-import { logger as baseLogger } from "veryfront/utils";
+import { logger as baseLogger } from "veryfront/utils/logger";
 import { type Span, SpanNames } from "veryfront/observability";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { isProxy as isProxyWithoutHooks } from "node:util/types";
@@ -489,7 +489,7 @@ export class RedisCacheBackend implements CacheBackend {
   }
 
   private async probeRevisionCapability(client: RedisClient): Promise<boolean> {
-    if (typeof client.ttl !== "function") return false;
+    if (typeof client.ttl !== "function" || typeof client.info !== "function") return false;
     try {
       const [serverInfo, clusterInfo, memoryInfo] = await Promise.all([
         client.info("server"),

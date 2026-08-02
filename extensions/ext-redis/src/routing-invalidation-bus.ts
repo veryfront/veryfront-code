@@ -1,7 +1,6 @@
 import { createClient } from "redis";
-import { getEnv } from "veryfront";
+import { getEnv } from "veryfront/platform/env";
 import { getErrorMessage } from "veryfront/errors";
-import { base64urlEncodeBytes } from "veryfront/utils";
 import {
   hasProjectIdentityControlCharacters,
   isCanonicalOpaqueProjectIdentifier,
@@ -34,6 +33,12 @@ const EVENT_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:event:v1";
 const ACK_SIGNATURE_DOMAIN = "vf-proxy-routing-invalidation:ack:v1";
 const HMAC_SHA256_SIGNATURE_BYTES = 32;
 const HMAC_SHA256_SIGNATURE_BASE64URL_CODE_UNITS = 43;
+
+function encodeBase64Url(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
 
 type RedisListener = (message: string, channel: string) => void;
 type SignatureDomain = "event" | "ack";
@@ -420,7 +425,7 @@ async function signPayload(
   issuedAtMs: number,
   payload: string,
 ): Promise<string> {
-  return base64urlEncodeBytes(
+  return encodeBase64Url(
     new Uint8Array(
       await crypto.subtle.sign("HMAC", key, signatureInput(domain, issuedAtMs, payload)),
     ),

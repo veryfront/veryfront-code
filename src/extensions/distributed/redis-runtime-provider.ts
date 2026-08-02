@@ -112,7 +112,7 @@ export interface RedisClient {
   pExpire(key: string, milliseconds: number): Promise<boolean>;
   pTTL(key: string): Promise<number>;
   ttl?(key: string): Promise<number>;
-  info(section?: "server" | "memory" | "cluster"): Promise<string>;
+  info?(section?: "server" | "memory" | "cluster"): Promise<string>;
   on?(event: string, listener: (...args: unknown[]) => void): void;
   isOpen?: boolean;
 }
@@ -384,6 +384,7 @@ function captureRedisClient(value: unknown): RedisClient {
   if (cached) return cached;
   const methods = captureAsyncMethods(value, REDIS_CLIENT_METHODS, "Redis provider client");
   const ttl = readDataMethod(value, "ttl", "Redis provider client ttl", true);
+  const info = readDataMethod(value, "info", "Redis provider client info", true);
   const on = readDataMethod(value, "on", "Redis provider client on", true);
   let isOpenOwner: object | null = value;
   let isOpenDescriptor: PropertyDescriptor | undefined;
@@ -416,6 +417,11 @@ function captureRedisClient(value: unknown): RedisClient {
     ...(ttl
       ? {
         ttl: (...args: unknown[]) => Promise.resolve(Reflect.apply(ttl, value, args)),
+      }
+      : {}),
+    ...(info
+      ? {
+        info: (...args: unknown[]) => Promise.resolve(Reflect.apply(info, value, args)),
       }
       : {}),
     ...(on

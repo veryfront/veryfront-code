@@ -1,4 +1,4 @@
-import { rendererLogger } from "veryfront/utils";
+import { rendererLogger } from "veryfront/utils/logger";
 import {
   type CachePayload,
   escapeCacheGlobLiteral,

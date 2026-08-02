@@ -1,5 +1,5 @@
-import { assertEquals, assertRejects } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { MinimalMessage } from "veryfront/extensions/distributed/agent-memory-support";
 import { type RedisClient, RedisMemory } from "./agent-memory.ts";
 
@@ -79,6 +79,10 @@ function estimateTestTokens(messages: Msg[]): number {
   return Math.ceil(totalChars / 4);
 }
 
+function memoryKey(agentId: string, userId = "anonymous"): string {
+  return `veryfront:agent:memory:${agentId.length}:${agentId}:${userId.length}:${userId}`;
+}
+
 describe("agent/memory/redis", () => {
   it("round-trips messages through add() and getMessages()", async () => {
     const client = createFakeRedis();
@@ -141,16 +145,30 @@ describe("agent/memory/redis", () => {
     assertEquals((await a.getMessages())[0]?.content, "for-a");
   });
 
+  it("keeps delimiter-containing identities in distinct namespaces", async () => {
+    const client = createFakeRedis();
+    const first = new RedisMemory<Msg>("a:b", { type: "redis", client, userId: "c" });
+    const second = new RedisMemory<Msg>("a", { type: "redis", client, userId: "b:c" });
+
+    await first.add(msg("user", "first"));
+    await second.add(msg("user", "second"));
+
+    assertEquals((await first.getMessages())[0]?.content, "first");
+    assertEquals((await second.getMessages())[0]?.content, "second");
+    assertEquals(client.store.size, 2);
+  });
+
   it("throws on corrupt JSON instead of silently wiping history", async () => {
     const client = createFakeRedis();
     const memory = new RedisMemory<Msg>("corrupt", { type: "redis", client });
     // Seed the key with invalid JSON directly, then a read/add must surface it.
-    client.store.set("veryfront:agent:memory:corrupt:anonymous", "{not valid json");
+    const key = memoryKey("corrupt");
+    client.store.set(key, "{not valid json");
 
     await assertRejects(() => memory.getMessages());
     await assertRejects(() => memory.add(msg("user", "x")));
     // The corrupt value must NOT have been overwritten by add().
-    assertEquals(client.store.get("veryfront:agent:memory:corrupt:anonymous"), "{not valid json");
+    assertEquals(client.store.get(key), "{not valid json");
   });
 
   it("does not lose concurrent add() calls when an atomic Redis command surface is available", async () => {

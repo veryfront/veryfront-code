@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertThrows } from "@std/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   cacheTtlMillisecondsToSeconds,
   expiresImmediately,
@@ -9,8 +10,8 @@ import {
   resolveIntegerCacheTtlSeconds,
 } from "./ttl.ts";
 
-Deno.test("cache TTL contract", async (t) => {
-  await t.step("preserves precise TTLs and defaults only when omitted", () => {
+describe("cache TTL contract", () => {
+  it("preserves precise TTLs and defaults only when omitted", () => {
     assertEquals(resolveCacheTtlSeconds(undefined), undefined);
     assertEquals(resolveCacheTtlSeconds(undefined, 300), 300);
     assertEquals(resolveCacheTtlSeconds(0, 300), 0);
@@ -18,7 +19,7 @@ Deno.test("cache TTL contract", async (t) => {
     assertEquals(resolveCacheTtlSeconds(-0.1), -0.1);
   });
 
-  await t.step("rounds positive fractions up for integer-second protocols", () => {
+  it("rounds positive fractions up for integer-second protocols", () => {
     assertEquals(resolveIntegerCacheTtlSeconds(undefined, 300), 300);
     assertEquals(resolveIntegerCacheTtlSeconds(0.1), 1);
     assertEquals(resolveIntegerCacheTtlSeconds(1.01), 2);
@@ -26,14 +27,14 @@ Deno.test("cache TTL contract", async (t) => {
     assertEquals(resolveIntegerCacheTtlSeconds(-0.1), -0.1);
   });
 
-  await t.step("classifies zero and negative values as immediate expiry", () => {
+  it("classifies zero and negative values as immediate expiry", () => {
     assertEquals(expiresImmediately(0), true);
     assertEquals(expiresImmediately(-1), true);
     assertEquals(expiresImmediately(0.1), false);
     assertEquals(expiresImmediately(undefined), false);
   });
 
-  await t.step("rejects non-finite values before a backend can persist them", () => {
+  it("rejects non-finite values before a backend can persist them", () => {
     for (
       const ttl of [
         Number.NaN,
@@ -52,7 +53,7 @@ Deno.test("cache TTL contract", async (t) => {
     }
   });
 
-  await t.step("converts positive millisecond TTLs without shortening them", () => {
+  it("converts positive millisecond TTLs without shortening them", () => {
     assertEquals(cacheTtlMillisecondsToSeconds(1), 1);
     assertEquals(cacheTtlMillisecondsToSeconds(1_000), 1);
     assertEquals(cacheTtlMillisecondsToSeconds(1_001), 2);
@@ -62,7 +63,7 @@ Deno.test("cache TTL contract", async (t) => {
     );
   });
 
-  await t.step("rejects millisecond TTLs outside the safe integer-second range", () => {
+  it("rejects millisecond TTLs outside the safe integer-second range", () => {
     for (
       const ttl of [
         0,
@@ -76,7 +77,7 @@ Deno.test("cache TTL contract", async (t) => {
     }
   });
 
-  await t.step("advertised maximum produces an exact safe expiry timestamp", () => {
+  it("advertised maximum produces an exact safe expiry timestamp", () => {
     const now = Date.now();
     const expiresAt = now + MAX_CACHE_TTL_MILLISECONDS;
     assertEquals(Number.isSafeInteger(expiresAt), true);

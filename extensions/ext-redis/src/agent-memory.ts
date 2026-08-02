@@ -13,7 +13,7 @@ import {
   type MinimalMessage,
 } from "veryfront/extensions/distributed/agent-memory-support";
 import { withSpan } from "veryfront/observability/otlp-setup";
-import { agentLogger } from "veryfront/utils";
+import { agentLogger } from "veryfront/utils/logger";
 
 /**
  * Redis client interface (compatible with ioredis and node-redis)
@@ -141,7 +141,7 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
   }
 
   private getKey(): string {
-    return `${this.keyPrefix}${this.agentId}:${this.userId}`;
+    return `${this.keyPrefix}${this.agentId.length}:${this.agentId}:${this.userId.length}:${this.userId}`;
   }
 
   private parseMessages(data: string | null): M[] {

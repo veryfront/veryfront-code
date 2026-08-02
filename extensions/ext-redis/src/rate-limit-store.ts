@@ -1,5 +1,5 @@
 import { createError, toError } from "veryfront/errors";
-import { serverLogger } from "veryfront/utils";
+import { serverLogger } from "veryfront/utils/logger";
 import { createClient } from "redis";
 import {
   MAX_TIMER_DELAY_MS,
