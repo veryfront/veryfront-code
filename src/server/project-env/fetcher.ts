@@ -6,7 +6,12 @@
 
 import { encodeBase64, getBaseLogger } from "#veryfront/utils";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
-import { AUTHENTICATION_REQUIRED, NETWORK_ERROR, PERMISSION_DENIED } from "#veryfront/errors";
+import {
+  AUTHENTICATION_REQUIRED,
+  isVeryfrontError,
+  NETWORK_ERROR,
+  PERMISSION_DENIED,
+} from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { createProjectEnvSnapshot } from "./snapshot.ts";
 
@@ -144,7 +149,16 @@ async function fetchEnvironmentVariables(
       environmentId,
       error: error instanceof Error ? error.message : String(error),
     });
-    throw error;
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("Project environment request was cancelled", "AbortError");
+    }
+    if (isVeryfrontError(error)) throw error;
+    throw NETWORK_ERROR.create({
+      detail: "Project environment request failed",
+      cause: error,
+    });
   }
 }
 

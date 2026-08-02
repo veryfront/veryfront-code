@@ -49,6 +49,26 @@ function fetchFromMockApi(
 }
 
 describe("project-env/fetcher", () => {
+  it("maps unknown transport failures to typed 502 semantics", async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch;
+
+    try {
+      const error = await assertRejects(() =>
+        fetchProjectEnvVars(
+          "https://api.veryfront.test",
+          "my-project",
+          "env-123",
+          "test-token",
+        )
+      );
+      assertEquals((error as { slug?: string }).slug, "network-error");
+      assertEquals((error as { status?: number }).status, 502);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("fetches and transforms env vars from API", async () => {
     const { server, port } = createMockServer((req: Request) => {
       const url = new URL(req.url);
@@ -298,13 +318,14 @@ describe("project-env/fetcher", () => {
     const timeoutId = setTimeout(() => controller.abort(new Error("management timeout")), 10);
 
     try {
-      await assertRejects(() =>
+      const error = await assertRejects(() =>
         fetchFromMockApi(
           port,
           { username: "runtime-user", password: "runtime-pass" },
           controller.signal,
         )
       );
+      assertEquals(error.message, "management timeout");
       assertEquals(paths, ["/projects/my-project/environment-variables"]);
     } finally {
       clearTimeout(timeoutId);

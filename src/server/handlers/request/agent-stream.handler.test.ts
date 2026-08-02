@@ -1791,6 +1791,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000097",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "production",
+        releaseId: "release-production",
+      },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -1821,7 +1830,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
             JSON.stringify({
               data: [
                 { id: "env-staging", name: "staging", protected: true },
-                { id: "env-production", name: "production", protected: false },
+                {
+                  id: "10000000-1000-4000-8000-100000000097",
+                  name: "production",
+                  protected: false,
+                },
               ],
             }),
             { headers: { "content-type": "application/json" } },
@@ -1830,7 +1843,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       }
 
       if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
-        assertEquals(String(url).includes("environment_id=env-production"), true);
+        assertEquals(
+          String(url).includes(
+            "environment_id=10000000-1000-4000-8000-100000000097",
+          ),
+          true,
+        );
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -1927,7 +1945,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [
       `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environments`,
-      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100`,
+      `${TEST_PUBLIC_API_ORIGIN}/projects/support-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000097&limit=100`,
       `${TEST_PUBLIC_API_ORIGIN}/mcp`,
     ]);
   });
@@ -1981,6 +1999,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000096",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "production",
+        releaseId: "release-production",
+      },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -2031,7 +2058,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
           new Response(
             JSON.stringify({
               data: [
-                { id: "env-production-base-url", name: "production", protected: false },
+                {
+                  id: "10000000-1000-4000-8000-100000000096",
+                  name: "production",
+                  protected: false,
+                },
               ],
             }),
             { headers: { "content-type": "application/json" } },
@@ -2042,7 +2073,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
       if (
         String(url).includes(`${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?`)
       ) {
-        assertEquals(String(url).includes("environment_id=env-production-base-url"), true);
+        assertEquals(
+          String(url).includes(
+            "environment_id=10000000-1000-4000-8000-100000000096",
+          ),
+          true,
+        );
         return Promise.resolve(
           new Response(
             JSON.stringify({
@@ -2088,7 +2124,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
       `${canonicalApiOrigin}/projects/base-url-agent-fork/environments`,
-      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
+      `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=10000000-1000-4000-8000-100000000096&limit=100`,
       `${canonicalApiOrigin}/mcp`,
     ]);
   });
@@ -2294,8 +2330,23 @@ describe("server/handlers/request/agent-stream.handler", () => {
       branch?: string | null;
       environmentName?: string | null;
     }> = [];
+    let observedEnvironmentTarget:
+      | {
+        environmentName: string;
+        environmentId: string | null;
+        token: string;
+      }
+      | undefined;
 
     const handler = createTestAgentStreamHandler({
+      loadAgentSourceEnvironment: (_ctx, source, target, token) => {
+        observedEnvironmentTarget = {
+          environmentName: source.type === "environment" ? source.environmentName : source.type,
+          environmentId: target.runtimeTargetEnvironmentId,
+          token,
+        };
+        return Promise.resolve({});
+      },
       ensureProjectDiscovery: async () => {
         observedCacheCredential = getVerifiedCacheApiCredential();
       },
@@ -2341,6 +2392,10 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
       agentSource: {
         type: "environment",
         environmentName: "staging",
@@ -2388,6 +2443,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(runWithContextCalls[0]?.environmentName, "staging");
     assertEquals(runWithContextCalls[0]?.releaseId, "10000000-1000-4000-8000-100000000099");
     assertEquals(runWithContextCalls[0]?.productionMode, true);
+    assertEquals(observedEnvironmentTarget, {
+      environmentName: "staging",
+      environmentId: "10000000-1000-4000-8000-100000000098",
+      token: "request-scoped-user-token",
+    });
     assertEquals(observedCacheCredential, {
       token: "request-scoped-user-token",
       projectId: "proj-1",
@@ -2522,7 +2582,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
-  it("fails closed with typed authorization semantics when production env lookup is denied", async () => {
+  it("fails closed with typed authorization semantics when named env lookup is denied", async () => {
     const originalFetch = globalThis.fetch;
     let discoveryCalls = 0;
     let redirect: RequestRedirect | undefined;
@@ -2539,6 +2599,15 @@ describe("server/handlers/request/agent-stream.handler", () => {
       sessionManager: new AgentRunSessionManager(),
     });
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "10000000-1000-4000-8000-100000000099",
+      },
       credentials: { authToken: "denied-project-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
@@ -2567,6 +2636,47 @@ describe("server/handlers/request/agent-stream.handler", () => {
       );
       assertEquals(discoveryCalls, 0);
       assertEquals(redirect, "error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("does not discover or inject production secrets for a branch source", async () => {
+    const originalFetch = globalThis.fetch;
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls += 1;
+      return Promise.reject(new Error("branch source must not fetch an environment"));
+    }) as typeof fetch;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      credentials: { authToken: "branch-project-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        createCtx(publicKeyPem),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 404);
+      assertEquals(fetchCalls, 0);
     } finally {
       globalThis.fetch = originalFetch;
     }

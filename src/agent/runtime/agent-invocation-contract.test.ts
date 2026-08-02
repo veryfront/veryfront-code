@@ -14,6 +14,7 @@ const inputAnchorMessageId = "10000000-1000-4000-8000-100000000003";
 const userId = "10000000-1000-4000-8000-100000000004";
 const projectId = "10000000-1000-4000-8000-100000000005";
 const branchId = "10000000-1000-4000-8000-100000000006";
+const environmentId = "10000000-1000-4000-8000-100000000007";
 
 function createInvocation(overrides: Record<string, unknown> = {}) {
   return {
@@ -133,6 +134,15 @@ describe("agent/runtime-agent-invocation-contract", () => {
     );
 
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        ...createInvocation().run,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "environment",
+          runtimeTargetEnvironmentId: environmentId,
+        },
+      },
       agentSource: {
         type: "environment",
         environmentName: "Production",
@@ -145,6 +155,26 @@ describe("agent/runtime-agent-invocation-contract", () => {
       environmentName: "Production",
       releaseId: "release-1",
     });
+  });
+
+  it("rejects agent sources that do not match the selected runtime target", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          run: {
+            ...createInvocation().run,
+            project: {
+              projectId,
+              projectSlug: "demo-project",
+              runtimeTargetKind: "environment",
+              runtimeTargetEnvironmentId: environmentId,
+            },
+          },
+          agentSource: { type: "branch", branch: "main" },
+        })),
+      Error,
+      "environment runtime target requires an environment agent source",
+    );
   });
 
   it("requires an exact source for every runtime invocation", () => {
@@ -267,6 +297,8 @@ describe("agent/runtime-agent-invocation-contract", () => {
       messages: parsed.messages,
       tools: parsed.tools,
       context: parsed.context,
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetEnvironmentId: null,
       runtimeTargetBranchId: branchId,
       credentials: parsed.credentials,
       agentSource: parsed.agentSource,

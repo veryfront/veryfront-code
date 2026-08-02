@@ -18,6 +18,8 @@ export {
 export { filterRuntimeProjectEnv, filterSharedRuntimeProjectEnv } from "./reserved-env.ts";
 export { fetchProjectEnvVars } from "./fetcher.ts";
 export {
+  type NamedProjectEnvironmentScope,
   ProductionEnvironmentResolver,
   type ProductionEnvironmentScope,
+  ProjectEnvironmentIdentityResolver,
 } from "./production-environment-resolver.ts";

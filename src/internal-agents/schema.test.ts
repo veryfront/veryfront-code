@@ -8,6 +8,17 @@ import {
   toRuntimeRunAgentInput,
 } from "./schema.ts";
 
+const MAIN_BRANCH_TARGET = {
+  runtimeTargetKind: "main_branch",
+  runtimeTargetEnvironmentId: null,
+  runtimeTargetBranchId: null,
+} as const;
+const ENVIRONMENT_TARGET = {
+  runtimeTargetKind: "environment",
+  runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000009",
+  runtimeTargetBranchId: null,
+} as const;
+
 describe("internal-agents/schema", () => {
   it("applies defaults for optional runtime collections", () => {
     const parsed = getRuntimeRunAgentInputSchema().parse({
@@ -87,6 +98,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [],
       forwardedProps,
@@ -102,6 +114,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           agentSource: { type: "branch", branch: "main" },
           messages: [],
           forwardedProps: {
@@ -127,6 +140,7 @@ describe("internal-agents/schema", () => {
             agentId: "agent_1",
             threadId: "10000000-1000-4000-8000-100000000001",
             runId: "run_1",
+            ...MAIN_BRANCH_TARGET,
             agentSource: { type: "branch", branch: "main" },
             messages: [],
             forwardedProps: { maxOutputTokens },
@@ -144,6 +158,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           agentSource: { type: "branch", branch: "main" },
           messages: [],
           tools: [
@@ -178,6 +193,7 @@ describe("internal-agents/schema", () => {
         agentId: "agent_1",
         threadId: "10000000-1000-4000-8000-100000000001",
         runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
         messages: [],
       })
     );
@@ -186,6 +202,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...ENVIRONMENT_TARGET,
       messages: [],
       agentSource: {
         type: "environment",
@@ -199,17 +216,35 @@ describe("internal-agents/schema", () => {
       environmentName: "staging",
       releaseId: "release_1",
     });
+    assertEquals(parsed.runtimeTargetEnvironmentId, ENVIRONMENT_TARGET.runtimeTargetEnvironmentId);
     assertThrows(
       () =>
         getInternalAgentStreamRequestSchema().parse({
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           messages: [],
           agentSource: { type: "branch", branch: "" },
         }),
       Error,
       "Too small: expected string to have >=1 characters",
+    );
+  });
+
+  it("rejects a signed target whose kind does not match the exact source", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          ...ENVIRONMENT_TARGET,
+          agentSource: { type: "branch", branch: "main" },
+          messages: [],
+        }),
+      Error,
+      "environment runtime target requires an environment agent source",
     );
   });
 
@@ -325,6 +360,7 @@ describe("internal-agents/schema", () => {
           agentId: "agent_1",
           threadId: "10000000-1000-4000-8000-100000000001",
           runId: "run_1",
+          ...MAIN_BRANCH_TARGET,
           agentSource: { type: "branch", branch: "main" },
           messages: [],
           agentConfig: {
@@ -344,6 +380,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -401,6 +438,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -446,6 +484,7 @@ describe("internal-agents/schema", () => {
         agentId: "agent_1",
         threadId: "10000000-1000-4000-8000-100000000001",
         runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
         agentSource: { type: "branch", branch: "main" },
         endUserId: "10000000-1000-4000-8000-100000000004",
         messages: [],
@@ -492,6 +531,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -540,6 +580,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -587,6 +628,7 @@ describe("internal-agents/schema", () => {
         agentId: "agent_1",
         threadId: "10000000-1000-4000-8000-100000000001",
         runId: "run_1",
+        ...MAIN_BRANCH_TARGET,
         agentSource: { type: "branch", branch: "main" },
         messages: [
           {
@@ -681,6 +723,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {
@@ -737,6 +780,7 @@ describe("internal-agents/schema", () => {
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      ...MAIN_BRANCH_TARGET,
       agentSource: { type: "branch", branch: "main" },
       messages: [
         {

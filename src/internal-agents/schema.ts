@@ -17,7 +17,10 @@ import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtim
 import {
   getRuntimeAgentCredentialsSchema,
   getRuntimeAgentSourceContextSchema,
+  getRuntimeAgentTargetKindSchema,
   type RuntimeAgentSourceContext,
+  validateRuntimeAgentSourceTargetBinding,
+  validateRuntimeAgentTargetSelection,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -73,7 +76,9 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => isWithinJsonSizeLimit(value, 65_536),
       { message: "context must be less than 64 KB total" },
     ),
-    runtimeTargetBranchId: v.string().uuid().nullable().optional(),
+    runtimeTargetKind: getRuntimeAgentTargetKindSchema(),
+    runtimeTargetEnvironmentId: v.string().uuid().nullable(),
+    runtimeTargetBranchId: v.string().uuid().nullable(),
     agentSource: getRuntimeAgentSourceContextSchema(),
     agentConfig: getRuntimeAgentMarkdownDefinitionSchema().optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_AGENT_CONFIG_BYTES),
@@ -85,6 +90,9 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       { message: "forwardedProps must be less than 192 KB" },
     ),
   }).strict().superRefine((input, ctx) => {
+    validateRuntimeAgentTargetSelection(input, ctx);
+    validateRuntimeAgentSourceTargetBinding(input, ctx);
+
     if (input.agentConfig && input.agentConfig.id !== input.agentId) {
       ctx.addIssue({
         code: "custom",

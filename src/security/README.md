@@ -80,10 +80,13 @@ requires the edge-supplied project slug and request credential; a process-level
 API token is never substituted for a missing shared-request credential.
 
 Project and environment IDs become cache or secret-fetch authority only after
-that same proxy trust check succeeds. Environment cache identity includes the
-canonical project slug, project ID, environment ID, and a digest of the
-request credential. Fetch failure, timeout, credential rejection, or explicit
-invalidation never returns stale or empty secret data.
+that same proxy trust check succeeds. The proxy forwards an environment ID only
+with the canonical environment name selected from project metadata; the runtime
+rejects partial pairs and ignores both headers outside the trusted topology.
+Environment cache identity includes the canonical project slug, project ID,
+environment ID, and a digest of the request credential. Fetch failure, timeout,
+credential rejection, or explicit invalidation never returns stale or empty
+secret data.
 
 If both `VERYFRONT_API_INTERNAL_USER` and `VERYFRONT_API_INTERNAL_PASS` are
 configured, `VERYFRONT_API_BASE_URL` must provide the canonical

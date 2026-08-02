@@ -156,7 +156,7 @@ export const getRuntimeAgentTargetKindSchema = defineSchema((v) =>
  */
 export const RuntimeAgentTargetKindSchema = lazySchema(getRuntimeAgentTargetKindSchema);
 
-type RuntimeAgentTargetSelectionInput = {
+export type RuntimeAgentTargetSelectionInput = {
   runtimeTargetKind?: InferSchema<ReturnType<typeof getRuntimeAgentTargetKindSchema>> | null;
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
@@ -197,6 +197,40 @@ export function validateRuntimeAgentTargetSelection(
       message:
         "preview_branch target requires runtimeTargetBranchId and no runtimeTargetEnvironmentId",
       path: ["runtimeTargetKind"],
+    });
+  }
+}
+
+/**
+ * Binds the selected source snapshot to the runtime target whose identifiers
+ * will be signed into the control-plane request.
+ */
+export function validateRuntimeAgentSourceTargetBinding(
+  input: RuntimeAgentTargetSelectionInput & { agentSource: RuntimeAgentSourceContext },
+  ctx: RefinementCtx,
+) {
+  const kind = input.runtimeTargetKind ?? "main_branch";
+  const sourceType = input.agentSource.type;
+
+  if (sourceType === "environment" && kind !== "environment") {
+    ctx.addIssue({
+      code: "custom",
+      message: "environment agent source requires an environment runtime target",
+      path: ["agentSource", "type"],
+    });
+  } else if (sourceType !== "environment" && kind === "environment") {
+    ctx.addIssue({
+      code: "custom",
+      message: "environment runtime target requires an environment agent source",
+      path: ["agentSource", "type"],
+    });
+  }
+
+  if (sourceType === "release" && kind !== "main_branch") {
+    ctx.addIssue({
+      code: "custom",
+      message: "release agent source requires a main-branch runtime target",
+      path: ["agentSource", "type"],
     });
   }
 }
@@ -332,6 +366,14 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
         path: ["agentConfig", "id"],
       });
     }
+
+    validateRuntimeAgentSourceTargetBinding(
+      {
+        ...input.run.project,
+        agentSource: input.agentSource,
+      },
+      ctx,
+    );
   })
 );
 
@@ -380,7 +422,9 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   messages: RuntimeAgentRunInvocation["messages"];
   tools: RuntimeAgentRunInvocation["tools"];
   context: RuntimeAgentRunInvocation["context"];
-  runtimeTargetBranchId?: RuntimeAgentProjectContext["runtimeTargetBranchId"];
+  runtimeTargetKind: NonNullable<RuntimeAgentProjectContext["runtimeTargetKind"]>;
+  runtimeTargetEnvironmentId: RuntimeAgentProjectContext["runtimeTargetEnvironmentId"];
+  runtimeTargetBranchId: RuntimeAgentProjectContext["runtimeTargetBranchId"];
   credentials?: RuntimeAgentRunInvocation["credentials"];
   agentSource: RuntimeAgentRunInvocation["agentSource"];
   agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
@@ -399,6 +443,8 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     messages: input.messages,
     tools: input.tools,
     context: input.context,
+    runtimeTargetKind: input.run.project.runtimeTargetKind ?? "main_branch",
+    runtimeTargetEnvironmentId: input.run.project.runtimeTargetEnvironmentId ?? null,
     runtimeTargetBranchId: input.run.project.runtimeTargetBranchId ?? null,
     ...(input.credentials ? { credentials: input.credentials } : {}),
     agentSource: input.agentSource,

@@ -66,7 +66,7 @@ import {
   EnvironmentVariableCache,
   fetchProjectEnvVars,
   filterRuntimeProjectEnv,
-  ProductionEnvironmentResolver,
+  ProjectEnvironmentIdentityResolver,
   runWithProjectEnv,
 } from "../../project-env/index.ts";
 import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
@@ -81,9 +81,15 @@ export interface AgentStreamHandlerDeps
   loadAgentSourceEnvironment?: AgentSourceEnvironmentLoader;
 }
 
+type AgentSourceTargetIdentity = Pick<
+  InternalAgentStreamRequest,
+  "runtimeTargetKind" | "runtimeTargetEnvironmentId" | "runtimeTargetBranchId"
+>;
+
 export type AgentSourceEnvironmentLoader = (
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
+  targetIdentity: AgentSourceTargetIdentity,
   apiAuthToken: string,
   signal?: AbortSignal,
 ) => Promise<Record<string, string>>;
@@ -122,7 +128,7 @@ const _agentEnvVarCache = new EnvironmentVariableCache(
   },
 );
 
-const _productionEnvironmentResolver = new ProductionEnvironmentResolver();
+const _environmentIdentityResolver = new ProjectEnvironmentIdentityResolver();
 
 function mergeAllowedRemoteTools(
   current: RuntimeRemoteToolConfig["__vfAllowedRemoteTools"],
@@ -341,33 +347,45 @@ function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContex
 /**
  * Load the project environment this agent source may read.
  *
- * Control-plane requests don't go through the proxy and therefore don't carry
- * x-environment-id, so the production environment ID is discovered from the API
- * (one fetch per project per server lifetime, then cached).
+ * Branch and bare-release sources do not carry an authoritative environment
+ * identity, so they receive no project environment variables. Named sources
+ * must carry an exact signed environment target, which is revalidated against
+ * project metadata before any secrets are fetched.
  */
 async function resolveAgentSourceEnvironment(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
+  targetIdentity: AgentSourceTargetIdentity,
   apiAuthToken: string,
   signal?: AbortSignal,
 ): Promise<Record<string, string>> {
-  if (sourceContext.type === "release") return {};
+  if (sourceContext.type !== "environment") return {};
   if (!ctx.projectSlug) {
     throw INVALID_ARGUMENT.create({
       detail: "Agent source environment requires a canonical project identity",
     });
   }
+  if (
+    targetIdentity.runtimeTargetKind !== "environment" ||
+    !targetIdentity.runtimeTargetEnvironmentId ||
+    targetIdentity.runtimeTargetBranchId
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail: "Named agent source requires an exact signed environment target",
+    });
+  }
 
-  const environmentId = ctx.environmentId ??
-    await _productionEnvironmentResolver.resolve(
-      {
-        apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
-        projectSlug: ctx.projectSlug,
-        projectId: ctx.projectId,
-        token: apiAuthToken,
-      },
-      signal,
-    );
+  const environmentId = await _environmentIdentityResolver.resolveNamed(
+    {
+      apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+      projectSlug: ctx.projectSlug,
+      projectId: ctx.projectId,
+      token: apiAuthToken,
+      environmentName: sourceContext.environmentName,
+      expectedEnvironmentId: targetIdentity.runtimeTargetEnvironmentId,
+    },
+    signal,
+  );
 
   return await _agentEnvVarCache.get({
     environmentId,
@@ -735,6 +753,7 @@ export class AgentStreamHandler extends BaseHandler {
             )(
               requestScopedContext,
               payload.agentSource,
+              payload,
               apiAuthToken,
               req.signal,
             );

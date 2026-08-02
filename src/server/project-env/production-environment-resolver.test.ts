@@ -4,6 +4,7 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   MAX_ENVIRONMENT_LIST_RESPONSE_BYTES,
   ProductionEnvironmentResolver,
+  ProjectEnvironmentIdentityResolver,
 } from "./production-environment-resolver.ts";
 
 const originalFetch = globalThis.fetch;
@@ -44,6 +45,43 @@ describe("ProductionEnvironmentResolver", () => {
     globalThis.fetch = (() => Promise.resolve(new Response(null, { status: 403 }))) as typeof fetch;
 
     const error = await assertRejects(() => new ProductionEnvironmentResolver().resolve(scope()));
+    assertEquals((error as { slug?: string }).slug, "permission-denied");
+    assertEquals((error as { status?: number }).status, 403);
+  });
+
+  it("resolves an exact named environment and verifies its signed ID", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(Response.json({
+        data: [
+          { id: "env-production", name: "production" },
+          { id: "env-staging", name: "staging" },
+        ],
+      }))) as typeof fetch;
+
+    const resolver = new ProjectEnvironmentIdentityResolver();
+    assertEquals(
+      await resolver.resolveNamed({
+        ...scope(),
+        environmentName: "staging",
+        expectedEnvironmentId: "env-staging",
+      }),
+      "env-staging",
+    );
+  });
+
+  it("fails closed when a signed environment ID does not match project metadata", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(Response.json({
+        data: [{ id: "env-staging", name: "staging" }],
+      }))) as typeof fetch;
+
+    const error = await assertRejects(() =>
+      new ProjectEnvironmentIdentityResolver().resolveNamed({
+        ...scope(),
+        environmentName: "staging",
+        expectedEnvironmentId: "env-production",
+      })
+    );
     assertEquals((error as { slug?: string }).slug, "permission-denied");
     assertEquals((error as { status?: number }).status, 403);
   });
