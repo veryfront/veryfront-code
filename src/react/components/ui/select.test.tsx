@@ -1112,6 +1112,12 @@ describe("Select", () => {
         () => document.getElementById("dynamic-default-list") === null,
         "default-open duplicate content suppression",
       );
+      // Suppression is synchronous with the invalid render; the close request
+      // to the owner is an effect that lands afterwards.
+      await waitFor(
+        () => openChanges.length > 0,
+        "default-open close request",
+      );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
       assertEquals(openChanges, [false]);
