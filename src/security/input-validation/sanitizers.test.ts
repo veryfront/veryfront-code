@@ -1,9 +1,18 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { sanitizeData as sanitizeDataFromRoot } from "../../index.ts";
+import { sanitizeData as sanitizeDataFromClient } from "../../index.client.ts";
+import { sanitizeData as sanitizeDataFromSecurity } from "../index.ts";
 import { sanitizeData } from "./sanitizers.ts";
 
 describe("sanitizeData compatibility", () => {
+  it("is the same compatibility function through root, client, and security exports", () => {
+    assertEquals(sanitizeDataFromRoot, sanitizeData);
+    assertEquals(sanitizeDataFromClient, sanitizeData);
+    assertEquals(sanitizeDataFromSecurity, sanitizeData);
+  });
+
   it("HTML-encodes nested string values", () => {
     assertEquals(sanitizeData({ values: ["<b>&</b>"] }), {
       values: ["&lt;b&gt;&amp;&lt;&#x2F;b&gt;"],

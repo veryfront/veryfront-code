@@ -19,6 +19,8 @@ import {
 const LOG_PREFIX = "[GitHubFSAdapter]";
 
 export class GitHubFSAdapter implements FSAdapter {
+  /** Git tree symlink blobs are excluded from the adapter's readable index. */
+  readonly symlinkSemantics = "none" as const;
   private readonly config: ResolvedGitHubConfig;
   private readonly client: GitHubApiClient;
   private readonly cache: FileCache;

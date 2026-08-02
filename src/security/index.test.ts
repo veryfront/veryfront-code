@@ -64,6 +64,7 @@ describe("security/index.ts exports", () => {
         "parseJsonBody",
         "parseQueryParams",
         "readBodyWithLimit",
+        "sanitizeData",
         "sanitizePathForDisplay",
         "setCors",
         "shouldApplyCORS",

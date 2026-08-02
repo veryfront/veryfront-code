@@ -5,7 +5,15 @@ import { NETWORK_ERROR } from "#veryfront/errors";
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
 const PROJECT_FILE_JSON_OVERHEAD_BYTES = 65_536;
+const PROJECT_FILE_PATH_MAX_CHARACTERS = 4_096;
+const PROJECT_FILE_CURSOR_MAX_CHARACTERS = 4_096;
+const PROJECT_FILE_LIST_MAX_PAGES = 50;
+const PROJECT_FILE_LIST_TOTAL_MAX_BYTES = 16 * 1_048_576;
+const PROJECT_FILE_LIST_PAGE_MAX_BYTES =
+  DEFAULT_PROJECT_FILES_PAGE_LIMIT * PROJECT_FILE_PATH_MAX_CHARACTERS * 6 +
+  PROJECT_FILE_JSON_OVERHEAD_BYTES;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Encoder = new TextEncoder();
 
 export const getRuntimeProjectFileSchema = defineSchema((v) =>
   v.object({
@@ -60,6 +68,14 @@ export type RuntimeProjectFilesApiOptions = {
   branchId?: string | null;
   /** Stop pagination before retaining more than this many entries. */
   maximumEntries?: number;
+  /** Restrict the API listing to this bounded server-side path prefix. */
+  pathPrefix?: string;
+  /** Shared bounded-listing budget used when one catalog spans several prefixes. */
+  listingBudget?: RuntimeProjectFileListingBudget;
+  /** Cooperatively cancel all requests and body reads in this listing. */
+  abortSignal?: AbortSignal;
+  /** Bound the complete request/pagination operation. */
+  timeoutMs?: number;
 };
 
 /** Options accepted by runtime get project file. */
@@ -92,6 +108,36 @@ export type RuntimeProjectFilesClient = {
     options: RuntimeProjectFilesApiOptions,
   ) => Promise<RuntimeProjectFileListItem[]>;
 };
+
+/** Opaque cumulative budget shared by related project-file listings. */
+export type RuntimeProjectFileListingBudget = {
+  consumePage(): void;
+  consumeBytes(byteCount: number): void;
+};
+
+/** Create a cumulative project-file listing budget. */
+export function createRuntimeProjectFileListingBudget(): RuntimeProjectFileListingBudget {
+  let pages = 0;
+  let bytes = 0;
+  return Object.freeze({
+    consumePage(): void {
+      pages += 1;
+      if (pages > PROJECT_FILE_LIST_MAX_PAGES) {
+        throw new RangeError(
+          `Project file listing may contain at most ${PROJECT_FILE_LIST_MAX_PAGES} pages`,
+        );
+      }
+    },
+    consumeBytes(byteCount: number): void {
+      bytes += byteCount;
+      if (bytes > PROJECT_FILE_LIST_TOTAL_MAX_BYTES) {
+        throw new RangeError(
+          `Project file listing responses may contain at most ${PROJECT_FILE_LIST_TOTAL_MAX_BYTES} bytes`,
+        );
+      }
+    },
+  });
+}
 
 /** Error shape for runtime project files API auth. */
 export class RuntimeProjectFilesApiAuthError extends Error {
@@ -131,56 +177,64 @@ export async function getRuntimeProjectFile(
       "Project file maximumContentCharacters must be a positive bounded safe integer",
     );
   }
-  return traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
-    const url = createRuntimeProjectFileUrl({
-      ...options,
-      fields: "(path,content)",
-    });
-    const response = await fetchRuntimeProjectFilesRestResponse(url, options);
+  return withRuntimeProjectFilesRequestSignal(
+    options,
+    (signal) =>
+      traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
+        const url = createRuntimeProjectFileUrl({
+          ...options,
+          fields: "(path,content)",
+        });
+        const response = await fetchRuntimeProjectFilesRestResponse(url, options, signal);
 
-    if (response.status === 404) {
-      return null;
-    }
+        if (response.status === 404) {
+          return null;
+        }
 
-    if (!response.ok) {
-      throw NETWORK_ERROR.create({
-        detail:
-          `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readApiErrorMessage(
+        if (!response.ok) {
+          throw NETWORK_ERROR.create({
+            detail:
+              `Failed to fetch file ${options.path} for project ${options.projectId}: ${await readApiErrorMessage(
+                response,
+              )}`,
+          });
+        }
+
+        const responseValue = options.maximumContentCharacters === undefined
+          ? await response.json()
+          : await readJsonResponseWithinLimit(
             response,
-          )}`,
-      });
-    }
+            options.maximumContentCharacters * 6 + PROJECT_FILE_JSON_OVERHEAD_BYTES,
+            signal,
+          );
+        const parsed = getRuntimeProjectFileSchema().safeParse(responseValue);
+        if (!parsed.success) {
+          throw NETWORK_ERROR.create({
+            detail:
+              `Failed to fetch file ${options.path} for project ${options.projectId}: invalid API response`,
+          });
+        }
 
-    const responseValue = options.maximumContentCharacters === undefined
-      ? await response.json()
-      : await readJsonResponseWithinLimit(
-        response,
-        options.maximumContentCharacters * 6 + PROJECT_FILE_JSON_OVERHEAD_BYTES,
-      );
-    const parsed = getRuntimeProjectFileSchema().safeParse(responseValue);
-    if (!parsed.success) {
-      throw NETWORK_ERROR.create({
-        detail:
-          `Failed to fetch file ${options.path} for project ${options.projectId}: invalid API response`,
-      });
-    }
-
-    if (
-      options.maximumContentCharacters !== undefined &&
-      parsed.data.content.length > options.maximumContentCharacters
-    ) {
-      throw new RangeError(
-        `Project file content may contain at most ${options.maximumContentCharacters} characters`,
-      );
-    }
-    return parsed.data;
-  });
+        if (
+          options.maximumContentCharacters !== undefined &&
+          parsed.data.content.length > options.maximumContentCharacters
+        ) {
+          throw new RangeError(
+            `Project file content may contain at most ${options.maximumContentCharacters} characters`,
+          );
+        }
+        return parsed.data;
+      }),
+  );
 }
 
 async function readJsonResponseWithinLimit(
   response: Response,
   byteLimit: number,
+  abortSignal?: AbortSignal,
+  listingBudget?: RuntimeProjectFileListingBudget,
 ): Promise<unknown> {
+  throwIfAborted(abortSignal);
   const declaredLength = response.headers.get("content-length");
   if (declaredLength !== null) {
     const length = Number(declaredLength);
@@ -188,7 +242,16 @@ async function readJsonResponseWithinLimit(
       throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
     }
   }
-  if (!response.body) return JSON.parse(await response.text());
+  if (!response.body) {
+    const text = await response.text();
+    throwIfAborted(abortSignal);
+    const byteLength = utf8Encoder.encode(text).byteLength;
+    listingBudget?.consumeBytes(byteLength);
+    if (byteLength > byteLimit) {
+      throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
+    }
+    return JSON.parse(text);
+  }
 
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -196,8 +259,10 @@ async function readJsonResponseWithinLimit(
   try {
     while (true) {
       const result = await reader.read();
+      throwIfAborted(abortSignal);
       if (result.done) break;
       total += result.value.byteLength;
+      listingBudget?.consumeBytes(result.value.byteLength);
       if (total > byteLimit) {
         await reader.cancel(new RangeError("Project file response exceeded its byte limit"));
         throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
@@ -227,48 +292,99 @@ export async function getRuntimeProjectFiles(
   ) {
     throw new RangeError("Project file maximumEntries must be a positive safe integer");
   }
-  return traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFiles", async () => {
-    const files: RuntimeProjectFileListItem[] = [];
-    let cursor: string | null = null;
+  if (
+    options.pathPrefix !== undefined &&
+    (options.pathPrefix.length === 0 ||
+      options.pathPrefix.length > PROJECT_FILE_PATH_MAX_CHARACTERS ||
+      options.pathPrefix.startsWith("/") || options.pathPrefix.endsWith("/") ||
+      options.pathPrefix.includes("\\") || options.pathPrefix.includes("\0") ||
+      options.pathPrefix.split("/").some((segment) =>
+        segment.length === 0 || segment === "." || segment === ".."
+      ))
+  ) {
+    throw new RangeError(
+      `Project file list path must contain between 1 and ${PROJECT_FILE_PATH_MAX_CHARACTERS} characters`,
+    );
+  }
+  return withRuntimeProjectFilesRequestSignal(
+    options,
+    (signal) =>
+      traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFiles", async () => {
+        const files: RuntimeProjectFileListItem[] = [];
+        const listingBudget = options.listingBudget ?? createRuntimeProjectFileListingBudget();
+        const seenCursors = new Set<string>();
+        let cursor: string | null = null;
 
-    do {
-      const url = createRuntimeProjectFileUrl({
-        ...options,
-        fields: "(path)",
-        cursor,
-      });
-      const response = await fetchRuntimeProjectFilesRestResponse(url, options);
+        do {
+          throwIfAborted(signal);
+          listingBudget.consumePage();
+          const url = createRuntimeProjectFileUrl({
+            ...options,
+            fields: "(path)",
+            cursor,
+          });
+          const response = await fetchRuntimeProjectFilesRestResponse(url, options, signal);
+          throwIfAborted(signal);
 
-      if (!response.ok) {
-        throw NETWORK_ERROR.create({
-          detail:
-            `Failed to fetch files for project ${options.projectId}: ${await readApiErrorMessage(
+          if (!response.ok) {
+            throw NETWORK_ERROR.create({
+              detail:
+                `Failed to fetch files for project ${options.projectId}: ${await readApiErrorMessage(
+                  response,
+                )}`,
+            });
+          }
+
+          const parsed = getRuntimeProjectFileListRestResponseSchema().safeParse(
+            await readJsonResponseWithinLimit(
               response,
-            )}`,
-        });
-      }
+              PROJECT_FILE_LIST_PAGE_MAX_BYTES,
+              signal,
+              listingBudget,
+            ),
+          );
+          if (!parsed.success) {
+            throw NETWORK_ERROR.create({
+              detail:
+                `Failed to fetch files for project ${options.projectId}: invalid API response`,
+            });
+          }
 
-      const parsed = getRuntimeProjectFileListRestResponseSchema().safeParse(await response.json());
-      if (!parsed.success) {
-        throw NETWORK_ERROR.create({
-          detail: `Failed to fetch files for project ${options.projectId}: invalid API response`,
-        });
-      }
+          for (const file of parsed.data.data) {
+            if (file.path.length > PROJECT_FILE_PATH_MAX_CHARACTERS) {
+              throw new RangeError(
+                `Project file paths may contain at most ${PROJECT_FILE_PATH_MAX_CHARACTERS} characters`,
+              );
+            }
+          }
+          if (
+            parsed.data.page_info.next !== null &&
+            parsed.data.page_info.next.length > PROJECT_FILE_CURSOR_MAX_CHARACTERS
+          ) {
+            throw new RangeError(
+              `Project file cursors may contain at most ${PROJECT_FILE_CURSOR_MAX_CHARACTERS} characters`,
+            );
+          }
 
-      if (
-        options.maximumEntries !== undefined &&
-        files.length + parsed.data.data.length > options.maximumEntries
-      ) {
-        throw new RangeError(
-          `Project file listing may contain at most ${options.maximumEntries} entries`,
-        );
-      }
-      files.push(...parsed.data.data);
-      cursor = parsed.data.page_info.next;
-    } while (cursor);
+          if (
+            options.maximumEntries !== undefined &&
+            files.length + parsed.data.data.length > options.maximumEntries
+          ) {
+            throw new RangeError(
+              `Project file listing may contain at most ${options.maximumEntries} entries`,
+            );
+          }
+          files.push(...parsed.data.data);
+          cursor = parsed.data.page_info.next;
+          if (cursor !== null && seenCursors.has(cursor)) {
+            throw new RangeError("Project file listing returned a repeated pagination cursor");
+          }
+          if (cursor !== null) seenCursors.add(cursor);
+        } while (cursor);
 
-    return files;
-  });
+        return files;
+      }),
+  );
 }
 
 function createRuntimeProjectFileUrl(input: {
@@ -279,6 +395,7 @@ function createRuntimeProjectFileUrl(input: {
   fields: string;
   cursor?: string | null;
   pageLimit?: number;
+  pathPrefix?: string;
 }): URL {
   const apiUrl = new URL(input.apiUrl);
   const encodedProjectId = encodeURIComponent(input.projectId);
@@ -294,6 +411,9 @@ function createRuntimeProjectFileUrl(input: {
   if (input.cursor) {
     url.searchParams.set("cursor", input.cursor);
   }
+  if (input.pathPrefix) {
+    url.searchParams.set("path", input.pathPrefix);
+  }
   if (!input.path) {
     url.searchParams.set("limit", String(input.pageLimit ?? DEFAULT_PROJECT_FILES_PAGE_LIMIT));
   }
@@ -304,12 +424,13 @@ function createRuntimeProjectFileUrl(input: {
 async function fetchRuntimeProjectFilesRestResponse(
   url: URL,
   options: RuntimeProjectFilesClientOptions & { authToken: string },
+  signal: AbortSignal,
 ): Promise<Response> {
   const response = await (options.fetch ?? fetch)(url.toString(), {
     headers: {
       Authorization: `Bearer ${options.authToken}`,
     },
-    signal: AbortSignal.timeout(options.timeoutMs ?? DEFAULT_PROJECT_FILES_TIMEOUT_MS),
+    signal,
   });
 
   if (response.status === 401 || response.status === 403) {
@@ -317,6 +438,41 @@ async function fetchRuntimeProjectFilesRestResponse(
   }
 
   return response;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
+}
+
+async function withRuntimeProjectFilesRequestSignal<T>(
+  options: RuntimeProjectFilesClientOptions & { abortSignal?: AbortSignal },
+  fn: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_PROJECT_FILES_TIMEOUT_MS;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("Project files timeoutMs must be a positive safe integer");
+  }
+  const controller = new AbortController();
+  const externalSignal = options.abortSignal;
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal) {
+    externalSignal.addEventListener("abort", abortFromExternal, { once: true });
+    if (externalSignal.aborted) abortFromExternal();
+  }
+  const timeoutId = setTimeout(
+    () => controller.abort(new DOMException("The operation timed out", "TimeoutError")),
+    timeoutMs,
+  );
+  try {
+    throwIfAborted(controller.signal);
+    const result = await fn(controller.signal);
+    throwIfAborted(controller.signal);
+    return result;
+  } finally {
+    clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", abortFromExternal);
+  }
 }
 
 function createProjectFilesAccessDeniedError(

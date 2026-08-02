@@ -10,6 +10,8 @@ import {
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { metrics } from "#veryfront/metrics";
 import { VeryfrontError } from "#veryfront/errors";
+import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
+import { VeryfrontFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/adapter.ts";
 import { BaseHandler } from "./base-handler.ts";
 import type {
   HandlerContext,
@@ -180,6 +182,39 @@ describe("BaseHandler.withProxyContext", () => {
       "fn should run directly for a standalone filesystem",
     );
     assertEquals(warnings, []);
+  });
+
+  it("runs a fixed-project Veryfront adapter without unsafe request-global mutation", async () => {
+    const handler = new TestHandler();
+    const fixedAdapter = new VeryfrontFSAdapter({
+      type: "veryfront-api",
+      projectDir: "/project",
+      veryfront: {
+        apiBaseUrl: "https://api.test",
+        apiToken: "fixed-token",
+        projectSlug: "fixed-project",
+      },
+    });
+    const fs = new FSAdapterWrapper(fixedAdapter);
+    let called = false;
+    try {
+      await handler.testWithProxyContext(
+        createMinimalCtx({
+          projectSlug: "fixed-project",
+          adapter: { fs } as unknown as HandlerContext["adapter"],
+        }),
+        () => {
+          called = true;
+          return Promise.resolve("ok");
+        },
+        { requireToken: true },
+      );
+      assertEquals(fs.isFixedProjectMode(), true);
+      assertEquals(fs.isContextualMode(), false);
+      assertEquals(called, true);
+    } finally {
+      await fs.shutdown();
+    }
   });
 
   it("runs fn() when requireToken is true and token is present", async () => {

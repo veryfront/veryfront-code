@@ -148,6 +148,7 @@ export abstract class BaseHandler implements Handler {
       setRequestBranch?: (b: string | null) => void;
       isMultiProjectMode?: () => boolean;
       isContextualMode?: () => boolean;
+      isFixedProjectMode?: () => boolean;
       runWithContext?: <R>(
         slug: string,
         token: string,
@@ -165,6 +166,7 @@ export abstract class BaseHandler implements Handler {
     const requireToken = options.requireToken ?? false;
     const isMultiProjectMode = fsWrapper.isMultiProjectMode?.() === true;
     const isContextualMode = fsWrapper.isContextualMode?.() === true;
+    const isFixedProjectMode = fsWrapper.isFixedProjectMode?.() === true;
     const requiresProjectCredential = isMultiProjectMode || isContextualMode;
 
     // No project slug → local dev mode, no proxy context needed.
@@ -226,6 +228,10 @@ export abstract class BaseHandler implements Handler {
         ),
       );
     }
+
+    // A fixed-project adapter is already bound to one tenant and credential at
+    // construction. It must never receive request-global token/branch mutation.
+    if (isFixedProjectMode) return runWithCacheBatching(fn);
 
     return runWithCacheBatching(fn);
   }

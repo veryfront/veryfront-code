@@ -30,6 +30,12 @@ export const SKILL_STEERING_PATH_MAX_ENTRIES = 16;
 export const SKILL_PATH_SEGMENT_MAX_LENGTH = 255;
 export const SKILL_VISIBLE_ERROR_MAX_IDS = 30;
 export const SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES = 1_000;
+/** Aggregate limits for one retained runtime skill catalog. */
+export const SKILL_CATALOG_MAX_SKILLS = 128;
+export const SKILL_CATALOG_MAX_DOCUMENT_CHARACTERS = 8 * 1_048_576;
+export const SKILL_CATALOG_MAX_DOCUMENT_UTF8_BYTES = 16 * 1_048_576;
+export const SKILL_CATALOG_MAX_PATH_ENTRIES = 1_000;
+export const SKILL_CATALOG_MAX_METADATA_CHARACTERS = 1_048_576;
 /** One outer deadline for skill discovery/read operations. */
 export const SKILL_FILE_OPERATION_TIMEOUT_MS = 30_000;
 
