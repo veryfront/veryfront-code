@@ -1245,6 +1245,81 @@ Deno.test("OAuthProvider bounds revocation tokens before fetch and releases resp
   }
 });
 
+Deno.test("OAuthProvider authenticates revocation with client credentials in the body", async () => {
+  const provider = new OAuthProvider(
+    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },
+    (key) => ENV[key],
+  );
+  const original = globalThis.fetch;
+  let init: RequestInit | undefined;
+  globalThis.fetch = ((_input: string | URL | Request, requestInit?: RequestInit) => {
+    init = requestInit;
+    return Promise.resolve(new Response(null, { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    assertEquals(await provider.revokeToken("token"), true);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  const body = new URLSearchParams(String(init?.body));
+  assertEquals(body.get("token"), "token");
+  assertEquals(body.get("client_id"), "test-id");
+  assertEquals(body.get("client_secret"), "test-secret");
+  const headers = init?.headers as Record<string, string>;
+  assertEquals(headers["Content-Type"], "application/x-www-form-urlencoded");
+  assertEquals(headers.Authorization, undefined);
+});
+
+Deno.test("OAuthProvider authenticates revocation with Basic auth when configured", async () => {
+  const provider = new OAuthProvider(
+    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke", useBasicAuth: true },
+    (key) => ENV[key],
+  );
+  const original = globalThis.fetch;
+  let init: RequestInit | undefined;
+  globalThis.fetch = ((_input: string | URL | Request, requestInit?: RequestInit) => {
+    init = requestInit;
+    return Promise.resolve(new Response(null, { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    assertEquals(await provider.revokeToken("token"), true);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  const headers = init?.headers as Record<string, string>;
+  assertEquals(headers.Authorization, `Basic ${btoa("test-id:test-secret")}`);
+  const body = new URLSearchParams(String(init?.body));
+  assertEquals(body.get("token"), "token");
+  // Basic-auth providers must not also receive the secret in the body.
+  assertEquals(body.get("client_id"), null);
+  assertEquals(body.get("client_secret"), null);
+});
+
+Deno.test("OAuthProvider skips revocation when client credentials are missing", async () => {
+  const provider = new OAuthProvider(
+    { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },
+    () => undefined,
+  );
+  const original = globalThis.fetch;
+  let fetchCalls = 0;
+  globalThis.fetch = (() => {
+    fetchCalls++;
+    return Promise.resolve(new Response(null, { status: 200 }));
+  }) as typeof fetch;
+
+  try {
+    assertEquals(await provider.revokeToken("token"), false);
+  } finally {
+    globalThis.fetch = original;
+  }
+
+  assertEquals(fetchCalls, 0);
+});
+
 Deno.test("OAuthProvider revocation logging does not coerce hostile thrown values", async () => {
   const provider = new OAuthProvider(
     { ...TEST_CONFIG, revocationUrl: "https://provider.test/revoke" },

@@ -578,11 +578,18 @@ export class OAuthProvider {
     };
   }
 
-  private buildTokenHeaders(clientId: string, clientSecret: string): Record<string, string> {
+  /**
+   * Headers for a client-authenticated request to the provider's auth server.
+   * `useBasicAuth` providers carry the client credentials here; every other
+   * provider carries them in the body via {@link buildClientCredentialsParams}.
+   */
+  private buildClientAuthHeaders(
+    clientId: string,
+    clientSecret: string,
+    contentType: string,
+  ): Record<string, string> {
     const headers: Record<string, string> = {
-      "Content-Type": this.config.tokenRequestFormat === "json"
-        ? "application/json"
-        : "application/x-www-form-urlencoded",
+      "Content-Type": contentType,
       Accept: "application/json",
       ...this.config.tokenRequestHeaders,
     };
@@ -592,6 +599,16 @@ export class OAuthProvider {
     }
 
     return headers;
+  }
+
+  private buildTokenHeaders(clientId: string, clientSecret: string): Record<string, string> {
+    return this.buildClientAuthHeaders(
+      clientId,
+      clientSecret,
+      this.config.tokenRequestFormat === "json"
+        ? "application/json"
+        : "application/x-www-form-urlencoded",
+    );
   }
 
   /**
@@ -911,6 +928,16 @@ export class OAuthProvider {
       return false;
     }
 
+    const clientId = this.getClientId();
+    const clientSecret = this.getClientSecret();
+    if (!clientId || !clientSecret) {
+      // RFC 7009 section 2.1 requires confidential clients to authenticate on
+      // revocation, so an unauthenticated request would just be rejected.
+      // Fail here instead of sending the token to the provider for nothing.
+      logger.debug("Token revocation skipped: OAuth client credentials are not configured");
+      return false;
+    }
+
     const scope = createOAuthRequestAbortScope(
       this.config.requestTimeoutMs ?? HTTP_FETCH_TIMEOUT_MS,
       callerSignal,
@@ -920,8 +947,15 @@ export class OAuthProvider {
         revocationUrl,
         {
           method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ token }).toString(),
+          headers: this.buildClientAuthHeaders(
+            clientId,
+            clientSecret,
+            "application/x-www-form-urlencoded",
+          ),
+          body: new URLSearchParams({
+            token,
+            ...this.buildClientCredentialsParams(clientId, clientSecret),
+          }).toString(),
           redirect: "error",
         },
         scope.signal,
