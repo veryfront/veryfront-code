@@ -330,7 +330,9 @@ export class ResilientCache implements TokenCache {
     try {
       return await recovery;
     } finally {
-      if (this.recoveryPromise === recovery) this.recoveryPromise = null;
+      // This is the only path that installs a recovery promise. Concurrent
+      // callers join it above, so none can replace it before this owner exits.
+      this.recoveryPromise = null;
     }
   }
 
