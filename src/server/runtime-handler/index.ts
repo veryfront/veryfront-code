@@ -391,7 +391,6 @@ export function createVeryfrontHandler(
       req,
       url,
       isProxyMode,
-      adapterEnv: adapter.env,
     });
     const { headers, requestContext: reqCtx } = preparedRequest;
     const { proxyTrusted } = preparedRequest.proxyTrust;
@@ -498,7 +497,10 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
+          // Browser-controlled WebSocket query parameters cannot select tenant
+          // identity. Local development uses the configured default project;
+          // hosted requests use the edge-derived header or routed host.
+          const wsSlugOverride = undefined;
 
           // Resolve project from various sources
           const projectRes = await profilePhase(

@@ -39,6 +39,11 @@ import {
 } from "#veryfront/release-assets/module-consumption.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
+  getReadyManifestForRenderAsync,
+  isReleaseAssetManifestEnabled,
+} from "#veryfront/release-assets/manifest-cache.ts";
+import { resolveManifestModuleUrl } from "#veryfront/release-assets/html-consumption.ts";
+import {
   DEPENDENCY_PINNING_ENV_FLAG,
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
   RELEASE_MODULE_RUNTIME_VERSION_PARAM,
@@ -71,6 +76,13 @@ import {
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
+import { HttpStatus } from "#veryfront/http/responses";
+import {
+  describeBrowserModuleBoundaryViolation,
+  inspectBrowserModuleBoundary,
+} from "#veryfront/server/shared/browser-module-boundary.ts";
+import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
+import { isProtectedBrowserModulePath } from "./browser-module-admission.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
@@ -172,9 +184,38 @@ function shouldCacheReleaseVersionedModule(
     url.searchParams.get(RELEASE_MODULE_RUNTIME_VERSION_PARAM) === VERSION;
 }
 
-function isSSRModuleRequest(req: Request, url: URL): boolean {
+function isSSRModuleRequest(
+  req: Request,
+  url: URL,
+  options: ModuleServerOptions,
+): boolean {
+  // Query parameters and user-agent strings are attacker-controlled. Only an
+  // in-process caller that has explicitly admitted a local project may enable
+  // the legacy SSR module transport.
+  if (options.allowSSRModuleMode !== true || options.isLocalProject !== true) return false;
   const userAgent = req.headers.get("user-agent") ?? "";
   return url.searchParams.get("ssr") === "true" || userAgent.startsWith("Deno/");
+}
+
+function isFrameworkBrowserModulePath(modulePath: string): boolean {
+  return modulePath.startsWith("_veryfront/") ||
+    modulePath.startsWith("react/") ||
+    modulePath.startsWith("deps/") ||
+    modulePath.startsWith("_dnt.") ||
+    modulePath === "deno";
+}
+
+function isScriptModuleSource(path: string): boolean {
+  return /\.(?:[cm]?[jt]sx?)$/i.test(path);
+}
+
+async function inspectBrowserSourceBoundary(
+  source: string,
+  sourceFile: string,
+): Promise<string | null> {
+  await ensureDefaultParserContracts();
+  const violation = await inspectBrowserModuleBoundary(source, sourceFile);
+  return violation ? describeBrowserModuleBoundaryViolation(violation) : null;
 }
 
 async function addReleaseVersionToFallbackImports(
@@ -237,6 +278,11 @@ export interface ModuleServerOptions {
   contentSourceId?: string;
   /** Explicitly selects host FS for local projects and adapter FS for proxy projects. */
   isLocalProject?: boolean;
+  /**
+   * Enables the legacy SSR transform only for an explicitly admitted local
+   * project. Never derive this capability from request headers or query data.
+   */
+  allowSSRModuleMode?: boolean;
   /**
    * Restrict module imports to specific directories (opt-in security).
    * When not set, users can import from any directory in the project.
@@ -394,7 +440,24 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
         const { slug: snippetProjectSlug, branch: snippetBranch } = parseProjectDomain(url.host);
 
-        const isSSR = isSSRModuleRequest(req, url);
+        const isSSR = isSSRModuleRequest(req, url, options);
+
+        if (!isSSR) {
+          const boundaryReason = await inspectBrowserSourceBoundary(
+            snippetCode,
+            `_snippets/${hash}.tsx`,
+          );
+          if (boundaryReason) {
+            logger.warn("Rejected server-only snippet from browser module endpoint", {
+              hash,
+              reason: boundaryReason,
+            });
+            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store",
+            });
+          }
+        }
 
         logger.debug("Transforming snippet", {
           hash,
@@ -487,6 +550,19 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           });
         }
 
+        // The remote project's configuration is unavailable here, so enforce
+        // the framework-owned default private roots before any registry fetch.
+        if (isProtectedBrowserModulePath(crossPath)) {
+          logger.warn("Rejected protected cross-project browser module path", {
+            project: crossProjectSlug,
+            path: crossPath,
+          });
+          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+        }
+
         const projectRef = crossVersion === "latest"
           ? crossProjectSlug
           : `${crossProjectSlug}@${crossVersion}`;
@@ -511,7 +587,21 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             );
           }
 
-          const isSSR = isSSRModuleRequest(req, url);
+          const isSSR = isSSRModuleRequest(req, url, options);
+          if (!isSSR && isScriptModuleSource(crossPath)) {
+            const boundaryReason = await inspectBrowserSourceBoundary(source, crossPath);
+            if (boundaryReason) {
+              logger.warn("Rejected server-only cross-project source from browser endpoint", {
+                projectRef,
+                path: crossPath,
+                reason: boundaryReason,
+              });
+              return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+                "Content-Type": "text/plain; charset=utf-8",
+                "Cache-Control": "no-store",
+              });
+            }
+          }
           const crossProjectModuleServerUrl = `/_vf_modules/_cross/${projectRef}/@`;
           const browserCrossProjectModuleServerUrl = dependencyPinningCacheKey.startsWith("on:")
             ? pathPin.found ? undefined : `/_vf_modules/_cross/${projectRef}/@`
@@ -597,7 +687,55 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         branch ??= parsedHost.branch;
       }
 
-      const isSSR = isSSRModuleRequest(req, url);
+      const isSSR = isSSRModuleRequest(req, url, options);
+      if (isProtectedBrowserModulePath(modulePath, options.config)) {
+        logger.warn("Rejected protected project path from browser module endpoint", {
+          modulePath,
+        });
+        return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+        });
+      }
+
+      if (
+        !isSSR &&
+        options.mode === "production" &&
+        options.releaseId &&
+        !isFrameworkBrowserModulePath(modulePath) &&
+        isReleaseAssetManifestEnabled()
+      ) {
+        const admissionManifest = await getReadyManifestForRenderAsync(options.releaseId, {
+          refreshCachedNull: true,
+        });
+        if (!admissionManifest) {
+          logger.error("Production browser module manifest is unavailable", {
+            modulePath,
+            releaseId: options.releaseId,
+          });
+          return createModuleResponse(
+            method,
+            "Browser module manifest unavailable",
+            HttpStatus.SERVICE_UNAVAILABLE,
+            {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store",
+            },
+          );
+        }
+        if (!resolveManifestModuleUrl(admissionManifest, modulePath)) {
+          logger.warn("Rejected production browser module absent from release manifest", {
+            modulePath,
+            releaseId: options.releaseId,
+            manifestVersion: admissionManifest.manifestVersion,
+          });
+          return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-store",
+          });
+        }
+      }
+
       const canUseReleaseModuleResponseCache = method === "GET" || method === "HEAD";
       const canCacheReleaseVersionedModule = canUseReleaseModuleResponseCache &&
         shouldCacheReleaseVersionedModule(url, options, isSSR);
@@ -685,11 +823,32 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         const { path: sourceFile, isFrameworkFile, embeddedContent } = findResult;
 
         let code = "";
+        let inspectedBrowserSource: string | undefined;
+
+        if (!isSSR && !isFrameworkFile && isScriptModuleSource(sourceFile)) {
+          inspectedBrowserSource = await readSourceFileForVersion(secureFs, findResult);
+          const boundaryReason = await inspectBrowserSourceBoundary(
+            inspectedBrowserSource,
+            sourceFile,
+          );
+          if (boundaryReason) {
+            logger.warn("Rejected server-only source from browser module endpoint", {
+              modulePath,
+              reason: boundaryReason,
+            });
+            return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store",
+            });
+          }
+        }
 
         if (!isHeadRequest) {
           // Use embedded content for compiled polyfills (no filesystem I/O needed)
           let source: string;
-          if (embeddedContent) {
+          if (inspectedBrowserSource !== undefined) {
+            source = inspectedBrowserSource;
+          } else if (embeddedContent) {
             source = embeddedContent;
             logger.debug("Using embedded polyfill content", {
               path: sourceFile,

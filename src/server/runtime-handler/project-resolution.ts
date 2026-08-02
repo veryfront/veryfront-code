@@ -101,15 +101,12 @@ export function extractRequestHeaders(
   const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
   const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
-  // The WebSocket endpoint uses this query parameter for its existing HMR
-  // handshake. Other routes must not let client-controlled query/header values
-  // override the host-derived environment unless a trusted proxy supplied them.
-  const websocketEnvironment = url.pathname === "/_ws"
-    ? url.searchParams.get("x-environment") ?? undefined
-    : undefined;
+  // Routing identity supplied in a header or query is meaningful only behind
+  // the operator-declared sanitising edge. WebSocket query parameters are
+  // browser-controlled and must not independently unlock preview behavior.
   const environment = (proxyTrusted ?? trustForwardedHeaders())
     ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
-    : websocketEnvironment;
+    : undefined;
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,

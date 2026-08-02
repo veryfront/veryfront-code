@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter, RuntimeId } from "#veryfront/platform/adapters/base.ts";
 import { DenoAdapter } from "#veryfront/platform/adapters/runtime/deno/index.ts";
@@ -108,6 +108,7 @@ describe("server/runtime-handler/index", () => {
     injectIsolationDepsForTests(null);
     HMRHandler.shutdown();
     requestTracker.shutdown();
+    Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
   });
 
   it("preserves debug flags supplied by binding-backed runtime adapters", () => {
@@ -257,8 +258,9 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
-  it("allows standard first-party proxy context headers without an extra trust proof", async () => {
+  it("allows proxy context only behind the operator-trusted topology", async () => {
     const handler = createProxyModeHandler();
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
 
     const response = await handler(
       new Request("http://localhost/page", {
@@ -293,11 +295,11 @@ describe("server/runtime-handler/index", () => {
     assertEquals(response.headers.get("Content-Type"), "application/json");
     assertEquals(await response.json(), {
       error: "Untrusted proxy context",
-      detail: "proxy context headers require a trusted upstream proxy",
+      detail: "proxy mode requires an operator-trusted upstream proxy",
     });
   });
 
-  it("skips the proxy header guard for websocket requests", async () => {
+  it("rejects websocket query identity before HMR", async () => {
     const handler = createProxyModeHandler();
 
     const response = await handler(
@@ -306,10 +308,11 @@ describe("server/runtime-handler/index", () => {
       ),
     );
 
-    assertEquals(response.status, 200);
-    const body = await response.json();
-    assertEquals(body.status, "ok");
-    assertExists(body.metrics);
+    assertEquals(response.status, 502);
+    assertEquals(await response.json(), {
+      error: "Missing project context",
+      detail: "x-project-slug header is required in proxy mode",
+    });
   });
 
   it("keeps the native HMR upgrade request connected", async () => {
@@ -370,7 +373,7 @@ describe("server/runtime-handler/index", () => {
     }
   });
 
-  it("skips the proxy header guard for lightweight module requests", async () => {
+  it("applies the proxy header guard to lightweight module requests", async () => {
     const handler = createProxyModeHandler();
 
     const response = await handler(
@@ -379,9 +382,47 @@ describe("server/runtime-handler/index", () => {
       }),
     );
 
-    assertEquals(response.status === 502, false);
-    const body = await response.text();
-    assertEquals(body.includes("x-project-slug header is required in proxy mode"), false);
-    assertEquals(body.includes("x-token header is required in proxy mode"), false);
+    assertEquals(response.status, 502);
+    assertEquals(await response.json(), {
+      error: "Missing project context",
+      detail: "x-project-slug header is required in proxy mode",
+    });
+  });
+
+  it("rejects tokenless module identity before env loading even behind a trusted edge", async () => {
+    Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+    const originalHostToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    Deno.env.set("VERYFRONT_API_TOKEN", "host-token-must-not-authorize-request");
+    const originalFetch = globalThis.fetch;
+    let apiCalls = 0;
+    globalThis.fetch = ((..._args: Parameters<typeof fetch>) => {
+      apiCalls += 1;
+      return Promise.reject(new Error("project environment fetch must not run"));
+    }) as typeof fetch;
+
+    try {
+      const handler = createProxyModeHandler();
+      const response = await handler(
+        new Request("http://internal.proxy/_vf_modules/components/App.js", {
+          headers: {
+            "x-project-slug": "attacker-project",
+            "x-project-id": "attacker-project-id",
+            "x-environment-id": "attacker-environment-id",
+            "x-environment": "preview",
+          },
+        }),
+      );
+
+      assertEquals(response.status, 502);
+      assertEquals(await response.json(), {
+        error: "Missing authentication context",
+        detail: "x-token header is required in proxy mode",
+      });
+      assertEquals(apiCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalHostToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalHostToken);
+    }
   });
 });
