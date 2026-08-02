@@ -56,7 +56,6 @@ type AnthropicStreamToolCallState = {
 
 type AnthropicStreamReasoningState = {
   id: string;
-  text: string;
   signature?: string;
   redactedData?: string;
 };
@@ -90,6 +89,8 @@ const MAX_ANTHROPIC_PARTIAL_JSON_BYTES = 1_048_576;
 const MAX_ANTHROPIC_PARTIAL_JSON_DELTAS = 4_096;
 const MAX_ANTHROPIC_SSE_EVENT_BYTES = 8_388_608;
 const MAX_ANTHROPIC_SSE_REMAINDER_BYTES = 8_388_608;
+export const MAX_ANTHROPIC_RETAINED_CONTENT_BYTES = 16_777_216;
+export const MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS = 8_192;
 const ANTHROPIC_TOOL_INPUT_ENCODER = new TextEncoder();
 
 function invalidAnthropicStream(
@@ -143,6 +144,27 @@ function appendAnthropicToolInput(
 
 function joinAnthropicToolInput(toolCall: AnthropicStreamToolCallState): string {
   return toolCall.inputChunks.join("");
+}
+
+class AnthropicRetainedContentBudget {
+  #bytes = 0;
+  #items = 0;
+
+  retain(value: string, issue: string): void {
+    if (this.#items >= MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS) {
+      throw new RangeError(
+        `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items (${issue})`,
+      );
+    }
+    const bytes = ANTHROPIC_TOOL_INPUT_ENCODER.encode(value).byteLength;
+    if (bytes > MAX_ANTHROPIC_RETAINED_CONTENT_BYTES - this.#bytes) {
+      throw new RangeError(
+        `Anthropic retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_BYTES} UTF-8 bytes (${issue})`,
+      );
+    }
+    this.#items++;
+    this.#bytes += bytes;
+  }
 }
 
 class BoundedAnthropicSseParser {
@@ -729,6 +751,9 @@ export async function* streamAnthropicCompatibleParts(
   const toolCalls = new Map<number, AnthropicStreamToolCallState>();
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   const rawContentBlocks = new Map<number, Record<string, unknown>>();
+  const rawTextChunks = new Map<number, string[]>();
+  const rawThinkingChunks = new Map<number, string[]>();
+  const retainedContentBudget = new AnthropicRetainedContentBudget();
   const openContentBlocks = new Set<number>();
   const seenContentBlocks = new Set<number>();
   const supportedContentBlocks = new Set<number>();
@@ -1000,6 +1025,20 @@ export async function* streamAnthropicCompatibleParts(
           openContentBlocks.add(index);
           clientToolUseIdleDeadlineMs = null;
           clientToolUseTerminalDeadlineMs = null;
+          try {
+            retainedContentBudget.retain(
+              stringifyJsonValue(contentBlock),
+              "content block",
+            );
+          } catch (error) {
+            if (error instanceof RangeError) {
+              throw invalidAnthropicStream(providerLabel, error.message);
+            }
+            throw invalidAnthropicStream(
+              providerLabel,
+              "content block could not be retained safely",
+            );
+          }
           rawContentBlocks.set(index, { ...contentBlock });
 
           if (blockType === "text") {
@@ -1007,6 +1046,7 @@ export async function* streamAnthropicCompatibleParts(
               throw invalidAnthropicStream(providerLabel, "text content block was malformed");
             }
             supportedContentBlocks.add(index);
+            rawTextChunks.set(index, [contentBlock.text]);
             if (contentBlock.text.length > 0) {
               yield { type: "text-delta", delta: contentBlock.text };
             }
@@ -1026,21 +1066,17 @@ export async function* streamAnthropicCompatibleParts(
             const reasoningId = `thinking-${index}`;
             reasoningBlocks.set(index, {
               id: reasoningId,
-              text: "",
               ...(typeof contentBlock.signature === "string"
                 ? { signature: contentBlock.signature }
                 : {}),
             });
+            rawThinkingChunks.set(index, [contentBlock.thinking ?? ""]);
             yield {
               type: "reasoning-start",
               id: reasoningId,
             };
 
             if (typeof contentBlock?.thinking === "string" && contentBlock.thinking.length > 0) {
-              const current = reasoningBlocks.get(index);
-              if (current) {
-                current.text += contentBlock.thinking;
-              }
               yield {
                 type: "reasoning-delta",
                 id: reasoningId,
@@ -1065,7 +1101,6 @@ export async function* streamAnthropicCompatibleParts(
             const reasoningId = `thinking-${index}`;
             reasoningBlocks.set(index, {
               id: reasoningId,
-              text: "",
               redactedData: contentBlock.data,
             });
             yield {
@@ -1227,9 +1262,22 @@ export async function* streamAnthropicCompatibleParts(
                 "text delta did not match its content block",
               );
             }
-            rawBlock.text = `${
-              typeof rawBlock.text === "string" ? rawBlock.text : ""
-            }${delta.text}`;
+            const chunks = rawTextChunks.get(index);
+            if (!chunks) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                "text delta retention state was missing",
+              );
+            }
+            try {
+              retainedContentBudget.retain(delta.text, "text delta");
+            } catch (error) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                error instanceof Error ? error.message : "text retention budget was exceeded",
+              );
+            }
+            chunks.push(delta.text);
             if (delta.text.length > 0) {
               yield { type: "text-delta", delta: delta.text };
             }
@@ -1248,13 +1296,23 @@ export async function* streamAnthropicCompatibleParts(
               );
             }
 
-            current.text += delta.thinking;
             const rawBlock = rawContentBlocks.get(index);
-            if (rawBlock) {
-              rawBlock.thinking = `${
-                typeof rawBlock.thinking === "string" ? rawBlock.thinking : ""
-              }${delta.thinking}`;
+            const chunks = rawThinkingChunks.get(index);
+            if (!rawBlock || !chunks) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                "thinking delta retention state was missing",
+              );
             }
+            try {
+              retainedContentBudget.retain(delta.thinking, "thinking delta");
+            } catch (error) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                error instanceof Error ? error.message : "thinking retention budget was exceeded",
+              );
+            }
+            chunks.push(delta.thinking);
             if (delta.thinking.length > 0) {
               yield {
                 type: "reasoning-delta",
@@ -1295,6 +1353,17 @@ export async function* streamAnthropicCompatibleParts(
               );
             }
             const citations = Array.isArray(rawBlock.citations) ? rawBlock.citations : [];
+            try {
+              retainedContentBudget.retain(
+                stringifyJsonValue(citation),
+                "citation delta",
+              );
+            } catch (error) {
+              throw invalidAnthropicStream(
+                providerLabel,
+                error instanceof Error ? error.message : "citation retention budget was exceeded",
+              );
+            }
             citations.push(citation);
             rawBlock.citations = citations;
             continue;
@@ -1338,6 +1407,17 @@ export async function* streamAnthropicCompatibleParts(
           if (supportedContentBlocks.delete(index)) {
             completedSupportedContentBlocks++;
           }
+          const rawBlock = rawContentBlocks.get(index);
+          const textChunks = rawTextChunks.get(index);
+          if (rawBlock && textChunks) {
+            rawBlock.text = textChunks.join("");
+            rawTextChunks.delete(index);
+          }
+          const thinkingChunks = rawThinkingChunks.get(index);
+          if (rawBlock && thinkingChunks) {
+            rawBlock.thinking = thinkingChunks.join("");
+            rawThinkingChunks.delete(index);
+          }
           const reasoning = reasoningBlocks.get(index);
           if (reasoning) {
             yield {
@@ -1370,7 +1450,6 @@ export async function* streamAnthropicCompatibleParts(
             );
           }
 
-          const rawBlock = rawContentBlocks.get(index);
           if (rawBlock) rawBlock.input = parsedInput;
 
           yield {

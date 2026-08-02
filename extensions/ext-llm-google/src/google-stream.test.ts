@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProviderRequestError } from "veryfront/provider/shared";
 import {
   extractGoogleUsage,
+  MAX_GOOGLE_RETAINED_STATE_ITEMS,
   MAX_GOOGLE_SSE_BUFFER_CODE_UNITS,
   MAX_GOOGLE_SSE_CHUNK_BYTES,
   streamGoogleCompatibleParts,
@@ -990,6 +991,41 @@ describe("ext-llm-google/google-stream", () => {
         )),
       ProviderRequestError,
       `SSE buffer exceeded ${MAX_GOOGLE_SSE_BUFFER_CODE_UNITS} code units`,
+    );
+  });
+
+  it("bounds retained raw parts across many small candidate events", async () => {
+    const events = Array.from(
+      { length: MAX_GOOGLE_RETAINED_STATE_ITEMS + 1 },
+      () => data({ candidates: [{ content: { parts: [{ text: "x" }] } }] }),
+    );
+
+    await assertRejects(
+      () => collectParts(streamFromText(events.join(""))),
+      ProviderRequestError,
+      `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_ITEMS} items`,
+    );
+  });
+
+  it("bounds retained correlation maps across many small function calls", async () => {
+    const events = Array.from(
+      { length: Math.floor(MAX_GOOGLE_RETAINED_STATE_ITEMS / 2) + 1 },
+      (_, index) =>
+        data({
+          candidates: [{
+            content: {
+              parts: [{
+                functionCall: { id: `call-${index}`, name: "lookup", args: {} },
+              }],
+            },
+          }],
+        }),
+    );
+
+    await assertRejects(
+      () => collectParts(streamFromText(events.join(""))),
+      ProviderRequestError,
+      `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_ITEMS} items`,
     );
   });
 

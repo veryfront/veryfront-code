@@ -24,6 +24,9 @@ import {
 
 export const MAX_GOOGLE_SSE_CHUNK_BYTES = 8 * 1024 * 1024;
 export const MAX_GOOGLE_SSE_BUFFER_CODE_UNITS = 8 * 1024 * 1024;
+export const MAX_GOOGLE_RETAINED_STATE_BYTES = 16 * 1024 * 1024;
+export const MAX_GOOGLE_RETAINED_STATE_ITEMS = 8_192;
+const GOOGLE_RETAINED_STATE_ENCODER = new TextEncoder();
 
 const GOOGLE_CONTENT_FILTER_FINISH_REASONS = new Set([
   "SAFETY",
@@ -181,6 +184,8 @@ export async function* streamGoogleCompatibleParts(
   }> = [];
   const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
   const rawAssistantParts: Array<Record<string, unknown>> = [];
+  let retainedStateBytes = 0;
+  let retainedStateItems = 0;
   let reasoningId: string | null = null;
   let reasoningSignature: string | undefined;
   let reasoningIndex = 0;
@@ -191,6 +196,44 @@ export async function* streamGoogleCompatibleParts(
   let sawOutput = false;
   let sawFinishReason = false;
   let sawDone = false;
+
+  const reserveRetainedItem = (issue: string): void => {
+    if (retainedStateItems >= MAX_GOOGLE_RETAINED_STATE_ITEMS) {
+      throw invalidGoogleStream(
+        context,
+        `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_ITEMS} items (${issue})`,
+      );
+    }
+    retainedStateItems++;
+  };
+
+  const reserveRetainedBytes = (value: string, issue: string): void => {
+    const bytes = GOOGLE_RETAINED_STATE_ENCODER.encode(value).byteLength;
+    if (bytes > MAX_GOOGLE_RETAINED_STATE_BYTES - retainedStateBytes) {
+      throw invalidGoogleStream(
+        context,
+        `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_BYTES} UTF-8 bytes (${issue})`,
+      );
+    }
+    retainedStateBytes += bytes;
+  };
+
+  const retainRawAssistantPart = (part: Record<string, unknown>): number => {
+    let serialized: string;
+    try {
+      serialized = stringifyJsonValue(part);
+    } catch {
+      throw invalidGoogleStream(context, "candidate part could not be retained safely");
+    }
+    reserveRetainedItem("raw candidate part");
+    reserveRetainedBytes(serialized, "raw candidate part");
+    return rawAssistantParts.push(part) - 1;
+  };
+
+  const reserveCorrelation = (issue: string, ...values: string[]): void => {
+    reserveRetainedItem(issue);
+    for (const value of values) reserveRetainedBytes(value, issue);
+  };
 
   const mergeReplaySignature = (
     prior: { rawPartIndex: number; thoughtSignature?: string },
@@ -209,6 +252,7 @@ export async function* streamGoogleCompatibleParts(
       if (!previousRawPart) {
         throw invalidGoogleStream(context, "candidate replay history was inconsistent");
       }
+      reserveRetainedBytes(thoughtSignature, "replayed thought signature");
       previousRawPart.thoughtSignature = thoughtSignature;
       prior.thoughtSignature = thoughtSignature;
     }
@@ -347,7 +391,7 @@ export async function* streamGoogleCompatibleParts(
         throw invalidGoogleStream(context, "candidate text part was malformed");
       }
       if (dataField === "text") {
-        rawAssistantParts.push(part);
+        retainRawAssistantPart(part);
       }
 
       if (partText !== undefined && part.thought === true) {
@@ -458,7 +502,13 @@ export async function* streamGoogleCompatibleParts(
         } catch {
           throw invalidGoogleStream(context, "candidate tool call id was duplicated");
         }
-        rawAssistantParts.push(part);
+        retainRawAssistantPart(part);
+        reserveCorrelation(
+          "function-call correlation",
+          deduplicationKey,
+          callShape,
+          ...(thoughtSignature === undefined ? [] : [thoughtSignature]),
+        );
         seenToolCalls.set(deduplicationKey, {
           callShape,
           rawPartIndex,
@@ -536,7 +586,13 @@ export async function* streamGoogleCompatibleParts(
           }
         }
 
-        const rawPartIndex = rawAssistantParts.push(part) - 1;
+        const rawPartIndex = retainRawAssistantPart(part);
+        reserveCorrelation(
+          "code-execution correlation",
+          callShape,
+          ...(executableCode.providerId === undefined ? [] : [executableCode.providerId]),
+          ...(thoughtSignature === undefined ? [] : [thoughtSignature]),
+        );
         const pending = {
           callShape,
           rawPartIndex,
@@ -616,8 +672,14 @@ export async function* streamGoogleCompatibleParts(
         pendingAnonymousCodeExecutions.shift();
       }
 
-      const rawPartIndex = rawAssistantParts.push(part) - 1;
+      const rawPartIndex = retainRawAssistantPart(part);
       if (result.providerId !== undefined) {
+        reserveCorrelation(
+          "code-result correlation",
+          result.providerId,
+          resultShape,
+          ...(thoughtSignature === undefined ? [] : [thoughtSignature]),
+        );
         seenCodeExecutionResults.set(result.providerId, {
           resultShape,
           rawPartIndex,

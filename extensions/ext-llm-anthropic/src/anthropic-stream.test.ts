@@ -4,6 +4,7 @@ import { ProviderOverloadedError, ProviderRequestError } from "veryfront/provide
 import {
   addAnthropicUsage,
   extractAnthropicUsage,
+  MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS,
   streamAnthropicCompatibleParts,
 } from "./anthropic-stream.ts";
 
@@ -412,6 +413,32 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
     );
     assertEquals(cancelCount, 1);
     assertEquals(stream.locked, false);
+  });
+
+  it("bounds retained content across many small text deltas", async () => {
+    const events = [
+      data({ type: "message_start", message: { usage: { input_tokens: 1 } } }),
+      data({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      }),
+      ...Array.from(
+        { length: MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS },
+        () =>
+          data({
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "x" },
+          }),
+      ),
+    ];
+
+    await assertRejects(
+      () => collectParts(streamFromText(events.join(""))),
+      ProviderRequestError,
+      `retained content exceeded ${MAX_ANTHROPIC_RETAINED_CONTENT_ITEMS} items`,
+    );
   });
 
   it("caps an unterminated SSE remainder and cancels the provider body", async () => {
