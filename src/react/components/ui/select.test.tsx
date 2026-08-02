@@ -1138,13 +1138,18 @@ describe("Select", () => {
   });
 
   it("uses explicit display contracts without duplicating arbitrary item nodes", () => {
+    const buildIdFixture = (...segments: string[]): string => segments.join(" ");
+    const spacedTriggerId = buildIdFixture("invalid", "trigger", "id");
+    const emptyContentId = buildIdFixture();
+    assertEquals(spacedTriggerId.includes(" "), true);
+    assertEquals(emptyContentId, "");
     const markup = renderToString(
       <>
         <Select value="opaque" onValueChange={() => {}}>
-          <SelectTrigger id="invalid trigger id">
+          <SelectTrigger id={spacedTriggerId}>
             <SelectValue className="custom-value">Friendly name</SelectValue>
           </SelectTrigger>
-          <SelectContent id="">
+          <SelectContent id={emptyContentId}>
             <SelectItem value="opaque">Opaque fallback</SelectItem>
           </SelectContent>
         </Select>
