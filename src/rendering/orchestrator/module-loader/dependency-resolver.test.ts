@@ -59,6 +59,49 @@ describe("module-loader/dependency-resolver", () => {
     );
   });
 
+  // Bounding only the static scan would leave the same allocation reachable
+  // through the dynamic-import form, since both kinds are collected and
+  // rewritten together.
+  it("fails closed when dynamic import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `const value${index} = await import("@/value-${index}");`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 dynamic alias imports",
+    );
+  });
+
+  it("fails closed when dynamic relative import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `const value${index} = await import("./value-${index}");`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 dynamic relative imports",
+    );
+  });
+
   it("resolves alias and relative imports while ignoring already transformed file imports", async () => {
     await withDependencyFixture(
       {

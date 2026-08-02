@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteDntImports, rewriteVeryfrontImports } from "./import-rewriter.ts";
+import { MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./limits.ts";
 import { FRAMEWORK_ROOT } from "../constants.ts";
 import { join } from "#veryfront/compat/path";
 
@@ -106,5 +107,32 @@ describe("rewriteDntImports", () => {
 
     assertEquals(lines[0], `// Previous example: from "./ai/csp-nonce.js"`);
     assertEquals(lines[1]?.includes(`from "file://`), true);
+  });
+
+  // Side-effect imports are rewritten by their own scan, so bounding only the
+  // `from "…"` scan would leave this pattern unbounded.
+  it("fails closed when side-effect import collection exceeds its bound", async () => {
+    const code = Array.from(
+      { length: MAX_MDX_MODULE_IMPORTS_PER_FILE + 1 },
+      (_, index) => `import "./polyfill-${index}.js";`,
+    ).join("\n");
+
+    await assertRejects(
+      () => rewriteDntImports(code, "/app/node_modules/veryfront/dist/head.js"),
+      RangeError,
+      `more than ${MAX_MDX_MODULE_IMPORTS_PER_FILE} static imports`,
+    );
+  });
+
+  it("rewrites side-effect imports sitting exactly on the bound", async () => {
+    const code = Array.from(
+      { length: MAX_MDX_MODULE_IMPORTS_PER_FILE },
+      (_, index) => `import "./polyfill-${index}.js";`,
+    ).join("\n");
+
+    const result = await rewriteDntImports(code, "/app/node_modules/veryfront/dist/head.js");
+
+    assertEquals(result.split("\n").length, MAX_MDX_MODULE_IMPORTS_PER_FILE);
+    assertEquals(result.includes(`import "./polyfill-`), false);
   });
 });

@@ -4,8 +4,13 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findDynamicImportSpans,
   findStaticImportFromSpans,
+  findStaticSideEffectImportSpans,
   replaceSourceSpans,
 } from "./source-spans.ts";
+
+// Cases about which specifiers a scanner recognises, rather than about how many
+// it collects, opt out of the bound explicitly.
+const UNBOUNDED = Number.MAX_SAFE_INTEGER;
 
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   describe("replaceSourceSpans", () => {
@@ -124,9 +129,33 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     // are recognised rather than about resolution.
     const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
 
+    // These cases are about which arguments the scanner recognises, so they opt
+    // out of the bound rather than exercising it.
     function specifiers(source: string): string[] {
-      return findDynamicImportSpans(source, matchRelative).map((span) => span.path);
+      return findDynamicImportSpans(source, matchRelative, UNBOUNDED).map((span) => span.path);
     }
+
+    it("requires a positive safe match bound", () => {
+      for (const maxMatches of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        assertThrows(
+          () => findDynamicImportSpans('await import("./value.js");', matchRelative, maxMatches),
+          RangeError,
+          "positive safe integer",
+        );
+      }
+    });
+
+    it("stops collecting after the explicit match bound", () => {
+      const source = Array.from(
+        { length: 20 },
+        (_, index) => `const value${index} = await import("./value-${index}.js");`,
+      ).join("\n");
+
+      assertEquals(
+        findDynamicImportSpans(source, matchRelative, 3).map((span) => span.path),
+        ["./value-0.js", "./value-1.js", "./value-2.js"],
+      );
+    });
 
     it("finds a literal specifier", () => {
       assertEquals(specifiers(`const m = await import("./foo.js");`), ["./foo.js"]);
@@ -223,13 +252,54 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
 
     it("spans only the quoted specifier when comments surround it", () => {
       const source = `import(/* hint */ "./a.js" /* eager */);`;
-      const [span] = findDynamicImportSpans(source, matchRelative);
+      const [span] = findDynamicImportSpans(source, matchRelative, UNBOUNDED);
       assertEquals(span?.original, `"./a.js"`);
       assertEquals(
         replaceSourceSpans(source, [
           { start: span!.start, end: span!.end, replacement: `"file:///out/a.js"` },
         ]),
         `import(/* hint */ "file:///out/a.js" /* eager */);`,
+      );
+    });
+  });
+
+  describe("findStaticSideEffectImportSpans", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+
+    it("requires a positive safe match bound", () => {
+      for (const maxMatches of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        assertThrows(
+          () => findStaticSideEffectImportSpans('import "./value.js";', matchRelative, maxMatches),
+          RangeError,
+          "positive safe integer",
+        );
+      }
+    });
+
+    it("stops collecting after the explicit match bound", () => {
+      const source = Array.from(
+        { length: 20 },
+        (_, index) => `import "./value-${index}.js";`,
+      ).join("\n");
+
+      assertEquals(
+        findStaticSideEffectImportSpans(source, matchRelative, 3).map((span) => span.path),
+        ["./value-0.js", "./value-1.js", "./value-2.js"],
+      );
+    });
+
+    // Only matched specifiers count against the bound, so unrelated side-effect
+    // imports do not crowd out the ones the caller is looking for.
+    it("counts only matched specifiers against the bound", () => {
+      const source = [
+        `import "some-package";`,
+        `import "another-package";`,
+        `import "./value.js";`,
+      ].join("\n");
+
+      assertEquals(
+        findStaticSideEffectImportSpans(source, matchRelative, 2).map((span) => span.path),
+        ["./value.js"],
       );
     });
   });
