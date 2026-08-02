@@ -9,10 +9,12 @@ import {
   createModelCallContextRunEvents,
   MAX_CHUNKED_MODEL_CALL_CONTEXT_EVENT_BYTES,
   MAX_MODEL_CALL_CONTEXT_BYTES,
+  MAX_SINGLE_MODEL_CALL_CONTEXT_EVENT_BYTES,
   type ModelCallContextMetricsSink,
   ModelCallContextPersistenceError,
   scopeAsyncIterableWithModelCallRecorder,
 } from "./model-call-context-run-event-recorder.ts";
+import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "../conversation/run-event-limits.ts";
 import type { ModelCallRecorder } from "../../runtime/model-call-context.ts";
 import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
@@ -173,6 +175,31 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
         true,
       );
     }
+  });
+
+  it("chunks contexts above the per-event payload budget instead of emitting one row", async () => {
+    const events = await createModelCallContextRunEvents({
+      messages: [{
+        role: "system",
+        content: "x".repeat(MAX_SINGLE_MODEL_CALL_CONTEXT_EVENT_BYTES),
+      }],
+    });
+
+    assertEquals(events.length > 1, true);
+    for (const event of events) {
+      assertEquals(
+        encoder.encode(JSON.stringify(event)).byteLength <
+          MAX_CHUNKED_MODEL_CALL_CONTEXT_EVENT_BYTES,
+        true,
+      );
+    }
+  });
+
+  it("sizes the unchunked ceiling against the conversation run event payload budget", () => {
+    assertEquals(
+      MAX_SINGLE_MODEL_CALL_CONTEXT_EVENT_BYTES,
+      MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+    );
   });
 
   it("rejects contexts larger than 4 MiB before append", async () => {

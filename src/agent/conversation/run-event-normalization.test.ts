@@ -226,6 +226,23 @@ describe("agent/conversation-run-event-normalization", () => {
     assertEquals(normalizeConversationRunEvent(event), [event]);
   });
 
+  it("keeps pass-through model-call context envelopes within the per-event payload budget", async () => {
+    // Model-call context events skip summarization, so the recorder must chunk any
+    // context above the budget itself — otherwise normalization would hand the API
+    // an event it rejects and fail the run closed before dispatch.
+    const events = await createModelCallContextRunEvents({
+      messages: [{ role: "system", content: "x".repeat(300 * 1024) }],
+    });
+
+    assertEquals(events.length > 1, true);
+    for (const event of normalizeConversationRunEvents(events)) {
+      assertEquals(
+        getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES,
+        true,
+      );
+    }
+  });
+
   it("rejects malformed model-call context envelopes", () => {
     let rejected = false;
     try {
