@@ -20,6 +20,7 @@ export function APITab(): React.JSX.Element {
         <div className="overflow-hidden rounded-md border border-gray-200 bg-white shadow-sm">
           <iframe
             src="/_docs"
+            title="Veryfront API documentation"
             className="w-full border-0"
             style={{ height: "calc(100vh - 180px)" }}
           />

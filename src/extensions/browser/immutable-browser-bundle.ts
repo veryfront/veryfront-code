@@ -1,5 +1,7 @@
 /** Dependency-free validation for extension-owned, immutable browser bundles. */
 
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
 const textEncoder = new TextEncoder();
 
 export interface ImmutableBrowserBundleValidationOptions {
@@ -60,7 +62,7 @@ export function snapshotImmutableBrowserBundleProvider(
   value: unknown,
   options: ImmutableBrowserBundleValidationOptions,
 ): Readonly<{ browserBundle: string }> {
-  if (!value || typeof value !== "object") {
+  if (!value || typeof value !== "object" || isProxyWithoutHooks(value)) {
     throw new TypeError(`${options.providerLabel} must be an object`);
   }
 

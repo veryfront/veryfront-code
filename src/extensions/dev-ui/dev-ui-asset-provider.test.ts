@@ -37,6 +37,19 @@ Deno.test("Development UI asset provider rejects accessors and fallback metadata
   );
 });
 
+Deno.test("Development UI asset provider rejects proxies without invoking traps", () => {
+  let trapCalls = 0;
+  const proxied = new Proxy({ browserBundle: "export {};" }, {
+    getOwnPropertyDescriptor() {
+      trapCalls++;
+      throw new Error("must not inspect proxy descriptors");
+    },
+  });
+
+  assertThrows(() => snapshotDevUiAssetProvider(proxied), TypeError, "must be an object");
+  assertEquals(trapCalls, 0);
+});
+
 Deno.test("Development UI asset provider enforces canonical source and byte limits", () => {
   for (const source of ["", " \n", "\ufeffexport {};", "export {};\0", "\ud800"]) {
     assertThrows(() => createDevUiAssetProvider(source), TypeError);

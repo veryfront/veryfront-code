@@ -45,6 +45,8 @@ export function SearchInput({
         ? (
           <button
             type="button"
+            aria-label="Clear search"
+            title="Clear search"
             onClick={() => onChange("")}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
           >
