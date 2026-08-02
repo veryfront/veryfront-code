@@ -2,11 +2,6 @@ import type { ReactFeatures, ReactVersionInfo } from "./types.ts";
 import { detectReactVersion, detectReactVersionFromProject } from "./feature-detector.ts";
 
 let defaultVersionInfo: ReactVersionInfo | null = null;
-const projectVersionCache = new Map<string, ReactVersionInfo>();
-
-function projectCacheKey(projectDir: string, projectId?: string): string {
-  return projectId === undefined ? `directory:${projectDir}` : `project:${projectId}`;
-}
 
 export function getReactVersionInfo(): ReactVersionInfo {
   defaultVersionInfo ??= detectReactVersion();
@@ -15,20 +10,12 @@ export function getReactVersionInfo(): ReactVersionInfo {
 
 export async function getReactVersionInfoForProject(
   projectDir: string,
-  projectId?: string,
 ): Promise<ReactVersionInfo> {
-  const cacheKey = projectCacheKey(projectDir, projectId);
-  const cached = projectVersionCache.get(cacheKey);
-  if (cached) return cached;
-
-  const info = await detectReactVersionFromProject(projectDir);
-  projectVersionCache.set(cacheKey, info);
-  return info;
-}
-
-export function clearProjectVersionCache(projectIdOrDir: string): void {
-  projectVersionCache.delete(`project:${projectIdOrDir}`);
-  projectVersionCache.delete(`directory:${projectIdOrDir}`);
+  // A project's package metadata can change independently of this module's
+  // lifetime. The owning project/config lifecycle does not expose a reliable
+  // invalidation signal here, so caching would return stale cross-request
+  // results and require callers to coordinate a manual reset API.
+  return await detectReactVersionFromProject(projectDir);
 }
 
 export function hasFeature(feature: keyof ReactFeatures): boolean {
@@ -37,5 +24,4 @@ export function hasFeature(feature: keyof ReactFeatures): boolean {
 
 export function __resetReactVersionCacheForTests(): void {
   defaultVersionInfo = null;
-  projectVersionCache.clear();
 }

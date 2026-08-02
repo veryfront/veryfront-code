@@ -3,7 +3,6 @@ import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   checkVersionCompatibility,
-  clearProjectVersionCache,
   detectReactVersion,
   getReactVersionInfo,
   getReactVersionInfoForProject,
@@ -255,43 +254,30 @@ describe("React Version Detector", () => {
       assertEquals(Reflect.set(info.features, "streaming", false), false);
     });
 
-    it("separates project-id cache keys from directory cache keys", async () => {
-      const firstDir = await Deno.makeTempDir({ prefix: "vf-react-cache-a-" });
-      const secondDir = await Deno.makeTempDir({ prefix: "vf-react-cache-b-" });
+    it("reads current project metadata without a process-lifetime cache", async () => {
+      const projectDir = await Deno.makeTempDir({ prefix: "vf-react-version-project-" });
       try {
         await Deno.writeTextFile(
-          `${firstDir}/package.json`,
+          `${projectDir}/package.json`,
           JSON.stringify({ dependencies: { react: "17.0.2" } }),
         );
-        await Deno.writeTextFile(
-          `${secondDir}/package.json`,
-          JSON.stringify({ dependencies: { react: "19.1.0" } }),
-        );
 
         assertEquals(
-          (await getReactVersionInfoForProject(firstDir, secondDir)).version,
+          (await getReactVersionInfoForProject(projectDir)).version,
           "17.0.2",
         );
-        assertEquals(
-          (await getReactVersionInfoForProject(secondDir)).version,
-          "19.1.0",
-        );
 
         await Deno.writeTextFile(
-          `${firstDir}/package.json`,
+          `${projectDir}/package.json`,
           JSON.stringify({ dependencies: { react: "18.2.0" } }),
         );
-        clearProjectVersionCache(secondDir);
         assertEquals(
-          (await getReactVersionInfoForProject(firstDir, secondDir)).version,
+          (await getReactVersionInfoForProject(projectDir)).version,
           "18.2.0",
         );
       } finally {
         __resetReactVersionCacheForTests();
-        await Promise.all([
-          Deno.remove(firstDir, { recursive: true }),
-          Deno.remove(secondDir, { recursive: true }),
-        ]);
+        await Deno.remove(projectDir, { recursive: true });
       }
     });
 

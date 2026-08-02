@@ -39,7 +39,6 @@ export {
 } from "./ssr-adapter/index.ts";
 export {
   checkVersionCompatibility,
-  clearProjectVersionCache,
   detectReactVersion,
   getReactVersionInfo,
   getReactVersionInfoForProject,
