@@ -28,13 +28,13 @@ function snapshotContext(
 }
 
 /**
- * Wrap any unknown error as a VeryfrontError with unknown-error slug
+ * Return a detached VeryfrontError, preserving safe identity fields from valid VeryfrontError inputs
  *
  * This function is used at system boundaries (HTTP, CLI, etc.) to ensure
  * all errors have slug-based identity for consistent handling.
  *
- * @param error - Any error value (Error, VeryfrontError, string, etc.)
- * @param context - Optional context to add to the wrapped error
+ * @param error - A valid VeryfrontError to detach, or another value to wrap as unknown-error
+ * @param context - Optional context added only when error is not a valid VeryfrontError
  * @returns A detached, framework-owned VeryfrontError. Valid VeryfrontError
  * inputs retain safe identity fields; other inputs use the unknown-error slug.
  *
