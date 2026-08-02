@@ -1,3 +1,5 @@
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
 const ArrayIsArray = Array.isArray;
 const JSONStringify = JSON.stringify;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -30,6 +32,9 @@ export function readToolResultOwnDataProperty(
 ): unknown | typeof UNREADABLE_TOOL_RESULT_PROPERTY {
   if (!isRecord(value)) {
     return undefined;
+  }
+  if (isProxyWithoutHooks(value)) {
+    return UNREADABLE_TOOL_RESULT_PROPERTY;
   }
 
   try {

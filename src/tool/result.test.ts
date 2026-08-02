@@ -212,6 +212,18 @@ describe("tool/result", () => {
     assertEquals(propertyGetterCalls, 0);
   });
 
+  it("fails closed on transparent proxies without inspecting their targets", () => {
+    const result = new Proxy({ error: "target error" }, {});
+
+    assertEquals(
+      readToolResultOwnDataProperty(result, "error"),
+      UNREADABLE_TOOL_RESULT_PROPERTY,
+    );
+    assertEquals(hasToolExecutionErrorMarker(result), true);
+    assertEquals(isErroredToolExecutionResult(result), true);
+    assertEquals(getToolResultError(result), "Tool execution failed");
+  });
+
   it("uses captured primordials after its module has been imported", () => {
     let poisonCalls = 0;
     const poison = (): never => {

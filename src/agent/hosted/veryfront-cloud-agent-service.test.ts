@@ -23,6 +23,7 @@ import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
 } from "#veryfront/skill/tools.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
@@ -236,6 +237,7 @@ function getRuntimeAgent(
 }
 
 Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
+  const originalSkillToolIds = [...SKILL_TOOL_IDS];
   try {
     toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
     toolRegistryInternal.registerShared("execute_skill_script", createExecuteSkillScriptTool());
@@ -248,6 +250,8 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
         execute: () => ({ ok: true }),
       }),
     );
+    SKILL_TOOL_IDS.delete("execute_skill_script");
+    SKILL_TOOL_IDS.add("shared_echo");
 
     const tools = getDiscoveredHostTools();
 
@@ -255,6 +259,8 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
     assertEquals("load_skill_reference" in tools, false);
     assertEquals("execute_skill_script" in tools, false);
   } finally {
+    SKILL_TOOL_IDS.clear();
+    for (const toolId of originalSkillToolIds) SKILL_TOOL_IDS.add(toolId);
     toolRegistryInternal.clearAll();
   }
 });

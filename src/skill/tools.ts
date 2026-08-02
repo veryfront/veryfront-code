@@ -13,6 +13,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
   captureByteReadCapabilities,
   captureSnapshotReadCapability,
@@ -38,7 +39,7 @@ import {
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "./limits.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
-import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
+import type { Skill, SkillContent, SkillScriptExecutor, SkillScriptResult } from "./types.ts";
 import {
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
@@ -53,6 +54,11 @@ import {
 const MAX_SCRIPT_TIMEOUT_MS = SKILL_SCRIPT_MAX_TIMEOUT_MS;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
+const freeze = Object.freeze;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const hasOwnProperty = Object.prototype.hasOwnProperty;
+const numberIsSafeInteger = Number.isSafeInteger;
+const reflectApply = Reflect.apply;
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
@@ -190,14 +196,55 @@ function assertScriptInputs(
   }
 }
 
-function assertScriptOutput(result: { stdout: string; stderr: string }): void {
-  const bytes = utf8Encoder.encode(result.stdout).byteLength +
-    utf8Encoder.encode(result.stderr).byteLength;
+function readScriptResultField(
+  result: object,
+  field: keyof SkillScriptResult,
+): unknown {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = getOwnPropertyDescriptor(result, field);
+  } catch {
+    throw new TypeError("Skill script executor returned an invalid result");
+  }
+  if (
+    !descriptor ||
+    !(reflectApply(hasOwnProperty, descriptor, ["value"]) as boolean)
+  ) {
+    throw new TypeError(
+      `Skill script executor result must contain an own data property for "${field}"`,
+    );
+  }
+  return descriptor.value;
+}
+
+function snapshotScriptOutput(result: unknown): SkillScriptResult {
+  if (
+    (typeof result !== "object" && typeof result !== "function") ||
+    result === null ||
+    isProxyWithoutHooks(result)
+  ) {
+    throw new TypeError("Skill script executor returned an invalid result");
+  }
+
+  const stdout = readScriptResultField(result, "stdout");
+  const stderr = readScriptResultField(result, "stderr");
+  const exitCode = readScriptResultField(result, "exitCode");
+  if (typeof stdout !== "string" || typeof stderr !== "string") {
+    throw new TypeError("Skill script executor stdout and stderr must be strings");
+  }
+  if (typeof exitCode !== "number" || !numberIsSafeInteger(exitCode)) {
+    throw new TypeError("Skill script executor exitCode must be a safe integer");
+  }
+
+  const bytes = utf8Encoder.encode(stdout).byteLength +
+    utf8Encoder.encode(stderr).byteLength;
   if (bytes > SKILL_SCRIPT_MAX_OUTPUT_BYTES) {
     throw new RangeError(
       `Skill script output may contain at most ${SKILL_SCRIPT_MAX_OUTPUT_BYTES} bytes`,
     );
   }
+
+  return freeze({ stdout, stderr, exitCode });
 }
 
 /**
@@ -515,8 +562,7 @@ export function createExecuteSkillScriptTool(
           abortSignal,
         })
       );
-      assertScriptOutput(result);
-      return result;
+      return snapshotScriptOutput(result);
     },
   });
 }

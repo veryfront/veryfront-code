@@ -214,59 +214,35 @@ class SkillRegistry extends ScopedRegistryView<Skill> {
     );
   }
 
+  resolveSelectorForAgent(
+    skillsConfig: true | string[] | undefined,
+    scope?: AgentCapabilityScope,
+  ): ResolvedSkillSelectorSnapshot<Skill> {
+    return this.#registry.resolveSelectorForAgent(skillsConfig, scope);
+  }
+
   resolveForAgent(
     skillsConfig: true | string[],
     scope?: AgentCapabilityScope,
   ): Map<string, Skill> {
     const result = new Map<string, Skill>();
-    if (skillsConfig === true) {
-      for (const [id, skill] of this.getAll()) {
-        if (isSkillVisibleTo(skill, scope)) {
-          result.set(id, skill);
-        }
-      }
-      return result;
-    }
-
-    for (const requested of skillsConfig) {
-      const skill = this.resolveVisibleSkill(requested, scope);
-      if (skill) {
-        result.set(skill.id, skill);
-      }
+    for (const [id, skill] of this.#registry.resolveForAgent(skillsConfig, scope)) {
+      result.set(id, getPublicSkillView(skill));
     }
     return result;
   }
 
   resolveVisibleSkill(requested: string, scope?: AgentCapabilityScope): Skill | undefined {
-    if (scope?.agentId !== undefined) {
-      for (const skill of this.getAll().values()) {
-        if (skill.ownerAgentId === scope.agentId && skill.shortName === requested) {
-          return skill;
-        }
-      }
-    }
-
-    const skill = this.get(requested);
-    return skill && isSkillVisibleTo(skill, scope) ? skill : undefined;
+    const skill = this.#registry.resolveVisibleSkill(requested, scope);
+    return skill ? getPublicSkillView(skill) : undefined;
   }
 
   getVisibleSkillIds(scope?: AgentCapabilityScope): string[] {
-    const ids: string[] = [];
-    for (const [id, skill] of this.getAll()) {
-      if (isSkillVisibleTo(skill, scope)) {
-        appendOwnArrayElement(ids, id);
-      }
-    }
-    return ids;
+    return this.#registry.getVisibleSkillIds(scope);
   }
 
   hasVisibleSkills(scope?: AgentCapabilityScope): boolean {
-    for (const skill of this.getAll().values()) {
-      if (isSkillVisibleTo(skill, scope)) {
-        return true;
-      }
-    }
-    return false;
+    return this.#registry.hasVisibleSkills(scope);
   }
 }
 

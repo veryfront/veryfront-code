@@ -17,6 +17,7 @@ import {
   parseToolArgs,
   resolveConfiguredTool,
 } from "./tool-helpers.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 
 async function withMockRemoteIntegrationTools<T>(
   remoteToolNames: string[],
@@ -38,6 +39,37 @@ async function withMockRemoteIntegrationTools<T>(
     Deno.env.set("VERYFRONT_API_URL", "https://api.test");
     Deno.env.set("VERYFRONT_API_TOKEN", "token");
     return await callback();
+  } finally {
+    if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+    else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
+    if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+    else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+    globalThis.fetch = originalFetch;
+  }
+}
+
+async function withContextOnlyRemoteIntegrationTools<T>(
+  callback: () => Promise<T>,
+): Promise<{ result: T; authorization: string | null }> {
+  const originalFetch = globalThis.fetch;
+  const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
+  const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+  let authorization: string | null = null;
+  globalThis.fetch = async (input, init) => {
+    authorization = new Request(input, init).headers.get("authorization");
+    return Response.json({
+      tools: [{
+        name: "gmail__list_emails",
+        description: "List emails",
+        inputSchema: { type: "object", properties: {} },
+      }],
+    });
+  };
+
+  try {
+    Deno.env.set("VERYFRONT_API_URL", "https://api.test");
+    Deno.env.delete("VERYFRONT_API_TOKEN");
+    return { result: await callback(), authorization };
   } finally {
     if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
     else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
@@ -552,6 +584,57 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("uses request-scoped auth when listing integration tools", async () => {
+      const { result, authorization } = await withContextOnlyRemoteIntegrationTools(() =>
+        getAvailableTools(true, {
+          remoteToolContext: {
+            authToken: "context-token",
+            projectId: "project-id",
+          },
+        })
+      );
+
+      assertEquals(result.map((definition) => definition.name), ["gmail__list_emails"]);
+      assertEquals(authorization, "Bearer context-token");
+    });
+
+    it("does not use the mutable public skill-tool set for filtering", async () => {
+      const originalSkillToolIds = [...SKILL_TOOL_IDS];
+      toolRegistryInternal.clearAll();
+      try {
+        toolRegistry.register(
+          "execute_skill_script",
+          tool({
+            id: "execute_skill_script",
+            description: "Execute a skill script",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+          }),
+        );
+        toolRegistry.register(
+          "ordinary_tool",
+          tool({
+            id: "ordinary_tool",
+            description: "Ordinary tool",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+          }),
+        );
+        SKILL_TOOL_IDS.delete("execute_skill_script");
+        SKILL_TOOL_IDS.add("ordinary_tool");
+
+        const definitions = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+        });
+
+        assertEquals(definitions.map((definition) => definition.name), ["ordinary_tool"]);
+      } finally {
+        SKILL_TOOL_IDS.clear();
+        for (const toolId of originalSkillToolIds) SKILL_TOOL_IDS.add(toolId);
         toolRegistryInternal.clearAll();
       }
     });

@@ -358,7 +358,7 @@ describe("src/skill/registry", () => {
       assertEquals(resolved.size, 0);
     });
 
-    it("resolves visibility and short names from the mutable public view", () => {
+    it("keeps visibility decisions independent of mutable public views", () => {
       const source: Skill = {
         ...createTestSkill("agent--helper"),
         ownerAgentId: "agent-a",
@@ -371,16 +371,21 @@ describe("src/skill/registry", () => {
 
       assertEquals(
         [...skillRegistry.resolveForAgent(true, { agentId: "agent-a" }).keys()],
-        [],
+        ["agent--helper"],
       );
       assertStrictEquals(
-        skillRegistry.resolveVisibleSkill("new-name", { agentId: "agent-b" }),
+        skillRegistry.resolveVisibleSkill("old-name", { agentId: "agent-a" }),
         source,
       );
-      assertEquals(skillRegistry.getVisibleSkillIds({ agentId: "agent-b" }), [
+      assertEquals(
+        skillRegistry.resolveVisibleSkill("new-name", { agentId: "agent-b" }),
+        undefined,
+      );
+      assertEquals(skillRegistry.getVisibleSkillIds({ agentId: "agent-a" }), [
         "agent--helper",
       ]);
-      assertEquals(skillRegistry.hasVisibleSkills({ agentId: "agent-b" }), true);
+      assertEquals(skillRegistry.hasVisibleSkills({ agentId: "agent-a" }), true);
+      assertEquals(skillRegistry.hasVisibleSkills({ agentId: "agent-b" }), false);
 
       assertEquals(
         skillRegistryInternal.resolveVisibleSkill("old-name", { agentId: "agent-a" })?.shortName,
@@ -501,6 +506,15 @@ describe("src/skill/registry", () => {
   });
 
   describe("resolveSelectorForAgent", () => {
+    it("keeps the historical public registry selector method", () => {
+      registerSkill("a", createTestSkill("a"));
+
+      const snapshot = skillRegistry.resolveSelectorForAgent(["a"]);
+
+      assertEquals(snapshot.allowedSkillIds, ["a"]);
+      assertEquals(snapshot.definitions.map((skill) => skill.id), ["a"]);
+    });
+
     it("preserves omitted, true, empty, and allowlist selector policies", () => {
       registerSkill("a", createTestSkill("a"));
       registerSkill("b", createTestSkill("b"));

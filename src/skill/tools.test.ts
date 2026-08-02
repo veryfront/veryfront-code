@@ -9,7 +9,7 @@ import {
   createLoadSkillReferenceTool,
   createLoadSkillTool,
 } from "./tools.ts";
-import type { Skill } from "./types.ts";
+import type { Skill, SkillScriptResult } from "./types.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSkillTestAdapter } from "./testing.ts";
 import { LocalScriptExecutor } from "./executor.ts";
@@ -448,6 +448,71 @@ Do work.`,
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
+  });
+
+  it("execute_skill_script snapshots only validated executor result fields", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo run",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let extraGetterCalls = 0;
+    const executorResult = {
+      stdout: "done",
+      stderr: "",
+      exitCode: 0,
+      get extra(): string {
+        extraGetterCalls += 1;
+        return "ignored";
+      },
+    };
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute: async () => executorResult,
+      },
+    });
+
+    const result = await tool.execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+    });
+    executorResult.stdout = "mutated";
+
+    assertEquals(result, { stdout: "done", stderr: "", exitCode: 0 });
+    assertEquals("extra" in result, false);
+    assertEquals(Object.isFrozen(result), true);
+    assertEquals(extraGetterCalls, 0);
+  });
+
+  it("execute_skill_script rejects accessor-backed required result fields", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo run",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+    let getterCalls = 0;
+    const executorResult = {
+      get stdout(): string {
+        getterCalls += 1;
+        return "unsafe";
+      },
+      stderr: "",
+      exitCode: 0,
+    } as SkillScriptResult;
+    const tool = createExecuteSkillScriptTool({
+      executor: {
+        execute: async () => executorResult,
+      },
+    });
+
+    await assertRejects(
+      () =>
+        tool.execute({
+          skillId: "my-skill",
+          script: "scripts/run.sh",
+        }),
+      TypeError,
+      'own data property for "stdout"',
+    );
+    assertEquals(getterCalls, 0);
   });
 
   it("execute_skill_script should reject scripts not advertised by the active skill", async () => {

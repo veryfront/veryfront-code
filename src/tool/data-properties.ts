@@ -1,3 +1,5 @@
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
 const MISSING_OWN_DATA_PROPERTY = Symbol("veryfront.missing-own-data-property");
 
 export type OwnDataPropertyValue =
@@ -8,12 +10,17 @@ function invalidDataProperties(label: string): TypeError {
   return new TypeError(`${label} must contain only own data properties`);
 }
 
+function rejectProxy(value: object, label: string): void {
+  if (isProxyWithoutHooks(value)) throw invalidDataProperties(label);
+}
+
 /** Read one own data property without invoking accessors or proxy getters. */
 export function getOwnDataProperty(
   value: object,
   key: PropertyKey,
   label: string,
 ): OwnDataPropertyValue {
+  rejectProxy(value, label);
   let descriptor: PropertyDescriptor | undefined;
   try {
     descriptor = Reflect.getOwnPropertyDescriptor(value, key);
@@ -33,6 +40,7 @@ export function isMissingOwnDataProperty(
 }
 
 function ownKeys(value: object, label: string): PropertyKey[] {
+  rejectProxy(value, label);
   try {
     return Reflect.ownKeys(value);
   } catch {

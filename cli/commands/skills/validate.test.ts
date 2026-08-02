@@ -93,7 +93,7 @@ description: Invalid directory name.
       assertEquals(issues[0]?.severity, "error");
       assertEquals(
         issues[0]?.message,
-        "Invalid skill name: must be lowercase alphanumeric with hyphens, 1-64 characters",
+        "Invalid skill name: must be 1-64 lowercase alphanumeric characters or single hyphens, without leading or trailing hyphens",
       );
       assertEquals(issues[0]?.message.includes("Bad Name"), false);
     }, "Bad Name");
@@ -145,5 +145,43 @@ description: Empty instruction body.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues, [{ severity: "warning", message: "SKILL.md body is empty" }]);
     }, "empty-body");
+  });
+
+  it("uses the same strict metadata contract as runtime discovery", async () => {
+    const cases = [
+      {
+        frontmatter: "description: Missing authored name.",
+        expected: 'missing required field "name"',
+      },
+      {
+        frontmatter: [
+          "name: strict-skill",
+          "description: Strict metadata.",
+          "allowed-tools: Read",
+          "allowed_tools: Write",
+        ].join("\n"),
+        expected: "must not declare both",
+      },
+      {
+        frontmatter: [
+          "name: strict-skill",
+          "description: Strict metadata.",
+          "metadata:",
+          "  version: 2",
+        ].join("\n"),
+        expected: "metadata values must be strings",
+      },
+    ];
+
+    for (const testCase of cases) {
+      await withTempSkill({
+        "SKILL.md": `---\n${testCase.frontmatter}\n---\n\n# Strict skill\n`,
+      }, async (dir) => {
+        const issues = await validateSkillDirectory(dir);
+        assertEquals(issues.length, 1);
+        assertEquals(issues[0]?.severity, "error");
+        assertEquals(issues[0]?.message.includes(testCase.expected), true);
+      }, "strict-skill");
+    }
   });
 });
