@@ -243,6 +243,55 @@ describe("observability/tracing/otlp-setup", () => {
     assertEquals(descriptorValueCalls, 0);
   });
 
+  it("withSpan rethrows hostile proxy failures without inspecting them", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    let trapCalls = 0;
+    const applicationError = new Proxy(Object.create(null), {
+      get(): never {
+        trapCalls += 1;
+        throw new Error("get trap must not run");
+      },
+      getOwnPropertyDescriptor(): never {
+        trapCalls += 1;
+        throw new Error("descriptor trap must not run");
+      },
+      getPrototypeOf(): never {
+        trapCalls += 1;
+        throw new Error("prototype trap must not run");
+      },
+    });
+    let caught: unknown;
+
+    try {
+      await withSpan("hostile-proxy", async () => {
+        throw applicationError;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assertStrictEquals(caught, applicationError);
+    assertEquals(trapCalls, 0);
+  });
+
+  it("withSpan rethrows revoked proxy failures without replacing them", async () => {
+    const { withSpan } = await import("./otlp-setup.ts");
+    const revocable = Proxy.revocable(Object.create(null), {});
+    const applicationError = revocable.proxy;
+    revocable.revoke();
+    let caught: unknown;
+
+    try {
+      await withSpan("revoked-proxy", async () => {
+        throw applicationError;
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    assertStrictEquals(caught, applicationError);
+  });
+
   it("withSpan invokes its callback once with an inert span when tracer setup fails", async () => {
     const { withSpan } = await import("./otlp-setup.ts");
 
