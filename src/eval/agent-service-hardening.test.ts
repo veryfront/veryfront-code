@@ -820,6 +820,51 @@ describe("eval/agent-service hardening", () => {
     assertEquals(summaryCalls, 3);
   });
 
+  it("accepts plain Error 404 responses from injected durable clients", async () => {
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    let summaryCalls = 0;
+    const apiClient: DurableRunCanaryApiClient = {
+      createDurableRootRun: async () => {},
+      getRunSummary: async ({ runId }) => {
+        summaryCalls += 1;
+        if (summaryCalls === 1) {
+          throw new Error("HTTP 404: run not found");
+        }
+        return createRunSummary(conversationId, runId);
+      },
+      listMessagesForCanary: async () => [],
+      sendUserMessageForCanary: async () => ({
+        id: "33333333-3333-4333-8333-333333333333",
+        role: "user",
+        parts: [],
+      }),
+      startDurableRun: async () => {},
+    };
+    const runner = createDurableRunCanaryRunner({
+      agentId: "veryfront",
+      apiUrl: "https://api.example.test",
+      authToken: "token",
+      keepSuccessfulEvidence: true,
+      projectId: null,
+      requestTimeoutMs: 1_000,
+    }, apiClient);
+
+    const result = await runner.runCase({
+      id: "plain-error-404",
+      label: "Plain Error 404",
+      prepare: async () => ({
+        cleanup: async () => {},
+        conversationId,
+        prompt: "run",
+        title: "Plain Error 404",
+        validate: () => {},
+      }),
+    });
+
+    assertEquals(result.status, "pass");
+    assertEquals(summaryCalls, 3);
+  });
+
   it("rejects malformed configuration and invalid performance samples", () => {
     assertThrows(
       () =>

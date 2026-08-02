@@ -1,6 +1,9 @@
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import type { EvalExample, EvalExampleInput } from "./types.ts";
+
+const ArrayIsArray = Array.isArray;
 
 export function createEvalValidationError(message: string): Error {
   return INVALID_ARGUMENT.create({ message });
@@ -29,7 +32,14 @@ export function stringifyEvalError(value: unknown): string {
 }
 
 export function isEvalRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || isProxyWithoutHooks(value)) {
+    return false;
+  }
+  try {
+    return !ArrayIsArray(value);
+  } catch {
+    return false;
+  }
 }
 
 function assertMetadata(value: unknown, label: string): asserts value is Record<string, unknown> {

@@ -178,6 +178,19 @@ describe("eval/factory", () => {
       "metadata",
     );
 
+    const revokedMetadata = Proxy.revocable({}, {});
+    revokedMetadata.revoke();
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metadata: revokedMetadata.proxy,
+        }),
+      Error,
+      "metadata must be an object",
+    );
+
     const normalized = evalAgent({
       id: " eval:trimmed ",
       target: " agent:researcher ",

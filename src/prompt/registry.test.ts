@@ -65,6 +65,35 @@ describe("prompt registry", () => {
       assertEquals(Object.isFrozen(stored), true);
     });
 
+    it("should snapshot MCP metadata for project and shared registrations", () => {
+      for (const shared of [false, true]) {
+        const id = shared ? "shared-mcp" : "project-mcp";
+        const arguments_ = [{ name: "topic", required: true }];
+        const mcp = { enabled: true, arguments: arguments_ };
+        const definition: Prompt = {
+          id,
+          description: "desc",
+          mcp,
+          getContent: async () => "Hello",
+        };
+
+        if (shared) {
+          promptRegistry.registerShared(id, definition);
+        } else {
+          promptRegistry.register(id, definition);
+        }
+
+        mcp.enabled = false;
+        arguments_[0]!.name = "mutated";
+
+        const stored = promptRegistry.get(id);
+        assertEquals(stored?.mcp?.enabled, true);
+        assertEquals(stored?.mcp?.arguments?.[0]?.name, "topic");
+        assertEquals(Object.isFrozen(stored?.mcp), true);
+        assertEquals(Object.isFrozen(stored?.mcp?.arguments), true);
+      }
+    });
+
     it("should throw when a prompt is missing", () => {
       assertThrows(
         () => promptRegistry.getContent("missing"),

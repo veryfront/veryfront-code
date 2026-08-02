@@ -1,5 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { API_CLIENT_ERROR, TIMEOUT_ERROR } from "#veryfront/errors";
+import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { sleep } from "#veryfront/utils";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
@@ -589,8 +590,22 @@ function isNotFoundError(error: unknown): boolean {
   }
 
   try {
-    return ("status" in error && error.status === 404) ||
-      ("statusCode" in error && error.statusCode === 404);
+    if (
+      ("status" in error && error.status === 404) ||
+      ("statusCode" in error && error.statusCode === 404)
+    ) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  if (!isNativeErrorWithoutHooks(error)) return false;
+
+  try {
+    const message = Object.getOwnPropertyDescriptor(error, "message");
+    return message !== undefined && "value" in message &&
+      typeof message.value === "string" && /\b404\b/.test(message.value);
   } catch {
     return false;
   }

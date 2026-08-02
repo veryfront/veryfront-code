@@ -20,6 +20,10 @@ class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
     super.register(id, normalizePromptDefinition(id, prompt));
   }
 
+  override registerShared(id: string, prompt: Prompt): void {
+    super.registerShared(id, normalizePromptDefinition(id, prompt));
+  }
+
   getContent(id: string, variables?: Record<string, unknown>): Promise<string> {
     const registeredPrompt = this.get(id);
     if (registeredPrompt) return registeredPrompt.getContent(variables);
