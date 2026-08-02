@@ -14,6 +14,7 @@ import {
 import { profileProxyServerTimingPhase, type ProxyServerTiming } from "./server-timing.ts";
 import {
   classifyInternalControlPlaneRequest,
+  isAuthenticInternalControlPlaneCandidate,
   isVerifiedInternalControlPlaneRequest,
 } from "./control-plane-signature.ts";
 import {
@@ -762,12 +763,25 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let projectId: string | undefined;
     let releaseId: string | undefined;
     let environmentId: string | undefined;
+    const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
-    // The first pass establishes an authentic, audience-bound candidate so its
-    // x-token can perform project metadata lookup. No authorization bypass is
-    // granted until a second pass binds the signature to the resolved id.
-    const signedInternalControlPlaneCandidate = projectSlug !== undefined &&
-      await isVerifiedInternalControlPlaneRequest(req, url, { audience: projectSlug });
+    // The first pass authenticates the candidate so its x-token can perform the
+    // project metadata lookup. Known slugs are audience-bound immediately;
+    // custom domains are audience- and id-bound after lookup. No authorization
+    // bypass or renderer forwarding is granted before that second binding.
+    let signedInternalControlPlaneCandidate = false;
+    if (projectSlug !== undefined) {
+      signedInternalControlPlaneCandidate = await isVerifiedInternalControlPlaneRequest(
+        req,
+        url,
+        { audience: projectSlug },
+      );
+    } else if (isCustomDomain) {
+      signedInternalControlPlaneCandidate = await isAuthenticInternalControlPlaneCandidate(
+        req,
+        url,
+      );
+    }
     let signedInternalControlPlaneRequest = false;
 
     const verifySignedInternalControlPlaneBinding: VerifySignedInternalControlPlaneBinding = async (
@@ -778,8 +792,6 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         audience: resolvedProjectSlug,
         expectedProjectId: resolvedProjectId,
       });
-
-    const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
     if (!projectSlug && parsedDomain.isVeryfrontDomain) {
       return {

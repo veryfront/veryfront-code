@@ -89,6 +89,68 @@ export interface InternalControlPlaneProjectBinding {
   expectedProjectId?: string;
 }
 
+async function verifyInternalControlPlaneSignature(
+  req: Request,
+  url: URL,
+  binding?: InternalControlPlaneProjectBinding,
+): Promise<boolean> {
+  const routeKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
+  if (routeKind === "public" || routeKind === "reserved") return false;
+
+  // The candidate only matters when there is an x-token to use for metadata
+  // lookup or forward after the resolved project binding succeeds.
+  if (!req.headers.get("x-token")) return false;
+
+  const publicKeyPem = getHostEnv(PUBLIC_KEY_ENV_VAR);
+  if (!publicKeyPem) return false;
+
+  if (routeKind === "dispatch") {
+    const dispatchJws = req.headers.get(DISPATCH_JWS_HEADER);
+    if (!dispatchJws) return false;
+    return await verifyDispatchJwsSignature(dispatchJws, {
+      publicKeyPem,
+      maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
+      ...(binding
+        ? {
+          audience: binding.audience,
+          expectedProjectId: binding.expectedProjectId,
+        }
+        : {}),
+    });
+  }
+
+  const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
+  if (!controlPlaneJws) return false;
+  return await verifyControlPlaneJwsSignature(controlPlaneJws, {
+    publicKeyPem,
+    maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
+    requestMethod: req.method,
+    requestPath: url.pathname,
+    ...(binding
+      ? {
+        audience: binding.audience,
+        expectedProjectId: binding.expectedProjectId,
+      }
+      : {}),
+  });
+}
+
+/**
+ * Authenticate a signed internal request before a custom domain has resolved
+ * to its project audience.
+ *
+ * This result may authorize only the project-metadata lookup needed to resolve
+ * that audience. The caller must re-verify with
+ * {@link isVerifiedInternalControlPlaneRequest} and the resolved project slug
+ * and id before bypassing user authentication or forwarding the inbound token.
+ */
+export async function isAuthenticInternalControlPlaneCandidate(
+  req: Request,
+  url: URL,
+): Promise<boolean> {
+  return await verifyInternalControlPlaneSignature(req, url);
+}
+
 /**
  * Returns true only for internal control-plane paths carrying a caller `x-token`
  * plus a cryptographically valid, fresh control-plane/dispatch signature.
@@ -101,36 +163,6 @@ export async function isVerifiedInternalControlPlaneRequest(
   url: URL,
   binding: InternalControlPlaneProjectBinding,
 ): Promise<boolean> {
-  const routeKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
-  if (routeKind === "public" || routeKind === "reserved") return false;
   if (!binding.audience) return false;
-
-  // The bypass only matters when there is an x-token to forward as the upstream
-  // bearer; without it the request gains nothing, so reject early.
-  if (!req.headers.get("x-token")) return false;
-
-  const publicKeyPem = getHostEnv(PUBLIC_KEY_ENV_VAR);
-  if (!publicKeyPem) return false;
-
-  if (routeKind === "dispatch") {
-    const dispatchJws = req.headers.get(DISPATCH_JWS_HEADER);
-    if (!dispatchJws) return false;
-    return await verifyDispatchJwsSignature(dispatchJws, {
-      publicKeyPem,
-      maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
-      audience: binding.audience,
-      expectedProjectId: binding.expectedProjectId,
-    });
-  }
-
-  const controlPlaneJws = req.headers.get(CONTROL_PLANE_JWS_HEADER);
-  if (!controlPlaneJws) return false;
-  return await verifyControlPlaneJwsSignature(controlPlaneJws, {
-    publicKeyPem,
-    maxAgeSeconds: MAX_SIGNATURE_AGE_SECONDS,
-    audience: binding.audience,
-    expectedProjectId: binding.expectedProjectId,
-    requestMethod: req.method,
-    requestPath: url.pathname,
-  });
+  return await verifyInternalControlPlaneSignature(req, url, binding);
 }

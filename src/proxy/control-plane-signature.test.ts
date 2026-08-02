@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { isVerifiedInternalControlPlaneRequest } from "./control-plane-signature.ts";
+import {
+  isAuthenticInternalControlPlaneCandidate,
+  isVerifiedInternalControlPlaneRequest,
+} from "./control-plane-signature.ts";
 
 const PUBLIC_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
 const CONTROL_PLANE_PATH =
@@ -169,6 +172,18 @@ describe("proxy/control-plane-signature", () => {
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
     assertEquals(await verifyRequest(req, url), true);
+  });
+
+  it("authenticates a custom-domain candidate without granting project binding", async () => {
+    const { jws, publicKeyPem } = await mintJws("control-plane");
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const { req, url } = requestWith(
+      { "x-token": "t", "x-veryfront-control-plane-jws": jws },
+      "https://custom.example.test/api/control-plane/runs/r_1/stream",
+    );
+
+    assertEquals(await isAuthenticInternalControlPlaneCandidate(req, url), true);
+    assertEquals(await verifyRequest(req, url, { audience: "another-project" }), false);
   });
 
   it("binds authentic signatures to the resolved project audience and id", async () => {

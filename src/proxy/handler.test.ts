@@ -2143,6 +2143,95 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("binds signed custom-domain control-plane requests after project lookup", async () => {
+      let tokenEndpointHits = 0;
+      const metadataAuthorization = new Set<string | null>();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          tokenEndpointHits += 1;
+          return createTokenResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          metadataAuthorization.add(req.headers.get("authorization"));
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            name: "Protected Project",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              domains: ["protected.example.com"],
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      let handler: ReturnType<typeof createHandler> | undefined;
+      try {
+        const { jws, publicKeyPem } = await mintControlPlaneJws();
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request(
+            "http://protected.example.com/api/control-plane/runs/run_1/stream",
+            {
+              method: "POST",
+              headers: {
+                host: "protected.example.com",
+                "x-token": "project-agent-token",
+                "x-veryfront-control-plane-jws": jws,
+              },
+            },
+          ),
+        );
+
+        assertEquals(ctx.error, undefined);
+        assertEquals(ctx.projectSlug, "protected-project");
+        assertEquals(ctx.projectId, "proj-123");
+        assertEquals(ctx.releaseId, "rel-123");
+        assertEquals(ctx.token, "project-agent-token");
+        assertEquals(metadataAuthorization, new Set(["Bearer project-agent-token"]));
+        assertEquals(tokenEndpointHits, 0);
+
+        const mismatched = await mintControlPlaneJws({ projectId: "another-project" });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", mismatched.publicKeyPem);
+        const rejected = await handler.processRequest(
+          new Request(
+            "http://protected.example.com/api/control-plane/runs/run_1/stream",
+            {
+              method: "POST",
+              headers: {
+                host: "protected.example.com",
+                "x-token": "wrong-project-token",
+                "x-veryfront-control-plane-jws": mismatched.jws,
+              },
+            },
+          ),
+        );
+        assertEquals(rejected.error?.status, 401);
+        assertEquals(rejected.token, undefined);
+
+        await handler.close();
+        handler = undefined;
+      } finally {
+        await handler?.close();
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
     it("allows access to protected custom domain with auth token for project member", async () => {
       const memberToken = await signTestJwt({ userId: "user-123", sub: "user-123" });
       const { server, port } = createMockServer((req: Request) => {
