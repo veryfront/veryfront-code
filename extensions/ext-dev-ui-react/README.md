@@ -10,11 +10,11 @@ The bundle carries React and its stylesheet inline, so serving it needs no CDN
 module, no request-time TSX transform, and no source fallback. The extension
 requests no Deno runtime capabilities.
 
-This package supplies the asset and the shared protocol only. The dashboard and
-projects handlers in `src/server/handlers/dev/` still serve the legacy
-`src/server/dev-ui` path; switching them to `DevUiAssetProvider` also requires
-the dashboard session endpoint and CSRF token defined in
-`src/extensions/dev-ui/protocol.ts`, which core does not implement yet.
+This package supplies the asset bundle and its shared host protocol only.
+Veryfront's dashboard and projects pages still use the legacy development UI.
+A host that adopts `DevUiAssetProvider` must also implement the dashboard
+session endpoint and CSRF-token contract exposed by the shared protocol; the
+core host does not provide those protocol operations yet.
 
 After changing the UI or shell source, regenerate and verify both generated
 files with:
