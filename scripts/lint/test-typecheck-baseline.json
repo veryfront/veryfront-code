@@ -49,7 +49,6 @@
   "src/platform/adapters/fs/veryfront/adapter-helpers.test.ts",
   "src/platform/adapters/fs/veryfront/directory-operations.test.ts",
   "src/platform/adapters/redis/node.test.ts",
-  "src/platform/adapters/runtime/shared/watcher-queue.test.ts",
   "src/platform/adapters/token/factory.test.ts",
   "src/prompt/factory.test.ts",
   "src/react/components/chat/chat.test.tsx",

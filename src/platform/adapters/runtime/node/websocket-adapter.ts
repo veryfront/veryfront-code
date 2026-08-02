@@ -32,6 +32,7 @@ function decodeMessageBytes(data: WSMessageData): Uint8Array<ArrayBuffer> {
   }
   return bytes;
 }
+
 function normalizeMessageData(
   data: WSMessageData,
   isBinary: boolean,

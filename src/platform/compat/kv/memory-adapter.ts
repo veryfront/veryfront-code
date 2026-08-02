@@ -1,37 +1,46 @@
 import type { Kv, KvEntry, KvListOptions } from "./types.ts";
+import {
+  createKvVersionstamp,
+  deserializeKvKey,
+  deserializeKvValue,
+  isKvKeyPrefix,
+  serializeKvKey,
+  serializeKvValue,
+  validateKvListLimit,
+} from "./internal.ts";
 
 export class MemoryKv implements Kv {
-  private store = new Map<string, { value: unknown; versionstamp: string }>();
-
-  private keyToString(key: string[]): string {
-    return JSON.stringify(key);
-  }
-
-  private stringToKey(keyStr: string): string[] {
-    return JSON.parse(keyStr);
-  }
+  private store = new Map<string, { value: string; versionstamp: string }>();
 
   async get<T = unknown>(key: string[]): Promise<{ value: T | undefined; versionstamp?: string }> {
-    const entry = this.store.get(this.keyToString(key));
+    const entry = this.store.get(serializeKvKey(key));
     if (!entry) return { value: undefined };
 
-    return { value: entry.value as T, versionstamp: entry.versionstamp };
+    return {
+      value: deserializeKvValue<T>(entry.value),
+      versionstamp: entry.versionstamp,
+    };
   }
 
   async set<T = unknown>(key: string[], value: T): Promise<void> {
-    this.store.set(this.keyToString(key), { value, versionstamp: Date.now().toString() });
+    this.store.set(serializeKvKey(key), {
+      value: serializeKvValue(value),
+      versionstamp: createKvVersionstamp(),
+    });
   }
 
   async delete(key: string[]): Promise<void> {
-    this.store.delete(this.keyToString(key));
+    this.store.delete(serializeKvKey(key));
   }
 
   async *list<T = unknown>(options?: KvListOptions): AsyncIterableIterator<KvEntry<T>> {
+    const limit = validateKvListLimit(options);
     let entries = Array.from(this.store.entries());
 
-    if (options?.prefix) {
-      const prefixStr = this.keyToString(options.prefix);
-      entries = entries.filter(([key]) => key.startsWith(prefixStr.slice(0, -1)));
+    const prefix = options?.prefix;
+    if (prefix) {
+      serializeKvKey(prefix);
+      entries = entries.filter(([key]) => isKvKeyPrefix(prefix, deserializeKvKey(key)));
     }
 
     entries.sort((a, b) => {
@@ -40,23 +49,23 @@ export class MemoryKv implements Kv {
     });
 
     if (options?.start) {
-      const startStr = this.keyToString(options.start);
+      const startStr = serializeKvKey(options.start);
       entries = entries.filter(([key]) => key >= startStr);
     }
 
     if (options?.end) {
-      const endStr = this.keyToString(options.end);
+      const endStr = serializeKvKey(options.end);
       entries = entries.filter(([key]) => key < endStr);
     }
 
-    if (options?.limit != null) {
-      entries = entries.slice(0, options.limit);
+    if (limit !== undefined) {
+      entries = entries.slice(0, limit);
     }
 
     for (const [keyStr, entry] of entries) {
       yield {
-        key: this.stringToKey(keyStr),
-        value: entry.value as T,
+        key: deserializeKvKey(keyStr),
+        value: deserializeKvValue<T>(entry.value),
         versionstamp: entry.versionstamp,
       };
     }

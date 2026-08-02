@@ -5,10 +5,17 @@ export interface NodeIncomingMessage {
   on(event: "data", handler: (chunk: Uint8Array) => void): void;
   on(event: "end", handler: () => void): void;
   on(event: "error", handler: (error: Error) => void): void;
+  on(event: "aborted" | "close", handler: () => void): void;
+  off?(event: "data", handler: (chunk: Uint8Array) => void): void;
+  off?(event: "end", handler: () => void): void;
+  off?(event: "error", handler: (error: Error) => void): void;
+  off?(event: "aborted" | "close", handler: () => void): void;
   /** Pause flowing mode — used to apply backpressure to the request body. */
   pause?(): void;
   /** Resume flowing mode once the body stream consumer asks for more. */
   resume?(): void;
+  /** Release the underlying socket/stream when the web consumer cancels. */
+  destroy?(error?: Error): void;
 }
 
 export interface NodeServerResponse {

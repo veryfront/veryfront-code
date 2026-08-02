@@ -1,221 +1,25 @@
-import type {
-  DirEntry,
-  FileChangeEvent,
-  FileInfo,
-  FileSystemAdapter,
-  FileWatcher,
-  WatchOptions,
-} from "../../base.ts";
 import {
-  createFileWatcher,
-  createWatcherIterator,
-  setupNodeFsWatcher,
-} from "../shared/shared-watcher.ts";
-import { isNotFoundError } from "#veryfront/platform/compat/not-found-error.ts";
-import { makeNodeTempDir } from "../shared/temp-dir.ts";
+  NodeCompatibleFileSystemAdapter,
+  type NodeFileSystemCapabilityOptions,
+} from "../shared/node-filesystem-adapter.ts";
+import { markNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { serverLogger } from "#veryfront/utils";
-import { readBoundedFilePrefix, readFileWithinLimit } from "../../bounded-file-read.ts";
-import {
-  createNodeFileBytesExclusive,
-  readNodeFileSnapshotWithinLimit,
-  supportsNativeFileSnapshots,
-} from "../shared/native-file-capabilities.ts";
 
-export class NodeFileSystemAdapter implements FileSystemAdapter {
-  readonly readFileSnapshotWithinLimit = supportsNativeFileSnapshots()
-    ? (path: string, containmentRoot: string, byteLimit: number) =>
-      readNodeFileSnapshotWithinLimit(path, containmentRoot, byteLimit)
-    : undefined;
-
-  async readFile(path: string): Promise<string> {
-    const fs = await import("node:fs/promises");
-    return fs.readFile(path, "utf-8");
+/** Node.js filesystem adapter. */
+export class NodeFileSystemAdapter extends NodeCompatibleFileSystemAdapter {
+  constructor(options: NodeFileSystemCapabilityOptions = {}) {
+    super(serverLogger, options);
+    if (new.target === NodeFileSystemAdapter) {
+      markNativeFileSystemAdapter(this);
+    }
   }
 
-  async readFileBytes(path: string): Promise<Uint8Array> {
-    const fs = await import("node:fs/promises");
-    const buffer = await fs.readFile(path);
-    return buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-  }
-
-  async readFileBytesBounded(path: string, byteLimit: number): Promise<Uint8Array> {
-    const fs = await import("node:fs/promises");
-    return await readBoundedFilePrefix(async () => {
-      const handle = await fs.open(path, "r");
-      return {
-        close: () => handle.close(),
-        read: async (buffer: Uint8Array) => {
-          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
-          return bytesRead === 0 ? null : bytesRead;
-        },
-      };
-    }, byteLimit);
-  }
-
-  async readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array> {
-    const fs = await import("node:fs/promises");
-    return await readFileWithinLimit(async () => {
-      const handle = await fs.open(path, "r");
-      return {
-        close: () => handle.close(),
-        read: async (buffer: Uint8Array) => {
-          const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
-          return bytesRead === 0 ? null : bytesRead;
-        },
-      };
-    }, byteLimit);
-  }
-
-  async writeFile(path: string, content: string): Promise<void> {
-    const fs = await import("node:fs/promises");
-    await fs.writeFile(path, content, "utf-8");
-  }
-
-  async writeFileBytes(path: string, content: Uint8Array): Promise<void> {
-    const fs = await import("node:fs/promises");
-    await fs.writeFile(path, content);
-  }
-
-  createFileBytesExclusive(path: string, content: Uint8Array): Promise<void> {
-    return createNodeFileBytesExclusive(path, content);
-  }
-
-  async rename(from: string, to: string): Promise<void> {
-    const fs = await import("node:fs/promises");
-    await fs.rename(from, to);
-  }
-
-  async exists(path: string): Promise<boolean> {
-    const fs = await import("node:fs/promises");
-
+  override async exists(path: string): Promise<boolean> {
     try {
-      await fs.access(path);
-      return true;
+      return await super.exists(path);
     } catch (error) {
-      if (!isNotFoundError(error)) {
-        serverLogger.debug(`File access check failed for ${path}:`, error);
-      }
-      return false;
+      serverLogger.debug(`File access check failed for ${path}:`, { error });
+      throw error;
     }
-  }
-
-  async *readDir(path: string): AsyncIterable<DirEntry> {
-    const fs = await import("node:fs/promises");
-    const entries = await fs.readdir(path, { withFileTypes: true });
-
-    for (const entry of entries) {
-      yield {
-        name: entry.name,
-        isFile: entry.isFile(),
-        isDirectory: entry.isDirectory(),
-        isSymlink: entry.isSymbolicLink(),
-      };
-    }
-  }
-
-  async stat(path: string): Promise<FileInfo> {
-    const fs = await import("node:fs/promises");
-    const stats = await fs.stat(path);
-
-    return {
-      size: stats.size,
-      isFile: stats.isFile(),
-      isDirectory: stats.isDirectory(),
-      isSymlink: stats.isSymbolicLink(),
-      mtime: stats.mtime,
-    };
-  }
-
-  async lstat(path: string): Promise<FileInfo> {
-    const fs = await import("node:fs/promises");
-    const stats = await fs.lstat(path);
-
-    return {
-      size: stats.size,
-      isFile: stats.isFile(),
-      isDirectory: stats.isDirectory(),
-      isSymlink: stats.isSymbolicLink(),
-      mtime: stats.mtime,
-    };
-  }
-
-  async realPath(path: string): Promise<string> {
-    const fs = await import("node:fs/promises");
-    return await fs.realpath(path);
-  }
-
-  async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    const fs = await import("node:fs/promises");
-    await fs.mkdir(path, options);
-  }
-
-  async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    const fs = await import("node:fs/promises");
-    await fs.rm(path, { recursive: options?.recursive, force: true });
-  }
-
-  async makeTempDir(prefix: string): Promise<string> {
-    return makeNodeTempDir(prefix);
-  }
-
-  watch(paths: string | string[], options?: WatchOptions): FileWatcher {
-    const pathArray = Array.isArray(paths) ? paths : [paths];
-    const recursive = options?.recursive ?? true;
-    const signal = options?.signal;
-
-    let closed = false;
-    const watchers: Array<import("node:fs").FSWatcher> = [];
-    const eventQueue: FileChangeEvent[] = [];
-    let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
-
-    const setResolver = (r: ((value: IteratorResult<FileChangeEvent>) => void) | null): void => {
-      resolver = r;
-    };
-
-    void Promise.all(
-      pathArray.map((path) =>
-        setupNodeFsWatcher(path, {
-          recursive,
-          closed: () => closed,
-          signal,
-          eventQueue,
-          getResolver: () => resolver,
-          setResolver,
-          watchers,
-          onError: (error, watchPath) =>
-            serverLogger.error(`File watcher error for ${watchPath}:`, error),
-        })
-      ),
-    ).catch((error) => {
-      serverLogger.error("Failed to setup file watchers:", error);
-    });
-
-    const iterator = createWatcherIterator(
-      eventQueue,
-      (r) => {
-        resolver = r;
-      },
-      () => closed,
-      () => signal?.aborted ?? false,
-    );
-
-    const cleanup = (): void => {
-      closed = true;
-
-      for (const watcher of watchers) {
-        try {
-          watcher.close();
-        } catch (error) {
-          serverLogger.debug("Error closing file watcher during cleanup:", error);
-        }
-      }
-
-      resolver?.({ done: true, value: undefined });
-      resolver = null;
-    };
-
-    signal?.addEventListener("abort", cleanup, { once: true });
-
-    return createFileWatcher(iterator, cleanup);
   }
 }

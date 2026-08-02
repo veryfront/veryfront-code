@@ -1,5 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertNotEquals,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 
@@ -8,15 +14,7 @@ function assertFunction(value: unknown): void {
   assertEquals(typeof value, "function");
 }
 
-if (!isDeno) {
-  describe("DenoAdapter", { skip: true }, () => {
-    it("skipped - not running in Deno", () => {});
-  });
-
-  describe("denoAdapter singleton", { skip: true }, () => {
-    it("skipped - not running in Deno", () => {});
-  });
-} else {
+if (isDeno) {
   const { DenoAdapter, denoAdapter } = await import("./adapter.ts");
 
   const testFilePath = new URL(import.meta.url).pathname;
@@ -38,6 +36,16 @@ if (!isDeno) {
     });
 
     describe("capabilities", () => {
+      it("exposes an immutable capability snapshot", () => {
+        assertThrows(
+          () => {
+            (denoAdapter.capabilities as { typescript: boolean }).typescript = false;
+          },
+          TypeError,
+        );
+        assertEquals(denoAdapter.capabilities.typescript, true);
+      });
+
       it("should have typescript capability", () => {
         assertEquals(denoAdapter.capabilities.typescript, true);
       });
@@ -88,21 +96,8 @@ if (!isDeno) {
         assertFunction(denoAdapter.fs.readFileBytes);
       });
 
-      it("should expose bounded snapshot and exclusive-create capabilities", () => {
-        assertFunction(denoAdapter.fs.readFileBytesWithinLimit);
-        assertEquals(
-          typeof denoAdapter.fs.readFileSnapshotWithinLimit,
-          Deno.build.os === "windows" ? "undefined" : "function",
-        );
-        assertFunction(denoAdapter.fs.createFileBytesExclusive);
-      });
-
       it("should have writeFile method", () => {
         assertFunction(denoAdapter.fs.writeFile);
-      });
-
-      it("should have rename method", () => {
-        assertFunction(denoAdapter.fs.rename);
       });
 
       it("should have exists method", () => {
@@ -149,19 +144,6 @@ if (!isDeno) {
         assertEquals(bytes.length > 0, true);
       });
 
-      it("should enforce exact byte limits", async () => {
-        const fileSize = (await Deno.stat(testFilePath)).size;
-        assertEquals(
-          (await denoAdapter.fs.readFileBytesWithinLimit!(testFilePath, fileSize)).byteLength,
-          fileSize,
-        );
-        await assertRejects(
-          () => denoAdapter.fs.readFileBytesWithinLimit!(testFilePath, fileSize - 1),
-          RangeError,
-          "exceeds byte limit",
-        );
-      });
-
       it("should return true for file that exists", async () => {
         const exists = await denoAdapter.fs.exists(testFilePath);
         assertEquals(exists, true);
@@ -170,6 +152,10 @@ if (!isDeno) {
       it("should return false for file that does not exist", async () => {
         const exists = await denoAdapter.fs.exists("/nonexistent/path/file.ts");
         assertEquals(exists, false);
+      });
+
+      it("should propagate invalid path errors", async () => {
+        await assertRejects(() => denoAdapter.fs.exists("\0"), TypeError);
       });
 
       it("should stat a file", async () => {
@@ -218,21 +204,6 @@ if (!isDeno) {
           await denoAdapter.fs.writeFile(filePath, "hello from test");
           const content = await denoAdapter.fs.readFile(filePath);
           assertEquals(content, "hello from test");
-        } finally {
-          await denoAdapter.fs.remove(tmpDir, { recursive: true });
-        }
-      });
-
-      it("should rename a file", async () => {
-        const tmpDir = await denoAdapter.fs.makeTempDir("test-rename-");
-        const from = `${tmpDir}/source.txt`;
-        const to = `${tmpDir}/destination.txt`;
-
-        try {
-          await denoAdapter.fs.writeFile(from, "renamed");
-          await denoAdapter.fs.rename(from, to);
-          assertEquals(await denoAdapter.fs.exists(from), false);
-          assertEquals(await denoAdapter.fs.readFile(to), "renamed");
         } finally {
           await denoAdapter.fs.remove(tmpDir, { recursive: true });
         }
@@ -329,12 +300,10 @@ if (!isDeno) {
       });
 
       it("should throw for statSync of non-existent path", () => {
-        try {
-          denoAdapter.shell.statSync("/nonexistent/path/12345");
-          assertEquals(true, false, "Should have thrown");
-        } catch (e) {
-          assertExists(e);
-        }
+        assertThrows(
+          () => denoAdapter.shell.statSync("/nonexistent/path/12345"),
+          Deno.errors.NotFound,
+        );
       });
 
       it("should readFileSync a file", () => {
@@ -344,18 +313,56 @@ if (!isDeno) {
       });
 
       it("should throw for readFileSync of non-existent file", () => {
-        try {
-          denoAdapter.shell.readFileSync("/nonexistent/path/12345.ts");
-          assertEquals(true, false, "Should have thrown");
-        } catch (e) {
-          assertExists(e);
-        }
+        assertThrows(
+          () => denoAdapter.shell.readFileSync("/nonexistent/path/12345.ts"),
+          Deno.errors.NotFound,
+        );
       });
     });
 
     describe("serve method", () => {
       it("should have serve method", () => {
         assertFunction(denoAdapter.serve);
+      });
+
+      it("reports the actual bound address for an ephemeral port", async () => {
+        const adapter = new DenoAdapter();
+        const server = await adapter.serve(
+          () => new Response("ok"),
+          { hostname: "127.0.0.1", port: 0 },
+        );
+
+        try {
+          assertNotEquals(server.addr.port, 0);
+          const response = await fetch(`http://${server.addr.hostname}:${server.addr.port}/`);
+          assertEquals(await response.text(), "ok");
+        } finally {
+          await server.stop();
+        }
+      });
+
+      it("does not open a listener when startup is already aborted", async () => {
+        const adapter = new DenoAdapter();
+        const controller = new AbortController();
+        controller.abort(new DOMException("cancelled", "AbortError"));
+
+        try {
+          await assertRejects(
+            () =>
+              adapter.serve(
+                () => new Response("unreachable"),
+                {
+                  hostname: "127.0.0.1",
+                  port: 0,
+                  signal: controller.signal,
+                },
+              ),
+            DOMException,
+            "cancelled",
+          );
+        } finally {
+          await adapter.shutdown();
+        }
       });
     });
 

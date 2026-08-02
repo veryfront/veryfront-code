@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createKVStore, openKv, polyfillDenoKv } from "./factory.ts";
 
@@ -19,6 +19,14 @@ describe("kv/factory", () => {
       assertExists(kv.list);
       assertExists(kv.close);
       kv.close();
+    });
+
+    it("fails closed when an explicit persistent path has no durable backend", async () => {
+      await assertRejects(
+        () => openKv("./requested-persistent-store.sqlite"),
+        Error,
+        "durable KV store",
+      );
     });
   });
 

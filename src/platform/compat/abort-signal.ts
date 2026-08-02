@@ -1,14 +1,31 @@
-/** Captured AbortSignal operations for hostile JavaScript boundaries. */
+/**
+ * Captured AbortSignal operations for hostile JavaScript boundaries.
+ *
+ * Callers can shadow instance properties or mutate public prototypes after
+ * module initialization. These helpers validate the native brand and dispatch
+ * through captured intrinsics so cancellation cannot execute those hooks.
+ *
+ * @module
+ */
+
+import { isProxyWithoutHooks } from "./error-introspection.ts";
+
 const apply = Reflect.apply;
 const createObject = Object.create;
 const defineOwnProperty = Object.defineProperty;
 const freeze = Object.freeze;
 const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const NativeTypeError = TypeError;
-const abortedGetter = getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")?.get;
-const reasonGetter = getOwnPropertyDescriptor(AbortSignal.prototype, "reason")?.get;
-const addEventListener = EventTarget.prototype.addEventListener;
-const removeEventListener = EventTarget.prototype.removeEventListener;
+const abortSignalAbortedGetter = getOwnPropertyDescriptor(
+  AbortSignal.prototype,
+  "aborted",
+)?.get;
+const abortSignalReasonGetter = getOwnPropertyDescriptor(
+  AbortSignal.prototype,
+  "reason",
+)?.get;
+const eventTargetAddEventListener = EventTarget.prototype.addEventListener;
+const eventTargetRemoveEventListener = EventTarget.prototype.removeEventListener;
 
 const onceOptions = createObject(null) as AddEventListenerOptions;
 defineOwnProperty(onceOptions, "once", {
@@ -24,31 +41,44 @@ export function isAbortSignalWithoutHooks(value: unknown): value is AbortSignal 
   if (
     value === null ||
     (typeof value !== "object" && typeof value !== "function") ||
-    typeof abortedGetter !== "function"
-  ) return false;
+    isProxyWithoutHooks(value) ||
+    typeof abortSignalAbortedGetter !== "function"
+  ) {
+    return false;
+  }
   try {
-    return typeof apply(abortedGetter, value, []) === "boolean";
+    return typeof apply(abortSignalAbortedGetter, value, []) === "boolean";
   } catch {
     return false;
   }
 }
 
+/** Read cancellation state through the captured native getter. */
 export function isAbortSignalAborted(signal: AbortSignal): boolean {
-  if (typeof abortedGetter !== "function") {
+  if (typeof abortSignalAbortedGetter !== "function") {
     throw new NativeTypeError("AbortSignal is unavailable in this runtime");
   }
-  return apply(abortedGetter, signal, []) as boolean;
+  return apply(abortSignalAbortedGetter, signal, []) as boolean;
 }
 
+/** Read the native cancellation reason without consulting an own accessor. */
 export function getAbortSignalReason(signal: AbortSignal): unknown {
-  if (typeof reasonGetter !== "function") return undefined;
-  return apply(reasonGetter, signal, []);
+  if (typeof abortSignalReasonGetter !== "function") return undefined;
+  return apply(abortSignalReasonGetter, signal, []);
 }
 
-export function addAbortSignalListenerOnce(signal: AbortSignal, listener: () => void): void {
-  apply(addEventListener, signal, ["abort", listener, onceOptions]);
+/** Attach one native abort listener without consulting instance methods. */
+export function addAbortSignalListenerOnce(
+  signal: AbortSignal,
+  listener: () => void,
+): void {
+  apply(eventTargetAddEventListener, signal, ["abort", listener, onceOptions]);
 }
 
-export function removeAbortSignalListener(signal: AbortSignal, listener: () => void): void {
-  apply(removeEventListener, signal, ["abort", listener]);
+/** Remove a native abort listener without consulting instance methods. */
+export function removeAbortSignalListener(
+  signal: AbortSignal,
+  listener: () => void,
+): void {
+  apply(eventTargetRemoveEventListener, signal, ["abort", listener]);
 }

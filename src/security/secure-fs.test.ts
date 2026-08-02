@@ -230,6 +230,9 @@ describe("SecureFs", () => {
     adapter.fs.files.set("/project/asset.bin", "old");
     Reflect.deleteProperty(adapter.fs, "readFileSnapshotWithinLimit");
     const exact = adapter.fs.readFileBytesWithinLimit;
+    if (!exact) {
+      throw new Error("Mock adapter must provide bounded byte reads");
+    }
     let mutateDuringRead = false;
     let sourceGeneration = 1;
     Object.defineProperty(adapter.fs, "getSourceSnapshotVersion", {

@@ -5,7 +5,8 @@
  * In npm packages, dnt replaces the global `Response` with undici's polyfill,
  * but `Deno.serve` requires native `Response` instances. These helpers access
  * the native constructor via `self` (which dnt does not shim) and re-wrap
- * polyfilled responses as needed.
+ * polyfilled responses as needed. Deno exposes `self`; Node does not, so the
+ * host lookup uses `globalThis` only when `self` is unavailable.
  *
  * IMPORTANT: this module must remain importable without `--allow-env`. It must
  * NOT read environment variables or import a logger at module load time.
@@ -20,6 +21,8 @@ type NativeResponseHost = {
 type NativeDenoHost = {
   Deno?: unknown;
 };
+
+type NativeHost = NativeResponseHost & NativeDenoHost;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -39,12 +42,17 @@ export function getNativeDenoFromHost(host: NativeDenoHost): typeof Deno | undef
   return host.Deno;
 }
 
+function getNativeHost(): NativeHost {
+  return (typeof self === "undefined" ? globalThis : self) as NativeHost;
+}
+
 /**
  * The native `Response` constructor, accessed via `self` to bypass the dnt
- * shim transform (dnt rewrites bare `Response` to undici's polyfill).
+ * shim transform (dnt rewrites bare `Response` to undici's polyfill). Node
+ * lacks `self`, so its native global host is used there.
  */
 export function getNativeResponse(): typeof Response {
-  return getNativeResponseFromHost(self);
+  return getNativeResponseFromHost(getNativeHost());
 }
 
 /**
@@ -61,7 +69,7 @@ export function getNativeResponse(): typeof Response {
  * Deno runtime can use a non-null assertion on the result.
  */
 export function getNativeDeno(): typeof Deno | undefined {
-  return getNativeDenoFromHost(self);
+  return getNativeDenoFromHost(getNativeHost());
 }
 
 /**
