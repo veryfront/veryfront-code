@@ -35,6 +35,7 @@ const PACKAGE_NAME = /^(@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
 const SUBPATH = /^(?:[A-Za-z0-9._~+-]+)(?:\/[A-Za-z0-9._~+-]+)*$/;
 const FAILURE_CODE = /^[a-z][a-z0-9_-]{0,63}$/;
 const MAX_UPSTREAM_REDIRECTS = 5;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 export interface DependencyArtifactBuildClient {
   uploadAsset(input: {
@@ -342,6 +343,84 @@ function mergeLimits(
   return { ...DEFAULT_LIMITS, ...overrides };
 }
 
+interface UpstreamDeadline {
+  readonly signal: AbortSignal;
+  race<T>(operation: () => Promise<T>, cleanup?: () => void): Promise<T>;
+  dispose(): void;
+}
+
+function upstreamTimeoutError(): DependencyArtifactBuildError {
+  return new DependencyArtifactBuildError(
+    "upstream_timeout",
+    "Dependency artifact upstream request timed out",
+  );
+}
+
+function createUpstreamDeadline(timeoutMs: number): UpstreamDeadline {
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 0 ||
+    timeoutMs > MAX_TIMER_DELAY_MS
+  ) {
+    throw new DependencyArtifactBuildError(
+      "invalid_limits",
+      `Dependency artifact timeout must be an integer between 0 and ${MAX_TIMER_DELAY_MS}`,
+    );
+  }
+
+  const controller = new AbortController();
+  const expiresAt = performance.now() + timeoutMs;
+  const timeoutError = upstreamTimeoutError();
+  let expired = false;
+  let disposed = false;
+  let activeOperation: { token: object; cleanup?: () => void } | undefined;
+  let rejectDeadline!: (error: DependencyArtifactBuildError) => void;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    rejectDeadline = reject;
+  });
+
+  const expire = (): void => {
+    if (expired || disposed) return;
+    expired = true;
+    rejectDeadline(timeoutError);
+    controller.abort(timeoutError);
+    try {
+      activeOperation?.cleanup?.();
+    } catch {
+      // Cancellation is best-effort cleanup; the deadline rejection is authoritative.
+    }
+  };
+  const timeout = setTimeout(expire, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    async race<T>(operation: () => Promise<T>, cleanup?: () => void): Promise<T> {
+      if (expired || performance.now() >= expiresAt) {
+        expire();
+        return await deadline;
+      }
+
+      const token = {};
+      activeOperation = { token, cleanup };
+      try {
+        return await Promise.race([operation(), deadline]);
+      } finally {
+        if (activeOperation?.token === token) activeOperation = undefined;
+      }
+    },
+    dispose(): void {
+      if (disposed) return;
+      disposed = true;
+      activeOperation = undefined;
+      clearTimeout(timeout);
+    },
+  };
+}
+
+function cancelResponseBody(response: Response, reason?: unknown): void {
+  void response.body?.cancel(reason).catch(() => undefined);
+}
+
 async function fetchSourceModules(
   identity: DependencyArtifactIdentity,
   fetcher: typeof fetch,
@@ -354,8 +433,7 @@ async function fetchSourceModules(
   const externals = profileExternals(identity);
   const modules = new Map<string, DependencyArtifactSourceModule>();
   let totalBytes = 0;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), limits.timeoutMs);
+  const deadline = createUpstreamDeadline(limits.timeoutMs);
 
   async function fetchAllowedModule(moduleId: string): Promise<{
     response: Response;
@@ -365,23 +443,22 @@ async function fetchSourceModules(
     for (let redirectCount = 0; redirectCount <= MAX_UPSTREAM_REDIRECTS; redirectCount++) {
       let response: Response;
       try {
-        response = await fetcher(currentUrl, {
-          headers: {
-            accept: "text/javascript, application/javascript, text/css;q=0.9",
-            "user-agent": "Mozilla/5.0 Veryfront/1.0",
-          },
-          redirect: "manual",
-          signal: controller.signal,
-        });
+        response = await deadline.race(() =>
+          fetcher(currentUrl, {
+            headers: {
+              accept: "text/javascript, application/javascript, text/css;q=0.9",
+              "user-agent": "Mozilla/5.0 Veryfront/1.0",
+            },
+            redirect: "manual",
+            signal: deadline.signal,
+          })
+        );
       } catch (error) {
         if (
-          controller.signal.aborted ||
+          deadline.signal.aborted ||
           (error instanceof Error && error.name === "AbortError")
         ) {
-          throw new DependencyArtifactBuildError(
-            "upstream_timeout",
-            "Dependency artifact upstream request timed out",
-          );
+          throw upstreamTimeoutError();
         }
         throw new DependencyArtifactBuildError(
           "upstream_fetch_failed",
@@ -394,7 +471,7 @@ async function fetchSourceModules(
       }
 
       const location = response.headers.get("location");
-      await response.body?.cancel().catch(() => undefined);
+      cancelResponseBody(response);
       if (!location) {
         throw new DependencyArtifactBuildError(
           "upstream_redirect_invalid",
@@ -434,7 +511,7 @@ async function fetchSourceModules(
     const { response, finalUrl } = await fetchAllowedModule(moduleId);
 
     if (!response.ok) {
-      await response.body?.cancel().catch(() => undefined);
+      cancelResponseBody(response);
       throw new DependencyArtifactBuildError(
         "upstream_http_error",
         "Dependency artifact upstream returned an unsuccessful response",
@@ -442,7 +519,7 @@ async function fetchSourceModules(
     }
     const rawContentType = response.headers.get("content-type");
     if (rawContentType?.toLowerCase().includes("text/html")) {
-      await response.body?.cancel().catch(() => undefined);
+      cancelResponseBody(response);
       throw new DependencyArtifactBuildError(
         "upstream_html",
         "Dependency artifact upstream returned HTML",
@@ -450,7 +527,7 @@ async function fetchSourceModules(
     }
     const contentType = normalizeContentType(rawContentType);
     if (!contentType) {
-      await response.body?.cancel().catch(() => undefined);
+      cancelResponseBody(response);
       throw new DependencyArtifactBuildError(
         "upstream_content_type",
         "Dependency artifact upstream returned an unsupported content type",
@@ -459,7 +536,7 @@ async function fetchSourceModules(
 
     let bytes: Uint8Array<ArrayBuffer>;
     try {
-      bytes = await readBoundedResponseBytes(response, totalBytes, limits);
+      bytes = await readBoundedResponseBytes(response, totalBytes, limits, deadline);
     } catch (error) {
       if (
         error instanceof DependencyArtifactBuildError ||
@@ -468,13 +545,10 @@ async function fetchSourceModules(
         throw error;
       }
       if (
-        controller.signal.aborted ||
+        deadline.signal.aborted ||
         (error instanceof Error && error.name === "AbortError")
       ) {
-        throw new DependencyArtifactBuildError(
-          "upstream_timeout",
-          "Dependency artifact upstream request timed out",
-        );
+        throw upstreamTimeoutError();
       }
       throw new DependencyArtifactBuildError(
         "upstream_fetch_failed",
@@ -515,7 +589,7 @@ async function fetchSourceModules(
     await visit(rootId, 0);
     return { modules, rootId };
   } finally {
-    clearTimeout(timeout);
+    deadline.dispose();
   }
 }
 
@@ -523,20 +597,21 @@ async function readBoundedResponseBytes(
   response: Response,
   currentTotalBytes: number,
   limits: DependencyArtifactBuildLimits,
+  deadline: UpstreamDeadline,
 ): Promise<Uint8Array<ArrayBuffer>> {
   const declaredLengthHeader = response.headers.get("content-length");
   if (declaredLengthHeader !== null) {
     const declaredLength = Number(declaredLengthHeader);
     if (Number.isFinite(declaredLength) && declaredLength >= 0) {
       if (declaredLength > limits.maxAssetBytes) {
-        await response.body?.cancel().catch(() => undefined);
+        cancelResponseBody(response);
         throw new DependencyArtifactBuildError(
           "asset_size_limit",
           "Dependency artifact asset exceeds the size limit",
         );
       }
       if (currentTotalBytes + declaredLength > limits.maxTotalBytes) {
-        await response.body?.cancel().catch(() => undefined);
+        cancelResponseBody(response);
         throw new DependencyArtifactBuildError(
           "graph_total_size_limit",
           "Dependency artifact graph exceeds the total size limit",
@@ -552,18 +627,21 @@ async function readBoundedResponseBytes(
   let size = 0;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await deadline.race(
+        () => reader.read(),
+        () => void reader.cancel(upstreamTimeoutError()).catch(() => undefined),
+      );
       if (done) break;
       size += value.byteLength;
       if (size > limits.maxAssetBytes) {
-        await reader.cancel().catch(() => undefined);
+        void reader.cancel().catch(() => undefined);
         throw new DependencyArtifactBuildError(
           "asset_size_limit",
           "Dependency artifact asset exceeds the size limit",
         );
       }
       if (currentTotalBytes + size > limits.maxTotalBytes) {
-        await reader.cancel().catch(() => undefined);
+        void reader.cancel().catch(() => undefined);
         throw new DependencyArtifactBuildError(
           "graph_total_size_limit",
           "Dependency artifact graph exceeds the total size limit",

@@ -56,6 +56,21 @@ function fixtureFetch(
   }) as typeof fetch;
 }
 
+async function settleBeforeWatchdog<T>(promise: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const watchdog = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error("Dependency artifact timeout did not settle promptly")),
+      1_000,
+    );
+  });
+  try {
+    return await Promise.race([promise, watchdog]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
+}
+
 function recordingClient() {
   const events: Array<Record<string, unknown>> = [];
   const client: DependencyArtifactBuildClient = {
@@ -337,21 +352,71 @@ describe("release-assets/dependency-artifact-builder", () => {
     }
   });
 
-  it("turns an aborted upstream request into a bounded timeout failure", async () => {
-    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+  it("bounds an upstream fetch that ignores AbortSignal", async () => {
     const { client } = recordingClient();
-    const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
-      fetch: fixtureFetch({
-        [rootUrl]: () =>
-          new Promise((_resolve, reject) => {
-            setTimeout(() => reject(new DOMException("Aborted", "AbortError")), 5);
-          }),
+    const upstreamSignals: AbortSignal[] = [];
+    const result = await settleBeforeWatchdog(
+      runDependencyArtifactBuild(buildTaskInput(), client, {
+        fetch: ((_input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.signal) upstreamSignals.push(init.signal);
+          return new Promise<Response>(() => undefined);
+        }) as typeof fetch,
+        limits: { timeoutMs: 1 },
       }),
-      limits: { timeoutMs: 1 },
-    });
+    );
 
     assertEquals(result.success, false);
     assertEquals(failureCodeOf(result), "upstream_timeout");
+    assertEquals(upstreamSignals[0]?.aborted, true);
+  });
+
+  it("bounds an upstream body read that never settles", async () => {
+    const rootUrl = dependencyArtifactUpstreamUrl(standardIdentity);
+    const { client } = recordingClient();
+    const upstreamSignals: AbortSignal[] = [];
+    let bodyCancelCalls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        bodyCancelCalls++;
+        return new Promise<void>(() => undefined);
+      },
+    });
+
+    const result = await settleBeforeWatchdog(
+      runDependencyArtifactBuild(buildTaskInput(), client, {
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.signal) upstreamSignals.push(init.signal);
+          assertEquals(String(input), rootUrl);
+          return new Response(body, {
+            headers: { "content-type": "text/javascript" },
+          });
+        }) as typeof fetch,
+        limits: { timeoutMs: 1 },
+      }),
+    );
+
+    assertEquals(result.success, false);
+    assertEquals(failureCodeOf(result), "upstream_timeout");
+    assertEquals(upstreamSignals[0]?.aborted, true);
+    assertEquals(bodyCancelCalls, 1);
+  });
+
+  it("rejects timeout values that JavaScript timers cannot represent", async () => {
+    for (const timeoutMs of [-1, 1.5, 2_147_483_648, Number.NaN]) {
+      let fetchCalls = 0;
+      const { client } = recordingClient();
+      const result = await runDependencyArtifactBuild(buildTaskInput(), client, {
+        fetch: (async () => {
+          fetchCalls++;
+          return response("export {};");
+        }) as typeof fetch,
+        limits: { timeoutMs },
+      });
+
+      assertEquals(result.success, false);
+      assertEquals(failureCodeOf(result), "invalid_limits");
+      assertEquals(fetchCalls, 0);
+    }
   });
 
   it("uploads hash-verified assets before publishing one ready graph", async () => {
