@@ -10,6 +10,7 @@
 import { basename } from "#veryfront/compat/path/index.ts";
 import { resolveImport } from "#veryfront/modules/import-map/resolver.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 import { parseBarePackageSpecifier } from "../shared/package-specifier.ts";
 import { isServerOnlyPackage } from "../shared/server-only-packages.ts";
 import { type ImportSpecifier, parseImports, replaceSpecifiers } from "./lexer.ts";
@@ -205,6 +206,12 @@ export async function buildReplacements(
       if (resolved && resolved !== resolvedFor) replacements.set(resolvedFor, resolved);
       continue;
     }
+
+    // An egress-policy denial is an authorization decision, not a transient
+    // prefetch failure. Leaving the original absolute import in the emitted
+    // bundle would let the runtime resolve it with its unrestricted loader and
+    // bypass the guarded transport entirely.
+    if (outcome.reason instanceof OutboundRequestBlockedError) throw outcome.reason;
 
     // Anything the runtime cannot resolve on its own must resolve here.
     // Leaving one unresolved would emit a module whose own import graph reaches

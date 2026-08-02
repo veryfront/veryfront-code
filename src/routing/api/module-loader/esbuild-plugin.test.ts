@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeIntegrity, type LockfileManager } from "#veryfront/utils";
+import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
 import * as esbuild from "veryfront/extensions/bundler";
 import type {
@@ -461,6 +462,97 @@ describe("routing/api/module-loader/esbuild-plugin", () => {
         });
 
         assertEquals((result as { contents: string }).contents, "export const ok = true;");
+        assertEquals(attempts, 3);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("rejects oversized remote module bodies without retrying", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({ allowedHosts: ["https://esm.sh"] });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = (async () => {
+          attempts += 1;
+          return new Response("export {};", {
+            headers: {
+              "content-length": String(MAX_BUNDLE_CHUNK_SIZE_BYTES + 1),
+            },
+          });
+        }) as typeof fetch;
+
+        await assertRejects(
+          async () => {
+            await loadHandler!({
+              path: "https://esm.sh/yaml@2",
+              namespace: "http-url",
+              pluginData: undefined,
+              suffix: "",
+            });
+          },
+          Error,
+          `exceeds ${MAX_BUNDLE_CHUNK_SIZE_BYTES} bytes`,
+        );
+        assertEquals(attempts, 1);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("keeps the fetch deadline active while reading a streaming module body", async () => {
+      const originalFetch = globalThis.fetch;
+      let attempts = 0;
+      let loadHandler: ((args: OnLoadArgs) => unknown) | undefined;
+      const plugin = createHTTPPlugin({
+        allowedHosts: ["https://93.184.216.34"],
+        fetchTimeoutMs: 20,
+      });
+      plugin.setup(createMockBuild(
+        () => {},
+        (_opts, fn) => {
+          loadHandler = fn;
+        },
+      ));
+      assertExists(loadHandler);
+
+      try {
+        globalThis.fetch = ((_input, init) => {
+          attempts += 1;
+          const signal = init?.signal;
+          return Promise.resolve(
+            new Response(
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.enqueue(new TextEncoder().encode("export const pending = "));
+                  signal?.addEventListener("abort", () => controller.error(signal.reason), {
+                    once: true,
+                  });
+                },
+              }),
+            ),
+          );
+        }) as typeof fetch;
+
+        const result = await loadHandler!({
+          path: "https://93.184.216.34/module.js",
+          namespace: "http-url",
+          pluginData: undefined,
+          suffix: "",
+        });
+
+        const errors = (result as { errors?: Array<{ text: string }> }).errors;
+        assertExists(errors?.[0]);
+        assertEquals(errors[0].text.includes("Failed to fetch"), true);
         assertEquals(attempts, 3);
       } finally {
         globalThis.fetch = originalFetch;

@@ -33,6 +33,7 @@ import { buildHttpCacheIdentity } from "./http-cache-helpers.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { MAX_BUNDLE_CHUNK_SIZE_BYTES } from "#veryfront/utils/constants/buffers.ts";
+import { OutboundRequestBlockedError } from "#veryfront/security/http/outbound-fetch.ts";
 
 /** Duplicated from http-cache.ts for isolated unit testing of the pattern. */
 const BUNDLE_RE = /file:\/\/([^"'\s]+veryfront-http-bundle\/http-([a-f0-9]+)\.mjs)/gi;
@@ -693,6 +694,48 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       await cacheHttpImportsToLocal(source, options);
       assertEquals(parentFetches, 2);
       assertEquals(distributed.size, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+      __injectCachesForTests(null);
+      __setDistributedCacheAccessorForTests(null);
+      __clearInFlightHttpFetches();
+      await remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("fails instead of emitting an internal dynamic import after egress denial", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-egress-denied-dynamic-import-" });
+    const originalFetch = globalThis.fetch;
+    const parentUrl = "https://93.184.216.34/parent.js";
+    const internalUrl = "http://169.254.169.254/latest/meta-data";
+    let internalFetches = 0;
+
+    __injectCachesForTests({
+      cachedPaths: new Map(),
+      processingStack: new Set(),
+      lastDistributedRefresh: new Map(),
+    });
+    __setDistributedCacheAccessorForTests(() => Promise.resolve(null));
+    globalThis.fetch = ((input: string | URL | Request) => {
+      if (String(input) === internalUrl) internalFetches += 1;
+      return Promise.resolve(
+        new Response(`export const load = () => import("${internalUrl}");`, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+    }) as typeof fetch;
+
+    try {
+      await assertRejects(
+        () =>
+          cacheHttpImportsToLocal(
+            `import { load } from "${parentUrl}"; export { load };`,
+            { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+          ),
+        OutboundRequestBlockedError,
+        "internal host",
+      );
+      assertEquals(internalFetches, 0);
     } finally {
       globalThis.fetch = originalFetch;
       __injectCachesForTests(null);
