@@ -182,24 +182,45 @@ export class MetricsRecorder {
       failureCode?: string;
     },
   ): void {
-    const attributes = {
+    const attributes = sanitizeTelemetryAttributes({
       event: input.event,
       ...(input.failureCode ? { failure_code: input.failureCode } : {}),
-    };
-    this.instruments.dependencyArtifactBuildCounter?.add(1, attributes);
-    if (input.durationMs !== undefined) {
-      this.instruments.dependencyArtifactBuildDuration?.record(input.durationMs, attributes);
+    });
+    safelyRecord(() => this.instruments.dependencyArtifactBuildCounter?.add(1, attributes));
+    const durationMs = input.durationMs;
+    if (durationMs !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildDuration?.record(
+          nonNegativeFiniteMeasure(durationMs),
+          attributes,
+        )
+      );
     }
-    if (input.totalBytes !== undefined) {
-      this.instruments.dependencyArtifactBuildBytes?.record(input.totalBytes, attributes);
+    const totalBytes = input.totalBytes;
+    if (totalBytes !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildBytes?.record(
+          nonNegativeSafeInteger(totalBytes),
+          attributes,
+        )
+      );
     }
-    if (input.assetCount !== undefined) {
-      this.instruments.dependencyArtifactBuildAssetCount?.record(input.assetCount, attributes);
+    const assetCount = input.assetCount;
+    if (assetCount !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildAssetCount?.record(
+          nonNegativeSafeInteger(assetCount),
+          attributes,
+        )
+      );
     }
-    if (input.remainingExternalImportCount !== undefined) {
-      this.instruments.dependencyArtifactBuildExternalImportCount?.record(
-        input.remainingExternalImportCount,
-        attributes,
+    const remainingExternalImportCount = input.remainingExternalImportCount;
+    if (remainingExternalImportCount !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildExternalImportCount?.record(
+          nonNegativeSafeInteger(remainingExternalImportCount),
+          attributes,
+        )
       );
     }
   }

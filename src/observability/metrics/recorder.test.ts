@@ -536,6 +536,58 @@ describe("observability/metrics/recorder", () => {
       assertEquals(instruments._dependencyArtifactBuildBytes._value, 0);
       assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 0);
     });
+
+    it("normalizes dependency artifact measurements", () => {
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: Number.POSITIVE_INFINITY,
+        totalBytes: Number.MAX_SAFE_INTEGER + 100,
+        assetCount: 3.9,
+        remainingExternalImportCount: -1,
+      });
+
+      assertEquals(instruments._dependencyArtifactBuildDuration._value, 0);
+      assertEquals(
+        instruments._dependencyArtifactBuildBytes._value,
+        Number.MAX_SAFE_INTEGER,
+      );
+      assertEquals(instruments._dependencyArtifactBuildAssetCount._value, 3);
+      assertEquals(
+        instruments._dependencyArtifactBuildExternalImportCount._value,
+        0,
+      );
+    });
+
+    it("isolates dependency artifact builds from telemetry backend failures", () => {
+      let attemptedWrites = 0;
+      instruments._dependencyArtifactBuildCounter.add = () => {
+        attemptedWrites += 1;
+        throw new Error("counter unavailable");
+      };
+      for (
+        const histogram of [
+          instruments._dependencyArtifactBuildDuration,
+          instruments._dependencyArtifactBuildBytes,
+          instruments._dependencyArtifactBuildAssetCount,
+          instruments._dependencyArtifactBuildExternalImportCount,
+        ]
+      ) {
+        histogram.record = () => {
+          attemptedWrites += 1;
+          throw new Error("histogram unavailable");
+        };
+      }
+
+      recorder.recordDependencyArtifactBuild({
+        event: "success",
+        durationMs: 120,
+        totalBytes: 2048,
+        assetCount: 3,
+        remainingExternalImportCount: 1,
+      });
+
+      assertEquals(attemptedWrites, 5);
+    });
   });
 
   describe("recordDataFetch", () => {
