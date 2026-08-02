@@ -43,7 +43,15 @@ export interface DisclosureParts {
   Root: React.FC<
     & DisclosureProps
     & React.HTMLAttributes<HTMLDivElement>
-    & { disabled?: boolean; children: React.ReactNode; ref?: React.Ref<HTMLDivElement> }
+    & {
+      disabled?: boolean;
+      /** Synchronous id owned by the root and referenced by Content. */
+      triggerId?: string;
+      /** Synchronous id owned by the root and referenced by Trigger. */
+      contentId?: string;
+      children: React.ReactNode;
+      ref?: React.Ref<HTMLDivElement>;
+    }
   >;
   /** Toggles the region; `asChild` merges onto the consumer's element. */
   Trigger: React.FC<
@@ -118,7 +126,7 @@ export interface ToolbarParts {
       ref?: React.Ref<HTMLDivElement>;
     }
   >;
-  /** A roving-focus stop (a button, or the consumer's element via `asChild`). */
+  /** A roving-focus stop. It must render with `tabIndex={-1}` until the Root assigns ownership. */
   Item: React.FC<
     & React.ButtonHTMLAttributes<HTMLButtonElement>
     & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }

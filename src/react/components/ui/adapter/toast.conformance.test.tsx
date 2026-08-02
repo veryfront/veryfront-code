@@ -178,7 +178,8 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
         <span>app</span>
       </ToastProvider>,
     );
-    assert(html === "<span>app</span>", "SSR output stays portal-free and hydration-stable");
+    assert(!html.includes('aria-label="Notifications"'), "SSR renders no portal viewport");
+    assert(html.includes("data-vf-toast-portal-host"), "SSR reserves the stable owned host");
 
     const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
     const restore = installDomGlobals(dom);
@@ -201,6 +202,41 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       );
     } finally {
       restore();
+    }
+  });
+
+  it("keeps the portal in the provider document and nearest UI scope", async () => {
+    const shellDom = new JSDOM('<!doctype html><html><body><div id="shell"></div></body></html>');
+    const foreignDom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(shellDom);
+    const foreignDocument = foreignDom.window.document;
+    const root = createRoot(foreignDocument.getElementById("root")!);
+    try {
+      flushSync(() =>
+        root.render(
+          <section data-vf-ui="scoped">
+            <ToastProvider>
+              <span>app</span>
+            </ToastProvider>
+          </section>,
+        )
+      );
+      await waitFor(() =>
+        foreignDocument.querySelectorAll('[aria-label="Notifications"]').length === 1
+      );
+      const viewport = foreignDocument.querySelector<HTMLElement>(
+        '[aria-label="Notifications"]',
+      )!;
+      assert(viewport.ownerDocument === foreignDocument, "portal stays in the React root document");
+      assert(viewport.closest('[data-vf-ui="scoped"]'), "portal inherits the nearest UI scope");
+      assert(
+        !document.querySelector('[aria-label="Notifications"]'),
+        "shell document is untouched",
+      );
+    } finally {
+      flushSync(() => root.unmount());
+      restore();
+      foreignDom.window.close();
     }
   });
 
@@ -312,6 +348,66 @@ describe("Builtin Toast viewport and timer lifecycle", () => {
       assert(document.body.textContent?.includes("Focused"), "focus pauses timer");
       action.blur();
       await waitFor(() => !document.body.textContent?.includes("Focused"));
+    } finally {
+      root.unmount();
+      restore();
+    }
+  });
+
+  it("keeps hover and focus pause reasons independent for structured and custom toasts", async () => {
+    let api: ToastState | null = null;
+    function Probe(): null {
+      api = useToast();
+      return null;
+    }
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(dom);
+    const root = createRoot(document.getElementById("root")!);
+    try {
+      flushSync(() =>
+        root.render(
+          <ToastProvider viewport="inline" duration={60}>
+            <Probe />
+          </ToastProvider>,
+        )
+      );
+
+      flushSync(() =>
+        api!.toast({
+          title: "Structured overlap",
+          action: { label: "Structured action", onClick: () => undefined },
+        })
+      );
+      let item = [...document.querySelectorAll<HTMLLIElement>("li")].find((node) =>
+        node.textContent?.includes("Structured overlap")
+      )!;
+      const structuredAction = [...item.querySelectorAll("button")].find((button) =>
+        button.textContent === "Structured action"
+      )!;
+      flushSync(() =>
+        item.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }))
+      );
+      structuredAction.focus();
+      flushSync(() => item.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true })));
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      assert(document.body.contains(item), "focus keeps structured toast paused after mouseout");
+      structuredAction.blur();
+      await waitFor(() => !document.body.contains(item));
+
+      flushSync(() => api!.toast.custom(() => <button type="button">Custom action</button>));
+      item = [...document.querySelectorAll<HTMLLIElement>("li")].find((node) =>
+        node.textContent?.includes("Custom action")
+      )!;
+      const customAction = item.querySelector("button")!;
+      flushSync(() =>
+        item.dispatchEvent(new dom.window.MouseEvent("mouseover", { bubbles: true }))
+      );
+      customAction.focus();
+      customAction.blur();
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      assert(document.body.contains(item), "hover keeps custom toast paused after blur");
+      flushSync(() => item.dispatchEvent(new dom.window.MouseEvent("mouseout", { bubbles: true })));
+      await waitFor(() => !document.body.contains(item));
     } finally {
       root.unmount();
       restore();

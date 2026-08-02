@@ -140,10 +140,11 @@ export function Toast({
   ...props
 }: ToastProps): React.ReactElement {
   const [node, setNode] = React.useState<HTMLLIElement | null>(null);
-  const [interactionPaused, setInteractionPaused] = React.useState(false);
+  const [hovered, setHovered] = React.useState(false);
+  const [focusWithin, setFocusWithin] = React.useState(false);
   const composedRef = React.useMemo(() => composeRefs<HTMLLIElement>(setNode, ref), [ref]);
   useAutoDismiss(duration, onClose, {
-    paused: interactionPaused,
+    paused: hovered || focusWithin,
     ownerDocument: node?.ownerDocument,
   });
 
@@ -157,19 +158,19 @@ export function Toast({
       className={cn(toastVariants({ variant }), className)}
       onMouseEnter={(event) => {
         onMouseEnter?.(event);
-        setInteractionPaused(true);
+        setHovered(true);
       }}
       onMouseLeave={(event) => {
         onMouseLeave?.(event);
-        setInteractionPaused(false);
+        setHovered(false);
       }}
       onFocus={(event) => {
         onFocus?.(event);
-        setInteractionPaused(true);
+        setFocusWithin(true);
       }}
       onBlur={(event) => {
         onBlur?.(event);
-        if (!event.currentTarget.contains(event.relatedTarget)) setInteractionPaused(false);
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusWithin(false);
       }}
       {...props}
     >

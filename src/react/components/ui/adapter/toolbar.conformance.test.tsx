@@ -10,10 +10,11 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { Toolbar, ToolbarButton, ToolbarSeparator } from "../toolbar.tsx";
+import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "../toolbar.tsx";
 import { UIAdapterProvider, useAdapter } from "./context.tsx";
 import { composeRefs, Slot } from "../slot.tsx";
 import type { ToolbarParts } from "./contract.ts";
@@ -236,6 +237,23 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
     });
   });
 }
+
+describe("Builtin Toolbar SSR ownership", () => {
+  it("emits exactly one deterministic tab stop before hydration", () => {
+    const html = renderToString(
+      <Toolbar>
+        <ToolbarButton>A</ToolbarButton>
+        <ToolbarLink href="#b">B</ToolbarLink>
+        <ToolbarButton>C</ToolbarButton>
+      </Toolbar>,
+    );
+    const document = new JSDOM(html).window.document;
+    const root = document.querySelector<HTMLElement>('[role="toolbar"]')!;
+    const items = [...document.querySelectorAll<HTMLElement>("[data-toolbar-item]")];
+    assert(root.tabIndex === 0, "toolbar root owns the pre-hydration tab stop");
+    assert(items.length === 3 && items.every((item) => item.tabIndex === -1), "items opt out");
+  });
+});
 
 function EditableToolbarItem(): React.ReactElement {
   const { toolbar } = useAdapter();

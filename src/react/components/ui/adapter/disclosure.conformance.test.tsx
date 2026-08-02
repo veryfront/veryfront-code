@@ -189,7 +189,7 @@ function DisclosureAsChildProbe(): React.ReactElement {
 function DisclosureCustomIdProbe(): React.ReactElement {
   const { disclosure } = useAdapter();
   return (
-    <disclosure.Root>
+    <disclosure.Root triggerId="custom-trigger" contentId="custom-content">
       <disclosure.Trigger id="custom-trigger">Toggle</disclosure.Trigger>
       <disclosure.Content id="custom-content" role="region">Body</disclosure.Content>
     </disclosure.Root>
@@ -208,18 +208,26 @@ const AltCtx = React.createContext<
     toggle: () => void;
     triggerId: string;
     contentId: string;
-    setTriggerId: (id: string) => void;
-    setContentId: (id: string) => void;
     disabled?: boolean;
   } | null
 >(null);
 const altDisclosure: DisclosureParts = {
-  Root: ({ open, defaultOpen, onOpenChange, disabled, children, ref, ...props }) => {
+  Root: ({
+    open,
+    defaultOpen,
+    onOpenChange,
+    disabled,
+    triggerId: explicitTriggerId,
+    contentId: explicitContentId,
+    children,
+    ref,
+    ...props
+  }) => {
     const controlled = open !== undefined;
     const [internal, setInternal] = React.useState(defaultOpen ?? false);
     const baseId = `alt-disclosure-${React.useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
-    const [triggerId, setTriggerId] = React.useState(`${baseId}-trigger`);
-    const [contentId, setContentId] = React.useState(`${baseId}-content`);
+    const triggerId = explicitTriggerId ?? `${baseId}-trigger`;
+    const contentId = explicitContentId ?? `${baseId}-content`;
     const isOpen = controlled ? open : internal;
     const toggle = React.useCallback(() => {
       if (!controlled) setInternal((v) => !v);
@@ -233,8 +241,6 @@ const altDisclosure: DisclosureParts = {
             toggle,
             triggerId,
             contentId,
-            setTriggerId,
-            setContentId,
             disabled,
           }}
         >
@@ -248,9 +254,6 @@ const altDisclosure: DisclosureParts = {
     const Comp = asChild ? Slot : "button";
     const isDisabled = Boolean(ctx?.disabled || disabled);
     const realizedId = id ?? ctx?.triggerId;
-    React.useLayoutEffect(() => {
-      if (realizedId) ctx?.setTriggerId(realizedId);
-    }, [ctx, realizedId]);
     return (
       <Comp
         {...(asChild ? {} : { type: "button" as const })}
@@ -274,9 +277,6 @@ const altDisclosure: DisclosureParts = {
   Content: ({ children, ref, id, hidden, ...props }) => {
     const ctx = React.useContext(AltCtx);
     const realizedId = id ?? ctx?.contentId;
-    React.useLayoutEffect(() => {
-      if (realizedId) ctx?.setContentId(realizedId);
-    }, [ctx, realizedId]);
     return (
       <div
         {...props}

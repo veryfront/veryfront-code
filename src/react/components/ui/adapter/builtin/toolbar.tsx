@@ -51,6 +51,7 @@ const ToolbarRoot: ToolbarParts["Root"] = (
       : null;
     const resting = items.find((element) => element === focused || element.tabIndex === 0) ??
       items[0];
+    root.tabIndex = resting ? -1 : 0;
     scopedItems(root).forEach((el) => {
       el.tabIndex = el === resting ? 0 : -1;
     });
@@ -95,7 +96,16 @@ const ToolbarRoot: ToolbarParts["Root"] = (
     const target = event.target as HTMLElement;
     if (!root || target.closest("[data-toolbar-root]") !== root) return;
     const items = enabledItems(root);
+    if (target === root) {
+      const first = items[0];
+      if (!first) return;
+      root.tabIndex = -1;
+      items.forEach((item) => item.tabIndex = item === first ? 0 : -1);
+      first.focus();
+      return;
+    }
     if (!items.includes(target)) return;
+    root.tabIndex = -1;
     items.forEach((item) => item.tabIndex = item === target ? 0 : -1);
   };
 
@@ -104,6 +114,7 @@ const ToolbarRoot: ToolbarParts["Root"] = (
       {...props}
       ref={composedRef}
       role="toolbar"
+      tabIndex={0}
       data-toolbar-root=""
       aria-orientation={orientation}
       data-orientation={orientation}
@@ -123,6 +134,7 @@ const ToolbarItem: ToolbarParts["Item"] = ({ asChild, ref, ...props }) => {
       {...(asChild ? {} : { type: "button" as const })}
       ref={ref}
       data-toolbar-item=""
+      tabIndex={-1}
     />
   );
 };

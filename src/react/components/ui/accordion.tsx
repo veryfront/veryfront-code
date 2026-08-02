@@ -34,8 +34,6 @@ const AccordionContext = React.createContext<AccordionContextValue | null>(null)
 interface AccordionItemContextValue {
   triggerId: string;
   contentId: string;
-  setTriggerId: (id: string) => void;
-  setContentId: (id: string) => void;
 }
 const AccordionItemContext = React.createContext<AccordionItemContextValue | null>(null);
 
@@ -141,6 +139,10 @@ export function Accordion({
 export interface AccordionItemProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Identifies this section within the accordion's open value(s). */
   value: string;
+  /** Stable id for the trigger and the content's `aria-labelledby`. */
+  triggerId?: string;
+  /** Stable id for the content and the trigger's `aria-controls`. */
+  contentId?: string;
   /** React 19: ref is a regular prop. */
   ref?: React.Ref<HTMLDivElement>;
 }
@@ -152,21 +154,33 @@ export interface AccordionItemProps extends React.HTMLAttributes<HTMLDivElement>
  * Accordion keeps owning which sections may be open.
  */
 export function AccordionItem(
-  { value, className, children, ...props }: AccordionItemProps,
+  {
+    value,
+    className,
+    children,
+    triggerId: explicitTriggerId,
+    contentId: explicitContentId,
+    ...props
+  }: AccordionItemProps,
 ): React.ReactElement {
   const { disclosure } = useAdapter();
   const root = useAccordionContext();
   const open = root.value.includes(value);
   const generatedId = React.useId().replace(/[^A-Za-z0-9_-]/g, "");
-  const [triggerId, setTriggerId] = React.useState(`vf-accordion-${generatedId}-trigger`);
-  const [contentId, setContentId] = React.useState(`vf-accordion-${generatedId}-content`);
+  const childIds = findAccordionPartIds(children);
+  const triggerId = explicitTriggerId ?? childIds.triggerId ??
+    `vf-accordion-${generatedId}-trigger`;
+  const contentId = explicitContentId ?? childIds.contentId ??
+    `vf-accordion-${generatedId}-content`;
   const itemContext = React.useMemo(
-    () => ({ triggerId, contentId, setTriggerId, setContentId }),
+    () => ({ triggerId, contentId }),
     [triggerId, contentId],
   );
   return (
     <disclosure.Root
       open={open}
+      triggerId={triggerId}
+      contentId={contentId}
       onOpenChange={(nextOpen) => {
         if (nextOpen !== open) root.toggle(value);
       }}
@@ -198,8 +212,10 @@ export function AccordionTrigger(
   const { disclosure } = useAdapter();
   const item = React.useContext(AccordionItemContext);
   if (!item) throw new Error("AccordionTrigger must be used within <AccordionItem>");
+  if (id !== undefined && id !== item.triggerId) {
+    throw new Error("AccordionTrigger id must match the triggerId owned by AccordionItem");
+  }
   const realizedId = id ?? item.triggerId;
-  React.useLayoutEffect(() => item.setTriggerId(realizedId), [item, realizedId]);
   const Heading = `h${headingLevel}` as "h2" | "h3" | "h4" | "h5" | "h6";
   return (
     <Heading>
@@ -234,8 +250,10 @@ export function AccordionContent(
   const { disclosure } = useAdapter();
   const item = React.useContext(AccordionItemContext);
   if (!item) throw new Error("AccordionContent must be used within <AccordionItem>");
+  if (id !== undefined && id !== item.contentId) {
+    throw new Error("AccordionContent id must match the contentId owned by AccordionItem");
+  }
   const realizedId = id ?? item.contentId;
-  React.useLayoutEffect(() => item.setContentId(realizedId), [item, realizedId]);
   return (
     <disclosure.Content
       id={realizedId}
@@ -247,4 +265,21 @@ export function AccordionContent(
       {children}
     </disclosure.Content>
   );
+}
+
+function findAccordionPartIds(children: React.ReactNode): {
+  triggerId?: string;
+  contentId?: string;
+} {
+  const result: { triggerId?: string; contentId?: string } = {};
+  const visit = (nodes: React.ReactNode): void => {
+    React.Children.forEach(nodes, (child) => {
+      if (!React.isValidElement<{ id?: string; children?: React.ReactNode }>(child)) return;
+      if (child.type === AccordionTrigger && child.props.id) result.triggerId ??= child.props.id;
+      if (child.type === AccordionContent && child.props.id) result.contentId ??= child.props.id;
+      if (child.type === React.Fragment) visit(child.props.children);
+    });
+  };
+  visit(children);
+  return result;
 }

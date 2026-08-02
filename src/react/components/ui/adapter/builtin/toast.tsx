@@ -59,6 +59,7 @@ function BuiltinToastProvider(
     throw new RangeError(`ToastProvider maxToasts must be an integer between 1 and ${MAX_TOASTS}`);
   }
   const [toasts, setToasts] = React.useState<ToastRecord[]>([]);
+  const [portalHost, setPortalHost] = React.useState<HTMLDivElement | null>(null);
   const idRef = React.useRef(0);
 
   React.useLayoutEffect(() => {
@@ -91,7 +92,18 @@ function BuiltinToastProvider(
     <ToastContext.Provider value={value}>
       {children}
       {viewport === "inline" ? <ToastViewportContents /> : null}
-      {viewport === "portal" ? <ToastViewportPortal /> : null}
+      {viewport === "portal"
+        ? (
+          <>
+            <div
+              ref={setPortalHost}
+              data-vf-toast-portal-host=""
+              style={{ display: "contents" }}
+            />
+            {portalHost ? <ToastViewportPortal host={portalHost} /> : null}
+          </>
+        )
+        : null}
     </ToastContext.Provider>
   );
 }
@@ -137,12 +149,8 @@ export function ToastViewport({
 }
 ToastViewport.displayName = "ToastViewport";
 
-function ToastViewportPortal(): React.ReactPortal | null {
-  const [host, setHost] = React.useState<HTMLElement | null>(null);
-  React.useEffect(() => {
-    setHost(globalThis.document?.body ?? null);
-  }, []);
-  return host ? createPortal(<ToastViewportContents />, host) : null;
+function ToastViewportPortal({ host }: { host: HTMLElement }): React.ReactPortal {
+  return createPortal(<ToastViewportContents />, host);
 }
 
 function ToastViewportContents({
@@ -248,17 +256,21 @@ function CustomToastItem(
   },
 ): React.ReactElement {
   const [node, setNode] = React.useState<HTMLLIElement | null>(null);
-  const [paused, setPaused] = React.useState(false);
-  useAutoDismiss(duration, onClose, { paused, ownerDocument: node?.ownerDocument });
+  const [hovered, setHovered] = React.useState(false);
+  const [focusWithin, setFocusWithin] = React.useState(false);
+  useAutoDismiss(duration, onClose, {
+    paused: hovered || focusWithin,
+    ownerDocument: node?.ownerDocument,
+  });
   return (
     <li
       ref={setNode}
       className="pointer-events-auto"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      onFocus={() => setPaused(true)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocusWithin(true)}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setPaused(false);
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusWithin(false);
       }}
     >
       {children}

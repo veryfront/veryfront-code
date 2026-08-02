@@ -19,8 +19,6 @@ const DisclosureContext = React.createContext<
     toggle: () => void;
     triggerId: string;
     contentId: string;
-    setTriggerId: (id: string) => void;
-    setContentId: (id: string) => void;
     disabled?: boolean;
   } | null
 >(null);
@@ -36,21 +34,29 @@ function useDisclosureContext(part: string) {
 }
 
 const DisclosureRoot: DisclosureParts["Root"] = (
-  { open, defaultOpen, onOpenChange, disabled, children, ref, ...props },
+  {
+    open,
+    defaultOpen,
+    onOpenChange,
+    disabled,
+    triggerId: explicitTriggerId,
+    contentId: explicitContentId,
+    children,
+    ref,
+    ...props
+  },
 ) => {
   const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
   const toggle = React.useCallback(() => setOpen(!isOpen), [isOpen, setOpen]);
   const generatedId = stableDomId(React.useId());
-  const [triggerId, setTriggerId] = React.useState(`vf-disclosure-${generatedId}-trigger`);
-  const [contentId, setContentId] = React.useState(`vf-disclosure-${generatedId}-content`);
+  const triggerId = explicitTriggerId ?? `vf-disclosure-${generatedId}-trigger`;
+  const contentId = explicitContentId ?? `vf-disclosure-${generatedId}-content`;
   const ctx = React.useMemo(
     () => ({
       open: isOpen,
       toggle,
       triggerId,
       contentId,
-      setTriggerId,
-      setContentId,
       disabled,
     }),
     [isOpen, toggle, triggerId, contentId, disabled],
@@ -68,8 +74,10 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
   const ctx = useDisclosureContext("Disclosure Trigger");
   const Comp = asChild ? Slot : "button";
   const isDisabled = Boolean(ctx.disabled || disabled);
+  if (id !== undefined && id !== ctx.triggerId) {
+    throw new Error("Disclosure Trigger id must match the triggerId owned by Disclosure Root");
+  }
   const realizedId = id ?? ctx.triggerId;
-  React.useLayoutEffect(() => ctx.setTriggerId(realizedId), [ctx, realizedId]);
   return (
     <Comp
       {...props}
@@ -96,8 +104,10 @@ const DisclosureContent: DisclosureParts["Content"] = (
   { children, ref, id, hidden, ...props },
 ) => {
   const ctx = useDisclosureContext("Disclosure Content");
+  if (id !== undefined && id !== ctx.contentId) {
+    throw new Error("Disclosure Content id must match the contentId owned by Disclosure Root");
+  }
   const realizedId = id ?? ctx.contentId;
-  React.useLayoutEffect(() => ctx.setContentId(realizedId), [ctx, realizedId]);
   return (
     <div
       {...props}

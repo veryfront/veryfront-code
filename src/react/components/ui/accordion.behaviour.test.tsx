@@ -8,6 +8,7 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -54,6 +55,31 @@ function click(node: Element): void {
 }
 
 describe("Accordion: disclosure-slot behaviour (builtin)", () => {
+  it("emits complete default and custom ARIA wiring during SSR", () => {
+    for (const custom of [false, true]) {
+      const html = renderToString(
+        <Accordion>
+          <AccordionItem value="shipping">
+            <AccordionTrigger id={custom ? "shipping-trigger" : undefined}>
+              Shipping
+            </AccordionTrigger>
+            <AccordionContent id={custom ? "shipping-content" : undefined}>Body</AccordionContent>
+          </AccordionItem>
+        </Accordion>,
+      );
+      const document = new JSDOM(html).window.document;
+      const trigger = document.querySelector("button")!;
+      const content = document.querySelector<HTMLElement>("[role=region]")!;
+      assert(trigger.id.length > 0 && content.id.length > 0, "SSR realizes both ids");
+      assert(trigger.getAttribute("aria-controls") === content.id, "SSR trigger controls content");
+      assert(content.getAttribute("aria-labelledby") === trigger.id, "SSR content names trigger");
+      if (custom) {
+        assert(trigger.id === "shipping-trigger", "SSR preserves custom trigger id");
+        assert(content.id === "shipping-content", "SSR preserves custom content id");
+      }
+    }
+  });
+
   it("single mode: opening one section closes the other", () => {
     const { host, unmount } = render(
       <Accordion type="single" collapsible>
