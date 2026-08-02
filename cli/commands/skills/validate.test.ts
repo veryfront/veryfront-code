@@ -79,7 +79,7 @@ Review the submitted changes.
     });
   });
 
-  it("reports invalid canonical directory names", async () => {
+  it("reports invalid canonical directory names without echoing rejected input", async () => {
     await withTempSkill({
       "SKILL.md": `---
 description: Invalid directory name.
@@ -91,7 +91,11 @@ description: Invalid directory name.
       const issues = await validateSkillDirectory(dir);
       assertEquals(issues.length, 1);
       assertEquals(issues[0]?.severity, "error");
-      assertEquals(issues[0]?.message.includes('Invalid skill name "Bad Name"'), true);
+      assertEquals(
+        issues[0]?.message,
+        "Invalid skill name: must be lowercase alphanumeric with hyphens, 1-64 characters",
+      );
+      assertEquals(issues[0]?.message.includes("Bad Name"), false);
     }, "Bad Name");
   });
 
