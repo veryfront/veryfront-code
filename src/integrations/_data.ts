@@ -12221,12 +12221,11 @@ export const connectors: IntegrationConfig[] = [
         "write:page:confluence",
         "offline_access",
       ],
-      "tokenAuthMethod": "client_secret_post",
+      "tokenAuthMethod": "body",
       "requiredApis": [{
         "name": "Atlassian OAuth 2.0 App",
         "enableUrl": "https://developer.atlassian.com/console/myapps/",
       }],
-      "additionalParams": { "audience": "api.atlassian.com", "prompt": "consent" },
       "additionalAuthParams": { "audience": "api.atlassian.com", "prompt": "consent" },
     },
     "envVars": [{
@@ -12241,6 +12240,14 @@ export const connectors: IntegrationConfig[] = [
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.atlassian.com/console/myapps/",
+    }, {
+      "name": "CONFLUENCE_CLOUD_ID",
+      "description":
+        "Optional Atlassian site ID; required when the user can access multiple Confluence sites",
+      "required": false,
+      "sensitive": false,
+      "docsUrl":
+        "https://developer.atlassian.com/cloud/confluence/oauth-2-3lo-apps/#get-list-of-resources",
     }],
     "tools": [{
       "id": "confluence__list_sites",
@@ -15270,7 +15277,6 @@ export const connectors: IntegrationConfig[] = [
       "scopes": [
         "https://www.googleapis.com/auth/documents.readonly",
         "https://www.googleapis.com/auth/documents",
-        "https://www.googleapis.com/auth/docs",
         "https://www.googleapis.com/auth/drive.readonly",
       ],
       "requiredApis": [{
@@ -15441,11 +15447,44 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["gmail", "calendar", "drive", "sheets"],
     "setupGuide": {
+      "title": "Google Docs Integration Setup",
       "steps": [{
-        "title": "Setup guide",
+        "title": "Create or select a Google Cloud project",
         "description":
-          "# Google Docs Integration Setup\n\n## Prerequisites\n- A Google Cloud Platform account\n- A Google Cloud project\n\n## Step 1: Create OAuth 2.0 Credentials\n\n1. Go to the [Google Cloud Console](https://console.cloud.google.com/)\n2. Select or create a project\n3. Navigate to **APIs & Services** > **Credentials**\n4. Click **Create Credentials** > **OAuth client ID**\n5. Select **Web application** as the application type\n6. Add your authorized redirect URIs:\n   - For development: `http://localhost:3000/api/auth/docs-google/callback`\n   - For production: `https://yourdomain.com/api/auth/docs-google/callback`\n7. Click **Create** and copy your Client ID and Client Secret\n\n## Step 2: Enable Required APIs\n\nEnable the following APIs in your Google Cloud project:\n\n1. [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)\n2. [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)\n\n## Step 3: Configure Environment Variables\n\nAdd the following to your `.env` file:\n\n```bash\nGOOGLE_CLIENT_ID=your_client_id_here\nGOOGLE_CLIENT_SECRET=your_client_secret_here\n```\n\n## Step 4: Test the Integration\n\n1. Start your development server\n2. Navigate to `/api/auth/docs-google` to initiate OAuth flow\n3. Grant permissions when prompted\n4. You should be redirected back to your application\n\n## OAuth Scopes\n\nThis integration requests the following scopes:\n\n- `https://www.googleapis.com/auth/documents.readonly` - Read access to Google Docs\n- `https://www.googleapis.com/auth/documents` - Full access to create and edit Google Docs\n- `https://www.googleapis.com/auth/docs` - Manage Google Docs files in Drive (create, edit, delete)\n- `https://www.googleapis.com/auth/drive.readonly` - Read access to list documents from Drive\n\n## Security Notes\n\n- Keep your Client Secret secure and never commit it to version control\n- Use environment variables for all sensitive credentials\n- Consider implementing proper user session management in production\n- The default implementation uses an in-memory token store - replace with a persistent store for production use\n\n## Available AI Tools\n\nOnce configured, you can use these AI tools:\n\n- **list-documents** - List recent Google Docs from your Drive\n- **get-document** - Retrieve document content and structure\n- **create-document** - Create new documents with formatted content\n- **update-document** - Modify existing documents with batch updates\n- **search-documents** - Search for documents by name or content\n\n## Need Help?\n\nRefer to the [Google Docs API documentation](https://developers.google.com/docs/api) for detailed information about API capabilities and limits.",
+          "Open the Google Cloud Console and select the project that will own the OAuth client.",
+        "url": "https://console.cloud.google.com/projectcreate",
+      }, {
+        "title": "Enable the Google Docs API",
+        "description": "Enable the Docs API used to read, create, and edit documents.",
+        "url": "https://console.cloud.google.com/apis/library/docs.googleapis.com",
+      }, {
+        "title": "Enable the Google Drive API",
+        "description": "Enable the Drive API used to list and search Google Docs files.",
+        "url": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+      }, {
+        "title": "Configure the OAuth consent screen",
+        "description":
+          "Authorize exactly https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/documents, and https://www.googleapis.com/auth/drive.readonly.",
+        "url": "https://console.cloud.google.com/apis/credentials/consent",
+      }, {
+        "title": "Create a web OAuth client",
+        "description":
+          "Create an OAuth 2.0 Client ID for a web application and register http://localhost:3000/api/auth/docs-google/callback for local development plus the matching HTTPS callback for each deployed environment.",
+        "url": "https://console.cloud.google.com/apis/credentials",
+      }, {
+        "title": "Configure credentials",
+        "description":
+          "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in the application environment. Keep the client secret out of source control.",
+      }, {
+        "title": "Connect Google Docs",
+        "description":
+          "Start the application and open /api/auth/docs-google to complete the OAuth flow.",
       }],
+      "notes": [
+        "The same Google OAuth client can serve Gmail, Calendar, Drive, Docs, and Sheets when all required APIs, scopes, and callback URLs are configured.",
+        "Production deployments must use the application's durable OAuth token store and verified user identity resolver.",
+      ],
+      "documentation": "https://developers.google.com/workspace/docs/api/auth",
     },
   },
   {
@@ -30204,6 +30243,14 @@ export const connectors: IntegrationConfig[] = [
       "required": true,
       "sensitive": true,
       "docsUrl": "https://developer.atlassian.com/console/myapps/",
+    }, {
+      "name": "JIRA_CLOUD_ID",
+      "description":
+        "Optional Atlassian site ID; required when the user can access multiple Jira sites",
+      "required": false,
+      "sensitive": false,
+      "docsUrl":
+        "https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/#get-list-of-resources",
     }],
     "tools": [{
       "id": "jira__list_sites",
@@ -37854,6 +37901,7 @@ export const connectors: IntegrationConfig[] = [
         "Mail.Read",
         "Mail.Send",
         "Mail.ReadWrite",
+        "Mail.Read.Shared",
         "Calendars.Read",
         "Calendars.ReadWrite",
         "Group.Read.All",
@@ -38867,7 +38915,7 @@ export const connectors: IntegrationConfig[] = [
       "id": "outlook__list_threads",
       "name": "List Threads",
       "description":
-        "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to the template get-thread tool or use it in get_thread's filter.",
+        "List recent Outlook conversation threads for request-desk triage. Returns one representative message per conversationId; pass that value as thread_id to the template outlook-get-thread tool or use it in get_thread's filter.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",

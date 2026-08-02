@@ -18,7 +18,7 @@
       "write:page:confluence",
       "offline_access"
     ],
-    "callbackPath": "/api/auth/atlassian/callback",
+    "callbackPath": "/api/auth/confluence/callback",
     "tokenAuthMethod": "body",
     "requiredApis": [
       {

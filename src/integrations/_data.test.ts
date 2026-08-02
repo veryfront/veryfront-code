@@ -1104,6 +1104,19 @@ describe("integration endpoint specs", () => {
     );
 
     const docsCreateDocument = getTool("docs-google", "create_document");
+    const googleDocs = getConnector("docs-google");
+    assertEquals(googleDocs.auth.scopes, [
+      "https://www.googleapis.com/auth/documents.readonly",
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/drive.readonly",
+    ]);
+    assertEquals(googleDocs.setupGuide?.title, "Google Docs Integration Setup");
+    const googleDocsSetup =
+      googleDocs.setupGuide?.steps.map((step) => step.description).join("\n") ?? "";
+    assertEquals(
+      googleDocsSetup.includes("https://www.googleapis.com/auth/docs"),
+      false,
+    );
     assertEquals(
       docsCreateDocument.endpoint?.url,
       "https://docs.googleapis.com/v1/documents",
@@ -1704,6 +1717,7 @@ describe("integration endpoint specs", () => {
       "Mail.Read",
       "Mail.Send",
       "Mail.ReadWrite",
+      "Mail.Read.Shared",
       "Calendars.Read",
       "Calendars.ReadWrite",
       "Group.Read.All",

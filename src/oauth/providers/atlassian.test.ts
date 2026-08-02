@@ -20,7 +20,7 @@ describe("Atlassian OAuth provider configs", () => {
     assertEquals(confluenceConfig.tokenRequestFormat, "json");
   });
 
-  it("declares the one shared callback accepted by the Atlassian OAuth app", async () => {
+  it("keeps each scaffold on its generated product callback", async () => {
     for (const serviceId of ["jira", "confluence"]) {
       const connector = JSON.parse(
         await Deno.readTextFile(
@@ -35,7 +35,7 @@ describe("Atlassian OAuth provider configs", () => {
       };
       assertEquals(
         connector.auth.callbackPath,
-        "/api/auth/atlassian/callback",
+        `/api/auth/${serviceId}/callback`,
       );
       assertEquals(connector.auth.tokenAuthMethod, "body");
       assertEquals(connector.auth.additionalParams, undefined);
