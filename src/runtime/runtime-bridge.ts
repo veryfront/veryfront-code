@@ -490,7 +490,7 @@ async function recordModelCall(
     prompt: directOptions.prompt as ModelCallMessage[],
     ...(directOptions.tools ? { tools: directOptions.tools as ModelCallTool[] } : {}),
   };
-  await recorder(context);
+  await recorder(structuredClone(context));
 }
 
 function isDirectToolCallPart(

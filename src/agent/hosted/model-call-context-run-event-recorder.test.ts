@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
+import { createConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { ConversationRunMirrorSnapshot } from "../conversation/run-mirror.ts";
 import {
   createModelCallContextRunEventRecorder,
@@ -19,6 +20,45 @@ import { streamText } from "../../runtime/runtime-bridge.ts";
 import { collectAsync, createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
 
 const encoder = new TextEncoder();
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+function appendResponse(latestEventId: number, appendedCount: number): Response {
+  return new Response(
+    JSON.stringify({
+      latest_event_id: latestEventId,
+      latest_external_event_sequence: 0,
+      appended_count: appendedCount,
+      run: {
+        run_id: "run_mcc_test",
+        conversation_id: "11111111-1111-4111-a111-111111111111",
+        latest_event_id: latestEventId,
+        latest_external_event_sequence: 0,
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+function productionMirror(overrides: {
+  immediateFlushEventCount?: number;
+  flushDelayMs?: number;
+} = {}): ConversationRunChunkMirror {
+  return createConversationRunChunkMirror({
+    authToken: "test-token",
+    apiUrl: "https://api.example.com",
+    conversationId: "11111111-1111-4111-a111-111111111111",
+    runId: "run_mcc_test",
+    latestEventId: 0,
+    latestExternalEventSequence: 0,
+    maxEventsPerBatch: 24,
+    immediateFlushEventCount: overrides.immediateFlushEventCount ?? 24,
+    flushDelayMs: overrides.flushDelayMs ?? 10_000,
+  });
+}
 
 function snapshot(
   overrides: Partial<ConversationRunMirrorSnapshot> = {},
@@ -175,6 +215,63 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     assertEquals((metrics.measurements[0]?.durationMs ?? -1) >= 0, true);
   });
 
+  it("drains ordinary pending events together with the required context", async () => {
+    const requests: Array<{ events: Array<{ type: string }> }> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { events: Array<{ type: string }> };
+      requests.push(body);
+      return appendResponse(body.events.length, body.events.length);
+    }) as typeof fetch;
+    const target = productionMirror();
+    await target.appendEvents([{ type: "CUSTOM", value: "ordinary pending event" }]);
+
+    await createModelCallContextRunEventRecorder({ mirror: target })({
+      prompt: [{ role: "system", content: "required context" }],
+    });
+
+    assertEquals(requests.map((request) => request.events.map((event) => event.type)), [[
+      "CUSTOM",
+      "AGENT_RUN_MODEL_CALL_CONTEXT",
+    ]]);
+    assertEquals(target.getSnapshot().pendingEventCount, 0);
+    assertEquals(target.getSnapshot().inFlight, false);
+    target.dispose();
+  });
+
+  it("continues an ordinary in-flight append and then drains the required context", async () => {
+    const requests: Array<{ events: Array<{ type: string }> }> = [];
+    let resolveFirst: ((response: Response) => void) | undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { events: Array<{ type: string }> };
+      requests.push(body);
+      if (requests.length === 1) {
+        return new Promise<Response>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      return Promise.resolve(appendResponse(2, body.events.length));
+    }) as typeof fetch;
+    const target = productionMirror({ immediateFlushEventCount: 1 });
+    await target.appendEvents([{ type: "CUSTOM", value: "ordinary in flight" }]);
+    assertEquals(requests.length, 1);
+
+    const recording = Promise.resolve(
+      createModelCallContextRunEventRecorder({ mirror: target })({
+        prompt: [{ role: "system", content: "required continuation" }],
+      }),
+    );
+    resolveFirst?.(appendResponse(1, 1));
+    await recording;
+
+    assertEquals(requests.map((request) => request.events.map((event) => event.type)), [
+      ["CUSTOM"],
+      ["AGENT_RUN_MODEL_CALL_CONTEXT"],
+    ]);
+    assertEquals(target.getSnapshot().pendingEventCount, 0);
+    assertEquals(target.getSnapshot().inFlight, false);
+    target.dispose();
+  });
+
   it("reports every bounded writer outcome without sensitive values", async () => {
     const cases: Array<{
       outcome: string;
@@ -298,7 +395,6 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
   for (
     const [name, target] of [
       ["disabled before append", mirror({ before: snapshot({ disabled: true }) })],
-      ["pending before append", mirror({ before: snapshot({ pendingEventCount: 1 }) })],
       ["disabled in the resolved flush", mirror({ resolved: snapshot({ disabled: true }) })],
       ["pending in the resolved flush", mirror({ resolved: snapshot({ pendingEventCount: 1 }) })],
       ["retry after flush", mirror({ current: snapshot({ hasRetryTimer: true }) })],
@@ -348,5 +444,95 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
     await assertRejects(() => recording, DOMException, "aborted");
     assertEquals(target.isDisposed(), true);
     assertEquals(metrics.barrierOutcomes, ["aborted"]);
+  });
+
+  it("aborts the active append at the deadline and makes disposal terminal", async () => {
+    let requestCount = 0;
+    let appendWasAborted = false;
+    let resolveLateAppend: ((response: Response) => void) | undefined;
+    globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+      requestCount += 1;
+      return new Promise<Response>((resolve) => {
+        resolveLateAppend = resolve;
+        init?.signal?.addEventListener("abort", () => {
+          appendWasAborted = true;
+        }, { once: true });
+      });
+    }) as typeof fetch;
+    const target = productionMirror({ immediateFlushEventCount: 99 });
+    const metrics = metricsSink();
+    const recorder = createModelCallContextRunEventRecorder({
+      mirror: target,
+      timeoutMs: 5,
+      metrics: metrics.result,
+    });
+
+    await assertRejects(
+      () => Promise.resolve(recorder({ prompt: [{ role: "system", content: "deadline" }] })),
+      ModelCallContextPersistenceError,
+      "timed out",
+    );
+    await Promise.resolve();
+    assertEquals(appendWasAborted, true);
+    assertEquals(requestCount, 1);
+    assertEquals(metrics.measurements[0]?.appendRequestCount, 1);
+    const rejectedSnapshot = target.getSnapshot();
+
+    await target.appendEvents([{ type: "CUSTOM", value: "after disposal" }]);
+    await target.flush();
+    resolveLateAppend?.(appendResponse(1, 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(requestCount, 1);
+    const finalSnapshot = target.getSnapshot();
+    assertEquals(finalSnapshot.latestEventId, rejectedSnapshot.latestEventId);
+    assertEquals(
+      finalSnapshot.latestExternalEventSequence,
+      rejectedSnapshot.latestExternalEventSequence,
+    );
+    assertEquals(finalSnapshot.appendRequestCount, rejectedSnapshot.appendRequestCount);
+    assertEquals(finalSnapshot.pendingEventCount, 0);
+  });
+
+  it("cancels caller-aborted append recovery without another request", async () => {
+    let appendRequestCount = 0;
+    let runLookupCount = 0;
+    let markRequestStarted: (() => void) | undefined;
+    const requestStarted = new Promise<void>((resolve) => {
+      markRequestStarted = resolve;
+    });
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith("/events")) {
+        runLookupCount += 1;
+        return Promise.reject(new Error("recovery request must not start after caller abort"));
+      }
+      appendRequestCount += 1;
+      markRequestStarted?.();
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          reject(new DOMException("This operation was aborted", "AbortError"));
+        }, { once: true });
+      });
+    }) as typeof fetch;
+    const target = productionMirror({ immediateFlushEventCount: 99 });
+    const controller = new AbortController();
+    const metrics = metricsSink();
+    const recording = Promise.resolve(
+      createModelCallContextRunEventRecorder({
+        mirror: target,
+        abortSignal: controller.signal,
+        metrics: metrics.result,
+      })({ prompt: [{ role: "system", content: "caller abort" }] }),
+    );
+
+    await requestStarted;
+    controller.abort(new DOMException("caller aborted", "AbortError"));
+    await assertRejects(() => recording, DOMException, "caller aborted");
+    await Promise.resolve();
+
+    assertEquals(appendRequestCount, 1);
+    assertEquals(runLookupCount, 0);
+    assertEquals(metrics.barrierOutcomes, ["aborted"]);
+    assertEquals(metrics.measurements[0]?.appendRequestCount, 1);
+    assertEquals(target.getSnapshot().pendingEventCount, 0);
   });
 });

@@ -26,7 +26,7 @@ const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 export interface ConversationRunChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
-  flush(): Promise<ConversationRunMirrorSnapshot>;
+  flush(options?: { abortSignal?: AbortSignal }): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
   dispose(): void;
 }
@@ -201,8 +201,8 @@ export function createConversationRunChunkMirror(
 
       mirror.enqueue(normalizedEvents);
     },
-    flush() {
-      return mirror.flush();
+    flush(options) {
+      return mirror.flush(options);
     },
     getSnapshot() {
       return mirror.getSnapshot();

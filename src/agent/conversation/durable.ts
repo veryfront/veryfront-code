@@ -79,12 +79,12 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   const controller = new AbortController();
   let abortedByCaller = false;
   const timeout = setTimeout(() => {
-    controller.abort();
+    controller.abort(new DOMException("Conversation run API request timed out", "TimeoutError"));
   }, timeoutMs);
 
   const onAbort = () => {
     abortedByCaller = true;
-    controller.abort();
+    controller.abort(abortSignal?.reason);
   };
 
   if (abortSignal?.aborted) {
@@ -545,6 +545,7 @@ export async function flushConversationRunEventBatches(input: {
   let latestExternalEventSequence = input.latestExternalEventSequence;
 
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+    input.abortSignal?.throwIfAborted();
     const batch = batches[batchIndex];
     if (!batch) {
       continue;
@@ -567,6 +568,7 @@ export async function flushConversationRunEventBatches(input: {
       latestEventId = response.latestEventId;
       latestExternalEventSequence = response.latestExternalEventSequence;
     } catch (error) {
+      input.abortSignal?.throwIfAborted();
       const recovered = await recoverConversationRunAppendExecution({
         error,
         authToken: input.authToken,
@@ -741,13 +743,15 @@ export function createConversationRunEventQueueController(input: {
   let pendingEvents: unknown[] = [];
   let consecutiveFailures = 0;
   let disabled = false;
+  let disposed = false;
   let appendRequestCount = 0;
   let disableReason: ReturnType<
     ConversationRunEventQueueController["getSnapshot"]
   >["disableReason"];
   let flushTail: Promise<unknown> | null = null;
 
-  async function flushOnce() {
+  async function flushOnce(abortSignal?: AbortSignal) {
+    abortSignal?.throwIfAborted();
     if (disabled) {
       return {
         outcome: "idle" as const,
@@ -787,13 +791,27 @@ export function createConversationRunEventQueueController(input: {
         maxBatchPayloadBytes: input.maxBatchPayloadBytes,
         maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
         consecutiveFailures,
+        abortSignal,
         onAppendRequest: () => {
           appendRequestCount += 1;
         },
       });
     } catch (error) {
-      pendingEvents = [...queuedEvents, ...pendingEvents];
+      if (!disposed) {
+        pendingEvents = [...queuedEvents, ...pendingEvents];
+      }
       throw error;
+    }
+
+    if (disposed) {
+      return {
+        outcome: "idle" as const,
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: 0,
+        consecutiveFailures,
+        disabled: true,
+      };
     }
 
     latestEventId = flushed.latestEventId;
@@ -841,19 +859,21 @@ export function createConversationRunEventQueueController(input: {
 
   return {
     enqueue(events) {
-      if (disabled || events.length === 0) {
+      if (disposed || disabled || events.length === 0) {
         return;
       }
 
       pendingEvents.push(...events);
     },
-    flush() {
+    flush(options) {
       // Serialize overlapping flushes: a second call while one is still
       // awaiting the network would read stale cursors and burn resync budget
       // on a self-inflicted cursor mismatch. Start synchronously when idle so
       // events enqueued right after flush() still hit the in-flight merge
       // path.
-      const result = flushTail === null ? flushOnce() : flushTail.then(flushOnce);
+      const result = flushTail === null
+        ? flushOnce(options?.abortSignal)
+        : flushTail.then(() => flushOnce(options?.abortSignal));
       const tail = result.catch(() => {});
       flushTail = tail;
       tail.then(() => {
@@ -873,6 +893,11 @@ export function createConversationRunEventQueueController(input: {
         appendRequestCount,
         ...(disableReason ? { disableReason } : {}),
       };
+    },
+    dispose() {
+      disposed = true;
+      disabled = true;
+      pendingEvents = [];
     },
   };
 }

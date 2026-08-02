@@ -8,6 +8,10 @@ import {
   recordModelCallContextMeasurements,
   recordModelCallContextWriterOutcome,
 } from "../../observability/metrics/index.ts";
+import type {
+  ModelCallContextBarrierOutcome,
+  ModelCallContextWriterOutcome,
+} from "../../observability/metrics/types.ts";
 
 /** Private durable event type used to persist exact model-call inputs. */
 export const AGENT_RUN_MODEL_CALL_CONTEXT_EVENT_TYPE = "AGENT_RUN_MODEL_CALL_CONTEXT";
@@ -40,18 +44,10 @@ export class ModelCallContextPersistenceError extends Error {
   override name = "ModelCallContextPersistenceError";
 }
 
-export type ModelCallContextWriterOutcome =
-  | "recorded"
-  | "disabled"
-  | "append_failed"
-  | "retry_scheduled"
-  | "stopped"
-  | "ambiguous_durable_replay"
-  | "pending_after_flush"
-  | "successor_in_flight"
-  | "partial_append_failed";
-
-export type ModelCallContextBarrierOutcome = "timeout" | "aborted";
+export type {
+  ModelCallContextBarrierOutcome,
+  ModelCallContextWriterOutcome,
+} from "../../observability/metrics/types.ts";
 
 /** Content-free, fail-open projection of required persistence telemetry. */
 export interface ModelCallContextMetricsSink {
@@ -326,35 +322,48 @@ function assertQuiescent(
   }
 }
 
+function assertEnabled(snapshot: ConversationRunMirrorSnapshot): void {
+  if (!snapshot.disabled) return;
+  const error = new ModelCallContextPersistenceError(
+    "Required model-call context mirror is disabled",
+  );
+  Object.assign(error, {
+    writerOutcome: snapshot.disableReason === "cursor_mismatch_ambiguous"
+      ? "ambiguous_durable_replay"
+      : "disabled",
+  });
+  throw error;
+}
+
 async function withRequiredPersistenceDeadline<T>(input: {
-  operation: () => Promise<T>;
+  operation: (abortSignal: AbortSignal) => Promise<T>;
   abortSignal?: AbortSignal;
   timeoutMs: number;
 }): Promise<T> {
   if (input.abortSignal?.aborted) {
     throw input.abortSignal.reason ?? new DOMException("This operation was aborted", "AbortError");
   }
-  let timeout: ReturnType<typeof setTimeout> | undefined;
-  let onAbort: (() => void) | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(
-      () =>
-        reject(new ModelCallContextPersistenceError("Model-call context persistence timed out")),
-      input.timeoutMs,
+  const controller = new AbortController();
+  const timeoutError = new ModelCallContextPersistenceError(
+    "Model-call context persistence timed out",
+  );
+  const timeout = setTimeout(() => controller.abort(timeoutError), input.timeoutMs);
+  const onCallerAbort = () => {
+    controller.abort(
+      input.abortSignal?.reason ?? new DOMException("This operation was aborted", "AbortError"),
     );
-    if (input.abortSignal) {
-      onAbort = () =>
-        reject(
-          input.abortSignal?.reason ?? new DOMException("This operation was aborted", "AbortError"),
-        );
-      input.abortSignal.addEventListener("abort", onAbort, { once: true });
-    }
+  };
+  input.abortSignal?.addEventListener("abort", onCallerAbort, { once: true });
+  const aborted = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener("abort", () => reject(controller.signal.reason), {
+      once: true,
+    });
   });
   try {
-    return await Promise.race([input.operation(), deadline]);
+    return await Promise.race([input.operation(controller.signal), aborted]);
   } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-    if (onAbort) input.abortSignal?.removeEventListener("abort", onAbort);
+    clearTimeout(timeout);
+    input.abortSignal?.removeEventListener("abort", onCallerAbort);
   }
 }
 
@@ -375,16 +384,18 @@ export function createModelCallContextRunEventRecorder(input: {
     let writerOutcome: ModelCallContextWriterOutcome | undefined;
     let barrierOutcome: ModelCallContextBarrierOutcome | undefined;
     try {
-      assertQuiescent(before, "before");
+      assertEnabled(before);
       await withRequiredPersistenceDeadline({
         abortSignal: input.abortSignal,
         timeoutMs: input.timeoutMs ?? DEFAULT_MODEL_CALL_CONTEXT_PERSISTENCE_TIMEOUT_MS,
-        operation: async () => {
+        operation: async (abortSignal) => {
           const events = await createModelCallContextRunEvents(context);
+          abortSignal.throwIfAborted();
           logicalByteLength = events[0]?.totalByteLength ?? 0;
           partCount = events.length;
           await input.mirror.appendEvents(events);
-          const resolvedSnapshot = await input.mirror.flush();
+          abortSignal.throwIfAborted();
+          const resolvedSnapshot = await input.mirror.flush({ abortSignal });
           assertQuiescent(resolvedSnapshot, "after");
           assertQuiescent(input.mirror.getSnapshot(), "after");
         },

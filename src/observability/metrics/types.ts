@@ -11,6 +11,33 @@ import type {
   UpDownCounter,
 } from "#veryfront/observability/tracing/api-shim.ts";
 
+/** Closed, bounded label values for required model-call context writer outcomes. */
+export const MODEL_CALL_CONTEXT_WRITER_OUTCOMES = Object.freeze(
+  [
+    "recorded",
+    "disabled",
+    "append_failed",
+    "retry_scheduled",
+    "stopped",
+    "ambiguous_durable_replay",
+    "pending_after_flush",
+    "successor_in_flight",
+    "partial_append_failed",
+  ] as const,
+);
+
+export type ModelCallContextWriterOutcome = (typeof MODEL_CALL_CONTEXT_WRITER_OUTCOMES)[number];
+
+/** Closed, bounded label values for required model-call context barrier outcomes. */
+export const MODEL_CALL_CONTEXT_BARRIER_OUTCOMES = Object.freeze(
+  [
+    "timeout",
+    "aborted",
+  ] as const,
+);
+
+export type ModelCallContextBarrierOutcome = (typeof MODEL_CALL_CONTEXT_BARRIER_OUTCOMES)[number];
+
 export interface OpenTelemetryAPI {
   metrics: {
     getMeter(name: string | undefined, version?: string): Meter;

@@ -1,4 +1,9 @@
-import type { MetricsInstruments, RuntimeState } from "./types.ts";
+import type {
+  MetricsInstruments,
+  ModelCallContextBarrierOutcome,
+  ModelCallContextWriterOutcome,
+  RuntimeState,
+} from "./types.ts";
 
 export class MetricsRecorder {
   constructor(
@@ -204,11 +209,11 @@ export class MetricsRecorder {
     }
   }
 
-  recordModelCallContextWriterOutcome(outcome: string): void {
+  recordModelCallContextWriterOutcome(outcome: ModelCallContextWriterOutcome): void {
     this.instruments.modelCallContextWriterOutcomeCounter?.add(1, { outcome });
   }
 
-  recordModelCallContextBarrierOutcome(outcome: string): void {
+  recordModelCallContextBarrierOutcome(outcome: ModelCallContextBarrierOutcome): void {
     this.instruments.modelCallContextBarrierOutcomeCounter?.add(1, { outcome });
   }
 

@@ -6,8 +6,18 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { metricsManager } from "./manager.ts";
+import type { ModelCallContextBarrierOutcome, ModelCallContextWriterOutcome } from "./types.ts";
 
-export type { MemoryUsage, MetricsConfig } from "./types.ts";
+export type {
+  MemoryUsage,
+  MetricsConfig,
+  ModelCallContextBarrierOutcome,
+  ModelCallContextWriterOutcome,
+} from "./types.ts";
+export {
+  MODEL_CALL_CONTEXT_BARRIER_OUTCOMES,
+  MODEL_CALL_CONTEXT_WRITER_OUTCOMES,
+} from "./types.ts";
 export { getMemoryUsage, loadConfig } from "./config.ts";
 export { MetricsRecorder } from "./recorder.ts";
 export { MetricsManager, metricsManager } from "./manager.ts";
@@ -213,7 +223,7 @@ export function recordStreamLifecycleDuration(
 }
 
 /** Record a bounded required model-call context writer outcome (internal). */
-export function recordModelCallContextWriterOutcome(outcome: string): void {
+export function recordModelCallContextWriterOutcome(outcome: ModelCallContextWriterOutcome): void {
   try {
     getRecorder()?.recordModelCallContextWriterOutcome(outcome);
   } catch {
@@ -222,7 +232,9 @@ export function recordModelCallContextWriterOutcome(outcome: string): void {
 }
 
 /** Record a bounded required model-call context barrier terminal outcome (internal). */
-export function recordModelCallContextBarrierOutcome(outcome: string): void {
+export function recordModelCallContextBarrierOutcome(
+  outcome: ModelCallContextBarrierOutcome,
+): void {
   try {
     getRecorder()?.recordModelCallContextBarrierOutcome(outcome);
   } catch {

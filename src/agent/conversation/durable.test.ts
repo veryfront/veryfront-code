@@ -664,15 +664,85 @@ describe("agent/durable", () => {
     );
   });
 
-  it("persists a near-limit context in no more than sixteen append requests", async () => {
-    const events = await createModelCallContextRunEvents({
-      prompt: [{ role: "system", content: "x".repeat(4 * 1024 * 1024 - 128) }],
+  it("stops an ambiguous A-B replay after response loss and an interleaved event", async () => {
+    const events = await createModelCallContextRunEvents(
+      { prompt: [{ role: "system", content: "x".repeat(600) }] },
+      { singleEventByteLimit: 1, chunkEventByteLimit: 800 },
+    );
+    assertEquals(events.length, 2);
+    const committed: unknown[] = Array.from({ length: 6 }, (_, index) => ({
+      type: "EXISTING",
+      index,
+    }));
+    const requests: Array<{ expected_previous_event_id: number; events: unknown[] }> = [];
+    let runLookupCount = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith("/events")) {
+        runLookupCount += 1;
+        throw new Error("durable replay must not resync through the run projection");
+      }
+      const body = JSON.parse(String(init?.body)) as {
+        expected_previous_event_id: number;
+        events: unknown[];
+      };
+      requests.push(body);
+      if (body.expected_previous_event_id !== committed.length) {
+        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+      }
+      committed.push(...body.events);
+      throw new Error("append response lost after A and B committed");
+    }) as typeof fetch;
+    const controller = createConversationRunEventQueueController({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_interleaved_replay",
+      latestEventId: 6,
+      latestExternalEventSequence: 0,
+      maxEventsPerBatch: 2,
     });
+    controller.enqueue(events);
+
+    assertEquals((await controller.flush()).outcome, "retry_scheduled");
+    committed.push({ type: "X", source: "interleaved writer" });
+    const retried = await controller.flush();
+    let providerDispatchCount = 0;
+    if (retried.outcome === "flushed" || retried.outcome === "idle") {
+      providerDispatchCount += 1;
+    }
+
+    assertEquals(retried, {
+      outcome: "stopped",
+      latestEventId: 6,
+      latestExternalEventSequence: 0,
+      pendingEventCount: 0,
+      consecutiveFailures: 1,
+      disabled: true,
+      disableReason: "cursor_mismatch_ambiguous",
+    });
+    assertEquals(requests.length, 2);
+    assertEquals(requests[0]?.events, events);
+    assertEquals(requests[1]?.events, events);
+    assertEquals(committed.slice(6), [...events, { type: "X", source: "interleaved writer" }]);
+    assertEquals(runLookupCount, 0);
+    assertEquals(providerDispatchCount, 0);
+  });
+
+  it("persists the exact 32-part maximum in 16 requests and never starts request 17", async () => {
+    const events = await createModelCallContextRunEvents(
+      { prompt: [{ role: "system", content: "x".repeat(4 * 1024 * 1024 - 128) }] },
+      { singleEventByteLimit: 1, chunkEventByteLimit: 132 * 1024 },
+    );
+    assertEquals(events.length, 32);
     let requestCount = 0;
     let latestEventId = 0;
     globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
       requestCount += 1;
+      if (requestCount === 17) {
+        throw new Error("request 17 is impossible for the maximum supported context");
+      }
       const body = JSON.parse(String(init?.body)) as { events: unknown[] };
+      assertEquals(body.events.length, 2);
       latestEventId += body.events.length;
       return jsonResponse({
         latest_event_id: latestEventId,
@@ -695,12 +765,11 @@ describe("agent/durable", () => {
       latestEventId: 0,
       latestExternalEventSequence: 0,
       events,
-      maxEventsPerBatch: 32,
+      maxEventsPerBatch: 2,
       maxCursorResyncsPerFlush: 3,
     });
     assertEquals(result.outcome, "flushed");
-    assertEquals(requestCount <= 16, true);
-    assertEquals(events.length <= 32, true);
+    assertEquals(requestCount, 16);
   });
 
   it("flushes conversation run event batches and returns the final cursors", async () => {

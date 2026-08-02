@@ -229,7 +229,7 @@ export type ConversationRunQueueFlushOutcome =
 /** Public API contract for conversation run event queue controller. */
 export interface ConversationRunEventQueueController {
   enqueue(events: unknown[]): void;
-  flush(): Promise<
+  flush(options?: { abortSignal?: AbortSignal }): Promise<
     | {
       outcome: "idle" | "flushed";
       latestEventId: number;
@@ -278,6 +278,7 @@ export interface ConversationRunEventQueueController {
       | "payload_too_large"
       | "auth_rejected";
   };
+  dispose?(): void;
 }
 
 /** Zod schema for get create conversation run accepted. */

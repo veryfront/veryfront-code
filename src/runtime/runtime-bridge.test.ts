@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { generateText, streamText } from "./runtime-bridge.ts";
 import { runWithModelCallRecorder } from "./model-call-recorder-context.ts";
+import type { ModelCallContext } from "./model-call-context.ts";
 import {
   collectAsync,
   createGenerateModel,
@@ -171,7 +172,10 @@ describe("runtime-bridge", () => {
             },
           }],
         },
-        { role: "assistant", content: "REMOVE THIS TRAILING PREFILL" },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "REMOVE THIS TRAILING PREFILL" }],
+        },
       ],
       tools,
       modelCallRecorder: recorder,
@@ -290,6 +294,70 @@ describe("runtime-bridge", () => {
 
       await assertRejects(operation, Error, error.message);
       assertEquals(dispatches, 0);
+    }
+  });
+
+  it("isolates nested recorder mutations from generate and stream provider inputs", async () => {
+    for (const mode of ["generate", "stream"] as const) {
+      const expectedPrompt = [{
+        role: "user" as const,
+        content: [{ type: "text" as const, text: "keep me" }],
+      }];
+      const expectedTools = [{
+        type: "function" as const,
+        name: "lookup",
+        inputSchema: { type: "object", properties: { id: { type: "string" } } },
+      }];
+      const assertProviderInput = (options: Record<string, unknown>) => {
+        assertEquals(options.prompt, expectedPrompt);
+        assertEquals(options.tools, expectedTools);
+      };
+      const model = mode === "generate"
+        ? createGenerateModel("test", "test/mutation-generate", async (options) => {
+          assertProviderInput(options);
+          return { content: [], finishReason: "stop", usage: {} };
+        })
+        : createStreamModel("test", "test/mutation-stream", async (options) => {
+          assertProviderInput(options);
+          return {
+            stream: ReadableStream.from([
+              { type: "finish", finishReason: "stop", usage: {} },
+            ]),
+          };
+        });
+      const options = {
+        model,
+        messages: [{ role: "user" as const, content: "keep me" }],
+        tools: {
+          lookup: {
+            inputSchema: {
+              jsonSchema: {
+                type: "object",
+                properties: { id: { type: "string" } },
+              },
+            },
+          },
+        },
+        modelCallRecorder: (context: ModelCallContext) => {
+          const message = context.prompt[0];
+          if (message?.role === "user" && message.content[0]?.type === "text") {
+            message.content[0].text = "mutated prompt";
+          }
+          const tool = context.tools?.[0];
+          if (tool?.type === "function") {
+            const schema = tool.inputSchema as {
+              properties: { id: { type: string } };
+            };
+            schema.properties.id.type = "number";
+          }
+        },
+      };
+
+      if (mode === "generate") {
+        await generateText(options);
+      } else {
+        await collectAsync(streamText(options).fullStream);
+      }
     }
   });
 

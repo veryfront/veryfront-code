@@ -2,7 +2,12 @@ import type { Counter, Histogram, Meter } from "#veryfront/observability/tracing
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "#veryfront/config/defaults.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 
-/** Content-free metrics for required hosted model-call context persistence. */
+/**
+ * Content-free metrics for required hosted model-call context persistence.
+ * Service identity remains an OpenTelemetry resource attribute and individual
+ * runs remain correlated through existing traces. Run and context IDs are not
+ * metric labels because this metrics layer has no bounded correlation value.
+ */
 export interface ModelCallContextInstruments {
   modelCallContextWriterOutcomeCounter: Counter | null;
   modelCallContextBarrierOutcomeCounter: Counter | null;
