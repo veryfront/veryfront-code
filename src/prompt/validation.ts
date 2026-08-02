@@ -43,13 +43,16 @@ function assertOptionalStringProperty(property: OwnDataProperty, field: string):
   }
 }
 
-function assertOptionalString(value: unknown, field: string): void {
-  if (value !== undefined && typeof value !== "string") {
-    throw new TypeError(`${field} must be a string`);
-  }
-}
-
 type PromptMCPArgument = NonNullable<PromptMCPConfig["arguments"]>[number];
+
+export interface NormalizedPromptConfig {
+  readonly id: string | undefined;
+  readonly description: string;
+  readonly suggestion: string | undefined;
+  readonly content: string | undefined;
+  readonly generate: PromptConfig["generate"];
+  readonly mcp: PromptMCPConfig | undefined;
+}
 
 function parsePromptMCPArgument(value: unknown): PromptMCPArgument {
   if (!isObjectRecord(value)) {
@@ -151,32 +154,46 @@ export function snapshotPromptMCPConfig(
   return parsePromptMCPConfig(config);
 }
 
-/** Validate the construction boundary while remaining schema-bootstrap independent. */
-export function assertPromptConfig(
-  value: unknown,
-): asserts value is PromptConfig {
+/** Validate and snapshot the construction boundary without invoking caller code. */
+export function normalizePromptConfig(value: unknown): NormalizedPromptConfig {
   if (!isObjectRecord(value)) {
     throw new TypeError("Prompt configuration must be an object");
   }
-  if (value.id !== undefined) {
-    if (typeof value.id !== "string" || value.id.trim().length === 0) {
+
+  const id = readOwnDataProperty(value, "id", "Prompt id");
+  const description = readOwnDataProperty(value, "description", "Prompt description");
+  const suggestion = readOwnDataProperty(value, "suggestion", "Prompt suggestion");
+  const content = readOwnDataProperty(value, "content", "Prompt content");
+  const generate = readOwnDataProperty(value, "generate", "Prompt generator");
+  const mcp = readOwnDataProperty(value, "mcp", "Prompt MCP configuration");
+
+  if (id.value !== undefined) {
+    if (typeof id.value !== "string" || id.value.trim().length === 0) {
       throw new TypeError("Prompt id must not be empty");
     }
   }
-  if (typeof value.description !== "string") {
+  if (typeof description.value !== "string") {
     throw new TypeError("Prompt description must be a string");
   }
-  assertOptionalString(value.suggestion, "Prompt suggestion");
-  if (value.content !== undefined && typeof value.content !== "string") {
+  assertOptionalStringProperty(suggestion, "Prompt suggestion");
+  if (content.value !== undefined && typeof content.value !== "string") {
     throw new TypeError("Prompt content must be a string");
   }
-  if (value.generate !== undefined && typeof value.generate !== "function") {
+  if (generate.value !== undefined && typeof generate.value !== "function") {
     throw new TypeError("Prompt generator must be a function");
   }
-  if (value.content === undefined && value.generate === undefined) {
+  if (content.value === undefined && generate.value === undefined) {
     throw new TypeError("Prompt must define static content or a generator");
   }
-  if (value.mcp !== undefined) assertPromptMCPConfig(value.mcp);
+
+  return ObjectFreeze({
+    id: id.value as string | undefined,
+    description: description.value,
+    suggestion: suggestion.value as string | undefined,
+    content: content.value as string | undefined,
+    generate: generate.value as PromptConfig["generate"],
+    mcp: snapshotPromptMCPConfig(mcp.value as PromptMCPConfig | undefined),
+  });
 }
 
 /** Validate and snapshot a prompt before it crosses the registry boundary. */
@@ -184,22 +201,42 @@ export function normalizePromptDefinition(id: string, value: Prompt): Prompt {
   if (!isObjectRecord(value)) {
     throw new TypeError("Prompt definition must be an object");
   }
-  if (typeof value.id !== "string" || value.id.length === 0) {
+  const definitionId = readOwnDataProperty(value, "id", "Prompt definition id");
+  const generatedId = readOwnDataProperty(
+    value,
+    "__veryfrontGeneratedId",
+    "Prompt generated id",
+  );
+  const description = readOwnDataProperty(value, "description", "Prompt description");
+  const suggestion = readOwnDataProperty(value, "suggestion", "Prompt suggestion");
+  const mcp = readOwnDataProperty(value, "mcp", "Prompt MCP configuration");
+  const getContent = readOwnDataProperty(value, "getContent", "Prompt getContent");
+
+  if (typeof definitionId.value !== "string" || definitionId.value.length === 0) {
     throw new TypeError("Prompt definition id must be a non-empty string");
   }
-  if (value.id !== id) {
+  if (definitionId.value !== id) {
     throw new TypeError(
-      `Prompt registry id "${id}" does not match definition id "${value.id}"`,
+      `Prompt registry id "${id}" does not match definition id "${definitionId.value}"`,
     );
   }
-  if (typeof value.description !== "string") {
+  if (generatedId.value !== undefined && typeof generatedId.value !== "string") {
+    throw new TypeError("Prompt generated id must be a string");
+  }
+  if (typeof description.value !== "string") {
     throw new TypeError("Prompt description must be a string");
   }
-  assertOptionalString(value.suggestion, "Prompt suggestion");
-  if (typeof value.getContent !== "function") {
+  assertOptionalStringProperty(suggestion, "Prompt suggestion");
+  if (typeof getContent.value !== "function") {
     throw new TypeError("Prompt getContent must be a function");
   }
 
-  const mcp = snapshotPromptMCPConfig(value.mcp);
-  return mcp === value.mcp ? value : { ...value, mcp };
+  return ObjectFreeze({
+    id: definitionId.value,
+    __veryfrontGeneratedId: generatedId.value as string | undefined,
+    description: description.value,
+    suggestion: suggestion.value as string | undefined,
+    mcp: snapshotPromptMCPConfig(mcp.value as PromptMCPConfig | undefined),
+    getContent: getContent.value as Prompt["getContent"],
+  });
 }

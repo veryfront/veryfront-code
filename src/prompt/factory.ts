@@ -1,7 +1,7 @@
 import type { Prompt, PromptConfig, PromptRenderContext } from "./types.ts";
 import { createError, toError } from "#veryfront/errors";
 import { COMMON_BLOCKED_PATTERNS } from "#veryfront/agent/middleware/index.ts";
-import { assertPromptConfig, snapshotPromptMCPConfig } from "./validation.ts";
+import { normalizePromptConfig } from "./validation.ts";
 
 const DateNow = Date.now;
 const NumberIsFinite = Number.isFinite;
@@ -23,17 +23,17 @@ interface PromptCancellation {
 
 /** Create a typed prompt definition. */
 export function prompt(config: PromptConfig): Prompt {
-  assertPromptConfig(config);
-  const { content, description, generate, suggestion } = config;
+  const normalized = normalizePromptConfig(config);
+  const { content, description, generate, mcp, suggestion } = normalized;
 
-  const id = config.id ?? generatePromptId();
-  const generatedId = config.id === undefined ? id : undefined;
+  const id = normalized.id ?? generatePromptId();
+  const generatedId = normalized.id === undefined ? id : undefined;
 
   const created: Prompt = {
     id,
     description,
     suggestion,
-    mcp: snapshotPromptMCPConfig(config.mcp),
+    mcp,
     async getContent(
       variables?: Record<string, unknown>,
       context?: Readonly<PromptRenderContext>,
@@ -75,7 +75,8 @@ export function prompt(config: PromptConfig): Prompt {
       throw new TypeError(`Prompt "${id}" has no content or generator`);
     },
   };
-  return generatedId === undefined ? created : { ...created, __veryfrontGeneratedId: generatedId };
+  if (generatedId !== undefined) created.__veryfrontGeneratedId = generatedId;
+  return ObjectFreeze(created);
 }
 
 function createPromptAbortError(): DOMException {

@@ -150,6 +150,43 @@ describe("prompt factory", () => {
       );
     });
 
+    it("should reject top-level configuration accessors without invoking them", () => {
+      let reads = 0;
+      const config = Object.freeze(
+        Object.defineProperties({}, {
+          id: { enumerable: true, value: "accessor-config" },
+          description: {
+            enumerable: true,
+            get() {
+              reads += 1;
+              return "desc";
+            },
+          },
+          content: { enumerable: true, value: "Hello" },
+        }),
+      );
+
+      assertThrows(
+        () => prompt(config as unknown as PromptConfig),
+        TypeError,
+        "Prompt description must be an own data property",
+      );
+      assertEquals(reads, 0);
+    });
+
+    it("should always return an owned frozen prompt from a frozen configuration", () => {
+      const config = Object.freeze({
+        id: "owned-config",
+        description: "desc",
+        content: "Hello",
+      });
+      const p = prompt(config);
+
+      assertNotStrictEquals(p as unknown, config as unknown);
+      assertEquals(Object.isFrozen(p), true);
+      assertEquals(p.id, "owned-config");
+    });
+
     it("should reject MCP accessors without invoking them", () => {
       let reads = 0;
       const mcp = Object.freeze(
