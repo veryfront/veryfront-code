@@ -1757,9 +1757,9 @@ export default defineConfig({ tailwind: { stylesheet: "src/styles/app.css" } });
       ...baseInput(client, transform),
       loadConfig: (source) => {
         selectedConfigSource = source;
-        return releaseConfigLoader({
+        return Promise.resolve({
           tailwind: { stylesheet: "src/styles/app.css" },
-        })();
+        } as VeryfrontConfig);
       },
     }, await tmp());
 
