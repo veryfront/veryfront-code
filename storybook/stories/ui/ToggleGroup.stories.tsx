@@ -68,8 +68,8 @@ function ToggleGroupDocsPage() {
             },
             {
               name: "onValueChange",
-              type: "(value: string | string[]) => void",
-              description: "Fires with the next selection",
+              type: "((value: string) => void) | ((value: string[]) => void)",
+              description: "Fires with a string in single mode or a string array in multiple mode",
             },
             {
               name: "disabled",

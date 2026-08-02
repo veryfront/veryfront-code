@@ -76,8 +76,8 @@ function AccordionDocsPage() {
             },
             {
               name: "onValueChange",
-              type: "(value: string | string[]) => void",
-              description: "Fires with the next open value(s)",
+              type: "((value: string) => void) | ((value: string[]) => void)",
+              description: "Fires with a string in single mode or a string array in multiple mode",
             },
           ]}
         />

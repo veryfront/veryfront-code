@@ -13,7 +13,7 @@ import {
   ToastProvider,
   type ToastVariant,
   useToast,
-} from "../../../src/react/components/ui/toast.tsx";
+} from "../../../src/react/components/ui/index.ts";
 
 const importCode = `import { ToastProvider, useToast } from "veryfront/ui"`;
 
