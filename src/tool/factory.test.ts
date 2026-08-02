@@ -163,13 +163,20 @@ describe("tool factory", () => {
       });
     });
 
-    it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
+    it("should reject schema-like raw objects by default", () => {
       assertThrows(
         () =>
           tool({
-            id: "invalid-schema",
+            id: "shape-test",
             description: "desc",
-            inputSchema: new Date() as unknown as Schema<unknown>,
+            inputSchema: {
+              _def: {
+                shape: {
+                  name: {},
+                  age: {},
+                },
+              },
+            } as unknown as Schema<unknown>,
             execute: async () => null,
           }),
         Error,
@@ -177,11 +184,31 @@ describe("tool factory", () => {
       );
     });
 
+    it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
+      for (
+        const inputSchema of [{}, new Date(), { _def: { shape: {} } }] as unknown as Schema<
+          unknown
+        >[]
+      ) {
+        assertThrows(
+          () =>
+            tool({
+              id: "invalid-schema",
+              description: "desc",
+              inputSchema,
+              execute: async () => null,
+            }),
+          Error,
+          "input schema is not a valid Veryfront schema",
+        );
+      }
+    });
+
     it("should fall back to permissive schema with allowUnknownSchema", () => {
       const t = tool({
         id: "permissive-tool",
         description: "desc",
-        inputSchema: new Date() as unknown as Schema<unknown>,
+        inputSchema: {} as Schema<unknown>,
         execute: async () => null,
         allowUnknownSchema: true,
       });

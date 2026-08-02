@@ -26,6 +26,38 @@ function snapshotJsonSchemaObject(value: unknown): JsonSchema | undefined {
     : undefined;
 }
 
+// Inferring "this is a raw JSON Schema" from an unknown value needs positive
+// evidence. Without it, foreign shapes such as a Zod internal ({ _def: ... })
+// would be shipped verbatim to providers as inputSchemaJson. Unions and $ref
+// schemas legitimately omit `type`, so membership — not `type` — is the test.
+const JSON_SCHEMA_KEYWORDS = new Set([
+  "$defs",
+  "$ref",
+  "$schema",
+  "additionalProperties",
+  "allOf",
+  "anyOf",
+  "const",
+  "default",
+  "definitions",
+  "description",
+  "enum",
+  "format",
+  "items",
+  "not",
+  "oneOf",
+  "patternProperties",
+  "prefixItems",
+  "properties",
+  "required",
+  "title",
+  "type",
+]);
+
+function isInferredJsonSchemaObject(value: JsonSchema): boolean {
+  return Object.keys(value).some((key) => JSON_SCHEMA_KEYWORDS.has(key));
+}
+
 function isContractSchema(value: unknown): value is ContractSchemaShape {
   if (value === null || typeof value !== "object") return false;
   if ("__zod" in value) return true;
@@ -99,7 +131,7 @@ function convertSchemaToJson(
   }
 
   const jsonSchema = snapshotJsonSchemaObject(schema);
-  if (jsonSchema && (!permissive || Object.keys(jsonSchema).length > 0)) {
+  if (jsonSchema && isInferredJsonSchemaObject(jsonSchema)) {
     logSchemaResult(logPrefix, toolId, "Raw JSON", jsonSchema);
     return jsonSchema;
   }
