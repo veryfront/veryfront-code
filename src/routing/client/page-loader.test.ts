@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { JSDOM } from "npm:jsdom@28.0.0";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  descriptorFromHeadProps,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
 import { PageLoader } from "./page-loader.ts";
 import type { RouteData, SpaPageData } from "./types.ts";
 
@@ -62,6 +67,19 @@ function installSnapshotDOMParser(): () => void {
   globalWithDOMParser.DOMParser = SnapshotDOMParser as unknown as typeof DOMParser;
   return () => {
     globalWithDOMParser.DOMParser = originalDOMParser;
+  };
+}
+
+function installJSDOMParser(): () => void {
+  const globalWithDOMParser = globalThis as typeof globalThis & {
+    DOMParser: typeof DOMParser;
+  };
+  const originalDOMParser = globalWithDOMParser.DOMParser;
+  const owner = new JSDOM("");
+  globalWithDOMParser.DOMParser = owner.window.DOMParser as unknown as typeof DOMParser;
+  return () => {
+    globalWithDOMParser.DOMParser = originalDOMParser;
+    owner.window.close();
   };
 }
 
@@ -181,6 +199,43 @@ describe("routing/client/page-loader", () => {
   });
 
   describe("page data URL", () => {
+    it("extracts root content and complete managed head from a full-document JSON payload", async () => {
+      const originalFetch = globalThis.fetch;
+      const restoreDOMParser = installJSDOMParser();
+      const structured = serializeManagedHeadPayload([
+        descriptorFromHeadProps("meta", {
+          name: "description",
+          content: "Destination",
+        })!,
+      ]);
+      const committed = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "Destination title" })!,
+      ]);
+      const fullDocument = `<!doctype html><html><head>
+        <script id="veryfront-hydration-data" type="application/json">${
+        JSON.stringify({ managedHeadPayload: structured })
+      }</script>
+      </head><body><div id="root"><main>Destination</main>
+        <div data-veryfront-head="1" data-vf-react-head-owner="1"
+          data-vf-ssr-head="${committed}"></div></div></body></html>`;
+      globalThis.fetch = () => Promise.resolve(Response.json({ html: fullDocument }));
+
+      try {
+        const data = await new PageLoader().fetchPageData("/destination");
+        assertEquals(data.html?.includes("<main>Destination</main>"), true);
+        assertEquals(data.managedHead, [
+          {
+            tagName: "meta",
+            attributes: [["content", "Destination"], ["name", "description"]],
+          },
+          { tagName: "title", attributes: [], content: "Destination title" },
+        ]);
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreDOMParser();
+      }
+    });
+
     it("places the JSON suffix before query parameters and preserves application pins while off", async () => {
       const originalFetch = globalThis.fetch;
       let requestedUrl = "";

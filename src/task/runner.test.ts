@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runTask } from "./runner.ts";
 import type { DiscoveredTask } from "./discovery.ts";
@@ -75,6 +75,34 @@ describe("src/task/runner", () => {
       assertEquals(result.error, "async failure");
     });
 
+    it("should fail without invoking the task when injected project env is malformed", async () => {
+      const originalTaskEnvJson = Deno.env.get("VERYFRONT_TASK_ENV_JSON");
+      let invoked = false;
+      const task = makeTask({
+        run: () => {
+          invoked = true;
+          return null;
+        },
+      });
+
+      const result = await (async () => {
+        try {
+          Deno.env.set("VERYFRONT_TASK_ENV_JSON", "not-json");
+          return await runTask({ task });
+        } finally {
+          if (originalTaskEnvJson === undefined) {
+            Deno.env.delete("VERYFRONT_TASK_ENV_JSON");
+          } else {
+            Deno.env.set("VERYFRONT_TASK_ENV_JSON", originalTaskEnvJson);
+          }
+        }
+      })();
+
+      assertEquals(invoked, false);
+      assertEquals(result.success, false);
+      assertEquals(result.error?.includes("VERYFRONT_TASK_ENV_JSON"), true);
+    });
+
     it("should pass config to task context", async () => {
       let receivedConfig: Record<string, unknown> = {};
       const task = makeTask({
@@ -115,6 +143,42 @@ describe("src/task/runner", () => {
       await runTask({ task, environmentId: "env-123" });
 
       assertEquals(receivedEnvironmentId, "env-123");
+    });
+
+    it("should pass a cooperative cancellation signal to the task context", async () => {
+      const controller = new AbortController();
+      let receivedSignal: AbortSignal | undefined;
+      const task = makeTask({
+        run: (ctx) => {
+          receivedSignal = ctx.signal;
+          return null;
+        },
+      });
+
+      const result = await runTask({ task, signal: controller.signal });
+
+      assertEquals(result.success, true);
+      assertStrictEquals(receivedSignal, controller.signal);
+    });
+
+    it("should not invoke a task when its cancellation signal is already aborted", async () => {
+      const controller = new AbortController();
+      controller.abort(new Error("cancelled before task start"));
+      let invoked = false;
+      const task = makeTask({
+        run: () => {
+          invoked = true;
+          return null;
+        },
+      });
+
+      const result = await runTask({ task, signal: controller.signal });
+
+      assertEquals(invoked, false);
+      assertEquals(result.success, false);
+      assertEquals(result.error, "cancelled before task start");
+      assertEquals(Number.isInteger(result.durationMs), true);
+      assertEquals(result.durationMs >= 0, true);
     });
 
     it("should merge injected task env into ctx.env without exposing reserved runtime env", async () => {

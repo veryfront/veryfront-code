@@ -1,149 +1,181 @@
-# Module Loader Selection Guide
+# Choose a module loader
 
-This guide helps you choose the right module loader for your use case.
+Veryfront has several module loaders because they admit different inputs and
+produce different outputs. Choose the loader by boundary; they are not
+interchangeable convenience wrappers.
 
-## Quick Reference
+## Quick reference
 
-| Loader              | Location                                  | Use Case                                 |
-| ------------------- | ----------------------------------------- | ---------------------------------------- |
-| esm-module-loader   | `transforms/mdx/esm-module-loader/`       | MDX content, frontmatter, JSX transforms |
-| ssr-module-loader   | `modules/react-loader/ssr-module-loader/` | React SSR, distributed caching           |
-| orchestrator loader | `rendering/orchestrator/module-loader/`   | Render pipeline, ESM rewriting           |
-| API loader          | `routing/api/module-loader/`              | API routes, HTTP imports, security       |
+| Input and desired result                         | Entry point               | Location                                   |
+| ------------------------------------------------ | ------------------------- | ------------------------------------------ |
+| One source string to a React component           | `loadComponentFromSource` | `modules/react-loader/component-loader.ts` |
+| One source string to its complete module exports | `loadModuleFromSource`    | `modules/react-loader/component-loader.ts` |
+| A bounded batch of named component sources       | `loadComponentsUnified`   | `modules/react-loader/unified-loader.ts`   |
+| A project file/source graph for SSR              | `SSRModuleLoader`         | `modules/react-loader/ssr-module-loader/`  |
+| A compiled MDX program                           | `loadModuleESM`           | `transforms/mdx/esm-module-loader/`        |
+| A render-orchestrator file and dependency graph  | `loadModule`              | `rendering/orchestrator/module-loader/`    |
+| An API route handler file                        | `loadHandlerModule`       | `routing/api/module-loader/`               |
+| An HTTP request for `/_vf_modules/*`             | `serveModule`             | `modules/server/`                          |
 
-## Decision Tree
+## Decision guide
 
-```
-Loading MDX content?
-├─ Yes → esm-module-loader
-│   - Handles frontmatter extraction
-│   - JSX runtime loading
-│   - Component resolution
-│
-└─ No
-   ├─ React SSR with caching?
-   │  └─ Yes → ssr-module-loader
-   │      - Multi-layer caching (memory + disk)
-   │      - Import rewriting for cross-project
-   │      - Environment-specific strategies
-   │
-   ├─ In render pipeline?
-   │  └─ Yes → orchestrator/module-loader
-   │      - ESM rewriting for external modules
-   │      - Render context integration
-   │
-   └─ API route handlers?
-      └─ Yes → routing/api/module-loader
-          - Direct import strategy
-          - Transpilation fallback
-          - HTTP import security
-```
+1. If the input is an HTTP request for a browser or SSR module URL, use
+   `serveModule`. It owns request classification, containment, response
+   headers, and module transformation.
+2. If the input is an API route file, use `loadHandlerModule`. It owns API
+   handler extraction, HTTP-import policy, external dependency preparation,
+   and direct host-process loading. The higher-level API request handler uses
+   the separate preparation path when worker isolation is available.
+3. If the input is compiled MDX program text, use `loadModuleESM`. It owns MDX
+   metadata/component wiring and the MDX ESM cache.
+4. If rendering needs to load a project file and recursively transform its
+   dependencies, use the render orchestrator's `loadModule`.
+5. If application code already has a source string:
+   - use `loadComponentFromSource` when only the React component is needed;
+   - use `loadModuleFromSource` when named exports are also needed;
+   - use `loadComponentsUnified` for a bounded collection that should be
+     transformed and imported together.
+6. Use `SSRModuleLoader` directly only when the caller owns the SSR project,
+   content-source, adapter, and import-map identities. Most hosted request
+   paths reach it through a higher-level loader.
 
-## Shared Patterns
+## Loader contracts
 
-Import from `#veryfront/modules/loader-shared/patterns.ts`:
+### Source component loaders
 
 ```typescript
 import {
-  MODULE_EXTENSIONS, // [".tsx", ".ts", ".jsx", ".js", ".mdx"]
-  PROJECT_ALIAS_IMPORT_PATTERN, // @/ alias imports
-  REACT_IMPORT_PATTERN, // React detection
-  RELATIVE_IMPORT_PATTERN, // ./path imports
-  VF_MODULE_IMPORT_PATTERN, // /_vf_modules/ imports
-} from "#veryfront/modules/loader-shared/patterns.ts";
+  loadComponentFromSource,
+  loadModuleFromSource,
+} from "#veryfront/modules/react-loader/index.ts";
 ```
 
-## Loader Details
+Both functions require source code, its logical file path, the project root,
+and a `RuntimeAdapter`. `loadComponentFromSource` validates and returns a React
+component export; `loadModuleFromSource` returns the module namespace.
 
-### esm-module-loader
+Set `ssr: true` for server execution. In hosted code, also pass stable
+`projectId`, `contentSourceId`, React version, and the request-bound import map
+when it is already available.
 
-**Location:** `src/transforms/mdx/esm-module-loader/`
+`loadComponentsUnified` is for an in-memory batch. It validates the batch,
+bounds aggregate input/output, limits transform and write concurrency,
+materializes a temporary entry module, imports it, and cleans up its owned
+temporary directory.
 
-**Purpose:** Primary loader for MDX content with ESM module support.
-
-**Key Features:**
-
-- Module caching with multi-layer validation
-- Alias import transformation (@/ → absolute paths)
-- JSX file import handling
-- Stub module generation for missing dependencies
-- Framework bundle loading
-
-**Entry Point:** `loadModuleESM()`
-
-**Sub-modules:**
-
-- `metadata/` - Frontmatter and metadata extraction
-- `components/` - Component import resolution
-- `jsx/` - JSX runtime loading
-- `cache/` - Multi-layer caching
-- `transforms/` - Import transformations
-- `resolution/` - File finding utilities
-
-### ssr-module-loader
-
-**Location:** `src/modules/react-loader/ssr-module-loader/`
-
-**Purpose:** React SSR with distributed caching support.
-
-**Key Features:**
-
-- Memory + disk caching layers
-- Cross-project import rewriting
-- Environment-specific loading strategies (Deno vs Node)
-- Lockfile integrity verification
-
-**Entry Point:** `SSRModuleLoader` class
-
-### orchestrator/module-loader
-
-**Location:** `src/rendering/orchestrator/module-loader/`
-
-**Purpose:** Render pipeline integration.
-
-**Key Features:**
-
-- ESM rewriting for external modules
-- CDN URL resolution
-- Render context integration
-
-**Entry Point:** `ESMRewriter` class
-
-### API module-loader
-
-**Location:** `src/routing/api/module-loader/`
-
-**Purpose:** API route handler loading.
-
-**Key Features:**
-
-- Direct import strategy (fastest)
-- Transpilation fallback
-- HTTP import security controls
-
-**Entry Point:** `loadModule()`
-
-## Migration Notes
-
-Legacy helper files under `module-loader/` were removed.
-Use `esm-module-loader/` imports directly.
-
-### Removed Legacy Paths
-
-The following old imports were removed and must be replaced:
-
-| Function                  | Old Location                          | New Location                                  |
-| ------------------------- | ------------------------------------- | --------------------------------------------- |
-| `extractFrontmatter`      | `module-loader/metadata-extractor.ts` | `esm-module-loader/metadata/extractor.ts`     |
-| `extractMetadata`         | `module-loader/metadata-extractor.ts` | `esm-module-loader/metadata/extractor.ts`     |
-| `mergeFrontmatter`        | `module-loader/metadata-extractor.ts` | `esm-module-loader/metadata/extractor.ts`     |
-| `extractBalancedBlock`    | `module-loader/string-parser.ts`      | `esm-module-loader/metadata/string-parser.ts` |
-| `cleanModuleCode`         | `module-loader/string-parser.ts`      | `esm-module-loader/metadata/string-parser.ts` |
-| `parseJsonish`            | `module-loader/string-parser.ts`      | `esm-module-loader/metadata/string-parser.ts` |
-| `extractComponentImports` | `module-loader/component-resolver.ts` | `esm-module-loader/components/resolver.ts`    |
-| `resolveComponents`       | `module-loader/component-resolver.ts` | `esm-module-loader/components/resolver.ts`    |
-| `loadJSXRuntime`          | `module-loader/jsx-runtime-loader.ts` | `esm-module-loader/jsx/runtime-loader.ts`     |
+### SSR module loader
 
 ```typescript
-import { extractFrontmatter } from "./esm-module-loader/metadata/index.ts";
+import {
+  createSSRImportMapIdentity,
+  SSRModuleLoader,
+} from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
 ```
+
+`SSRModuleLoader` transforms local and cross-project dependency graphs for
+server execution. Its reusable caches include:
+
+- bounded process memory;
+- content-hashed files under project/content-source cache directories;
+- an optional distributed cache when explicitly initialized.
+
+For hosted work, construct `importMapIdentity` from the immutable map resolved
+for that exact project and content source. Omitting it is reserved for
+standalone callers that intentionally accept ambient import-map resolution.
+
+The loader fails when a required static dependency, transform, cache
+validation, or capacity acquisition fails. Dynamic dependencies may be left
+for runtime resolution when they are not required by the current execution
+path.
+
+### MDX ESM loader
+
+```typescript
+import {
+  type ESMLoaderContext,
+  loadModuleESM,
+} from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
+```
+
+Use this after MDX has been compiled to an ESM program. The loader resolves MDX
+component imports, prepares the JSX runtime, materializes module dependencies,
+and returns an `MDXModule`.
+
+`strictMissingModules` defaults to `true`. Setting it to `false` enables the
+legacy missing-module/stub behavior and should only be done by a trusted caller
+that deliberately accepts incomplete output; it is not a generic recovery
+mode.
+
+### Render-orchestrator loader
+
+```typescript
+import {
+  loadModule,
+  type ModuleLoaderConfig,
+} from "#veryfront/rendering/orchestrator/module-loader/index.ts";
+```
+
+This loader recursively transforms a render dependency graph, persists
+content-addressed artifacts, and imports the resulting root module. The caller
+provides request-scoped caches, adapter, project root, mode, and optional
+cooperative cancellation/progress hooks.
+
+Do not call it for API handlers or raw browser module requests. Those
+boundaries have different security and response contracts.
+
+### API route loader
+
+```typescript
+import {
+  loadHandlerModule,
+  type LoadModuleOptions,
+} from "#veryfront/routing/api/module-loader/index.ts";
+```
+
+This loader validates that the route module stays inside the project, prepares
+its dependency graph for the active runtime, enforces configured remote-import
+hosts, imports it in the host process, and returns the supported HTTP method
+handlers. A loaded module with no supported handler exports returns `null`;
+missing files and build, validation, or execution failures are surfaced as API
+errors. Hosted request handling may instead prepare the route for worker
+execution; do not infer worker isolation from a direct `loadHandlerModule`
+call.
+
+### HTTP module server
+
+```typescript
+import { type ModuleServerOptions, serveModule } from "#veryfront/modules/server/index.ts";
+```
+
+`serveModule` handles canonical and legacy module URL prefixes, snippet
+modules, cross-project modules, SSR query identities, release-aware response
+caching, and HEAD response semantics. Hosted callers should supply a validated
+request-bound `importMapIdentity` and the project/source identities used by
+their filesystem adapter.
+
+## Shared patterns
+
+`#veryfront/modules/loader-shared/index.ts` exports path-validation helpers and
+legacy import regexes. The regexes are suitable only for their documented,
+bounded compatibility call sites. They do not parse JavaScript and must not be
+used for new general source rewriting.
+
+Use the module lexer/import-rewriter primitives under `transforms/` when an edit
+must distinguish real imports and exports from comments, strings, templates,
+or regular expressions.
+
+## Migration reference
+
+The former `module-loader/` MDX helper paths were consolidated under
+`transforms/mdx/esm-module-loader/`:
+
+| API                                                         | Current location                              |
+| ----------------------------------------------------------- | --------------------------------------------- |
+| `extractFrontmatter`, `extractMetadata`, `mergeFrontmatter` | `esm-module-loader/metadata/index.ts`         |
+| `extractBalancedBlock`, `cleanModuleCode`, `parseJsonish`   | `esm-module-loader/metadata/string-parser.ts` |
+| `extractComponentImports`, `resolveComponents`              | `esm-module-loader/components/resolver.ts`    |
+| `loadJSXRuntime`                                            | `esm-module-loader/jsx/runtime-loader.ts`     |
+
+Import these APIs through
+`#veryfront/transforms/mdx/esm-module-loader/index.ts` where they are exported,
+rather than recreating the removed legacy path.

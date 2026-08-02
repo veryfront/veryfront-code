@@ -1,30 +1,66 @@
-import { releaseAssetUrl } from "./constants.ts";
+import { isValidContentHash, RELEASE_ASSET_CONTENT_TYPES, releaseAssetUrl } from "./constants.ts";
 import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 
-export function buildReleaseAssetModules(
-  manifest?: ReleaseAssetManifest | null,
-  options: { route?: string | null } = {},
+export interface BuildReleaseAssetModulesOptions {
+  /** Prefer the manifest closure for this route, falling back to the full map when stale. */
+  route?: string | null;
+  /** Restrict non-route callers to an explicit set of logical module paths. */
+  logicalPaths?: Iterable<string>;
+}
+
+function buildModuleMap(
+  manifest: ReleaseAssetManifest,
+  logicalPaths: Iterable<string>,
+  requireComplete: boolean,
 ): Record<string, string> | undefined {
-  if (!manifest) return undefined;
+  const modules: Record<string, string> = Object.create(null);
 
-  const routeModules = options.route ? manifest.routes[options.route]?.modules : undefined;
-  const buildFallback = (): Record<string, string> | undefined => {
-    const fallbackModules: Record<string, string> = {};
-    for (const [path, entry] of Object.entries(manifest.modules)) {
-      fallbackModules[path] = releaseAssetUrl(entry.contentHash, "js");
+  for (const path of new Set(logicalPaths)) {
+    if (!Object.hasOwn(manifest.modules, path)) {
+      if (requireComplete) return undefined;
+      continue;
     }
-    return Object.keys(fallbackModules).length > 0 ? fallbackModules : undefined;
-  };
 
-  if (!routeModules) return buildFallback();
-  if (routeModules.length === 0) return buildFallback();
-
-  const modules: Record<string, string> = {};
-  for (const path of routeModules) {
     const entry = manifest.modules[path];
-    if (!entry) return buildFallback();
+    if (
+      !entry ||
+      entry.contentType !== RELEASE_ASSET_CONTENT_TYPES.js ||
+      typeof entry.contentHash !== "string" ||
+      !isValidContentHash(entry.contentHash)
+    ) {
+      if (requireComplete) return undefined;
+      continue;
+    }
+
     modules[path] = releaseAssetUrl(entry.contentHash, "js");
   }
 
-  return modules;
+  return Object.keys(modules).length > 0 ? modules : undefined;
+}
+
+export function buildReleaseAssetModules(
+  manifest?: ReleaseAssetManifest | null,
+  options: BuildReleaseAssetModulesOptions = {},
+): Record<string, string> | undefined {
+  if (!manifest) return undefined;
+
+  if (options.route) {
+    const routeEntry = Object.hasOwn(manifest.routes, options.route)
+      ? manifest.routes[options.route]
+      : undefined;
+    if (routeEntry?.modules.length) {
+      const routeModules = buildModuleMap(manifest, routeEntry.modules, true);
+      if (routeModules) return routeModules;
+    }
+
+    // Missing, empty, or stale route metadata must not produce an incomplete
+    // hydration map. Rebuild from the validated full manifest instead.
+    return buildModuleMap(manifest, Object.keys(manifest.modules), false);
+  }
+
+  return buildModuleMap(
+    manifest,
+    options.logicalPaths ?? Object.keys(manifest.modules),
+    false,
+  );
 }

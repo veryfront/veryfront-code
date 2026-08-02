@@ -1,7 +1,16 @@
 import { isDeno } from "../runtime.ts";
 import type { WebSocketUpgradeOptions, WebSocketUpgradeResult } from "./types.ts";
 import { getNativeDeno } from "./native-response.ts";
-import { NOT_SUPPORTED } from "#veryfront/errors";
+import { NOT_SUPPORTED } from "#veryfront/errors/error-registry/general.ts";
+import { resolvePortableWebSocketUpgradeHeaders } from "./websocket-upgrade-options.ts";
+
+const DENO_WEBSOCKET_UPGRADE_CONFIG = {
+  platform: "deno",
+  runtimeName: "Deno",
+  supportsNonzeroIdleTimeout: true,
+  supportsResponseHeaders: false,
+  unsupportedResponseHeadersDetail: "Deno does not support custom WebSocket response headers",
+} as const;
 
 export function upgradeWebSocket(
   request: Request,
@@ -36,18 +45,62 @@ function upgradeWebSocketDeno(
 
   const { socket, response } = nativeDeno.upgradeWebSocket(
     request,
-    resolveDenoUpgradeWebSocketOptions(options),
+    resolveDenoWebSocketUpgradeOptions(request, options),
   );
   return { socket, response };
 }
 
+/**
+ * Resolve and validate Deno's native WebSocket options against the actual
+ * request. Deno owns the handshake response and cannot apply custom response
+ * headers.
+ */
+export function resolveDenoWebSocketUpgradeOptions(
+  request: Request,
+  options?: WebSocketUpgradeOptions,
+): Deno.UpgradeWebSocketOptions | undefined {
+  const headers = resolvePortableWebSocketUpgradeHeaders(
+    request,
+    options,
+    DENO_WEBSOCKET_UPGRADE_CONFIG,
+  );
+  return toDenoUpgradeWebSocketOptions(
+    headers.get("sec-websocket-protocol") ?? undefined,
+    options?.idleTimeout,
+  );
+}
+
+/**
+ * Validate and translate a standalone option bag.
+ *
+ * @internal Prefer {@link resolveDenoWebSocketUpgradeOptions} at an upgrade
+ * boundary so protocol selection is also checked against the client offer.
+ */
 export function resolveDenoUpgradeWebSocketOptions(
   options?: WebSocketUpgradeOptions,
 ): Deno.UpgradeWebSocketOptions | undefined {
-  if (!options?.protocol && options?.idleTimeout === undefined) return undefined;
+  const requestHeaders = new Headers({ Upgrade: "websocket" });
+  if (options?.protocol !== undefined) {
+    requestHeaders.set("Sec-WebSocket-Protocol", options.protocol);
+  }
+  const headers = resolvePortableWebSocketUpgradeHeaders(
+    new Request("http://localhost/", { headers: requestHeaders }),
+    options,
+    DENO_WEBSOCKET_UPGRADE_CONFIG,
+  );
+  return toDenoUpgradeWebSocketOptions(
+    headers.get("sec-websocket-protocol") ?? undefined,
+    options?.idleTimeout,
+  );
+}
 
+function toDenoUpgradeWebSocketOptions(
+  protocol: string | undefined,
+  idleTimeout: number | undefined,
+): Deno.UpgradeWebSocketOptions | undefined {
+  if (!protocol && idleTimeout === undefined) return undefined;
   return {
-    ...(options.protocol ? { protocol: options.protocol } : {}),
-    ...(options.idleTimeout !== undefined ? { idleTimeout: options.idleTimeout } : {}),
+    ...(protocol ? { protocol } : {}),
+    ...(idleTimeout !== undefined ? { idleTimeout } : {}),
   };
 }

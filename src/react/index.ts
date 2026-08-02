@@ -77,6 +77,7 @@ export {
   hasCollectedHead,
   type HeadLink,
   type HeadMeta,
+  type HeadStyle,
   resetHeadCollector,
   runWithHeadCollector,
 } from "./head-collector.ts";

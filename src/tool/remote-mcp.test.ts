@@ -2,9 +2,31 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
-import { createRemoteMCPToolSource } from "./remote-mcp.ts";
+import {
+  createRemoteMCPToolSource,
+  MAX_REMOTE_MCP_CALL_RESPONSE_BYTES,
+  MAX_REMOTE_MCP_TOOL_DEFINITIONS,
+  MAX_REMOTE_MCP_TOOL_LIST_PAGES,
+  MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES,
+} from "./remote-mcp.ts";
 
 describe("tool/remote-mcp", () => {
+  it("normalizes non-Error caller abort reasons", async () => {
+    const controller = new AbortController();
+    controller.abort("caller stopped");
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      fetch: () => Promise.reject("caller stopped"),
+    });
+
+    await assertRejects(
+      () => source.listTools({ abortSignal: controller.signal }),
+      Error,
+      "Remote MCP request was aborted",
+    );
+  });
+
   it("lists tools from a remote MCP server using the standard JSON-RPC contract", async () => {
     let requestUrl = "";
     let requestMethod = "";
@@ -414,6 +436,31 @@ describe("tool/remote-mcp", () => {
     }]);
   });
 
+  it("applies the tools/list response limit to SSE catalogs", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    const padding = "x".repeat(MAX_REMOTE_MCP_CALL_RESPONSE_BYTES + 1_024);
+
+    const tools = await withMockFetch(
+      async () =>
+        new Response(
+          `data: ${
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: { tools: [], padding },
+            })
+          }\n\n`,
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+      async () => await source.listTools(),
+    );
+
+    assertEquals(tools, []);
+  });
+
   it("throws when the remote MCP server responds with a JSON-RPC error", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
@@ -434,5 +481,316 @@ describe("tool/remote-mcp", () => {
       Error,
       "upstream unavailable",
     );
+  });
+
+  it("rejects successful list responses whose declared body exceeds the limit", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            new Response("{}", {
+              headers: {
+                "Content-Type": "application/json",
+                "Content-Length": String(MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES + 1),
+              },
+            }),
+          async () => await source.listTools(),
+        ),
+      Error,
+      `exceeds the ${MAX_REMOTE_MCP_TOOL_LIST_RESPONSE_BYTES}-byte response limit`,
+    );
+  });
+
+  it("cancels successful call response streams that exceed the body limit", async () => {
+    let canceled = false;
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(MAX_REMOTE_MCP_CALL_RESPONSE_BYTES + 1));
+      },
+      cancel() {
+        canceled = true;
+      },
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            new Response(body, {
+              headers: { "Content-Type": "application/json" },
+            }),
+          async () => await source.executeTool("search_docs", {}),
+        ),
+      Error,
+      `exceeds the ${MAX_REMOTE_MCP_CALL_RESPONSE_BYTES}-byte response limit`,
+    );
+    assertEquals(canceled, true);
+  });
+
+  it("rejects JSON-RPC responses with a mismatched protocol version or request id", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            Response.json({
+              jsonrpc: "1.0",
+              id: "docs:tools:list",
+              result: { tools: [] },
+            }),
+          async () => await source.listTools(),
+        ),
+      Error,
+      'must declare jsonrpc "2.0"',
+    );
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            Response.json({
+              jsonrpc: "2.0",
+              id: "another-request",
+              result: { tools: [] },
+            }),
+          async () => await source.listTools(),
+        ),
+      Error,
+      "did not match request id",
+    );
+  });
+
+  it("selects only the matching JSON-RPC response from an SSE stream", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const tools = await withMockFetch(
+      async () =>
+        new Response(
+          [
+            'data: {"jsonrpc":"2.0","id":"unrelated","result":{"tools":[{"name":"wrong","description":"Wrong","inputSchema":{}}]}}',
+            "",
+            'data: {"jsonrpc":"2.0","id":"docs:tools:list","result":{"tools":[{"name":"right","description":"Right","inputSchema":{}}]}}',
+            "",
+            "",
+          ].join("\n"),
+          { headers: { "Content-Type": "text/event-stream" } },
+        ),
+      async () => await source.listTools(),
+    );
+
+    assertEquals(tools.map((tool) => tool.name), ["right"]);
+  });
+
+  it("rejects malformed tool entries atomically instead of returning a partial catalog", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: {
+                tools: [
+                  {
+                    name: "search_docs",
+                    description: "Search documentation",
+                    inputSchema: {},
+                  },
+                  {
+                    name: "",
+                    description: "Malformed",
+                    inputSchema: {},
+                  },
+                ],
+              },
+            }),
+          async () => await source.listTools(),
+        ),
+      Error,
+      "malformed tool definition",
+    );
+  });
+
+  it("rejects duplicate tool names and repeated pagination cursors", async () => {
+    let callCount = 0;
+    const duplicateSource = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () => {
+            callCount += 1;
+            return Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: {
+                tools: [{
+                  name: "search_docs",
+                  description: "Search documentation",
+                  inputSchema: {},
+                }],
+                ...(callCount === 1 ? { nextCursor: "page-2" } : {}),
+              },
+            });
+          },
+          async () => await duplicateSource.listTools(),
+        ),
+      Error,
+      'duplicate tool name "search_docs"',
+    );
+
+    callCount = 0;
+    const repeatedCursorSource = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () => {
+            callCount += 1;
+            return Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: {
+                tools: [],
+                nextCursor: "same-cursor",
+              },
+            });
+          },
+          async () => await repeatedCursorSource.listTools(),
+        ),
+      Error,
+      'repeated pagination cursor "same-cursor"',
+    );
+    assertEquals(callCount, 2);
+  });
+
+  it("rejects catalogs above the definition and pagination ceilings", async () => {
+    const oversizedCatalogSource = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    const tools = Array.from(
+      { length: MAX_REMOTE_MCP_TOOL_DEFINITIONS + 1 },
+      (_, index) => ({
+        name: `tool_${index}`,
+        description: "Tool",
+        inputSchema: {},
+      }),
+    );
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: { tools },
+            }),
+          async () => await oversizedCatalogSource.listTools(),
+        ),
+      Error,
+      `cannot contain more than ${MAX_REMOTE_MCP_TOOL_DEFINITIONS} tools`,
+    );
+
+    let page = 0;
+    const endlessSource = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () => {
+            page += 1;
+            return Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: { tools: [], nextCursor: `page-${page}` },
+            });
+          },
+          async () => await endlessSource.listTools(),
+        ),
+      Error,
+      `exceeded ${MAX_REMOTE_MCP_TOOL_LIST_PAGES} pages`,
+    );
+    assertEquals(page, MAX_REMOTE_MCP_TOOL_LIST_PAGES);
+  });
+
+  it("rejects unsafe endpoints and disables redirects for authenticated requests", async () => {
+    const credentialEndpointSource = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://user:secret@mcp.test",
+    });
+    await assertRejects(
+      () => credentialEndpointSource.listTools(),
+      TypeError,
+      "must not include credentials",
+    );
+
+    let redirectMode: RequestRedirect | undefined;
+    const redirectSafeSource = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      headers: { Authorization: "Bearer remote-token" },
+      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+        redirectMode = init?.redirect;
+        return Response.json({
+          jsonrpc: "2.0",
+          id: "docs:tools:list",
+          result: { tools: [] },
+        });
+      }) as typeof fetch,
+    });
+
+    await redirectSafeSource.listTools();
+    assertEquals(redirectMode, "error");
+  });
+
+  it("rejects cyclic outbound arguments before invoking the remote fetch", async () => {
+    let fetchCalled = false;
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      fetch: (async () => {
+        fetchCalled = true;
+        return Response.json({});
+      }) as typeof fetch,
+    });
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    await assertRejects(
+      () => source.executeTool("search_docs", cyclic),
+      TypeError,
+      "bounded JSON object",
+    );
+    assertEquals(fetchCalled, false);
   });
 });

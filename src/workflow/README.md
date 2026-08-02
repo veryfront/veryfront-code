@@ -2,6 +2,16 @@
 
 Durable, DAG-based workflows with automatic crash recovery and multi-tenant isolation.
 
+## Execution-stack migration boundary
+
+Workflow definition limits, source authority, public run projections, runtime-state
+contracts, and Claude Code wire events are owned by this module. Changes to the
+workflow client, executor admission/lifecycle, run control, and backend atomic
+operations must be migrated together: those surfaces share compare-and-set,
+lease, cancellation, and ownership invariants and are not independently
+replaceable. Backend implementations remain extension-owned; core depends only
+on their contracts.
+
 ## Quick Start (Local Development)
 
 ```bash

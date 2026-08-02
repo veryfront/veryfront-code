@@ -1,4 +1,5 @@
 export const ESBUILD_VERSION = "0.28.1";
+export const ESBUILD_WASM_URL = `https://deno.land/x/esbuild@v${ESBUILD_VERSION}/esbuild.wasm`;
 
 export function getEsbuildBinaryName(): string {
   const archMap: Record<string, string> = {

@@ -20,19 +20,49 @@ describe("capabilities", () => {
       ];
       const lines = formatCapabilities(caps);
       assertEquals(lines.length, 3);
-      assertEquals(lines[0], 'fs:read (paths: ["./src"])');
-      assertEquals(lines[1], 'net:outbound (hosts: ["api.example.com"])');
-      assertEquals(lines[2], 'custom:metadata (name: "diagnostic")');
+      assertEquals(lines[0], '"fs:read" ("paths": ["./src"])');
+      assertEquals(lines[1], '"net:outbound" ("hosts": ["api.example.com"])');
+      assertEquals(lines[2], '"custom:metadata" ("name": "diagnostic")');
     });
 
     it("should handle capabilities with no extra fields", () => {
       const caps: Capability[] = [{ type: "native:ffi" }];
       const lines = formatCapabilities(caps);
-      assertEquals(lines, ["native:ffi"]);
+      assertEquals(lines, ['"native:ffi"']);
     });
 
     it("should return empty array for empty input", () => {
       assertEquals(formatCapabilities([]), []);
+    });
+
+    it("rejects cyclic and bigint metadata before startup audit", () => {
+      const metadata: Record<string, unknown> = { count: 1n };
+      metadata.self = metadata;
+
+      assertThrows(
+        () => formatCapabilities([{ type: "custom:metadata", metadata }]),
+        TypeError,
+        "must contain only JSON-safe values",
+      );
+    });
+
+    it("rejects capability metadata getters without invoking them", () => {
+      const capability = { type: "custom:metadata" } as Capability;
+      let getterCalls = 0;
+      Object.defineProperty(capability, "secret", {
+        enumerable: true,
+        get() {
+          getterCalls++;
+          throw new Error("metadata blocked");
+        },
+      });
+
+      assertThrows(
+        () => formatCapabilities([capability]),
+        TypeError,
+        "must be an enumerable own data property",
+      );
+      assertEquals(getterCalls, 0);
     });
   });
 
@@ -41,41 +71,6 @@ describe("capabilities", () => {
       const caps: Capability[] = [{ type: "fs:read", paths: ["./src", "./public"] }];
       const perms = mapToDenoPermissions(caps);
       assertEquals(perms, ["--allow-read=./src,./public"]);
-    });
-
-    it("rejects malformed scalar filesystem scopes", () => {
-      assertThrows(
-        () =>
-          mapToDenoPermissions([{
-            type: "fs:read",
-            paths: "./src",
-          } as unknown as Capability]),
-        TypeError,
-        "string array",
-      );
-    });
-
-    it("snapshots scoped permissions without invoking array methods", () => {
-      const paths = ["./src"];
-      Object.defineProperty(paths, "some", {
-        value: () => {
-          throw new Error("must not execute extension-owned array methods");
-        },
-      });
-      assertEquals(
-        mapToDenoPermissions([{ type: "fs:read", paths }]),
-        ["--allow-read=./src"],
-      );
-    });
-
-    it("rejects empty and comma-delimited permission scopes", () => {
-      for (const path of ["", "./src,./secrets"]) {
-        assertThrows(
-          () => mapToDenoPermissions([{ type: "fs:read", paths: [path] }]),
-          TypeError,
-          "non-empty strings without commas",
-        );
-      }
     });
 
     it("should map net:outbound to --allow-net with hosts", () => {
@@ -96,130 +91,17 @@ describe("capabilities", () => {
       assertEquals(perms, ["--allow-run=esbuild"]);
     });
 
-    it("maps declared read-only system APIs without broadening access", () => {
-      const caps: Capability[] = [{
-        type: "system:read",
-        apis: ["cpus", "getPriority", "cpus"],
-      }];
-      assertEquals(
-        mapToDenoPermissions(caps),
-        ["--allow-sys=cpus,getPriority"],
-      );
+    it("maps scoped system reads without granting unrestricted system access", () => {
+      const caps: Capability[] = [{ type: "system:read", apis: ["cpus"] }];
+      assertEquals(mapToDenoPermissions(caps), ["--allow-sys=cpus"]);
     });
 
-    it("requires an explicit, dense system API scope", () => {
+    it("requires system:read scopes instead of emitting bare --allow-sys", () => {
       assertThrows(
         () => mapToDenoPermissions([{ type: "system:read" }]),
         TypeError,
-        "system:read.apis must be an enumerable own data property",
+        "capabilities[0].apis must be a non-empty array",
       );
-      assertThrows(
-        () => mapToDenoPermissions([{ type: "system:read", apis: [] }]),
-        TypeError,
-        "must contain between 1 and",
-      );
-
-      const sparse = new Array<string>(1);
-      assertThrows(
-        () => mapToDenoPermissions([{ type: "system:read", apis: sparse }]),
-        TypeError,
-        "system:read.apis[0] must be an enumerable own data property",
-      );
-    });
-
-    it("rejects unsupported and mutating system APIs", () => {
-      for (const api of ["setPriority", "foobar", "cpus=all", "node:os.cpus"]) {
-        assertThrows(
-          () => mapToDenoPermissions([{ type: "system:read", apis: [api] }]),
-          TypeError,
-          "supported read-only Deno system API name",
-        );
-      }
-    });
-
-    it("does not invoke system scope accessors or custom iterators", () => {
-      let accessorReads = 0;
-      const accessorCapability = { type: "system:read" } as Capability;
-      Object.defineProperty(accessorCapability, "apis", {
-        enumerable: true,
-        get() {
-          accessorReads++;
-          return ["cpus"];
-        },
-      });
-      assertThrows(
-        () => mapToDenoPermissions([accessorCapability]),
-        TypeError,
-        "own data property",
-      );
-      assertEquals(accessorReads, 0);
-
-      let iteratorReads = 0;
-      const apis = ["cpus"];
-      Object.defineProperty(apis, Symbol.iterator, {
-        get() {
-          iteratorReads++;
-          throw new Error("iterator must not be read");
-        },
-      });
-      assertEquals(
-        mapToDenoPermissions([{ type: "system:read", apis }]),
-        ["--allow-sys=cpus"],
-      );
-      assertEquals(iteratorReads, 0);
-    });
-
-    it("rejects inherited scopes and hostile proxy inspection", () => {
-      const inherited = Object.assign(
-        Object.create({ apis: ["cpus"] }),
-        { type: "system:read" },
-      ) as Capability;
-      assertThrows(
-        () => mapToDenoPermissions([inherited]),
-        TypeError,
-        "own data property",
-      );
-
-      const proxy = new Proxy(
-        { type: "system:read", apis: ["cpus"] },
-        {
-          getOwnPropertyDescriptor(target, property) {
-            if (property === "apis") throw new Error("blocked");
-            return Reflect.getOwnPropertyDescriptor(target, property);
-          },
-        },
-      );
-      assertThrows(
-        () => mapToDenoPermissions([proxy]),
-        TypeError,
-        "could not be inspected",
-      );
-    });
-
-    it("cannot be broadened by poisoned Set operations", () => {
-      const originalHas = Set.prototype.has;
-      let rejected: unknown;
-      let allowed: string[] | undefined;
-      try {
-        Set.prototype.has = () => true;
-        try {
-          mapToDenoPermissions([{
-            type: "system:read",
-            apis: ["setPriority"],
-          }]);
-        } catch (error) {
-          rejected = error;
-        }
-        allowed = mapToDenoPermissions([{
-          type: "system:read",
-          apis: ["cpus"],
-        }]);
-      } finally {
-        Set.prototype.has = originalHas;
-      }
-
-      assertEquals(rejected instanceof TypeError, true);
-      assertEquals(allowed, ["--allow-sys=cpus"]);
     });
 
     it("should map net:listen ports to localhost:port by default", () => {
@@ -253,6 +135,396 @@ describe("capabilities", () => {
       ];
       const perms = mapToDenoPermissions(caps);
       assertEquals(perms, ["--allow-read=./src"]);
+    });
+
+    it("aggregates repeated and shared Deno permission flags", () => {
+      assertEquals(
+        mapToDenoPermissions([
+          { type: "env:read", keys: ["A"] },
+          { type: "env:read", keys: ["B", "A"] },
+        ]),
+        ["--allow-env=A,B"],
+      );
+      assertEquals(
+        mapToDenoPermissions([
+          { type: "net:outbound", hosts: ["api.example.com:443"] },
+          { type: "net:listen", ports: [3000] },
+        ]),
+        ["--allow-net=api.example.com:443,localhost:3000"],
+      );
+    });
+
+    it("lets an explicit unscoped permission subsume narrower duplicates", () => {
+      assertEquals(
+        mapToDenoPermissions([
+          { type: "fs:read", paths: ["./src"] },
+          { type: "fs:read" },
+          { type: "fs:read", paths: ["./public"] },
+        ]),
+        ["--allow-read"],
+      );
+      assertEquals(
+        mapToDenoPermissions([
+          { type: "net:outbound", hosts: ["*"] },
+          { type: "net:listen", ports: [3000] },
+        ]),
+        ["--allow-net"],
+      );
+    });
+
+    it("serializes the supported network host grammar", () => {
+      assertEquals(
+        mapToDenoPermissions([
+          {
+            type: "net:outbound",
+            hosts: [
+              "example.com",
+              "*.hf.co:443",
+              "127.0.0.1:8080",
+              "[::1]",
+              "[2001:db8::1]:8443",
+            ],
+          },
+          { type: "net:listen", host: "[::1]", ports: [3000, "8080"] },
+        ]),
+        [
+          "--allow-net=example.com,*.hf.co:443,127.0.0.1:8080,[::1],[2001:db8::1]:8443,[::1]:3000,[::1]:8080",
+        ],
+      );
+    });
+
+    it("snapshots scope data once before serialization", () => {
+      const scopes = new Proxy(["safe"], {
+        get(target, property, receiver) {
+          if (property === "0") return "safe,/";
+          return Reflect.get(target, property, receiver);
+        },
+      });
+
+      assertEquals(
+        mapToDenoPermissions([{ type: "fs:read", paths: scopes }]),
+        ["--allow-read=safe"],
+      );
+    });
+
+    it("ignores unknown capability names without prototype lookup", () => {
+      assertEquals(
+        mapToDenoPermissions([
+          { type: "constructor" },
+          { type: "toString" },
+          { type: "custom:metadata", value: "diagnostic" },
+        ]),
+        [],
+      );
+    });
+
+    it("requires unknown capability metadata to remain bounded JSON data", () => {
+      const cyclic: Record<string, unknown> = { type: "custom:metadata" };
+      cyclic.self = cyclic;
+      assertThrows(
+        () => mapToDenoPermissions([cyclic as Capability]),
+        TypeError,
+        "unshared acyclic JSON tree",
+      );
+
+      const withSymbol = { type: "custom:metadata" } as Capability;
+      Object.defineProperty(withSymbol, Symbol("secret"), {
+        enumerable: true,
+        value: true,
+      });
+      assertThrows(
+        () => mapToDenoPermissions([withSymbol]),
+        TypeError,
+        "must not contain symbol properties",
+      );
+
+      const withAccessor = { type: "custom:metadata" } as Capability;
+      Object.defineProperty(withAccessor, "secret", {
+        enumerable: true,
+        get() {
+          throw new Error("must not run");
+        },
+      });
+      assertThrows(
+        () => mapToDenoPermissions([withAccessor]),
+        TypeError,
+        "secret must be an enumerable own data property",
+      );
+    });
+
+    it("bounds the runtime capability inventory before inspection", () => {
+      const oversized = Array.from(
+        { length: 257 },
+        () => ({ type: "custom:metadata" }),
+      );
+      assertThrows(
+        () => mapToDenoPermissions(oversized),
+        TypeError,
+        "capabilities must contain at most 256 entries",
+      );
+    });
+
+    it("rejects malformed scope fields with a contract-specific error", () => {
+      assertThrows(
+        () =>
+          mapToDenoPermissions([
+            { type: "fs:read", paths: "./src" } as Capability,
+          ]),
+        TypeError,
+        "capabilities[0].paths must be a non-empty array",
+      );
+    });
+
+    it("rejects present-but-empty scopes instead of broadening permissions", () => {
+      for (
+        const [capability, field] of [
+          [{ type: "fs:read", paths: [] }, "paths"],
+          [{ type: "fs:write", paths: [] }, "paths"],
+          [{ type: "net:outbound", hosts: [] }, "hosts"],
+          [{ type: "env:read", keys: [] }, "keys"],
+          [{ type: "process:spawn", commands: [] }, "commands"],
+          [{ type: "system:read", apis: [] }, "apis"],
+          [{ type: "sandbox:execute", tools: [] }, "tools"],
+        ] as const
+      ) {
+        assertThrows(
+          () => mapToDenoPermissions([capability]),
+          TypeError,
+          `capabilities[0].${field} must be a non-empty array`,
+        );
+      }
+    });
+
+    it("rejects comma and control-character scope injection", () => {
+      for (
+        const [capability, field] of [
+          [{ type: "fs:read", paths: ["./safe,/"] }, "paths"],
+          [{ type: "env:read", keys: ["SAFE,SECRET"] }, "keys"],
+          [{ type: "net:outbound", hosts: ["example.com,*"] }, "hosts"],
+          [{ type: "process:spawn", commands: ["safe,sh"] }, "commands"],
+          [{ type: "sandbox:execute", tools: ["safe\u0000shell"] }, "tools"],
+        ] as const
+      ) {
+        assertThrows(
+          () => mapToDenoPermissions([capability]),
+          TypeError,
+          `capabilities[0].${field}[0] must not contain`,
+        );
+      }
+    });
+
+    it("rejects ill-formed Unicode and line-forging scope characters", () => {
+      for (
+        const capability of [
+          { type: "env:read", keys: ["SAFE\uD800KEY"] },
+          { type: "fs:read", paths: ["./safe\uDC00path"] },
+          { type: "env:read", keys: ["SAFE\u0085SECRET"] },
+          { type: "fs:write", paths: ["./safe\u2028forged"] },
+        ] as Capability[]
+      ) {
+        assertThrows(
+          () => mapToDenoPermissions([capability]),
+          TypeError,
+        );
+      }
+    });
+
+    it("bounds aggregate serialized Deno permission flags", () => {
+      const keys = ["A", "B", "C"].map((prefix) => `${prefix}_${"x".repeat(3_000)}`);
+      assertThrows(
+        () => mapToDenoPermissions([{ type: "env:read", keys }]),
+        TypeError,
+        "serialized Deno permission flags exceed the cross-platform budget",
+      );
+    });
+
+    it("rejects unsafe capability types before audit formatting", () => {
+      for (const type of ["custom\uD800type", "custom\u0085type", "custom\u2029type"]) {
+        assertThrows(
+          () => formatCapabilities([{ type }]),
+          TypeError,
+        );
+      }
+    });
+
+    it("rejects audit-forging custom capability metadata", () => {
+      for (
+        const capability of [
+          { type: "custom", details: "value\u0085FORGED" },
+          { type: "custom", details: "value\u2028FORGED" },
+          { type: "custom", details: "value\uD800FORGED" },
+          { type: "custom", ["key\u2029FORGED"]: "value" },
+        ] as Capability[]
+      ) {
+        assertThrows(() => formatCapabilities([capability]), TypeError);
+      }
+    });
+
+    it("quotes extensible types and keys in audit output", () => {
+      assertEquals(
+        formatCapabilities([{
+          type: 'native:ffi, env:read (keys: ["SECRET"])',
+          ["safe: false), native:ffi ("]: true,
+        }]),
+        [
+          '"native:ffi, env:read (keys: [\\"SECRET\\"])" ("safe: false), native:ffi (": true)',
+        ],
+      );
+    });
+
+    it("bounds aggregate capability metadata before audit formatting", () => {
+      assertThrows(
+        () =>
+          formatCapabilities([{
+            type: "custom",
+            details: Array.from({ length: 5 }, () => "x".repeat(7_000)),
+          }]),
+        TypeError,
+        "capabilities exceed 32768 aggregate UTF-8 bytes",
+      );
+    });
+
+    it("bounds escaped capability audit output independently", () => {
+      assertThrows(
+        () =>
+          formatCapabilities([{
+            type: "custom",
+            first: "\\".repeat(7_000),
+            second: "\\".repeat(7_000),
+            third: "\\".repeat(7_000),
+            fourth: "\\".repeat(7_000),
+          }]),
+        TypeError,
+        "formatted capability audit exceeds 49152 UTF-8 bytes",
+      );
+    });
+
+    it("rejects known-capability typos before they become unscoped flags", () => {
+      for (
+        const capability of [
+          { type: "fs:read", path: ["./safe"] },
+          { type: "env:read", key: ["SAFE"] },
+          { type: "net:outbound", host: ["example.com"] },
+          { type: "process:spawn", command: ["safe"] },
+          { type: "system:read", api: ["cpus"] },
+          { type: "native:ffi", libraries: ["safe"] },
+        ] as Capability[]
+      ) {
+        assertThrows(
+          () => mapToDenoPermissions([capability]),
+          TypeError,
+          "contains unexpected field",
+        );
+      }
+    });
+
+    it("rejects unsupported Deno system API scopes", () => {
+      for (
+        const api of ["foobar", "cpus=all", "node:os.cpus", "1cpus", "cpus-"]
+      ) {
+        assertThrows(
+          () => mapToDenoPermissions([{ type: "system:read", apis: [api] }]),
+          TypeError,
+          "must be a supported read-only Deno 2.7.7 system API name",
+        );
+      }
+    });
+
+    it("rejects Deno's mutating setPriority kind from system:read", () => {
+      assertThrows(
+        () =>
+          mapToDenoPermissions([{
+            type: "system:read",
+            apis: ["setPriority"],
+          }]),
+        TypeError,
+        "must be a supported read-only Deno 2.7.7 system API name",
+      );
+    });
+
+    it("rejects inherited and accessor-backed scope state", () => {
+      const inherited = Object.assign(
+        Object.create({ paths: ["./safe"] }),
+        { type: "fs:read" },
+      ) as Capability;
+      assertThrows(
+        () => mapToDenoPermissions([inherited]),
+        TypeError,
+        "capabilities[0] must be a plain object",
+      );
+
+      const accessor = { type: "env:read" } as Capability;
+      Object.defineProperty(accessor, "keys", {
+        enumerable: true,
+        get: () => ["SAFE"],
+      });
+      assertThrows(
+        () => mapToDenoPermissions([accessor]),
+        TypeError,
+        "capabilities[0].keys must be an enumerable own data property",
+      );
+    });
+
+    it("rejects listen scopes that could broaden or inject network access", () => {
+      assertThrows(
+        () => mapToDenoPermissions([{ type: "net:listen", ports: [] }]),
+        TypeError,
+        "capabilities[0].ports must be a non-empty array",
+      );
+      assertThrows(
+        () => mapToDenoPermissions([{ type: "net:listen", host: "localhost" }]),
+        TypeError,
+        "capabilities[0].host requires a non-empty ports array",
+      );
+      assertThrows(
+        () =>
+          mapToDenoPermissions([
+            { type: "net:listen", host: "localhost,*", ports: [3000] },
+          ]),
+        TypeError,
+        "capabilities[0].host must not contain commas or control characters",
+      );
+    });
+
+    it("rejects scopes that Deno cannot interpret as declared", () => {
+      assertThrows(
+        () => mapToDenoPermissions([{ type: "env:read", keys: ["A=B"] }]),
+        TypeError,
+        "capabilities[0].keys[0] must not contain =",
+      );
+      for (
+        const host of [
+          "https://example.com",
+          "example.com/path",
+          "::1",
+          "999.1.1.1",
+          "01.2.3.4",
+        ]
+      ) {
+        assertThrows(
+          () => mapToDenoPermissions([{ type: "net:outbound", hosts: [host] }]),
+          TypeError,
+        );
+      }
+      assertThrows(
+        () =>
+          mapToDenoPermissions([
+            { type: "net:outbound", hosts: ["*", "example.com"] },
+          ]),
+        TypeError,
+        'hosts must contain only "*"',
+      );
+    });
+
+    it("rejects invalid listen ports instead of emitting malformed flags", () => {
+      assertThrows(
+        () =>
+          mapToDenoPermissions([
+            { type: "net:listen", ports: [0, 65_536] } as Capability,
+          ]),
+        TypeError,
+        "capabilities[0].ports[0] must be an integer from 1 through 65535",
+      );
     });
   });
 });

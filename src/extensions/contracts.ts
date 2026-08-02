@@ -6,12 +6,18 @@
 
 import { MISSING_EXTENSION_ERROR } from "./errors.ts";
 import { getRecommendation } from "./recommendations.ts";
-
-const contracts = new Map<string, unknown>();
+import { assertCanonicalNonEmptyString } from "./runtime-validation.ts";
+import {
+  registerUnmanagedContract,
+  resetContractRegistry,
+  tryResolveRegisteredContract,
+  unregisterContract,
+} from "./contract-registry-internal.ts";
 
 /** Resolve path segments to an absolute path. */
 export function resolve<T>(name: string): T {
-  const impl = contracts.get(name);
+  assertCanonicalNonEmptyString(name, "Contract name");
+  const impl = tryResolveRegisteredContract<T>(name);
   if (impl === undefined) {
     const recommendation = getRecommendation(name);
     throw MISSING_EXTENSION_ERROR.create({
@@ -21,25 +27,31 @@ export function resolve<T>(name: string): T {
       detail: recommendation ? `Install it with: deno add ${recommendation}` : undefined,
     });
   }
-  return impl as T;
+  return impl;
 }
 
 /** Try to resolve. */
 export function tryResolve<T>(name: string): T | undefined {
-  return contracts.get(name) as T | undefined;
+  assertCanonicalNonEmptyString(name, "Contract name");
+  return tryResolveRegisteredContract<T>(name);
 }
 
 /** Register. */
 export function register<T>(name: string, impl: T): void {
-  contracts.set(name, impl);
+  assertCanonicalNonEmptyString(name, "Contract name");
+  if (impl === undefined) {
+    throw new TypeError(`Contract "${name}" implementation must not be undefined`);
+  }
+  registerUnmanagedContract(name, impl);
 }
 
 /** Unregister. */
 export function unregister(name: string): void {
-  contracts.delete(name);
+  assertCanonicalNonEmptyString(name, "Contract name");
+  unregisterContract(name);
 }
 
 /** Reset. */
 export function reset(): void {
-  contracts.clear();
+  resetContractRegistry();
 }

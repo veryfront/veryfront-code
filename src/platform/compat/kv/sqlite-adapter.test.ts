@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { SqliteKv } from "./sqlite-adapter.ts";
 import type { SqliteDatabase } from "./types.ts";
@@ -35,19 +35,32 @@ function createMockDb(): SqliteDatabase & {
           }
         },
         all(...params: unknown[]): unknown[] {
-          const results: unknown[] = [];
-          for (const [key, entry] of store) {
-            let match = true;
-            // Simple prefix matching for LIKE queries
-            if (sql.includes("LIKE")) {
-              const pattern = (params[0] as string).replace(/%$/, "");
-              if (!key.startsWith(pattern)) match = false;
-            }
-            if (match) {
-              results.push({ key, value: entry.value, versionstamp: entry.versionstamp });
-            }
+          let parameterIndex = 0;
+          let exactPrefix: string | undefined;
+          let descendantPrefix: string | undefined;
+          if (sql.includes("substr(key")) {
+            exactPrefix = params[parameterIndex++] as string;
+            descendantPrefix = params[parameterIndex++] as string;
+            parameterIndex++; // The second descendant-prefix parameter is identical.
           }
-          return results;
+          const start = sql.includes("key >= ?") ? params[parameterIndex++] as string : undefined;
+          const end = sql.includes("key < ?") ? params[parameterIndex++] as string : undefined;
+          const limit = sql.includes("LIMIT ?") ? params[parameterIndex] as number : undefined;
+
+          const results: Array<{ key: string; value: string; versionstamp?: string }> = [];
+          for (const [key, entry] of store) {
+            if (
+              exactPrefix !== undefined &&
+              key !== exactPrefix &&
+              !key.startsWith(descendantPrefix!)
+            ) continue;
+            if (start !== undefined && key < start) continue;
+            if (end !== undefined && key >= end) continue;
+            results.push({ key, value: entry.value, versionstamp: entry.versionstamp });
+          }
+          results.sort((a, b) => a.key.localeCompare(b.key));
+          if (sql.includes("ORDER BY key DESC")) results.reverse();
+          return limit === undefined ? results : results.slice(0, limit);
         },
       };
     },
@@ -55,6 +68,12 @@ function createMockDb(): SqliteDatabase & {
       store.clear();
     },
   };
+}
+
+async function collectEntries<T>(iterable: AsyncIterable<T>): Promise<T[]> {
+  const entries: T[] = [];
+  for await (const entry of iterable) entries.push(entry);
+  return entries;
 }
 
 describe("platform/compat/kv/sqlite-adapter", () => {
@@ -165,6 +184,81 @@ describe("platform/compat/kv/sqlite-adapter", () => {
           entries.push(entry);
         }
         assertEquals(entries.length, 0);
+      });
+
+      it("matches prefixes by complete key parts", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+        await kv.set(["a"], "exact");
+        await kv.set(["a", "child"], "child");
+        await kv.set(["ab"], "collision");
+
+        const entries = await collectEntries(kv.list({ prefix: ["a"] }));
+        assertEquals(entries.map((entry) => entry.key.join("/")).sort(), ["a", "a/child"]);
+      });
+
+      it("treats a zero limit as an empty result", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+        await kv.set(["a"], 1);
+
+        assertEquals(await collectEntries(kv.list({ limit: 0 })), []);
+      });
+
+      it("rejects invalid limits", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+
+        for (const limit of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+          await assertRejects(
+            () => collectEntries(kv.list({ limit })),
+            RangeError,
+            "non-negative safe integer",
+          );
+        }
+      });
+    });
+
+    describe("versionstamps", () => {
+      it("generates a distinct versionstamp for every write", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+        const originalNow = Date.now;
+        Date.now = () => 123;
+        try {
+          await kv.set(["key"], "first");
+          const first = (await kv.get(["key"])).versionstamp;
+          await kv.set(["key"], "second");
+          const second = (await kv.get(["key"])).versionstamp;
+
+          assertExists(first);
+          assertExists(second);
+          assertEquals(first === second, false);
+        } finally {
+          Date.now = originalNow;
+        }
+      });
+    });
+
+    describe("contract validation", () => {
+      it("rejects values without a JSON representation", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+        await assertRejects(
+          () => kv.set(["undefined"], undefined),
+          TypeError,
+          "JSON-serializable",
+        );
+      });
+
+      it("rejects sparse keys instead of storing unreadable entries", async () => {
+        const db = createMockDb();
+        const kv = new SqliteKv(db);
+        await assertRejects(
+          () => kv.set(new Array<string>(1), "value"),
+          TypeError,
+          "arrays of strings",
+        );
       });
     });
 

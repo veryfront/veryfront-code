@@ -1,20 +1,48 @@
 import "#veryfront/schemas/_test-setup.ts";
 // Activates the @veryfront/ext-css-tailwind CSSProcessor so the pure
-// `generateTailwindCSS` compile path resolves a real compiler.
+// `generateCSS` compile path resolves a real compiler.
 import "#veryfront/html/styles-builder/__tests__/css-processor-setup.ts";
 
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
-import { type CSSProcessor, CSSProcessorName } from "#veryfront/extensions/css/index.ts";
+import {
+  assert,
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  createTestCSSOptimizationEngine,
+  installTestCSSOptimizationEngine,
+} from "../../tests/_helpers/css-optimization-engine.ts";
+import {
+  isCSSPipelineIdentity,
+  isStyleProfileHash,
+} from "#veryfront/utils/css-artifact-identity.ts";
+import { acquireCSSGenerationSession } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
+import type { VeryfrontConfig } from "#veryfront/config";
 import { createCompileProjectCss } from "./css-compile.ts";
 
+const RELEASE_CONFIG = { config: {} as VeryfrontConfig };
+
 describe("release-assets/css-compile", () => {
-  it("compiles tailwind candidates into a text/css string with a styleProfileHash", async () => {
+  let restoreCSSOptimizationEngine: (() => void) | undefined;
+
+  beforeEach(() => {
+    restoreCSSOptimizationEngine = installTestCSSOptimizationEngine();
+  });
+
+  afterEach(() => {
+    restoreCSSOptimizationEngine?.();
+    restoreCSSOptimizationEngine = undefined;
+  });
+
+  it("returns the canonical profile and exact pipeline identities used for compilation", async () => {
     const compile = createCompileProjectCss({ projectScope: "css-compile-test" });
+    const expectedPipelineIdentity = acquireCSSGenerationSession(true).cacheIdentity;
 
     const candidates = new Set(["p-4", "text-red-500", "flex"]);
-    const result = await compile(candidates, '@import "tailwindcss";');
+    const result = await compile(candidates, '@import "tailwindcss";', RELEASE_CONFIG);
 
     assert(result !== null, "expected a compiled result");
     assert(result.css.length > 0, "expected non-empty CSS output");
@@ -23,13 +51,14 @@ describe("release-assets/css-compile", () => {
       result.css.includes("padding") || result.css.includes(".p-4"),
       "expected the p-4 utility to be present in the compiled CSS",
     );
-    // styleProfileHash is derived from the style-scope profile (string, never throws).
-    assertEquals(typeof result.styleProfileHash, "string");
+    assert(isStyleProfileHash(result.styleProfileHash));
+    assert(isCSSPipelineIdentity(result.cssPipelineIdentity));
+    assertEquals(result.cssPipelineIdentity, expectedPipelineIdentity);
   });
 
   it("returns null only when there are no candidates AND no stylesheet", async () => {
     const compile = createCompileProjectCss({ projectScope: "css-compile-empty" });
-    const result = await compile(new Set<string>(), undefined);
+    const result = await compile(new Set<string>(), undefined, RELEASE_CONFIG);
     assertEquals(result, null);
   });
 
@@ -38,25 +67,45 @@ describe("release-assets/css-compile", () => {
     const result = await compile(
       new Set<string>(),
       '@import "tailwindcss"; :root { --brand: #123456; }',
+      RELEASE_CONFIG,
     );
     // Stylesheet-only compiles must not be skipped: base/custom rules ship.
     assertExists(result);
     assert(result.css.length > 0, "stylesheet-only compile produced CSS");
   });
 
-  it("propagates missing-provider failures so the executor records an explicit gap", async () => {
+  it("propagates compiler failures instead of publishing a CSS gap", async () => {
     const compile = createCompileProjectCss({ projectScope: "css-compile-fail" });
     const candidates = new Set(["p-4"]);
-    const previous = tryResolve<CSSProcessor>(CSSProcessorName);
-    unregister(CSSProcessorName);
+    const restoreFailingEngine = installTestCSSOptimizationEngine(
+      createTestCSSOptimizationEngine(() => {
+        throw new Error("release CSS optimization failed");
+      }, "test-failing-css-optimization-engine@1"),
+    );
     try {
       await assertRejects(
-        () => compile(candidates, '@import "tailwindcss";'),
+        () => compile(candidates, '@import "tailwindcss";', RELEASE_CONFIG),
         Error,
-        'Missing extension for contract "CSSProcessor"',
+        "release CSS optimization failed",
       );
     } finally {
-      if (previous !== undefined) register(CSSProcessorName, previous);
+      restoreFailingEngine();
     }
+  });
+
+  it("rejects invalid project scopes at configuration time", () => {
+    assertThrows(() => createCompileProjectCss({ projectScope: "bad\nscope" }));
+    assertThrows(() => createCompileProjectCss(null as never));
+  });
+
+  it("rejects malformed candidate input", async () => {
+    const compile = createCompileProjectCss({ projectScope: "project-1" });
+    const candidates = new Set<string>(["text-red-500", "bad\u0000candidate"]);
+
+    await assertRejects(
+      () => compile(candidates, undefined, RELEASE_CONFIG),
+      TypeError,
+      "candidate is invalid",
+    );
   });
 });

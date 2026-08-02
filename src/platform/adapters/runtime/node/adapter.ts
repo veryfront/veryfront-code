@@ -1,10 +1,10 @@
-import type { RuntimeAdapter, RuntimeCapabilities, Server } from "../../base.ts";
+import type { RuntimeAdapter, RuntimeCapabilities } from "../../base.ts";
 import { NodeFileSystemAdapter } from "./filesystem-adapter.ts";
 import { NodeEnvironmentAdapter } from "./environment-adapter.ts";
 import { NodeServerAdapter } from "./websocket-adapter.ts";
 import { createNodeServer } from "./http-server.ts";
 import { NodeBasedShellAdapter } from "../shared/node-based-shell-adapter.ts";
-import { createServeHandler, stopManagedServer } from "../shared/server-lifecycle.ts";
+import { createServeHandler, ManagedServerRegistry } from "../shared/server-lifecycle.ts";
 
 export class NodeAdapter implements RuntimeAdapter {
   readonly id = "node" as const;
@@ -14,7 +14,7 @@ export class NodeAdapter implements RuntimeAdapter {
   readonly server = new NodeServerAdapter();
   readonly shell = new NodeBasedShellAdapter();
 
-  readonly capabilities: RuntimeCapabilities = {
+  readonly capabilities: RuntimeCapabilities = Object.freeze({
     typescript: false,
     jsx: false,
     http2: true,
@@ -24,18 +24,16 @@ export class NodeAdapter implements RuntimeAdapter {
     shell: true,
     kvStore: false,
     writableFs: true,
-  };
+  });
 
-  private activeServer: Server | null = null;
+  private readonly servers = new ManagedServerRegistry();
   readonly serve = createServeHandler(
     createNodeServer,
-    (server) => {
-      this.activeServer = server;
-    },
+    this.servers,
   );
 
-  async shutdown(): Promise<void> {
-    this.activeServer = await stopManagedServer(this.activeServer);
+  shutdown(): Promise<void> {
+    return this.servers.shutdown();
   }
 }
 

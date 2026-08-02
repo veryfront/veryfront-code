@@ -62,6 +62,32 @@ describe("html-generation/html-shell-generator", () => {
       assertStringIncludes(result, "</html>");
     });
 
+    it("emits the charset before every production head script", async () => {
+      const result = await wrapInHTMLShell(
+        "<h1>Hello</h1>",
+        createMeta(),
+        createOptions({
+          mode: "production",
+          environment: "production",
+          isLocalProject: false,
+          projectId: "default",
+        }),
+      );
+      const head = result.slice(
+        result.indexOf("<head>") + "<head>".length,
+        result.indexOf("</head>"),
+      ).trimStart();
+
+      assert(
+        head.startsWith('<meta charset="UTF-8">'),
+        "The encoding declaration must precede scripts and other head content",
+      );
+      assert(
+        result.indexOf('<meta charset="UTF-8">') < result.indexOf("<script"),
+        "No production head script may precede the encoding declaration",
+      );
+    });
+
     it("should include content in the body", async () => {
       const result = await wrapInHTMLShell(
         "<h1>Hello World</h1>",
@@ -79,7 +105,10 @@ describe("html-generation/html-shell-generator", () => {
         createOptions(),
       );
 
-      assertStringIncludes(result, "<title>My Test Page</title>");
+      assertStringIncludes(
+        result,
+        '<title data-vf-shell-head="true">My Test Page</title>',
+      );
     });
 
     it("should use frontmatter title if provided", async () => {
@@ -92,7 +121,10 @@ describe("html-generation/html-shell-generator", () => {
         createOptions(),
       );
 
-      assertStringIncludes(result, "<title>Frontmatter Title</title>");
+      assertStringIncludes(
+        result,
+        '<title data-vf-shell-head="true">Frontmatter Title</title>',
+      );
     });
 
     it("should include import map", async () => {
@@ -391,16 +423,16 @@ describe("html-generation/html-shell-generator", () => {
       );
     });
 
-    it("escapes release-manifest URLs in modulepreload attributes", async () => {
+    it("rejects invalid release-manifest asset hashes before generating preload URLs", async () => {
       const hostileHash = 'hash"><script>alert(1)</script>';
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project",
         releaseId: "release",
         releaseVersion: 1,
         manifestVersion: 1,
         builderVersion: "test",
-        sourceContentHash: "source",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-01-01T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {
@@ -415,7 +447,7 @@ describe("html-generation/html-shell-generator", () => {
           "/dashboard": { modules: ["pages/dashboard.tsx"], css: [] },
         },
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
       const options = {
         ...createOptions({
@@ -430,14 +462,11 @@ describe("html-generation/html-shell-generator", () => {
         options,
       );
 
-      assertStringIncludes(
-        result,
-        'href="/_vf/assets/hash&quot;&gt;&lt;script&gt;alert(1)&lt;/script&gt;.js"',
-      );
       assertEquals(
-        result.includes('href="/_vf/assets/hash"><script>alert(1)</script>.js"'),
+        result.includes("/_vf/assets/hash"),
         false,
       );
+      assertStringIncludes(result, 'href="/_vf_modules/pages/dashboard.js"');
     });
 
     it("should include Tailwind CSS link in development mode", async () => {

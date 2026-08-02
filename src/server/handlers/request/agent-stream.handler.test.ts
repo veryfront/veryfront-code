@@ -278,7 +278,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 1);
     assertEquals(streamContext?.runId, "run_1");
     assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
-    assertEquals(typeof runtimeSystem, "function");
+    assertEquals(typeof runtimeSystem, "string");
     assertEquals(
       runtimeMessages?.[0]?.parts as unknown,
       [
@@ -302,7 +302,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
       ],
     );
-    const prompt = await (runtimeSystem as () => Promise<string>)();
+    const prompt = runtimeSystem as string;
     assertStringIncludes(
       prompt,
       'branch_id: "10000000-1000-4000-8000-100000000006"',
@@ -2071,7 +2071,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
-      `${apiBaseUrl}/mcp`,
+      `${new URL(apiBaseUrl).origin}/mcp`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
     ]);
@@ -2474,11 +2474,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
   });
 
   it("returns 500 when runtime execution setup fails unexpectedly", async () => {
+    const sessionManager = new AgentRunSessionManager();
     const handler = new AgentStreamHandler({
       ensureProjectDiscovery: async () => {},
       getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
       getAllAgentIds: () => ["assistant-1"],
-      sessionManager: new AgentRunSessionManager(),
+      sessionManager,
       createRuntime: () => {
         throw new Error("runtime boom");
       },
@@ -2502,6 +2503,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 500);
     assertEquals(await result.response.json(), { error: "Internal agent stream failed" });
+    assertEquals(sessionManager.getRunStatus("run_1"), null);
   });
 
   it("emits a cancellation error instead of finishing after an abort during a pending read", async () => {

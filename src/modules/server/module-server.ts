@@ -5,7 +5,7 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { TransformOptions } from "#veryfront/transforms/esm-transform.ts";
 import { serverLogger, VERSION } from "#veryfront/utils";
-import { HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
+import { HTTP_BAD_REQUEST, HTTP_NOT_FOUND, HTTP_OK, HTTP_SERVER_ERROR } from "#veryfront/utils";
 import { getContentTypeForPath } from "#veryfront/server/handlers/utils/content-types.ts";
 import { createSecureFs } from "#veryfront/security";
 import { getErrorMessage } from "#veryfront/errors";
@@ -70,6 +70,7 @@ import {
   extractDependencyPinningPathKey,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
@@ -342,6 +343,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         },
       });
       const platformFs = createFileSystem();
+      const dependencyCacheRoot = getHttpBundleCacheDir();
 
       const debugUserAgent = req.headers.get("user-agent") ?? "";
       logger.debug("Request", {
@@ -353,6 +355,17 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
 
       if (kind.kind === "not-module") {
         return createModuleResponse(method, "Module not found", HTTP_NOT_FOUND, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-cache",
+        });
+      }
+
+      if (kind.kind === "invalid-module") {
+        logger.warn("Rejected malformed reserved module request", {
+          namespace: kind.namespace,
+          path: url.pathname,
+        });
+        return createModuleResponse(method, "Invalid module path", HTTP_BAD_REQUEST, {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-cache",
         });
@@ -431,6 +444,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             },
             releaseRewriteOptions: {
               releaseId: options.releaseId,
+              dependencyCacheRoot,
               readDependencySource: (path) => platformFs.readTextFile(path),
             },
             profile: true,
@@ -449,9 +463,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         } catch (error) {
           const errorMsg = getErrorMessage(error);
           logger.error("Snippet transform error", { hash, error: errorMsg });
+          const clientError = getClientModuleError(dev, errorMsg);
           return createModuleResponse(
             method,
-            `// Transform Error\nthrow new Error(${JSON.stringify(errorMsg)});`,
+            `// Transform Error\nthrow new Error(${JSON.stringify(clientError)});`,
             HTTP_SERVER_ERROR,
             {
               "Content-Type": "application/javascript; charset=utf-8",
@@ -538,6 +553,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             },
             releaseRewriteOptions: {
               releaseId: options.releaseId,
+              dependencyCacheRoot,
               readDependencySource: (path) => platformFs.readTextFile(path),
             },
             profile: true,
@@ -548,11 +564,18 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             "Cache-Control": "no-cache",
           });
         } catch (error) {
-          logger.error("Cross-project error", { projectRef, error: String(error) });
-          return createModuleResponse(method, `// Error: ${String(error)}`, HTTP_SERVER_ERROR, {
-            "Content-Type": "application/javascript; charset=utf-8",
-            "Cache-Control": "no-cache",
-          });
+          const errorMsg = getErrorMessage(error);
+          logger.error("Cross-project error", { projectRef, error: errorMsg });
+          const clientError = getClientModuleError(dev, errorMsg);
+          return createModuleResponse(
+            method,
+            `// Transform Error\nthrow new Error(${JSON.stringify(clientError)});`,
+            HTTP_SERVER_ERROR,
+            {
+              "Content-Type": "application/javascript; charset=utf-8",
+              "Cache-Control": "no-cache",
+            },
+          );
         }
       }
 
@@ -750,6 +773,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               releaseId: options.releaseId,
               manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
               manifestReadOptions: { refreshCachedNull: true },
+              dependencyCacheRoot,
               readDependencySource: (path) => platformFs.readTextFile(path),
             },
             profile: true,
@@ -804,7 +828,10 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         logger.error("Module transform error", { modulePath, error: errorMsg });
 
         const headers = getModuleHeaders(modulePath);
-        const errorBody = createDevModuleErrorBody(modulePath, errorMsg);
+        const errorBody = createModuleErrorBody(
+          modulePath,
+          getClientModuleError(dev, errorMsg),
+        );
 
         return createModuleResponse(method, errorBody, HTTP_SERVER_ERROR, headers);
       }
@@ -1208,7 +1235,13 @@ export function getDevModuleContentType(modulePath: string): string {
   return detected ?? "application/javascript; charset=utf-8";
 }
 
-function createDevModuleErrorBody(modulePath: string, errorMessage: string): string {
+const PRODUCTION_MODULE_ERROR = "Module transformation failed";
+
+function getClientModuleError(dev: boolean, errorMessage: string): string {
+  return dev ? errorMessage : PRODUCTION_MODULE_ERROR;
+}
+
+function createModuleErrorBody(modulePath: string, errorMessage: string): string {
   const normalizedPath = modulePath.toLowerCase();
 
   if (normalizedPath.endsWith(".css")) {

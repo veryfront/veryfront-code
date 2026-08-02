@@ -9,6 +9,8 @@
  */
 
 import type { EvalMetricResult, EvalRecord, EvalReport } from "#veryfront/eval/types.ts";
+import { assertRegistrationMethod, captureRegistrationId } from "../runtime-validation.ts";
+import { describeThrownValue } from "../safe-value.ts";
 
 /** Contract name used for `resolve()` / `provide()`. */
 export const EvalReportExporterRegistryName = "EvalReportExporterRegistry" as const;
@@ -232,18 +234,16 @@ export function redactEvalReportForExport(
   };
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 class EvalReportExporterRegistryImpl implements EvalReportExporterRegistry {
   private readonly exporters = new Map<string, EvalReportExporter>();
 
   register(exporter: EvalReportExporter): void {
-    if (this.exporters.has(exporter.id)) {
+    const exporterId = captureRegistrationId(exporter, "EvalReportExporter");
+    assertRegistrationMethod(exporter, "EvalReportExporter", "export");
+    if (this.exporters.has(exporterId)) {
       return;
     }
-    this.exporters.set(exporter.id, exporter);
+    this.exporters.set(exporterId, exporter);
   }
 
   unregister(id: string): void {
@@ -277,20 +277,21 @@ class EvalReportExporterRegistryImpl implements EvalReportExporterRegistry {
   ): Promise<EvalReportExportResult[]> {
     const results: EvalReportExportResult[] = [];
     const redaction = cloneRedaction(context.redaction) ?? {};
+    const exporters = [...this.exporters.entries()];
 
-    for (const exporter of this.exporters.values()) {
+    for (const [exporterId, exporter] of exporters) {
       try {
         const sanitizedReport = redactEvalReportForExport(report, redaction);
         const exportContext = redactEvalReportExportContext(context, redaction);
         const receipt = await exporter.export(sanitizedReport, exportContext);
-        const result: EvalReportExportSuccess = { exporterId: exporter.id, ok: true };
+        const result: EvalReportExportSuccess = { exporterId, ok: true };
         if (receipt !== undefined) result.receipt = receipt;
         results.push(result);
       } catch (error) {
         results.push({
-          exporterId: exporter.id,
+          exporterId,
           ok: false,
-          error: errorMessage(error),
+          error: describeThrownValue(error),
         });
       }
     }

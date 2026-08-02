@@ -338,9 +338,17 @@ describe("cli/templates", () => {
 
     assertEquals(page.includes("useChat"), false);
     assertEquals(page.includes('agentId="rag"'), true);
-    assertEquals(page.includes('uploadApi="/api/uploads"'), true);
+    assertEquals(
+      page.includes("uploadApi"),
+      false,
+      "the RAG ingestion route does not return a runtime-fetchable Chat attachment URL",
+    );
     assertEquals(uploadsPage.includes("AttachmentsPanel"), true);
     assertEquals(uploadsPage.includes("useUploadsRegistry"), true);
+    assertEquals(uploadsPage.includes('role="alert"'), true);
+    assertEquals(uploadsPage.includes("refreshError"), true);
+    assertEquals(uploadsPage.includes("removeError"), true);
+    assertEquals(uploadsPage.includes("storageError"), true);
     assertEquals(agent.includes("suggestions:"), true);
   });
 

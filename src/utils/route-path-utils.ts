@@ -14,6 +14,15 @@ export const COMPONENT_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js"] as const;
 /** Regex for matching and removing file extensions */
 const EXTENSION_REGEX = /\.(tsx|jsx|ts|js|mdx|md)$/;
 
+/** Reject control characters before paths reach runtime filesystem adapters. */
+export function containsPathControlCharacters(value: string): boolean {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0)!;
+    if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) return true;
+  }
+  return false;
+}
+
 /** Patterns for dynamic segment detection */
 const DYNAMIC_SEGMENT_PATTERNS = {
   standard: /^\[[\w]+\]$/, // [id]

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
@@ -39,6 +39,69 @@ function withStaticSpan<T extends { full: string }>(
 }
 
 describe("module-loader/dependency-resolver", () => {
+  it("fails closed when static import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `import value${index} from "@/value-${index}";`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 static alias imports",
+    );
+  });
+
+  // Bounding only the static scan would leave the same allocation reachable
+  // through the dynamic-import form, since both kinds are collected and
+  // rewritten together.
+  it("fails closed when dynamic import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `const value${index} = await import("@/value-${index}");`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 dynamic alias imports",
+    );
+  });
+
+  it("fails closed when dynamic relative import collection exceeds its bound", async () => {
+    const adapter = await getLocalAdapter();
+    const fileContent = Array.from(
+      { length: 501 },
+      (_, index) => `const value${index} = await import("./value-${index}");`,
+    ).join("\n");
+
+    await assertRejects(
+      () =>
+        resolveModuleDependencies({
+          adapter,
+          fileContent,
+          filePath: "/project/page.tsx",
+          projectDir: "/project",
+        }),
+      RangeError,
+      "more than 500 dynamic relative imports",
+    );
+  });
+
   it("resolves alias and relative imports while ignoring already transformed file imports", async () => {
     await withDependencyFixture(
       {

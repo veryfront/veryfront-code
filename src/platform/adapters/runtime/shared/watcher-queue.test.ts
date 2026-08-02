@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileWatcher, createWatcherIterator, enqueueWatchEvent } from "./watcher-queue.ts";
 import type { FileChangeEvent } from "../../base.ts";
@@ -54,13 +54,22 @@ describe("watcher-queue", () => {
     });
 
     it("should wait for events when queue is empty and not closed", async () => {
-      let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
+      const pending: {
+        resolver?: (value: IteratorResult<FileChangeEvent>) => void;
+      } = {};
 
-      const iterator = createWatcherIterator([], (r) => (resolver = r), () => false, () => false);
+      const iterator = createWatcherIterator(
+        [],
+        (resolver) => {
+          pending.resolver = resolver ?? undefined;
+        },
+        () => false,
+        () => false,
+      );
 
       const promise = iterator.next();
 
-      const resolve = resolver;
+      const resolve = pending.resolver;
       if (!resolve) throw new Error("Expected resolver to be set");
 
       resolve({ done: false, value: makeEvent("modify", ["/c.ts"]) });
@@ -77,6 +86,28 @@ describe("watcher-queue", () => {
       assertEquals(result.done, true);
       assertEquals(result.value, undefined);
     });
+
+    it("rejects concurrent next calls instead of orphaning the first waiter", async () => {
+      let resolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = null;
+      const iterator = createWatcherIterator(
+        [],
+        (value) => {
+          resolver = value;
+        },
+        () => false,
+        () => false,
+      );
+
+      const first = iterator.next();
+      await assertRejects(
+        () => iterator.next(),
+        TypeError,
+        "concurrent next()",
+      );
+      await iterator.return?.();
+      assertEquals((await first).done, true);
+      assertEquals(resolver, null);
+    });
   });
 
   describe("enqueueWatchEvent", () => {
@@ -92,10 +123,10 @@ describe("watcher-queue", () => {
 
     it("should resolve immediately when resolver exists", () => {
       const queue: FileChangeEvent[] = [];
-      let resolvedValue: IteratorResult<FileChangeEvent> | null = null;
+      const resolved: { value?: IteratorResult<FileChangeEvent> } = {};
 
       const fakeResolver = (value: IteratorResult<FileChangeEvent>) => {
-        resolvedValue = value;
+        resolved.value = value;
       };
 
       let currentResolver: ((value: IteratorResult<FileChangeEvent>) => void) | null = fakeResolver;
@@ -106,9 +137,9 @@ describe("watcher-queue", () => {
 
       assertEquals(queue.length, 0);
 
-      assertExists(resolvedValue);
-      assertEquals(resolvedValue.done, false);
-      assertEquals(resolvedValue.value, event);
+      assertExists(resolved.value);
+      assertEquals(resolved.value.done, false);
+      assertEquals(resolved.value.value, event);
 
       assertEquals(currentResolver, null);
     });
@@ -139,7 +170,26 @@ describe("watcher-queue", () => {
       const watcher = createFileWatcher(iterator, () => {});
 
       const returned = watcher[Symbol.asyncIterator]();
-      assertEquals(returned, iterator);
+      assertExists(returned.next);
+      assertExists(returned.return);
+    });
+
+    it("cleans up when async iteration returns early", async () => {
+      let cleanupCalls = 0;
+      const iterator = createWatcherIterator(
+        [makeEvent("modify", ["/a.ts"])],
+        () => {},
+        () => false,
+        () => false,
+      );
+      const watcher = createFileWatcher(iterator, () => {
+        cleanupCalls++;
+      });
+
+      for await (const _event of watcher) break;
+      assertEquals(cleanupCalls, 1);
+      watcher.close();
+      assertEquals(cleanupCalls, 1);
     });
   });
 });

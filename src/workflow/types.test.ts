@@ -5,7 +5,14 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateId, parseDuration, validateRetryConfig } from "./types.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import {
+  captureApprovalApprovers,
+  generateId,
+  parseDuration,
+  validateRetryConfig,
+} from "./types.ts";
+import { RunFilterSchema } from "./schemas/workflow.schema.ts";
 
 describe("parseDuration", () => {
   it("should parse seconds", () => {
@@ -32,14 +39,50 @@ describe("parseDuration", () => {
   });
 
   it("should handle number input (passthrough)", () => {
+    assertEquals(parseDuration(0), 0);
     assertEquals(parseDuration(5000), 5000);
     assertEquals(parseDuration(100), 100);
   });
 
-  it("should reject zero and negative durations", () => {
+  it("should preserve decimal units that resolve to whole milliseconds", () => {
+    assertEquals(parseDuration("1.5s"), 1500);
+    assertEquals(parseDuration("0.001s"), 1);
+  });
+
+  it("should accept the exact portable timer boundary", () => {
+    assertEquals(parseDuration(MAX_TIMER_DELAY_MS), MAX_TIMER_DELAY_MS);
+    assertEquals(parseDuration(`${MAX_TIMER_DELAY_MS}ms`), MAX_TIMER_DELAY_MS);
+  });
+
+  it("should reject zero string and negative durations", () => {
     assertThrows(() => parseDuration("0s"), Error, "Duration must be positive");
     assertThrows(() => parseDuration("0m"), Error, "Duration must be positive");
     assertThrows(() => parseDuration(-100), Error, "Duration cannot be negative");
+  });
+
+  it("should reject non-finite, fractional-millisecond, and overflowing durations", () => {
+    for (
+      const duration of [
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+        1.5,
+        MAX_TIMER_DELAY_MS + 1,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]
+    ) {
+      assertThrows(() => parseDuration(duration), Error);
+    }
+
+    for (
+      const duration of [
+        "0.1ms",
+        `${MAX_TIMER_DELAY_MS + 1}ms`,
+        "999999999999999999999999999999999999999999d",
+      ]
+    ) {
+      assertThrows(() => parseDuration(duration), Error);
+    }
   });
 
   it("should throw on invalid format", () => {
@@ -73,32 +116,151 @@ describe("generateId", () => {
   });
 });
 
+describe("captureApprovalApprovers", () => {
+  it("detaches and freezes a dense canonical identity list", () => {
+    const source = ["alice@example.com", "bob@example.com"];
+    const captured = captureApprovalApprovers(source);
+    source[0] = "mallory@example.com";
+
+    assertEquals(captured, ["alice@example.com", "bob@example.com"]);
+    assertEquals(Object.isFrozen(captured), true);
+  });
+
+  it("rejects hostile, sparse, and accessor arrays without invoking hooks", () => {
+    let hooks = 0;
+    const hostile = new Proxy(["alice@example.com"], {
+      get() {
+        hooks++;
+        throw new Error("must not run");
+      },
+      ownKeys() {
+        hooks++;
+        throw new Error("must not run");
+      },
+    });
+    const accessor = ["alice@example.com"];
+    Object.defineProperty(accessor, "0", {
+      enumerable: true,
+      get() {
+        hooks++;
+        return "alice@example.com";
+      },
+    });
+    const sparse = new Array<string>(1);
+
+    assertThrows(() => captureApprovalApprovers(hostile), Error);
+    assertThrows(() => captureApprovalApprovers(accessor), Error, "dense non-empty array");
+    assertThrows(() => captureApprovalApprovers(sparse), Error, "dense non-empty array");
+    assertEquals(hooks, 0);
+  });
+
+  it("rejects control characters and oversized identities", () => {
+    assertThrows(() => captureApprovalApprovers(["alice\u0000@example.com"]), Error);
+    assertThrows(() => captureApprovalApprovers(["x".repeat(1_025)]), Error);
+  });
+});
+
+describe("RunFilterSchema", () => {
+  it("bounds workflow run page size and offset", () => {
+    assertEquals(RunFilterSchema.parse({ limit: 1_000 }).limit, 1_000);
+    assertEquals(RunFilterSchema.parse({ offset: 10_000 }).offset, 10_000);
+    assertThrows(
+      () => RunFilterSchema.parse({ limit: 1_001 }),
+      Error,
+    );
+    assertThrows(
+      () => RunFilterSchema.parse({ offset: 10_001 }),
+      Error,
+    );
+  });
+});
+
 describe("validateRetryConfig", () => {
   it("should accept valid config", () => {
     validateRetryConfig({});
-    validateRetryConfig({ maxAttempts: 3 });
-    validateRetryConfig({ backoff: "exponential", initialDelay: 100, maxDelay: 5000 });
+    validateRetryConfig({ maxAttempts: 1 });
+    validateRetryConfig({ maxAttempts: 100 });
+    validateRetryConfig({
+      backoff: "exponential",
+      initialDelay: 0,
+      maxDelay: MAX_TIMER_DELAY_MS,
+    });
+  });
+
+  it("accepts only plain records at the raw runtime boundary", () => {
+    const nullPrototypeConfig = Object.create(null) as Record<string, unknown>;
+    nullPrototypeConfig.maxAttempts = 2;
+    validateRetryConfig(nullPrototypeConfig);
+
+    class RetryPolicy {}
+
+    for (
+      const config of [
+        5,
+        "three",
+        false,
+        null,
+        [],
+        () => undefined,
+        new Date(),
+        new RetryPolicy(),
+      ]
+    ) {
+      assertThrows(
+        () => validateRetryConfig(config as never),
+        Error,
+        "plain record",
+      );
+    }
   });
 
   it("should reject invalid maxAttempts", () => {
     const message = "maxAttempts must be a positive integer";
 
-    assertThrows(() => validateRetryConfig({ maxAttempts: 0 }), Error, message);
-    assertThrows(() => validateRetryConfig({ maxAttempts: -1 }), Error, message);
-    assertThrows(() => validateRetryConfig({ maxAttempts: 1.5 }), Error, message);
+    for (
+      const maxAttempts of [
+        0,
+        -1,
+        1.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]
+    ) {
+      assertThrows(() => validateRetryConfig({ maxAttempts }), Error, message);
+    }
   });
 
-  it("should reject negative delays", () => {
+  it("should reject retry counts above the production safety ceiling", () => {
     assertThrows(
-      () => validateRetryConfig({ initialDelay: -100 }),
+      () => validateRetryConfig({ maxAttempts: 101 }),
       Error,
-      "initialDelay cannot be negative",
+      "maxAttempts cannot exceed 100",
     );
-    assertThrows(
-      () => validateRetryConfig({ maxDelay: -100 }),
-      Error,
-      "maxDelay cannot be negative",
-    );
+  });
+
+  it("should reject invalid retry delays", () => {
+    for (
+      const delay of [
+        -1,
+        0.5,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_TIMER_DELAY_MS + 1,
+        Number.MAX_SAFE_INTEGER + 1,
+      ]
+    ) {
+      assertThrows(
+        () => validateRetryConfig({ initialDelay: delay }),
+        Error,
+        "initialDelay",
+      );
+      assertThrows(
+        () => validateRetryConfig({ maxDelay: delay }),
+        Error,
+        "maxDelay",
+      );
+    }
   });
 
   it("should reject initialDelay greater than maxDelay", () => {
@@ -106,6 +268,14 @@ describe("validateRetryConfig", () => {
       () => validateRetryConfig({ initialDelay: 5000, maxDelay: 1000 }),
       Error,
       "initialDelay (5000) cannot be greater than maxDelay (1000)",
+    );
+  });
+
+  it("should reject unsupported backoff strategies", () => {
+    assertThrows(
+      () => validateRetryConfig({ backoff: "random" as "fixed" }),
+      Error,
+      "Invalid backoff strategy",
     );
   });
 });

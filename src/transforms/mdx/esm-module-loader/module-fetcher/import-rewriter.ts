@@ -18,7 +18,9 @@ import {
   findStaticSideEffectImportSpans,
   replaceSourceSpans,
   type SourceSpanReplacement,
+  type StaticImportSpan,
 } from "../utils/source-spans.ts";
+import { MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./limits.ts";
 
 const MODULE_FETCHER_VERYFRONT_CONTEXT: RewriteContext = {
   filePath: "",
@@ -28,6 +30,37 @@ const MODULE_FETCHER_VERYFRONT_CONTEXT: RewriteContext = {
   dev: false,
   reactVersion: DEFAULT_REACT_VERSION,
 };
+
+type SpecifierMatcher = (specifier: string) => string | null | undefined;
+
+/**
+ * Run a span scanner one match past the per-file bound and fail closed there.
+ *
+ * Both rewriters below replace every span they collect, so accepting a
+ * truncated scan would emit a half-rewritten module whose remaining specifiers
+ * no longer resolve.
+ */
+function findBoundedSpans(
+  scan: (maxMatches: number) => StaticImportSpan[],
+): StaticImportSpan[] {
+  const matches = scan(MAX_MDX_MODULE_IMPORTS_PER_FILE + 1);
+  if (matches.length > MAX_MDX_MODULE_IMPORTS_PER_FILE) {
+    throw new RangeError(
+      `Module contains more than ${MAX_MDX_MODULE_IMPORTS_PER_FILE} static imports`,
+    );
+  }
+  return matches;
+}
+
+function findBoundedStaticImportSpans(source: string, matcher: SpecifierMatcher) {
+  return findBoundedSpans((maxMatches) => findStaticImportFromSpans(source, matcher, maxMatches));
+}
+
+function findBoundedStaticSideEffectImportSpans(source: string, matcher: SpecifierMatcher) {
+  return findBoundedSpans((maxMatches) =>
+    findStaticSideEffectImportSpans(source, matcher, maxMatches)
+  );
+}
 
 function rewriteVeryfrontModuleSpecifier(specifier: string): string | null {
   const result = veryfrontStrategy.rewrite(
@@ -50,7 +83,7 @@ function rewriteVeryfrontModuleSpecifier(specifier: string): string | null {
  * Uses deno.json exports/imports as the source of truth and appends ?ssr=true.
  */
 export function rewriteVeryfrontImports(code: string): string {
-  const replacements: SourceSpanReplacement[] = findStaticImportFromSpans(
+  const replacements: SourceSpanReplacement[] = findBoundedStaticImportSpans(
     code,
     (specifier) => specifier.startsWith("veryfront/") ? specifier : null,
   ).flatMap(({ original, path, start, end }) => {
@@ -128,7 +161,7 @@ export async function rewriteDntImports(code: string, sourceFilePath: string): P
   const patterns = [
     {
       findMatches: (source: string) =>
-        findStaticImportFromSpans(
+        findBoundedStaticImportSpans(
           source,
           (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
         ),
@@ -136,7 +169,7 @@ export async function rewriteDntImports(code: string, sourceFilePath: string): P
     },
     {
       findMatches: (source: string) =>
-        findStaticSideEffectImportSpans(
+        findBoundedStaticSideEffectImportSpans(
           source,
           (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
         ),

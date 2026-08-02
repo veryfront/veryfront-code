@@ -41,6 +41,11 @@ export interface OrchestrateOptions {
    *  Pass `0` to disable. */
   setupTimeoutMs?: number;
   /**
+   * @internal Release process-global resources owned by the previous
+   * generation after its teardown and before candidate setup begins.
+   */
+  beforeActivate?: () => void | Promise<void>;
+  /**
    * @internal Override discovery functions in tests.
    *
    * This is a trusted injection seam, not an untrusted-data boundary. A custom
@@ -56,6 +61,14 @@ export interface OrchestrateOptions {
   /** @internal Override factory loading in tests. */
   loadFactory?: typeof defaultLoadFactory;
 }
+
+// The contract registry is process-global, so production orchestration must
+// have one serialized generation owner. Direct ExtensionLoader construction is
+// still available for tests and low-level use, but overlapping direct loaders
+// are intentionally outside the supported lifecycle contract.
+let orchestrationTail: Promise<void> = Promise.resolve();
+let activeLoader: ExtensionLoader | undefined;
+let failedCandidate: ExtensionLoader | undefined;
 
 function isDisableDirective(
   entry: ExtensionConfigEntry,
@@ -122,7 +135,18 @@ interface ProjectLoadCandidate {
  * partial rollback internally. The error is re-thrown unchanged so callers
  * can surface the extension name to the user.
  */
-export async function orchestrateExtensions(
+export function orchestrateExtensions(
+  options: OrchestrateOptions,
+): Promise<ExtensionLoader> {
+  const result = orchestrationTail.then(() => orchestrateExtensionGeneration(options));
+  orchestrationTail = result.then(
+    () => undefined,
+    () => undefined,
+  );
+  return result;
+}
+
+async function orchestrateExtensionGeneration(
   options: OrchestrateOptions,
 ): Promise<ExtensionLoader> {
   const { projectDir, config, logger } = options;
@@ -235,9 +259,44 @@ export async function orchestrateExtensions(
   if (options.primeContracts) {
     loader.primeContracts(options.primeContracts);
   }
-  await loader.setupAll(merged, config as Record<string, unknown>, {
-    setupTimeoutMs: options.setupTimeoutMs,
-  });
+  let activationStarted = false;
+  try {
+    await loader.setupAll(merged, config as Record<string, unknown>, {
+      setupTimeoutMs: options.setupTimeoutMs,
+      beforeTransition: async () => {
+        // A failed candidate already owns the fail-closed transition fence.
+        // Finish its late cleanup before the replacement acquires a new fence.
+        const failed = failedCandidate;
+        if (failed) {
+          await failed.awaitLateSetupCleanup();
+          if (failedCandidate === failed) failedCandidate = undefined;
+        }
+      },
+      beforeActivate: async () => {
+        // Candidate discovery, factory loading, flattening, validation,
+        // conflict checks, and topology all completed before this hook. The
+        // new transition fence is active before old-generation teardown.
+        const previous = activeLoader;
+        if (previous) {
+          await previous.teardownAll();
+          if (activeLoader === previous) activeLoader = undefined;
+        }
+        await options.beforeActivate?.();
+        activationStarted = true;
+      },
+    });
+  } catch (error) {
+    if (activationStarted) {
+      activeLoader = undefined;
+      // setupAll rejects promptly on timeout but retains its own losing setup
+      // and cleanup barrier. Keep the candidate reachable so the next
+      // generation cannot activate until that barrier succeeds.
+      failedCandidate = loader;
+    }
+    throw error;
+  }
+
+  activeLoader = loader;
   return loader;
 }
 

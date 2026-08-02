@@ -5,6 +5,7 @@ const RESERVED_KEYS = new Set([
   "description",
   "meta",
   "links",
+  "icons",
   "scripts",
   "styles",
   "og",
@@ -26,11 +27,11 @@ export function extractHTMLMetadata(
     description: merged.description || "",
     viewport: merged.viewport,
     themeColor: merged.themeColor,
-    meta: Array.isArray(merged.meta) ? merged.meta : [],
-    links: Array.isArray(merged.links) ? merged.links : [],
-    icons: merged.icons || [],
-    scripts: Array.isArray(merged.scripts) ? merged.scripts : [],
-    styles: Array.isArray(merged.styles) ? merged.styles : [],
+    meta: Array.isArray(merged.meta) ? merged.meta.map((entry) => ({ ...entry })) : [],
+    links: Array.isArray(merged.links) ? merged.links.map((entry) => ({ ...entry })) : [],
+    icons: Array.isArray(merged.icons) ? merged.icons.map((entry) => ({ ...entry })) : [],
+    scripts: Array.isArray(merged.scripts) ? merged.scripts.map((entry) => ({ ...entry })) : [],
+    styles: Array.isArray(merged.styles) ? merged.styles.map((entry) => ({ ...entry })) : [],
   };
 
   if (merged.og && metadata.meta) {
@@ -47,7 +48,11 @@ export function extractHTMLMetadata(
 
   for (const [key, value] of Object.entries(merged)) {
     if (RESERVED_KEYS.has(key)) continue;
-    metadata[key] = value;
+    metadata[key] = Array.isArray(value)
+      ? value.map((entry) =>
+        entry !== null && typeof entry === "object" && !Array.isArray(entry) ? { ...entry } : entry
+      )
+      : value;
   }
 
   return metadata;

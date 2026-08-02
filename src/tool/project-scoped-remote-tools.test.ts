@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStrictEquals } from "@std/assert";
+import { assertEquals, assertStrictEquals, assertThrows } from "@std/assert";
 import {
   createProjectScopedRemoteToolCatalog,
   filterProjectScopedRemoteToolDefinitions,
@@ -194,6 +194,10 @@ Deno.test("resolveProjectScopedRemoteToolProjectId prefers context project ids",
   );
   assertEquals(resolveProjectScopedRemoteToolProjectId({}, "default-project"), "default-project");
   assertEquals(resolveProjectScopedRemoteToolProjectId(undefined, null), null);
+  assertEquals(
+    resolveProjectScopedRemoteToolProjectId({ projectId: "   " }, " default-project "),
+    "default-project",
+  );
 });
 
 Deno.test("isRemoteToolNameAllowed applies optional allowlists", () => {
@@ -202,7 +206,7 @@ Deno.test("isRemoteToolNameAllowed applies optional allowlists", () => {
   assertEquals(isRemoteToolNameAllowed("delete_file", new Set(["list_files"])), false);
 });
 
-Deno.test("createProjectScopedRemoteToolCatalog filters, caches, and hydrates project tools", async () => {
+Deno.test("createProjectScopedRemoteToolCatalog filters, revalidates, and hydrates project tools", async () => {
   const listContexts: (ToolExecutionContext | undefined)[] = [];
   const source: RemoteToolSource = {
     id: "api",
@@ -242,7 +246,37 @@ Deno.test("createProjectScopedRemoteToolCatalog filters, caches, and hydrates pr
     project_reference: "project-1",
   });
   assertEquals(prepared.executeContext, { projectId: "project-1" });
-  assertEquals(listContexts, [{ projectId: "project-1" }]);
+  assertEquals(listContexts, [
+    { projectId: "project-1" },
+    { projectId: "project-1" },
+  ]);
+});
+
+Deno.test("createProjectScopedRemoteToolCatalog does not reuse definitions across credential contexts", async () => {
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools(context) {
+      return context?.authToken === "token-b"
+        ? [toolDefinition({ name: "write_file" })]
+        : [toolDefinition({ name: "read_file" })];
+    },
+    async executeTool() {
+      return { ok: true };
+    },
+  };
+  const catalog = createProjectScopedRemoteToolCatalog({ source });
+
+  assertEquals(
+    (await catalog.listTools({ authToken: "token-a" })).map((tool) => tool.name),
+    ["read_file"],
+  );
+  const prepared = await catalog.prepareExecution({
+    toolName: "write_file",
+    toolInput: {},
+    context: { authToken: "token-b" },
+  });
+
+  assertEquals(prepared.toolDefinition.name, "write_file");
 });
 
 Deno.test("createProjectScopedRemoteToolCatalog resolves dynamic default project ids", async () => {
@@ -348,6 +382,87 @@ Deno.test("createProjectScopedRemoteToolCatalog rejects missing required remote 
       }),
     'Tool "outlook__search_emails" requires input: $search',
   );
+});
+
+Deno.test("createProjectScopedRemoteToolCatalog rejects duplicate advertised names", async () => {
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools() {
+      return [
+        toolDefinition({ name: "read_file" }),
+        toolDefinition({ name: "read_file" }),
+      ];
+    },
+    async executeTool() {
+      return { ok: true };
+    },
+  };
+  const catalog = createProjectScopedRemoteToolCatalog({ source });
+
+  await assertRejectsWithMessage(
+    () => catalog.listTools(),
+    'Remote source "api" advertised duplicate tool name "read_file"',
+  );
+});
+
+Deno.test("required input checks do not invoke accessors or accept inherited values", async () => {
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools() {
+      return [toolDefinition({ name: "search", required: ["query"] })];
+    },
+    async executeTool() {
+      return { ok: true };
+    },
+  };
+  const catalog = createProjectScopedRemoteToolCatalog({ source });
+  let getterCalls = 0;
+  const accessorInput = Object.defineProperty({}, "query", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "secret";
+    },
+  });
+
+  await assertRejectsWithMessage(
+    () =>
+      catalog.prepareExecution({
+        toolName: "search",
+        toolInput: accessorInput,
+      }),
+    'Tool "search" input must be a bounded JSON object',
+  );
+  assertEquals(getterCalls, 0);
+
+  const inheritedInput = Object.create({ query: "inherited" }) as Record<string, unknown>;
+  await assertRejectsWithMessage(
+    () =>
+      catalog.prepareExecution({
+        toolName: "search",
+        toolInput: inheritedInput,
+      }),
+    'Tool "search" input must be a bounded JSON object',
+  );
+});
+
+Deno.test("project schema inspection does not execute accessors", () => {
+  let getterCalls = 0;
+  const definition = toolDefinition({ name: "search" });
+  definition.parameters = Object.defineProperty({}, "required", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return ["project_reference"];
+    },
+  });
+
+  assertThrows(
+    () => filterProjectScopedRemoteToolDefinitions([definition], null),
+    TypeError,
+    'Tool "search" parameters must be a bounded JSON Schema object',
+  );
+  assertEquals(getterCalls, 0);
 });
 
 Deno.test("listProjectScopedRemoteToolNames returns sorted unique visible names", async () => {

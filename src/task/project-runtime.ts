@@ -9,13 +9,24 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { RunnableTask } from "./runner.ts";
 
+/** Project runtime discovery result used by task lookup and execution helpers. */
+export type ProjectTaskRuntimeDiscovery = ProjectAgentRuntimeDiscovery;
+
+/** Options for discovering tasks through the unified project runtime. */
 export interface ProjectTaskRuntimeOptions {
+  /** Project root used to resolve local discovery paths and configuration. */
   projectDir: string;
+  /** Runtime adapter that owns filesystem and environment access. */
   adapter: RuntimeAdapter;
+  /** Preloaded project configuration, or `null` to load it from the project. */
   config?: VeryfrontConfig | null;
+  /** Optional filesystem override for virtual or hosted project sources. */
   fsAdapter?: FileSystemAdapter;
+  /** Source-specific configuration cache key. */
   cacheKey?: string;
+  /** Emit verbose discovery diagnostics. */
   debug?: boolean;
+  /** Reject the discovery when any colocated project primitive fails to load. */
   throwOnErrors?: boolean;
 }
 
@@ -23,15 +34,17 @@ function formatRuntimeDiscoveryError(error: DiscoveryResult["errors"][number]): 
   return `${error.file}: ${error.error.message}`;
 }
 
+/** Format project-runtime discovery failures for CLI and operator diagnostics. */
 export function formatProjectRuntimeDiscoveryErrors(
   errors: DiscoveryResult["errors"],
 ): string[] {
   return errors.map(formatRuntimeDiscoveryError);
 }
 
+/** Discover project tasks and the colocated runtime primitives they may use. */
 export async function discoverProjectTaskRuntime(
   options: ProjectTaskRuntimeOptions,
-): Promise<ProjectAgentRuntimeDiscovery> {
+): Promise<ProjectTaskRuntimeDiscovery> {
   const discovery = await discoverProjectAgentRuntime({
     projectDir: options.projectDir,
     adapter: options.adapter,
@@ -54,6 +67,17 @@ export async function discoverProjectTaskRuntime(
   return discovery;
 }
 
+function resolveTaskName(definition: RunnableTask["definition"], taskId: string): string {
+  return typeof definition.name === "string" && definition.name.trim().length > 0
+    ? definition.name
+    : taskId;
+}
+
+function compareTaskIds(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Find one task by its stable project-runtime ID. */
 export function findProjectRuntimeTask(
   discovery: DiscoveryResult,
   taskId: string,
@@ -63,15 +87,18 @@ export function findProjectRuntimeTask(
 
   return {
     id: taskId,
-    name: definition.name || taskId,
+    name: resolveTaskName(definition, taskId),
     definition,
   };
 }
 
+/** List project-runtime tasks in deterministic ID order. */
 export function listProjectRuntimeTasks(discovery: DiscoveryResult): RunnableTask[] {
-  return [...discovery.tasks].map(([id, definition]) => ({
-    id,
-    name: definition.name || id,
-    definition,
-  }));
+  return [...discovery.tasks]
+    .sort(([left], [right]) => compareTaskIds(left, right))
+    .map(([id, definition]) => ({
+      id,
+      name: resolveTaskName(definition, id),
+      definition,
+    }));
 }

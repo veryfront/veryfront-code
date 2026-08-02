@@ -53,11 +53,12 @@ Set `contentDir: "knowledge"` to index `knowledge/` instead of `content/`.
 Create upload routes that share the same store:
 
 ```ts title="lib/upload-auth.ts"
-export function authorizeUploads(request: Request): boolean {
-  const token = Deno.env.get("UPLOAD_TOKEN");
-  return token !== undefined &&
-    request.headers.get("authorization") === `Bearer ${token}`;
-}
+import { authorizeSession } from "./session.ts";
+
+// Verify your app's signed, same-origin session cookie. The browser sends that
+// cookie for useUploadsRegistry requests without exposing a bearer token to
+// client code.
+export const authorizeUploads = (request: Request) => authorizeSession(request);
 ```
 
 ```ts title="app/api/uploads/route.ts"
@@ -74,6 +75,41 @@ export const { POST, GET, DELETE } = createUploadHandler(store, {
 document. For local-only prototypes, pass
 `auth: { type: "none", allowUnauthenticated: true }` to explicitly allow
 unauthenticated upload routes.
+
+The `auth` policy is required and fails closed. An `authorize` callback must
+return the literal value `true` to permit a request; `false` or an accidental
+missing return denies it with `401`. Return a `Response` when the route needs a
+custom denial or authentication-challenge response. Calling
+`createUploadHandler(store)` without an explicit auth policy now fails when the
+handler is created.
+
+The handler bounds each source file to 10 MiB, the complete multipart body to
+the file limit plus 64 KiB, and extracted UTF-8 text to 5 MiB by default. Set
+`maxFileSize`, `maxBodySize`, or `maxExtractedTextBytes` only when your
+deployment has a different, still-bounded budget. Invalid configuration fails
+when the handler is created. Request cancellation is propagated through
+multipart reading, extraction, and RAG ingestion.
+
+`GET /api/uploads?limit=25&offset=0` returns only upload-origin documents,
+newest first:
+
+```json
+{
+  "items": [],
+  "total": 0,
+  "offset": 0,
+  "limit": 25,
+  "hasMore": false
+}
+```
+
+The default and maximum page sizes are controlled by `maxListItems` (100 by
+default, at most 1,000). `useUploadsRegistry()` follows `hasMore` pages and
+publishes the new server snapshot only after every bounded page validates.
+`DELETE` accepts an `id` route parameter or query parameter and refuses to
+delete documents that did not originate from the upload route. In Cloud mode,
+a `502` means the RAG entry was removed but source blob cleanup is incomplete;
+retry the same deletion safely.
 
 ## Understand ingestion
 
@@ -178,29 +214,38 @@ import { AttachmentsPanel, Chat, useUploadsRegistry } from "veryfront/chat";
 
 export default function RagPage() {
   const uploads = useUploadsRegistry({ url: "/api/uploads" });
+  const uploadError = uploads.uploadError ??
+    uploads.refreshError ??
+    uploads.removeError ??
+    uploads.storageError;
 
   return (
     <main className="flex min-h-screen">
       <Chat
         agentId="rag"
         api="/api/ag-ui"
-        uploadApi="/api/uploads"
         placeholder="Ask about your documents..."
       />
 
-      <AttachmentsPanel
-        uploads={uploads.items}
-        loading={uploads.isLoading}
-        onAttach={uploads.upload}
-        onRemoveUpload={uploads.remove}
-      />
+      <aside>
+        {uploadError && <p role="alert">{uploadError.message}</p>}
+        <AttachmentsPanel
+          uploads={uploads.items}
+          loading={uploads.isLoading}
+          onAttach={uploads.upload}
+          onRemoveUpload={uploads.remove}
+        />
+      </aside>
     </main>
   );
 }
 ```
 
 The `docs-agent` template includes a fuller upload panel. Use this smaller
-example when you want the minimum wiring.
+example when you want the minimum wiring. Upload documents through the panel:
+the RAG ingestion route returns document metadata, not the runtime-fetchable
+`url` required by `Chat.uploadApi`. Composer attachments use a separate
+`createChatUploadHandler` route when you want them stored durably.
 
 ## Use Veryfront Cloud mode
 

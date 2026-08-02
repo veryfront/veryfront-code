@@ -10,14 +10,30 @@ export interface ExecutionContext {
   passThroughOnException(): void;
 }
 
+export interface CloudflareRequestPipeline {
+  execute(
+    request: Request,
+    env?: Record<string, unknown>,
+    executionCtx?: ExecutionContext,
+  ): Promise<Response>;
+}
+
 export function createWorker(
-  setup: (
+  setup: (env: CloudflareEnv) => CloudflareRequestPipeline,
+): {
+  fetch(
+    request: Request,
     env: CloudflareEnv,
-  ) => import("#veryfront/middleware/core/pipeline/index.ts").MiddlewarePipeline,
-): { fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): unknown } {
+    ctx: ExecutionContext,
+  ): Promise<Response>;
+} {
   return {
-    fetch(request: Request, env: CloudflareEnv, ctx: ExecutionContext): unknown {
-      return setup(env).execute(request, env, ctx);
+    async fetch(
+      request: Request,
+      env: CloudflareEnv,
+      ctx: ExecutionContext,
+    ): Promise<Response> {
+      return await setup(env).execute(request, env, ctx);
     },
   };
 }

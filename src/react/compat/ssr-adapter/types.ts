@@ -8,6 +8,8 @@ export interface SSROptions {
   namespaceURI?: string;
   nonce?: string;
   progressiveChunkSize?: number;
+  /** Maximum UTF-8 bytes retained when an SSR result must be buffered. */
+  maxBufferedBytes?: number;
   onAllReady?: () => void;
   onShellReady?: () => void;
   onShellError?: (error: Error) => void;

@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { identifyError } from "./error-identifier.ts";
+import { CONFIG_NOT_FOUND, DEPENDENCY_MISSING } from "../error-registry.ts";
+import { VeryfrontError } from "../types.ts";
 
 function testIdentifyError(name: string, message: string, expected: string): void {
   it(name, () => {
@@ -100,6 +102,34 @@ describe("error-identifier", () => {
         "missing-deps",
       );
       testIdentifyError("should handle case variations", "REACT NOT FOUND", "missing-deps");
+      testIdentifyError(
+        "should prefer the dependency solution for React module errors",
+        "React module not found",
+        "missing-deps",
+      );
+    });
+
+    describe("registered errors", () => {
+      it("should bridge canonical config slugs to the legacy solution catalog", () => {
+        expect(identifyError(CONFIG_NOT_FOUND.create())).toBe("missing-config");
+      });
+
+      it("should bridge canonical dependency slugs to the legacy solution catalog", () => {
+        expect(identifyError(DEPENDENCY_MISSING.create())).toBe("missing-deps");
+      });
+
+      it("should not treat inherited object property names as registered solutions", () => {
+        for (const slug of ["toString", "constructor", "__proto__"]) {
+          const error = new VeryfrontError("unrecognized failure", {
+            slug,
+            category: "GENERAL",
+            status: 500,
+            title: "Unrecognized failure",
+          });
+
+          expect(identifyError(error)).toBe("unknown");
+        }
+      });
     });
 
     describe("unknown errors", () => {

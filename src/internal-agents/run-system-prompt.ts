@@ -137,10 +137,3 @@ export async function composeInternalAgentRunSystemPrompt(
 
   return flattenSystemInstructions(withRuntimeToolInventory(messages, input.toolNames));
 }
-
-/** Creates a lazy system prompt resolver for an internal agent run. */
-export function createInternalAgentRunSystemPromptResolver(
-  input: ComposeInternalAgentRunSystemPromptInput,
-): () => Promise<string> {
-  return () => composeInternalAgentRunSystemPrompt(input);
-}

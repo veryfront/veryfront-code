@@ -1,4 +1,12 @@
 import type { Kv, KvEntry, KvListOptions, SqliteDatabase } from "./types.ts";
+import {
+  createKvVersionstamp,
+  deserializeKvKey,
+  deserializeKvValue,
+  serializeKvKey,
+  serializeKvValue,
+  validateKvListLimit,
+} from "./internal.ts";
 
 export class SqliteKv implements Kv {
   private db: SqliteDatabase;
@@ -20,30 +28,25 @@ export class SqliteKv implements Kv {
     `);
   }
 
-  private keyToString(key: string[]): string {
-    return JSON.stringify(key);
-  }
-
-  private stringToKey(keyStr: string): string[] {
-    return JSON.parse(keyStr);
-  }
-
-  get<T = unknown>(key: string[]): Promise<{ value: T | undefined; versionstamp?: string }> {
-    const keyStr = this.keyToString(key);
+  async get<T = unknown>(
+    key: string[],
+  ): Promise<{ value: T | undefined; versionstamp?: string }> {
+    const keyStr = serializeKvKey(key);
     const row = this.db
       .prepare("SELECT value, versionstamp FROM kv_store WHERE key = ?")
       .get(keyStr) as { value: string; versionstamp?: string } | undefined;
 
-    if (!row) return Promise.resolve({ value: undefined });
+    if (!row) return { value: undefined };
 
-    return Promise.resolve({
-      value: JSON.parse(row.value) as T,
+    return {
+      value: deserializeKvValue<T>(row.value),
       versionstamp: row.versionstamp,
-    });
+    };
   }
 
-  set<T = unknown>(key: string[], value: T): Promise<void> {
-    const keyStr = this.keyToString(key);
+  async set<T = unknown>(key: string[], value: T): Promise<void> {
+    const keyStr = serializeKvKey(key);
+    const serializedValue = serializeKvValue(value);
     const now = Date.now();
 
     this.db
@@ -51,35 +54,34 @@ export class SqliteKv implements Kv {
         INSERT OR REPLACE INTO kv_store (key, value, versionstamp, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?)
       `)
-      .run(keyStr, JSON.stringify(value), now.toString(), now, now);
-
-    return Promise.resolve();
+      .run(keyStr, serializedValue, createKvVersionstamp(), now, now);
   }
 
-  delete(key: string[]): Promise<void> {
-    this.db.prepare("DELETE FROM kv_store WHERE key = ?").run(this.keyToString(key));
-    return Promise.resolve();
+  async delete(key: string[]): Promise<void> {
+    this.db.prepare("DELETE FROM kv_store WHERE key = ?").run(serializeKvKey(key));
   }
 
   async *list<T = unknown>(options?: KvListOptions): AsyncIterableIterator<KvEntry<T>> {
+    const limit = validateKvListLimit(options);
     let query = "SELECT key, value, versionstamp FROM kv_store";
     const params: unknown[] = [];
     const conditions: string[] = [];
 
-    if (options?.prefix) {
-      const prefixStr = this.keyToString(options.prefix);
-      conditions.push("key LIKE ?");
-      params.push(`${prefixStr.slice(0, -1)}%`);
+    if (options?.prefix?.length) {
+      const prefixStr = serializeKvKey(options.prefix);
+      const descendantPrefix = `${prefixStr.slice(0, -1)},`;
+      conditions.push("(key = ? OR substr(key, 1, length(?)) = ?)");
+      params.push(prefixStr, descendantPrefix, descendantPrefix);
     }
 
     if (options?.start) {
       conditions.push("key >= ?");
-      params.push(this.keyToString(options.start));
+      params.push(serializeKvKey(options.start));
     }
 
     if (options?.end) {
       conditions.push("key < ?");
-      params.push(this.keyToString(options.end));
+      params.push(serializeKvKey(options.end));
     }
 
     if (conditions.length) query += ` WHERE ${conditions.join(" AND ")}`;
@@ -87,9 +89,9 @@ export class SqliteKv implements Kv {
     query += " ORDER BY key";
     if (options?.reverse) query += " DESC";
 
-    if (options?.limit) {
+    if (limit !== undefined) {
       query += " LIMIT ?";
-      params.push(options.limit);
+      params.push(limit);
     }
 
     const rows = this.db.prepare(query).all(...params) as Array<{
@@ -100,8 +102,8 @@ export class SqliteKv implements Kv {
 
     for (const row of rows) {
       yield {
-        key: this.stringToKey(row.key),
-        value: JSON.parse(row.value) as T,
+        key: deserializeKvKey(row.key),
+        value: deserializeKvValue<T>(row.value),
         versionstamp: row.versionstamp,
       };
     }

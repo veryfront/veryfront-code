@@ -354,10 +354,8 @@ export class RunResumeSessionManager<T> {
   }
 
   reset(): void {
-    for (const session of this.sessions.values()) {
-      this.clearWaitingTimeout(session);
-      this.clearSessionTimeout(session);
+    for (const runId of [...this.sessions.keys()]) {
+      this.cancelRun(runId);
     }
-    this.sessions.clear();
   }
 }

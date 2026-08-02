@@ -1,4 +1,5 @@
 import { RENDER_ERROR } from "#veryfront/errors";
+import { SSR_MAX_BUFFERED_BYTES, SSR_TIMEOUT_MS } from "#veryfront/config/defaults.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
   getReactVersionInfo,
@@ -22,67 +23,71 @@ function supportsStreamingReactVersion(version: string): boolean {
   return Number(version.split(".")[0]) >= 18;
 }
 
-async function pipeToString(
-  pipeFn: (writable: NodeJS.WritableStream) => void,
-): Promise<string> {
-  const { PassThrough } = await import("node:stream");
-  const { Buffer } = await import("node:buffer");
-
-  return await new Promise((resolve, reject) => {
-    const chunks: Uint8Array[] = [];
-    const passThrough = new PassThrough();
-
-    passThrough.on("data", (chunk: Uint8Array) => chunks.push(chunk));
-    passThrough.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
-    passThrough.on("error", (err: Error) => reject(err));
-
-    try {
-      pipeFn(passThrough);
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
 function pipeToReadableStream(
   pipeFn: (writable: NodeJS.WritableStream) => void,
   abortFn?: () => void,
 ): ReadableStream<Uint8Array> {
   let passThrough: import("node:stream").PassThrough | null = null;
   let cancelled = false;
+  let settled = false;
+  let abortCalled = false;
+
+  const abortOnce = () => {
+    if (abortCalled || !abortFn) return;
+    abortCalled = true;
+    try {
+      abortFn();
+    } catch (error) {
+      logger.warn("Error aborting pipeable SSR stream", error);
+    }
+  };
 
   return new ReadableStream<Uint8Array>({
     async start(controller) {
       const { PassThrough } = await import("node:stream");
       passThrough = new PassThrough();
+      if (cancelled) {
+        passThrough.destroy();
+        return;
+      }
 
       passThrough.on("data", (chunk: Uint8Array) => {
-        if (cancelled) return;
+        if (cancelled || settled) return;
         controller.enqueue(new Uint8Array(chunk));
+        if ((controller.desiredSize ?? 0) <= 0) passThrough?.pause();
       });
       passThrough.on("end", () => {
-        if (!cancelled) controller.close();
+        if (cancelled || settled) return;
+        settled = true;
+        controller.close();
       });
       passThrough.on("error", (err: Error) => {
-        if (!cancelled) controller.error(err);
+        if (cancelled || settled) return;
+        settled = true;
+        abortOnce();
+        controller.error(err);
       });
 
       try {
         pipeFn(passThrough);
       } catch (error) {
-        if (!cancelled) controller.error(error);
-      }
-    },
-    cancel(reason) {
-      cancelled = true;
-
-      if (abortFn) {
-        try {
-          abortFn();
-        } catch (error) {
-          logger.warn("Error aborting pipeable SSR stream", error);
+        if (cancelled || settled) return;
+        settled = true;
+        abortOnce();
+        controller.error(error);
+        if (!passThrough.destroyed) {
+          passThrough.destroy(error instanceof Error ? error : undefined);
         }
       }
+    },
+    pull() {
+      if (!cancelled && !settled) passThrough?.resume();
+    },
+    cancel(reason) {
+      if (cancelled) return;
+      cancelled = true;
+      settled = true;
+      abortOnce();
 
       if (passThrough && !passThrough.destroyed) {
         passThrough.destroy(reason instanceof Error ? reason : undefined);
@@ -105,6 +110,8 @@ export interface SSRRenderOptions {
   debugMode?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
+  /** Maximum UTF-8 bytes retained when the result must be buffered. */
+  maxBufferedBytes?: number;
 }
 
 export interface SSRRenderResult {
@@ -176,6 +183,7 @@ export class SSRRenderer {
     );
     const wantsStreamingMode = this.mode === "production" || options.wantsStream;
     const compiledBinary = isCompiledBinary();
+    const maxBufferedBytes = options.maxBufferedBytes ?? SSR_MAX_BUFFERED_BYTES;
 
     if (compiledBinary && wantsStreamingMode) {
       logger.debug(
@@ -199,7 +207,12 @@ export class SSRRenderer {
 
       const html = await withSpan(
         SpanNames.SSR_REACT_RENDER,
-        () => renderToStringAdapter(pageElement, { reactVersion }),
+        () =>
+          renderToStringAdapter(pageElement, {
+            identifierPrefix: "vf",
+            maxBufferedBytes,
+            reactVersion,
+          }),
         {
           "ssr.method": "string",
           "ssr.react_version": reactVersion,
@@ -219,6 +232,7 @@ export class SSRRenderer {
       () =>
         renderToStreamAdapter(pageElement, {
           identifierPrefix: "vf",
+          maxBufferedBytes,
           reactVersion,
         }),
       {
@@ -234,7 +248,11 @@ export class SSRRenderer {
         return { html: "", stream: attachAllReady(renderResult.stream, renderResult.allReady) };
       }
 
-      const html = await streamToString(renderResult.stream);
+      const html = await streamToString(
+        renderResult.stream,
+        SSR_TIMEOUT_MS,
+        maxBufferedBytes,
+      );
 
       if (options.debugMode) {
         logger.debug("Streaming SSR completed (buffered)", { htmlLength: html.length });
@@ -251,7 +269,11 @@ export class SSRRenderer {
       }
 
       logger.debug("Converting pipeable stream to string (Node.js renderToPipeableStream)");
-      const html = await pipeToString(renderResult.pipe);
+      const html = await streamToString(
+        pipeToReadableStream(renderResult.pipe, renderResult.abort),
+        SSR_TIMEOUT_MS,
+        maxBufferedBytes,
+      );
 
       if (options.debugMode) {
         logger.debug("Pipeable SSR completed", { htmlLength: html.length });

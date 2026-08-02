@@ -7,15 +7,26 @@ const ACCEPT = '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.md,.mdx,.html,.
 
 export default function UploadsPage(): React.JSX.Element {
   const uploads = useUploadsRegistry({ url: UPLOAD_API, storageKey: 'rag-uploads' })
+  const error = uploads.uploadError
+    ?? uploads.refreshError
+    ?? uploads.removeError
+    ?? uploads.storageError
 
   return (
-    <AttachmentsPanel
-      uploads={uploads.items}
-      loading={uploads.isLoading}
-      onAttach={uploads.upload}
-      onRemoveUpload={uploads.remove}
-      attachAccept={ACCEPT}
-      className="flex-1 min-h-0"
-    />
+    <>
+      {error && (
+        <p role="alert" className="m-4 rounded-md bg-red-50 p-3 text-sm text-red-800">
+          {error.message}
+        </p>
+      )}
+      <AttachmentsPanel
+        uploads={uploads.items}
+        loading={uploads.isLoading}
+        onAttach={uploads.upload}
+        onRemoveUpload={uploads.remove}
+        attachAccept={ACCEPT}
+        className="flex-1 min-h-0"
+      />
+    </>
   )
 }

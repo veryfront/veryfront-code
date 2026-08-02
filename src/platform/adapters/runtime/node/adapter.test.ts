@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isNode } from "#veryfront/platform/compat/runtime.ts";
+import { isNativeFileSystemAdapter } from "../../native-file-system-provenance.ts";
 import { NodeAdapter, nodeAdapter } from "./adapter.ts";
 
 function createAdapter(): NodeAdapter {
@@ -34,7 +36,9 @@ describe("NodeAdapter", () => {
     });
 
     it("should have fs adapter", () => {
-      assertExists(createAdapter().fs);
+      const fsAdapter = createAdapter().fs;
+      assertExists(fsAdapter);
+      assertEquals(isNativeFileSystemAdapter(fsAdapter), true);
     });
 
     it("should have env adapter", () => {
@@ -72,6 +76,34 @@ describe("NodeAdapter", () => {
       const { shutdown } = createAdapter();
       assertExists(shutdown);
       assertEquals(typeof shutdown, "function");
+    });
+
+    it("shuts down every server started by the adapter", async () => {
+      if (!isNode) return;
+      const adapter = createAdapter();
+      const first = await adapter.serve(() => new Response("first"), {
+        hostname: "127.0.0.1",
+        port: 0,
+      });
+      const second = await adapter.serve(() => new Response("second"), {
+        hostname: "127.0.0.1",
+        port: 0,
+      });
+      const firstUrl = `http://127.0.0.1:${first.addr.port}`;
+      const secondUrl = `http://127.0.0.1:${second.addr.port}`;
+
+      try {
+        assertEquals(await (await fetch(firstUrl)).text(), "first");
+        assertEquals(await (await fetch(secondUrl)).text(), "second");
+
+        await adapter.shutdown();
+
+        await assertRejects(() => fetch(firstUrl), TypeError, "fetch failed");
+        await assertRejects(() => fetch(secondUrl), TypeError, "fetch failed");
+      } finally {
+        await Promise.allSettled([first.stop(), second.stop()]);
+        await adapter.shutdown();
+      }
     });
   });
 });

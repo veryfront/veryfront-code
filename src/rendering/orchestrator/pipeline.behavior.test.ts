@@ -10,8 +10,8 @@ import { cacheCSSAsync, hashCSS } from "#veryfront/html/styles-builder/index.ts"
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
   getReadyManifestForRender,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -111,13 +111,13 @@ function primeCssCache(slug: string, projectId: string): void {
 
 function releaseManifestWithCss(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "p",
     releaseId: "rel-css",
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.793",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-06-12T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {},
@@ -125,17 +125,20 @@ function releaseManifestWithCss(): ReleaseAssetManifest {
       contentHash: RELEASE_CSS_HASH,
       size: 10,
       contentType: "text/css",
-      styleProfileHash: "style-profile",
+      styleProfileHash: "b".repeat(64),
+      cssPipelineIdentity: "tailwind-v4",
     }],
     routes: { "/behavior-release-css": { modules: [], css: [RELEASE_CSS_HASH] } },
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
+    dependencyMode: "immutable",
   };
 }
 
 async function primeReadyReleaseCssManifest(): Promise<void> {
-  configureReleaseAssetManifestFetcher(() =>
-    Promise.resolve({ state: "ready", manifest: releaseManifestWithCss() })
+  registerManifestFetcherForRelease(
+    "rel-css",
+    () =>
+      Promise.resolve({ state: "ready", manifest_version: 1, manifest: releaseManifestWithCss() }),
   );
   setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
   getReadyManifestForRender("rel-css");
@@ -149,7 +152,6 @@ describe("RenderPipeline behavior", () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
     Deno.env.delete("VERYFRONT_ENABLE_SERVER_TIMING");
     resetRequestProfiles();
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
 
@@ -936,7 +938,7 @@ describe("RenderPipeline behavior", () => {
       "pages/behavior-release-modules.mdx": {
         contentHash: "a".repeat(64),
         size: 100,
-        contentType: "application/javascript",
+        contentType: "text/javascript",
       },
     };
 

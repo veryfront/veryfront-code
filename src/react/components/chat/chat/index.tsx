@@ -42,23 +42,6 @@
  * @module react/components/chat
  */
 
-import * as React from "react";
-
-import type { ChatComponent } from "./chat-component.ts";
-import type { ChatProps } from "./chat-props.ts";
-import { ControlledChat } from "./controlled-chat.tsx";
-import { ConversationBoundChat } from "./app-mode-chat.tsx";
-
-// Composition imports (used in the Chat preset)
-import { ChatRoot } from "./composition/chat-root.tsx";
-import { ChatInput } from "./composition/chat-composer.tsx";
-import { ChatMessageList } from "./composition/chat-message-list.tsx";
-import { ChatEmpty } from "./composition/chat-empty.tsx";
-import { ChatIf } from "./composition/chat-if.tsx";
-import { ErrorBanner } from "./composition/error-banner.tsx";
-import { Message } from "./composition/message.tsx";
-import { ChatMessagesSkeleton } from "./components/chat-messages-skeleton.tsx";
-
 // Re-exports — sub-components
 
 export { FadeIn, Loader, Shimmer } from "./components/animations.tsx";
@@ -182,19 +165,17 @@ export {
   useAttachmentsPanel,
 } from "./components/attachments-panel.tsx";
 
-export {
-  type ConversationPatch,
-  useConversations,
-  type UseConversationsOptions,
-  type UseConversationsResult,
-} from "./hooks/use-conversations.ts";
+export { useConversations } from "./hooks/use-conversations.ts";
+export type * from "./hooks/use-conversations.ts";
 export {
   useConversation,
   type UseConversationOptions,
+  type UseConversationPersistenceState,
   type UseConversationResult,
 } from "./hooks/use-conversation.ts";
 export {
   ConversationsContextProvider,
+  type ConversationsContextValue,
   ConversationsProvider,
   type ConversationsProviderProps,
   useConversationsContext,
@@ -204,8 +185,12 @@ export {
 export {
   type Conversation,
   type ConversationStore,
+  ConversationStoreError,
+  type ConversationStoreOperation,
   type ConversationSummary,
 } from "./persistence/conversation-store.ts";
+export { CONVERSATION_STORAGE_LIMITS } from "./persistence/conversation-codec.ts";
+export type { ConversationStorageLimits } from "./persistence/conversation-codec.ts";
 export {
   localConversationStore,
   type StorageLike,
@@ -220,7 +205,9 @@ export {
 export {
   useAttachments,
   type UseAttachmentsOptions,
+  type UseAttachmentsRequestState,
   type UseAttachmentsResult,
+  type UseAttachmentsStorageState,
 } from "./hooks/use-uploads-registry.ts";
 export {
   useStickToBottom,
@@ -289,42 +276,5 @@ export {
 } from "./contexts/index.ts";
 
 // ChatProps: preset interface, re-exported here to preserve the public surface.
-
 export type { ChatAgentInfo, ChatProps } from "./chat-props.ts";
-
-// Chat — Preset component. `ControlledChat` (controlled mode) and
-// `ConversationBoundChat`/`UncontrolledChat` (app mode) live in sibling files;
-// this module wires them into the `Chat` compound.
-
-/**
- * Chat — batteries-included chat surface.
- *
- * - **App mode (uncontrolled):** omit `chat` and pass `agentId` + `api`;
- *   `<Chat>` wires `useChat` + `useAgentMetadata` internally. Inside a
- *   `ConversationsProvider` it also binds to the active conversation.
- * - **Controlled mode:** pass `chat={useChat()}`.
- */
-function ChatBase(props: ChatProps): React.ReactElement {
-  return props.chat !== undefined
-    ? <ControlledChat {...props} chat={props.chat} />
-    : <ConversationBoundChat ref={props.ref} {...props} />;
-}
-ChatBase.displayName = "Chat";
-
-// ---------------------------------------------------------------------------
-// Chat — Compound API via Object.assign. The default export IS the compound, so
-// `Chat.Root` / `Chat.Empty` / `Chat.Skeleton` / … are all typed off the same
-// import.
-// ---------------------------------------------------------------------------
-
-/** Render chat components. */
-export const Chat: ChatComponent = Object.assign(ChatBase, {
-  Root: ChatRoot,
-  MessageList: ChatMessageList,
-  Input: ChatInput,
-  Empty: ChatEmpty,
-  Skeleton: ChatMessagesSkeleton,
-  If: ChatIf,
-  Message: Message,
-  ErrorBanner: ErrorBanner,
-});
+export { Chat } from "./chat-preset.tsx";

@@ -159,13 +159,13 @@ describe("hydration-data-generator", () => {
 
     it("includes release asset module URLs for hydration when a manifest is provided", () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 5,
         builderVersion: "0.1.784",
-        sourceContentHash: "",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-06-13T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {
@@ -183,7 +183,7 @@ describe("hydration-data-generator", () => {
         css: [],
         routes: {},
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
       const parsed = parseHydrationData(
         "page",
@@ -213,13 +213,13 @@ describe("hydration-data-generator", () => {
 
     it("includes App Router release asset module URLs for hydration", () => {
       const manifest: ReleaseAssetManifest = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectId: "project-id",
         releaseId: "release-id",
         releaseVersion: 1,
         manifestVersion: 5,
         builderVersion: "0.1.1156",
-        sourceContentHash: "",
+        sourceContentHash: "a".repeat(64),
         createdAt: "2026-07-27T00:00:00.000Z",
         assetBasePath: "/_vf/assets",
         modules: {
@@ -239,7 +239,7 @@ describe("hydration-data-generator", () => {
           "/": { modules: ["app/page.tsx", "app/layout.tsx"], css: [] },
         },
         dependencies: {},
-        fallback: { mode: "jit", gaps: [] },
+        dependencyMode: "immutable",
       };
       const parsed = parseHydrationData(
         "page",

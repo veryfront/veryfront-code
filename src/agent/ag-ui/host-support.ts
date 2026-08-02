@@ -16,6 +16,7 @@ const decoder = new TextDecoder();
 
 /** Event emitted for AG-UI sse. */
 export interface AgUiSseEvent {
+  /** 1-128 character ASCII token beginning with a letter. */
   event: string;
   payload: Record<string, unknown>;
 }

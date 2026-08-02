@@ -1,4 +1,12 @@
 import React, { useEffect } from "react";
+import {
+  descriptorFromHeadProps,
+  HEAD_REACT_OWNER_ATTRIBUTE,
+  HEAD_SSR_PAYLOAD_ATTRIBUTE,
+  type ManagedHeadDescriptor,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
+import { getClientHeadManager, getManagedHeadNonce } from "#veryfront/html/client-head-manager.ts";
 
 /** Router state exposed through `useRouter()`. */
 export interface RouterValue {
@@ -130,7 +138,6 @@ const defaultPageContext: PageContextValue = {
 
 const ROUTER_CONTEXT_SYMBOL = Symbol.for("veryfront.react.router-context");
 const PAGE_CONTEXT_SYMBOL = Symbol.for("veryfront.react.page-context");
-const HEAD_COLLECTOR_SYMBOL = Symbol.for("veryfront.react.collect-head");
 
 const globalRouterContext = globalThis as typeof globalThis & {
   [ROUTER_CONTEXT_SYMBOL]?: React.Context<RouterValue>;
@@ -140,43 +147,24 @@ const globalPageContext = globalThis as typeof globalThis & {
   [PAGE_CONTEXT_SYMBOL]?: React.Context<PageContextValue>;
 };
 
-type CollectHeadFn = (data: {
-  title?: string;
-  description?: string;
-  metas?: Array<{ name?: string; property?: string; content: string }>;
-  links?: Array<Record<string, string>>;
-  styles?: string[];
-  scripts?: Array<Record<string, string | undefined>>;
-}) => void;
-
 const RouterContext = globalRouterContext[ROUTER_CONTEXT_SYMBOL] ??
   (globalRouterContext[ROUTER_CONTEXT_SYMBOL] = React.createContext<RouterValue>(defaultRouter));
 
 const PageContextContext = globalPageContext[PAGE_CONTEXT_SYMBOL] ??
   (globalPageContext[PAGE_CONTEXT_SYMBOL] = React.createContext(defaultPageContext));
 
-function isServerEnvironment(): boolean {
-  const ssrFlag = (globalThis as Record<string, unknown>).__VERYFRONT_SSR__;
-  if (ssrFlag === true) return true;
-  return typeof window === "undefined";
-}
+type ClientHeadDescriptor = ManagedHeadDescriptor;
 
-function getDocumentNonce(): string | undefined {
-  if (typeof document === "undefined") return undefined;
-
-  const element = document.querySelector<HTMLElement>("script[nonce], style[nonce], link[nonce]");
-  if (!element) return undefined;
-
-  const nonce = element.nonce || element.getAttribute("nonce") || "";
-  return nonce || undefined;
-}
-
-function collectHead(data: Parameters<CollectHeadFn>[0]): void {
-  const collector = (globalThis as typeof globalThis & {
-    [HEAD_COLLECTOR_SYMBOL]?: CollectHeadFn;
-  })[HEAD_COLLECTOR_SYMBOL];
-
-  collector?.(data);
+function createClientHeadDescriptor(
+  child: React.ReactElement,
+  nonce: string | undefined,
+): ClientHeadDescriptor | null {
+  if (typeof child.type !== "string") return null;
+  return descriptorFromHeadProps(
+    child.type,
+    child.props as Record<string, unknown>,
+    nonce,
+  );
 }
 
 /** How a navigation should affect the history stack. */
@@ -469,135 +457,50 @@ function flattenHeadChildren(children: React.ReactNode): React.ReactElement[] {
 
 /** Applies document head elements during SSR and client rendering. */
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
-  const isSSR = isServerEnvironment();
-
-  if (isSSR && children) {
-    flattenHeadChildren(children).forEach((child) => {
-      const { type } = child;
-      const props = child.props as Record<string, unknown>;
-      if (typeof type !== "string" || type === "body") return;
-
-      if (type === "title") {
-        collectHead({ title: String(props.children ?? "") });
-        return;
-      }
-
-      if (type === "meta") {
-        collectHead({
-          metas: [{
-            name: props.name as string | undefined,
-            property: props.property as string | undefined,
-            content: String(props.content ?? ""),
-          }],
-        });
-        return;
-      }
-
-      if (type === "link") {
-        const link: Record<string, string> = {};
-        for (const [key, value] of Object.entries(props)) {
-          if (value != null) link[key] = String(value);
-        }
-        collectHead({ links: [link] });
-        return;
-      }
-
-      if (type === "style") {
-        collectHead({ styles: [String(props.children ?? "")] });
-        return;
-      }
-
-      if (type === "script") {
-        const script: Record<string, string | undefined> = {};
-        for (const [key, value] of Object.entries(props)) {
-          if (key === "children" || key === "dangerouslySetInnerHTML") continue;
-          if (value != null) script[key] = String(value);
-        }
-        if (props.dangerouslySetInnerHTML) {
-          const html = props.dangerouslySetInnerHTML as { __html?: string };
-          if (html.__html) script.content = html.__html;
-        } else if (typeof props.children === "string") {
-          script.content = props.children;
-        }
-        collectHead({ scripts: [script] });
-      }
-    });
-  }
+  const ownerRef = React.useRef<object | null>(null);
+  const anchorRef = React.useRef<HTMLDivElement | null>(null);
+  const managerRef = React.useRef<ReturnType<typeof getClientHeadManager> | null>(
+    null,
+  );
+  if (!ownerRef.current) ownerRef.current = {};
+  const payload = serializeManagedHeadPayload(
+    flattenHeadChildren(children)
+      .map((child) => createClientHeadDescriptor(child, undefined))
+      .filter((descriptor): descriptor is ClientHeadDescriptor => descriptor !== null),
+  );
 
   useEffect(() => {
-    if (!children) return;
+    const owner = ownerRef.current;
+    const anchor = anchorRef.current;
+    const ownerDocument = anchor?.ownerDocument;
+    if (!owner || !anchor || !ownerDocument) return;
 
-    const addedElements: Element[] = [];
-    const nonce = getDocumentNonce();
+    const nonce = getManagedHeadNonce(ownerDocument);
+    const descriptors = flattenHeadChildren(children)
+      .map((child) => createClientHeadDescriptor(child, nonce))
+      .filter((descriptor): descriptor is ClientHeadDescriptor => descriptor !== null);
+    const manager = getClientHeadManager(ownerDocument);
+    if (managerRef.current && managerRef.current !== manager) {
+      managerRef.current.deactivate(owner);
+    }
+    manager.update(owner, anchor, descriptors);
+    managerRef.current = manager;
+  });
 
-    flattenHeadChildren(children).forEach((child) => {
-      const { type } = child;
-      const props = child.props as Record<string, unknown>;
-      if (typeof type !== "string" || type === "body") return;
-
-      if (type === "title") {
-        document.title = String(props.children ?? "");
-        return;
-      }
-
-      const element = document.createElement(type);
-      if ((type === "style" || type === "script") && !props.nonce && nonce) {
-        element.setAttribute("nonce", nonce);
-      }
-
-      if (type === "script") {
-        const src = props.src as string | undefined;
-        const id = props.id as string | undefined;
-
-        if (id && document.querySelector(`script[data-vf-head][id="${id}"]`)) return;
-        if (src && document.querySelector(`script[data-vf-head][src="${src}"]`)) return;
-
-        const content = typeof props.children === "string"
-          ? props.children
-          : (props.dangerouslySetInnerHTML as { __html?: string })?.__html;
-        if (content && !id) {
-          let sum = 0;
-          for (let i = 0; i < Math.min(content.length, 200); i++) {
-            sum = ((sum << 5) - sum + content.charCodeAt(i)) | 0;
-          }
-          const hash = `vf${Math.abs(sum).toString(36)}`;
-          if (document.querySelector(`script[data-vf-head][data-vf-hash="${hash}"]`)) return;
-          element.setAttribute("data-vf-hash", hash);
-        }
-        element.setAttribute("data-vf-head", "true");
-      }
-
-      for (const [key, value] of Object.entries(props)) {
-        if (key === "children") continue;
-
-        let attrName = key;
-        if (key === "className") attrName = "class";
-        else if (key === "htmlFor") attrName = "for";
-
-        if (typeof value === "boolean") {
-          if (value) element.setAttribute(attrName, "");
-          continue;
-        }
-
-        if (value != null) element.setAttribute(attrName, String(value));
-      }
-
-      if (typeof props.children === "string") {
-        element.textContent = props.children;
-      }
-
-      element.setAttribute("data-veryfront-managed", "1");
-      document.head.appendChild(element);
-      addedElements.push(element);
-    });
-
+  useEffect(() => {
+    const owner = ownerRef.current;
+    if (!owner) return;
     return () => {
-      for (const el of addedElements) el.remove();
+      managerRef.current?.deactivate(owner);
+      managerRef.current = null;
     };
-  }, [children]);
+  }, []);
 
   return React.createElement("div", {
+    ref: anchorRef,
     "data-veryfront-head": "1",
+    [HEAD_REACT_OWNER_ATTRIBUTE]: "1",
+    [HEAD_SSR_PAYLOAD_ATTRIBUTE]: payload,
     style: { display: "none" },
   });
 }

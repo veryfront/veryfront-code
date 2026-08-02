@@ -76,8 +76,7 @@
     "cycle-sensitive:src/utils/cache-file-ops.ts -> #veryfront/utils",
     "cycle-sensitive:src/utils/circuit-breaker.ts -> #veryfront/utils",
     "cycle-sensitive:src/utils/lru-wrapper.ts -> #veryfront/utils",
-    "cycle-sensitive:src/utils/memory/profiler.ts -> #veryfront/utils",
-    "cycle-sensitive:src/utils/redis-client.ts -> #veryfront/errors"
+    "cycle-sensitive:src/utils/memory/profiler.ts -> #veryfront/utils"
   ],
   "cycleEdges": [
     "src/proxy/logger.ts -> src/proxy/tracing.ts",

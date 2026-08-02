@@ -106,6 +106,28 @@ describe("jsonResponse", () => {
     assertEquals(await res.text(), "Failed to serialize response data");
   });
 
+  it("preserves response metadata when serialization fails", () => {
+    const circular: Record<string, unknown> = {};
+    circular["self"] = circular;
+
+    const res = jsonResponse(circular, HttpStatus.OK, {
+      correlationId: "serialize-failure",
+      headers: { "X-Custom": "preserved" },
+    });
+
+    assertEquals(res.status, 500);
+    assertEquals(res.headers.get("X-Correlation-Id"), "serialize-failure");
+    assertEquals(res.headers.get("X-Custom"), "preserved");
+    assertEquals(res.headers.get("Content-Type"), "text/plain; charset=utf-8");
+  });
+
+  it("rejects undefined because it is not a valid JSON document", async () => {
+    const res = jsonResponse(undefined);
+
+    assertEquals(res.status, 500);
+    assertEquals(await res.text(), "Failed to serialize response data");
+  });
+
   it("should add correlation id header", () => {
     const res = jsonResponse({}, HttpStatus.OK, { correlationId: "xyz" });
     assertEquals(res.headers.get("X-Correlation-Id"), "xyz");
@@ -207,6 +229,19 @@ describe("ok", () => {
     assertEquals(res.status, 200);
     assertEquals(await res.json(), { result: true });
   });
+
+  it("does not allow options to override its canonical status", () => {
+    assertEquals(ok(undefined, { status: HttpStatus.BAD_GATEWAY }).status, HttpStatus.OK);
+  });
+
+  it("preserves headers and correlation ids for an empty response", () => {
+    const res = ok(undefined, {
+      correlationId: "ok-empty",
+      headers: { "X-Custom": "value" },
+    });
+    assertEquals(res.headers.get("X-Correlation-Id"), "ok-empty");
+    assertEquals(res.headers.get("X-Custom"), "value");
+  });
 });
 
 describe("created", () => {
@@ -226,12 +261,37 @@ describe("created", () => {
     assertEquals(res.status, 201);
     assertEquals(res.headers.get("Location"), "/items/123");
   });
+
+  it("does not allow options to override its canonical status or generated headers", () => {
+    const res = created(undefined, "/items/123", {
+      status: HttpStatus.BAD_GATEWAY,
+      correlationId: "created-empty",
+      headers: { "X-Custom": "value" },
+    });
+
+    assertEquals(res.status, HttpStatus.CREATED);
+    assertEquals(res.headers.get("Location"), "/items/123");
+    assertEquals(res.headers.get("X-Correlation-Id"), "created-empty");
+    assertEquals(res.headers.get("X-Custom"), "value");
+  });
 });
 
 describe("noContent", () => {
   it("should return 204 with null body", () => {
     const res = noContent();
     assertEquals(res.status, 204);
+  });
+
+  it("does not allow options to override its canonical status", () => {
+    const res = noContent({
+      status: HttpStatus.BAD_GATEWAY,
+      correlationId: "no-content",
+      headers: { "X-Custom": "value" },
+    });
+
+    assertEquals(res.status, HttpStatus.NO_CONTENT);
+    assertEquals(res.headers.get("X-Correlation-Id"), "no-content");
+    assertEquals(res.headers.get("X-Custom"), "value");
   });
 });
 

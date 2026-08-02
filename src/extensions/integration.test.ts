@@ -14,7 +14,7 @@ import type { Extension, ResolvedExtension } from "./index.ts";
 import { register, reset } from "./contracts.ts";
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import type { LLMProviderRegistry } from "./llm/index.ts";
-import extOpenAI from "../../extensions/ext-llm-openai/src/index.ts";
+import extOpenAI, { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
 import extAnthropic from "../../extensions/ext-llm-anthropic/src/index.ts";
 import extGoogle from "../../extensions/ext-llm-google/src/index.ts";
 import {
@@ -193,6 +193,31 @@ describe("extensions/integration", () => {
     assertEquals(resolved, registry);
     assert(registry.has("openai"));
     await loader.teardownAll();
+  });
+
+  it("provider extensions preserve a higher-priority registry binding", async () => {
+    const registry = createLLMProviderRegistry();
+    const existingProvider = new OpenAIProvider();
+    registry.register(existingProvider);
+
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ [LLMProviderRegistryName]: registry });
+    await loader.setupAll(
+      [
+        {
+          source: "local-file",
+          origin: "virtual://ext-llm-openai",
+          extension: extOpenAI(),
+        } satisfies ResolvedExtension,
+      ],
+      {},
+    );
+
+    assertEquals(registry.get("openai"), existingProvider);
+    assertEquals(resolve("LLMProvider:openai"), existingProvider);
+
+    await loader.teardownAll();
+    assertEquals(registry.get("openai"), existingProvider);
   });
 
   it("ext-observability-opentelemetry: TracingExporter registers and returns a real tracer", async () => {

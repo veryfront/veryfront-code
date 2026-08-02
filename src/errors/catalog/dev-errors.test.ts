@@ -7,6 +7,7 @@ describe("errors/catalog/dev-errors", () => {
   describe("DEV_ERROR_CATALOG", () => {
     it("should contain all dev error slugs", () => {
       const expectedSlugs = [
+        "hmr-error",
         "dev-server-error",
         "fast-refresh-error",
         "error-overlay-error",
@@ -33,8 +34,8 @@ describe("errors/catalog/dev-errors", () => {
       }
     });
 
-    it("should have 4 entries", () => {
-      assertEquals(Object.keys(DEV_ERROR_CATALOG).length, 4);
+    it("should have 5 entries", () => {
+      assertEquals(Object.keys(DEV_ERROR_CATALOG).length, 5);
     });
 
     it("dev-server-error should suggest restarting dev server", () => {

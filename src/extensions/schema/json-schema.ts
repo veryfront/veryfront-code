@@ -6,18 +6,39 @@
  * @module extensions/schema/json-schema
  */
 
+export type JsonSchemaPrimitiveType =
+  | "string"
+  | "number"
+  | "integer"
+  | "boolean"
+  | "object"
+  | "array"
+  | "null";
+
 export type JsonSchema = {
-  type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
+  [keyword: string]: unknown;
+  $schema?: string;
+  type?: JsonSchemaPrimitiveType | readonly JsonSchemaPrimitiveType[];
   description?: string;
-  enum?: unknown[];
+  format?: string;
+  pattern?: string;
+  minLength?: number;
+  maxLength?: number;
+  minimum?: number;
+  maximum?: number;
+  exclusiveMinimum?: number;
+  exclusiveMaximum?: number;
+  enum?: readonly unknown[];
   const?: unknown;
   default?: unknown;
   properties?: Record<string, JsonSchema>;
-  required?: string[];
+  required?: readonly string[];
+  propertyNames?: JsonSchema;
   items?: JsonSchema;
   additionalProperties?: boolean | JsonSchema;
-  anyOf?: JsonSchema[];
-  prefixItems?: JsonSchema[];
+  anyOf?: readonly JsonSchema[];
+  allOf?: readonly JsonSchema[];
+  prefixItems?: readonly JsonSchema[];
   minItems?: number;
   maxItems?: number;
 };

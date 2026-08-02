@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   findNestedImports,
@@ -7,6 +7,11 @@ import {
   resolveNestedImportBase,
   resolveNestedModuleImports,
 } from "./nested-imports.ts";
+import {
+  MAX_MDX_MODULE_IMPORTS_PER_FILE,
+  MAX_MDX_MODULE_TRANSFORM_CONCURRENCY,
+  ModuleImportLimitError,
+} from "./limits.ts";
 
 describe("transforms/mdx/esm-module-loader/module-fetcher/nested-imports", () => {
   describe("findNestedImports", () => {
@@ -157,6 +162,58 @@ import { bar } from "./local.js";
           `export { local };`,
         ].join("\n"),
       );
+    });
+
+    it("resolves admitted fan-out with bounded concurrency", async () => {
+      const importCount = MAX_MDX_MODULE_TRANSFORM_CONCURRENCY + 4;
+      const moduleCode = Array.from(
+        { length: importCount },
+        (_, index) => `import value${index} from "./dependency-${index}.js";`,
+      ).join("\n");
+      let active = 0;
+      let peak = 0;
+
+      await resolveNestedModuleImports({
+        moduleCode,
+        esmCacheDir: "/tmp/veryfront-unused",
+        normalizedPath: "_vf_modules/pages/index.js",
+        projectSlug: "docs",
+        strictMissingModules: true,
+        fetchAndCacheModule: async (path) => {
+          active += 1;
+          peak = Math.max(peak, active);
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          active -= 1;
+          return `/cache/${path.replaceAll("/", "__")}.mjs`;
+        },
+      });
+
+      assertEquals(peak, MAX_MDX_MODULE_TRANSFORM_CONCURRENCY);
+    });
+
+    it("rejects excessive per-file fan-out before starting child fetches", async () => {
+      let fetchCount = 0;
+      const moduleCode = Array.from(
+        { length: MAX_MDX_MODULE_IMPORTS_PER_FILE + 1 },
+        (_, index) => `import value${index} from "./dependency-${index}.js";`,
+      ).join("\n");
+
+      await assertRejects(
+        () =>
+          resolveNestedModuleImports({
+            moduleCode,
+            esmCacheDir: "/tmp/veryfront-unused",
+            normalizedPath: "_vf_modules/pages/index.js",
+            projectSlug: "docs",
+            strictMissingModules: true,
+            fetchAndCacheModule: () => {
+              fetchCount += 1;
+              return Promise.resolve(null);
+            },
+          }),
+        ModuleImportLimitError,
+      );
+      assertEquals(fetchCount, 0);
     });
   });
 

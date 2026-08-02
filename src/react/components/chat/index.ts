@@ -104,6 +104,39 @@ export {
 } from "./chat.tsx";
 
 // ---------------------------------------------------------------------------
+// Chat - Conversation persistence
+// ---------------------------------------------------------------------------
+export {
+  type ActiveConversationLoadFailure,
+  type Conversation,
+  CONVERSATION_STORAGE_LIMITS,
+  type ConversationPatch,
+  ConversationsContextProvider,
+  type ConversationsContextValue,
+  ConversationsProvider,
+  type ConversationsProviderProps,
+  type ConversationStorageLimits,
+  type ConversationStore,
+  ConversationStoreError,
+  type ConversationStoreOperation,
+  type ConversationSummary,
+  localConversationStore,
+  memoryConversationStore,
+  type StorageLike,
+  useConversation,
+  type UseConversationOptions,
+  type UseConversationPersistenceState,
+  type UseConversationResult,
+  useConversations,
+  type UseConversationsActiveLoadState,
+  useConversationsContext,
+  useConversationsContextOptional,
+  type UseConversationsOptions,
+  type UseConversationsPersistenceState,
+  type UseConversationsResult,
+} from "./chat.tsx";
+
+// ---------------------------------------------------------------------------
 // Chat — Sub-components
 // ---------------------------------------------------------------------------
 export {

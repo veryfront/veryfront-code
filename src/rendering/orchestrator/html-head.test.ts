@@ -1,0 +1,282 @@
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { CollectedHead } from "#veryfront/react/head-collector.ts";
+import {
+  descriptorFromHeadProps,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
+import {
+  buildHeadElements,
+  extractCommittedHeadFromHTML,
+  mergeCollectedHeadWithShell,
+} from "./html-head.ts";
+
+describe("committed React Head extraction", () => {
+  it("reads only explicit owner payloads and aggregates committed order", () => {
+    const layout = serializeManagedHeadPayload([
+      descriptorFromHeadProps("title", { children: "Layout" })!,
+      descriptorFromHeadProps("meta", { name: "author", content: "Layout author" })!,
+    ]);
+    const page = serializeManagedHeadPayload([
+      descriptorFromHeadProps("title", { children: "Page" })!,
+      descriptorFromHeadProps("style", { children: ".page{}" })!,
+    ]);
+    const html = `<div data-vf-ssr-head="${layout}"></div>
+      <div data-veryfront-head="1" data-vf-react-head-owner="1" data-vf-ssr-head="${layout}"></div>
+      <div data-veryfront-head="1" data-vf-react-head-owner="1" data-vf-ssr-head="${page}"></div>`;
+
+    assertEquals(extractCommittedHeadFromHTML(html), {
+      title: "Page",
+      metas: [{ content: "Layout author", name: "author" }],
+      links: [],
+      styles: [".page{}"],
+      scripts: [],
+    });
+  });
+
+  it("fails closed when a committed owner payload is malformed", () => {
+    assertThrows(
+      () =>
+        extractCommittedHeadFromHTML(
+          '<div data-veryfront-head="1" data-vf-react-head-owner="1" data-vf-ssr-head="Zh"></div>',
+        ),
+      TypeError,
+      "non-canonical trailing bits",
+    );
+  });
+});
+
+describe("collected Head serialization", () => {
+  it("marks every emitted node and preserves empty content and style attributes", () => {
+    const result = buildHeadElements({
+      metas: [{ name: "author", content: "" }],
+      links: [{ rel: "canonical", href: "https://example.com/" }],
+      styles: [{ media: "print", content: "" }],
+      scripts: [{ content: "" }],
+    });
+
+    assertEquals(
+      (result.scripts.match(/data-vf-head="true"/g) ?? []).length,
+      1,
+    );
+    assertEquals(
+      (result.other.match(/data-vf-head="true"/g) ?? []).length,
+      3,
+    );
+    assertStringIncludes(result.scripts, 'data-vf-hash="vf0"');
+    assertStringIncludes(result.other, 'content=""');
+    assertStringIncludes(result.other, 'media="print"');
+  });
+
+  it("strips event handlers and every case variant of internal markers", () => {
+    const result = buildHeadElements({
+      metas: [{
+        name: "author",
+        content: "A",
+        onload: "alert(1)",
+        "DATA-VF-HEAD": "spoofed",
+      }],
+      links: [{
+        rel: "canonical",
+        href: "https://example.com/",
+        onLoad: "alert(1)",
+        "Data-Vf-React-Head-Owner": "1",
+      }],
+      styles: [{
+        content: ".x{}",
+        ONCLICK: "alert(1)",
+        "DATA-VERYFRONT-MANAGED": "spoofed",
+      }],
+      scripts: [{
+        content: "safe()",
+        onerror: "alert(1)",
+        "DATA-VF-HASH": "spoofed",
+      }],
+    });
+
+    const html = `${result.scripts}\n${result.other}`;
+    assertEquals(/onload|onclick|onerror/i.test(html), false);
+    assertEquals(html.includes("spoofed"), false);
+    assertEquals(
+      (html.match(/data-vf-head="true"/g) ?? []).length,
+      4,
+    );
+  });
+});
+
+describe("collected Head and shell singleton merge", () => {
+  it("emits one winning viewport/canonical/social/script identity", () => {
+    const head: CollectedHead = {
+      title: "Head title",
+      description: "Head description",
+      metas: [
+        { name: "viewport", content: "width=900" },
+        { property: "og:title", content: "Head OG" },
+      ],
+      links: [{
+        rel: "canonical",
+        href: "https://example.com/head",
+      }],
+      styles: [],
+      scripts: [{
+        id: "head-script",
+        src: "/shared.js",
+      }],
+    };
+
+    const result = mergeCollectedHeadWithShell(
+      {
+        meta: [{ name: "author", content: "Page author" }],
+      },
+      {
+        og: { title: "Layout OG", image: "layout.jpg" },
+        links: [
+          { rel: "canonical", href: "https://example.com/layout" },
+          { rel: "stylesheet", href: "/layout.css" },
+        ],
+        scripts: [
+          { id: "layout-script", src: "/shared.js" },
+          { id: "other-script", src: "/other.js" },
+        ],
+      },
+      head,
+    );
+
+    assertEquals(result.frontmatter.title, "Head title");
+    assertEquals(result.frontmatter.description, "Head description");
+    assertEquals(result.frontmatter.viewport, "width=900");
+    assertEquals(result.frontmatter.links, [
+      { rel: "stylesheet", href: "/layout.css" },
+    ]);
+    assertEquals(result.frontmatter.scripts, [
+      { id: "other-script", src: "/other.js" },
+    ]);
+    assertEquals(result.frontmatter.og, { image: "layout.jpg" });
+    assertEquals(result.emissionHead?.metas, [
+      { name: "viewport", content: "width=900" },
+      { property: "og:title", content: "Head OG" },
+    ]);
+    assertEquals(result.marksViewport, true);
+  });
+
+  it("deduplicates exact repeatables and their structured aliases", () => {
+    const result = mergeCollectedHeadWithShell(
+      {
+        og: {
+          image: "/same.png",
+          "image:alt": "Alternative",
+        },
+        meta: [
+          { name: "Author", content: "Same author" },
+          { name: "author", content: "Different author" },
+          { property: "og:image", content: "/same.png" },
+        ],
+        links: [
+          { rel: "preload", href: "/same.woff2", as: "font" },
+          { rel: "preload", href: "/other.woff2", as: "font" },
+        ],
+        icons: [
+          { href: "/favicon.svg" },
+          { href: "/other.svg" },
+        ],
+        styles: [
+          { href: "/shared.css", media: "print" },
+          { content: ".same{}", media: "screen" },
+          { content: ".other{}" },
+        ],
+      },
+      {},
+      {
+        metas: [
+          { name: "author", content: "Same author" },
+          { property: "og:image", content: "/same.png" },
+        ],
+        links: [
+          { rel: "PRELOAD", href: "/same.woff2", as: "font" },
+          { rel: "icon", href: "/favicon.svg" },
+          { rel: "stylesheet", href: "/shared.css", media: "print" },
+        ],
+        styles: [{ content: ".same{}", media: "screen" }],
+        scripts: [],
+      },
+    );
+
+    assertEquals(result.frontmatter.meta, [
+      { name: "author", content: "Different author" },
+    ]);
+    assertEquals(result.frontmatter.og, {
+      "image:alt": "Alternative",
+    });
+    assertEquals(result.frontmatter.links, [
+      { rel: "preload", href: "/other.woff2", as: "font" },
+    ]);
+    assertEquals(result.frontmatter.icons, [{ href: "/other.svg" }]);
+    assertEquals(result.frontmatter.styles, [{ content: ".other{}" }]);
+  });
+
+  it("deduplicates identical anonymous scripts but preserves distinct behavior", () => {
+    const result = mergeCollectedHeadWithShell(
+      {
+        scripts: [
+          { content: "boot()", type: "module", nonce: "shell" },
+          { content: "boot()", type: "text/javascript" },
+          { content: "other()" },
+        ],
+      },
+      {},
+      {
+        metas: [],
+        links: [],
+        styles: [],
+        scripts: [{ content: "boot()", type: "module", nonce: "head" }],
+      },
+    );
+
+    assertEquals(result.frontmatter.scripts, [
+      { content: "boot()", type: "text/javascript" },
+      { content: "other()" },
+    ]);
+  });
+
+  it("normalizes singleton values and keeps media-qualified theme colors distinct", () => {
+    const result = mergeCollectedHeadWithShell(
+      {
+        themeColor: "red",
+        meta: [{ name: "Viewport", content: "width=400" }],
+        links: [{ rel: "CANONICAL", href: "https://example.com/old" }],
+      },
+      {},
+      {
+        metas: [
+          { name: "viewport", content: "width=900" },
+          { name: "theme-color", content: "blue" },
+          {
+            name: "theme-color",
+            content: "black",
+            media: "(prefers-color-scheme: dark)",
+          },
+          { charset: "utf-8" },
+        ],
+        links: [{
+          rel: "canonical",
+          href: "https://example.com/current",
+        }],
+        styles: [],
+        scripts: [],
+      },
+    );
+
+    assertEquals(result.frontmatter.themeColor, undefined);
+    assertEquals(result.frontmatter.meta, []);
+    assertEquals(result.frontmatter.links, []);
+    assertEquals(result.emissionHead?.metas, [
+      { name: "viewport", content: "width=900" },
+      { name: "theme-color", content: "blue" },
+      {
+        name: "theme-color",
+        content: "black",
+        media: "(prefers-color-scheme: dark)",
+      },
+    ]);
+  });
+});

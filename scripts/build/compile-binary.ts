@@ -32,6 +32,7 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-observability-opentelemetry/src/index.ts",
   "extensions/ext-observability-sentry/src/index.ts",
   "extensions/ext-parser-babel/src/index.ts",
+  "extensions/ext-parser-babel/src/parser-only.ts",
   "extensions/ext-sandbox-shell-tools/src/index.ts",
   // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
   "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",

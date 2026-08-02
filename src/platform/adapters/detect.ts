@@ -1,23 +1,11 @@
-import { logger as baseLogger } from "#veryfront/utils";
-import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { detectRuntime } from "./runtime-detection.ts";
 import type { RuntimeAdapter } from "./base.ts";
-
-// Re-export the registry for convenient access
-export { runtime } from "./registry.ts";
-
-function throwConfigError(message: string): never {
-  logger.error("", message);
-  throw toError(createError({ type: "config", message }));
-}
+import { runtime } from "./registry.ts";
 
 /**
  * Get the runtime adapter for the current environment
  *
  * @deprecated Use `runtime.get()` from `./registry.ts` instead for singleton management.
- * This function creates a new adapter instance each time, which can cause memory leaks
- * and inconsistent state. The registry provides proper singleton management and lifecycle.
+ * This compatibility alias delegates to the same lifecycle registry.
  *
  * @example
  * ```ts
@@ -29,56 +17,26 @@ function throwConfigError(message: string): never {
  * const adapter = await runtime.get();
  * ```
  *
- * @returns A new RuntimeAdapter instance for the detected runtime
- * @throws Error if the runtime is unsupported or requires manual initialization (Cloudflare)
+ * @returns The initialized RuntimeAdapter owned by the registry
+ * @throws Error if the runtime is unsupported or requires request-scoped
+ * Cloudflare bindings. Use `createCloudflareAdapter(env)` in a Worker handler.
  */
 export function getAdapter(): Promise<RuntimeAdapter> {
-  const runtimeId = detectRuntime();
-
-  return withSpan(
-    "platform.adapter.getAdapter",
-    async () => {
-      switch (runtimeId) {
-        case "deno": {
-          const { denoAdapter } = await import("./deno.ts");
-          return denoAdapter;
-        }
-        case "bun": {
-          const { bunAdapter } = await import("./bun.ts");
-          return bunAdapter;
-        }
-        case "node": {
-          const { nodeAdapter } = await import("./node.ts");
-          return nodeAdapter;
-        }
-        case "cloudflare":
-          return throwConfigError(
-            "Cloudflare adapter requires manual initialization with environment. Please use createCloudflareAdapter() with your environment context.",
-          );
-        default: {
-          const supportedRuntimes = ["deno", "bun", "node", "cloudflare"];
-          throwConfigError(
-            `Unsupported runtime: ${runtimeId}. Supported runtimes: ${
-              supportedRuntimes.join(", ")
-            }`,
-          );
-        }
-      }
-    },
-    { "adapter.runtime": runtimeId },
-  );
+  return runtime.get();
 }
+
+// Re-export the registry for compatibility with existing imports.
+export { runtime };
 
 export { denoAdapter } from "./deno.ts";
 export { nodeAdapter } from "./node.ts";
 export { bunAdapter } from "./bun.ts";
 
 export type {
+  BoundedFileSystemAdapter,
   EnvironmentAdapter,
   FileSystemAdapter,
   RuntimeAdapter,
   RuntimeCapabilities,
   RuntimeId,
 } from "./base.ts";
-
-const logger = baseLogger.component("adapter-detection");

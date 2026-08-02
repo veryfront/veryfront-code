@@ -33,7 +33,7 @@ import {
 import {
   clearCachedReleaseAssetManifests,
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
@@ -91,7 +91,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     deleteEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG);
     deleteEnv(DEPENDENCY_PINNING_ENV_FLAG);
     deleteEnv("VERYFRONT_ENABLE_SERVER_TIMING");
-    configureReleaseAssetManifestFetcher(undefined);
+    deleteEnv("VERYFRONT_CACHE_DIR");
     clearReleaseAssetManifestCache();
     clearReleaseModuleResponseCache();
     clearImportMapCache();
@@ -127,22 +127,26 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     return match?.[1] ?? "";
   }
 
-  function manifest(dependencies: ReleaseAssetManifest["dependencies"]): ReleaseAssetManifest {
+  function manifest(
+    dependencies: ReleaseAssetManifest["dependencies"],
+    releaseId = "release-id",
+    dependencyMode: ReleaseAssetManifest["dependencyMode"] = "immutable",
+  ): ReleaseAssetManifest {
     return {
       schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
       projectId: "project-id",
-      releaseId: "release-id",
+      releaseId,
       releaseVersion: 1,
       manifestVersion: 1,
       builderVersion: "test",
-      sourceContentHash: "source",
+      sourceContentHash: "a".repeat(64),
       createdAt: new Date(0).toISOString(),
       assetBasePath: "/_vf/assets",
       modules: {},
       css: [],
       routes: {},
+      dependencyMode,
       dependencies,
-      fallback: { mode: "jit", gaps: [] },
     };
   }
 
@@ -197,16 +201,65 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(response.status, 404);
   });
 
-  it("should return 404 for snippet with missing hash", async () => {
+  it("rejects malformed paths in framework-owned module namespaces", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_snippets/.js"));
 
-    assertEquals(response.status === 404 || response.status === 500, true);
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Invalid module path");
+
+    const malformedCrossProject = await serve(
+      new Request(
+        "http://localhost:3000/_vf_modules/_cross/demo_project/@/index.js",
+      ),
+    );
+    assertEquals(malformedCrossProject.status, 400);
+    assertEquals(await malformedCrossProject.text(), "Invalid module path");
   });
 
-  it("should return 404 for invalid cross-project import path", async () => {
+  it("returns 400 for an invalid path in the reserved cross-project namespace", async () => {
     const response = await serve(new Request("http://localhost:3000/_vf_modules/_cross//@/"));
 
-    assertEquals(response.status === 404 || response.status === 500, true);
+    assertEquals(response.status, 400);
+    assertEquals(await response.text(), "Invalid module path");
+  });
+
+  it("redacts internal module failures outside development", async () => {
+    const { serveModule } = await import("./module-server.ts");
+    const projectDir = "/module-error-redaction";
+    const sourcePath = `${projectDir}/page.ts`;
+    const secret = "sensitive adapter failure";
+    const adapter = createMockAdapter();
+    adapter.fs.files.set(sourcePath, "export const page = true;");
+    const originalReadFile = adapter.fs.readFile.bind(adapter.fs);
+    adapter.fs.readFile = (path) => {
+      if (path === sourcePath) return Promise.reject(new Error(secret));
+      return originalReadFile(path);
+    };
+    const request = new Request("http://localhost:3000/_vf_modules/page.js");
+    const options = {
+      projectId: "module-error-redaction",
+      projectDir,
+      adapter,
+    };
+
+    const productionResponse = await serveModule(request, {
+      ...options,
+      dev: false,
+    });
+    assertEquals(productionResponse.status, 500);
+    const productionBody = await productionResponse.text();
+    assertEquals(
+      productionBody,
+      `// Transform Error\nthrow new Error("Module transformation failed");`,
+    );
+    assertEquals(productionBody.includes(secret), false);
+
+    const developmentResponse = await serveModule(request, {
+      ...options,
+      dev: true,
+    });
+    assertEquals(developmentResponse.status, 500);
+    assertStringIncludes(await developmentResponse.text(), secret);
   });
 
   it("should serve _dnt.shims.js with _veryfront/ prefix", async () => {
@@ -684,8 +737,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
       `http://localhost:3000/_vf_modules/components/App.js?vf_release=${releaseId}&vf_runtime=${VERSION}`,
     );
 
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "building", manifest: null })
+    registerManifestFetcherForRelease(
+      releaseId,
+      () => Promise.resolve({ state: "building", manifest_version: 1, manifest: null }),
     );
 
     async function serveWithProfile(): Promise<{
@@ -859,6 +913,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-release-assets-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-cache-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
@@ -875,9 +930,10 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
+      registerManifestFetcherForRelease("release-id", () =>
         Promise.resolve({
           state: "ready",
+          manifest_version: 1,
           manifest: manifest({
             [sourceUrl]: {
               contentHash: hash,
@@ -885,8 +941,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
               contentType: "text/javascript",
             },
           }),
-        })
-      );
+        }));
 
       const { serveModule } = await import("./module-server.ts");
       const response = await serveModule(
@@ -909,12 +964,13 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("caches dependency-bearing release modules with partial manifest bodies", async () => {
+  it("rejects partial manifests and keeps dependency-bearing modules uncached", async () => {
     setEnv("VERYFRONT_ENABLE_SERVER_TIMING", "1");
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-partial-manifest-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-partial-cache-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
@@ -935,32 +991,35 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
+      registerManifestFetcherForRelease(releaseId, () =>
         Promise.resolve({
           state: "partial",
+          manifest_version: 1,
           manifest: manifest({
             [sourceUrl]: {
               contentHash: hash,
               size: 100,
               contentType: "text/javascript",
             },
-          }),
-        })
-      );
+          }, releaseId),
+        }));
 
       const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
       const second = await serveProductionModuleWithProfile(request, projectDir, releaseId);
 
       assertEquals(first.status, 200);
       assertEquals(second.status, 200);
-      assertEquals(first.cacheControl, "public, max-age=31536000, immutable");
-      assertEquals(second.cacheControl, "public, max-age=31536000, immutable");
-      assertStringIncludes(first.body, `"/_vf/assets/${hash}.js"`);
+      assertEquals(first.cacheControl, "no-cache");
+      assertEquals(second.cacheControl, "no-cache");
+      assertEquals(first.body.includes(`"/_vf/assets/${hash}.js"`), false);
+      assertStringIncludes(first.body, sourceUrl);
       assertEquals(first.body.includes("file://"), false);
+      assertStringIncludes(second.body, sourceUrl);
+      assertEquals(second.body.includes("file://"), false);
       assertEquals(second.body, first.body);
       assertEquals(first.record.phases["release_manifest.fetch_partial"], 0);
-      assertEquals(second.record.phases["module.response_cache_hit"], 0);
-      assertEquals("module.source_lookup" in second.record.phases, false);
+      assertEquals("module.response_cache_hit" in second.record.phases, false);
+      assertEquals(Boolean(second.record.phases["module.source_lookup"]), true);
     } finally {
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(cacheDir, { recursive: true });
@@ -973,6 +1032,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-manifest-miss-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-manifest-miss-cache-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
@@ -992,9 +1052,12 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
-        Promise.resolve({ state: "ready", manifest: manifest({}) })
-      );
+      registerManifestFetcherForRelease(releaseId, () =>
+        Promise.resolve({
+          state: "ready",
+          manifest_version: 1,
+          manifest: manifest({}, releaseId, "source"),
+        }));
 
       const first = await serveProductionModuleWithProfile(request, projectDir, releaseId);
       const second = await serveProductionModuleWithProfile(request, projectDir, releaseId);
@@ -1864,6 +1927,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     setEnv(RELEASE_ASSET_DEPENDENCY_IMPORT_MAP_ENV_FLAG, "1");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-module-release-cache-gate-" });
     const cacheDir = await Deno.makeTempDir({ prefix: "vf-module-cache-gate-" });
+    setEnv("VERYFRONT_CACHE_DIR", cacheDir);
     const dependencyDir = `${cacheDir}/veryfront-http-bundle`;
     const dependencyPath = `${dependencyDir}/http-123abc.mjs`;
     const sourceUrl = "https://esm.sh/react@19.2.4?deps=csstype%403.2.3&target=es2022";
@@ -1917,22 +1981,22 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
         `${projectDir}/components/App.tsx`,
         `import React from ${JSON.stringify(`file://${dependencyPath}`)};\nexport default React;\n`,
       );
-      configureReleaseAssetManifestFetcher(() =>
+      registerManifestFetcherForRelease(releaseId, () =>
         Promise.resolve(
           ready
             ? {
               state: "ready",
+              manifest_version: 1,
               manifest: manifest({
                 [sourceUrl]: {
                   contentHash: hash,
                   size: 100,
                   contentType: "text/javascript",
                 },
-              }),
+              }, releaseId),
             }
-            : { state: "building", manifest: null },
-        )
-      );
+            : { state: "building", manifest_version: 1, manifest: null },
+        ));
 
       const first = await serveWithProfile();
       ready = true;

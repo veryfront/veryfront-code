@@ -1,13 +1,25 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { ESBUILD_VERSION, getEsbuildBinaryName, getVFSBasePath } from "./esbuild-shared.ts";
+import {
+  ESBUILD_VERSION,
+  ESBUILD_WASM_URL,
+  getEsbuildBinaryName,
+  getVFSBasePath,
+} from "./esbuild-shared.ts";
 
 describe("platform/compat/esbuild-shared", () => {
   describe("ESBUILD_VERSION", () => {
     it("should be a semver string", () => {
       assertEquals(typeof ESBUILD_VERSION, "string");
       assertEquals(/^\d+\.\d+\.\d+/.test(ESBUILD_VERSION), true);
+    });
+
+    it("keeps the default WASM artifact on the authoritative esbuild version", () => {
+      assertEquals(
+        ESBUILD_WASM_URL,
+        `https://deno.land/x/esbuild@v${ESBUILD_VERSION}/esbuild.wasm`,
+      );
     });
   });
 

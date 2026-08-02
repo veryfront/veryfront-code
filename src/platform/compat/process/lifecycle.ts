@@ -1,4 +1,9 @@
 import { getDenoRuntime, isBun as IS_BUN, isDeno as IS_DENO } from "../runtime.ts";
+import {
+  type GlobalErrorHandler,
+  invokeGlobalErrorHandler,
+  normalizeGlobalError,
+} from "./global-error.ts";
 import { runtimeProcess } from "./runtime-process.ts";
 
 /** Get command-line arguments (cross-runtime: Deno.args or process.argv). */
@@ -141,18 +146,78 @@ export function getOsType(): string {
 }
 
 /**
- * Register a signal handler (SIGINT, SIGTERM) for graceful shutdown
+ * Register a SIGINT or SIGTERM handler for graceful shutdown.
+ *
+ * If registration fails after a runtime partially installs the handler, this
+ * function removes that exact registration. When removal also fails, both
+ * failures are exposed in registration-first order through an AggregateError.
+ *
+ * @returns An idempotent disposer for the exact signal and handler pair.
  */
 export function onSignal(
   signal: "SIGINT" | "SIGTERM",
   handler: () => void,
-): void {
+): () => void {
   const deno = IS_DENO ? getDenoRuntime() : undefined;
   if (deno) {
-    deno.addSignalListener(signal, handler);
-    return;
+    try {
+      deno.addSignalListener(signal, handler);
+    } catch (error) {
+      // Older Deno builds can retain the callback before native binding fails.
+      try {
+        deno.removeSignalListener(signal, handler);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Failed to register and roll back ${signal} handler`,
+        );
+      }
+      throw error;
+    }
+    return createIdempotentDisposer(() => {
+      deno.removeSignalListener(signal, handler);
+    });
   }
-  if (runtimeProcess) runtimeProcess.on(signal, handler);
+  if (runtimeProcess) {
+    const process = runtimeProcess;
+    const remove = (): void => {
+      if (typeof process.off === "function") {
+        process.off(signal, handler);
+      } else {
+        process.removeListener(signal, handler);
+      }
+    };
+    try {
+      process.on(signal, handler);
+    } catch (error) {
+      // A runtime hook can throw after installing the listener.
+      try {
+        remove();
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          `Failed to register and roll back ${signal} handler`,
+        );
+      }
+      throw error;
+    }
+    return createIdempotentDisposer(remove);
+  }
+  return () => {};
+}
+
+function createIdempotentDisposer(dispose: () => void): () => void {
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    try {
+      dispose();
+    } catch (error) {
+      active = true;
+      throw error;
+    }
+  };
 }
 
 /**
@@ -165,18 +230,22 @@ export function onSignal(
  * @param onError - Callback invoked with the error. Return true to prevent process exit.
  */
 export function onGlobalError(
-  onError: (error: Error, type: "uncaughtException" | "unhandledRejection") => boolean | void,
+  onError: GlobalErrorHandler,
 ): void {
   if (IS_DENO) {
     // Intentionally permanent: process-level handlers must persist for the entire runtime
     globalThis.addEventListener("error", (event) => {
-      const error = event.error instanceof Error ? event.error : new Error(String(event.error));
-      if (onError(error, "uncaughtException")) event.preventDefault();
+      const error = normalizeGlobalError(event.error);
+      if (invokeGlobalErrorHandler(onError, error, "uncaughtException")) {
+        event.preventDefault();
+      }
     });
 
     globalThis.addEventListener("unhandledrejection", (event) => {
-      const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
-      if (onError(error, "unhandledRejection")) event.preventDefault();
+      const error = normalizeGlobalError(event.reason);
+      if (invokeGlobalErrorHandler(onError, error, "unhandledRejection")) {
+        event.preventDefault();
+      }
     });
 
     return;
@@ -189,17 +258,7 @@ export function onGlobalError(
     error: Error,
     type: "uncaughtException" | "unhandledRejection",
   ): void => {
-    let shouldPreventExit = false;
-    try {
-      shouldPreventExit = onError(error, type) === true;
-    } catch (handlerError) {
-      const handlerException = handlerError instanceof Error
-        ? handlerError
-        : new Error(String(handlerError));
-      console.error("Global error handler threw while processing", type, handlerException);
-    }
-
-    if (shouldPreventExit) return;
+    if (invokeGlobalErrorHandler(onError, error, type)) return;
 
     // Node/Bun suppress default fatal behavior when a listener is registered.
     // If the callback did not explicitly handle the error, exit to preserve
@@ -208,12 +267,17 @@ export function onGlobalError(
   };
 
   runtimeProcess.on("uncaughtException", (error: Error) => {
-    handleNodeGlobalError(error, "uncaughtException");
+    handleNodeGlobalError(
+      normalizeGlobalError(error),
+      "uncaughtException",
+    );
   });
 
   runtimeProcess.on("unhandledRejection", (reason: unknown) => {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
-    handleNodeGlobalError(error, "unhandledRejection");
+    handleNodeGlobalError(
+      normalizeGlobalError(reason),
+      "unhandledRejection",
+    );
   });
 }
 

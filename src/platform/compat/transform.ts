@@ -5,7 +5,7 @@
 
 import { getEsbuild, initializeEsbuild } from "./esbuild.ts";
 
-let esbuildInitialized = false;
+let esbuildInitialization: Promise<void> | null = null;
 
 export interface TransformResult {
   code: string;
@@ -19,7 +19,7 @@ export async function transformJsx(
   source: string,
   options: TransformOptions = {},
 ): Promise<TransformResult> {
-  const esbuild = await getEsbuild();
+  const esbuild = getEsbuild();
   const result = await esbuild.transform(source, {
     loader: options.loader ?? "tsx",
     jsx: "automatic",
@@ -33,10 +33,11 @@ export async function transformJsx(
 
 /** Call at server startup to ensure esbuild binary is available. */
 export async function initializeTransform(): Promise<void> {
-  if (esbuildInitialized) return;
-
-  await initializeEsbuild();
-  esbuildInitialized = true;
+  esbuildInitialization ??= initializeEsbuild().catch((error) => {
+    esbuildInitialization = null;
+    throw error;
+  });
+  await esbuildInitialization;
 }
 
 export function isUsingEsbuild(): boolean {

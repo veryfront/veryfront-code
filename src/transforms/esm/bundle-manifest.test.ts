@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/bundle-manifest.test */
 
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";
 import { makeTempDir, remove, writeTextFile } from "#veryfront/testing/deno-compat.ts";
@@ -10,6 +10,7 @@ import {
   computeManifestId,
   createBundleManifest,
   getManifestIdForHash,
+  parseBundleManifest,
   validateBundleGroup,
   validateBundleManifest,
 } from "./bundle-manifest.ts";
@@ -58,14 +59,63 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
 
     it("registers hash-to-manifest mappings for co-refresh", async () => {
       const bundles: BundleEntry[] = [
-        { hash: "corefresh1", url: "https://esm.sh/test@1", sizeBytes: 100 },
-        { hash: "corefresh2", url: "https://esm.sh/test@2", sizeBytes: 200 },
+        { hash: "c0efe511", url: "https://esm.sh/test@1", sizeBytes: 100 },
+        { hash: "c0efe522", url: "https://esm.sh/test@2", sizeBytes: 200 },
       ];
 
       const manifest = await createBundleManifest(bundles);
 
-      assertEquals(getManifestIdForHash("corefresh1"), manifest.manifestId);
-      assertEquals(getManifestIdForHash("corefresh2"), manifest.manifestId);
+      assertEquals(getManifestIdForHash("c0efe511"), manifest.manifestId);
+      assertEquals(getManifestIdForHash("c0efe522"), manifest.manifestId);
+    });
+
+    it("rejects invalid bundle hashes before constructing cache paths", async () => {
+      await assertRejects(
+        () =>
+          createBundleManifest([
+            { hash: "../escape", url: "https://esm.sh/test@1", sizeBytes: 100 },
+          ]),
+        TypeError,
+        "entry is invalid",
+      );
+    });
+
+    it("deduplicates and orders entries deterministically", async () => {
+      const first = { hash: "bbb222", url: "https://esm.sh/b@1", sizeBytes: 20 };
+      const second = { hash: "aaa111", url: "https://esm.sh/a@1", sizeBytes: 10 };
+
+      const manifest = await createBundleManifest([first, second, first]);
+
+      assertEquals(manifest.bundles, [second, first]);
+    });
+  });
+
+  describe("parseBundleManifest", () => {
+    it("authenticates a valid serialized manifest", async () => {
+      const manifest = await createBundleManifest([
+        { hash: "abc123", url: "https://esm.sh/a@1", sizeBytes: 10 },
+      ]);
+
+      assertEquals(
+        await parseBundleManifest(JSON.stringify(manifest), manifest.manifestId),
+        manifest,
+      );
+    });
+
+    it("rejects tampered identities and path-shaped hashes", async () => {
+      const manifest = await createBundleManifest([
+        { hash: "abc123", url: "https://esm.sh/a@1", sizeBytes: 10 },
+      ]);
+      const tampered = {
+        ...manifest,
+        bundles: [{ ...manifest.bundles[0], hash: "../escape" }],
+      };
+
+      assertEquals(await parseBundleManifest(JSON.stringify(tampered)), null);
+      assertEquals(
+        await parseBundleManifest(JSON.stringify(manifest), "f".repeat(64)),
+        null,
+      );
     });
   });
 
@@ -103,22 +153,42 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
       const tmpDir = await makeTempDir();
       try {
         const bundles: BundleEntry[] = [
-          { hash: "recover111", url: "https://esm.sh/recover@1", sizeBytes: 16 },
+          { hash: "ec0e111", url: "https://esm.sh/recover@1", sizeBytes: 16 },
         ];
         const manifest = await createBundleManifest(bundles);
         let recovered = false;
 
         const result = await validateBundleManifest(manifest, tmpDir, async (missing, cacheDir) => {
           recovered = true;
-          assertEquals(missing.map(({ hash }) => hash), ["recover111"]);
+          assertEquals(missing.map(({ hash }) => hash), ["ec0e111"]);
           assertEquals(cacheDir, tmpDir);
-          await writeTextFile(join(tmpDir, "http-recover111.mjs"), "// recovered bundle");
+          await writeTextFile(join(tmpDir, "http-ec0e111.mjs"), "// recovered bundle");
           return [];
         });
 
         assertEquals(recovered, true);
         assertEquals(result.valid, true);
         assertEquals(result.failedHashes, []);
+      } finally {
+        await remove(tmpDir, { recursive: true });
+      }
+    });
+
+    it("rejects a manifest whose present root has a missing transitive dependency", async () => {
+      const tmpDir = await makeTempDir();
+      try {
+        await writeTextFile(
+          join(tmpDir, "http-aaa111.mjs"),
+          'import "./http-bbb222.mjs";',
+        );
+        const manifest = await createBundleManifest([
+          { hash: "aaa111", url: "https://esm.sh/root@1", sizeBytes: 29 },
+        ]);
+
+        const result = await validateBundleManifest(manifest, tmpDir);
+
+        assertEquals(result.valid, false);
+        assertEquals(result.reason, "bundle_missing");
       } finally {
         await remove(tmpDir, { recursive: true });
       }

@@ -1,14 +1,54 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createEscapeBuffer,
   createNodeStdinReader,
+  type NodeStdinLike,
   readStdinLine,
   setNodeRawMode,
   type StdinReader,
   waitForNodeKeypress,
 } from "./stdin.ts";
+
+function createFakeStdin(): {
+  stdin: NodeStdinLike;
+  emitData(data: Uint8Array): void;
+  emitEnd(): void;
+  emitError(error: unknown): void;
+} {
+  const dataListeners = new Set<(data: Uint8Array) => void>();
+  const endListeners = new Set<() => void>();
+  const errorListeners = new Set<(error: unknown) => void>();
+
+  const stdin = {
+    resume() {},
+    pause() {},
+    on(event: string, listener: unknown) {
+      if (event === "data") dataListeners.add(listener as (data: Uint8Array) => void);
+      if (event === "end") endListeners.add(listener as () => void);
+      if (event === "error") errorListeners.add(listener as (error: unknown) => void);
+    },
+    off(event: string, listener: unknown) {
+      if (event === "data") dataListeners.delete(listener as (data: Uint8Array) => void);
+      if (event === "end") endListeners.delete(listener as () => void);
+      if (event === "error") errorListeners.delete(listener as (error: unknown) => void);
+    },
+  } as NodeStdinLike;
+
+  return {
+    stdin,
+    emitData(data) {
+      for (const listener of dataListeners) listener(data);
+    },
+    emitEnd() {
+      for (const listener of endListeners) listener();
+    },
+    emitError(error) {
+      for (const listener of errorListeners) listener(error);
+    },
+  };
+}
 
 function createTestBuffer(timeouts: string[]): ReturnType<typeof createEscapeBuffer> {
   return createEscapeBuffer((key) => timeouts.push(key));
@@ -71,6 +111,54 @@ describe("createEscapeBuffer", () => {
 
     assertEquals(buffer.push("a"), "a");
     assertEquals(timeouts, []);
+  });
+});
+
+describe("createNodeStdinReader", () => {
+  it("queues concurrent reads without replacing an earlier waiter", async () => {
+    const fake = createFakeStdin();
+    const reader = createNodeStdinReader(fake.stdin);
+    const first = reader.read();
+    const second = reader.read();
+
+    fake.emitData(new Uint8Array([1]));
+    fake.emitData(new Uint8Array([2]));
+
+    assertEquals(await first, { value: new Uint8Array([1]), done: false });
+    assertEquals(await second, { value: new Uint8Array([2]), done: false });
+    reader.releaseLock();
+  });
+
+  it("settles pending and future reads when the stream ends", async () => {
+    const fake = createFakeStdin();
+    const reader = createNodeStdinReader(fake.stdin);
+    const pending = reader.read();
+
+    fake.emitEnd();
+
+    assertEquals(await pending, { value: undefined, done: true });
+    assertEquals(await reader.read(), { value: undefined, done: true });
+  });
+
+  it("settles a pending read when its lock is released", async () => {
+    const fake = createFakeStdin();
+    const reader = createNodeStdinReader(fake.stdin);
+    const pending = reader.read();
+
+    reader.releaseLock();
+
+    assertEquals(await pending, { value: undefined, done: true });
+  });
+
+  it("rejects pending and future reads after a stream error", async () => {
+    const fake = createFakeStdin();
+    const reader = createNodeStdinReader(fake.stdin);
+    const pending = reader.read();
+
+    fake.emitError(new Error("stdin failed"));
+
+    await assertRejects(() => pending, Error, "stdin failed");
+    await assertRejects(() => reader.read(), Error, "stdin failed");
   });
 });
 
@@ -144,7 +232,13 @@ describe("createNodeStdinReader", () => {
     setNodeRawMode(stdin, true);
     const reader = createNodeStdinReader(stdin);
 
-    assertEquals(events, ["raw:true", "on:data", "on:end", "resume"]);
+    assertEquals(events, [
+      "raw:true",
+      "on:data",
+      "on:end",
+      "on:error",
+      "resume",
+    ]);
     reader.releaseLock();
   });
 

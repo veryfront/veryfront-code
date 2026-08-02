@@ -38,4 +38,14 @@ describe("platform/adapters/runtime/shared/env-to-object", () => {
     const env = { "MY_VAR-1": "val", "some.dotted.key": "v2" };
     assertEquals(envToObject(env), { "MY_VAR-1": "val", "some.dotted.key": "v2" });
   });
+
+  it("preserves __proto__ as data without changing the result prototype", () => {
+    const env = JSON.parse('{"__proto__":"literal"}') as Record<string, string>;
+
+    const result = envToObject(env);
+
+    assertEquals(Object.getPrototypeOf(result), Object.prototype);
+    assertEquals(Object.hasOwn(result, "__proto__"), true);
+    assertEquals(result["__proto__"], "literal");
+  });
 });

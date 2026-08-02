@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockAdapter } from "./mock.ts";
+import { FileSnapshotChangedError } from "./file-snapshot-error.ts";
 
 type DirEntry = { name: string; isFile: boolean; isDirectory: boolean };
 
@@ -55,19 +56,181 @@ describe("MockAdapter", () => {
       const adapter = createMockAdapter();
       adapter.fs.files.set("/test.txt", "hello");
 
-      assertExists(adapter.fs.readFileBytes);
-      const bytes = await adapter.fs.readFileBytes("/test.txt");
+      const readFileBytes = adapter.fs.readFileBytes;
+      assertExists(readFileBytes);
+      const bytes = await readFileBytes("/test.txt");
       assertEquals(new TextDecoder().decode(bytes), "hello");
+    });
+
+    it("preserves binary files exactly", async () => {
+      const adapter = createMockAdapter();
+      const writeFileBytes = adapter.fs.writeFileBytes;
+      const readFileBytes = adapter.fs.readFileBytes;
+      assertExists(writeFileBytes);
+      assertExists(readFileBytes);
+      const bytes = new Uint8Array([0, 255, 1, 128]);
+
+      await writeFileBytes("/test.bin", bytes);
+
+      assertEquals([...await readFileBytes("/test.bin")], [...bytes]);
+      assertEquals(adapter.fs.byteFiles.get("/test.bin") === bytes, false);
     });
 
     it("should throw for non-existent file", async () => {
       const adapter = createMockAdapter();
 
-      assertExists(adapter.fs.readFileBytes);
+      const readFileBytes = adapter.fs.readFileBytes;
+      assertExists(readFileBytes);
       await assertRejects(
-        () => adapter.fs.readFileBytes("/missing.txt"),
+        () => readFileBytes("/missing.txt"),
         Error,
         "File not found: /missing.txt",
+      );
+    });
+  });
+
+  describe("fs.readFileSnapshotWithinLimit", () => {
+    it("reads a complete contained snapshot within the exact limit", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/asset.bin", new Uint8Array([1, 2, 3]));
+      const readSnapshot = adapter.fs.readFileSnapshotWithinLimit;
+      assertExists(readSnapshot);
+
+      assertEquals([...await readSnapshot("/project/asset.bin", "/project", 3)], [1, 2, 3]);
+      await assertRejects(
+        () => readSnapshot("/outside.bin", "/project", 3),
+        TypeError,
+        "contained",
+      );
+      await assertRejects(
+        () => readSnapshot("/project/asset.bin", "/project", 2),
+        RangeError,
+        "exceeds",
+      );
+    });
+
+    it("rejects replacement during a snapshot read", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.byteFiles.set("/project/asset.bin", new Uint8Array([1, 2, 3]));
+      const readSnapshot = adapter.fs.readFileSnapshotWithinLimit;
+      assertExists(readSnapshot);
+
+      const read = readSnapshot("/project/asset.bin", "/project", 3);
+      adapter.fs.byteFiles.set("/project/asset.bin", new Uint8Array([4, 5, 6]));
+
+      await assertRejects(() => read, FileSnapshotChangedError, "changed");
+    });
+  });
+
+  describe("fs.readFileBytesBounded", () => {
+    it("reads only the requested UTF-8 byte prefix", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/test.txt", "A€B");
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      assertEquals(
+        [...await readFileBytesBounded("/test.txt", 3)],
+        [65, 226, 130],
+      );
+    });
+
+    it("reads bounded binary prefixes without exposing stored bytes", async () => {
+      const adapter = createMockAdapter();
+      const stored = new Uint8Array([0, 255, 1, 128]);
+      adapter.fs.byteFiles.set("/test.bin", stored);
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      const prefix = await readFileBytesBounded("/test.bin", 2);
+      assertEquals([...prefix], [0, 255]);
+      prefix[0] = 99;
+      assertEquals([...stored], [0, 255, 1, 128]);
+    });
+
+    it("does not inspect text beyond the requested byte prefix", async () => {
+      const adapter = createMockAdapter();
+      const source = "a".repeat(1_000_000);
+      let codePointReads = 0;
+      const observedSource = new Proxy(new String(source), {
+        get(target, key) {
+          if (key === "length") return source.length;
+          if (key === "codePointAt") {
+            return (index: number) => {
+              codePointReads += 1;
+              return source.codePointAt(index);
+            };
+          }
+          return Reflect.get(target, key, target);
+        },
+      }) as unknown as string;
+      adapter.fs.files.set("/large.txt", observedSource);
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      assertEquals([...await readFileBytesBounded("/large.txt", 1)], [97]);
+      assertEquals(codePointReads, 1);
+    });
+
+    it("preserves missing-file and invalid-limit failures", async () => {
+      const adapter = createMockAdapter();
+      const readFileBytesBounded = adapter.fs.readFileBytesBounded;
+      assertExists(readFileBytesBounded);
+
+      await assertRejects(
+        () => readFileBytesBounded("/missing.txt", 4),
+        Error,
+        "File not found: /missing.txt",
+      );
+      await assertRejects(
+        () => readFileBytesBounded("/missing.txt", 0),
+        RangeError,
+        "positive safe integer",
+      );
+    });
+  });
+
+  describe("fs.readFileBytesWithinLimit", () => {
+    it("returns complete text and binary files only when they fit", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/text.txt", "A€B");
+      adapter.fs.byteFiles.set("/bytes.bin", new Uint8Array([0, 255, 1]));
+      const readFileBytesWithinLimit = adapter.fs.readFileBytesWithinLimit;
+      assertExists(readFileBytesWithinLimit);
+
+      assertEquals(
+        [...await readFileBytesWithinLimit("/text.txt", 5)],
+        [65, 226, 130, 172, 66],
+      );
+      assertEquals(
+        [...await readFileBytesWithinLimit("/bytes.bin", 3)],
+        [0, 255, 1],
+      );
+      await assertRejects(
+        () => readFileBytesWithinLimit("/text.txt", 4),
+        RangeError,
+        "exceeds byte limit of 4 bytes",
+      );
+      await assertRejects(
+        () => readFileBytesWithinLimit("/bytes.bin", 2),
+        RangeError,
+        "exceeds byte limit of 2 bytes",
+      );
+    });
+
+    it("preserves missing-file and invalid-limit failures", async () => {
+      const readFileBytesWithinLimit = createMockAdapter().fs.readFileBytesWithinLimit;
+      assertExists(readFileBytesWithinLimit);
+
+      await assertRejects(
+        () => readFileBytesWithinLimit("/missing.txt", 4),
+        Error,
+        "File not found: /missing.txt",
+      );
+      await assertRejects(
+        () => readFileBytesWithinLimit("/missing.txt", 0),
+        RangeError,
+        "positive safe integer",
       );
     });
   });
@@ -140,6 +303,38 @@ describe("MockAdapter", () => {
       const entries = await collectDirEntries(adapter.fs.readDir("/empty"));
       assertEquals(entries.length, 0);
     });
+
+    it("lists root files and explicit empty directories", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/root.txt", "root");
+      adapter.fs.directories.add("/empty");
+
+      const entries = await collectDirEntries(adapter.fs.readDir("///"));
+      assertEquals(
+        entries.some((entry) => entry.name === "root.txt" && entry.isFile),
+        true,
+      );
+      assertEquals(
+        entries.some((entry) => entry.name === "empty" && entry.isDirectory),
+        true,
+      );
+    });
+
+    it("rejects missing paths and file paths", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/file.txt", "content");
+
+      await assertRejects(
+        () => collectDirEntries(adapter.fs.readDir("/missing")),
+        Error,
+        "Path not found",
+      );
+      await assertRejects(
+        () => collectDirEntries(adapter.fs.readDir("/file.txt")),
+        TypeError,
+        "not a directory",
+      );
+    });
   });
 
   describe("fs.stat", () => {
@@ -151,6 +346,13 @@ describe("MockAdapter", () => {
       assertEquals(stat.isFile, true);
       assertEquals(stat.isDirectory, false);
       assertEquals(stat.size, 5);
+    });
+
+    it("reports UTF-8 byte size rather than UTF-16 code units", async () => {
+      const adapter = createMockAdapter();
+      adapter.fs.files.set("/unicode.txt", "€");
+
+      assertEquals((await adapter.fs.stat("/unicode.txt")).size, 3);
     });
 
     it("should stat a directory", async () => {
@@ -199,6 +401,15 @@ describe("MockAdapter", () => {
       assertEquals(adapter.fs.directories.has("/a/b"), true);
       assertEquals(adapter.fs.directories.has("/a/b/c"), true);
     });
+
+    it("preserves relative paths when creating parents recursively", async () => {
+      const adapter = createMockAdapter();
+      await adapter.fs.mkdir("a/b", { recursive: true });
+
+      assertEquals(adapter.fs.directories.has("a"), true);
+      assertEquals(adapter.fs.directories.has("a/b"), true);
+      assertEquals(adapter.fs.directories.has("/a"), false);
+    });
   });
 
   describe("fs.remove", () => {
@@ -242,6 +453,16 @@ describe("MockAdapter", () => {
       const tempDir = await adapter.fs.makeTempDir("test");
 
       assertEquals(tempDir.startsWith("/tmp/test"), true);
+      assertEquals(await adapter.fs.exists(tempDir), true);
+    });
+
+    it("rejects path-bearing prefixes", async () => {
+      const adapter = createMockAdapter();
+      await assertRejects(
+        () => adapter.fs.makeTempDir("../escape-"),
+        TypeError,
+        "must not contain",
+      );
     });
   });
 

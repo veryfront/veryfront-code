@@ -1,43 +1,108 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ReleaseAssetManifest } from "./manifest-schema.ts";
 import { buildReleaseAssetModules } from "./client-module-map.ts";
+import type { ReleaseAssetManifest } from "./manifest-schema.ts";
+import { RELEASE_ASSET_MANIFEST_SCHEMA_VERSION } from "./constants.ts";
 
 const PAGE_HASH = "a".repeat(64);
 const FALLBACK_HASH = "b".repeat(64);
 
-function manifest(): ReleaseAssetManifest {
+function manifestWithModules(
+  modules: ReleaseAssetManifest["modules"],
+  routes: ReleaseAssetManifest["routes"] = {},
+): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
-    projectId: "project-id",
-    releaseId: "release-id",
+    schemaVersion: RELEASE_ASSET_MANIFEST_SCHEMA_VERSION,
+    projectId: "project-1",
+    releaseId: "release-1",
     releaseVersion: 1,
     manifestVersion: 1,
-    builderVersion: "0.1.765",
-    sourceContentHash: "",
-    createdAt: "2026-07-27T00:00:00.000Z",
+    builderVersion: "test",
+    sourceContentHash: "a".repeat(64),
+    createdAt: "2026-07-26T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
-    modules: {
-      "app/page.tsx": { contentHash: PAGE_HASH, size: 1, contentType: "text/javascript" },
+    modules,
+    css: [],
+    routes,
+    dependencyMode: "source",
+    dependencies: {},
+  };
+}
+
+function manifest(): ReleaseAssetManifest {
+  return manifestWithModules(
+    {
+      "app/page.tsx": {
+        contentHash: PAGE_HASH,
+        size: 1,
+        contentType: "text/javascript",
+      },
       "components/Fallback.tsx": {
         contentHash: FALLBACK_HASH,
         size: 1,
         contentType: "text/javascript",
       },
     },
-    css: [],
-    routes: {
+    {
       "/": { modules: ["app/page.tsx"], css: [] },
       "/empty": { modules: [], css: [] },
       "/partial-stale": { modules: ["app/page.tsx", "src/site/page.tsx"], css: [] },
       "/stale": { modules: ["src/site/page.tsx"], css: [] },
     },
-    dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
-  };
+  );
 }
 
 describe("release asset client module map", () => {
+  it("uses an own-property-only result for adversarial module keys", () => {
+    const modules = JSON.parse(
+      `{"__proto__":{"contentHash":"${PAGE_HASH}","size":1,"contentType":"text/javascript"}}`,
+    ) as ReleaseAssetManifest["modules"];
+
+    const result = buildReleaseAssetModules(manifestWithModules(modules));
+
+    assertEquals(Object.getPrototypeOf(result), null);
+    assertEquals(Object.hasOwn(result ?? {}, "__proto__"), true);
+    assertEquals(result?.["__proto__"], `/_vf/assets/${PAGE_HASH}.js`);
+  });
+
+  it("omits malformed runtime entries instead of emitting unsafe URLs", () => {
+    const result = buildReleaseAssetModules(
+      manifestWithModules({
+        "pages/index.tsx": {
+          contentHash: "../asset",
+          size: 1,
+          contentType: "text/javascript",
+        },
+      }),
+    );
+
+    assertEquals(result, undefined);
+  });
+
+  it("can scope a browser map to an explicit module set", () => {
+    const result = buildReleaseAssetModules(
+      manifestWithModules({
+        "app/page.tsx": {
+          contentHash: FALLBACK_HASH,
+          size: 1,
+          contentType: "text/javascript",
+        },
+        "app/unrelated.tsx": {
+          contentHash: "c".repeat(64),
+          size: 1,
+          contentType: "text/javascript",
+        },
+      }),
+      {
+        logicalPaths: ["app/page.tsx", "app/page.tsx", "app/missing.tsx"],
+      },
+    );
+
+    assertEquals(result, {
+      "app/page.tsx": `/_vf/assets/${FALLBACK_HASH}.js`,
+    });
+  });
+
   it("uses route-scoped modules when route entries match manifest modules", () => {
     assertEquals(buildReleaseAssetModules(manifest(), { route: "/" }), {
       "app/page.tsx": `/_vf/assets/${PAGE_HASH}.js`,

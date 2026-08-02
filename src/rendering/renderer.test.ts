@@ -8,7 +8,7 @@ import {
 } from "#veryfront/release-assets/constants.ts";
 import {
   clearReleaseAssetManifestCache,
-  configureReleaseAssetManifestFetcher,
+  registerManifestFetcherForRelease,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import { getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
@@ -121,20 +121,20 @@ async function waitForProductionPrewarm(renderer: Renderer): Promise<void> {
 
 function makeReadyManifest(): ReleaseAssetManifest {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectId: "proj-1",
     releaseId: "rel-1",
     releaseVersion: 1,
     manifestVersion: 1,
     builderVersion: "0.1.799",
-    sourceContentHash: "",
+    sourceContentHash: "a".repeat(64),
     createdAt: "2026-06-14T00:00:00.000Z",
     assetBasePath: "/_vf/assets",
     modules: {},
     css: [],
     routes: {},
     dependencies: {},
-    fallback: { mode: "jit", gaps: [] },
+    dependencyMode: "immutable",
   };
 }
 
@@ -278,14 +278,14 @@ describe("Renderer release asset cache isolation", () => {
 
   afterEach(() => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, originalManifestFlag ?? "");
-    configureReleaseAssetManifestFetcher(undefined);
     clearReleaseAssetManifestCache();
   });
 
   it("checks the manifest-versioned cache prefix after awaiting a ready manifest", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
     );
 
     const store = createInMemoryStore();
@@ -319,8 +319,9 @@ describe("Renderer release asset cache isolation", () => {
 
   it("persists rendered HTML under the manifest-versioned cache prefix", async () => {
     setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
-    configureReleaseAssetManifestFetcher(() =>
-      Promise.resolve({ state: "ready", manifest: makeReadyManifest() })
+    registerManifestFetcherForRelease(
+      "rel-1",
+      () => Promise.resolve({ state: "ready", manifest_version: 1, manifest: makeReadyManifest() }),
     );
 
     const store = createInMemoryStore();

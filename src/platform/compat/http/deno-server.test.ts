@@ -1,16 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { DenoHttpServer } from "./deno-server.ts";
-
-/** Find a free port by temporarily binding to port 0. */
-function getFreePort(): number {
-  const tmp = Deno.listen({ port: 0 });
-  const port = (tmp.addr as Deno.NetAddr).port;
-  tmp.close();
-  return port;
-}
 
 describe("DenoHttpServer", () => {
   describe("serve", () => {
@@ -47,27 +39,27 @@ describe("DenoHttpServer", () => {
     it("returns native Response instances from handler", async () => {
       if (!isDeno) return;
       const server = new DenoHttpServer();
-      const ac = new AbortController();
-      const port = getFreePort();
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
 
       const responseBody = "hello";
       const handler = () => new Response(responseBody, { status: 200 });
 
-      // Start serve (blocks until abort)
       const servePromise = server.serve(handler, {
-        port,
-        signal: ac.signal,
+        port: 0,
+        onListen: ({ port }) => resolvePort(port),
       });
-
-      // Wait for the server to be ready
-      await new Promise((r) => setTimeout(r, 100));
+      const port = await listening;
 
       try {
+        assertNotEquals(port, 0);
         const res = await fetch(`http://127.0.0.1:${port}`);
         assertEquals(res.status, 200);
         assertEquals(await res.text(), responseBody);
       } finally {
-        ac.abort();
+        await server.close();
       }
 
       await servePromise;
@@ -76,8 +68,10 @@ describe("DenoHttpServer", () => {
     it("re-wraps non-native Response-like objects as native Response", async () => {
       if (!isDeno) return;
       const server = new DenoHttpServer();
-      const ac = new AbortController();
-      const port = getFreePort();
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
 
       // Simulate what dnt does: create a Response-like object that is NOT
       // an instanceof the native Response class.
@@ -97,11 +91,10 @@ describe("DenoHttpServer", () => {
       };
 
       const servePromise = server.serve(handler, {
-        port,
-        signal: ac.signal,
+        port: 0,
+        onListen: ({ port }) => resolvePort(port),
       });
-
-      await new Promise((r) => setTimeout(r, 100));
+      const port = await listening;
 
       try {
         const res = await fetch(`http://127.0.0.1:${port}`);
@@ -109,10 +102,137 @@ describe("DenoHttpServer", () => {
         assertEquals(res.headers.get("x-custom"), "test");
         assertEquals(await res.text(), "wrapped body");
       } finally {
-        ac.abort();
+        await server.close();
       }
 
       await servePromise;
+    });
+
+    it("close owns shutdown even when serve receives an external signal", async () => {
+      if (!isDeno) return;
+      const server = new DenoHttpServer();
+      const external = new AbortController();
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
+      const servePromise = server.serve(
+        () => new Response("ok"),
+        {
+          port: 0,
+          signal: external.signal,
+          onListen: ({ port }) => resolvePort(port),
+        },
+      );
+      const port = await listening;
+      let timeoutId: number | undefined;
+
+      try {
+        await server.close();
+        const stopped = await Promise.race([
+          servePromise.then(() => true),
+          new Promise<false>((resolve) => {
+            timeoutId = setTimeout(() => resolve(false), 1_000);
+          }),
+        ]);
+        assertEquals(stopped, true);
+        assertNotEquals(port, 0);
+      } finally {
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        external.abort();
+        await servePromise;
+      }
+    });
+
+    it("rejects an already-aborted startup before binding", async () => {
+      if (!isDeno) return;
+      const server = new DenoHttpServer();
+      const controller = new AbortController();
+      controller.abort(new DOMException("cancelled", "AbortError"));
+
+      await assertRejects(
+        () =>
+          server.serve(
+            () => new Response("unreachable"),
+            { port: 0, signal: controller.signal },
+          ),
+        DOMException,
+        "cancelled",
+      );
+      await server.close();
+    });
+
+    it("rejects concurrent serve calls without losing the active listener", async () => {
+      if (!isDeno) return;
+      const server = new DenoHttpServer();
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
+      const first = server.serve(
+        () => new Response("first"),
+        {
+          port: 0,
+          onListen: ({ port }) => resolvePort(port),
+        },
+      );
+      const port = await listening;
+
+      try {
+        await assertRejects(
+          () => server.serve(() => new Response("second"), { port: 0 }),
+          Error,
+          "more than once concurrently",
+        );
+        assertEquals(
+          await (await fetch(`http://127.0.0.1:${port}`)).text(),
+          "first",
+        );
+      } finally {
+        await server.close();
+        await first;
+      }
+    });
+
+    it("can be reused after an onListen callback fails and cleanup succeeds", async () => {
+      if (!isDeno) return;
+      const server = new DenoHttpServer();
+      await assertRejects(
+        () =>
+          server.serve(
+            () => new Response("unreachable"),
+            {
+              port: 0,
+              onListen: () => {
+                throw new Error("listen callback failed");
+              },
+            },
+          ),
+        Error,
+        "listen callback failed",
+      );
+
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
+      const servePromise = server.serve(
+        () => new Response("restarted"),
+        {
+          port: 0,
+          onListen: ({ port }) => resolvePort(port),
+        },
+      );
+      const port = await listening;
+      try {
+        assertEquals(
+          await (await fetch(`http://127.0.0.1:${port}`)).text(),
+          "restarted",
+        );
+      } finally {
+        await server.close();
+        await servePromise;
+      }
     });
   });
 });

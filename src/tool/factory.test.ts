@@ -7,7 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { Schema } from "#veryfront/extensions/schema/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { dynamicTool, tool } from "./factory.ts";
 
 describe("tool factory", () => {
@@ -89,7 +89,7 @@ describe("tool factory", () => {
     });
 
     it("should preserve raw JSON input and output schemas", async () => {
-      const inputSchema = {
+      const inputSchema: JsonSchema = {
         type: "object",
         properties: {
           min: { type: "number" },
@@ -136,25 +136,31 @@ describe("tool factory", () => {
       assertEquals(t.outputSchemaJson?.properties?.result, { type: "string" });
     });
 
-    it("should reject schema-like raw objects by default", () => {
-      assertThrows(
-        () =>
-          tool({
-            id: "shape-test",
-            description: "desc",
-            inputSchema: {
-              _def: {
-                shape: {
-                  name: {},
-                  age: {},
-                },
-              },
-            } as unknown as Schema<unknown>,
-            execute: async () => null,
-          }),
-        Error,
-        "input schema is not a valid Veryfront schema",
-      );
+    it("should accept valid raw JSON schemas that omit the type keyword", () => {
+      const t = tool({
+        id: "union-schema",
+        description: "desc",
+        inputSchema: {
+          anyOf: [
+            { type: "object", required: ["query"] },
+            { $ref: "#/$defs/defaultQuery" },
+          ],
+          $defs: {
+            defaultQuery: { type: "object" },
+          },
+        },
+        execute: async () => null,
+      });
+
+      assertEquals(t.inputSchemaJson, {
+        anyOf: [
+          { type: "object", required: ["query"] },
+          { $ref: "#/$defs/defaultQuery" },
+        ],
+        $defs: {
+          defaultQuery: { type: "object" },
+        },
+      });
     });
 
     it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
@@ -163,7 +169,7 @@ describe("tool factory", () => {
           tool({
             id: "invalid-schema",
             description: "desc",
-            inputSchema: {} as Schema<unknown>,
+            inputSchema: new Date() as unknown as Schema<unknown>,
             execute: async () => null,
           }),
         Error,
@@ -175,7 +181,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "permissive-tool",
         description: "desc",
-        inputSchema: {} as Schema<unknown>,
+        inputSchema: new Date() as unknown as Schema<unknown>,
         execute: async () => null,
         allowUnknownSchema: true,
       });
@@ -193,6 +199,63 @@ describe("tool factory", () => {
       });
       assertEquals(t.mcp?.enabled, true);
       assertEquals(t.mcp?.cachePolicy, "cache");
+    });
+
+    it("rejects MCP config descriptor traps with a framework schema error", () => {
+      const mcp = new Proxy({ enabled: true }, {
+        ownKeys: () => ["enabled"],
+        getOwnPropertyDescriptor: () => {
+          throw new Error("descriptor trap must not escape");
+        },
+      });
+
+      assertThrows(
+        () =>
+          tool({
+            id: "hostile-mcp-config",
+            description: "desc",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => null,
+            mcp,
+          }),
+        Error,
+        "MCP configuration must contain only data properties",
+      );
+    });
+
+    it("snapshots raw schemas and metadata at construction", () => {
+      const inputSchema: JsonSchema = {
+        type: "object",
+        properties: { query: { type: "string" } },
+      };
+      const delegatedIntegrationTools = ["github__search"];
+      const mcp = {
+        title: "Search",
+        annotations: { readOnlyHint: true },
+      };
+      const t = tool({
+        id: "snapshot-tool",
+        description: "desc",
+        inputSchema,
+        delegatedIntegrationTools,
+        mcp,
+        execute: async () => null,
+      });
+
+      inputSchema.properties!.query!.type = "number";
+      delegatedIntegrationTools[0] = "github__delete";
+      mcp.title = "Mutated";
+      mcp.annotations.readOnlyHint = false;
+
+      assertEquals(t.inputSchemaJson, {
+        type: "object",
+        properties: { query: { type: "string" } },
+      });
+      assertEquals(t.delegatedIntegrationTools, ["github__search"]);
+      assertEquals(t.mcp, {
+        title: "Search",
+        annotations: { readOnlyHint: true },
+      });
     });
   });
 
@@ -272,6 +335,24 @@ describe("tool factory", () => {
       assertEquals(received, { limit: 10, tag: "tag:foo" });
       assertEquals(result, { limit: 10, tag: "tag:foo" });
     });
+
+    it("uses the parser and handler admitted at construction", async () => {
+      const originalSchema = defineSchema((v) => v.object({ value: v.string() }))();
+      const config = {
+        id: "stable-contract",
+        description: "desc",
+        inputSchema: originalSchema,
+        execute: ({ value }: { value: string }) => `original:${value}`,
+      };
+      const t = tool(config);
+
+      config.inputSchema = defineSchema((v) =>
+        v.object({ value: v.string().transform((value) => `mutated:${value}`) })
+      )();
+      config.execute = ({ value }) => `replacement:${value}`;
+
+      assertEquals(await t.execute({ value: "input" }), "original:input");
+    });
   });
 
   describe("dynamicTool()", () => {
@@ -340,6 +421,32 @@ describe("tool factory", () => {
         },
         required: ["query"],
       });
+    });
+
+    it("snapshots explicit schemas and execution callbacks at construction", async () => {
+      const inputSchemaJson: JsonSchema = {
+        type: "object",
+        properties: { query: { type: "string" } },
+      };
+      const config = {
+        id: "stable-dynamic",
+        description: "desc",
+        inputSchema: {},
+        inputSchemaJson,
+        execute: async () => "original",
+        toModelOutput: (output: unknown) => `model:${String(output)}`,
+      };
+      const t = dynamicTool(config);
+
+      inputSchemaJson.properties!.query!.type = "number";
+      config.execute = async () => "replacement";
+      config.toModelOutput = () => "replacement-output";
+
+      assertEquals(t.inputSchemaJson, {
+        type: "object",
+        properties: { query: { type: "string" } },
+      });
+      assertEquals(await t.execute({}), "model:original");
     });
   });
 
