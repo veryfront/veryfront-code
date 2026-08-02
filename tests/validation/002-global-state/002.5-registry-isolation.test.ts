@@ -22,7 +22,8 @@ import { resourceRegistry } from "../../../src/resource/registry.ts";
 import type { Resource } from "../../../src/resource/types.ts";
 import { toolRegistry } from "../../../src/tool/registry.ts";
 import type { Tool } from "../../../src/tool/types.ts";
-import { workflowRegistry } from "../../../src/workflow/registry.ts";
+import { workflowRegistry, workflowRegistryInternal } from "../../../src/workflow/registry.ts";
+import type { WorkflowDefinition } from "../../../src/workflow/types.ts";
 
 function createMockTool(id: string, projectMarker: string): Tool {
   return {
@@ -52,6 +53,17 @@ function createMockResource(id: string, projectMarker: string): Resource {
   };
 }
 
+function createMockWorkflow(id: string, projectMarker: string): WorkflowDefinition {
+  return {
+    id,
+    description: `Workflow from ${projectMarker}`,
+    steps: [{
+      id: "run",
+      config: { type: "step", tool: `${projectMarker}-tool` },
+    }],
+  };
+}
+
 const projectAContext = {
   projectId: "project-a",
   mode: "preview" as const,
@@ -68,7 +80,9 @@ function clearAllRegistries(): void {
   toolRegistry.clearAll();
   promptRegistry.clearAll();
   agentRegistry.clearAll();
-  workflowRegistry.clearAll();
+  // Process-wide cleanup is framework maintenance authority. Application-facing
+  // registries intentionally expose only project-scoped `clear()`.
+  workflowRegistryInternal.clearAll();
   resourceRegistry.clearAll();
   clearModelProviders();
 }
@@ -199,6 +213,30 @@ describe("002.5 Registry Isolation", () => {
 
       assertEquals(resourceA?.description, "Resource from Project A");
       assertEquals(resourceB?.description, "Resource from Project B");
+    });
+  });
+
+  describe("Workflow Registry Isolation", () => {
+    it("workflows are isolated between projects", () => {
+      runWithCacheKeyContext(projectAContext, () => {
+        workflowRegistry.register(createMockWorkflow("deployment", "Project A"));
+      });
+
+      runWithCacheKeyContext(projectBContext, () => {
+        workflowRegistry.register(createMockWorkflow("deployment", "Project B"));
+      });
+
+      const workflowA = runWithCacheKeyContext(
+        projectAContext,
+        () => workflowRegistry.get("deployment"),
+      );
+      const workflowB = runWithCacheKeyContext(
+        projectBContext,
+        () => workflowRegistry.get("deployment"),
+      );
+
+      assertEquals(workflowA?.description, "Workflow from Project A");
+      assertEquals(workflowB?.description, "Workflow from Project B");
     });
   });
 
