@@ -176,7 +176,7 @@ export function createRedisRuntimeProvider(
       if (closePromise) return closePromise;
 
       const closing = Promise.resolve()
-        .then(() => client.disconnect())
+        .then(() => client.isOpen === false ? undefined : client.disconnect())
         .then(() => {
           closed = true;
           clientHandles.delete(handle);
@@ -236,7 +236,9 @@ export function createRedisRuntimeProvider(
           },
         });
       } catch (error) {
-        if (provisionalHandle) failedSetupHandles.add(provisionalHandle);
+        if (provisionalHandle && clientHandles.has(provisionalHandle)) {
+          failedSetupHandles.add(provisionalHandle);
+        }
         const failedClient = takeRedisClientSetupCleanupClient(error);
         if (failedClient && !provisionalHandle) {
           const failedHandle = createClientHandle(failedClient);

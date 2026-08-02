@@ -205,6 +205,33 @@ describe("Redis event publisher", () => {
     await publisher.close();
   });
 
+  it("treats a client closed by a failed connect as already disposed", async () => {
+    const connectError = new Error("connect failed");
+    let isOpen = true;
+    const publishClient = createFakeClient({
+      connect: () => {
+        isOpen = false;
+        return Promise.reject(connectError);
+      },
+      close: () => Promise.reject(new Error("closed client must not be closed again")),
+    });
+    Object.defineProperty(publishClient, "isOpen", {
+      configurable: true,
+      get: () => isOpen,
+    });
+    const subscribeClient = createFakeClient();
+    const publisher = createPublisher(publishClient, subscribeClient);
+
+    const publishingError = await assertRejects(() => publisher.publish(createEvent()));
+    assertEquals(publishingError, connectError);
+    assertEquals(publishClient.closeCalls, 0);
+    assertEquals(subscribeClient.closeCalls, 1);
+
+    await publisher.close();
+    await publisher.close();
+    assertEquals(publishClient.closeCalls, 0);
+  });
+
   it("closes a client again when parallel initialization settles late", async () => {
     let releaseConnect: (() => void) | undefined;
     const connectGate = new Promise<void>((resolve) => {
