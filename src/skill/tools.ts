@@ -17,7 +17,6 @@ import {
   captureByteReadCapabilities,
   captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
-import { join } from "#veryfront/compat/path";
 import { createError, toError } from "#veryfront/errors";
 import { skillRegistry } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
@@ -362,7 +361,6 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
 
       // Read SKILL.md
-      const skillMdPath = join(skill.rootPath, SKILL_MD_FILENAME);
       const validatedSkillMdPath = await validateStrictSkillPath(
         skill.rootPath,
         SKILL_MD_FILENAME,
