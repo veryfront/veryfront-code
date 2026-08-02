@@ -114,15 +114,10 @@ describe("Redis runtime provider owned clients", () => {
       },
     });
     const provider = createRedisRuntimeProvider({
-      openClient: (options, lifecycle) =>
-        openRedisClient(
-          options,
-          {
-            getEnv: () => undefined,
-            loadFactory: () => Promise.resolve(() => client),
-          },
-          lifecycle,
-        ),
+      clientManagerDependencies: {
+        getEnv: () => undefined,
+        loadFactory: () => Promise.resolve(() => client),
+      },
     });
     const opening = provider.openClient({ url: "redis://cache.example.test" });
     await connectStarted;

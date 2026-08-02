@@ -13,6 +13,7 @@ import { createRedisEventPublisher, type RedisEventPublisherClient } from "./eve
 import {
   createRedisClientManager,
   openRedisClient,
+  type RedisClientManagerDependencies,
   type RedisClientOpenLifecycle,
   takeRedisClientSetupCleanupClient,
 } from "./redis-client-manager.ts";
@@ -93,6 +94,7 @@ function bindClientMethods<T>(
 }
 
 export interface RedisRuntimeProviderDependencies {
+  clientManagerDependencies?: RedisClientManagerDependencies;
   openClient?: (
     options?: RedisClientOptions,
     lifecycle?: RedisClientOpenLifecycle,
@@ -103,14 +105,16 @@ export interface RedisRuntimeProviderDependencies {
 export function createRedisRuntimeProvider(
   dependencies: RedisRuntimeProviderDependencies = {},
 ): RedisRuntimeProvider {
-  const clientManager = createRedisClientManager();
+  const clientManagerDependencies = dependencies.clientManagerDependencies ?? {};
+  const clientManager = createRedisClientManager(clientManagerDependencies);
   const publishers = new Set<RedisEventPublisherImplementation>();
   const clientHandles = new Set<RedisClientHandle>();
   const failedSetupHandles = new Set<RedisClientHandle>();
   const forcedHandleClosers = new WeakMap<RedisClientHandle, () => Promise<void>>();
   const openingAbortControllers = new Set<AbortController>();
   const exposedClients = new WeakMap<object, RedisClient>();
-  const connectClient = dependencies.openClient ?? openRedisClient;
+  const connectClient = dependencies.openClient ??
+    ((options, lifecycle) => openRedisClient(options, clientManagerDependencies, lifecycle));
   const moduleAdapter: NodeRedisModule = Object.freeze({
     createClient(options: Parameters<NodeRedisModule["createClient"]>[0]) {
       requireOpen();
