@@ -60,6 +60,19 @@ describe("cli/templates/integration-loader file namespacing", () => {
     );
   });
 
+  it("keeps relocated Deno tool imports extensionful", async () => {
+    const { files } = await loadIntegrations(["aws", "anthropic"]);
+    const extensionlessRelativeImports = files
+      .filter((file) => file.path.startsWith("tools/"))
+      .flatMap((file) =>
+        [...file.content.matchAll(/from\s+["'](\.\.?\/[^"']+)["']/g)]
+          .map((match) => ({ path: file.path, specifier: match[1] }))
+      )
+      .filter(({ specifier }) => !/\.[cm]?[jt]sx?$/.test(specifier ?? ""));
+
+    assertEquals(extensionlessRelativeImports, []);
+  });
+
   it("drops no tool module when every available integration is generated together", async () => {
     const { integrations, files } = await loadIntegrations(getAvailableIntegrations());
 

@@ -1,6 +1,6 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAnthropicAdminClient } from '../lib/anthropic-admin-client';
+import { getAnthropicAdminClient } from '../lib/anthropic-admin-client.ts';
 
 export const getUsage = tool({
   id: 'anthropic-get-usage',

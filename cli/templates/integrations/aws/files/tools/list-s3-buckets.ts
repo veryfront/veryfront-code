@@ -1,6 +1,6 @@
 import { tool } from 'veryfront/tool';
 import { defineSchema } from 'veryfront/schemas';
-import { getAWSClient } from '../lib/aws-client';
+import { getAWSClient } from '../lib/aws-client.ts';
 
 export const listS3BucketsTool = tool({
   id: 'aws-list-s3-buckets',
