@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RedisRateLimitStore } from "./redis-rate-limit.ts";
 
@@ -20,6 +20,7 @@ function createMockRedisClient(): {
   _incrCalls: number;
   _pExpireCalls: number;
   _disconnectCalls: number;
+  _delCalls: number;
   _store: Map<string, { count: number; ttl: number }>;
 } {
   const store = new Map<string, { count: number; ttl: number }>();
@@ -28,6 +29,7 @@ function createMockRedisClient(): {
   let incrCalls = 0;
   let pExpireCalls = 0;
   let disconnectCalls = 0;
+  let delCalls = 0;
 
   return {
     connect: () => Promise.resolve(),
@@ -64,6 +66,7 @@ function createMockRedisClient(): {
       return Promise.resolve(entry?.ttl ?? -2);
     },
     del: (key: string) => {
+      delCalls += 1;
       const deleted = store.has(key) ? 1 : 0;
       store.delete(key);
       return Promise.resolve(deleted);
@@ -87,6 +90,9 @@ function createMockRedisClient(): {
     },
     get _disconnectCalls() {
       return disconnectCalls;
+    },
+    get _delCalls() {
+      return delCalls;
     },
     _store: store,
   };
@@ -132,6 +138,21 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const store = new RedisRateLimitStore({ keyPrefix: "custom:" });
         // deno-lint-ignore no-explicit-any
         assertEquals((store as any).keyPrefix, "custom:");
+      });
+
+      it("should reject an invalid key prefix before connecting", () => {
+        assertThrows(
+          () => new RedisRateLimitStore({ keyPrefix: "x".repeat(1025) }),
+          RangeError,
+          "1024",
+        );
+        for (const invalidPrefix of ["", " \t ", "app\u0000:", "app\u0085:"]) {
+          assertThrows(
+            () => new RedisRateLimitStore({ keyPrefix: invalidPrefix }),
+            TypeError,
+            "visible text without control characters",
+          );
+        }
       });
     });
 
@@ -198,6 +219,34 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
         const diff = entry.resetAt - before;
         assertEquals(diff >= 59000 && diff <= 61000, true);
       });
+
+      it("should reject invalid keys and windows before Redis evaluation", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+
+        await assertRejects(
+          () => rateStore.increment("x".repeat(1025), 1000),
+          RangeError,
+          "1024",
+        );
+        for (
+          const invalidKey of ["", " \t ", "tenant\u0000member", "tenant\u0085member"]
+        ) {
+          await assertRejects(
+            () => rateStore.increment(invalidKey, 1000),
+            TypeError,
+            "visible text without control characters",
+          );
+        }
+        for (const invalidWindow of [0, -1, 1.5, Number.NaN]) {
+          await assertRejects(
+            () => rateStore.increment("key", invalidWindow),
+            RangeError,
+            "windowMs",
+          );
+        }
+
+        assertEquals(mockClient._evalCalls, 0);
+      });
     });
 
     describe("reset", () => {
@@ -213,6 +262,23 @@ describe("middleware/builtin/security/redis-rate-limit", () => {
       it("should not throw when resetting non-existent key", async () => {
         const { rateStore } = createStoreWithMock();
         await rateStore.reset("nonexistent");
+      });
+
+      it("should reject an invalid key before deleting", async () => {
+        const { rateStore, mockClient } = createStoreWithMock();
+
+        await assertRejects(
+          () => rateStore.reset("x".repeat(1025)),
+          RangeError,
+          "1024",
+        );
+        await assertRejects(
+          () => rateStore.reset("tenant\u0000member"),
+          TypeError,
+          "visible text without control characters",
+        );
+
+        assertEquals(mockClient._delCalls, 0);
       });
     });
 

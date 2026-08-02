@@ -2,6 +2,7 @@ import { createError, toError } from "#veryfront/errors";
 import { OwnedRedisClientConnection } from "#veryfront/extensions/distributed/owned-redis-client.ts";
 import type { RedisClient } from "#veryfront/extensions/distributed";
 import { serverLogger } from "#veryfront/utils";
+import { requireRateLimitKey, requireRateLimitWindowMs } from "./rate-limit-validation.ts";
 import type { RateLimitEntry, RateLimitStore } from "./types.ts";
 
 const logger = serverLogger.component("redis-ratelimit");
@@ -28,7 +29,10 @@ export class RedisRateLimitStore implements RateLimitStore {
   private readonly keyPrefix: string;
 
   constructor(options: RedisRateLimitOptions = {}) {
-    this.keyPrefix = options.keyPrefix ?? "veryfront:ratelimit:";
+    this.keyPrefix = requireRateLimitKey(
+      options.keyPrefix ?? "veryfront:ratelimit:",
+      "Redis rate limit keyPrefix",
+    );
     this.connection = new OwnedRedisClientConnection(
       options.url === undefined ? {} : { url: options.url },
       {
@@ -51,22 +55,25 @@ export class RedisRateLimitStore implements RateLimitStore {
   }
 
   async increment(key: string, windowMs: number): Promise<RateLimitEntry> {
+    const normalizedKey = requireRateLimitKey(key);
+    const normalizedWindowMs = requireRateLimitWindowMs(windowMs);
     const client = await this.ensureClient();
-    const redisKey = this.storageKey(key);
+    const redisKey = this.storageKey(normalizedKey);
 
     const [count, pttl] = parseIncrementResult(
       await client.eval(INCREMENT_WITH_TTL_SCRIPT, {
         keys: [redisKey],
-        arguments: [String(windowMs)],
+        arguments: [String(normalizedWindowMs)],
       }),
     );
-    const ttl = pttl > 0 ? pttl : windowMs;
+    const ttl = pttl > 0 ? pttl : normalizedWindowMs;
     return { count, resetAt: Date.now() + ttl };
   }
 
   async reset(key: string): Promise<void> {
+    const normalizedKey = requireRateLimitKey(key);
     const client = await this.ensureClient();
-    await client.del(this.storageKey(key));
+    await client.del(this.storageKey(normalizedKey));
   }
 
   async destroy(): Promise<void> {
