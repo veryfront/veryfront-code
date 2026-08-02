@@ -23,6 +23,10 @@ const MAX_PROVIDER_DELAY_MS = 5_000;
 const DEFAULT_SIDE_OFFSET_PX = 6;
 const VIEWPORT_PADDING_PX = 8;
 const ARROW_EDGE_INSET_PX = 8;
+const useIsomorphicLayoutEffect = typeof document === "undefined"
+  ? React.useEffect
+  : React.useLayoutEffect;
+
 const REACT_MAJOR_VERSION = Number.parseInt(React.version, 10);
 const SUPPORTS_REF_CLEANUP = Number.isFinite(REACT_MAJOR_VERSION) &&
   REACT_MAJOR_VERSION >= 19;
@@ -248,7 +252,7 @@ function useTooltipInteractions(
     if (disabled) reset();
   }, [reset]);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     delayed.clearPending();
     if (canOpen()) delayed.requestOpen();
   }, [canOpen, delayDuration, delayed.clearPending, delayed.requestOpen]);
@@ -328,7 +332,7 @@ export function Tooltip(
     };
   }, [generatedContentId]);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!interactions.open || !triggerElement) return;
     const ownerDocument = triggerElement.ownerDocument;
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -502,7 +506,7 @@ function useComposedTriggerRef(
     }
   }, [attachChildRef, detachChildRef, triggerRef]);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const element = elementRef.current;
     if (!element || assignedChildRef.current.ref === childRef) return;
     detachChildRef();
@@ -558,7 +562,7 @@ export function TooltipTrigger(
   const childRef = child && childProps ? getChildRef(child, childProps) : undefined;
   const composedRef = useComposedTriggerRef(triggerRef, childRef);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const element = context?.triggerElement;
     if (!element) return;
     const updateDisabled = (): void => {
@@ -843,12 +847,12 @@ export function TooltipContent(
     setPortalReady(true);
   }, []);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!registerContent || !resolvedId) return;
     return registerContent(resolvedId);
   }, [registerContent, resolvedId]);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const content = ref.current;
     if (!open || !portalReady || !triggerElement || !content) {
       setPosition((current) => current.visible ? { ...current, visible: false } : current);
