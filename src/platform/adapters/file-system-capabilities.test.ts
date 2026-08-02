@@ -105,6 +105,15 @@ describe("platform/adapters/file-system-capabilities", () => {
     await assertRejects(() => captured.exact!("/a", 0), RangeError, "positive safe integer");
   });
 
+  it("captures byte readers without inspecting an unrelated malformed writer", async () => {
+    const captured = captureByteReadCapabilities({
+      readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array([4])),
+      writeFileBytes: new Proxy(function () {}, {}),
+    });
+
+    assertEquals([...(await captured.exact!("/a", 1))], [4]);
+  });
+
   it("captures snapshot authority without inspecting unrelated writer fields", async () => {
     let unrelatedReads = 0;
     const adapter = {
@@ -522,11 +531,20 @@ describe("platform/adapters/file-system-capabilities", () => {
     );
   });
 
+  it("does not publish virtual authority without an admissible bounded reader", () => {
+    const captured = captureStaticReadCapabilities({
+      symlinkSemantics: "none",
+      getSourceSnapshotVersion: () => 0,
+    });
+    assertEquals(captured.virtual, undefined);
+  });
+
   it("validates every virtual generation result as a non-negative safe integer", async () => {
     let generation: unknown = 0;
     const captured = captureStaticReadCapabilities({
       symlinkSemantics: "none",
       getSourceSnapshotVersion: () => generation,
+      readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array()),
     });
 
     assertEquals(await captured.virtual!.generation(), 0);
