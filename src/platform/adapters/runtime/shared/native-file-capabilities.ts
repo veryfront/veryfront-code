@@ -122,9 +122,6 @@ export async function readNodeFileSnapshotWithinLimit(
   const admittedLimit = requireByteLimit(byteLimit);
   const lexicalRoot = resolve(containmentRoot);
   const candidate = resolve(path);
-  if (!isContainedPath(candidate, lexicalRoot)) {
-    throw new TypeError("Snapshot path must be contained by the requested root");
-  }
 
   const fsOperations = operations ?? await defaultOperations();
   const { constants } = await import("node:fs");
@@ -133,6 +130,12 @@ export async function readNodeFileSnapshotWithinLimit(
   }
 
   const canonicalRoot = await fsOperations.realpath(lexicalRoot);
+  if (
+    !isContainedPath(candidate, lexicalRoot) &&
+    !isContainedPath(candidate, canonicalRoot)
+  ) {
+    throw new TypeError("Snapshot path must be contained by the requested root");
+  }
   const pathnameBefore = await fsOperations.lstat(candidate);
   if (pathnameBefore.isSymbolicLink()) {
     throw new TypeError("Snapshot path must not be a symbolic link");
