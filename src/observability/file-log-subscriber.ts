@@ -252,7 +252,6 @@ export class FileLogSubscriber {
   }
 
   private enqueue(entry: LogEntry): void {
-    this.queueGeneration++;
     if (this.pendingWrites >= MAX_FILE_LOG_PENDING_WRITES) {
       const error = new RangeError(
         `File log pending-write capacity of ${MAX_FILE_LOG_PENDING_WRITES} was reached`,
@@ -265,6 +264,7 @@ export class FileLogSubscriber {
       return;
     }
 
+    this.queueGeneration++;
     this.pendingWrites++;
     this.writeQueue = this.writeQueue
       .then(() => this.writeEntry(entry))

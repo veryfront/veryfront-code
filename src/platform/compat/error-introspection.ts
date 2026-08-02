@@ -15,6 +15,17 @@ interface NativeBrandChecks {
   isUint8Array(value: unknown): boolean;
 }
 
+const createObject = Object.create;
+const defineProperty = Object.defineProperty;
+const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const getPrototypeOf = Object.getPrototypeOf;
+const objectHasOwnProperty = Object.prototype.hasOwnProperty;
+const deleteProperty = Reflect.deleteProperty;
+const apply = Reflect.apply;
+const NativeError = Error;
+const NativeAsyncFunctionPrototype = getPrototypeOf(async function () {});
+const toStringTagSymbol = Symbol.toStringTag;
+
 const NODE_UTIL_TYPES_SPECIFIER = "node:util/types";
 let nativeBrandChecks: NativeBrandChecks | undefined;
 if (isBun || isDeno || isNode) {
@@ -33,17 +44,6 @@ const nativeErrorBrandCheck = nativeBrandChecks?.isNativeError ?? unavailableBra
 const nativePromiseBrandCheck = nativeBrandChecks?.isPromise ?? unavailableBrandCheck;
 const nativeProxyBrandCheck = nativeBrandChecks?.isProxy ?? unavailableBrandCheck;
 const nativeUint8ArrayBrandCheck = nativeBrandChecks?.isUint8Array ?? unavailableBrandCheck;
-
-const createObject = Object.create;
-const defineProperty = Object.defineProperty;
-const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
-const getPrototypeOf = Object.getPrototypeOf;
-const objectHasOwnProperty = Object.prototype.hasOwnProperty;
-const deleteProperty = Reflect.deleteProperty;
-const apply = Reflect.apply;
-const NativeError = Error;
-const NativeAsyncFunctionPrototype = getPrototypeOf(async function () {});
-const toStringTagSymbol = Symbol.toStringTag;
 
 function hasOwn(object: object, key: PropertyKey): boolean {
   return apply(objectHasOwnProperty, object, [key]) as boolean;

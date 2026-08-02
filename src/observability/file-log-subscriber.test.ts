@@ -622,6 +622,7 @@ describe("observability/file-log-subscriber", () => {
       });
       const internals = sub as unknown as {
         pendingWrites: number;
+        queueGeneration: number;
         writeEntry(entry: unknown): Promise<void>;
       };
       internals.writeEntry = () => gate;
@@ -639,6 +640,7 @@ describe("observability/file-log-subscriber", () => {
       }
 
       assertEquals(internals.pendingWrites, MAX_FILE_LOG_PENDING_WRITES);
+      assertEquals(internals.queueGeneration, MAX_FILE_LOG_PENDING_WRITES);
       release();
       await assertRejects(() => sub.flush(), Error, "capacity");
       await sub.close();

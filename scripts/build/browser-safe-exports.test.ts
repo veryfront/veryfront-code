@@ -99,7 +99,7 @@ Deno.test("the public observability barrel does not eagerly import Node-only hel
 		"the public observability barrel must not retain a browser-eager node:v8 import",
 	);
 	assert(
-		!/\bfrom\s*["']node:util\/types["']/.test(bundle),
+		!/\b(?:from|import)\s*["']node:util\/types["']/.test(bundle),
 		"the public observability barrel must not retain a browser-eager node:util/types import",
 	);
 });
