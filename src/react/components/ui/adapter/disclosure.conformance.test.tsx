@@ -122,9 +122,10 @@ function runDisclosureConformance(
     });
 
     it("prevents disabled asChild link navigation", () => {
+      let disabledClickCount = 0;
       const { host, unmount } = render(
         <Wrap>
-          <DisclosureAsChildProbe />
+          <DisclosureAsChildProbe onClick={() => disabledClickCount += 1} />
         </Wrap>,
       );
       try {
@@ -132,6 +133,7 @@ function runDisclosureConformance(
         const event = click(link);
         assert(event.defaultPrevented, "disabled composed link prevents its default action");
         assert(link.getAttribute("aria-expanded") === "false", "disabled link stays closed");
+        assert(disabledClickCount === 0, "disabled composed trigger skips its click handler");
       } finally {
         unmount();
       }
@@ -174,11 +176,13 @@ function DisclosureProbe(
   );
 }
 
-function DisclosureAsChildProbe(): React.ReactElement {
+function DisclosureAsChildProbe(
+  { onClick }: { onClick?: React.MouseEventHandler<HTMLButtonElement> },
+): React.ReactElement {
   const { disclosure } = useAdapter();
   return (
     <disclosure.Root disabled>
-      <disclosure.Trigger asChild>
+      <disclosure.Trigger asChild onClick={onClick}>
         <a href="#navigated">Toggle</a>
       </disclosure.Trigger>
       <disclosure.Content>Body</disclosure.Content>
@@ -264,8 +268,11 @@ const altDisclosure: DisclosureParts = {
         disabled={asChild ? undefined : isDisabled}
         aria-disabled={asChild && isDisabled ? true : undefined}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          if (isDisabled) {
+            e.preventDefault();
+            return;
+          }
           onClick?.(e);
-          if (isDisabled) e.preventDefault();
           if (!e.defaultPrevented) ctx?.toggle();
         }}
         {...props}

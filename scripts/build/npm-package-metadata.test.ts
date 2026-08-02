@@ -25,6 +25,16 @@ Deno.test("exports agent skill helpers as a public package subpath", async () =>
   assertEquals(imports["veryfront/skill"], "./src/skill/index.ts");
 });
 
+Deno.test("exports the UI adapter contract as a public package subpath", async () => {
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const exports = denoConfig.exports as Record<string, string>;
+  const imports = denoConfig.imports as Record<string, string>;
+  const contract = "./src/react/components/ui/adapter/contract.ts";
+
+  assertEquals(exports["./ui/adapter"], contract);
+  assertEquals(imports["veryfront/ui/adapter"], contract);
+});
+
 Deno.test("exports CLI framework dependencies as public package subpaths", async () => {
   const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
   const exports = denoConfig.exports as Record<string, string>;

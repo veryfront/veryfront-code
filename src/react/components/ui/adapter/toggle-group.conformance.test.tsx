@@ -93,11 +93,16 @@ function runToggleGroupConformance(
     });
 
     it("blocks native, composed-link, and consumer-cancelled toggles", () => {
+      let disabledClickCount = 0;
       const { host, unmount } = render(
         <Wrap>
           <ToggleGroup type="multiple" disabled>
             <ToggleGroupItem value="native">Native</ToggleGroupItem>
-            <ToggleGroupItem value="link" asChild>
+            <ToggleGroupItem
+              value="link"
+              asChild
+              onClick={() => disabledClickCount += 1}
+            >
               <a href="#disabled">Link</a>
             </ToggleGroupItem>
           </ToggleGroup>
@@ -119,6 +124,7 @@ function runToggleGroupConformance(
         assert(native.getAttribute("aria-pressed") === "false", "disabled button stays off");
         assert(linkEvent.defaultPrevented, "disabled link prevents navigation");
         assert(link.getAttribute("aria-pressed") === "false", "disabled link stays off");
+        assert(disabledClickCount === 0, "disabled composed item skips its click handler");
         assert(cancelled.getAttribute("aria-pressed") === "false", "cancelled item stays off");
       } finally {
         unmount();
@@ -214,8 +220,11 @@ const altToggleGroup: ToggleGroupParts = {
         disabled={asChild ? undefined : isDisabled}
         data-state={isOn ? "on" : "off"}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+          if (isDisabled) {
+            e.preventDefault();
+            return;
+          }
           onClick?.(e);
-          if (isDisabled) e.preventDefault();
           if (!e.defaultPrevented) ctx?.toggle(value);
         }}
         {...props}

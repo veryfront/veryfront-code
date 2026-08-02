@@ -22,15 +22,13 @@
  *           title: "Saved",
  *           description: "Your changes are live.",
  *           variant: "success",
- *           action: { label: "Undo", onClick: undo },
+ *           action: { label: "Undo", onClick: () => undefined },
  *         })}
  *     >
  *       Save
  *     </button>
  *   );
  * }
- *
- * // Fully custom node: toast.custom((id) => <MyToast onClose={() => dismiss(id)} />);
  *
  * export function App() {
  *   return (

@@ -90,8 +90,11 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
       data-state={ctx.open ? "open" : "closed"}
       disabled={asChild ? undefined : isDisabled}
       onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+        if (isDisabled) {
+          e.preventDefault();
+          return;
+        }
         onClick?.(e);
-        if (isDisabled) e.preventDefault();
         if (!e.defaultPrevented) ctx.toggle();
       }}
     >

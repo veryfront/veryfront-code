@@ -70,6 +70,11 @@ describe("generate-api-reference", () => {
         "| `AppShellProps` | Props accepted by `AppShell`. |",
       );
       assertStringIncludes(
+        uiReference,
+        'import type { DisclosureParts, DisclosureProps, MultipleToggleGroupRootProps } from "veryfront/ui/adapter";',
+        "type-only deep exports must use a copyable type import",
+      );
+      assertStringIncludes(
         routerReference,
         "| Name | Description | Source |",
       );

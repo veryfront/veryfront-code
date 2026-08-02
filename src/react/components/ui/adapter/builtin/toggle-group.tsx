@@ -88,8 +88,11 @@ const ToggleGroupItem: ToggleGroupParts["Item"] = (
       data-disabled={isDisabled ? "" : undefined}
       disabled={asChild ? undefined : isDisabled}
       onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
+        if (isDisabled) {
+          event.preventDefault();
+          return;
+        }
         onClick?.(event);
-        if (isDisabled) event.preventDefault();
         if (event.defaultPrevented) return;
         ctx.toggle(value);
       }}

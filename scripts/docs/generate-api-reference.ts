@@ -2576,9 +2576,11 @@ function generateMD(
       }
       lines.push("```ts");
       const sample = pickDeepImportSample(di.exports);
-      if (sample.length > 0) {
+      if (sample.names.length > 0) {
         lines.push(
-          `import { ${sample.join(", ")} } from "${di.deep.importPath}";`,
+          `import${sample.typeOnly ? " type" : ""} { ${
+            sample.names.join(", ")
+          } } from "${di.deep.importPath}";`,
         );
       } else {
         lines.push(`import "${di.deep.importPath}";`);
@@ -2614,14 +2616,22 @@ function generateMD(
   return lines.join("\n");
 }
 
-function pickDeepImportSample(exports: CategorizedExports): string[] {
-  const all = [
+function pickDeepImportSample(
+  exports: CategorizedExports,
+): { names: string[]; typeOnly: boolean } {
+  const runtime = [
     ...exports.functions,
     ...exports.components,
     ...exports.classes,
     ...exports.constants,
   ].map((e) => e.name);
-  return all.slice(0, 3);
+  if (runtime.length > 0) {
+    return { names: runtime.slice(0, 3), typeOnly: false };
+  }
+  return {
+    names: exports.types.map((entry) => entry.name).slice(0, 3),
+    typeOnly: true,
+  };
 }
 
 function sourceCell(summary: ExportSummary): string {
