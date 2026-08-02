@@ -215,8 +215,12 @@ function findFromSpan(
 export function findStaticImportFromSpans(
   source: string,
   matcher: SpecifierMatcher,
-  maxMatches = Number.MAX_SAFE_INTEGER,
+  maxMatches: number,
 ): StaticImportSpan[] {
+  if (!Number.isSafeInteger(maxMatches) || maxMatches <= 0) {
+    throw new RangeError("maxMatches must be a positive safe integer");
+  }
+
   const spans: StaticImportSpan[] = [];
   let cursor = 0;
 

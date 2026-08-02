@@ -19,6 +19,7 @@ import {
   replaceSourceSpans,
   type SourceSpanReplacement,
 } from "../utils/source-spans.ts";
+import { MAX_MDX_MODULE_IMPORTS_PER_FILE } from "./limits.ts";
 
 const MODULE_FETCHER_VERYFRONT_CONTEXT: RewriteContext = {
   filePath: "",
@@ -28,6 +29,23 @@ const MODULE_FETCHER_VERYFRONT_CONTEXT: RewriteContext = {
   dev: false,
   reactVersion: DEFAULT_REACT_VERSION,
 };
+
+function findBoundedStaticImportSpans(
+  source: string,
+  matcher: (specifier: string) => string | null | undefined,
+) {
+  const matches = findStaticImportFromSpans(
+    source,
+    matcher,
+    MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+  );
+  if (matches.length > MAX_MDX_MODULE_IMPORTS_PER_FILE) {
+    throw new RangeError(
+      `Module contains more than ${MAX_MDX_MODULE_IMPORTS_PER_FILE} static imports`,
+    );
+  }
+  return matches;
+}
 
 function rewriteVeryfrontModuleSpecifier(specifier: string): string | null {
   const result = veryfrontStrategy.rewrite(
@@ -50,7 +68,7 @@ function rewriteVeryfrontModuleSpecifier(specifier: string): string | null {
  * Uses deno.json exports/imports as the source of truth and appends ?ssr=true.
  */
 export function rewriteVeryfrontImports(code: string): string {
-  const replacements: SourceSpanReplacement[] = findStaticImportFromSpans(
+  const replacements: SourceSpanReplacement[] = findBoundedStaticImportSpans(
     code,
     (specifier) => specifier.startsWith("veryfront/") ? specifier : null,
   ).flatMap(({ original, path, start, end }) => {
@@ -128,7 +146,7 @@ export async function rewriteDntImports(code: string, sourceFilePath: string): P
   const patterns = [
     {
       findMatches: (source: string) =>
-        findStaticImportFromSpans(
+        findBoundedStaticImportSpans(
           source,
           (specifier) => specifier.match(/^(\.\.?\/[^?]+)(?:\?.*)?$/)?.[1],
         ),

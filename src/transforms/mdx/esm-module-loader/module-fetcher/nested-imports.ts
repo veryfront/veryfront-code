@@ -77,7 +77,11 @@ export function findNestedImports(
  * Check for unresolved /_vf_modules/ imports.
  */
 export function hasUnresolvedImports(moduleCode: string): { count: number; paths: string[] } {
-  const matches = findStaticImportFromSpans(moduleCode, matchUnresolvedVfModuleSpecifier);
+  const matches = findStaticImportFromSpans(
+    moduleCode,
+    matchUnresolvedVfModuleSpecifier,
+    MAX_MDX_MODULE_IMPORTS_PER_FILE + 1,
+  );
   return {
     count: matches.length,
     paths: matches.map((match) => match.path).slice(0, 5),

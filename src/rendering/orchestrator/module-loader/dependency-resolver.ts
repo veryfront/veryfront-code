@@ -10,6 +10,7 @@ import {
 import { findSourceFile } from "../file-resolver/index.ts";
 
 const logger = rendererLogger.component("module-loader");
+const MAX_STATIC_IMPORTS_PER_KIND = 500;
 
 type AliasImport = {
   full: string;
@@ -67,8 +68,19 @@ function collectAliasImports(fileContent: string): AliasImport[] {
     },
   ): AliasImport => ({ full: original, path, start, end, isDynamic });
 
+  const staticImports = findStaticImportFromSpans(
+    fileContent,
+    matchAlias,
+    MAX_STATIC_IMPORTS_PER_KIND + 1,
+  );
+  if (staticImports.length > MAX_STATIC_IMPORTS_PER_KIND) {
+    throw new RangeError(
+      `Module contains more than ${MAX_STATIC_IMPORTS_PER_KIND} static alias imports`,
+    );
+  }
+
   return [
-    ...findStaticImportFromSpans(fileContent, matchAlias).map(toAlias(false)),
+    ...staticImports.map(toAlias(false)),
     ...findDynamicImportSpans(fileContent, matchAlias).map(toAlias(true)),
   ];
 }
@@ -84,8 +96,19 @@ function collectRelativeImports(fileContent: string, fileDir: string): RelativeI
     },
   ): RelativeImport => ({ full: original, path, fromDir: fileDir, start, end, isDynamic });
 
+  const staticImports = findStaticImportFromSpans(
+    fileContent,
+    matchRelative,
+    MAX_STATIC_IMPORTS_PER_KIND + 1,
+  );
+  if (staticImports.length > MAX_STATIC_IMPORTS_PER_KIND) {
+    throw new RangeError(
+      `Module contains more than ${MAX_STATIC_IMPORTS_PER_KIND} static relative imports`,
+    );
+  }
+
   return [
-    ...findStaticImportFromSpans(fileContent, matchRelative).map(toRelative(false)),
+    ...staticImports.map(toRelative(false)),
     ...findDynamicImportSpans(fileContent, matchRelative).map(toRelative(true)),
   ]
     // Ignore already-transformed file:// imports.

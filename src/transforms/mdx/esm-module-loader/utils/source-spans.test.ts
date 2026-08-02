@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { findDynamicImportSpans, replaceSourceSpans } from "./source-spans.ts";
+import {
+  findDynamicImportSpans,
+  findStaticImportFromSpans,
+  replaceSourceSpans,
+} from "./source-spans.ts";
 
 describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
   describe("replaceSourceSpans", () => {
@@ -85,6 +89,33 @@ describe("transforms/mdx/esm-module-loader/utils/source-spans", () => {
     it("returns source unchanged for empty replacements", () => {
       const source = "unchanged";
       assertEquals(replaceSourceSpans(source, []), "unchanged");
+    });
+  });
+
+  describe("findStaticImportFromSpans", () => {
+    const matchRelative = (specifier: string) => specifier.startsWith("./") ? specifier : null;
+
+    it("requires a positive safe match bound", () => {
+      for (const maxMatches of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        assertThrows(
+          () =>
+            findStaticImportFromSpans('import value from "./value.js";', matchRelative, maxMatches),
+          RangeError,
+          "positive safe integer",
+        );
+      }
+    });
+
+    it("stops collecting after the explicit match bound", () => {
+      const source = Array.from(
+        { length: 20 },
+        (_, index) => `import value${index} from "./value-${index}.js";`,
+      ).join("\n");
+
+      assertEquals(
+        findStaticImportFromSpans(source, matchRelative, 3).map((span) => span.path),
+        ["./value-0.js", "./value-1.js", "./value-2.js"],
+      );
     });
   });
 
