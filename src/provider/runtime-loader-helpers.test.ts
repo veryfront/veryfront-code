@@ -48,10 +48,17 @@ describe("provider/runtime-loader helpers", () => {
     assertEquals(warnings.drain(), []);
   });
 
-  it("always returns JSON text for serializable provider tool values", () => {
+  it("returns JSON text for serializable non-string provider tool values", () => {
     assertEquals(stringifyJsonValue({ ok: true }), '{"ok":true}');
-    assertEquals(stringifyJsonValue("text"), '"text"');
     assertEquals(stringifyJsonValue(null), "null");
+    assertEquals(stringifyJsonValue(42), "42");
+  });
+
+  it("passes strings through instead of double-encoding them", () => {
+    assertEquals(stringifyJsonValue("text"), "text");
+    assertEquals(stringifyJsonValue(""), "");
+    // Pre-serialized JSON reaches the provider as-is, not wrapped in quotes.
+    assertEquals(stringifyJsonValue('{"ok":true}'), '{"ok":true}');
   });
 
   it("rejects provider tool values without a JSON representation", () => {

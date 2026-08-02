@@ -20,6 +20,9 @@ export const getAgentStatusSchema = defineSchema((v) =>
 
 export const getMemoryConfigSchema = defineSchema((v) =>
   v.object({
+    // Keep the public Redis discriminator until RedisMemory and its core export
+    // move together. Removing only schema support would leave the existing
+    // runtime implementation reachable but impossible to configure safely.
     type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
     maxTokens: v.number().int().positive().optional(),
     maxMessages: v.number().int().positive().optional(),
@@ -46,6 +49,7 @@ export const getToolCallPartWithArgsSchema = defineSchema((v) =>
     args: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 
@@ -57,6 +61,7 @@ export const getToolCallPartWithInputSchema = defineSchema((v) =>
     input: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
     providerExecuted: v.boolean().optional(),
+    supportsDeferredResults: v.boolean().optional(),
   })
 );
 

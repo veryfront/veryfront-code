@@ -1,6 +1,7 @@
-import { reset } from "../../extensions/contracts.ts";
+import { register, tryResolve, unregister } from "../../extensions/contracts.ts";
+import type { SchemaValidator } from "../../extensions/schema/index.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   agentServiceConfigSchema,
   parseAgentServiceConfig,
@@ -8,8 +9,18 @@ import {
 } from "./config.ts";
 
 describe("agent/agent-service-config", () => {
+  let previousSchemaValidator: SchemaValidator | undefined;
+
+  beforeEach(() => {
+    previousSchemaValidator = tryResolve<SchemaValidator>("SchemaValidator");
+    unregister("SchemaValidator");
+  });
+
   afterEach(() => {
-    reset();
+    unregister("SchemaValidator");
+    if (previousSchemaValidator !== undefined) {
+      register<SchemaValidator>("SchemaValidator", previousSchemaValidator);
+    }
   });
 
   it("registers the built-in schema validator when used directly", () => {
