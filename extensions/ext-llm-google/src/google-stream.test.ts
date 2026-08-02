@@ -41,6 +41,18 @@ async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown
   return parts;
 }
 
+function collectToolEventIdentities(parts: unknown[]): unknown[] {
+  return parts.flatMap((part) =>
+    typeof part === "object" &&
+      part !== null &&
+      "type" in part &&
+      "toolCallId" in part &&
+      (part.type === "tool-call" || part.type === "tool-result")
+      ? [{ type: part.type, toolCallId: part.toolCallId }]
+      : []
+  );
+}
+
 function data(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\r\n\r\n`;
 }
@@ -476,6 +488,109 @@ describe("ext-llm-google/google-stream", () => {
         input: '{"city":"Paris"}',
       }],
     );
+  });
+
+  it("coalesces replayed anonymous code execution pairs by candidate position", async () => {
+    const executableCode = {
+      executableCode: {
+        language: "PYTHON",
+        code: "print('same')",
+      },
+    };
+    const executionResult = {
+      codeExecutionResult: {
+        outcome: "OUTCOME_OK",
+        output: "same\n",
+      },
+    };
+    const snapshot = [
+      executableCode,
+      executionResult,
+      executableCode,
+      executionResult,
+    ];
+    const parts = await collectParts(streamFromText([
+      data({
+        candidates: [{ content: { role: "model", parts: snapshot } }],
+      }),
+      data({
+        candidates: [{
+          content: { role: "model", parts: snapshot },
+          finishReason: "STOP",
+        }],
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(collectToolEventIdentities(parts), [
+      { type: "tool-call", toolCallId: "google-code-execution-0" },
+      { type: "tool-result", toolCallId: "google-code-execution-0" },
+      { type: "tool-call", toolCallId: "google-code-execution-1" },
+      { type: "tool-result", toolCallId: "google-code-execution-1" },
+    ]);
+
+    await assertRejects(
+      () =>
+        collectParts(streamFromText([
+          data({
+            candidates: [{ content: { role: "model", parts: [executableCode] } }],
+          }),
+          data({
+            candidates: [{ content: { role: "model", parts: [executionResult] } }],
+          }),
+          data({
+            candidates: [{
+              content: {
+                role: "model",
+                parts: [{
+                  codeExecutionResult: {
+                    outcome: "OUTCOME_OK",
+                    output: "changed\n",
+                  },
+                }],
+              },
+              finishReason: "STOP",
+            }],
+          }),
+        ].join(""))),
+      ProviderRequestError,
+      "candidate code execution result changed after emission",
+    );
+  });
+
+  it("ignores a replayed anonymous code execution result after correlation", async () => {
+    const executableCode = {
+      executableCode: {
+        language: "PYTHON",
+        code: "print('once')",
+      },
+    };
+    const executionResult = {
+      codeExecutionResult: {
+        outcome: "OUTCOME_OK",
+        output: "once\n",
+      },
+    };
+    const parts = await collectParts(streamFromText([
+      data({
+        candidates: [{ content: { role: "model", parts: [executableCode] } }],
+      }),
+      data({
+        candidates: [{ content: { role: "model", parts: [executionResult] } }],
+      }),
+      data({
+        candidates: [{
+          content: { role: "model", parts: [executionResult] },
+          finishReason: "STOP",
+        }],
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(collectToolEventIdentities(parts), [
+      { type: "tool-call", toolCallId: "google-code-execution-0" },
+      { type: "tool-result", toolCallId: "google-code-execution-0" },
+    ]);
   });
 
   it("rejects a provider id that collides with an anonymous raw-position id", async () => {

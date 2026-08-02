@@ -178,11 +178,22 @@ export async function* streamGoogleCompatibleParts(
       thoughtSignature?: string;
     }
   >();
-  const pendingAnonymousCodeExecutions: Array<{
+  type AnonymousCodeExecutionReplay = {
     callShape: string;
     rawPartIndex: number;
     thoughtSignature?: string;
-  }> = [];
+    settled: boolean;
+  };
+  const seenAnonymousCodeExecutions = new Map<number, AnonymousCodeExecutionReplay>();
+  const seenAnonymousCodeExecutionResults = new Map<
+    number,
+    {
+      resultShape: string;
+      rawPartIndex: number;
+      thoughtSignature?: string;
+    }
+  >();
+  const pendingAnonymousCodeExecutions: AnonymousCodeExecutionReplay[] = [];
   const toolCallRegistry = createGoogleToolCallCorrelationRegistry();
   const rawAssistantParts: Array<Record<string, unknown>> = [];
   let retainedStateBytes = 0;
@@ -574,14 +585,22 @@ export async function* streamGoogleCompatibleParts(
             throw invalidGoogleStream(context, "candidate executable code id was duplicated");
           }
         } else {
-          const prior = pendingAnonymousCodeExecutions.at(-1);
-          if (prior?.callShape === callShape) {
-            mergeReplaySignature(
-              prior,
-              thoughtSignature,
-              "candidate executable code thought signature changed after emission",
-            );
-            continue;
+          const prior = seenAnonymousCodeExecutions.get(candidatePartIndex);
+          if (prior) {
+            if (prior.callShape === callShape) {
+              mergeReplaySignature(
+                prior,
+                thoughtSignature,
+                "candidate executable code thought signature changed after emission",
+              );
+              continue;
+            }
+            if (!prior.settled) {
+              throw invalidGoogleStream(
+                context,
+                "candidate executable code changed after emission",
+              );
+            }
           }
           try {
             toolCallId = toolCallRegistry.registerCodeExecution(undefined);
@@ -601,8 +620,10 @@ export async function* streamGoogleCompatibleParts(
           callShape,
           rawPartIndex,
           ...(thoughtSignature !== undefined ? { thoughtSignature } : {}),
+          settled: false,
         };
         if (executableCode.providerId === undefined) {
+          seenAnonymousCodeExecutions.set(candidatePartIndex, pending);
           pendingAnonymousCodeExecutions.push(pending);
         } else {
           seenCodeExecutions.set(executableCode.providerId, pending);
@@ -665,6 +686,28 @@ export async function* streamGoogleCompatibleParts(
           );
         }
       } else {
+        const pendingExecution = pendingAnonymousCodeExecutions[0];
+        if (!pendingExecution) {
+          const priorResult = seenAnonymousCodeExecutionResults.get(candidatePartIndex);
+          if (priorResult) {
+            if (priorResult.resultShape !== resultShape) {
+              throw invalidGoogleStream(
+                context,
+                "candidate code execution result changed after emission",
+              );
+            }
+            mergeReplaySignature(
+              priorResult,
+              thoughtSignature,
+              "candidate code execution result thought signature changed after emission",
+            );
+            continue;
+          }
+          throw invalidGoogleStream(
+            context,
+            "candidate code execution result did not match executable code",
+          );
+        }
         try {
           toolCallId = toolCallRegistry.resolveCodeExecutionResult(undefined);
         } catch {
@@ -673,6 +716,7 @@ export async function* streamGoogleCompatibleParts(
             "candidate code execution result did not match executable code",
           );
         }
+        pendingExecution.settled = true;
         pendingAnonymousCodeExecutions.shift();
       }
 
@@ -685,6 +729,19 @@ export async function* streamGoogleCompatibleParts(
           ...(thoughtSignature === undefined ? [] : [thoughtSignature]),
         );
         seenCodeExecutionResults.set(result.providerId, {
+          resultShape,
+          rawPartIndex,
+          ...(thoughtSignature !== undefined ? { thoughtSignature } : {}),
+        });
+      } else {
+        const deduplicationKey = `anonymous-${candidatePartIndex}`;
+        reserveCorrelation(
+          "code-result correlation",
+          deduplicationKey,
+          resultShape,
+          ...(thoughtSignature === undefined ? [] : [thoughtSignature]),
+        );
+        seenAnonymousCodeExecutionResults.set(candidatePartIndex, {
           resultShape,
           rawPartIndex,
           ...(thoughtSignature !== undefined ? { thoughtSignature } : {}),
