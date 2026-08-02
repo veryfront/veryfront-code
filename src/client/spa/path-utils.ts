@@ -168,6 +168,11 @@ function normalizeExistingModuleRequestPath(path: string): string {
   const parts = splitModulePathSuffix(path);
   const key = stripModuleServerPrefix(parts.path);
 
+  // Preserve an explicitly authored source extension. The module server
+  // accepts source-extension URLs and serves compiled JavaScript for that
+  // exact source; rewriting to `.js` would lose the identity when sibling
+  // files such as `page.ts` and `page.tsx` coexist. Extensionless legacy
+  // requests still use the canonical `.js` endpoint.
   return AUTHORED_SOURCE_EXT_PATTERN.test(key)
     ? `${key}${parts.suffix}`
     : `${key}.js${parts.suffix}`;
