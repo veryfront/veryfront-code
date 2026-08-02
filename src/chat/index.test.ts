@@ -9,10 +9,7 @@ import type {
   UseConversationChatOptions as ComponentsChatOptions,
   UseConversationChatResult as ComponentsChatResult,
 } from "veryfront/components/chat";
-import type {
-  ChatStreamWatchdogActiveTool,
-  ConversationStorageLimits,
-} from "./index.ts";
+import type { ConversationStorageLimits } from "./index.ts";
 import type {
   UseConversationChatOptions as ReactComponentsChatOptions,
   UseConversationChatResult as ReactComponentsChatResult,
@@ -30,14 +27,9 @@ const _componentsChatOptions: ComponentsChatOptions = {};
 const _reactComponentsChatOptions: ReactComponentsChatOptions = _componentsChatOptions;
 const _componentsChatResult = null as unknown as ComponentsChatResult;
 const _reactComponentsChatResult: ReactComponentsChatResult = _componentsChatResult;
-const _activeTool: ChatStreamWatchdogActiveTool = {
-  phase: "tool_running",
-  toolCallId: "tool-1",
-};
 const _storageLimits: ConversationStorageLimits = chatModule.CONVERSATION_STORAGE_LIMITS;
 void _reactComponentsChatOptions;
 void _reactComponentsChatResult;
-void _activeTool;
 void _storageLimits;
 
 const expectedRuntimeExports = [
