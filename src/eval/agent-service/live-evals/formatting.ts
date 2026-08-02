@@ -2,10 +2,14 @@ import { Buffer } from "node:buffer";
 import type { AgUiSseProgressSnapshot as EvalProgressSnapshot } from "#veryfront/agent";
 
 function escapePdfText(input: string): string {
-  return input.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(
-    ")",
-    "\\)",
-  );
+  const withoutControlCharacters = [...input].map((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x1f || codePoint === 0x7f ? " " : character;
+  }).join("");
+  return withoutControlCharacters
+    .replaceAll("\\", "\\\\")
+    .replaceAll("(", "\\(")
+    .replaceAll(")", "\\)");
 }
 
 /** Create plain text pdf. */

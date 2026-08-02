@@ -14,6 +14,15 @@ import type {
   EvalToolCall,
   EvalUsage,
 } from "./types.ts";
+import {
+  assertCanonicalEvalString,
+  assertEvalTimerDuration,
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  normalizeEvalString,
+  normalizeEvalStringList,
+  stringifyEvalError,
+} from "./validation.ts";
 
 export * from "./agent-service/live-evals/index.ts";
 export * from "./agent-service/durable-run-canaries/index.ts";
@@ -121,8 +130,30 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function readNumber(value: unknown): number | undefined {
+function readTrimmedEnvironmentString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function resolveAgentServiceEvalApiUrl(env: AgentServiceEvalEnvironmentInput): string {
+  const explicitApiUrl = readTrimmedEnvironmentString(env.VERYFRONT_API_URL);
+  if (explicitApiUrl !== undefined) {
+    return explicitApiUrl;
+  }
+  return parseAgentServiceConfig({
+    ...env,
+    VERYFRONT_API_URL: undefined,
+  }).VERYFRONT_API_URL;
+}
+
+function readFiniteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readNonNegativeNumber(value: unknown): number | undefined {
+  const number = readFiniteNumber(value);
+  return number !== undefined && number >= 0 ? number : undefined;
 }
 
 function readUsageCostSource(value: unknown): EvalUsage["costSource"] | undefined {
@@ -153,7 +184,13 @@ function stringifyPromptInput(input: unknown): string {
     const prompt = readString(input.prompt) ?? readString(input.message) ?? readString(input.input);
     if (prompt) return prompt;
   }
-  return JSON.stringify(input);
+  try {
+    return JSON.stringify(input) ?? String(input);
+  } catch (error) {
+    throw createEvalValidationError(
+      `Agent-service eval input must be JSON-serializable: ${stringifyEvalError(error)}`,
+    );
+  }
 }
 
 function getInputMetadata(input: unknown): Record<string, unknown> {
@@ -171,7 +208,7 @@ function getRequestOverrides(input: BuildAgentServiceEvalRequestBodyInput) {
     model: input.model ?? readString(record.model) ?? null,
     allowedTools: input.allowedTools ?? readStringArray(record.allowedTools),
     forceRuntimeOverrides: input.forceRuntimeOverrides ?? record.forceRuntimeOverrides === true,
-    maxSteps: input.maxSteps ?? readNumber(record.maxSteps),
+    maxSteps: input.maxSteps ?? readFiniteNumber(record.maxSteps),
   };
 }
 
@@ -179,20 +216,46 @@ function createVeryfrontForwardedProps(
   input: BuildAgentServiceEvalRequestBodyInput,
 ): AgentServiceEvalForwardedProps | null {
   const overrides = getRequestOverrides(input);
+  const allowedTools = overrides.allowedTools === undefined
+    ? undefined
+    : normalizeEvalStringList(overrides.allowedTools, "Agent-service eval allowedTools");
+  if (overrides.maxSteps !== undefined) {
+    assertFiniteEvalNumber(overrides.maxSteps, "Agent-service eval maxSteps", {
+      integer: true,
+      min: 1,
+    });
+  }
   const veryfront: AgentServiceEvalForwardedProps = {};
 
-  if (overrides.agentId) veryfront.agentId = overrides.agentId;
-  if (overrides.projectId) veryfront.projectId = overrides.projectId;
-  if (overrides.conversationId) veryfront.conversationId = overrides.conversationId;
-  if (overrides.branchId) veryfront.branchId = overrides.branchId;
-  if (overrides.model) veryfront.model = overrides.model;
+  if (overrides.agentId !== null) {
+    veryfront.agentId = normalizeEvalString(overrides.agentId, "Agent-service eval agentId");
+  }
+  if (overrides.projectId !== null) {
+    veryfront.projectId = normalizeEvalString(overrides.projectId, "Agent-service eval projectId");
+  }
+  if (overrides.conversationId !== null) {
+    veryfront.conversationId = normalizeEvalString(
+      overrides.conversationId,
+      "Agent-service eval conversationId",
+    );
+  }
+  if (overrides.branchId !== null) {
+    veryfront.branchId = normalizeEvalString(overrides.branchId, "Agent-service eval branchId");
+  }
+  if (overrides.model !== null) {
+    veryfront.model = normalizeEvalString(overrides.model, "Agent-service eval model");
+  }
 
-  const shouldForwardRuntimeOverrides = !!overrides.allowedTools ||
+  const shouldForwardRuntimeOverrides = allowedTools !== undefined ||
     overrides.forceRuntimeOverrides ||
     overrides.maxSteps !== undefined;
   if (shouldForwardRuntimeOverrides) {
     veryfront.runtimeOverrides = {
-      ...(overrides.allowedTools ? { allowedTools: overrides.allowedTools } : {}),
+      ...(allowedTools !== undefined
+        ? { allowedTools }
+        : overrides.forceRuntimeOverrides
+        ? { allowedTools: [] }
+        : {}),
       ...(overrides.maxSteps !== undefined ? { maxSteps: overrides.maxSteps } : {}),
     };
   }
@@ -232,7 +295,7 @@ function stringifyError(value: unknown): string | undefined {
   try {
     return JSON.stringify(value);
   } catch {
-    return String(value);
+    return stringifyEvalError(value);
   }
 }
 
@@ -373,42 +436,47 @@ function createRunOutput(run: Awaited<ReturnType<typeof parseAgUiSseResponse>>) 
 }
 
 function createUsageFromRecord(record: Record<string, unknown>): EvalUsage | undefined {
-  const inputTokens = readNumber(record.inputTokens) ?? readNumber(record.promptTokens);
-  const outputTokens = readNumber(record.outputTokens) ?? readNumber(record.completionTokens);
-  const totalTokens = readNumber(record.totalTokens) ??
+  const inputTokens = readNonNegativeNumber(record.inputTokens) ??
+    readNonNegativeNumber(record.promptTokens);
+  const outputTokens = readNonNegativeNumber(record.outputTokens) ??
+    readNonNegativeNumber(record.completionTokens);
+  const totalTokens = readNonNegativeNumber(record.totalTokens) ??
     (inputTokens !== undefined || outputTokens !== undefined
       ? (inputTokens ?? 0) + (outputTokens ?? 0)
       : undefined);
-  const billableInputTokens = readNumber(record.billableInputTokens) ??
-    readNumber(record.billable_input_tokens);
-  const billableOutputTokens = readNumber(record.billableOutputTokens) ??
-    readNumber(record.billable_output_tokens);
-  const cachedInputTokens = readNumber(record.cachedInputTokens) ??
-    readNumber(record.cached_input_tokens);
-  const cacheCreationInputTokens = readNumber(record.cacheCreationInputTokens) ??
-    readNumber(record.cacheCreationTokens) ??
-    readNumber(record.cache_creation_input_tokens);
-  const cacheReadInputTokens = readNumber(record.cacheReadInputTokens) ??
-    readNumber(record.cacheReadTokens) ??
-    readNumber(record.cache_read_input_tokens);
-  const reasoningTokens = readNumber(record.reasoningTokens) ?? readNumber(record.reasoning_tokens);
-  const providerInputCostUsd = readNumber(record.providerInputCostUsd) ??
-    readNumber(record.provider_input_cost_usd);
-  const providerOutputCostUsd = readNumber(record.providerOutputCostUsd) ??
-    readNumber(record.provider_output_cost_usd);
-  const providerCostUsd = readNumber(record.providerCostUsd) ??
-    readNumber(record.provider_cost_usd);
-  const veryfrontInputChargeUsd = readNumber(record.veryfrontInputChargeUsd) ??
-    readNumber(record.veryfront_input_charge_usd);
-  const veryfrontOutputChargeUsd = readNumber(record.veryfrontOutputChargeUsd) ??
-    readNumber(record.veryfront_output_charge_usd);
-  const veryfrontChargeUsd = readNumber(record.veryfrontChargeUsd) ??
-    readNumber(record.veryfront_charge_usd);
-  const veryfrontBilledUsd = readNumber(record.veryfrontBilledUsd) ??
-    readNumber(record.veryfront_billed_usd);
-  const costCredits = readNumber(record.costCredits) ?? readNumber(record.cost_credits);
-  const costUsd = readNumber(record.costUsd) ?? readNumber(record.totalCostUsd) ??
-    readNumber(record.total_cost_usd) ??
+  const billableInputTokens = readNonNegativeNumber(record.billableInputTokens) ??
+    readNonNegativeNumber(record.billable_input_tokens);
+  const billableOutputTokens = readNonNegativeNumber(record.billableOutputTokens) ??
+    readNonNegativeNumber(record.billable_output_tokens);
+  const cachedInputTokens = readNonNegativeNumber(record.cachedInputTokens) ??
+    readNonNegativeNumber(record.cached_input_tokens);
+  const cacheCreationInputTokens = readNonNegativeNumber(record.cacheCreationInputTokens) ??
+    readNonNegativeNumber(record.cacheCreationTokens) ??
+    readNonNegativeNumber(record.cache_creation_input_tokens);
+  const cacheReadInputTokens = readNonNegativeNumber(record.cacheReadInputTokens) ??
+    readNonNegativeNumber(record.cacheReadTokens) ??
+    readNonNegativeNumber(record.cache_read_input_tokens);
+  const reasoningTokens = readNonNegativeNumber(record.reasoningTokens) ??
+    readNonNegativeNumber(record.reasoning_tokens);
+  const providerInputCostUsd = readNonNegativeNumber(record.providerInputCostUsd) ??
+    readNonNegativeNumber(record.provider_input_cost_usd);
+  const providerOutputCostUsd = readNonNegativeNumber(record.providerOutputCostUsd) ??
+    readNonNegativeNumber(record.provider_output_cost_usd);
+  const providerCostUsd = readNonNegativeNumber(record.providerCostUsd) ??
+    readNonNegativeNumber(record.provider_cost_usd);
+  const veryfrontInputChargeUsd = readNonNegativeNumber(record.veryfrontInputChargeUsd) ??
+    readNonNegativeNumber(record.veryfront_input_charge_usd);
+  const veryfrontOutputChargeUsd = readNonNegativeNumber(record.veryfrontOutputChargeUsd) ??
+    readNonNegativeNumber(record.veryfront_output_charge_usd);
+  const veryfrontChargeUsd = readNonNegativeNumber(record.veryfrontChargeUsd) ??
+    readNonNegativeNumber(record.veryfront_charge_usd);
+  const veryfrontBilledUsd = readNonNegativeNumber(record.veryfrontBilledUsd) ??
+    readNonNegativeNumber(record.veryfront_billed_usd);
+  const costCredits = readNonNegativeNumber(record.costCredits) ??
+    readNonNegativeNumber(record.cost_credits);
+  const costUsd = readNonNegativeNumber(record.costUsd) ??
+    readNonNegativeNumber(record.totalCostUsd) ??
+    readNonNegativeNumber(record.total_cost_usd) ??
     providerCostUsd;
   const costSource = readUsageCostSource(record.costSource ?? record.cost_source);
   const billingMode = readUsageBillingMode(record.billingMode ?? record.billing_mode);
@@ -469,48 +537,122 @@ function createRequestInit(
     method: "POST",
     headers: createHeaders(config),
     body: JSON.stringify(body),
-    ...(config.requestTimeoutMs ? { signal: AbortSignal.timeout(config.requestTimeoutMs) } : {}),
+    ...(config.requestTimeoutMs !== undefined
+      ? { signal: AbortSignal.timeout(config.requestTimeoutMs) }
+      : {}),
   };
+}
+
+function assertOptionalAgentServiceConfigString(
+  value: string | null | undefined,
+  label: string,
+): void {
+  if (value !== undefined && value !== null) {
+    assertCanonicalEvalString(value, label);
+  }
+}
+
+function assertAgentServiceEvalAdapterConfig(config: AgentServiceEvalAdapterConfig): void {
+  assertCanonicalEvalString(config.authToken, "Agent-service eval auth token");
+  assertOptionalAgentServiceConfigString(config.endpoint, "Agent-service eval endpoint");
+  assertOptionalAgentServiceConfigString(config.agentId, "Agent-service eval agentId");
+  assertOptionalAgentServiceConfigString(config.projectId, "Agent-service eval projectId");
+  assertOptionalAgentServiceConfigString(config.projectSlug, "Agent-service eval projectSlug");
+  assertOptionalAgentServiceConfigString(config.releaseId, "Agent-service eval releaseId");
+  assertOptionalAgentServiceConfigString(
+    config.contentSourceId,
+    "Agent-service eval contentSourceId",
+  );
+  assertOptionalAgentServiceConfigString(
+    config.conversationId,
+    "Agent-service eval conversationId",
+  );
+  assertOptionalAgentServiceConfigString(config.branchId, "Agent-service eval branchId");
+  assertOptionalAgentServiceConfigString(config.branchName, "Agent-service eval branchName");
+  assertOptionalAgentServiceConfigString(config.environment, "Agent-service eval environment");
+  assertOptionalAgentServiceConfigString(
+    config.environmentId,
+    "Agent-service eval environmentId",
+  );
+  assertOptionalAgentServiceConfigString(
+    config.forwardedHost,
+    "Agent-service eval forwardedHost",
+  );
+  assertOptionalAgentServiceConfigString(
+    config.forwardedProto,
+    "Agent-service eval forwardedProto",
+  );
+  assertOptionalAgentServiceConfigString(config.model, "Agent-service eval model");
+  if (config.allowedTools !== undefined) {
+    normalizeEvalStringList(config.allowedTools, "Agent-service eval allowedTools");
+  }
+  if (config.maxSteps !== undefined) {
+    assertFiniteEvalNumber(config.maxSteps, "Agent-service eval maxSteps", {
+      integer: true,
+      min: 1,
+    });
+  }
+  if (config.requestTimeoutMs !== undefined) {
+    assertEvalTimerDuration(
+      config.requestTimeoutMs,
+      "Agent-service eval requestTimeoutMs",
+      { min: 1 },
+    );
+  }
+  if (config.progressThrottleMs !== undefined) {
+    assertEvalTimerDuration(
+      config.progressThrottleMs,
+      "Agent-service eval progressThrottleMs",
+    );
+  }
+  if (config.fetch !== undefined && typeof config.fetch !== "function") {
+    throw new TypeError("Agent-service eval fetch must be a function");
+  }
+  if (config.now !== undefined && typeof config.now !== "function") {
+    throw new TypeError("Agent-service eval now must be a function");
+  }
+  if (config.onProgress !== undefined && typeof config.onProgress !== "function") {
+    throw new TypeError("Agent-service eval onProgress must be a function");
+  }
 }
 
 /** Resolve environment values for live agent-service eval execution. */
 export function resolveAgentServiceEvalEnvironment(
   env: AgentServiceEvalEnvironmentInput = {},
 ): AgentServiceEvalEnvironment {
+  const projectId = readTrimmedEnvironmentString(env.AG_UI_EVAL_PROJECT_ID);
+  const projectSlug = readTrimmedEnvironmentString(env.AG_UI_EVAL_PROJECT_SLUG) ??
+    readTrimmedEnvironmentString(env.VERYFRONT_PROJECT_SLUG);
+  const branchId = readTrimmedEnvironmentString(env.AG_UI_EVAL_BRANCH_ID);
+  const model = readTrimmedEnvironmentString(env.AG_UI_EVAL_MODEL);
   return {
-    endpoint: typeof env.AG_UI_EVAL_ENDPOINT === "string"
-      ? env.AG_UI_EVAL_ENDPOINT
-      : DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT,
-    authToken: typeof env.VERYFRONT_TOKEN === "string" ? env.VERYFRONT_TOKEN : "",
-    apiUrl: typeof env.VERYFRONT_API_URL === "string"
-      ? env.VERYFRONT_API_URL
-      : parseAgentServiceConfig(env).VERYFRONT_API_URL,
-    ...(typeof env.AG_UI_EVAL_PROJECT_ID === "string"
-      ? { projectId: env.AG_UI_EVAL_PROJECT_ID }
-      : {}),
-    ...(typeof env.AG_UI_EVAL_PROJECT_SLUG === "string"
-      ? { projectSlug: env.AG_UI_EVAL_PROJECT_SLUG }
-      : typeof env.VERYFRONT_PROJECT_SLUG === "string"
-      ? { projectSlug: env.VERYFRONT_PROJECT_SLUG }
-      : {}),
-    ...(typeof env.AG_UI_EVAL_BRANCH_ID === "string" ? { branchId: env.AG_UI_EVAL_BRANCH_ID } : {}),
-    ...(typeof env.AG_UI_EVAL_MODEL === "string" ? { model: env.AG_UI_EVAL_MODEL } : {}),
+    endpoint: readTrimmedEnvironmentString(env.AG_UI_EVAL_ENDPOINT) ??
+      DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT,
+    authToken: readTrimmedEnvironmentString(env.VERYFRONT_TOKEN) ?? "",
+    apiUrl: resolveAgentServiceEvalApiUrl(env),
+    ...(projectId ? { projectId } : {}),
+    ...(projectSlug ? { projectSlug } : {}),
+    ...(branchId ? { branchId } : {}),
+    ...(model ? { model } : {}),
   };
 }
 
 /** Evaluate whether the required live agent-service eval environment is present. */
 export function evaluateAgentServiceEvalEnvironment(
   env: AgentServiceEvalEnvironmentInput = {},
-  resolvedApiUrl = parseAgentServiceConfig(env).VERYFRONT_API_URL,
+  resolvedApiUrl = resolveAgentServiceEvalApiUrl(env),
 ): AgentServiceEvalEnvironmentPreflightResult {
   const messages = [`Resolved VERYFRONT_API_URL: ${resolvedApiUrl}`];
   let hasBlockers = false;
 
-  if (typeof env.VERYFRONT_TOKEN !== "string" || env.VERYFRONT_TOKEN.length === 0) {
+  if (typeof env.VERYFRONT_TOKEN !== "string" || env.VERYFRONT_TOKEN.trim().length === 0) {
     hasBlockers = true;
     messages.push("BLOCKER: VERYFRONT_TOKEN is missing");
   }
-  if (typeof env.AG_UI_EVAL_PROJECT_ID !== "string" || env.AG_UI_EVAL_PROJECT_ID.length === 0) {
+  if (
+    typeof env.AG_UI_EVAL_PROJECT_ID !== "string" ||
+    env.AG_UI_EVAL_PROJECT_ID.trim().length === 0
+  ) {
     hasBlockers = true;
     messages.push("BLOCKER: AG_UI_EVAL_PROJECT_ID is missing");
   }
@@ -523,6 +665,7 @@ export function evaluateAgentServiceEvalEnvironment(
 export function buildAgentServiceEvalRequestBody(
   input: BuildAgentServiceEvalRequestBodyInput,
 ): AgentServiceEvalRequestBody {
+  const exampleId = normalizeEvalString(input.exampleId, "Agent-service eval example id");
   const veryfront = createVeryfrontForwardedProps(input);
   const metadata = {
     ...getInputMetadata(input.input),
@@ -533,8 +676,8 @@ export function buildAgentServiceEvalRequestBody(
     threadId: crypto.randomUUID(),
     runId: `eval-run-${crypto.randomUUID()}`,
     state: {
-      evalCase: input.exampleId,
       ...metadata,
+      evalCase: exampleId,
     },
     tools: [],
     context: [],
@@ -553,6 +696,7 @@ export function buildAgentServiceEvalRequestBody(
 export function createAgentServiceEvalAdapter(
   config: AgentServiceEvalAdapterConfig,
 ): EvalAgentAdapter {
+  assertAgentServiceEvalAdapterConfig(config);
   const requestFetch = config.fetch ?? fetch;
   const endpoint = config.endpoint ?? DEFAULT_AGENT_SERVICE_EVAL_ENDPOINT;
 
@@ -578,21 +722,20 @@ export function createAgentServiceEvalAdapter(
         error: "mockTools are only supported by local eval agent execution.",
       };
     }
-    const body = buildAgentServiceEvalRequestBody({
-      exampleId: context.example.id,
-      input: context.example.input,
-      metadata: context.example.metadata,
-      agentId: config.agentId,
-      projectId: config.projectId,
-      conversationId: config.conversationId,
-      branchId: config.branchId,
-      model: config.model,
-      allowedTools: config.allowedTools,
-      forceRuntimeOverrides: config.forceRuntimeOverrides,
-      maxSteps: config.maxSteps,
-    });
-
     try {
+      const body = buildAgentServiceEvalRequestBody({
+        exampleId: context.example.id,
+        input: context.example.input,
+        metadata: context.example.metadata,
+        agentId: config.agentId,
+        projectId: config.projectId,
+        conversationId: config.conversationId,
+        branchId: config.branchId,
+        model: config.model,
+        allowedTools: config.allowedTools,
+        forceRuntimeOverrides: config.forceRuntimeOverrides,
+        maxSteps: config.maxSteps,
+      });
       const parseOptions: ParseAgUiSseResponseOptions = {
         ...(config.progressThrottleMs !== undefined
           ? { progressThrottleMs: config.progressThrottleMs }
@@ -630,7 +773,7 @@ export function createAgentServiceEvalAdapter(
           agUi: {
             responseStatus: 0,
             eventTypes: [],
-            runError: error instanceof Error ? error.message : String(error),
+            runError: stringifyEvalError(error),
           },
         },
         trace: {
@@ -639,7 +782,7 @@ export function createAgentServiceEvalAdapter(
         },
         durationMs: getNow(config) - started,
         completed: false,
-        error: error instanceof Error ? error.message : String(error),
+        error: stringifyEvalError(error),
       };
     }
   };

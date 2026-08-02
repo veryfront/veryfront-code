@@ -137,6 +137,16 @@ describe("eval/factory", () => {
       Error,
       "repetitions",
     );
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          repetitions: Number.POSITIVE_INFINITY,
+        }),
+      Error,
+      "integer",
+    );
 
     assertThrows(
       () =>
@@ -147,5 +157,85 @@ describe("eval/factory", () => {
       Error,
       "input",
     );
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metrics: [{} as never],
+        }),
+      Error,
+      "valid metric",
+    );
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metadata: [] as never,
+        }),
+      Error,
+      "metadata",
+    );
+
+    const revokedMetadata = Proxy.revocable({}, {});
+    revokedMetadata.revoke();
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metadata: revokedMetadata.proxy,
+        }),
+      Error,
+      "metadata must be an object",
+    );
+
+    const revokedTags = Proxy.revocable([], {});
+    revokedTags.revoke();
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          tags: revokedTags.proxy,
+        }),
+      Error,
+      "tags must be an array of strings",
+    );
+
+    const revokedMetrics = Proxy.revocable([], {});
+    revokedMetrics.revoke();
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metrics: revokedMetrics.proxy,
+        }),
+      Error,
+      "metrics must be an array",
+    );
+
+    const normalized = evalAgent({
+      id: " eval:trimmed ",
+      target: " agent:researcher ",
+      dataset: datasets.inline([{ id: " q1 ", input: "hello" }]),
+      tags: [" smoke ", "smoke"],
+    });
+    assertEquals(normalized.id, "eval:trimmed");
+    assertEquals(normalized.target, "agent:researcher");
+    assertEquals(normalized.tags, ["smoke"]);
+  });
+
+  it("treats revoked nested arrays as invalid definitions", () => {
+    const definition = evalAgent({
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+    });
+    const revokedTags = Proxy.revocable([], {});
+    revokedTags.revoke();
+
+    assertEquals(isEvalDefinition({ ...definition, tags: revokedTags.proxy }), false);
   });
 });

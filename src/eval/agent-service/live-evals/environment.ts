@@ -16,22 +16,28 @@ export interface LiveEvalEnvironment {
 /** Default value for live eval endpoint. */
 export const DEFAULT_LIVE_EVAL_ENDPOINT = "http://127.0.0.1:3001/api/ag-ui";
 
+function readTrimmedEnvironmentString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 /** Resolves live eval environment. */
 export function resolveLiveEvalEnvironment(
   env: AgentServiceConfigInput = {},
 ): LiveEvalEnvironment {
+  const explicitApiUrl = readTrimmedEnvironmentString(env.VERYFRONT_API_URL);
   return {
-    endpoint: typeof env.AG_UI_EVAL_ENDPOINT === "string"
-      ? env.AG_UI_EVAL_ENDPOINT
-      : DEFAULT_LIVE_EVAL_ENDPOINT,
-    authToken: typeof env.VERYFRONT_TOKEN === "string" ? env.VERYFRONT_TOKEN : "",
-    apiUrl: typeof env.VERYFRONT_API_URL === "string"
-      ? env.VERYFRONT_API_URL
-      : parseAgentServiceConfig(env).VERYFRONT_API_URL,
-    projectId: typeof env.AG_UI_EVAL_PROJECT_ID === "string"
-      ? env.AG_UI_EVAL_PROJECT_ID
-      : undefined,
-    branchId: typeof env.AG_UI_EVAL_BRANCH_ID === "string" ? env.AG_UI_EVAL_BRANCH_ID : undefined,
-    model: typeof env.AG_UI_EVAL_MODEL === "string" ? env.AG_UI_EVAL_MODEL : undefined,
+    endpoint: readTrimmedEnvironmentString(env.AG_UI_EVAL_ENDPOINT) ??
+      DEFAULT_LIVE_EVAL_ENDPOINT,
+    authToken: readTrimmedEnvironmentString(env.VERYFRONT_TOKEN) ?? "",
+    apiUrl: explicitApiUrl ??
+      parseAgentServiceConfig({
+        ...env,
+        VERYFRONT_API_URL: undefined,
+      }).VERYFRONT_API_URL,
+    projectId: readTrimmedEnvironmentString(env.AG_UI_EVAL_PROJECT_ID),
+    branchId: readTrimmedEnvironmentString(env.AG_UI_EVAL_BRANCH_ID),
+    model: readTrimmedEnvironmentString(env.AG_UI_EVAL_MODEL),
   };
 }

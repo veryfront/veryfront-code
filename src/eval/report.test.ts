@@ -64,6 +64,22 @@ describe("eval/report", () => {
         metadata: { order: { first: 1, second: 2 }, source: "fixture" },
       },
     ]);
+    const plainObjectDataset = datasets.inline([
+      {
+        id: "q1",
+        input: {},
+        reference: { a: "first", z: "last" },
+        metadata: { order: { first: 1, second: 2 }, source: "fixture" },
+      },
+    ]);
+    const prototypeKeyDataset = datasets.inline([
+      {
+        id: "q1",
+        input: JSON.parse('{"__proto__":{"polluted":true}}'),
+        reference: { a: "first", z: "last" },
+        metadata: { order: { first: 1, second: 2 }, source: "fixture" },
+      },
+    ]);
 
     const metadata = await createEvalDatasetMetadata(
       dataset,
@@ -76,6 +92,14 @@ describe("eval/report", () => {
     const changedMetadata = await createEvalDatasetMetadata(
       changedDataset,
       await changedDataset.load({ baseDir: Deno.cwd() }),
+    );
+    const prototypeKeyMetadata = await createEvalDatasetMetadata(
+      prototypeKeyDataset,
+      await prototypeKeyDataset.load({ baseDir: Deno.cwd() }),
+    );
+    const plainObjectMetadata = await createEvalDatasetMetadata(
+      plainObjectDataset,
+      await plainObjectDataset.load({ baseDir: Deno.cwd() }),
     );
     const fileExamples = await dataset.load({ baseDir: Deno.cwd() });
     const pathDataset = {
@@ -98,6 +122,7 @@ describe("eval/report", () => {
     });
     assertEquals(reorderedMetadata.hash, metadata.hash);
     assertNotEquals(changedMetadata.hash, metadata.hash);
+    assertNotEquals(prototypeKeyMetadata.hash, plainObjectMetadata.hash);
     assertEquals(pathMetadata.path, "datasets/support.json");
     assertEquals(aliasPathMetadata.path, "./datasets/support.json");
     assertEquals(aliasPathMetadata.hash, pathMetadata.hash);

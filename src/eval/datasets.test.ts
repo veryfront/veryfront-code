@@ -63,7 +63,7 @@ describe("eval/datasets", () => {
       () =>
         datasets.inline([
           { id: "same", input: "alpha" },
-          { id: "same", input: "beta" },
+          { id: " same ", input: "beta" },
         ]),
       Error,
       "Duplicate",
@@ -73,6 +73,16 @@ describe("eval/datasets", () => {
       () => datasets.inline([{ id: "missing-input" } as never]),
       Error,
       "input",
+    );
+    assertThrows(() => datasets.json("  "), Error, "path");
+    assertThrows(() => datasets.jsonl(""), Error, "path");
+
+    const revokedExamples = Proxy.revocable([], {});
+    revokedExamples.revoke();
+    assertThrows(
+      () => datasets.inline(revokedExamples.proxy),
+      Error,
+      "inline dataset must be an array of eval examples",
     );
 
     const root = await Deno.makeTempDir({ prefix: "vf-eval-dataset-bad-" });

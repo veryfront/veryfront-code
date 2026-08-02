@@ -48,7 +48,6 @@
   "src/platform/adapters/fs/veryfront/directory-operations.test.ts",
   "src/platform/adapters/redis/node.test.ts",
   "src/platform/adapters/token/factory.test.ts",
-  "src/prompt/factory.test.ts",
   "src/react/components/chat/chat.test.tsx",
   "src/react/components/chat/chat/chat.characterization.test.tsx",
   "src/react/components/chat/chat/chat.index.test.tsx",

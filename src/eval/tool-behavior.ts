@@ -6,6 +6,12 @@ import type {
   EvalToolCallMatchOptions,
   EvalToolInputMatchMode,
 } from "./types.ts";
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalString,
+} from "./validation.ts";
 
 type ToolBehaviorResult = Omit<EvalMetricResult, "name" | "family" | "severity">;
 
@@ -13,7 +19,7 @@ function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonValue);
   if (!value || typeof value !== "object") return value;
 
-  const sorted: Record<string, unknown> = {};
+  const sorted = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(value).sort()) {
     sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
   }
@@ -40,7 +46,9 @@ function partialMatch(actual: unknown, expected: unknown): boolean {
 
   if (isRecord(expected)) {
     if (!isRecord(actual)) return false;
-    return Object.entries(expected).every(([key, value]) => partialMatch(actual[key], value));
+    return Object.entries(expected).every(([key, value]) =>
+      Object.hasOwn(actual, key) && partialMatch(actual[key], value)
+    );
   }
 
   return valuesEqual(actual, expected);
@@ -73,8 +81,50 @@ function countPasses(count: number, options: EvalToolCallCountOptions): boolean 
   return minPass && maxPass;
 }
 
+export function validateEvalToolCallMatchOptions(options: EvalToolCallMatchOptions): void {
+  if (!isEvalRecord(options)) {
+    throw createEvalValidationError("Eval tool call match options must be an object");
+  }
+  if (options.match !== undefined && options.match !== "exact" && options.match !== "partial") {
+    throw createEvalValidationError('Eval tool input match must be "exact" or "partial"');
+  }
+}
+
+export function validateEvalToolCallCountOptions(options: EvalToolCallCountOptions): void {
+  const exact = options?.exact;
+  const min = options?.min;
+  const max = options?.max;
+  if (!isEvalRecord(options)) {
+    throw createEvalValidationError("Eval tool call count options must be an object");
+  }
+  const entries = [
+    ["exact", exact],
+    ["min", min],
+    ["max", max],
+  ] as const;
+  for (const [key, value] of entries) {
+    if (value !== undefined) {
+      assertFiniteEvalNumber(value, `Eval tool call count ${key}`, { integer: true, min: 0 });
+    }
+  }
+  if (exact === undefined && min === undefined && max === undefined) {
+    throw createEvalValidationError(
+      "Eval tool call count requires exact, min, or max",
+    );
+  }
+  if (exact !== undefined && (min !== undefined || max !== undefined)) {
+    throw createEvalValidationError(
+      "Eval tool call count exact cannot be combined with min or max",
+    );
+  }
+  if (min !== undefined && max !== undefined && min > max) {
+    throw createEvalValidationError("Eval tool call count min cannot exceed max");
+  }
+}
+
 export function findEvalToolCalls(record: EvalRecord, name: string): EvalToolCall[] {
-  return record.trace.toolCalls.filter((tool) => tool.name === name);
+  const normalizedName = normalizeEvalString(name, "Eval tool name");
+  return record.trace.toolCalls.filter((tool) => tool.name === normalizedName);
 }
 
 export function isEvalToolFailed(toolCall: { status?: string; error?: string }): boolean {
@@ -87,6 +137,7 @@ export function evaluateCalledTool(
   name: string,
   options: EvalToolCallMatchOptions = {},
 ): ToolBehaviorResult {
+  validateEvalToolCallMatchOptions(options);
   const calls = findEvalToolCalls(record, name);
   const expectedInputProvided = hasExpectedInput(options);
   const match = options.match ?? "partial";
@@ -126,6 +177,7 @@ export function evaluateToolCallCount(
   name: string,
   options: EvalToolCallCountOptions,
 ): ToolBehaviorResult {
+  validateEvalToolCallCountOptions(options);
   const calls = findEvalToolCalls(record, name);
   const pass = countPasses(calls.length, options);
   return {

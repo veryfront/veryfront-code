@@ -1,5 +1,6 @@
 import type { DurableRunCanaryMessage, DurableRunCanaryRunSummary } from "./runner.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { stringifyEvalError } from "../../validation.ts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -59,15 +60,7 @@ export function findAssistantMessage(
 
 /** Stringify unknown helper. */
 export function stringifyUnknown(value: unknown): string {
-  if (typeof value === "string") {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  return stringifyEvalError(value);
 }
 
 /** Collect assistant text helper. */

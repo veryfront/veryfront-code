@@ -19,6 +19,12 @@ import {
 } from "../observability/tracing/api-shim.ts";
 import { metrics as runtimeMetrics } from "#veryfront/metrics";
 
+function createUnprintableThrownValue(): object {
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  return revocable.proxy;
+}
+
 describe("eval/runner", () => {
   afterEach(() => {
     _resetShimForTests();
@@ -465,6 +471,75 @@ describe("eval/runner", () => {
     assertEquals(report.records[0]?.error, "AG-UI request failed");
   });
 
+  it("contains hostile adapter throws as structured record failures", async () => {
+    const definition = evalAgent({
+      id: "eval:hostile-adapter-error",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => {
+          throw createUnprintableThrownValue();
+        },
+      },
+    });
+
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(report.records[0]?.error, "[unprintable thrown value]");
+  });
+
+  it("contains hostile metric and check throws as structured evaluation failures", async () => {
+    const hostileMetric = metrics.answer.exactMatch().gate();
+    hostileMetric.evaluate = () => {
+      throw createUnprintableThrownValue();
+    };
+    const definition = evalAgent({
+      id: "eval:hostile-evaluation-errors",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?", reference: "Paris" }]),
+      metrics: [hostileMetric],
+      check() {
+        throw createUnprintableThrownValue();
+      },
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({ text: "Paris" }),
+      },
+    });
+
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(
+      report.records[0]?.error,
+      "Metric evaluation failed: [unprintable thrown value]; Eval check failed: [unprintable thrown value]",
+    );
+  });
+
+  it("normalizes revoked trace arrays into structured adapter failures", async () => {
+    const definition = evalAgent({
+      id: "eval:revoked-trace",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+    const revokedEvents = Proxy.revocable([], {});
+    revokedEvents.revoke();
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({
+          text: "Paris",
+          trace: { events: revokedEvents.proxy },
+        }),
+      },
+    });
+
+    assertEquals(report.records[0]?.completed, false);
+    assertEquals(report.records[0]?.error, "Eval adapter trace events must be an array");
+  });
+
   it("emits eval result and duration metrics through the runtime metrics API", async () => {
     const counterCalls: unknown[] = [];
     const histogramCalls: unknown[] = [];
@@ -611,6 +686,34 @@ describe("eval/runner", () => {
       sourcePath: "evals/export.eval.ts",
       redaction: { metadataAllowlist: ["dataset"] },
     });
+  });
+
+  it("contains hostile exporter registry throws as structured export failures", async () => {
+    const registry = createEvalReportExporterRegistry();
+    registry.get = () => {
+      throw createUnprintableThrownValue();
+    };
+    const definition = evalAgent({
+      id: "eval:hostile-exporter-error",
+      target: "agent:researcher",
+      dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+    });
+
+    const report = await runEval(definition, {
+      adapters: {
+        agent: async () => ({ text: "Paris" }),
+      },
+      export: {
+        registry,
+        exporterIds: ["hostile"],
+      },
+    });
+
+    assertEquals(report.exports, [{
+      exporterId: "hostile",
+      ok: false,
+      error: "[unprintable thrown value]",
+    }]);
   });
 
   it("adds the active runtime trace context to eval report exports", async () => {

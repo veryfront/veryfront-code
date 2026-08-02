@@ -1,7 +1,5 @@
-import {
-  type AgentServiceConfigInput,
-  parseAgentServiceConfig,
-} from "../../../agent/service/config.ts";
+import { type AgentServiceConfigInput } from "../../../agent/service/config.ts";
+import { resolveLiveEvalEnvironment } from "./environment.ts";
 
 /** Result returned from runtime confidence preflight. */
 export interface RuntimeConfidencePreflightResult {
@@ -13,16 +11,19 @@ export interface RuntimeConfidencePreflightResult {
 /** Evaluate runtime confidence env helper. */
 export function evaluateRuntimeConfidenceEnv(
   env: AgentServiceConfigInput = {},
-  resolvedApiUrl: string = parseAgentServiceConfig(env).VERYFRONT_API_URL,
+  resolvedApiUrl: string = resolveLiveEvalEnvironment(env).apiUrl,
 ): RuntimeConfidencePreflightResult {
   const messages: string[] = [`Resolved VERYFRONT_API_URL: ${resolvedApiUrl}`];
   let hasBlockers = false;
 
-  if (typeof env.VERYFRONT_TOKEN !== "string" || env.VERYFRONT_TOKEN.length === 0) {
+  if (typeof env.VERYFRONT_TOKEN !== "string" || env.VERYFRONT_TOKEN.trim().length === 0) {
     hasBlockers = true;
     messages.push("BLOCKER: VERYFRONT_TOKEN is missing");
   }
-  if (typeof env.AG_UI_EVAL_PROJECT_ID !== "string" || env.AG_UI_EVAL_PROJECT_ID.length === 0) {
+  if (
+    typeof env.AG_UI_EVAL_PROJECT_ID !== "string" ||
+    env.AG_UI_EVAL_PROJECT_ID.trim().length === 0
+  ) {
     hasBlockers = true;
     messages.push("BLOCKER: AG_UI_EVAL_PROJECT_ID is missing");
   }

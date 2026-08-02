@@ -70,8 +70,8 @@ function stripEvalExtension(relativePath: string): string {
 }
 
 function stripFileProtocol(path: string): string {
-  if (!path.startsWith("file://")) return path;
-  return decodeURIComponent(new URL(path).pathname);
+  const stripped = path.startsWith("file://") ? decodeURIComponent(new URL(path).pathname) : path;
+  return stripped.replaceAll("\\", "/").replace(/^\/([A-Za-z]:\/)/, "$1");
 }
 
 /** Derive the stable `eval:<path>` ID for an eval file. */
@@ -171,7 +171,7 @@ export async function discoverEvals(
     }
 
     const files = await collectEvalFiles(baseDir, adapter);
-    for (const file of files) {
+    for (const file of [...files].sort((left, right) => left.path.localeCompare(right.path))) {
       try {
         const evalItem = await loadEvalFromFile(
           file.path,
@@ -189,7 +189,35 @@ export async function discoverEvals(
     errors.push({ filePath: baseDir, error: toErrorMessage(error) });
   }
 
-  return { evals, errors };
+  const evalsById = new Map<string, DiscoveredEval[]>();
+  for (const evalItem of evals) {
+    const matches = evalsById.get(evalItem.id) ?? [];
+    matches.push(evalItem);
+    evalsById.set(evalItem.id, matches);
+  }
+
+  const uniqueEvals: DiscoveredEval[] = [];
+  for (const [id, matches] of evalsById) {
+    if (matches.length === 1) {
+      uniqueEvals.push(matches[0]!);
+      continue;
+    }
+    const paths = matches.map((item) => item.filePath).sort();
+    for (const filePath of paths) {
+      errors.push({
+        filePath,
+        error: `Duplicate eval id "${id}" was declared by: ${paths.join(", ")}`,
+      });
+    }
+  }
+
+  uniqueEvals.sort((left, right) =>
+    left.id.localeCompare(right.id) || left.filePath.localeCompare(right.filePath)
+  );
+  errors.sort((left, right) =>
+    left.filePath.localeCompare(right.filePath) || left.error.localeCompare(right.error)
+  );
+  return { evals: uniqueEvals, errors };
 }
 
 /** Discover and return one eval definition by ID. */
