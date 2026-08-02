@@ -20,11 +20,11 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable         | Required                       | Description                                                                                         |
-| ---------------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `REDIS_URL`      | Yes (if explicit config unset) | Redis connection URL, for example `redis://localhost:6379` or `rediss://...` (TLS)                    |
-| `REDIS_PREFIX`   | No                             | Token-key prefix (default: `vf:token:`); see prefix constraints below                               |
-| `REDIS_PASSWORD` | No                             | Password override when credentials are not embedded in the connection URL                           |
+| Variable         | Required                       | Description                                                                                        |
+| ---------------- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`      | Yes (if explicit config unset) | Redis connection URL, for example `redis://localhost:6379` or `rediss://...` (TLS)                 |
+| `REDIS_PREFIX`   | No                             | Token-key prefix (default: `vf:token:`); see prefix constraints below                              |
+| `REDIS_PASSWORD` | No                             | Password override when credentials are not embedded in the connection URL                          |
 | `CACHE_TYPE`     | Standalone proxy only          | Set to `extension` so the CLI activates this extension before importing the provider-neutral proxy |
 
 Explicit config under `ctx.config.proxy.cache.redis` wins over env vars.
