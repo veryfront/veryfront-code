@@ -276,8 +276,10 @@ export interface SchemaValidator {
    * descriptor-based data reads before invoking a compiler. An invalid schema
    * causes compilation to throw. Invalid input returns a validation failure.
    * Accessors, proxies that cannot be inspected, cycles, and non-JSON object
-   * prototypes are rejected without executing caller code. Successful
-   * validation returns the accepted snapshot rather than caller-owned state.
+   * prototypes are rejected without invoking property getters, setters,
+   * iterators, or serialization hooks. Proxy reflection traps necessarily run
+   * during inspection and may throw before rejection. Successful validation
+   * returns the accepted snapshot rather than caller-owned state.
    *
    * This capability is optional so existing third-party `SchemaValidator`
    * implementations remain source-compatible. Framework features that accept

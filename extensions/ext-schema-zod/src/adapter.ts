@@ -546,6 +546,18 @@ interface JsonSchemaSnapshot {
 }
 
 const COMBINATOR_KEYWORDS = new Set(["allOf", "anyOf", "oneOf"]);
+const CODE_GENERATING_MAP_KEYWORDS = new Map<string, number>([
+  ["properties", 4],
+  ["patternProperties", 8],
+  ["dependencies", 4],
+  ["dependentRequired", 4],
+  ["dependentSchemas", 4],
+]);
+const RETAINED_SCHEMA_MAP_KEYWORDS = new Set(["$defs", "definitions"]);
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 /**
  * Estimate generated-validator work before Ajv sees a schema. Node and byte
@@ -563,6 +575,18 @@ function estimateCompilationWork(schema: JsonSchema): number {
       );
     }
   };
+  const addBoundedCollectionWork = (
+    keyword: string,
+    length: number,
+    multiplier: number,
+  ): void => {
+    if (length > JSON_SCHEMA_MAX_COMBINATOR_FANOUT) {
+      throw new TypeError(
+        `JSON Schema ${keyword} exceeds the code-generation collection limit of ${JSON_SCHEMA_MAX_COMBINATOR_FANOUT}`,
+      );
+    }
+    addWork(length * multiplier);
+  };
 
   while (stack.length > 0) {
     const value = stack.pop();
@@ -572,31 +596,47 @@ function estimateCompilationWork(schema: JsonSchema): number {
       continue;
     }
 
-    for (const [keyword, keywordValue] of Object.entries(value)) {
+    const schemaObject = value as Record<string, unknown>;
+    const propertyCount = isJsonObject(schemaObject.properties)
+      ? Object.keys(schemaObject.properties).length
+      : 0;
+    const patternPropertyCount = isJsonObject(schemaObject.patternProperties)
+      ? Object.keys(schemaObject.patternProperties).length
+      : 0;
+    if (propertyCount > 0 && patternPropertyCount > 0) {
+      // In Ajv strict mode every pattern is checked against every named
+      // property during compilation, so account for the cross-product.
+      addWork(propertyCount * patternPropertyCount);
+    }
+
+    for (const [keyword, keywordValue] of Object.entries(schemaObject)) {
       addWork(1);
       if (COMBINATOR_KEYWORDS.has(keyword) && Array.isArray(keywordValue)) {
-        if (keywordValue.length > JSON_SCHEMA_MAX_COMBINATOR_FANOUT) {
-          throw new TypeError(
-            `JSON Schema ${keyword} exceeds the branch fanout limit of ${JSON_SCHEMA_MAX_COMBINATOR_FANOUT}`,
-          );
-        }
-        addWork(keywordValue.length * 8);
+        addBoundedCollectionWork(keyword, keywordValue.length, 8);
       } else if (
         (keyword === "prefixItems" || keyword === "items") && Array.isArray(keywordValue)
       ) {
-        if (keywordValue.length > JSON_SCHEMA_MAX_COMBINATOR_FANOUT) {
-          throw new TypeError(
-            `JSON Schema ${keyword} exceeds the branch fanout limit of ${JSON_SCHEMA_MAX_COMBINATOR_FANOUT}`,
-          );
-        }
-        addWork(keywordValue.length * 2);
-      } else if (keyword === "enum" && Array.isArray(keywordValue)) {
-        addWork(keywordValue.length * 2);
+        addBoundedCollectionWork(keyword, keywordValue.length, 2);
       } else if (
-        (keyword === "properties" || keyword === "$defs" || keyword === "definitions" ||
-          keyword === "dependentSchemas") &&
-        keywordValue && typeof keywordValue === "object" && !Array.isArray(keywordValue)
+        (keyword === "enum" || keyword === "required" || keyword === "type") &&
+        Array.isArray(keywordValue)
       ) {
+        addBoundedCollectionWork(keyword, keywordValue.length, keyword === "required" ? 4 : 2);
+      } else if (isJsonObject(keywordValue) && CODE_GENERATING_MAP_KEYWORDS.has(keyword)) {
+        const entryCount = Object.keys(keywordValue).length;
+        addBoundedCollectionWork(
+          keyword,
+          entryCount,
+          CODE_GENERATING_MAP_KEYWORDS.get(keyword)!,
+        );
+        if (keyword === "dependentRequired" || keyword === "dependencies") {
+          for (const dependencyValue of Object.values(keywordValue)) {
+            if (Array.isArray(dependencyValue)) {
+              addBoundedCollectionWork(`${keyword} entry`, dependencyValue.length, 4);
+            }
+          }
+        }
+      } else if (isJsonObject(keywordValue) && RETAINED_SCHEMA_MAP_KEYWORDS.has(keyword)) {
         addWork(Object.keys(keywordValue).length * 2);
       } else if (keyword === "pattern" && typeof keywordValue === "string") {
         addWork(Math.ceil(keywordValue.length / 8));

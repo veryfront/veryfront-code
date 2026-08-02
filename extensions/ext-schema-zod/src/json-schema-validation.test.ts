@@ -303,7 +303,7 @@ describe("SchemaValidator.compileJsonSchema", () => {
     assertThrows(
       () => compile({ anyOf: new Array(257).fill(branch) }),
       TypeError,
-      "branch fanout limit of 256",
+      "code-generation collection limit of 256",
     );
   });
 
@@ -319,7 +319,7 @@ describe("SchemaValidator.compileJsonSchema", () => {
       minItems: 256,
       maxItems: 256,
       additionalItems: false,
-    });
+    } as never);
 
     assertEquals((await validate(atLimit, new Array(256).fill("value"))).success, true);
     assertThrows(
@@ -331,9 +331,70 @@ describe("SchemaValidator.compileJsonSchema", () => {
           minItems: 257,
           maxItems: 257,
           additionalItems: false,
+        } as never),
+      TypeError,
+      "code-generation collection limit of 256",
+    );
+  });
+
+  it("rejects every wide code-generating JSON Schema collection before Ajv", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const fields = Array.from({ length: 257 }, (_, index) => `field${index}`);
+    const schemas = Object.fromEntries(fields.map((field) => [field, { type: "string" }]));
+    const patterns = Object.fromEntries(fields.map((field) => [`^${field}$`, { type: "string" }]));
+    const draft7 = "http://json-schema.org/draft-07/schema#";
+    const cases: Array<{ keyword: string; schema: Record<string, unknown> }> = [
+      { keyword: "required", schema: { type: "object", required: fields } },
+      { keyword: "enum", schema: { enum: fields } },
+      { keyword: "properties", schema: { type: "object", properties: schemas } },
+      { keyword: "patternProperties", schema: { type: "object", patternProperties: patterns } },
+      { keyword: "dependentSchemas", schema: { type: "object", dependentSchemas: schemas } },
+      {
+        keyword: "dependencies",
+        schema: { $schema: draft7, type: "object", dependencies: schemas },
+      },
+    ];
+
+    for (const testCase of cases) {
+      assertThrows(
+        () => compile(testCase.schema),
+        TypeError,
+        `${testCase.keyword} exceeds the code-generation collection limit of 256`,
+      );
+    }
+  });
+
+  it("rejects adversarial dependentRequired maps and entry arrays before Ajv", () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const dependencies = Object.fromEntries(
+      Array.from({ length: 4_000 }, (_, index) => [`field${index}`, ["requiredField"]]),
+    );
+
+    assertThrows(
+      () => compile({ type: "object", dependentRequired: dependencies }),
+      TypeError,
+      "dependentRequired exceeds the code-generation collection limit of 256",
+    );
+    assertThrows(
+      () =>
+        compile({
+          type: "object",
+          dependentRequired: { source: new Array(257).fill("requiredField") },
         }),
       TypeError,
-      "branch fanout limit of 256",
+      "dependentRequired entry exceeds the code-generation collection limit of 256",
+    );
+    assertThrows(
+      () =>
+        compile({
+          $schema: "http://json-schema.org/draft-07/schema#",
+          type: "object",
+          dependencies: { source: new Array(257).fill("requiredField") },
+        }),
+      TypeError,
+      "dependencies entry exceeds the code-generation collection limit of 256",
     );
   });
 
