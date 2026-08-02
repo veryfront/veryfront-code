@@ -1362,10 +1362,12 @@ export async function* streamOpenAIResponsesParts(
         );
       }
       assertOutputIndex(record.item_id, record, "completed function-call arguments");
-      if (typeof record.name !== "string" || record.name !== state.name) {
+      if (
+        record.name !== undefined && (typeof record.name !== "string" || record.name !== state.name)
+      ) {
         throw invalidOpenAIResponsesStream(
           context,
-          "completed function-call arguments name changed or was missing",
+          "completed function-call arguments name changed",
         );
       }
       if (state.argumentsDone) {
