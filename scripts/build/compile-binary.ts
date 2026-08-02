@@ -13,6 +13,11 @@ export const DEFAULT_INCLUDES = [
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
   "extensions/ext-auth-jwt/src/index.ts",
+  // Embedding explicit extensions makes them available to compiled binaries;
+  // discovery still requires the caller to select them before activation.
+  "extensions/ext-blob-gcs/src/index.ts",
+  "extensions/ext-blob-s3/src/index.ts",
+  "extensions/ext-node-websocket-ws/src/index.ts",
   "extensions/ext-bundler-esbuild/src/index.ts",
   "extensions/ext-cache-redis/src/index.ts",
   "extensions/ext-content-mdx/src/index.ts",

@@ -9,7 +9,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * failure without fabricating the whole bootstrap environment.
  */
 
-import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { _resetShimForTests } from "#veryfront/observability/tracing/api-shim.ts";
 import { register, reset } from "#veryfront/extensions/contracts.ts";
@@ -20,8 +25,11 @@ import {
 } from "#veryfront/utils/logger/index.ts";
 import { __resetEnvLoaderForTests, loadEnv } from "#veryfront/utils/env-loader.ts";
 import type { TracingExporter } from "veryfront/extensions/observability";
+import type { NodeWebSocketServer } from "#veryfront/extensions/websocket";
+import { NodeWebSocketServerProviderName } from "#veryfront/extensions/websocket";
 import {
   orchestrateOrDisposeFS,
+  resolveNodeWebSocketServerProviderForBootstrap,
   validateProductionEnvironmentForTests,
   wireTracingShim,
 } from "./bootstrap.ts";
@@ -181,6 +189,32 @@ describe("wireTracingShim()", () => {
     assertEquals(emitted.length, 1);
     _resetShimForTests();
     __resetLogRecordEmitterForTests();
+  });
+});
+
+describe("Node WebSocket bootstrap contract", () => {
+  it("captures the explicitly registered provider generation", () => {
+    reset();
+    const originalServer = {} as NodeWebSocketServer;
+    const source = {
+      createServer: () => originalServer,
+    };
+    register(NodeWebSocketServerProviderName, source);
+
+    try {
+      const captured = resolveNodeWebSocketServerProviderForBootstrap();
+      source.createServer = () => {
+        throw new Error("mutated provider must not run");
+      };
+
+      assertStrictEquals(
+        captured?.createServer({ noServer: true, handleProtocols: () => false }),
+        originalServer,
+      );
+      assertEquals(Object.isFrozen(captured), true);
+    } finally {
+      reset();
+    }
   });
 });
 

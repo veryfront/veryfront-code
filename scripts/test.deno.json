@@ -1,5 +1,5 @@
 {
-  "lock": "../deno.lock",
+  "lock": "./deno.lock",
   "minimumDependencyAge": "P2D",
   "imports": {
     "#veryfront/": "../src/",

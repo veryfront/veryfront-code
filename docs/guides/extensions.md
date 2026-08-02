@@ -54,6 +54,29 @@ veryfront dev
 
 If the extension factory throws during setup, the dev server reports the setup error. For local extensions, edit the extension source and save `veryfront.config.ts` to force reload during development.
 
+## Enable Node.js WebSocket upgrades
+
+Install the explicit Node.js transport extension:
+
+```bash
+deno add npm:@veryfront/ext-node-websocket-ws
+```
+
+Add it to `veryfront.config.ts`:
+
+```ts
+import { defineConfig } from "veryfront";
+import extNodeWebSocketWs from "@veryfront/ext-node-websocket-ws";
+
+export default defineConfig({
+  extensions: [extNodeWebSocketWs()],
+});
+```
+
+Restart the Node.js server after changing the configuration. HTTP serving does
+not require this extension. Without it, Node.js WebSocket upgrades fail closed
+with an error that names the required package.
+
 ## First-party extension areas
 
 | Area          | Example package                              | Contract family   |
@@ -68,6 +91,7 @@ If the extension factory throws during setup, the dev server reports the setup e
 | Parser        | `@veryfront/ext-parser-babel`                | parsing           |
 | Sandbox       | `@veryfront/ext-sandbox-shell-tools`         | sandbox tools     |
 | Schema        | `@veryfront/ext-schema-zod`                  | schema validation |
+| WebSocket     | `@veryfront/ext-node-websocket-ws`           | Node.js transport |
 
 ## Verify it worked
 

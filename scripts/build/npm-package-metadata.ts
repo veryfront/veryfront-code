@@ -27,6 +27,8 @@ const ROOT_OPTIONAL_RUNTIME_PEER_FALLBACK_RANGES: Record<string, string> = {
 };
 
 export const EXTENSION_OWNED_DEPENDENCIES = [
+	"@aws-sdk/client-s3",
+	"@aws-sdk/lib-storage",
 	"@babel/generator",
 	"@babel/parser",
 	"@babel/traverse",
@@ -35,6 +37,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"@types/hast",
 	"@types/mdast",
 	"@types/unist",
+	"@types/ws",
 	"better-sqlite3",
 	"brace-expansion",
 	"@kreuzberg/node",
@@ -88,6 +91,7 @@ export const EXTENSION_OWNED_DEPENDENCIES = [
 	"unified",
 	"unist-util-visit",
 	"vfile",
+	"ws",
 ] as const;
 
 const STALE_DEV_DEPENDENCIES = [

@@ -2054,7 +2054,7 @@ async function ensureReleaseConfigBundlerContracts(): Promise<void> {
   if (tryResolve("Bundler") && tryResolve("ModuleLexer")) return;
 
   const { EsbuildBundler, EsModuleLexer } = await import(
-    "../../extensions/ext-bundler-esbuild/src/index.ts"
+    "@veryfront/ext-bundler-esbuild"
   );
   if (!tryResolve("Bundler")) register("Bundler", new EsbuildBundler());
   if (!tryResolve("ModuleLexer")) register("ModuleLexer", new EsModuleLexer());

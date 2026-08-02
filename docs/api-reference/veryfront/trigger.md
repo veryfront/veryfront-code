@@ -1,7 +1,7 @@
 ---
 title: "veryfront/trigger"
 description: "Shared source-trigger discovery and local execution primitives."
-order: 36
+order: 37
 ---
 
 ## Import

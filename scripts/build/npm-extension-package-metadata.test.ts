@@ -39,6 +39,18 @@ describe("firstPartyExtensionManifestPaths", () => {
 });
 
 describe("manifestDependencies", () => {
+  it("pins S3 to the first audit-clean fix-forward AWS SDK pair", async () => {
+    const manifest = JSON.parse(
+      await Deno.readTextFile("extensions/ext-blob-s3/deno.json"),
+    ) as ExtensionManifest;
+
+    assertEquals(manifestDependencies(manifest), {
+      "@aws-sdk/client-s3": "3.980.0",
+      "@aws-sdk/lib-storage": "3.980.0",
+    });
+    assertEquals(manifest.veryfront?.npm?.nodeEngine, ">=20.0.0");
+  });
+
   it("pins bash-tool's required AI SDK peer in the sandbox extension", async () => {
     const manifest = JSON.parse(
       await Deno.readTextFile(
@@ -93,6 +105,7 @@ describe("createExtensionPackageSpec", () => {
       exports: "./src/index.ts",
       veryfront: {
         extension: true,
+        activation: "explicit",
         contracts: { provides: ["SandboxShellToolsProvider"] },
         capabilities: [{ type: "sandbox:execute", tools: ["bash"] }],
       },
@@ -132,6 +145,7 @@ describe("createExtensionPackageSpec", () => {
     assertEquals(spec.packageJson.name, "@veryfront/ext-sandbox-shell-tools");
     assertEquals(spec.packageJson.version, "0.1.985");
     assertEquals(spec.packageJson.license, "Apache-2.0");
+    assertEquals(spec.packageJson.engines, { node: ">=18.0.0" });
     assertEquals(spec.packageJson.dependencies, {
       "bash-tool": "1.3.16",
       "just-bash": "2.14.5",
@@ -156,6 +170,69 @@ describe("createExtensionPackageSpec", () => {
           subPath: "extensions/sandbox",
         },
       ],
+    );
+  });
+
+  it("applies an extension-specific minimum Node version to base and runtime packages", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-example",
+      exports: {
+        ".": "./src/index.ts",
+        "./node": "./src/node.ts",
+      },
+      veryfront: {
+        extension: true,
+        npm: {
+          nodeEngine: ">=20.0.0",
+          runtimePackages: [{
+            name: "@veryfront/ext-example-node",
+            export: "./node",
+            dependencies: ["example-sdk"],
+          }],
+        },
+      },
+      imports: {
+        "example-sdk": "npm:example-sdk@1.2.3",
+      },
+    };
+
+    const specs = createExtensionPackageSpecs({
+      manifestPath: "extensions/ext-example/deno.json",
+      manifest,
+      rootConfig,
+      rootDir: "/repo",
+      version: "0.1.985",
+      license: "Apache-2.0",
+    });
+
+    assertEquals(
+      specs.map((spec) => spec.packageJson.engines),
+      [{ node: ">=20.0.0" }, { node: ">=20.0.0" }],
+    );
+  });
+
+  it("rejects ambiguous extension Node engine ranges", () => {
+    const manifest: ExtensionManifest = {
+      name: "@veryfront/ext-example",
+      exports: "./src/index.ts",
+      veryfront: {
+        extension: true,
+        npm: { nodeEngine: ">=20" },
+      },
+    };
+
+    assertThrows(
+      () =>
+        createExtensionPackageSpec({
+          manifestPath: "extensions/ext-example/deno.json",
+          manifest,
+          rootConfig,
+          rootDir: "/repo",
+          version: "0.1.985",
+          license: "Apache-2.0",
+        }),
+      Error,
+      "veryfront.npm.nodeEngine must use the exact minimum-version form >=MAJOR.MINOR.PATCH",
     );
   });
 

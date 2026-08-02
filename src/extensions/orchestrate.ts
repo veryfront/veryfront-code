@@ -10,6 +10,7 @@
 
 import { basename, dirname } from "#veryfront/compat/path";
 import * as defaultDiscovery from "./discovery.ts";
+import type { BoundExtensionEntrypoint } from "./entrypoint-identity.ts";
 import { loadExtensionFactory as defaultLoadFactory } from "./factory-loader.ts";
 import { ExtensionLoader } from "./loader.ts";
 import type {
@@ -39,7 +40,13 @@ export interface OrchestrateOptions {
   /** Per-extension setup() timeout in milliseconds. Defaults to 30 000 ms.
    *  Pass `0` to disable. */
   setupTimeoutMs?: number;
-  /** @internal Override discovery functions in tests. */
+  /**
+   * @internal Override discovery functions in tests.
+   *
+   * This is a trusted injection seam, not an untrusted-data boundary. A custom
+   * implementation controls import targets directly and must return ordinary
+   * data objects, not live or revoked Proxies.
+   */
   discovery?: {
     discoverPackageExtensions: typeof defaultDiscovery.discoverPackageExtensions;
     discoverProjectExtensions: typeof defaultDiscovery.discoverProjectExtensions;
@@ -71,8 +78,7 @@ function isDisableDirective(
  */
 function projectExtensionNameFromPath(path: string): string | undefined {
   let current = dirname(path);
-  // Safety limit in case of a malformed path that never reaches a root.
-  for (let i = 0; i < 8; i++) {
+  while (true) {
     const parent = dirname(current);
     if (basename(parent) === "extensions") {
       return basename(current);
@@ -80,7 +86,22 @@ function projectExtensionNameFromPath(path: string): string | undefined {
     if (parent === current) return undefined;
     current = parent;
   }
-  return undefined;
+}
+
+interface FactoryLoadTarget {
+  path: string;
+  binding?: BoundExtensionEntrypoint;
+}
+
+interface PackageLoadCandidate {
+  packageName: string;
+  metadata: defaultDiscovery.PackageMetadata;
+  target: FactoryLoadTarget;
+}
+
+interface ProjectLoadCandidate {
+  extensionName?: string;
+  target: FactoryLoadTarget;
 }
 
 /**
@@ -89,9 +110,10 @@ function projectExtensionNameFromPath(path: string): string | undefined {
  * Pipeline:
  *   1. Split `config.extensions` into resolved entries and disable directives.
  *   2. Discover extensions from package, project, and local sources.
- *   3. Skip loading factories for package- and project-source extensions whose
- *      names appear in the disable set (local-file names are not reliable
- *      pre-load and are filtered after `mergeExtensions`).
+ *   3. Omit explicit-only discovered extensions and skip loading factories
+ *      for package- and project-source extensions whose names appear in the
+ *      disable set (local-file names are not reliable pre-load and are
+ *      filtered after `mergeExtensions`).
  *   4. Dynamic-import factories for every remaining discovered path.
  *   5. Merge sources honoring priority `config > package > project > local-file`.
  *   6. Construct an `ExtensionLoader` and run `setupAll`.
@@ -129,40 +151,73 @@ export async function orchestrateExtensions(
   // though the user asked for it to be disabled.
   const disabledNames = new Set(disables.map((d) => d.name));
 
-  const [packageHits, projectPaths, localPaths] = await Promise.all([
-    disc.discoverPackageExtensions(projectDir),
-    disc.discoverProjectExtensions(projectDir),
-    disc.discoverLocalExtensions(projectDir),
-  ]);
+  let packageHits: PackageLoadCandidate[];
+  let projectHits: ProjectLoadCandidate[];
+  let localPaths: string[];
+  if (options.discovery) {
+    const [discoveredPackages, projectPaths, discoveredLocalPaths] = await Promise.all([
+      disc.discoverPackageExtensions(projectDir),
+      disc.discoverProjectExtensions(projectDir),
+      disc.discoverLocalExtensions(projectDir),
+    ]);
+    packageHits = discoveredPackages.map((hit) => ({
+      packageName: hit.packageName,
+      metadata: hit.metadata,
+      target: { path: hit.importTarget },
+    }));
+    projectHits = projectPaths.map((path) => ({
+      extensionName: projectExtensionNameFromPath(path),
+      target: { path },
+    }));
+    localPaths = discoveredLocalPaths;
+  } else {
+    const [discoveredPackages, discoveredProjects, discoveredLocalPaths] = await Promise.all([
+      defaultDiscovery.discoverBoundPackageExtensions(projectDir),
+      defaultDiscovery.discoverBoundProjectExtensions(projectDir),
+      defaultDiscovery.discoverLocalExtensions(projectDir),
+    ]);
+    packageHits = discoveredPackages.map((hit) => ({
+      packageName: hit.packageName,
+      metadata: hit.metadata,
+      target: { path: hit.binding.path, binding: hit.binding },
+    }));
+    projectHits = discoveredProjects.map((hit) => ({
+      extensionName: hit.extensionName,
+      target: { path: hit.binding.path, binding: hit.binding },
+    }));
+    localPaths = discoveredLocalPaths;
+  }
 
-  // Package hits carry the package name directly — filter before loading.
-  const enabledPackageNames = packageHits
-    .map((hit) => hit.packageName)
-    .filter((name) => !disabledNames.has(name));
+  // Package hits retain the lexical name for disable directives, but loading
+  // uses the canonical target captured while that package manifest was read.
+  // This prevents an import map from redirecting the authorized package name.
+  const enabledPackageTargets = packageHits
+    .filter((hit) => defaultDiscovery.resolvePackageActivation(hit.metadata) === "auto")
+    .filter((hit) => !disabledNames.has(hit.packageName))
+    .map((hit) => hit.target);
 
   // Project paths have the shape `<projectDir>/extensions/<name>/src/index.ts`
   // (or `<projectDir>/extensions/<name>/index.ts`). `mergeExtensions` is the
   // safety net for any path whose name cannot be derived.
-  const enabledProjectPaths = projectPaths.filter((path) => {
-    const name = projectExtensionNameFromPath(path);
-    return name === undefined || !disabledNames.has(name);
-  });
+  const enabledProjectTargets = projectHits
+    .filter((hit) => hit.extensionName === undefined || !disabledNames.has(hit.extensionName))
+    .map((hit) => hit.target);
 
   // Local-file paths cannot be reliably filtered pre-load: the filename
   // (`foo.extension.ts`) is not guaranteed to match the extension name
   // declared by the factory. `mergeExtensions` applies the post-hoc filter.
   const packageResolved = await loadAllFactories(
-    enabledPackageNames,
+    enabledPackageTargets,
     "package",
     loadFactory,
   );
   const projectResolved = await loadAllFactories(
-    enabledProjectPaths,
+    enabledProjectTargets,
     "project",
     loadFactory,
   );
   const localResolved = await loadAllFactories(
-    localPaths,
+    localPaths.map((path) => ({ path })),
     "local-file",
     loadFactory,
   );
@@ -187,13 +242,13 @@ export async function orchestrateExtensions(
 }
 
 async function loadAllFactories(
-  paths: string[],
+  targets: FactoryLoadTarget[],
   source: ExtensionSource,
   loadFactory: typeof defaultLoadFactory,
 ): Promise<ResolvedExtension[]> {
   const resolved: ResolvedExtension[] = [];
-  for (const path of paths) {
-    resolved.push(await loadFactory(path, source));
+  for (const target of targets) {
+    resolved.push(await loadFactory(target.path, source, undefined, target.binding));
   }
   return resolved;
 }

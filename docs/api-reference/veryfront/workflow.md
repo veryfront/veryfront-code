@@ -1,7 +1,7 @@
 ---
 title: "veryfront/workflow"
 description: "DAG-based agentic workflows with human-in-the-loop support."
-order: 40
+order: 41
 ---
 
 ## Import
@@ -211,6 +211,43 @@ Options accepted by parallel.
 
 These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.
 
+### `veryfront/workflow/blob`
+
+Provider-neutral blob storage contracts and built-in first-party storage.
+
+```ts
+import { assertSafeBlobId, isSafeBlobId, BlobStorageContractName } from "veryfront/workflow/blob";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `BlobStorageContractName` | Extension contract name for an explicitly selected blob-storage implementation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L38) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `assertSafeBlobId` | Validate an identifier before any blob backend constructs a storage path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L11) |
+| `isSafeBlobId` | Return whether a runtime value is a framework-safe blob identifier. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/blob-id.ts#L6) |
+
+#### Classes
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `LocalBlobStorage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/local-storage.ts#L12) |
+| `VeryfrontCloudBlobStorage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/veryfront-cloud-storage.ts#L184) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `BlobRef` | Blob Storage Types | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L7) |
+| `BlobStorage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L40) |
+| `StoreBlobOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/types.ts#L26) |
+| `VeryfrontCloudBlobStorageConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/blob/veryfront-cloud-storage.ts#L76) |
+
 ### `veryfront/workflow/claude-code`
 
 Claude Agent SDK Integration Provides Claude Code agentic capabilities within Veryfront workflows. Uses your local Claude Code installation - no separate API key needed.
@@ -227,9 +264,9 @@ import { createAgent, createClaudeCodeTool, createEventPublisher } from "veryfro
 | `createClaudeCodeTool` | Create a customized Claude Code tool | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/tool.ts#L113) |
 | `createEventPublisher` | Create an event publisher based on environment | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/event-publisher.ts#L312) |
 | `createWebSocketHandler` | Create a WebSocket handler for HTTP upgrade requests | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/websocket-publisher.ts#L255) |
-| `createWorkspaceSync` | Create a workspace sync for a Claude Code run | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L631) |
+| `createWorkspaceSync` | Create a workspace sync for a Claude Code run | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L638) |
 | `executeAgent` | Execute a task using the Claude Agent SDK. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/agent.ts#L108) |
-| `withWorkspace` | Execute a function with a synchronized workspace | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L656) |
+| `withWorkspace` | Execute a function with a synchronized workspace | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/claude-code/workspace-sync.ts#L663) |
 
 #### Classes
 

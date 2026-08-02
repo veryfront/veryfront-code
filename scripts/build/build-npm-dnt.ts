@@ -339,14 +339,66 @@ await verifyNpmRootImportLifecycle();
 
 async function verifyNpmRootImportLifecycle(): Promise<void> {
 	const timeoutMs = 10_000;
+	const probeSource = `
+const root = await import("./esm/src/index.js");
+if (typeof root.defineConfig !== "function") {
+  throw new Error("defineConfig export missing");
+}
+
+const { createEvalCliBuiltinExtensions } = await import(
+  "./esm/src/extensions/builtin-extensions.js"
+);
+const {
+  createEvalReportExporterRegistry,
+  EvalReportExporterRegistryName,
+} = await import("./esm/src/extensions/eval/index.js");
+
+const registry = createEvalReportExporterRegistry();
+const resolved = createEvalCliBuiltinExtensions(["mlflow"]).find(
+  (entry) => entry.extension.name === "ext-eval-report-mlflow",
+);
+if (!resolved) throw new Error("bundled MLflow extension missing");
+
+const context = {
+  get(contract) {
+    return contract === EvalReportExporterRegistryName ? registry : undefined;
+  },
+  require(contract) {
+    if (contract === EvalReportExporterRegistryName) return registry;
+    throw new Error(\`unexpected extension contract: \${contract}\`);
+  },
+  provide(contract) {
+    throw new Error(\`unexpected provided contract: \${contract}\`);
+  },
+  config: {},
+  logger: {
+    debug() {},
+    info() {},
+    warn() {},
+    error() {},
+  },
+};
+
+await resolved.extension.setup?.(context);
+if (!registry.has("mlflow")) {
+  throw new Error("bundled MLflow exporter did not register");
+}
+await resolved.extension.teardown?.();
+if (registry.has("mlflow")) {
+  throw new Error("bundled MLflow exporter did not unregister");
+}
+`;
 	const child = new Deno.Command("node", {
 		args: [
 			"--input-type=module",
 			"--eval",
-			'const mod = await import("./esm/src/index.js"); if (typeof mod.defineConfig !== "function") throw new Error("defineConfig export missing");',
+			probeSource,
 		],
 		cwd: "./npm",
-		env: { VF_DISABLE_LRU_INTERVAL: "0" },
+		env: {
+			MLFLOW_TRACKING_URI: "http://127.0.0.1:5000",
+			VF_DISABLE_LRU_INTERVAL: "0",
+		},
 		stdout: "piped",
 		stderr: "piped",
 	}).spawn();
@@ -383,7 +435,7 @@ async function verifyNpmRootImportLifecycle(): Promise<void> {
 		);
 	}
 
-	console.log("✅ Verified npm root import lifecycle");
+	console.log("✅ Verified npm root import and bundled MLflow lifecycle");
 }
 
 function addTypesExportEntries(

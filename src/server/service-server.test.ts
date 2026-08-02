@@ -320,14 +320,56 @@ Deno.test("Node service shutdown runs runtime stop when server close fails", asy
   const originalClose = server.server.close;
   server.server.close = ((callback?: (error?: Error) => void) => {
     events.push("server-close");
-    originalClose.call(server.server, () => {
-      callback?.(closeError);
-    });
+    callback?.(closeError);
+    // Release the real listener after exposing the injected failure. A native
+    // close event is terminal and must not be reinterpreted as a late callback
+    // failure by the hardened transport lifecycle.
+    originalClose.call(server.server);
     return server.server;
   }) as typeof server.server.close;
 
   const rejected = await assertRejects(() => server.stop(), Error, "node close failed");
+  await server.stop();
 
   assertStrictEquals(rejected, closeError);
   assertEquals(events, ["runtime-shutdown", "server-close", "runtime-stop"]);
+});
+
+Deno.test("Node service startup preserves transport error when lifecycle rollback fails", async () => {
+  const cleanupError = new Error("lifecycle cleanup failed");
+  const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+  const events: string[] = [];
+  const runtime = createVeryfrontServer({
+    modules: [{
+      name: "test",
+      handle: () => new Response("served"),
+      setShuttingDown: () => events.push("runtime-shutdown"),
+      stop: () => {
+        events.push("runtime-stop");
+        throw cleanupError;
+      },
+    }],
+  });
+  const server = await startNodeVeryfrontServer({
+    runtime,
+    port: -1,
+    bindAddress: "127.0.0.1",
+    signals: [],
+    logger: {
+      warn: (message, metadata) => warnings.push({ message, metadata }),
+    },
+  });
+
+  const rejected = await assertRejects(() => server.ready, RangeError, "options.port");
+  const startupErrorMessage = rejected instanceof Error ? rejected.message : String(rejected);
+
+  assertStrictEquals(rejected === cleanupError, false);
+  assertEquals(events, ["runtime-shutdown", "runtime-stop"]);
+  assertEquals(warnings, [{
+    message: "Veryfront service server cleanup failed during startup rollback",
+    metadata: {
+      startupError: startupErrorMessage,
+      cleanupError: cleanupError.message,
+    },
+  }]);
 });

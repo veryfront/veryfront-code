@@ -1,7 +1,7 @@
 ---
 title: "veryfront/knowledge"
 description: "Project knowledge retrieval helpers."
-order: 14
+order: 15
 ---
 
 ## Import

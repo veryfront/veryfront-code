@@ -1,5 +1,9 @@
 import { serverLogger } from "#veryfront/utils";
-import { toNodeHandler } from "./node-handler.ts";
+import {
+  createNodeServerWithStartupOwner,
+  type NodeServer,
+} from "#veryfront/platform/adapters/runtime/node/http-server.ts";
+import type { NodeWebSocketServerProvider } from "#veryfront/extensions/websocket";
 
 /** Public API contract for veryfront service server fetch. */
 export type VeryfrontServiceServerFetch = (request: Request) => Response | Promise<Response>;
@@ -47,6 +51,8 @@ export type StartNodeVeryfrontServerOptions = {
   logger?: VeryfrontServiceServerLogger;
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
+  /** Explicit Node WebSocket implementation; upgrades fail closed when omitted. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 };
 
 /** Options accepted by start veryfront server. */
@@ -57,6 +63,8 @@ export type StartVeryfrontServerOptions = {
   logger?: VeryfrontServiceServerLogger;
   signals?: readonly NodeJS.Signals[];
   hardShutdownTimeoutMs?: number;
+  /** Used only when the selected runtime is Node.js. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
 };
 
 /** Public API contract for veryfront service server runtime kind. */
@@ -180,19 +188,6 @@ export function createVeryfrontServer(
       }
     },
   };
-}
-
-function closeNodeServer(server: import("node:http").Server): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.close((error) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-
-      resolve();
-    });
-  });
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -580,12 +575,41 @@ export async function startVeryfrontServer(
 export async function startNodeVeryfrontServer(
   options: StartNodeVeryfrontServerOptions,
 ): Promise<NodeVeryfrontServiceServer> {
-  const { createServer } = await import("node:http");
   const logger = options.logger ?? serverLogger.component("service-server");
   const bindAddress = options.bindAddress ?? "0.0.0.0";
-  const server = createServer(toNodeHandler(options.runtime.fetch));
+  const startupController = new AbortController();
+  let listeningPort = options.port;
+  let listeningUrl = `http://${bindAddress}:${listeningPort}`;
   let shutdownStarted = false;
   let removeSignalHandlers: () => void = () => undefined;
+
+  let resolveOwnedServer!: (server: NodeServer) => void;
+  let rejectOwnedServer!: (error: unknown) => void;
+  const ownedServerPromise = new Promise<NodeServer>((resolve, reject) => {
+    resolveOwnedServer = resolve;
+    rejectOwnedServer = reject;
+  });
+  const listenerReady = createNodeServerWithStartupOwner(
+    options.runtime.fetch,
+    {
+      port: options.port,
+      hostname: bindAddress,
+      signal: startupController.signal,
+      nodeWebSocketServerProvider: options.nodeWebSocketServerProvider,
+      onListen: ({ port }) => {
+        listeningPort = port;
+        listeningUrl = `http://${bindAddress}:${port}`;
+        logger.info?.("Veryfront service server listening", {
+          port,
+          bindAddress,
+        });
+      },
+    },
+    resolveOwnedServer,
+  );
+  void listenerReady.catch(rejectOwnedServer);
+  const ownedServer = await ownedServerPromise;
+  const server = ownedServer.nativeHttpServer;
 
   const stop = async () => {
     if (shutdownStarted) {
@@ -594,23 +618,32 @@ export async function startNodeVeryfrontServer(
 
     shutdownStarted = true;
     try {
-      await stopRuntime(options.runtime, () => closeNodeServer(server));
+      if (!startupController.signal.aborted) {
+        startupController.abort(
+          new Error("Veryfront Node service server stopped before readiness"),
+        );
+      }
+      await stopRuntime(options.runtime, () => ownedServer.stop());
     } finally {
       removeSignalHandlers();
     }
   };
 
-  const ready = new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(options.port, bindAddress, () => {
-      server.off("error", reject);
-      logger.info?.("Veryfront service server listening", {
-        port: options.port,
-        bindAddress,
+  const ready = listenerReady.then(() => undefined).catch(async (startupError) => {
+    try {
+      await stop();
+    } catch (cleanupError) {
+      // Startup is the primary failure. Cleanup still runs to completion, but
+      // a lifecycle rollback error must not replace the transport error that
+      // explains why the server never became ready.
+      logger.warn?.("Veryfront service server cleanup failed during startup rollback", {
+        startupError: startupError instanceof Error ? startupError.message : String(startupError),
+        cleanupError: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
       });
-      resolve();
-    });
+    }
+    throw startupError;
   });
+  void ready.catch(() => undefined);
 
   removeSignalHandlers = installSignalHandlers({
     signalRuntime: getProcessSignalRuntime(),
@@ -625,8 +658,12 @@ export async function startNodeVeryfrontServer(
     server,
     ready,
     stop,
-    port: options.port,
-    url: `http://${bindAddress}:${options.port}`,
+    get port() {
+      return listeningPort;
+    },
+    get url() {
+      return listeningUrl;
+    },
     runtime: "node",
   };
 }

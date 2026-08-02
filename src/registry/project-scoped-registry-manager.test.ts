@@ -74,6 +74,43 @@ describe("ProjectScopedRegistryManager", () => {
     });
   });
 
+  describe("registerOwned", () => {
+    it("keeps an equal primitive replacement when the earlier owner disposes", () => {
+      const manager = createManager<string>("provider");
+      const disposeFirst = manager.registerOwned("local", "same-value");
+      const disposeSecond = manager.registerOwned("local", "same-value");
+
+      disposeFirst();
+      disposeFirst();
+      assertEquals(manager.get("local"), "same-value");
+
+      disposeSecond();
+      assertEquals(manager.get("local"), undefined);
+    });
+
+    it("keeps a same-object replacement when the earlier owner disposes", () => {
+      const manager = createManager<object>("provider");
+      const provider = { name: "shared-instance" };
+      const disposeFirst = manager.registerOwned("local", provider);
+      const disposeSecond = manager.registerOwned("local", provider);
+
+      disposeFirst();
+      assert(manager.get("local") === provider);
+
+      disposeSecond();
+      assertEquals(manager.get("local"), undefined);
+    });
+
+    it("does not own a later plain registration of the same value", () => {
+      const manager = createManager<string>("provider");
+      const disposeOwned = manager.registerOwned("local", "same-value");
+      manager.register("local", "same-value");
+
+      disposeOwned();
+      assertEquals(manager.get("local"), "same-value");
+    });
+  });
+
   describe("registerShared / get fallback", () => {
     it("should register and retrieve a shared item", () => {
       const manager = createManager<string>("tool");
@@ -275,6 +312,170 @@ describe("ProjectScopedRegistryManager", () => {
 
 describe("ProjectScopedRegistryManager transactions", () => {
   const scope = { projectId: "project-transaction", mode: "preview" as const, versionId: "main" };
+
+  it("can dispose an owned registration before its transaction commits", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider");
+
+    await runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          const dispose = manager.registerOwned("local", "transformers");
+          assertEquals(manager.get("local"), "transformers");
+          dispose();
+          dispose();
+          assertEquals(manager.get("local"), undefined);
+        }),
+    );
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), undefined);
+    });
+  });
+
+  it("keeps a same-value replacement when its previous owner disposes in the transaction", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider");
+
+    await runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          const disposeFirst = manager.registerOwned("local", "same-value");
+          const disposeSecond = manager.registerOwned("local", "same-value");
+
+          disposeFirst();
+          assertEquals(manager.get("local"), "same-value");
+          disposeSecond();
+          assertEquals(manager.get("local"), undefined);
+        }),
+    );
+  });
+
+  it("does not let an aborted same-object generation dispose the live owner", async () => {
+    const manager = new ProjectScopedRegistryManager<object>("provider");
+    const provider = { generation: "same-instance" };
+    let disposeLive = () => {};
+    let disposeAborted = () => {};
+    runWithCacheKeyContext(scope, () => {
+      disposeLive = manager.registerOwned("local", provider);
+    });
+
+    await assertRejects(
+      () =>
+        runWithCacheKeyContext(
+          scope,
+          () =>
+            runWithRegistryTransaction(async () => {
+              disposeAborted = manager.registerOwned("local", provider);
+              throw new Error("abort same-object replacement");
+            }),
+        ),
+      Error,
+      "abort same-object replacement",
+    );
+
+    disposeAborted();
+    runWithCacheKeyContext(scope, () => {
+      assert(manager.get("local") === provider);
+    });
+    disposeLive();
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), undefined);
+    });
+  });
+
+  it("keeps a staged replacement when the previous live owner disposes concurrently", async () => {
+    const manager = new ProjectScopedRegistryManager<object>("provider");
+    const first = { generation: 1 };
+    const second = { generation: 2 };
+    let disposeFirst = () => {};
+    runWithCacheKeyContext(scope, () => {
+      disposeFirst = manager.registerOwned("local", first);
+    });
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          manager.registerOwned("local", second);
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    disposeFirst();
+    releaseStage.resolve();
+    await transaction;
+
+    runWithCacheKeyContext(scope, () => {
+      assert(manager.get("local") === second);
+    });
+  });
+
+  it("stages disposal of an earlier owned registration in a later transaction", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider");
+    let dispose = () => {};
+    runWithCacheKeyContext(scope, () => {
+      dispose = manager.registerOwned("local", "transformers");
+    });
+
+    const stageReady = Promise.withResolvers<void>();
+    const releaseStage = Promise.withResolvers<void>();
+    const transaction = runWithCacheKeyContext(
+      scope,
+      () =>
+        runWithRegistryTransaction(async () => {
+          dispose();
+          assertEquals(manager.get("local"), undefined);
+          stageReady.resolve();
+          await releaseStage.promise;
+        }),
+    );
+
+    await stageReady.promise;
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), "transformers");
+    });
+    releaseStage.resolve();
+    await transaction;
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), undefined);
+    });
+  });
+
+  it("allows owned disposal to retry after its transaction aborts", async () => {
+    const manager = new ProjectScopedRegistryManager<string>("provider");
+    let dispose = () => {};
+    runWithCacheKeyContext(scope, () => {
+      dispose = manager.registerOwned("local", "generation-1");
+    });
+
+    await assertRejects(
+      () =>
+        runWithCacheKeyContext(
+          scope,
+          () =>
+            runWithRegistryTransaction(async () => {
+              dispose();
+              assertEquals(manager.get("local"), undefined);
+              throw new Error("abort replacement");
+            }),
+        ),
+      Error,
+      "abort replacement",
+    );
+
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), "generation-1");
+    });
+    dispose();
+    runWithCacheKeyContext(scope, () => {
+      assertEquals(manager.get("local"), undefined);
+    });
+  });
 
   it("keeps the live registry visible until a staged replacement commits", async () => {
     const manager = new ProjectScopedRegistryManager<string>("skill");

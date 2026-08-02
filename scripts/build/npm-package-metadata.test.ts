@@ -723,6 +723,17 @@ describe("npm supply-chain policy", () => {
     assertStringIncludes(source, "await verifyNpmRootImportLifecycle();");
   });
 
+  it("exercises the root-bundled MLflow exporter in the npm lifecycle probe", async () => {
+    const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+    assertStringIncludes(source, 'createEvalCliBuiltinExtensions(["mlflow"])');
+    assertStringIncludes(source, 'registry.has("mlflow")');
+    assertStringIncludes(
+      source,
+      'MLFLOW_TRACKING_URI: "http://127.0.0.1:5000"',
+    );
+  });
+
   it("keeps npm CLI agent workflow paths off the DNT Deno shim in real Deno", async () => {
     const generatedFiles = [
       "npm/esm/cli/commands/mcp/handler.js",

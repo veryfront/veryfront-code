@@ -1,13 +1,24 @@
 /**
- * Workflow Blob
+ * Provider-neutral blob storage contracts and built-in first-party storage.
  *
  * @module workflow/blob
+ * @example Store a blob with the local implementation
+ * ```ts
+ * import { LocalBlobStorage } from "veryfront/workflow/blob";
+ *
+ * const storage = new LocalBlobStorage(".veryfront/blobs");
+ * const blob = await storage.put("hello", { id: "greeting" });
+ * ```
  */
 
-export { type BlobRef, type BlobStorage, type StoreBlobOptions } from "./types.ts";
+export {
+  type BlobRef,
+  type BlobStorage,
+  BlobStorageContractName,
+  type StoreBlobOptions,
+} from "./types.ts";
+export { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
 export { LocalBlobStorage } from "./local-storage.ts";
-export { S3BlobStorage, type S3BlobStorageConfig } from "./s3-storage.ts";
-export { GCSBlobStorage, type GCSBlobStorageConfig } from "./gcs-storage.ts";
 export {
   VeryfrontCloudBlobStorage,
   type VeryfrontCloudBlobStorageConfig,
