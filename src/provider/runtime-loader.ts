@@ -144,6 +144,10 @@ export function createWarningCollector(): WarningCollector {
 
 /** Serialize a JSON-compatible value. */
 export function stringifyJsonValue(value: unknown): string {
+  // Strings are already a valid wire payload. Serializing them would send a
+  // double-encoded, quote-wrapped value to the provider.
+  if (typeof value === "string") return value;
+
   try {
     const serialized = JSON.stringify(value);
     if (serialized === undefined) {
