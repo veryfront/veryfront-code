@@ -96,6 +96,73 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
   });
 
   describe("handle - with mock SSRService", () => {
+    it("passes only application headers into project rendering", async () => {
+      let renderedRequest: Request | undefined;
+      const mockService = createMockSSRService({
+        renderPage: (_ctx, options) => {
+          renderedRequest = options.request;
+          return Promise.resolve({
+            status: 200,
+            html: "<html>rendered page</html>",
+            isStreaming: false,
+            cacheStrategy: "short" as const,
+            slug: "headers",
+          });
+        },
+      });
+      const handler = new SSRHandler(mockService);
+      await handler.handle(
+        new Request("http://localhost/headers", {
+          headers: {
+            authorization: "Bearer application-token",
+            cookie: "session=application-cookie",
+            "proxy-authorization": "Basic infrastructure-proxy-token",
+            "x-forwarded-host": "internal-proxy.example",
+            "x-project-id": "infrastructure-project",
+            "x-token": "platform-service-token",
+            "x-veryfront-control-plane-jws": "signed-control-plane-request",
+          },
+        }),
+        makeCtx({ isLocalProject: true }),
+      );
+
+      assertEquals(renderedRequest?.headers.get("authorization"), "Bearer application-token");
+      assertEquals(renderedRequest?.headers.get("cookie"), "session=application-cookie");
+      assertEquals(renderedRequest?.headers.get("proxy-authorization"), null);
+      assertEquals(renderedRequest?.headers.get("x-forwarded-host"), null);
+      assertEquals(renderedRequest?.headers.get("x-project-id"), null);
+      assertEquals(renderedRequest?.headers.get("x-token"), null);
+      assertEquals(renderedRequest?.headers.get("x-veryfront-control-plane-jws"), null);
+    });
+
+    it("returns a typed 503 before shared-runtime rendering", async () => {
+      let renderCalls = 0;
+      const handler = new SSRHandler(createMockSSRService({
+        renderPage: () => {
+          renderCalls++;
+          throw new Error("shared runtime reached the host renderer");
+        },
+      }));
+      const result = await handler.handle(
+        new Request("https://tenant.example/private-page"),
+        makeCtx({
+          isLocalProject: false,
+          prepareHostedConfigContext: (() => {
+            throw new Error("shared runtime prepared host rendering context");
+          }) as HandlerContext["prepareHostedConfigContext"],
+        }),
+      );
+
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
+      assertEquals(
+        (await result.response?.json() as { type?: string }).type,
+        "https://veryfront.com/docs/errors/project-execution-unavailable",
+      );
+      assertEquals(renderCalls, 0);
+    });
+
     it("returns response from renderPage result", async () => {
       const mockService = createMockSSRService({
         renderPage: () =>
@@ -342,7 +409,7 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       };
     }
 
-    it("calls runWithContext with correct args in multi-project mode", async () => {
+    it("fails closed before entering a multi-project rendering context", async () => {
       const mockService = createMockSSRService();
       const handler = new SSRHandler(mockService);
       const { ctx, calls } = makeExtendedCtx({}, {
@@ -362,15 +429,11 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       });
 
       const req = new Request("http://localhost/page");
-      await handler.handle(req, ctx);
+      const result = await handler.handle(req, ctx);
 
-      assertEquals(calls.runWithContext![0], "my-slug");
-      assertEquals(calls.runWithContext![1], "tok-abc");
-      assertEquals(calls.runWithContext![2], "proj-42");
-      const opts = calls.runWithContext![3] as Record<string, unknown>;
-      assertEquals(opts.releaseId, "rel-1");
-      assertEquals(opts.branch, "feature-x");
-      assertEquals(opts.environmentName, "staging");
+      assertEquals(calls.runWithContext, undefined);
+      assertEquals(result.response?.status, 503);
+      assertEquals(result.response?.headers.get("content-type"), "application/problem+json");
     });
 
     it("skips runWithContext when projectSlug is missing", async () => {
@@ -601,8 +664,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
     });
   });
 
-  describe("handle - context setup error", () => {
-    it("falls through to 404 when context setup throws", async () => {
+  describe("handle - hostile shared context", () => {
+    it("returns 503 without invoking a throwing shared context", async () => {
       const throwingFs = {
         exists: () => Promise.resolve(false),
         readFile: () => Promise.resolve(""),
@@ -624,7 +687,8 @@ describe("server/handlers/request/ssr/ssr.handler", () => {
       const ctx = makeCtx({ adapter, projectSlug: "test" });
 
       const result = await handler.handle(new Request("http://localhost/page"), ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 503);
     });
   });
 

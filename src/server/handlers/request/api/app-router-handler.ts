@@ -11,6 +11,7 @@ import { applySecurityHeaders } from "./security-headers.ts";
 import { applyCORSHeaders } from "#veryfront/security";
 import { serverLogger } from "#veryfront/utils";
 import { methodNotAllowed } from "#veryfront/http/responses";
+import { createApplicationRequest } from "#veryfront/security/http/application-request.ts";
 
 const logger = serverLogger.component("app-router-api-handler");
 
@@ -47,7 +48,7 @@ export async function handleAppRouter(
     const [fn, headShim] = resolveHandlerFunction(mod, method);
     if (!fn) return methodNotAllowed(getAllowedMethods(mod));
 
-    const res = await fn(req, { params: match.params });
+    const res = await fn(createApplicationRequest(req), { params: match.params });
     const headers = new Headers(res.headers);
 
     await applyCORSHeaders({

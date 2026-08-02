@@ -298,7 +298,51 @@ describe("ProjectMiddlewareRuntime", () => {
     ]);
   });
 
-  it("preserves request and response identity for non-HMR WebSocket upgrade handling", async () => {
+  it("exposes application auth while withholding infrastructure headers", async () => {
+    const adapter = createAdapter();
+    const runtime = new ProjectMiddlewareRuntime({
+      loadMiddleware: () =>
+        Promise.resolve([
+          (c) =>
+            Response.json({
+              authorization: c.req.headers.get("authorization"),
+              cookie: c.req.headers.get("cookie"),
+              proxyAuthorization: c.req.headers.get("proxy-authorization"),
+              forwardedHost: c.req.headers.get("x-forwarded-host"),
+              projectId: c.req.headers.get("x-project-id"),
+              platformToken: c.req.headers.get("x-token"),
+              dispatchSignature: c.req.headers.get("x-veryfront-dispatch-jws"),
+            }),
+        ]),
+    });
+    const response = await execute(
+      runtime,
+      createContext(adapter),
+      new Request("https://example.com/resource", {
+        headers: {
+          authorization: "Bearer application-token",
+          cookie: "session=application-cookie",
+          "proxy-authorization": "Basic infrastructure-proxy-token",
+          "x-forwarded-host": "internal-proxy.example",
+          "x-project-id": "infrastructure-project",
+          "x-token": "platform-service-token",
+          "x-veryfront-dispatch-jws": "signed-dispatch-request",
+        },
+      }),
+    );
+
+    assertEquals(await response?.json(), {
+      authorization: "Bearer application-token",
+      cookie: "session=application-cookie",
+      proxyAuthorization: null,
+      forwardedHost: null,
+      projectId: null,
+      platformToken: null,
+      dispatchSignature: null,
+    });
+  });
+
+  it("detaches the project request while preserving WebSocket and response behavior", async () => {
     const adapter = createAdapter();
     const request = new Request("https://example.com/socket", {
       headers: { upgrade: "websocket" },
@@ -309,7 +353,8 @@ describe("ProjectMiddlewareRuntime", () => {
       loadMiddleware: () =>
         Promise.resolve([
           async (c, next) => {
-            assertEquals(c.req === request, true);
+            assertEquals(c.req === request, false);
+            assertEquals(c.req.headers.get("upgrade"), "websocket");
             middlewareSawRequest = true;
             return await next();
           },

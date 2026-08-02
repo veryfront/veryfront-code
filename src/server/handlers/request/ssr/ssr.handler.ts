@@ -33,6 +33,7 @@ import { ErrorPages } from "../../../utils/error-html.ts";
 import { isSSRBuildFailure } from "#veryfront/rendering/ssr-outcome.ts";
 import { buildSSRResponse } from "./ssr-response-builder.ts";
 import { type DependencyPinningSnapshot } from "#veryfront/transforms/esm/package-registry.ts";
+import { createApplicationRequestHeaders } from "#veryfront/security/http/application-request.ts";
 import { createHandlerDependencyPinningSource } from "#veryfront/server/handlers/utils/dependency-pinning-source.ts";
 import {
   applySnapshotResponseHeaders,
@@ -41,6 +42,10 @@ import {
   snapshotConflictResponse,
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
+import {
+  createErrorResponseFromDefinition,
+  PROJECT_EXECUTION_UNAVAILABLE,
+} from "#veryfront/errors";
 
 const logger = serverLogger.component("ssr");
 
@@ -105,6 +110,27 @@ export class SSRHandler extends BaseHandler {
     if (hasDotSegment && isProductionMode(ctx, url)) {
       this.logDebug("Dot path blocked in production", { slug }, ctx);
       return Promise.resolve(this.continue());
+    }
+
+    const fsAdapter = ctx.adapter.fs;
+    const isSharedRuntime = ctx.prepareHostedConfigContext !== undefined ||
+      (isExtendedFSAdapter(fsAdapter) && fsAdapter.isMultiProjectMode());
+    if (isSharedRuntime) {
+      const problem = createErrorResponseFromDefinition(
+        PROJECT_EXECUTION_UNAVAILABLE,
+        {
+          detail:
+            "Shared runtimes require a dedicated isolated project runtime for server rendering",
+          instance: pathname,
+        },
+      );
+      const body = req.method === "HEAD" ? null : problem.body;
+      const response = this.createResponseBuilder(ctx, generateNonce())
+        .withSecurity(ctx.securityConfig ?? undefined, req)
+        .withCache("no-store")
+        .withHeaders(problem.headers)
+        .build(body, problem.status);
+      return Promise.resolve(this.respond(response));
     }
 
     this.logDebug("SSR attempt", { pathname, slug }, ctx);
@@ -220,7 +246,9 @@ export class SSRHandler extends BaseHandler {
         const dependencySnapshot = resolution.snapshot;
 
         const applicationUrl = new URL(url);
-        const applicationHeaders = stripSnapshotHeader(req.headers);
+        const applicationHeaders = createApplicationRequestHeaders(
+          stripSnapshotHeader(req.headers),
+        );
         const applicationRequest = new Request(applicationUrl, {
           method: req.method,
           headers: applicationHeaders,

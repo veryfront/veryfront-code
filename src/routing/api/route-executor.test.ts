@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  __serializeRequestForTests,
   executeAppRoute as executeAppRouteRaw,
   executePagesRoute as executePagesRouteRaw,
   type ExecuteRouteOptions,
@@ -136,6 +137,46 @@ async function isolatedRouteOptions(
 }
 
 describe("routing/api/route-executor", () => {
+  describe("application request boundary", () => {
+    it("withholds infrastructure credentials from remote project code", async () => {
+      const serialized = await __serializeRequestForTests(
+        new Request("https://tenant.example/api/test", {
+          headers: {
+            "authorization": "Bearer application-user-token",
+            "cookie": "session=application-cookie",
+            "proxy-authorization": "Basic infrastructure-proxy-token",
+            "x-project-slug": "tenant",
+            "x-token": "platform-service-token",
+            "x-veryfront-control-plane-jws": "signed-control-plane-request",
+            "x-veryfront-dispatch-jws": "signed-dispatch-request",
+            "x-veryfront-future-infrastructure-secret": "future-secret",
+          },
+        }),
+      );
+
+      assertEquals(serialized.headers, [
+        ["authorization", "Bearer application-user-token"],
+        ["cookie", "session=application-cookie"],
+      ]);
+    });
+
+    it("withholds reserved infrastructure headers from local project code too", async () => {
+      const serialized = await __serializeRequestForTests(
+        new Request("http://localhost/api/test", {
+          headers: {
+            authorization: "Bearer local-application-token",
+            "x-token": "local-infrastructure-token",
+          },
+        }),
+      );
+
+      assertEquals(serialized.headers, [[
+        "authorization",
+        "Bearer local-application-token",
+      ]]);
+    });
+  });
+
   describe("executeAppRoute()", () => {
     it("should call the matching HTTP method handler", async () => {
       const handler = {

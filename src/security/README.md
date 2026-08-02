@@ -168,8 +168,14 @@ The worker pool provides:
 The `WORKER_ISOLATION_ENABLED` and surface-specific
 `WORKER_ISOLATION_API`, `WORKER_ISOLATION_DATA`, and `WORKER_ISOLATION_SSR`
 flags opt trusted local projects into worker execution. They cannot disable the
-shared-runtime boundary: remote API routes always require prepared worker
-source and fail closed when that source or an execution scope is unavailable.
+shared-runtime boundary. A dedicated single-project runtime may execute
+prepared API source in its local worker pool. A shared multi-project/proxy
+runtime never executes tenant API source in the host process or a same-process
+Worker: API ownership returns the typed
+`project-execution-unavailable` 503 response until the request is routed to a
+genuinely external or dedicated isolated project runtime. Raw-path server-data
+modules are local-only; remote data and renderer-backed module endpoints return
+503 before resolving project modules.
 Defined invalid flags and pool limits are startup errors; they are not silently
 replaced with defaults.
 
@@ -194,10 +200,19 @@ resolving a renderer. API and data workers do not resolve or receive the
 renderer contract.
 
 Deno Workers share the host process. Worker retirement is lifecycle hygiene,
-not a hard per-worker memory or CPU boundary. A project can still create
-host-process memory pressure or consume a worker thread until the host
-terminates it. Strong memory, CPU, and process containment requires a
-separately limited process or container.
+not a hard per-worker memory or CPU boundary. They are therefore limited to
+local development and dedicated single-project execution, where one project
+cannot deny service to unrelated tenants. Shared multi-project execution must
+use a separately limited external process or container; there is no operator
+flag that reclassifies same-process Workers as a safe tenant boundary.
+
+Before application-controlled API handlers, project middleware, SSR/data
+rendering, or RSC action authorization receives a request, the runtime creates
+a detached application request. Public application credentials such as
+`Authorization` and `Cookie` are retained. Infrastructure-only credentials,
+project/source identity, trusted-proxy metadata, and `x-veryfront-*` control
+headers are withheld. The original request remains available only to the
+host-owned admission and routing pipeline.
 
 ## Internal-only files
 

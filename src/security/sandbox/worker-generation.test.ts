@@ -7,6 +7,7 @@ import {
   assertThrows,
 } from "#veryfront/testing/assert.ts";
 import {
+  digestWorkerGenerationMaterial,
   isWorkerGenerationInScope,
   resolveWorkerGeneration,
   snapshotWorkerGenerationIdentity,
@@ -147,6 +148,13 @@ Deno.test("worker identity preserves otherwise-replaced UTF-16 code units", asyn
   assertEquals(
     isWorkerGenerationInScope(surrogateScope.workerId, replacementCharacter),
     false,
+  );
+});
+
+Deno.test("semantic generation digests preserve otherwise-replaced UTF-16 code units", async () => {
+  assertNotEquals(
+    await digestWorkerGenerationMaterial("\ud800"),
+    await digestWorkerGenerationMaterial("\ufffd"),
   );
 });
 

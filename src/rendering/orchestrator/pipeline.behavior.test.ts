@@ -98,6 +98,7 @@ function createPipeline(
     } as any,
     mode: "production",
     projectDir: "/project",
+    isLocalProject: true,
     ...overrides,
   };
 
@@ -1043,6 +1044,9 @@ describe("RenderPipeline behavior", () => {
       [nestedClientLayoutPath, "'use client';\nexport default function GuidesLayout() {}"],
     ]);
     const pipeline = createPipeline(pagePath, {
+      // Server-owned page islands use the hosted module transport rather than
+      // the local filesystem transport exercised by the default fixture.
+      isLocalProject: false,
       pageResolver: {
         resolvePage: async () => ({
           entity: {
