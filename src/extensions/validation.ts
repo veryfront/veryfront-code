@@ -18,6 +18,7 @@ import {
   MAX_EXTENSION_CONTRACT_NAME_CHARACTERS,
   MAX_EXTENSION_CONTRACTS_PER_LIST,
   MAX_EXTENSION_NAME_CHARACTERS,
+  MAX_EXTENSION_PRESET_CHILDREN,
   MAX_EXTENSION_VERSION_CHARACTERS,
   snapshotDenseMetadataArray,
 } from "./metadata-policy.ts";
@@ -489,12 +490,17 @@ export function validateExtension(ext: unknown): string[] {
   }
 
   const extendsField = readField(candidate, "extends", issues);
-  if (
-    extendsField.ok &&
-    extendsField.value !== undefined &&
-    !Array.isArray(extendsField.value)
-  ) {
-    issues.push("extends must be an array");
+  if (extendsField.ok && extendsField.value !== undefined) {
+    try {
+      snapshotDenseMetadataArray(
+        extendsField.value,
+        "extends",
+        0,
+        MAX_EXTENSION_PRESET_CHILDREN,
+      );
+    } catch (error) {
+      issues.push(describeThrownValue(error));
+    }
   }
 
   return issues;

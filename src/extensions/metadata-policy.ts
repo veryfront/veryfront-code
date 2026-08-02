@@ -21,6 +21,9 @@ export const MAX_CAPABILITY_AUDIT_UTF8_BYTES = 49_152;
 export const MAX_CAPABILITY_AUDIT_UTF16_CODE_UNITS = 49_152;
 export const MAX_EXTENSION_CONTRACTS_PER_LIST = 256;
 export const MAX_EXTENSION_CONTRACT_NAME_CHARACTERS = 256;
+export const MAX_EXTENSION_PRESET_CHILDREN = 256;
+export const MAX_EXTENSION_PRESET_DEPTH = 32;
+export const MAX_EXTENSION_PRESET_NODES = 4096;
 
 /**
  * Conservative aggregate budget for every Deno permission flag produced for

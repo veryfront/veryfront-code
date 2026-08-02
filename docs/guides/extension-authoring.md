@@ -225,6 +225,10 @@ const webPreset: ExtensionFactory = () => ({
 export default webPreset;
 ```
 
+Preset metadata must be a dense array with at most 256 direct children.
+Veryfront rejects graphs deeper than 32 levels or larger than 4,096 visited
+nodes so malformed or cyclic composition cannot exhaust startup resources.
+
 During development, changes to `veryfront.config.ts` trigger teardown,
 rediscovery, and setup. Release resources in `teardown()` so reloads do not leak
 connections, timers, or file handles.

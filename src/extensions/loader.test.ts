@@ -1421,6 +1421,42 @@ describe("ExtensionLoader", () => {
       assertEquals(flat[0]?.extension.name, "leaf");
       assertEquals(flat[1]?.extension.name, "leaf");
     });
+
+    it("uses the bounded descriptor snapshot instead of proxy get traps", () => {
+      const child = makeExt("child");
+      const target = makeExt("preset", { extends: [child] });
+      let getCalls = 0;
+      const preset = new Proxy(target, {
+        get(_target, property, receiver) {
+          getCalls++;
+          if (property === "extends") return [receiver];
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      const resolved = makeResolved(preset);
+      getCalls = 0;
+
+      const loader = new ExtensionLoader(noopLogger);
+      const flat = loader.flattenPresets([resolved]);
+
+      assertEquals(getCalls, 0);
+      assertEquals(flat.length, 1);
+      assertEquals(flat[0]?.extension, child);
+    });
+
+    it("bounds recursive preset graphs before stack or memory exhaustion", () => {
+      let preset = makeExt("leaf");
+      for (let depth = 0; depth <= 32; depth++) {
+        preset = makeExt(`preset-${depth}`, { extends: [preset] });
+      }
+
+      const loader = new ExtensionLoader(noopLogger);
+      assertThrows(
+        () => loader.flattenPresets([makeResolved(preset)]),
+        Error,
+        "nesting exceeds 32 levels",
+      );
+    });
   });
 
   describe("setupAll() — source priority on register()", () => {
