@@ -132,9 +132,9 @@ describe("src/agent/runtime skill policy helpers", () => {
       assertEquals(enforceSkillPolicy("execute_skill_script", ["Read"], false).allowed, false);
     });
 
-    it("allows load_skill_reference only when the active skill advertised references", () => {
+    it("allows load_skill_reference only when policy and active skill advertise it", () => {
       assertEquals(
-        enforceSkillPolicy("load_skill_reference", ["Read"], false, {
+        enforceSkillPolicy("load_skill_reference", ["Read", "load_skill_reference"], false, {
           skillToolAvailability: {
             hasActiveSkill: true,
             references: ["references/guide.md"],
@@ -144,19 +144,35 @@ describe("src/agent/runtime skill policy helpers", () => {
         { allowed: true },
       );
 
-      const result = enforceSkillPolicy("load_skill_reference", ["Read"], false, {
-        skillToolAvailability: {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
+      assertEquals(
+        enforceSkillPolicy("load_skill_reference", ["Read"], false, {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: ["references/guide.md"],
+            scripts: [],
+          },
+        }).allowed,
+        false,
+      );
+
+      const result = enforceSkillPolicy(
+        "load_skill_reference",
+        ["Read", "load_skill_reference"],
+        false,
+        {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: [],
+          },
         },
-      });
+      );
       assertEquals(result.allowed, false);
     });
 
-    it("allows execute_skill_script only when the active skill advertised scripts", () => {
+    it("allows execute_skill_script only when policy and active skill advertise it", () => {
       assertEquals(
-        enforceSkillPolicy("execute_skill_script", ["Read"], false, {
+        enforceSkillPolicy("execute_skill_script", ["Read", "execute_skill_script"], false, {
           skillToolAvailability: {
             hasActiveSkill: true,
             references: [],
@@ -166,13 +182,29 @@ describe("src/agent/runtime skill policy helpers", () => {
         { allowed: true },
       );
 
-      const result = enforceSkillPolicy("execute_skill_script", ["Read"], false, {
-        skillToolAvailability: {
-          hasActiveSkill: true,
-          references: [],
-          scripts: [],
+      assertEquals(
+        enforceSkillPolicy("execute_skill_script", ["Read"], false, {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: ["scripts/run.sh"],
+          },
+        }).allowed,
+        false,
+      );
+
+      const result = enforceSkillPolicy(
+        "execute_skill_script",
+        ["Read", "execute_skill_script"],
+        false,
+        {
+          skillToolAvailability: {
+            hasActiveSkill: true,
+            references: [],
+            scripts: [],
+          },
         },
-      });
+      );
       assertEquals(result.allowed, false);
     });
 
