@@ -1,3 +1,5 @@
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+
 const DEFAULT_MAX_DEPTH = 64;
 const DEFAULT_MAX_NODES = 65_536;
 const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
@@ -38,12 +40,15 @@ export type JsonSnapshotOptions = {
    * @default 8_388_608
    */
   maxBytes?: number;
+  /** Sort object keys for deterministic snapshots. Defaults to true. */
+  sortObjectKeys?: boolean;
 };
 
 type ResolvedJsonSnapshotOptions = {
   maxDepth: number;
   maxNodes: number;
   maxBytes: number;
+  sortObjectKeys: boolean;
 };
 
 type SnapshotState = ResolvedJsonSnapshotOptions & {
@@ -75,10 +80,14 @@ function readLimit(
 }
 
 function resolveOptions(options: JsonSnapshotOptions): ResolvedJsonSnapshotOptions {
+  if (options.sortObjectKeys !== undefined && typeof options.sortObjectKeys !== "boolean") {
+    throw new TypeError("Provider JSON snapshot sortObjectKeys must be a boolean");
+  }
   return {
     maxDepth: readLimit(options.maxDepth, DEFAULT_MAX_DEPTH, "maxDepth", 0),
     maxNodes: readLimit(options.maxNodes, DEFAULT_MAX_NODES, "maxNodes", 1),
     maxBytes: readLimit(options.maxBytes, DEFAULT_MAX_BYTES, "maxBytes", 1),
+    sortObjectKeys: options.sortObjectKeys ?? true,
   };
 }
 
@@ -342,7 +351,9 @@ function snapshotObject(
       value: readDataProperty(value, key, true),
     });
   }
-  entries.sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  if (state.sortObjectKeys) {
+    entries.sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  }
 
   addBytes(state, 1);
   const snapshot = Object.create(null) as Record<string, JsonSnapshotValue>;
@@ -395,6 +406,9 @@ function snapshotValue(
       return value;
     case "object": {
       const objectValue = value as object;
+      if (isProxyWithoutHooks(objectValue)) {
+        invalidValue("must not contain Proxy values");
+      }
       if (state.ancestors.has(objectValue)) {
         invalidValue("must not contain cycles");
       }

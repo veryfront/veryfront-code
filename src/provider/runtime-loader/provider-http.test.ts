@@ -430,6 +430,51 @@ describe("provider-http", () => {
       assertEquals(error.retryable, false);
     });
 
+    for (const chunk of [new Uint8Array(0), Uint8Array.of(0x20)]) {
+      it(
+        `bounds JSON body read work for ${
+          chunk.byteLength === 0 ? "zero-byte" : "one-byte"
+        } chunks`,
+        async () => {
+          let readCalls = 0;
+          let cancelCalls = 0;
+          const body = new ReadableStream<Uint8Array>();
+          const hostileReader = {
+            read() {
+              readCalls += 1;
+              return Promise.resolve({ done: false, value: chunk });
+            },
+            cancel() {
+              cancelCalls += 1;
+              return Promise.resolve();
+            },
+            releaseLock() {},
+          } as unknown as ReadableStreamDefaultReader<Uint8Array>;
+          Object.defineProperty(body, "getReader", {
+            configurable: true,
+            value: () => hostileReader,
+          });
+
+          await assertRejects(
+            () =>
+              requestJson({
+                url: "https://provider.test/generate",
+                fetchImpl: () => Promise.resolve(new Response(body)),
+                init: { method: "POST" },
+                providerLabel: "Test provider",
+                providerKind: "openai",
+                maxResponseBytes: 100_000,
+              }),
+            ProviderRequestError,
+            "JSON response exceeded 65536 body reads",
+          );
+
+          assertEquals(readCalls, 65_536);
+          assertEquals(cancelCalls, 1);
+        },
+      );
+    }
+
     it("rejects an impractically large response limit before allocating", async () => {
       await assertRejects(
         () =>
