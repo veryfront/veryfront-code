@@ -16,11 +16,15 @@ import {
 
 const logger = baseLogger.component("veryfront-token-adapter");
 
+interface InitializationAttempt {
+  readonly controller: AbortController;
+  readonly promise: Promise<void>;
+}
+
 export class VeryfrontTokenAdapter implements TokenStorageAdapter {
   private client: TokenStorageApiClient;
   private initialized = false;
-  private initialization: Promise<void> | null = null;
-  private initializationController: AbortController | null = null;
+  private initialization: InitializationAttempt | null = null;
   private lifecycleGeneration = 0;
 
   constructor(config: TokenStorageAdapterConfig) {
@@ -35,22 +39,23 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    if (this.initialization) return await this.initialization;
+    if (this.initialization) return await this.initialization.promise;
 
     logger.debug("Initializing...");
 
     const generation = this.lifecycleGeneration;
     const controller = new AbortController();
-    const initialization = this.doInitialize(generation, controller.signal);
-    this.initializationController = controller;
+    const initialization: InitializationAttempt = {
+      controller,
+      promise: this.doInitialize(generation, controller.signal),
+    };
     this.initialization = initialization;
 
     try {
-      await initialization;
+      await initialization.promise;
     } finally {
       if (this.initialization === initialization) {
         this.initialization = null;
-        this.initializationController = null;
       }
     }
   }
@@ -81,10 +86,9 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
   dispose(): void {
     this.lifecycleGeneration++;
-    this.initializationController?.abort(
+    this.initialization?.controller.abort(
       new DOMException("Token storage initialization was invalidated", "AbortError"),
     );
-    this.initializationController = null;
     this.initialization = null;
     this.initialized = false;
     logger.debug("Disposed");
