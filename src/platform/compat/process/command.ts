@@ -58,6 +58,8 @@ const COMMAND_ABORT_EXIT_CODE = 130;
 const FORCE_KILL_GRACE_MS = 250;
 const DEFAULT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_COMMAND_TIMEOUT_MS = 2_147_483_647;
+const apply = Reflect.apply;
+const uint8ArraySlice = Uint8Array.prototype.slice;
 
 type TerminationReason = "abort" | "output-limit" | "timeout";
 type TerminationSignal = "SIGKILL" | "SIGTERM";
@@ -347,7 +349,12 @@ function captureChunk(
 ): void {
   const available = budget.remaining;
   if (available > 0) {
-    const retained = chunk.byteLength <= available ? chunk.slice() : chunk.slice(0, available);
+    // Invoke the typed-array intrinsic directly: Buffer#slice() returns a view
+    // and can retain a much larger pooled backing allocation.
+    const retained = apply(uint8ArraySlice, chunk, [
+      0,
+      Math.min(chunk.byteLength, available),
+    ]);
     chunks.push(retained);
     budget.remaining -= retained.byteLength;
   }
