@@ -221,7 +221,17 @@ export class CacheCoordinator {
           staleUntil: this.ttlMs && this.staleMs > 0 ? now + this.ttlMs + this.staleMs : undefined,
         };
 
-        await this.store.set(key, cloneCachePayload(payload));
+        // Caching is best-effort: a result too large to snapshot, or a store
+        // that refuses the write, must not fail the render that produced it.
+        try {
+          await this.store.set(key, cloneCachePayload(payload));
+        } catch (error) {
+          logger.warn("[CacheCoordinator] Skipped caching render result", {
+            slug,
+            key,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        }
       },
       { "cache.slug": slug, "cache.key": key, "cache.projectId": this.projectId ?? "unknown" },
     );

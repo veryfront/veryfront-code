@@ -84,6 +84,57 @@ describe("CacheCoordinator", () => {
     assertEquals(deletedKey, "project:draft:malformed");
   });
 
+  it("skips caching when a result cannot be snapshotted", async () => {
+    let setCalls = 0;
+    const data = new Map<string, CachePayload>();
+    const store: CacheStore = {
+      get: (key) => Promise.resolve(data.get(key)),
+      set: (key, value) => {
+        setCalls++;
+        data.set(key, value);
+        return Promise.resolve();
+      },
+      delete: (key) => {
+        data.delete(key);
+        return Promise.resolve();
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "bounds" });
+
+    // Nest past MAX_CACHE_VALUE_DEPTH so the snapshot fails its bounds check.
+    const root: Record<string, unknown> = {};
+    let branch = root;
+    for (let depth = 0; depth < 80; depth++) {
+      const next: Record<string, unknown> = {};
+      branch.child = next;
+      branch = next;
+    }
+    const result = makeResult("<html>too deep</html>");
+    setFrontmatter(result, root);
+
+    await coordinator.persistResult(result, "too-deep");
+
+    assertEquals(setCalls, 0);
+    assertEquals((await coordinator.checkCache("too-deep")).cacheStatus, "miss");
+  });
+
+  it("keeps rendering when the cache store rejects a write", async () => {
+    const store: CacheStore = {
+      get: () => Promise.resolve(undefined),
+      set: () => Promise.reject(new Error("store unavailable")),
+      delete: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "unavailable" });
+
+    await coordinator.persistResult(makeResult("<html>ok</html>"), "written");
+
+    assertEquals((await coordinator.checkCache("written")).cacheStatus, "miss");
+  });
+
   it("preserves Date frontmatter across a serializing store round-trip", async () => {
     let stored: CachePayload | undefined;
     const serializedStore: CacheStore = {
