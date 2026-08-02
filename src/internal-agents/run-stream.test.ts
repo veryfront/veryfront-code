@@ -209,7 +209,7 @@ describe("internal-agents/run-stream", () => {
       execute: () => ({ randomNumber: 7 }),
     } as unknown as Tool;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const runtimeAgent = {
         id: "random",
@@ -236,7 +236,7 @@ describe("internal-agents/run-stream", () => {
 
       assertEquals(mergedTools?.["number-generator"], true);
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
   });
 
@@ -1996,7 +1996,7 @@ describe("internal-agents/run-stream", () => {
     } as unknown as Tool;
     let capturedToolEntry: Tool | boolean | undefined;
 
-    toolRegistry.register("number-generator", projectTool);
+    toolRegistryInternal.register("number-generator", projectTool);
     try {
       const agent = {
         id: "random",
@@ -2051,7 +2051,7 @@ describe("internal-agents/run-stream", () => {
         },
       );
     } finally {
-      toolRegistry.delete("number-generator");
+      toolRegistryInternal.delete("number-generator");
     }
 
     assertEquals(capturedToolEntry, projectTool);
