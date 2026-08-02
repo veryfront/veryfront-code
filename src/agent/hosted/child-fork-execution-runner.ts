@@ -98,6 +98,8 @@ export type HostedChildForkExecutionRunContextFactoryInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
   authToken: string;
+  /** @internal Exact-child credential used only by the durable mirror. */
+  runEventAppendToken?: string;
   apiUrl: string;
   durableChildRun?: HostedChildRunIdentifiers;
   conversationId?: string;
@@ -112,6 +114,8 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
   authToken: string;
+  /** @internal Exact-child credential used only by the durable mirror. */
+  runEventAppendToken?: string;
   apiUrl: string;
   projectId?: string | null;
   description: string;
@@ -182,6 +186,7 @@ function createForkRunContext<
 
   return createHostedDurableChildForkRunContext({
     authToken: input.authToken,
+    runEventAppendToken: input.runEventAppendToken,
     apiUrl: input.apiUrl,
     durableChildRun: input.durableChildRun,
     instrumentation,
@@ -329,6 +334,7 @@ export async function executeHostedChildForkWithPreparedTools<
   const createRunContext = input.createRunContext ?? createForkRunContext;
   const runContext = createRunContext({
     authToken: input.authToken,
+    runEventAppendToken: input.runEventAppendToken,
     apiUrl: input.apiUrl,
     durableChildRun: input.durableChildRun,
     conversationId: input.conversationId,

@@ -84,6 +84,7 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
       projectId: "project-1",
       branchId: "branch-1",
       authToken: "token-1",
+      runEventAppendToken: "root-writer-token",
       instructions: "Base instructions",
       model: "sonnet",
       allowedTools: ["sleep"],
@@ -115,6 +116,7 @@ Deno.test("createDefaultHostedChatRuntime builds a cloud-backed hosted runtime",
   assertEquals(capturedContext.projectId, "project-1");
   assertEquals(capturedContext.branchId, "branch-1");
   assertEquals(capturedContext.model, "anthropic/claude-sonnet-4-6");
+  assertEquals(capturedContext.runEventAppendToken, "root-writer-token");
   assertEquals(capturedContext.userId, "user-1");
   assertEquals(capturedContext.submittedFormInputResult, {
     values: { topic: "Support FAQ assistant" },

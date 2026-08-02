@@ -395,6 +395,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       projectId: input.projectId,
       ...(input.request.projectSlug ? { projectSlug: input.request.projectSlug } : {}),
       authToken: input.authToken,
+      ...(input.request.runEventAppendToken
+        ? { runEventAppendToken: input.request.runEventAppendToken }
+        : {}),
       instructions: agentInstructions,
       ...(input.branchId !== undefined ? { branchId: input.branchId } : {}),
       ...(input.runtimeTargetKind !== undefined

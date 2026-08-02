@@ -36,10 +36,16 @@ import {
   type HostedProjectReferenceResolver,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
+import {
+  exchangeHostedChildRunEventWriterToken,
+  HostedChildRunEventWriterTokenExchangeError,
+} from "./child-run-event-writer-token.ts";
 
 /** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
   durableChildRun?: HostedChildRunIdentifiers;
+  /** @internal Exact-run credential used only for durable child event persistence. */
+  runEventAppendToken?: string;
 };
 
 /** Result returned from hosted durable child invoke. */
@@ -414,6 +420,7 @@ export type HostedDurableChildBootstrapCallbacks = {
 /** Public API contract for hosted durable child runtime dependencies. */
 export type HostedDurableChildRuntimeDependencies = {
   bootstrapChildRun?: typeof bootstrapHostedChildRun;
+  exchangeChildRunEventWriterToken?: typeof exchangeHostedChildRunEventWriterToken;
   createLifecycleAdapter?: typeof createConversationChildLifecycleAdapter;
   runLifecycle?: typeof runHostedChildExecutionLifecycle;
   shouldSkipTerminalPersistence?: typeof shouldSkipHostedChildTerminalPersistence;
@@ -425,6 +432,8 @@ export type ExecuteHostedDurableChildForkInput<
   TLocalResult extends ChildRunExecutionResult,
 > = {
   authToken: string;
+  /** @internal Verified active-parent credential used only to mint the child writer token. */
+  runEventAppendToken?: string;
   apiUrl: string;
   forkInput: HostedChildForkToolInput;
   executionOptions: {
@@ -613,34 +622,12 @@ async function executeHostedDurableChildLifecycle<
   input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult> & {
     bootstrapContext: HostedDurableChildBootstrapContext;
     identifiers: HostedChildRunIdentifiers;
+    childRunEventAppendToken: string;
   },
 ): Promise<TResult> {
   const { bootstrapContext, identifiers } = input;
   const { targets } = bootstrapContext;
-  const createLifecycleAdapter = input.runtime?.createLifecycleAdapter ??
-    createConversationChildLifecycleAdapter;
-  const lifecycleAdapter = createLifecycleAdapter({
-    authToken: input.authToken,
-    apiUrl: input.apiUrl,
-    parentConversationId: bootstrapContext.parentConversationId,
-    parentRunId: bootstrapContext.parentRunId,
-    projectId: input.getProjectId(),
-    publishParentRunEvents: input.publishParentRunEvents,
-    progress: {
-      toolCallId: input.executionOptions.toolCallId,
-      childAgentId: input.childAgentId,
-      childConversationId: identifiers.childConversationId,
-      childRunId: identifiers.childRunId,
-      childMessageId: identifiers.childMessageId,
-      description: input.forkInput.description,
-      sourceTargetKind: targets.sourceTargetKind,
-      runtimeTargetKind: targets.runtimeTargetKind,
-      targetEnvironmentId: targets.targetEnvironmentId,
-      targetBranchId: targets.targetBranchId,
-    },
-    model: bootstrapContext.resolvedModel,
-    provider: bootstrapContext.provider,
-  });
+  const lifecycleAdapter = createDurableChildLifecycleAdapter(input);
 
   const runLifecycle = input.runtime?.runLifecycle ?? runHostedChildExecutionLifecycle;
   const skipTerminalPersistence = input.runtime?.shouldSkipTerminalPersistence ??
@@ -652,6 +639,7 @@ async function executeHostedDurableChildLifecycle<
     execute: () =>
       input.executeLocal({
         durableChildRun: identifiers,
+        runEventAppendToken: input.childRunEventAppendToken,
       }),
     getExecutionSnapshot: input.getExecutionSnapshot,
     onLifecycleError: input.onLifecycleError,
@@ -686,6 +674,44 @@ async function executeHostedDurableChildLifecycle<
     snapshot: lifecycleResult.snapshot,
     identifiers,
     targets,
+  });
+}
+
+function createDurableChildLifecycleAdapter<
+  TResult,
+  TLocalResult extends ChildRunExecutionResult,
+>(
+  input: ExecuteHostedDurableChildForkInput<TResult, TLocalResult> & {
+    bootstrapContext: HostedDurableChildBootstrapContext;
+    identifiers: HostedChildRunIdentifiers;
+  },
+) {
+  const { bootstrapContext, identifiers } = input;
+  const { targets } = bootstrapContext;
+  const createLifecycleAdapter = input.runtime?.createLifecycleAdapter ??
+    createConversationChildLifecycleAdapter;
+
+  return createLifecycleAdapter({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    parentConversationId: bootstrapContext.parentConversationId,
+    parentRunId: bootstrapContext.parentRunId,
+    projectId: input.getProjectId(),
+    publishParentRunEvents: input.publishParentRunEvents,
+    progress: {
+      toolCallId: input.executionOptions.toolCallId,
+      childAgentId: input.childAgentId,
+      childConversationId: identifiers.childConversationId,
+      childRunId: identifiers.childRunId,
+      childMessageId: identifiers.childMessageId,
+      description: input.forkInput.description,
+      sourceTargetKind: targets.sourceTargetKind,
+      runtimeTargetKind: targets.runtimeTargetKind,
+      targetEnvironmentId: targets.targetEnvironmentId,
+      targetBranchId: targets.targetBranchId,
+    },
+    model: bootstrapContext.resolvedModel,
+    provider: bootstrapContext.provider,
   });
 }
 
@@ -733,9 +759,61 @@ export async function executeHostedDurableChildFork<
     });
   }
 
+  let childRunEventAppendToken: string;
+  try {
+    if (!input.runEventAppendToken) {
+      throw new HostedChildRunEventWriterTokenExchangeError();
+    }
+    const exchangeChildRunEventWriterToken = input.runtime?.exchangeChildRunEventWriterToken ??
+      exchangeHostedChildRunEventWriterToken;
+    childRunEventAppendToken = await exchangeChildRunEventWriterToken({
+      apiUrl: input.apiUrl,
+      parentRunId: bootstrapContext.parentRunId,
+      childRunId: identifiers.childRunId,
+      runEventAppendToken: input.runEventAppendToken,
+      abortSignal: input.executionOptions.abortSignal,
+    });
+  } catch {
+    const setupError = new HostedChildRunEventWriterTokenExchangeError();
+    await input.bootstrap?.onBootstrapError?.({
+      error: setupError,
+      parentConversationId: bootstrapContext.parentConversationId,
+      toolCallId: input.executionOptions.toolCallId,
+    });
+
+    const terminalState = {
+      status: "failed" as const,
+      terminalErrorCode: input.setupFailedCode,
+      terminalErrorMessage: setupError.message,
+    };
+    try {
+      await createDurableChildLifecycleAdapter({
+        ...input,
+        bootstrapContext,
+        identifiers,
+      }).failed?.(terminalState);
+    } catch (lifecycleError) {
+      if (input.onLifecycleError) {
+        await input.onLifecycleError(lifecycleError);
+      } else {
+        throw lifecycleError;
+      }
+    }
+
+    return input.buildSetupFailureResult({
+      targets,
+      childConversationId: identifiers.childConversationId,
+      childRunId: identifiers.childRunId,
+      childMessageId: identifiers.childMessageId,
+      terminalErrorCode: input.setupFailedCode,
+      terminalErrorMessage: setupError.message,
+    });
+  }
+
   return executeHostedDurableChildLifecycle({
     ...input,
     bootstrapContext,
     identifiers,
+    childRunEventAppendToken,
   });
 }

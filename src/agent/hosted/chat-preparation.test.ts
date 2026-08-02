@@ -182,6 +182,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({
       allowDelegation: false,
+      runEventAppendToken: "root-writer-token",
       model: "requested-model",
       runtimeOverrides: {
         allowedTools: ["load_skill"],
@@ -320,6 +321,7 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
   assertEquals(result.creationOptions, {
     projectId: "project-1",
     authToken: "token-1",
+    runEventAppendToken: "root-writer-token",
     instructions: [
       {
         role: "system",

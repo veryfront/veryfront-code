@@ -78,6 +78,8 @@ import {
 /** Context for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   authToken: string;
+  /** @internal Active exact-run credential inherited only by durable child setup. */
+  runEventAppendToken?: string;
   clientProfile?: RuntimeClientProfile | null;
   model?: string;
   conversationId?: string;
@@ -417,6 +419,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
     childConfig?: DefaultHostedChildAgentExecutionConfig;
     onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
     durableChildRun?: HostedChildRunIdentifiers;
+    runEventAppendToken?: string;
   },
 ): Promise<ChildRunExecutionResult> {
   const baseConfig = options.getConfig();
@@ -434,12 +437,15 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   const invocationContext = forkInput.context?.veryfront_invocation_context as
     | HostedChildInvocationContext
     | undefined;
-  const scopedOptions = invocationContext
+  const scopedOptions = invocationContext || runtimeOptions.durableChildRun
     ? {
       ...options,
       context: {
         ...options.context,
-        veryfrontInvocationContext: invocationContext,
+        ...(invocationContext ? { veryfrontInvocationContext: invocationContext } : {}),
+        ...(runtimeOptions.durableChildRun
+          ? { runEventAppendToken: runtimeOptions.runEventAppendToken }
+          : {}),
       },
     }
     : options;
@@ -449,6 +455,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   return executeHostedChildForkToolInput<DefaultHostedInvokeAgentTraceAttributes>({
     apiUrl: config.apiUrl,
     authToken: scopedOptions.context.authToken,
+    runEventAppendToken: runtimeOptions.runEventAppendToken,
     projectId: scopedOptions.context.projectId || null,
     forkInput,
     toolCallId: execution.toolCallId,
@@ -628,6 +635,7 @@ export async function executeDefaultHostedInvokeAgentTool<
           executionSnapshot = snapshot;
         },
         durableChildRun: runtimeOptions.durableChildRun,
+        runEventAppendToken: runtimeOptions.runEventAppendToken,
       },
     );
 
@@ -652,6 +660,7 @@ export async function executeDefaultHostedInvokeAgentTool<
       ChildRunExecutionResult
     >({
       authToken: options.context.authToken,
+      runEventAppendToken: options.context.runEventAppendToken,
       apiUrl: config.apiUrl,
       forkInput,
       executionOptions: {

@@ -212,12 +212,49 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime 
   }
 });
 
+Deno.test("executeHostedChildForkWithPreparedTools fails closed before provider dispatch without a child writer token", async () => {
+  let startRuntimeCalls = 0;
+  const result = await executeHostedChildForkWithPreparedTools({
+    authToken: "user-token",
+    apiUrl: "https://api.example.com",
+    description: "Check the app",
+    kind: "invoke_agent",
+    provider: "anthropic",
+    forkModel: "anthropic/claude-sonnet-4",
+    maxSteps: 4,
+    effectivePrompt: "Do the work.",
+    durableChildRun: {
+      childConversationId: "11111111-1111-4111-a111-111111111111",
+      childRunId: "child-run-scoped",
+      childMessageId: "22222222-2222-4222-a222-222222222222",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    },
+    toolAssembly: {
+      ok: true,
+      forkTools: {},
+      availableToolNames: [],
+    },
+    startRuntime: () => {
+      startRuntimeCalls += 1;
+      throw new Error("provider dispatch must not start");
+    },
+  });
+
+  assertEquals(startRuntimeCalls, 0);
+  assertEquals(result.success, false);
+  if (!result.success) {
+    assertEquals(result.error, "Durable hosted child run requires an event mirror");
+  }
+});
+
 Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run context factory", async () => {
   let createRunContextCalls = 0;
   let activeDuringStart = false;
   let activeDuringIteration = false;
   const result = await executeHostedChildForkWithPreparedTools({
     authToken: "token",
+    runEventAppendToken: "child-writer-token",
     apiUrl: "https://api.example.com",
     description: "Check the app",
     kind: "invoke_agent",
@@ -240,6 +277,7 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
     createRunContext: (input) => {
       createRunContextCalls += 1;
       assertEquals(input.authToken, "token");
+      assertEquals(input.runEventAppendToken, "child-writer-token");
       assertEquals(input.apiUrl, "https://api.example.com");
       const context = createHostedDurableChildForkRunContext({
         authToken: input.authToken,
@@ -273,7 +311,8 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
         },
       };
     },
-    startRuntime: () => {
+    startRuntime: (input) => {
+      assertEquals(input.authToken, "token");
       activeDuringStart = getActiveModelCallRecorder() !== undefined;
       return {
         forkStreamAbortController: new AbortController(),

@@ -94,6 +94,8 @@ export interface HostedChildForkRunContextInput {
 /** Input payload for hosted durable child fork run context. */
 export interface HostedDurableChildForkRunContextInput {
   authToken: string;
+  /** @internal Exact-child credential used only by the durable mirror. */
+  runEventAppendToken?: string;
   apiUrl: string;
   durableChildRun?: HostedChildRunIdentifiers;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
@@ -169,9 +171,9 @@ export function createHostedChildForkRunContext(
 export function createHostedDurableChildForkRunContext(
   input: HostedDurableChildForkRunContextInput,
 ): HostedDurableChildForkRunContext {
-  const durableRunMirror = input.durableChildRun
+  const durableRunMirror = input.durableChildRun && input.runEventAppendToken
     ? createHostedConversationRunChunkMirror({
-      authToken: input.authToken,
+      authToken: input.runEventAppendToken,
       apiUrl: input.apiUrl,
       conversationId: input.durableChildRun.childConversationId,
       runId: input.durableChildRun.childRunId,

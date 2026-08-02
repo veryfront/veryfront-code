@@ -123,6 +123,8 @@ export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingC
   runtimeTargetKind?: HostedChatRuntimeTargetKind | null;
   runtimeTargetEnvironmentId?: string | null;
   authToken: string;
+  /** @internal Verified exact-run credential for durable event persistence. */
+  runEventAppendToken?: string;
   instructions: string | ChatSystemMessage[];
   runId?: string;
   agentId?: string;

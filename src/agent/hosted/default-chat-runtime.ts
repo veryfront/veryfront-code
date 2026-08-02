@@ -76,6 +76,8 @@ export type DefaultHostedChatRuntimeCreationOptions =
 /** Context for default hosted chat runtime task. */
 export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverContext & {
   authToken: string;
+  /** @internal Active exact-run credential inherited only by durable child setup. */
+  runEventAppendToken?: string;
   runId?: string;
   agentId?: string;
   projectId: string;
@@ -159,6 +161,7 @@ function createDefaultTaskContext(
 ): DefaultHostedChatRuntimeTaskContext {
   return {
     authToken: input.options.authToken,
+    runEventAppendToken: input.options.runEventAppendToken,
     runId: input.options.runId,
     agentId: input.options.agentId,
     projectId: input.options.projectId ?? "",
