@@ -665,6 +665,15 @@ configureTokenStore(oauthStore);
 `createApplicationOAuthTokenStore` is the factory exported by your selected
 storage extension. Veryfront core does not select or import the backend.
 
+### Authenticated OAuth routes
+
+Generated OAuth routes call `requireUserIdFromRequest` in `lib/user-id.ts`.
+The generated implementation supports a stable identity only when
+`NODE_ENV` or `DENO_ENV` explicitly selects `development` or `test`; it fails
+closed for production, unset, and unrecognized modes. Before deploying,
+implement that function using your application's verified session, JWT, or
+authentication provider. Do not trust a client-controlled identity header.
+
 ### Authenticated tool context
 
 Generated integration tools resolve the token owner from `context.userId`.
@@ -677,6 +686,7 @@ no authenticated user id. For local development, set
 
 - [ ] Update all redirect URIs to production domain
 - [ ] Configure an extension-owned `RefreshCapableTokenStore`
+- [ ] Implement `requireUserIdFromRequest` using verified authentication
 - [ ] Verify token encryption and distributed refresh locking
 - [ ] Pass authenticated user ids through every tool execution context
 - [ ] Configure rate limiting
