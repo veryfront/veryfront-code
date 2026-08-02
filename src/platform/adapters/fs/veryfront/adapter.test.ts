@@ -14,6 +14,7 @@ import {
 import {
   clearReleaseAssetManifestCache,
   getReadyManifestForRender,
+  getReadyManifestForRenderAsync,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { RELEASE_ASSET_MANIFEST_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 
@@ -368,6 +369,41 @@ describe("VeryfrontFSAdapter", () => {
       assertEquals(getReadyManifestForRender(releaseId), null);
       await waitFor(async () => getReadyManifestForRender(releaseId)?.manifestVersion === 2);
       assertEquals(fetchCount, 1);
+    });
+
+    it("should stop awaiting a manifest request when the release context loses ownership", async () => {
+      setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+      const releaseId = "release-env-abort";
+      const adapter = createAdapter();
+      let requestStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        requestStarted = resolve;
+      });
+      const neverSettles = new Promise<never>(() => {});
+
+      (adapter.getClient() as unknown as {
+        getReleaseAssetManifest: (releaseId: string) => Promise<never>;
+      }).getReleaseAssetManifest = (requestedReleaseId: string) => {
+        assertEquals(requestedReleaseId, releaseId);
+        requestStarted();
+        return neverSettles;
+      };
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId,
+      });
+      const manifest = getReadyManifestForRenderAsync(releaseId);
+      await started;
+
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-env-next",
+      });
+
+      assertEquals(await manifest, null);
     });
 
     it("should register a release asset manifest fetcher when initialize resolves the release id", async () => {

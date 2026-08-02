@@ -1759,7 +1759,7 @@ export default defineConfig({ tailwind: { stylesheet: "src/styles/app.css" } });
         selectedConfigSource = source;
         return releaseConfigLoader({
           tailwind: { stylesheet: "src/styles/app.css" },
-        })(source);
+        })();
       },
     }, await tmp());
 
