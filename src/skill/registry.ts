@@ -14,14 +14,45 @@
 
 import type { Skill } from "./types.ts";
 import {
+  ScopedRegistryFacade,
+  ScopedRegistryView,
+} from "#veryfront/registry/scoped-registry-facade.ts";
+import {
   assertResolvedSkillSelector,
   type ResolvedSkillSelectorSnapshot,
   resolveSkillSelector,
 } from "./selector.ts";
-import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import {
+  cloneSkillDefinition,
+  normalizeSkillDefinition,
+  validateSkillRegistryCandidate,
+} from "./validation.ts";
 
-const skillManager = new ProjectScopedRegistryManager<Skill>("skill");
+const defineOwnProperty = Object.defineProperty;
+
+function appendOwnArrayElement<T>(values: T[], value: T): void {
+  defineOwnProperty(values, values.length, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+const skillManager = new ProjectScopedRegistryManager<Skill>("skill", {
+  validateRegistryCandidate: validateSkillRegistryCandidate,
+});
+const publicSkillViews = new WeakMap<Skill, Skill>();
+
+function getPublicSkillView(snapshot: Skill): Skill {
+  let view = publicSkillViews.get(snapshot);
+  if (!view) {
+    view = cloneSkillDefinition(snapshot);
+    publicSkillViews.set(snapshot, view);
+  }
+  return view;
+}
 
 /** Caller scope used for owner-aware capability resolution. */
 export type AgentCapabilityScope = {
@@ -34,7 +65,21 @@ export function isSkillVisibleTo(skill: Skill, scope?: AgentCapabilityScope): bo
   return skill.ownerAgentId === undefined || skill.ownerAgentId === scope?.agentId;
 }
 
-class SkillRegistryClass extends ScopedRegistryFacade<Skill> {
+class SkillRegistryInternal extends ScopedRegistryFacade<Skill> {
+  override register(id: string, skill: Skill): void {
+    super.register(id, normalizeSkillDefinition(id, skill));
+  }
+
+  registerPublic(id: string, skill: Skill): void {
+    const snapshot = normalizeSkillDefinition(id, skill);
+    super.register(id, snapshot);
+    publicSkillViews.set(snapshot, skill);
+  }
+
+  override registerShared(id: string, skill: Skill): void {
+    super.registerShared(id, normalizeSkillDefinition(id, skill));
+  }
+
   /**
    * Resolve a presence-aware, execution-facing skill selector snapshot.
    *
@@ -122,7 +167,7 @@ class SkillRegistryClass extends ScopedRegistryFacade<Skill> {
     const ids: string[] = [];
     for (const [id, skill] of this.getAll()) {
       if (isSkillVisibleTo(skill, scope)) {
-        ids.push(id);
+        appendOwnArrayElement(ids, id);
       }
     }
     return ids;
@@ -134,7 +179,98 @@ class SkillRegistryClass extends ScopedRegistryFacade<Skill> {
   }
 }
 
-export const skillRegistry = new SkillRegistryClass(skillManager);
+/** Framework-only skill registry with process-wide maintenance capabilities. */
+export const skillRegistryInternal = new SkillRegistryInternal(skillManager);
+
+/** Project-scoped skill registry API safe for application code. */
+class SkillRegistry extends ScopedRegistryView<Skill> {
+  readonly #registry: SkillRegistryInternal;
+
+  constructor(registry: SkillRegistryInternal) {
+    super(registry);
+    this.#registry = registry;
+  }
+
+  override register(id: string, skill: Skill): void {
+    this.#registry.registerPublic(id, skill);
+  }
+
+  override get(id: string): Skill | undefined {
+    const skill = this.#registry.get(id);
+    return skill ? getPublicSkillView(skill) : undefined;
+  }
+
+  override getOwn(id: string): Skill | undefined {
+    const skill = this.#registry.getOwn(id);
+    return skill ? getPublicSkillView(skill) : undefined;
+  }
+
+  override getAll(): Map<string, Skill> {
+    return new Map(
+      [...this.#registry.getAll()].map(([id, skill]) => [
+        id,
+        getPublicSkillView(skill),
+      ]),
+    );
+  }
+
+  resolveForAgent(
+    skillsConfig: true | string[],
+    scope?: AgentCapabilityScope,
+  ): Map<string, Skill> {
+    const result = new Map<string, Skill>();
+    if (skillsConfig === true) {
+      for (const [id, skill] of this.getAll()) {
+        if (isSkillVisibleTo(skill, scope)) {
+          result.set(id, skill);
+        }
+      }
+      return result;
+    }
+
+    for (const requested of skillsConfig) {
+      const skill = this.resolveVisibleSkill(requested, scope);
+      if (skill) {
+        result.set(skill.id, skill);
+      }
+    }
+    return result;
+  }
+
+  resolveVisibleSkill(requested: string, scope?: AgentCapabilityScope): Skill | undefined {
+    if (scope?.agentId !== undefined) {
+      for (const skill of this.getAll().values()) {
+        if (skill.ownerAgentId === scope.agentId && skill.shortName === requested) {
+          return skill;
+        }
+      }
+    }
+
+    const skill = this.get(requested);
+    return skill && isSkillVisibleTo(skill, scope) ? skill : undefined;
+  }
+
+  getVisibleSkillIds(scope?: AgentCapabilityScope): string[] {
+    const ids: string[] = [];
+    for (const [id, skill] of this.getAll()) {
+      if (isSkillVisibleTo(skill, scope)) {
+        appendOwnArrayElement(ids, id);
+      }
+    }
+    return ids;
+  }
+
+  hasVisibleSkills(scope?: AgentCapabilityScope): boolean {
+    for (const skill of this.getAll().values()) {
+      if (isSkillVisibleTo(skill, scope)) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+export const skillRegistry = new SkillRegistry(skillRegistryInternal);
 
 export function registerSkill(id: string, skill: Skill): void {
   skillRegistry.register(id, skill);

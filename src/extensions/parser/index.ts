@@ -15,3 +15,9 @@ export type {
   ParseOptions,
   TraverseVisitor,
 } from "./code-parser.ts";
+
+export {
+  type SkillDocumentParserProvider,
+  SkillDocumentParserProviderName,
+  snapshotSkillDocumentParserProvider,
+} from "./skill-document-parser.ts";
