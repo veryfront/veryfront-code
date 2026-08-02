@@ -837,7 +837,7 @@ class RunAgentController implements AgentControllerHandle {
   readonly #inputResolvers = new Map<string, PendingInputOperation>();
   #nextInputRequestId = 1;
   #nextApprovalRequestSequence = 1;
-  readonly #approvalRequestNamespace: string;
+  readonly #requestNamespace: string;
 
   constructor(
     publisher: BidirectionalPublisher,
@@ -855,22 +855,22 @@ class RunAgentController implements AgentControllerHandle {
         detail: "Agent publisher runId must be a bounded identifier",
       });
     }
-    let approvalRequestNamespace: string;
+    let requestNamespace: string;
     try {
-      approvalRequestNamespace = globalThis.crypto.randomUUID();
+      requestNamespace = globalThis.crypto.randomUUID();
     } catch (cause) {
       throw ORCHESTRATION_ERROR.create({
-        detail: "Agent approval request identity generation is unavailable",
+        detail: "Agent request identity generation is unavailable",
         cause,
       });
     }
-    if (!isBoundedIdentifier(approvalRequestNamespace)) {
+    if (!isBoundedIdentifier(requestNamespace)) {
       throw ORCHESTRATION_ERROR.create({
-        detail: "Agent approval request identity generation returned an invalid identifier",
+        detail: "Agent request identity generation returned an invalid identifier",
       });
     }
     this.#runId = runId;
-    this.#approvalRequestNamespace = approvalRequestNamespace;
+    this.#requestNamespace = requestNamespace;
     this.#config = Object.freeze({ ...config });
     Object.defineProperty(this, "runId", {
       configurable: false,
@@ -1061,9 +1061,7 @@ class RunAgentController implements AgentControllerHandle {
         detail: "Agent approval request identity space is exhausted",
       });
     }
-    const requestId = `${this.#approvalRequestNamespace}-${
-      this.#nextApprovalRequestSequence.toString(36)
-    }`;
+    const requestId = `${this.#requestNamespace}-${this.#nextApprovalRequestSequence.toString(36)}`;
     this.#nextApprovalRequestSequence += 1;
     return requestId;
   }
@@ -1077,7 +1075,12 @@ class RunAgentController implements AgentControllerHandle {
         detail: "Agent input request identity space is exhausted",
       });
     }
-    const requestId = `input-${this.#nextInputRequestId}`;
+    const requestId = `input-${this.#requestNamespace}-${this.#nextInputRequestId.toString(36)}`;
+    if (!isBoundedIdentifier(requestId)) {
+      throw ORCHESTRATION_ERROR.create({
+        detail: "Agent input request identity is not a bounded identifier",
+      });
+    }
     if (this.#inputResolvers.has(requestId)) {
       throw ORCHESTRATION_ERROR.create({
         detail: "Agent input request identity collided with pending work",

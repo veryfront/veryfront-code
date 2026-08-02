@@ -350,6 +350,43 @@ describe("AgentController", () => {
     registry.releaseRun(registration.run);
   });
 
+  it("fences delayed input commands after a same-run controller is recreated", async () => {
+    const registry = new AgentControllerRegistry({ inputTimeout: 1_000 });
+    const firstPublisher = new FakePublisher("run-1");
+    const firstRegistration = registry.register(firstPublisher);
+    const firstInput = firstRegistration.controller.requestInput("First value?");
+    const firstRequest = firstPublisher.events.find((event) => event.type === "input_request");
+    assertExists(firstRequest);
+
+    assertEquals(registry.releaseRun(firstRegistration.run), true);
+    await assertRejects(() => firstInput, Error, "Agent controller disposed");
+
+    const secondPublisher = new FakePublisher("run-1");
+    const secondRegistration = registry.register(secondPublisher);
+    const secondInput = secondRegistration.controller.requestInput("Second value?");
+    const secondRequest = secondPublisher.events.find((event) => event.type === "input_request");
+    assertExists(secondRequest);
+    assertEquals(firstRequest.requestId === secondRequest.requestId, false);
+
+    assertEquals(
+      secondPublisher.emit(command({
+        type: "input",
+        content: "stale value",
+        commandId: "delayed-first-input",
+        requestId: firstRequest.requestId,
+      })),
+      [{ status: "rejected", reason: "input request is not pending or is ambiguous" }],
+    );
+    secondPublisher.emit(command({
+      type: "input",
+      content: "current value",
+      commandId: "current-input",
+      requestId: secondRequest.requestId,
+    }));
+    assertEquals(await secondInput, "current value");
+    assertEquals(registry.releaseRun(secondRegistration.run), true);
+  });
+
   it("does not bind a replayed command to a later request after publisher replacement", async () => {
     const firstPublisher = new FakePublisher();
     const secondPublisher = new FakePublisher();
