@@ -105,7 +105,7 @@ export function lazySchema<T>(getSchema: () => Schema<T>): Schema<T> {
       return Reflect.get(target, prop, receiver);
     },
     has(target, prop) {
-      return Object.hasOwn(target, prop) || prop in (schema() as object) || prop in target;
+      return prop in target || prop in (schema() as object);
     },
     ownKeys(target) {
       if (!Reflect.isExtensible(target)) return Reflect.ownKeys(target);

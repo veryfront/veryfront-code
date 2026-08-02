@@ -6,6 +6,18 @@ import { defineSchema } from "./define.ts";
 import { lazySchema } from "./lazy.ts";
 
 describe("lazySchema", () => {
+  it("does not materialize for inherited facade properties", () => {
+    let materializations = 0;
+    const getConcreteSchema = defineSchema((v) => v.string());
+    const schema = lazySchema(() => {
+      materializations += 1;
+      return getConcreteSchema();
+    });
+
+    assertEquals("toString" in schema, true);
+    assertEquals(materializations, 0);
+  });
+
   it("reflects non-configurable adapter metadata without violating proxy invariants", () => {
     let materializations = 0;
     const getConcreteSchema = defineSchema((v) => v.string());
