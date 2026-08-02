@@ -20,6 +20,8 @@ import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-co
 import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 import { streamText } from "../../runtime/runtime-bridge.ts";
 import { collectAsync, createStreamModel } from "../../runtime/runtime-bridge.test-helpers.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
+import { FakeTime } from "#std/testing/time";
 
 const encoder = new TextEncoder();
 const originalFetch = globalThis.fetch;
@@ -452,6 +454,63 @@ describe("agent/hosted/model-call-context-run-event-recorder", () => {
       "timed out",
     );
     assertEquals(target.isDisposed(), true);
+    assertEquals(metrics.barrierOutcomes, ["timeout"]);
+  });
+
+  it("classifies a durable append request timeout as a timeout barrier", async () => {
+    const target = mirror({
+      flush: () =>
+        Promise.reject(
+          TIMEOUT_ERROR.create({ detail: "Append conversation run events timed out" }),
+        ),
+    });
+    const metrics = metricsSink();
+    const recorder = createModelCallContextRunEventRecorder({
+      mirror: target.result,
+      metrics: metrics.result,
+    });
+
+    await assertRejects(
+      () => Promise.resolve(recorder({ messages: [{ role: "system", content: "timeout" }] })),
+      Error,
+      "Append conversation run events timed out",
+    );
+    assertEquals(target.isDisposed(), true);
+    assertEquals(metrics.writerOutcomes, []);
+    assertEquals(metrics.barrierOutcomes, ["timeout"]);
+  });
+
+  it("classifies a production mirror append timeout as a timeout barrier", async () => {
+    using time = new FakeTime();
+    globalThis.fetch =
+      ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) throw new Error("expected request abort signal");
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        })) as typeof fetch;
+    const target = productionMirror({ immediateFlushEventCount: 99 });
+    const metrics = metricsSink();
+    const recorder = createModelCallContextRunEventRecorder({
+      mirror: target,
+      timeoutMs: 20_000,
+      metrics: metrics.result,
+    });
+
+    const recording = Promise.resolve(
+      recorder({ messages: [{ role: "system", content: "timeout" }] }),
+    );
+    await time.tickAsync(0);
+    const assertion = assertRejects(
+      () => recording,
+      Error,
+      "Append conversation run events timed out",
+    );
+    await time.tickAsync(15_000);
+    await assertion;
+
+    assertEquals(target.getSnapshot().disabled, true);
+    assertEquals(metrics.writerOutcomes, []);
     assertEquals(metrics.barrierOutcomes, ["timeout"]);
   });
 
