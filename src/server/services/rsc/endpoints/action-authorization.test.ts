@@ -586,6 +586,27 @@ describe("RSC action authorization provider", () => {
     assertEquals(constructorGetterCalls, 0);
   });
 
+  it("accepts a frozen native provider promise and releases its generation lease", async () => {
+    const counters = { stats: 0, reads: 0 };
+    const decision = Object.freeze(Promise.resolve(true));
+    const generation = beginContractGeneration();
+    stageContract(generation, RscActionAuthorizationProviderName, {
+      authorize: () => decision,
+    });
+    commitContractGeneration(generation);
+
+    const response = await handleActionRequestWithRegisteredAuthorizationForTesting(
+      params(counters),
+      { timeoutMs: 1_000, terminationGraceMs: 100 },
+      moduleLoader,
+    );
+
+    assertEquals(response.status, 200);
+    sealContractGeneration(generation);
+    await drainContractGeneration(generation);
+    completeContractGenerationRetirement(generation);
+  });
+
   it("fails closed without invoking an unshadowable promise constructor hook", async () => {
     const counters = { stats: 0, reads: 0 };
     const decision = Promise.resolve(true);

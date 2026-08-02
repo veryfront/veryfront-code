@@ -125,6 +125,98 @@ describe("extension Promise intrinsics", () => {
     assertEquals(await continuation, "value");
   });
 
+  it("observes a frozen ordinary Promise through verified intrinsic hooks", async () => {
+    const source = Object.freeze(Promise.resolve("value"));
+
+    const continuation = createIntrinsicPromiseContinuation(
+      source,
+      (value) => value,
+      () => "rejected",
+    );
+
+    assertEquals(await continuation, "value");
+  });
+
+  it("does not read a poisoned inherited constructor on a frozen Promise", () => {
+    const source = Object.freeze(Promise.resolve("value"));
+    const originalConstructor = getOwnPropertyDescriptor(
+      Promise.prototype,
+      "constructor",
+    );
+    let constructorReads = 0;
+
+    try {
+      defineProperty(Promise.prototype, "constructor", {
+        configurable: true,
+        get() {
+          constructorReads += 1;
+          throw new Error("Promise constructor hook ran");
+        },
+      });
+      assertThrows(
+        () =>
+          createIntrinsicPromiseContinuation(
+            source,
+            (value) => value,
+            () => "rejected",
+          ),
+        TypeError,
+        "verified intrinsic constructor hooks",
+      );
+    } finally {
+      restoreProperty(Promise.prototype, "constructor", originalConstructor);
+    }
+
+    assertEquals(constructorReads, 0);
+  });
+
+  it("does not read a poisoned species hook on a frozen Promise", () => {
+    const source = Object.freeze(Promise.resolve("value"));
+    const originalSpecies = getOwnPropertyDescriptor(Promise, Symbol.species);
+    let speciesReads = 0;
+
+    try {
+      defineProperty(Promise, Symbol.species, {
+        configurable: true,
+        get() {
+          speciesReads += 1;
+          throw new Error("Promise species hook ran");
+        },
+      });
+      assertThrows(
+        () =>
+          createIntrinsicPromiseContinuation(
+            source,
+            (value) => value,
+            () => "rejected",
+          ),
+        TypeError,
+        "verified intrinsic constructor hooks",
+      );
+    } finally {
+      restoreProperty(Promise, Symbol.species, originalSpecies);
+    }
+
+    assertEquals(speciesReads, 0);
+  });
+
+  it("observes a Promise with a fixed intrinsic constructor value", async () => {
+    const source = Promise.resolve("value");
+    defineProperty(source, "constructor", {
+      configurable: false,
+      value: Promise,
+      writable: false,
+    });
+
+    const continuation = createIntrinsicPromiseContinuation(
+      source,
+      (value) => value,
+      () => "rejected",
+    );
+
+    assertEquals(await continuation, "value");
+  });
+
   it("fails closed without reading a fixed Promise constructor", () => {
     const source = Promise.resolve("value");
     let constructorReads = 0;
