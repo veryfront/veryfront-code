@@ -1,7 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool } from "#veryfront/tool/types.ts";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
   LOAD_SKILL_CONTINUE_SAME_TURN,
@@ -11,10 +11,24 @@ import {
   LOAD_SKILL_TOOL_INTERSECTION,
 } from "../conversation/delegation-policy.ts";
 import {
-  listRuntimeBuiltinSkillReferences,
-  readRuntimeBuiltinSkill,
-  readRuntimeBuiltinSkillReferenceFile,
+  listRuntimeBuiltinSkillReferencesWithinLimit,
+  readRuntimeBuiltinSkillReferenceWithinLimit,
+  readRuntimeBuiltinSkillWithinLimit,
 } from "./builtin-skill-files.ts";
+import {
+  createSkillOperationBudget,
+  type SkillOperationBudget,
+} from "#veryfront/skill/operation-budget.ts";
+import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
+  SKILL_DOCUMENT_MAX_CHARACTERS,
+  SKILL_FILE_OPERATION_TIMEOUT_MS,
+  SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
+  SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
+  SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+  SKILL_SUBDIR_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
 import type {
   RuntimeLoadedProjectSkill,
   RuntimeProjectSkillContext,
@@ -118,9 +132,22 @@ export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
 
 /** Public API contract for runtime load skill builtin store. */
 export type RuntimeLoadSkillBuiltinStore = {
-  readSkill: (skillsDir: string, skillId: string) => string | null;
-  readReferenceFile: (skillsDir: string, skillId: string, normalizedFile: string) => string | null;
-  listReferences: (skillsDir: string, skillId: string) => string[];
+  readSkill: (
+    skillsDir: string,
+    skillId: string,
+    budget: SkillOperationBudget,
+  ) => Promise<string | null>;
+  readReferenceFile: (
+    skillsDir: string,
+    skillId: string,
+    normalizedFile: string,
+    budget: SkillOperationBudget,
+  ) => Promise<string | null>;
+  listReferences: (
+    skillsDir: string,
+    skillId: string,
+    budget: SkillOperationBudget,
+  ) => Promise<string[]>;
 };
 
 /** Public API contract for runtime load skill tool messages. */
@@ -183,11 +210,61 @@ export type RuntimeLoadSkillToolOutput =
 
 function getBuiltinStore(options: RuntimeLoadSkillToolOptions): RuntimeLoadSkillBuiltinStore {
   return {
-    readSkill: options.builtinStore?.readSkill ?? readRuntimeBuiltinSkill,
+    readSkill: options.builtinStore?.readSkill ?? readRuntimeBuiltinSkillWithinLimit,
     readReferenceFile: options.builtinStore?.readReferenceFile ??
-      readRuntimeBuiltinSkillReferenceFile,
-    listReferences: options.builtinStore?.listReferences ?? listRuntimeBuiltinSkillReferences,
+      readRuntimeBuiltinSkillReferenceWithinLimit,
+    listReferences: options.builtinStore?.listReferences ??
+      listRuntimeBuiltinSkillReferencesWithinLimit,
   };
+}
+
+function assertRuntimeBoundaryCollections(options: RuntimeLoadSkillToolOptions): void {
+  if (
+    (options.context.availableToolNames?.length ?? 0) > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES
+  ) {
+    throw new RangeError(
+      `Runtime tools may contain at most ${SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES} entries`,
+    );
+  }
+  if ((options.context.availableSkillIds?.length ?? 0) > SKILL_SUBDIR_MAX_ENTRIES) {
+    throw new RangeError(`Runtime skills may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`);
+  }
+}
+
+function assertLoadedSkillPayload(
+  instructions: string,
+  references: readonly string[] | undefined,
+): void {
+  if (instructions.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
+    throw new RangeError(
+      `Skill document may contain at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
+    );
+  }
+  if ((references?.length ?? 0) > SKILL_SUBDIR_MAX_ENTRIES) {
+    throw new RangeError(
+      `Skill references may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+    );
+  }
+}
+
+function assertRuntimeResponseMetadata(response: RuntimeLoadedSkillResponse): void {
+  const tools = response.delegationTools ?? [];
+  if (tools.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new RangeError(
+      `Skill allowed-tools may contain at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} entries`,
+    );
+  }
+  if (tools.some((entry) => entry.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH)) {
+    throw new RangeError(
+      `Skill allowed-tool patterns may contain at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
+    );
+  }
+}
+
+function assertCacheCapacity(record: object, maximum: number, label: string): void {
+  if (Object.keys(record).length >= maximum) {
+    throw new RangeError(`${label} may contain at most ${maximum} entries`);
+  }
 }
 
 function getResponseMessages(
@@ -214,7 +291,8 @@ function buildLoadedSkillResponse(input: {
   instructions: string;
   references?: readonly string[];
 }): RuntimeLoadedSkillResponse {
-  return buildRuntimeLoadedSkillResponse({
+  assertLoadedSkillPayload(input.instructions, input.references);
+  const response = buildRuntimeLoadedSkillResponse({
     skillId: input.skillId,
     instructions: input.instructions,
     nextStep: input.options.nextStep ??
@@ -224,6 +302,8 @@ function buildLoadedSkillResponse(input: {
     availableToolNames: input.options.context.availableToolNames,
     logger: input.options.logger,
   });
+  assertRuntimeResponseMetadata(response);
+  return response;
 }
 
 function buildAlreadyLoadedSkillResponse(
@@ -502,6 +582,7 @@ async function loadRuntimeSkillReferenceFile(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
   file: string,
+  budget: SkillOperationBudget,
 ): Promise<RuntimeLoadSkillReferenceFileOutput | RuntimeLoadSkillErrorOutput> {
   const normalizedFile = normalizeRuntimeSkillReferencePath(file);
   if (!normalizedFile) {
@@ -537,22 +618,30 @@ async function loadRuntimeSkillReferenceFile(
   if (loadedSkillReferenceResponses[referenceKey]) {
     return buildAlreadyLoadedSkillReferenceResponse(skillId, normalizedFile);
   }
+  assertCacheCapacity(
+    loadedSkillReferenceResponses,
+    SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
+    "Loaded skill reference cache",
+  );
 
   const projectFileContent = await options.projectSkillLoader.loadProjectSkillReference(
     options.context,
     skillId,
     normalizedFile,
+    { budget },
   );
   if (projectFileContent) {
+    assertLoadedSkillPayload(projectFileContent, undefined);
     const response = { skillId, file: normalizedFile, content: projectFileContent };
     loadedSkillReferenceResponses[referenceKey] = response;
     return response;
   }
 
-  const localContent = getBuiltinStore(options).readReferenceFile(
+  const localContent = await getBuiltinStore(options).readReferenceFile(
     options.skillsDir,
     skillId,
     normalizedFile,
+    budget,
   );
   if (localContent) {
     const response = { skillId, file: normalizedFile, content: localContent };
@@ -566,8 +655,9 @@ async function loadRuntimeSkillReferenceFile(
 async function loadRuntimeSkillBody(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
+  budget: SkillOperationBudget,
 ): Promise<RuntimeLoadedProjectSkill | null> {
-  return await options.projectSkillLoader.loadProjectSkill(options.context, skillId);
+  return await options.projectSkillLoader.loadProjectSkill(options.context, skillId, { budget });
 }
 
 /** Create runtime load skill tool. */
@@ -576,7 +666,15 @@ export function createRuntimeLoadSkillTool(
 ): Tool<RuntimeLoadSkillToolInput, RuntimeLoadSkillToolOutput> {
   const builtinStore = getBuiltinStore(options);
 
-  async function execute({ skillId, file }: RuntimeLoadSkillToolInput) {
+  async function execute(
+    { skillId, file }: RuntimeLoadSkillToolInput,
+    executionContext?: ToolExecutionContext,
+  ) {
+    assertRuntimeBoundaryCollections(options);
+    const budget = createSkillOperationBudget({
+      abortSignal: executionContext?.abortSignal,
+      timeoutMs: SKILL_FILE_OPERATION_TIMEOUT_MS,
+    });
     let parsed: RuntimeLoadSkillToolInput;
     try {
       parsed = buildRuntimeLoadSkillInputSchema(options).parse(
@@ -593,7 +691,7 @@ export function createRuntimeLoadSkillTool(
     file = parsed.file;
 
     if (file) {
-      return await loadRuntimeSkillReferenceFile(options, skillId, file);
+      return await loadRuntimeSkillReferenceFile(options, skillId, file, budget);
     }
 
     const loadedSkillResponses = options.context.loadedSkillResponses ??= {};
@@ -602,8 +700,13 @@ export function createRuntimeLoadSkillTool(
     if (loadedResponse) {
       return buildAlreadyLoadedSkillResponse(skillId, loadedResponse);
     }
+    assertCacheCapacity(
+      loadedSkillResponses,
+      SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+      "Loaded skill cache",
+    );
 
-    const projectSkill = await loadRuntimeSkillBody(options, skillId);
+    const projectSkill = await loadRuntimeSkillBody(options, skillId, budget);
     if (projectSkill) {
       const response = buildLoadedSkillResponse({
         options,
@@ -615,13 +718,14 @@ export function createRuntimeLoadSkillTool(
       return response;
     }
 
-    const localContent = builtinStore.readSkill(options.skillsDir, skillId);
+    const localContent = await builtinStore.readSkill(options.skillsDir, skillId, budget);
     if (localContent) {
+      const references = await builtinStore.listReferences(options.skillsDir, skillId, budget);
       const response = buildLoadedSkillResponse({
         options,
         skillId,
         instructions: localContent,
-        references: builtinStore.listReferences(options.skillsDir, skillId),
+        references,
       });
       loadedSkillResponses[loadedSkillKey] = response;
       return response;

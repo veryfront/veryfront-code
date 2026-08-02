@@ -30,6 +30,8 @@ export const SKILL_STEERING_PATH_MAX_ENTRIES = 16;
 export const SKILL_PATH_SEGMENT_MAX_LENGTH = 255;
 export const SKILL_VISIBLE_ERROR_MAX_IDS = 30;
 export const SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES = 1_000;
+/** One outer deadline for skill discovery/read operations. */
+export const SKILL_FILE_OPERATION_TIMEOUT_MS = 30_000;
 
 export const SKILL_SCRIPT_DEFAULT_TIMEOUT_MS = 60_000;
 export const SKILL_SCRIPT_MAX_TIMEOUT_MS = 300_000;

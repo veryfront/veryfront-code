@@ -159,12 +159,12 @@ Deno.test("hosted project steering adapter accepts a custom builtin skill store"
         },
       ],
       builtinStore: {
-        readSkill: (storeSkillsDir, skillId) => {
+        readSkill: async (storeSkillsDir, skillId) => {
           readSkillCalls.push({ skillsDir: storeSkillsDir, skillId });
           return skillId === "custom" ? "Use custom builtin instructions." : null;
         },
-        readReferenceFile: () => null,
-        listReferences: (storeSkillsDir, skillId) => {
+        readReferenceFile: async () => null,
+        listReferences: async (storeSkillsDir, skillId) => {
           referenceCalls.push({ skillsDir: storeSkillsDir, skillId });
           return ["references/custom.md"];
         },

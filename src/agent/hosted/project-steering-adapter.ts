@@ -1,9 +1,9 @@
 import type { Tool } from "#veryfront/tool";
 import { HostedServiceAuthError, isHostedServiceAuthError } from "../service/auth.ts";
 import {
-  listRuntimeBuiltinSkillReferences,
-  readRuntimeBuiltinSkill,
-  readRuntimeBuiltinSkillReferenceFile,
+  listRuntimeBuiltinSkillReferencesWithinLimit,
+  readRuntimeBuiltinSkillReferenceWithinLimit,
+  readRuntimeBuiltinSkillWithinLimit,
 } from "../runtime/builtin-skill-files.ts";
 import {
   createRuntimeLoadSkillTool,
@@ -134,9 +134,9 @@ function createDefaultProjectSkillLoader(
 
 function createDefaultBuiltinStore(): RuntimeLoadSkillBuiltinStore {
   return {
-    readSkill: readRuntimeBuiltinSkill,
-    readReferenceFile: readRuntimeBuiltinSkillReferenceFile,
-    listReferences: listRuntimeBuiltinSkillReferences,
+    readSkill: readRuntimeBuiltinSkillWithinLimit,
+    readReferenceFile: readRuntimeBuiltinSkillReferenceWithinLimit,
+    listReferences: listRuntimeBuiltinSkillReferencesWithinLimit,
   };
 }
 

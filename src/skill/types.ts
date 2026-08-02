@@ -109,6 +109,8 @@ export interface SkillScriptExecutorInput {
   env?: Record<string, string>;
   cwd?: string;
   timeoutMs?: number;
+  /** Cancellation shared with the outer skill operation budget. */
+  abortSignal?: AbortSignal;
 }
 
 /** Script executor interface */

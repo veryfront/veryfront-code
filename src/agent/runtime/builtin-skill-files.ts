@@ -1,6 +1,33 @@
 import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { normalizeRuntimeSkillReferencePath } from "./skill-metadata.ts";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import type { SkillOperationBudget } from "#veryfront/skill/operation-budget.ts";
+import { SKILL_SUBDIR_MAX_ENTRIES, SKILL_TEXT_FILE_MAX_BYTES } from "#veryfront/skill/limits.ts";
+
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const builtinFileSystem = createFileSystem();
+
+async function readBuiltinFileWithinLimit(
+  root: string,
+  path: string,
+  budget: SkillOperationBudget,
+): Promise<string | null> {
+  try {
+    return await budget.run(async () => {
+      const reader = builtinFileSystem.readFileSnapshotWithinLimit;
+      if (!reader) {
+        throw new Error("Runtime filesystem does not support bounded snapshot reads");
+      }
+      return utf8Decoder.decode(
+        await reader.call(builtinFileSystem, path, root, SKILL_TEXT_FILE_MAX_BYTES),
+      );
+    });
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
 
 /** Result returned from runtime builtin skill entries. */
 export type RuntimeBuiltinSkillEntriesResult = { ok: true; entries: Dirent[] } | {
@@ -129,4 +156,62 @@ export function listRuntimeBuiltinSkillReferences(skillsDir: string, skillId: st
   return listRuntimeBuiltinSkillReferenceFiles(skillsDir, skillId).map((file) =>
     `references/${file}`
   );
+}
+
+/** Strict bounded runtime read of a built-in skill document. */
+export async function readRuntimeBuiltinSkillWithinLimit(
+  skillsDir: string,
+  skillId: string,
+  budget: SkillOperationBudget,
+): Promise<string | null> {
+  const directoryPath = resolve(skillsDir, skillId, "SKILL.md");
+  const directory = await readBuiltinFileWithinLimit(skillsDir, directoryPath, budget);
+  if (directory !== null) return directory;
+  return await readBuiltinFileWithinLimit(
+    skillsDir,
+    resolve(skillsDir, `${skillId}.md`),
+    budget,
+  );
+}
+
+/** Strict bounded runtime read of one advertised built-in reference. */
+export async function readRuntimeBuiltinSkillReferenceWithinLimit(
+  skillsDir: string,
+  skillId: string,
+  file: string,
+  budget: SkillOperationBudget,
+): Promise<string | null> {
+  const path = resolveRuntimeBuiltinSkillReferenceFilePath(skillsDir, skillId, file);
+  return path ? await readBuiltinFileWithinLimit(skillsDir, path, budget) : null;
+}
+
+/** Strict capped and deterministic built-in reference listing. */
+export async function listRuntimeBuiltinSkillReferencesWithinLimit(
+  skillsDir: string,
+  skillId: string,
+  budget: SkillOperationBudget,
+): Promise<string[]> {
+  const refsDir = resolve(skillsDir, skillId, "references");
+  try {
+    return await budget.run(async () => {
+      const references: string[] = [];
+      let entries = 0;
+      for await (const entry of builtinFileSystem.readDir(refsDir)) {
+        entries += 1;
+        if (entries > SKILL_SUBDIR_MAX_ENTRIES) {
+          throw new RangeError(
+            `Skill references may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+          );
+        }
+        if (entry.isSymlink) {
+          throw new Error(`Skill reference entry must not be a symlink: ${entry.name}`);
+        }
+        if (entry.isFile) references.push(`references/${entry.name}`);
+      }
+      return references.sort();
+    });
+  } catch (error) {
+    if (isNotFoundError(error)) return [];
+    throw error;
+  }
 }

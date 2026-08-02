@@ -13,6 +13,10 @@ import type {
   RuntimeProjectSkillLoader,
 } from "./project-skill-loader.ts";
 import type { RuntimeLoadedSkillResponse } from "./skill-metadata.ts";
+import {
+  SKILL_DOCUMENT_MAX_CHARACTERS,
+  SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
 
 const PROJECT_CONTEXT: RuntimeProjectSkillContext = {
   projectId: "project-1",
@@ -66,10 +70,11 @@ function createBuiltinStore(input: {
   referenceLists?: Map<string, string[]>;
 }): RuntimeLoadSkillBuiltinStore {
   return {
-    readSkill: (_skillsDir, skillId) => input.skills?.get(skillId) ?? null,
+    readSkill: (_skillsDir, skillId) => Promise.resolve(input.skills?.get(skillId) ?? null),
     readReferenceFile: (_skillsDir, skillId, normalizedFile) =>
-      input.references?.get(`${skillId}/${normalizedFile}`) ?? null,
-    listReferences: (_skillsDir, skillId) => input.referenceLists?.get(skillId) ?? [],
+      Promise.resolve(input.references?.get(`${skillId}/${normalizedFile}`) ?? null),
+    listReferences: (_skillsDir, skillId) =>
+      Promise.resolve(input.referenceLists?.get(skillId) ?? []),
   };
 }
 
@@ -1085,15 +1090,15 @@ Deno.test("createRuntimeLoadSkillTool treats an empty availableSkillIds manifest
     },
     builtinSkillIds: ["plan"],
     builtinStore: {
-      readSkill: () => {
+      readSkill: async () => {
         builtinReads++;
         return "# Builtin plan";
       },
-      readReferenceFile: () => {
+      readReferenceFile: async () => {
         builtinReads++;
         return "Guide";
       },
-      listReferences: () => {
+      listReferences: async () => {
         builtinReads++;
         return ["references/guide.md"];
       },
@@ -1133,4 +1138,78 @@ Deno.test("createRuntimeLoadSkillTool allows host copy overrides", async () => {
   const result = expectLoadedSkillResponse(await tool.execute({ skillId: "plan" }));
   assertEquals(result.nextStep, "Custom next step.");
   assertStringIncludes(JSON.stringify(result), "Custom next step.");
+});
+
+Deno.test("runtime load_skill rejects oversized production-loader documents", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({
+      skills: new Map([
+        ["large", {
+          instructions: "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1),
+          references: [],
+        }],
+      ]),
+    }),
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "large" }),
+    RangeError,
+    "Skill document may contain at most",
+  );
+});
+
+Deno.test("runtime load_skill rejects oversized available-tool inventories before storage", async () => {
+  let storageCalls = 0;
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext({
+      availableToolNames: Array.from(
+        { length: SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES + 1 },
+        (_, index) => `tool_${index}`,
+      ),
+    }),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: () => {
+        storageCalls += 1;
+        return Promise.resolve(null);
+      },
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "large" }),
+    RangeError,
+    "Runtime tools may contain at most",
+  );
+  assertEquals(storageCalls, 0);
+});
+
+Deno.test("runtime load_skill propagates caller cancellation through the shared budget", async () => {
+  const controller = new AbortController();
+  const reason = new Error("cancel runtime skill load");
+  const tool = createRuntimeLoadSkillTool({
+    context: createProjectContext(),
+    skillsDir: "/skills",
+    projectSkillLoader: {
+      listProjectSkillReferences: () => Promise.resolve([]),
+      loadProjectSkill: (_context, _skillId, operation) =>
+        new Promise((_resolve, reject) => {
+          const signal = operation?.budget?.abortSignal;
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+      loadProjectSkillReference: () => Promise.resolve(null),
+    },
+    builtinStore: createBuiltinStore({}),
+  });
+
+  const pending = tool.execute({ skillId: "pending" }, { abortSignal: controller.signal });
+  controller.abort(reason);
+  await assertRejects(() => pending, Error, reason.message);
 });
