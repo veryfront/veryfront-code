@@ -53,11 +53,19 @@ export type { RedisEventPublisherConfig } from "./event-publisher.ts";
 // WebSocket Publisher (bidirectional)
 export {
   AgentController,
+  AgentControllerRegistry,
   createWebSocketHandler,
   WebSocketPublisher,
 } from "./websocket-publisher.ts";
 
-export type { WebSocketPublisherConfig } from "./websocket-publisher.ts";
+export type {
+  AgentControllerConfig,
+  AgentControllerHandle,
+  AgentControllerRegistration,
+  AgentControllerRunRegistration,
+  WebSocketHandlerConfig,
+  WebSocketPublisherConfig,
+} from "./websocket-publisher.ts";
 
 // Workspace Sync (for cloud deployments with API-backed file operations)
 export { createWorkspaceSync, withWorkspace, WorkspaceSync } from "./workspace-sync.ts";

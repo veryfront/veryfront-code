@@ -9,6 +9,13 @@ import type { Agent } from "#veryfront/agent/types.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 import type { SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
+import type { WorkflowProjectionState } from "./runtime-state.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES,
+  MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS,
+} from "./limits.ts";
 
 // Re-export schema types (Checkpoint excluded - defined locally to use WorkflowContext interface)
 export type {
@@ -41,9 +48,6 @@ import type {
   WorkflowStatus,
 } from "./schemas/index.ts";
 
-// Duration string type alias
-type DurationString = string;
-
 /**
  * Workflow context containing structured-cloneable input and node outputs.
  */
@@ -64,6 +68,73 @@ export interface Checkpoint {
   timestamp: Date;
   context: WorkflowContext;
   nodeStates: Record<string, NodeState>;
+  /** @internal Framework-only public projection ownership sidecar. */
+  _workflowProjection?: WorkflowProjectionState;
+  /** @internal Validated root snapshot for resuming a descendant checkpoint. */
+  _resumeEnvelope?: CheckpointResumeEnvelope;
+}
+
+/** @internal Serializable identity of one admitted workflow graph node. */
+export interface WorkflowGraphIdentityNode {
+  readonly id: string;
+  readonly type: WorkflowNodeConfig["type"];
+  readonly dependsOn: readonly string[] | null;
+  readonly composite: WorkflowGraphCompositeIdentity | null;
+}
+
+/** @internal Serializable identity of statically visible composite descendants. */
+export type WorkflowGraphCompositeIdentity =
+  | {
+    readonly kind: "parallel";
+    readonly strategy: ParallelStrategy | null;
+    readonly nodes: readonly WorkflowGraphIdentityNode[];
+  }
+  | {
+    readonly kind: "branch";
+    readonly then: readonly WorkflowGraphIdentityNode[];
+    readonly else: readonly WorkflowGraphIdentityNode[] | null;
+  }
+  | {
+    readonly kind: "loop";
+    readonly dynamic: boolean;
+    readonly nodes: readonly WorkflowGraphIdentityNode[] | null;
+  }
+  | {
+    readonly kind: "map";
+    readonly processorKind: "node" | "workflow";
+    readonly processorId: string;
+    readonly processorVersion: string | null;
+    readonly dynamic: boolean;
+    readonly nodes: readonly WorkflowGraphIdentityNode[] | null;
+  }
+  | {
+    readonly kind: "subWorkflow";
+    readonly workflowId: string;
+    readonly workflowVersion: string | null;
+    readonly dynamic: boolean;
+    readonly nodes: readonly WorkflowGraphIdentityNode[] | null;
+  };
+
+export type WorkflowGraphIdentity = readonly WorkflowGraphIdentityNode[];
+
+/** @internal Durable root graph admission captured before any admitted node runs. */
+export interface WorkflowGraphAdmission {
+  readonly stepsEvaluationContext: WorkflowContext;
+  readonly stepsEvaluationProjection: WorkflowProjectionState;
+  readonly graphIdentity: WorkflowGraphIdentity;
+  readonly workflowVersion: string | null;
+}
+
+/** @internal Durable root snapshot synthesized by the owning composite stack. */
+export interface CheckpointResumeEnvelope {
+  readonly schemaVersion: 2;
+  /** Root composite/node that owns this resumable transaction. */
+  readonly ownerNodeId: string;
+  readonly context: WorkflowContext;
+  readonly nodeStates: Record<string, NodeState>;
+  readonly workflowProjection: WorkflowProjectionState;
+  /** Original root graph-admission snapshot; never derived from post-node context. */
+  readonly graphAdmission: WorkflowGraphAdmission;
 }
 
 /**
@@ -134,6 +205,11 @@ export interface WaitNodeConfig extends BaseNodeConfig {
   waitType: WaitType;
   message?: string;
   payload?: unknown | ((context: WorkflowContext) => unknown);
+  /**
+   * Explicit identities allowed to decide the approval. When omitted, the
+   * authenticated host boundary is responsible for supplying the caller's
+   * canonical identity to the approval API.
+   */
   approvers?: string[];
   eventName?: string;
 }
@@ -207,6 +283,7 @@ export interface WorkflowNode {
 export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   id: string;
   description?: string;
+  /** Required for a persisted run to be safely resumed after its initial start admission. */
   version?: string;
   inputSchema?: Schema<TInput>;
   outputSchema?: Schema<TOutput>;
@@ -255,6 +332,7 @@ export interface CapturedTenantContext {
 export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   id: string;
   workflowId: string;
+  /** Immutable definition version; persisted recovery requires a non-null exact match. */
   version?: string;
   status: WorkflowStatus;
   input: TInput;
@@ -276,66 +354,215 @@ export interface WorkflowRun<TInput = unknown, TOutput = unknown> {
   workerId?: string;
   /** Captured tenant context for multi-tenant job execution */
   _tenant?: CapturedTenantContext;
+  /** @internal Immutable durable provenance model version. */
+  _runtimeStateVersion?: number;
+  /** @internal Framework-only public projection ownership sidecar. */
+  _workflowProjection?: WorkflowProjectionState;
 }
 
 // Utility functions
 
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Whether a value is a non-empty approval identity without surrounding whitespace. */
+export function isCanonicalApprovalIdentity(value: unknown): value is string {
+  if (
+    typeof value !== "string" || value.length === 0 ||
+    value.length > MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS || value.trim() !== value
+  ) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return false;
+  }
+  return true;
+}
+
+/** Validate and snapshot an optional explicit approval allowlist. */
+export function captureApprovalApprovers(
+  value: unknown,
+  label = "Approval approvers",
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (isProxyWithoutHooks(value) || !Array.isArray(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must be a non-empty array of canonical strings`,
+    });
+  }
+
+  const keys = Reflect.ownKeys(value);
+  const lengthDescriptor = Reflect.getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !Number.isSafeInteger(length) || (length as number) < 1 ||
+    (length as number) > MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES ||
+    keys.length !== (length as number) + 1
+  ) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `${label} must be a dense non-empty array with at most ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} canonical strings`,
+    });
+  }
+
+  const captured: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < (length as number); index++) {
+    const descriptor = Reflect.getOwnPropertyDescriptor(value, String(index));
+    if (descriptor?.enumerable !== true || !("value" in descriptor)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `${label} must be a dense non-empty array with at most ${MAX_WORKFLOW_DEFINITION_COLLECTION_ENTRIES} canonical strings`,
+      });
+    }
+    const approver = descriptor.value;
+    if (!isCanonicalApprovalIdentity(approver)) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `${label} must contain canonical strings of at most ${MAX_WORKFLOW_DEFINITION_ID_CODE_UNITS} code units without control characters`,
+      });
+    }
+    if (seen.has(approver)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} must not contain duplicate identities`,
+      });
+    }
+    seen.add(approver);
+    captured.push(approver);
+  }
+  return Object.freeze(captured) as unknown as string[];
+}
+
+/**
+ * Maximum retry attempts accepted by executable workflow nodes.
+ *
+ * This matches the loop iteration ceiling and prevents configurations that can
+ * consume effectively unbounded worker time or overflow exponential backoff
+ * arithmetic before the configured maximum delay is applied.
+ */
+export const MAX_WORKFLOW_RETRY_ATTEMPTS = 100;
+
+const DURATION_UNIT_MILLISECONDS = {
+  ms: 1,
+  s: 1_000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+} as const;
+
+const VALID_BACKOFF_STRATEGIES = ["fixed", "linear", "exponential"] as const;
+const VALID_BACKOFF_SET: ReadonlySet<string> = new Set(VALID_BACKOFF_STRATEGIES);
+
 /**
  * Parse duration string to milliseconds
  */
 export function parseDuration(duration: string | number): number {
+  return parseDurationWithLabel(duration, "Duration");
+}
+
+/**
+ * Parse a duration with a boundary-specific label for actionable errors.
+ *
+ * @internal
+ */
+export function parseDurationWithLabel(
+  duration: string | number,
+  label: string,
+): number {
   if (typeof duration === "number") {
     if (duration < 0) {
-      throw INVALID_ARGUMENT.create({ detail: `Duration cannot be negative: ${duration}` });
+      throw INVALID_ARGUMENT.create({ detail: `${label} cannot be negative: ${duration}` });
     }
-    return duration;
+    if (!Number.isSafeInteger(duration)) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} must be a safe integer number of milliseconds, got: ${duration}`,
+      });
+    }
+    if (duration > MAX_TIMER_DELAY_MS) {
+      throw INVALID_ARGUMENT.create({
+        detail: `${label} cannot exceed ${MAX_TIMER_DELAY_MS} milliseconds, got: ${duration}`,
+      });
+    }
+    return duration === 0 ? 0 : duration;
   }
 
   const match = duration.match(/^(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/);
   if (!match || !match[1] || !match[2]) {
-    throw INVALID_ARGUMENT.create({ detail: `Invalid duration format: ${duration}` });
+    throw INVALID_ARGUMENT.create({
+      detail: label === "Duration"
+        ? `Invalid duration format: ${duration}`
+        : `Invalid duration format for ${label}: ${duration}`,
+    });
   }
 
-  const num = parseFloat(match[1]);
-  if (num <= 0) throw INVALID_ARGUMENT.create({ detail: `Duration must be positive: ${duration}` });
-
-  switch (match[2]) {
-    case "ms":
-      return num;
-    case "s":
-      return num * 1000;
-    case "m":
-      return num * 60 * 1000;
-    case "h":
-      return num * 60 * 60 * 1000;
-    case "d":
-      return num * 24 * 60 * 60 * 1000;
-    default:
-      throw INVALID_ARGUMENT.create({ detail: `Unknown duration unit: ${match[2]}` });
+  const value = Number(match[1]);
+  if (value <= 0) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} must be positive: ${duration}` });
   }
+
+  const milliseconds = value *
+    DURATION_UNIT_MILLISECONDS[match[2] as keyof typeof DURATION_UNIT_MILLISECONDS];
+
+  if (!Number.isSafeInteger(milliseconds)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} must resolve to a safe integer number of milliseconds, got: ${duration}`,
+    });
+  }
+  if (milliseconds > MAX_TIMER_DELAY_MS) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} cannot exceed ${MAX_TIMER_DELAY_MS} milliseconds, got: ${duration}`,
+    });
+  }
+
+  return milliseconds;
+}
+
+/**
+ * Parse a duration that represents a timeout or interval and therefore cannot
+ * use zero to mean "disabled".
+ *
+ * @internal
+ */
+export function parsePositiveDurationWithLabel(
+  duration: string | number,
+  label: string,
+): number {
+  const milliseconds = parseDurationWithLabel(duration, label);
+  if (milliseconds === 0) {
+    throw INVALID_ARGUMENT.create({ detail: `${label} must be greater than zero` });
+  }
+  return milliseconds;
 }
 
 /**
  * Validate retry configuration
  */
-export function validateRetryConfig(config: RetryConfig): void {
-  const { maxAttempts, initialDelay, maxDelay, backoff } = config;
-
-  if (maxAttempts !== undefined && (!Number.isInteger(maxAttempts) || maxAttempts < 1)) {
+export function validateRetryConfig(config: RetryConfig, label = "Retry"): void {
+  if (!isPlainRecord(config)) {
     throw INVALID_ARGUMENT.create({
-      detail: `maxAttempts must be a positive integer, got: ${maxAttempts}`,
+      detail: `${label} must be a plain record`,
     });
   }
 
-  if (initialDelay !== undefined && initialDelay < 0) {
-    throw INVALID_ARGUMENT.create({ detail: `initialDelay cannot be negative: ${initialDelay}` });
+  const { maxAttempts, initialDelay, maxDelay, backoff } = config;
+
+  if (maxAttempts !== undefined && (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} maxAttempts must be a positive integer, got: ${maxAttempts}`,
+    });
   }
 
-  if (maxDelay !== undefined && maxDelay < 0) {
-    throw INVALID_ARGUMENT.create({ detail: `maxDelay cannot be negative: ${maxDelay}` });
+  if (maxAttempts !== undefined && maxAttempts > MAX_WORKFLOW_RETRY_ATTEMPTS) {
+    throw INVALID_ARGUMENT.create({
+      detail:
+        `${label} maxAttempts cannot exceed ${MAX_WORKFLOW_RETRY_ATTEMPTS}, got: ${maxAttempts}`,
+    });
   }
+
+  validateRetryDelay(initialDelay, "initialDelay", label);
+  validateRetryDelay(maxDelay, "maxDelay", label);
 
   if (initialDelay !== undefined && maxDelay !== undefined && initialDelay > maxDelay) {
     throw INVALID_ARGUMENT.create({
@@ -345,15 +572,41 @@ export function validateRetryConfig(config: RetryConfig): void {
 
   if (backoff === undefined) return;
 
-  const validBackoffs = new Set(["fixed", "linear", "exponential"]);
-
-  if (validBackoffs.has(backoff)) return;
+  if (VALID_BACKOFF_SET.has(backoff)) return;
 
   throw INVALID_ARGUMENT.create({
     detail: `Invalid backoff strategy: ${backoff}. Must be one of: ${
-      [...validBackoffs].join(", ")
+      VALID_BACKOFF_STRATEGIES.join(", ")
     }`,
   });
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function validateRetryDelay(
+  delay: number | undefined,
+  field: "initialDelay" | "maxDelay",
+  label: string,
+): void {
+  if (delay === undefined) return;
+
+  if (delay < 0) {
+    throw INVALID_ARGUMENT.create({ detail: `${field} cannot be negative: ${delay}` });
+  }
+  if (!Number.isSafeInteger(delay)) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} ${field} must be a non-negative safe integer, got: ${delay}`,
+    });
+  }
+  if (delay > MAX_TIMER_DELAY_MS) {
+    throw INVALID_ARGUMENT.create({
+      detail: `${label} ${field} cannot exceed ${MAX_TIMER_DELAY_MS}, got: ${delay}`,
+    });
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 /**
- * Source-defined schedules for Veryfront projects.
+ * Source-defined recurring schedules for Veryfront projects.
  *
  * @module schedule
  *

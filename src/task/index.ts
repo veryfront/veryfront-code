@@ -27,4 +27,4 @@ export {
   formatProjectRuntimeDiscoveryErrors,
   listProjectRuntimeTasks,
 } from "./project-runtime.ts";
-export type { ProjectTaskRuntimeOptions } from "./project-runtime.ts";
+export type { ProjectTaskRuntimeDiscovery, ProjectTaskRuntimeOptions } from "./project-runtime.ts";
