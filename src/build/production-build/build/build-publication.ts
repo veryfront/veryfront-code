@@ -17,7 +17,12 @@ export interface BuildPublication {
 
 export interface BuildPublicationDependencies {
   fs?: BuildPublicationFileSystem;
+  lock?: BuildPublicationLock;
   lockTimeoutMs?: number;
+}
+
+export interface BuildPublicationLock {
+  acquire(lockPath: string, timeoutMs: number): Promise<() => Promise<void>>;
 }
 
 export interface BuildPublicationFileSystem {
@@ -85,6 +90,10 @@ async function acquireBuildLock(
   };
 }
 
+export const nativeBuildPublicationLock: BuildPublicationLock = {
+  acquire: acquireBuildLock,
+};
+
 export async function createBuildPublication(
   outputDir: string,
   dryRun: boolean,
@@ -101,6 +110,13 @@ export async function createBuildPublication(
   }
 
   const fs = dependencies.fs ?? createFileSystem();
+  const lock = dependencies.lock ??
+    (dependencies.fs === undefined ? nativeBuildPublicationLock : undefined);
+  if (!lock) {
+    throw publicationError(
+      "Custom build publication filesystems require a matching lock provider",
+    );
+  }
   const rename = fs.rename?.bind(fs);
   if (!rename) {
     throw publicationError(
@@ -116,7 +132,7 @@ export async function createBuildPublication(
   const lockPath = join(parentDir, `.${outputName}.veryfront-build.lock`);
 
   await fs.mkdir(parentDir, { recursive: true });
-  const releaseLock = await acquireBuildLock(
+  const releaseLock = await lock.acquire(
     lockPath,
     dependencies.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS,
   );

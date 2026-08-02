@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem, type FileSystem } from "#veryfront/platform/compat/fs.ts";
-import { createBuildPublication } from "./build-publication.ts";
+import { createBuildPublication, nativeBuildPublicationLock } from "./build-publication.ts";
 
 describe("build/production-build/build/build-publication", () => {
   it("replaces a previous output only when the staged build is published", async () => {
@@ -74,6 +74,7 @@ describe("build/production-build/build/build-publication", () => {
 
     const publication = await createBuildPublication(outputDir, false, {
       fs: flakyFs,
+      lock: nativeBuildPublicationLock,
     });
     await Deno.mkdir(publication.buildDir);
     try {
@@ -115,6 +116,7 @@ describe("build/production-build/build/build-publication", () => {
 
     const publication = await createBuildPublication(outputDir, false, {
       fs: failingFs,
+      lock: nativeBuildPublicationLock,
     });
     try {
       await Deno.mkdir(publication.buildDir);
@@ -148,6 +150,15 @@ describe("build/production-build/build/build-publication", () => {
       await first.cleanup();
       await Deno.remove(root, { recursive: true });
     }
+  });
+
+  it("requires custom filesystems to provide matching lock authority", async () => {
+    const delegate = createFileSystem();
+    await assertRejects(
+      () => createBuildPublication("dist", false, { fs: delegate }),
+      Error,
+      "require a matching lock provider",
+    );
   });
 
   it("does not create staging or lock artifacts for dry runs", async () => {

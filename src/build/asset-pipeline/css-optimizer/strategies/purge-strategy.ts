@@ -170,6 +170,7 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
   private readonly usedSelectors = new Set<string>();
   private contentSources: PurgeContentSource[] = [];
   private purgeCSSModule: Promise<PurgeCSSModule> | null = null;
+  private purgeCSSLoadGeneration = 0;
 
   constructor(dependencies: PurgeStrategyDependencies = {}) {
     if (
@@ -338,7 +339,10 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
   }
 
   private async loadPurgeCSS(): Promise<PurgeCSSModule> {
-    const pending = this.purgeCSSModule ??= (async () => {
+    if (this.purgeCSSModule) return await this.purgeCSSModule;
+
+    const generation = ++this.purgeCSSLoadGeneration;
+    const pending = (async () => {
       try {
         const module = await this.loadPurgeCSSDependency();
         if (!module || typeof module.PurgeCSS !== "function") {
@@ -352,10 +356,11 @@ export class PurgeStrategy implements CSSOptimizationStrategy {
         });
       }
     })();
+    this.purgeCSSModule = pending;
     try {
       return await pending;
     } catch (error) {
-      if (this.purgeCSSModule === pending) this.purgeCSSModule = null;
+      if (this.purgeCSSLoadGeneration === generation) this.purgeCSSModule = null;
       throw error;
     }
   }
