@@ -465,13 +465,22 @@ export class VeryfrontRunsClient {
       body?: Record<string, unknown>;
     } = {},
   ): Promise<T> {
+    const apiUrl = this.resolveApiUrl();
+    const apiOrigin = new URL(apiUrl).origin;
     const raw = await requestWithRetry(
-      `${this.resolveApiUrl()}${path}`,
+      `${apiUrl}${path}`,
       this.resolveAuthToken(),
       this.retryConfig,
       {
         method: options.method,
         body: options.body == null ? undefined : JSON.stringify(options.body),
+      },
+      {
+        authorizeUrl: (target) => {
+          if (target.origin !== apiOrigin) {
+            throw new Error("Runs request blocked: destination origin is not authorized");
+          }
+        },
       },
     );
     return schema.parse(raw);

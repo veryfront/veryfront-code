@@ -47,7 +47,7 @@ function createMockUploadService() {
       headers,
     });
 
-    if (url.origin === "https://api.test") {
+    if (url.origin === "https://93.184.216.34") {
       const authHeader = headers.get("Authorization");
       if (!authHeader?.startsWith("Bearer ")) {
         return new Response("Unauthorized", { status: 401 });
@@ -78,7 +78,7 @@ function createMockUploadService() {
         });
 
         return Response.json({
-          file_upload_url: `https://upload.test/${encodeURIComponent(projectSlug)}/${
+          file_upload_url: `https://93.184.216.35/${encodeURIComponent(projectSlug)}/${
             encodeURIComponent(body.file_path)
           }`,
           file_path: `${projectSlug}/${body.file_path}`,
@@ -99,7 +99,7 @@ function createMockUploadService() {
         }
 
         return Response.json({
-          signed_url: `https://download.test/${encodeURIComponent(projectSlug)}/${
+          signed_url: `https://93.184.216.36/${encodeURIComponent(projectSlug)}/${
             encodeURIComponent(path)
           }`,
           expires_at: new Date(FIXED_NOW.getTime() + 30 * 60 * 1000).toISOString(),
@@ -140,7 +140,7 @@ function createMockUploadService() {
       }
     }
 
-    if (url.origin === "https://upload.test" && method === "PUT") {
+    if (url.origin === "https://93.184.216.35" && method === "PUT") {
       const [, encodedProjectSlug = "", encodedPath = ""] = url.pathname.split("/");
       const projectSlug = decodeURIComponent(encodedProjectSlug);
       const path = decodeURIComponent(encodedPath);
@@ -164,7 +164,7 @@ function createMockUploadService() {
       return new Response(null, { status: 200 });
     }
 
-    if (url.origin === "https://download.test" && method === "GET") {
+    if (url.origin === "https://93.184.216.36" && method === "GET") {
       const [, encodedProjectSlug = "", encodedPath = ""] = url.pathname.split("/");
       const projectSlug = decodeURIComponent(encodedProjectSlug);
       const path = decodeURIComponent(encodedPath);
@@ -200,7 +200,7 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("stores, retrieves, stats, and deletes blobs via project uploads", async () => {
     const service = createMockUploadService();
     const storage = new VeryfrontCloudBlobStorage({
-      apiBaseUrl: "https://api.test",
+      apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_config_token",
       projectSlug: "demo-project",
       prefix: ".vf-test/",
@@ -230,7 +230,7 @@ describe("VeryfrontCloudBlobStorage", () => {
       assertEquals(stat.size, 16);
       assertEquals(
         stat.url,
-        `https://download.test/demo-project/${encodeURIComponent(`.vf-test/${ref.id}.blob`)}`,
+        `https://93.184.216.36/demo-project/${encodeURIComponent(`.vf-test/${ref.id}.blob`)}`,
       );
       assertEquals(stat.createdAt.toISOString(), FIXED_NOW.toISOString());
       assertEquals(
@@ -247,7 +247,7 @@ describe("VeryfrontCloudBlobStorage", () => {
       assertEquals(service.uploads.size, 0);
 
       const firstCreate = service.fetchCalls.find((call) =>
-        call.method === "POST" && call.url === "https://api.test/projects/demo-project/uploads"
+        call.method === "POST" && call.url === "https://93.184.216.34/projects/demo-project/uploads"
       );
       assertExists(firstCreate);
       assertEquals(firstCreate.headers.get("Authorization"), "Bearer vf_config_token");
@@ -259,7 +259,7 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("lists stored blobs (newest first) with sidecar filenames", async () => {
     const service = createMockUploadService();
     const storage = new VeryfrontCloudBlobStorage({
-      apiBaseUrl: "https://api.test",
+      apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_config_token",
       projectSlug: "demo-project",
       prefix: ".vf-test/",
@@ -287,7 +287,7 @@ describe("VeryfrontCloudBlobStorage", () => {
       assertExists(byId.get(first.id)?.url);
 
       const listCall = service.fetchCalls.find((call) =>
-        call.method === "GET" && call.url === "https://api.test/projects/demo-project/uploads"
+        call.method === "GET" && call.url === "https://93.184.216.34/projects/demo-project/uploads"
       );
       assertExists(listCall);
     } finally {
@@ -298,7 +298,7 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("returns an empty list when nothing is stored", async () => {
     const service = createMockUploadService();
     const storage = new VeryfrontCloudBlobStorage({
-      apiBaseUrl: "https://api.test",
+      apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_config_token",
       projectSlug: "demo-project",
       prefix: ".vf-test/",
@@ -315,7 +315,7 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("falls back to upload metadata when the sidecar is missing", async () => {
     const service = createMockUploadService();
     const storage = new VeryfrontCloudBlobStorage({
-      apiBaseUrl: "https://api.test",
+      apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_config_token",
       projectSlug: "demo-project",
       prefix: ".vf-test/",
@@ -337,7 +337,7 @@ describe("VeryfrontCloudBlobStorage", () => {
       assertEquals(stat.expiresAt, undefined);
       assertEquals(
         stat.url,
-        `https://download.test/demo-project/${encodeURIComponent(`.vf-test/${ref.id}.blob`)}`,
+        `https://93.184.216.36/demo-project/${encodeURIComponent(`.vf-test/${ref.id}.blob`)}`,
       );
       assertEquals(await storage.exists(ref.id), true);
     } finally {
@@ -348,7 +348,7 @@ describe("VeryfrontCloudBlobStorage", () => {
   it("keeps explicit blob endpoints paired with their explicit credential", async () => {
     const service = createMockUploadService();
     const storage = new VeryfrontCloudBlobStorage({
-      apiBaseUrl: "https://api.test",
+      apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_scoped_token",
       prefix: ".vf-test/",
       now: () => FIXED_NOW,
@@ -367,7 +367,8 @@ describe("VeryfrontCloudBlobStorage", () => {
       );
 
       const createCall = service.fetchCalls.find((call) =>
-        call.method === "POST" && call.url === "https://api.test/projects/request-project/uploads"
+        call.method === "POST" &&
+        call.url === "https://93.184.216.34/projects/request-project/uploads"
       );
       assertExists(createCall);
       assertEquals(createCall.headers.get("Authorization"), "Bearer vf_scoped_token");
@@ -378,7 +379,7 @@ describe("VeryfrontCloudBlobStorage", () => {
 
   it("rejects blob IDs containing path traversal sequences", async () => {
     const storage = new VeryfrontCloudBlobStorage({
-      apiBaseUrl: "https://api.test",
+      apiBaseUrl: "https://93.184.216.34",
       apiToken: "vf_test",
       projectSlug: "my-project",
     });
