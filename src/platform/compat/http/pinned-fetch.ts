@@ -1,0 +1,208 @@
+/**
+ * Dependency-free Node/Bun HTTP transport that connects only to DNS addresses
+ * already validated by the host egress policy while preserving the original
+ * Host header and TLS SNI name.
+ */
+
+import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
+import type { Readable } from "node:stream";
+
+function addressFamily(address: string): 4 | 6 {
+  return address.includes(":") ? 6 : 4;
+}
+
+function createPinnedLookup(addresses: readonly string[]): RequestOptions["lookup"] {
+  let nextIndex = 0;
+  return ((_hostname: string, options: unknown, callback: (...args: unknown[]) => void) => {
+    const requestedFamily = typeof options === "number"
+      ? options
+      : typeof options === "object" && options !== null && "family" in options
+      ? Number((options as { family?: unknown }).family ?? 0)
+      : 0;
+    const candidates = addresses.filter((address) =>
+      requestedFamily === 0 || addressFamily(address) === requestedFamily
+    );
+    if (candidates.length === 0) {
+      callback(new Error("No validated address matches the requested address family"));
+      return;
+    }
+    const wantsAll = typeof options === "object" && options !== null &&
+      (options as { all?: unknown }).all === true;
+    if (wantsAll) {
+      callback(
+        null,
+        candidates.map((address) => ({ address, family: addressFamily(address) })),
+      );
+      return;
+    }
+    const address = candidates[nextIndex++ % candidates.length]!;
+    callback(null, address, addressFamily(address));
+  }) as RequestOptions["lookup"];
+}
+
+function copyResponseHeaders(message: IncomingMessage): Headers {
+  const headers = new Headers();
+  for (let i = 0; i < message.rawHeaders.length; i += 2) {
+    const name = message.rawHeaders[i];
+    const value = message.rawHeaders[i + 1];
+    if (name !== undefined && value !== undefined) headers.append(name, value);
+  }
+  return headers;
+}
+
+async function normalizeRequestBody(
+  url: URL,
+  init: RequestInit,
+  headers: Headers,
+): Promise<BodyInit | null> {
+  const body = init.body ?? null;
+  if (body instanceof URLSearchParams && !headers.has("content-type")) {
+    headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
+  } else if (body instanceof Blob && body.type && !headers.has("content-type")) {
+    headers.set("content-type", body.type);
+  } else if (typeof FormData !== "undefined" && body instanceof FormData) {
+    const normalized = new Request(url, {
+      method: init.method ?? "POST",
+      headers,
+      body,
+    });
+    const normalizedHeaders = new Headers(normalized.headers);
+    for (const [name, value] of normalizedHeaders) headers.set(name, value);
+    return new Uint8Array(await normalized.arrayBuffer());
+  }
+  return body;
+}
+
+async function writeRequestBody(request: ClientRequest, body: BodyInit | null): Promise<void> {
+  if (body === null) {
+    request.end();
+    return;
+  }
+  if (typeof body === "string" || body instanceof URLSearchParams) {
+    request.end(String(body));
+    return;
+  }
+  if (body instanceof ArrayBuffer) {
+    request.end(new Uint8Array(body));
+    return;
+  }
+  if (ArrayBuffer.isView(body)) {
+    request.end(new Uint8Array(body.buffer, body.byteOffset, body.byteLength));
+    return;
+  }
+
+  const { Readable } = await import("node:stream");
+  const webStream = body instanceof Blob ? body.stream() : body;
+  const source = Readable.fromWeb(webStream as globalThis.ReadableStream<Uint8Array>);
+  await new Promise<void>((resolve, reject) => {
+    source.once("error", reject);
+    request.once("error", reject);
+    request.once("finish", resolve);
+    source.pipe(request);
+  });
+}
+
+async function decodeResponseBody(
+  response: IncomingMessage,
+  headers: Headers,
+): Promise<Readable> {
+  const encoding = headers.get("content-encoding")?.trim().toLowerCase();
+  if (!encoding || encoding === "identity") return response;
+
+  const zlib = await import("node:zlib");
+  let decoder:
+    | ReturnType<typeof zlib.createGunzip>
+    | ReturnType<typeof zlib.createInflate>
+    | ReturnType<typeof zlib.createBrotliDecompress>;
+  if (encoding === "gzip" || encoding === "x-gzip") {
+    decoder = zlib.createGunzip();
+  } else if (encoding === "deflate") {
+    decoder = zlib.createInflate();
+  } else if (encoding === "br") {
+    decoder = zlib.createBrotliDecompress();
+  } else {
+    return response;
+  }
+  headers.delete("content-encoding");
+  headers.delete("content-length");
+  return response.pipe(decoder);
+}
+
+/** @internal Used by the central egress guard after DNS policy validation. */
+export async function fetchWithPinnedAddresses(
+  url: URL,
+  addresses: readonly string[],
+  init: RequestInit,
+): Promise<Response> {
+  if (addresses.length === 0) {
+    throw new Error(`No validated addresses are available for ${url.host}`);
+  }
+  const headers = new Headers(init.headers);
+  const body = await normalizeRequestBody(url, init, headers);
+  const requestHeaders: Record<string, string> = {};
+  for (const [name, value] of headers) requestHeaders[name] = value;
+
+  const transport = url.protocol === "https:"
+    ? await import("node:https")
+    : await import("node:http");
+  const requestOptions: RequestOptions & { autoSelectFamily?: boolean } = {
+    protocol: url.protocol,
+    hostname: url.hostname,
+    port: url.port || undefined,
+    path: `${url.pathname}${url.search}`,
+    method: init.method ?? "GET",
+    headers: requestHeaders,
+    lookup: createPinnedLookup(addresses),
+    // Let Node/Bun race the complete validated address set instead of binding
+    // availability to whichever A/AAAA record happened to be returned first.
+    autoSelectFamily: true,
+    ...(url.protocol === "https:" ? { servername: url.hostname } : {}),
+  };
+
+  return await new Promise<Response>((resolve, reject) => {
+    let settled = false;
+    let responseMessage: IncomingMessage | undefined;
+    const cleanupAbortListener = () => init.signal?.removeEventListener("abort", abort);
+    const rejectBeforeResponse = (error: unknown) => {
+      cleanupAbortListener();
+      reject(error);
+    };
+    const request = transport.request(requestOptions, async (message) => {
+      responseMessage = message;
+      try {
+        const responseHeaders = copyResponseHeaders(message);
+        const decoded = await decodeResponseBody(message, responseHeaders);
+        decoded.once("end", cleanupAbortListener);
+        decoded.once("close", cleanupAbortListener);
+        decoded.once("error", cleanupAbortListener);
+        const { Readable } = await import("node:stream");
+        const webBody = Readable.toWeb(decoded) as globalThis.ReadableStream<Uint8Array>;
+        settled = true;
+        resolve(
+          new Response(webBody, {
+            status: message.statusCode ?? 500,
+            statusText: message.statusMessage ?? "",
+            headers: responseHeaders,
+          }),
+        );
+      } catch (error) {
+        rejectBeforeResponse(error);
+      }
+    });
+
+    const abort = () => {
+      const reason = init.signal?.reason ??
+        new DOMException("The operation was aborted", "AbortError");
+      responseMessage?.destroy(reason instanceof Error ? reason : undefined);
+      request.destroy(reason instanceof Error ? reason : undefined);
+      if (!settled) rejectBeforeResponse(reason);
+    };
+    init.signal?.addEventListener("abort", abort, { once: true });
+    if (init.signal?.aborted) {
+      abort();
+      return;
+    }
+    request.once("error", rejectBeforeResponse);
+    void writeRequestBody(request, body).catch((error) => request.destroy(error));
+  });
+}

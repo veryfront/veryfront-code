@@ -17,7 +17,6 @@ describe("tool/remote-mcp", () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
       endpoint: "https://mcp.test",
-      fetch: () => Promise.reject("caller stopped"),
     });
 
     await assertRejects(
@@ -32,17 +31,18 @@ describe("tool/remote-mcp", () => {
     const source = createRemoteMCPToolSource({
       id: "private",
       endpoint: "http://169.254.169.254/latest/meta-data",
-      fetch: () => {
-        calls++;
-        return Promise.resolve(Response.json({}));
-      },
     });
 
-    await assertRejects(
-      () => source.listTools(),
-      Error,
-      "internal host",
-    );
+    await withMockFetch(() => {
+      calls++;
+      return Promise.resolve(Response.json({}));
+    }, async () => {
+      await assertRejects(
+        () => source.listTools(),
+        Error,
+        "internal host",
+      );
+    });
     assertEquals(calls, 0);
   });
 
@@ -833,17 +833,16 @@ describe("tool/remote-mcp", () => {
       id: "docs",
       endpoint: "https://mcp.test",
       headers: { Authorization: "Bearer remote-token" },
-      fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
-        redirectMode = init?.redirect;
-        return Response.json({
-          jsonrpc: "2.0",
-          id: "docs:tools:list",
-          result: { tools: [] },
-        });
-      }) as typeof fetch,
     });
 
-    await redirectSafeSource.listTools();
+    await withMockFetch(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      redirectMode = init?.redirect;
+      return Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:list",
+        result: { tools: [] },
+      });
+    }, async () => await redirectSafeSource.listTools());
     // The guarded transport must observe redirects itself so it can reject the
     // destination before fetch follows it. The caller-visible mode remains
     // `error`: any redirect response is rejected by guardedOutboundFetch.
@@ -855,19 +854,20 @@ describe("tool/remote-mcp", () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
       endpoint: "https://mcp.test",
-      fetch: (async () => {
-        fetchCalled = true;
-        return Response.json({});
-      }) as typeof fetch,
     });
-    const cyclic: Record<string, unknown> = {};
-    cyclic.self = cyclic;
+    await withMockFetch(async () => {
+      fetchCalled = true;
+      return Response.json({});
+    }, async () => {
+      const cyclic: Record<string, unknown> = {};
+      cyclic.self = cyclic;
 
-    await assertRejects(
-      () => source.executeTool("search_docs", cyclic),
-      TypeError,
-      "bounded JSON object",
-    );
+      await assertRejects(
+        () => source.executeTool("search_docs", cyclic),
+        TypeError,
+        "bounded JSON object",
+      );
+    });
     assertEquals(fetchCalled, false);
   });
 });

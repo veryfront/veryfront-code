@@ -46,7 +46,6 @@ Deno.test("createAgentServiceRemoteMcpConfig builds Veryfront API MCP config", a
 });
 
 Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without dropping options", () => {
-  const customFetch = () => Promise.resolve(new Response("{}"));
   const headers = { Authorization: "Bearer external-token" };
   assertEquals(
     createAgentServiceRemoteMcpConfig({
@@ -54,7 +53,6 @@ Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without d
         id: "linear",
         endpoint: "https://linear.example/mcp",
         headers,
-        fetch: customFetch,
         listMethod: "tools/list",
         callMethod: "tools/call",
       },
@@ -65,7 +63,6 @@ Deno.test("createAgentServiceRemoteMcpConfig builds generic MCP config without d
       id: "linear",
       endpoint: "https://linear.example/mcp",
       headers,
-      fetch: customFetch,
       listMethod: "tools/list",
       callMethod: "tools/call",
     },

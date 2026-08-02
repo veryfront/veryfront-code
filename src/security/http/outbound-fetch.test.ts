@@ -1,6 +1,15 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { guardedOutboundFetch, OutboundRequestBlockedError } from "./outbound-fetch.ts";
+import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import {
+  guardedEgressFetch,
+  WorkerEgressBlockedError,
+} from "#veryfront/security/sandbox/worker-egress-guard.ts";
+import {
+  createOriginBoundOutboundFetch,
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "./outbound-fetch.ts";
 
 describe("guardedOutboundFetch", () => {
   it("rejects loopback and cloud metadata before invoking fetch", async () => {
@@ -11,12 +20,12 @@ describe("guardedOutboundFetch", () => {
     };
 
     await assertRejects(
-      () => guardedOutboundFetch("http://127.0.0.1/private", undefined, { fetchImpl }),
+      () => withMockFetch(fetchImpl, () => guardedOutboundFetch("http://127.0.0.1/private")),
       OutboundRequestBlockedError,
       "internal host",
     );
     await assertRejects(
-      () => guardedOutboundFetch("http://169.254.169.254/metadata", undefined, { fetchImpl }),
+      () => withMockFetch(fetchImpl, () => guardedOutboundFetch("http://169.254.169.254/metadata")),
       OutboundRequestBlockedError,
       "internal host",
     );
@@ -30,12 +39,13 @@ describe("guardedOutboundFetch", () => {
       return Promise.resolve(new Response("unexpected"));
     };
     await assertRejects(
-      () => guardedOutboundFetch("file:///private/config", undefined, { fetchImpl }),
+      () => withMockFetch(fetchImpl, () => guardedOutboundFetch("file:///private/config")),
       OutboundRequestBlockedError,
       "unsupported URL scheme",
     );
     await assertRejects(
-      () => guardedOutboundFetch("https://user:secret@93.184.216.34/", undefined, { fetchImpl }),
+      () =>
+        withMockFetch(fetchImpl, () => guardedOutboundFetch("https://user:secret@93.184.216.34/")),
       OutboundRequestBlockedError,
       "URL credentials are not allowed",
     );
@@ -46,14 +56,14 @@ describe("guardedOutboundFetch", () => {
     let calls = 0;
     await assertRejects(
       () =>
-        guardedOutboundFetch("https://public.example/resource", undefined, {
+        guardedEgressFetch("https://public.example/resource", undefined, {
           fetchImpl: () => {
             calls++;
             return Promise.resolve(new Response("unexpected"));
           },
-          resolveHost: () => Promise.resolve(["10.0.0.8"]),
+          options: { resolveHost: () => Promise.resolve(["10.0.0.8"]) },
         }),
-      OutboundRequestBlockedError,
+      WorkerEgressBlockedError,
       "blocked for host",
     );
     assertEquals(calls, 0);
@@ -76,15 +86,18 @@ describe("guardedOutboundFetch", () => {
 
     await assertRejects(
       () =>
-        guardedOutboundFetch("https://93.184.216.34/start", undefined, {
+        withMockFetch(
           fetchImpl,
-          authorizeUrl(url) {
-            seen.push(url.href);
-            if (url.hostname !== "93.184.216.34") {
-              throw new OutboundRequestBlockedError("origin is not allowed");
-            }
-          },
-        }),
+          () =>
+            guardedOutboundFetch("https://93.184.216.34/start", undefined, {
+              authorizeUrl(url) {
+                seen.push(url.href);
+                if (url.hostname !== "93.184.216.34") {
+                  throw new OutboundRequestBlockedError("origin is not allowed");
+                }
+              },
+            }),
+        ),
       OutboundRequestBlockedError,
       "origin is not allowed",
     );
@@ -92,5 +105,53 @@ describe("guardedOutboundFetch", () => {
       "https://93.184.216.34/start",
       "https://93.184.216.35/next",
     ]);
+  });
+
+  it("preserves Request input semantics for origin-bound provider transports", async () => {
+    let captured: Request | undefined;
+    const fetchImpl: typeof fetch = async (input, init) => {
+      captured = new Request(input, init);
+      return Response.json({ ok: true });
+    };
+    const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
+    const request = new Request("https://93.184.216.34/v1/messages", {
+      method: "POST",
+      headers: { "x-api-key": "provider-secret", "content-type": "application/json" },
+      body: '{"message":"hello"}',
+    });
+
+    const response = await withMockFetch(fetchImpl, () => providerFetch(request));
+
+    assertEquals(response.status, 200);
+    assertEquals(captured?.method, "POST");
+    assertEquals(captured?.headers.get("x-api-key"), "provider-secret");
+    assertEquals(await captured?.text(), '{"message":"hello"}');
+  });
+
+  it("rejects provider redirects before API-key credentials can leave the origin", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = () => {
+      calls++;
+      return Promise.resolve(
+        new Response(null, {
+          status: 307,
+          headers: { location: "https://93.184.216.35/collect" },
+        }),
+      );
+    };
+    const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
+
+    await assertRejects(
+      () =>
+        withMockFetch(fetchImpl, () =>
+          providerFetch("https://93.184.216.34/v1/messages", {
+            method: "POST",
+            headers: { "x-api-key": "provider-secret" },
+            body: "payload",
+          })),
+      OutboundRequestBlockedError,
+      "unexpected redirect",
+    );
+    assertEquals(calls, 1);
   });
 });

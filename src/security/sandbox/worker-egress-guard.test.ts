@@ -620,12 +620,21 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
     assertEquals(cancellations, 21);
   });
 
-  it("strips Authorization and Cookie on a cross-origin redirect", async () => {
-    const seen: Array<{ auth: string | null; cookie: string | null }> = [];
+  it("strips bearer, cookie, and provider credentials on a cross-origin redirect", async () => {
+    const credentialHeaders = [
+      "authorization",
+      "cookie",
+      "proxy-authorization",
+      "x-api-key",
+      "api-key",
+      "x-auth-token",
+      "x-goog-api-key",
+    ] as const;
+    const seen: Array<Record<string, string | null>> = [];
     const fetchImpl: WorkerEgressFetch = (input, init) => {
       const url = input instanceof Request ? input.url : String(input);
       const headers = new Headers(init?.headers);
-      seen.push({ auth: headers.get("authorization"), cookie: headers.get("cookie") });
+      seen.push(Object.fromEntries(credentialHeaders.map((name) => [name, headers.get(name)])));
       if (url === "http://93.184.216.34/start") {
         return Promise.resolve(redirectTo("http://93.184.216.35/landing"));
       }
@@ -634,12 +643,22 @@ describe("worker-egress-guard guardedEgressFetch redirect handling", () => {
 
     const res = await guardedEgressFetch(
       "http://93.184.216.34/start",
-      { headers: { Authorization: "Bearer secret", Cookie: "sid=abc" } },
+      {
+        headers: Object.fromEntries(
+          credentialHeaders.map((name) => [name, `${name}-secret`]),
+        ),
+      },
       { fetchImpl },
     );
     assertEquals(res.status, 200);
-    assertEquals(seen[0], { auth: "Bearer secret", cookie: "sid=abc" });
-    assertEquals(seen[1], { auth: null, cookie: null });
+    assertEquals(
+      seen[0],
+      Object.fromEntries(credentialHeaders.map((name) => [name, `${name}-secret`])),
+    );
+    assertEquals(
+      seen[1],
+      Object.fromEntries(credentialHeaders.map((name) => [name, null])),
+    );
   });
 
   it("preserves Authorization on a same-origin redirect", async () => {

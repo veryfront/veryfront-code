@@ -38,7 +38,7 @@ import {
 
 // Extracted modules
 import { embedSourceUrl, extractSourceUrl } from "./source-url-embed.ts";
-import { isDegradedArtifact, markDegradedArtifact } from "./degraded-artifact.ts";
+import { isDegradedArtifact } from "./degraded-artifact.ts";
 import {
   buildHttpCacheIdentity,
   buildHttpCacheIdentityMetadata,
@@ -59,7 +59,6 @@ import { extractBundleDeps, validateBundleDepsExist } from "./bundle-deps-valida
 import {
   bundleAccumulatorStorage,
   createBundleAccumulator,
-  markBundleAccumulatorIncomplete,
   trackCachedBundleGraph,
   trackWrittenBundle,
 } from "./bundle-accumulator.ts";
@@ -452,7 +451,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     }
 
     processingStack.add(cacheIdentity);
-    let degraded: readonly string[] = [];
     try {
       const rewritten = await rewriteModuleImports(
         code,
@@ -461,13 +459,11 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         cacheHttpModule,
       );
       code = rewritten.code;
-      degraded = rewritten.degraded;
     } finally {
       processingStack.delete(cacheIdentity);
     }
 
     code = embedSourceUrl(code, normalizedUrl);
-    if (degraded.length > 0) code = markDegradedArtifact(code);
     if (!isHttpBundleCodeWithinLimit(code)) {
       throw BUNDLE_ERROR.create({
         detail: `Rewritten HTTP module exceeds ${MAX_CACHED_HTTP_BUNDLE_BYTES} bytes`,
@@ -482,21 +478,6 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
         detail:
           `[HTTP-CACHE] INVARIANT VIOLATION: File write succeeded but file does not exist: ${cachePath}`,
       });
-    }
-
-    if (degraded.length > 0) {
-      // The file on disk carries this render through, but the artifact is not
-      // the one this URL is supposed to produce. Keeping it out of the
-      // distributed cache and the in-memory path map means the next render
-      // retries the prefetch instead of inheriting one upstream blip for the
-      // lifetime of the distributed entry.
-      httpCacheLog.warn("Not caching a module with unresolved dynamic imports", {
-        url: safeUrl,
-        hash,
-        degraded: degraded.map(sanitizeUrlForSpan),
-      });
-      markBundleAccumulatorIncomplete();
-      return cachePath;
     }
 
     try {

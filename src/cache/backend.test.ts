@@ -1649,3 +1649,59 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "ApiCacheBackend does not pair a tenant env endpoint with a host credential",
+  fn: async () => {
+    const { ApiCacheBackend } = await importBackend();
+    const globals = globalThis as Record<string, unknown>;
+    const originalAdapter = globals.__vf_multi_project_adapter;
+    const originalProjectEnvGetter = globals.__vfProjectEnvGetter;
+    const originalProjectEnvActiveChecker = globals.__vfProjectEnvActiveChecker;
+    const originalFetch = globalThis.fetch;
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    const capturedUrls: string[] = [];
+
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+    Deno.env.set("VERYFRONT_API_TOKEN", "host-token");
+    globals.__vfProjectEnvGetter = (key: string) =>
+      key === "VERYFRONT_API_BASE_URL" ? "https://93.184.216.35" : undefined;
+    globals.__vfProjectEnvActiveChecker = () => true;
+    globals.__vf_multi_project_adapter = {
+      getCurrentRequestContext: () => ({ projectId: "project-123" }),
+    };
+    globalThis.fetch = ((input: RequestInfo | URL) => {
+      capturedUrls.push(String(input));
+      return Promise.resolve(
+        Response.json({ deleted: 1 }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const cache = new ApiCacheBackend({
+        circuitBreakerName: "api-cache-tenant-endpoint-isolation-test",
+      });
+      assertEquals(await cache.delByPattern("agent:*"), 1);
+      assertEquals(
+        capturedUrls,
+        ["https://93.184.216.34/projects/project-123/cache/del-pattern"],
+      );
+    } finally {
+      if (originalAdapter === undefined) delete globals.__vf_multi_project_adapter;
+      else globals.__vf_multi_project_adapter = originalAdapter;
+      if (originalProjectEnvGetter === undefined) delete globals.__vfProjectEnvGetter;
+      else globals.__vfProjectEnvGetter = originalProjectEnvGetter;
+      if (originalProjectEnvActiveChecker === undefined) {
+        delete globals.__vfProjectEnvActiveChecker;
+      } else {
+        globals.__vfProjectEnvActiveChecker = originalProjectEnvActiveChecker;
+      }
+      globalThis.fetch = originalFetch;
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+    }
+  },
+});

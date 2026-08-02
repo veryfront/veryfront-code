@@ -85,7 +85,6 @@ export class ApiCacheBackend implements CacheBackend {
   private readonly apiOrigin: string;
   private readonly hasExplicitApiBaseUrl: boolean;
   private readonly explicitApiToken?: string;
-  private readonly fetchImpl?: typeof fetch;
   private keyPrefix: string;
   private timeoutMs: number;
   private readonly maxResponseBytes: number;
@@ -96,8 +95,6 @@ export class ApiCacheBackend implements CacheBackend {
       apiBaseUrl?: string;
       /** Credential paired with a caller-selected apiBaseUrl. */
       apiToken?: string;
-      /** Trusted test/integration transport; policy still runs before it. */
-      fetchImpl?: typeof fetch;
       keyPrefix?: string;
       timeoutMs?: number;
       maxResponseBytes?: number;
@@ -107,11 +104,9 @@ export class ApiCacheBackend implements CacheBackend {
     this.hasExplicitApiBaseUrl = options.apiBaseUrl !== undefined;
     this.apiBaseUrl = options.apiBaseUrl ??
       getHostEnv("VERYFRONT_API_BASE_URL") ??
-      getEnvValue("VERYFRONT_API_BASE_URL") ??
       "https://api.veryfront.com";
     this.apiOrigin = new URL(this.apiBaseUrl).origin;
     this.explicitApiToken = options.apiToken;
-    this.fetchImpl = options.fetchImpl;
     this.keyPrefix = options.keyPrefix ?? "";
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
@@ -237,7 +232,6 @@ export class ApiCacheBackend implements CacheBackend {
                   redirect: "error",
                 },
                 {
-                  fetchImpl: this.fetchImpl,
                   authorizeUrl: (target) => {
                     if (target.origin !== this.apiOrigin) {
                       throw new OutboundRequestBlockedError(

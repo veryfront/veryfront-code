@@ -14,7 +14,6 @@ export function requestWithRetry(
   retryConfig: RetryConfig,
   options: RequestOptions = {},
   outboundPolicy?: {
-    fetchImpl?: typeof fetch;
     authorizeUrl?: (url: URL) => void | Promise<void>;
   },
 ): Promise<unknown> {

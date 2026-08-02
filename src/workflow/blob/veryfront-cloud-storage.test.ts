@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { runWithVeryfrontCloudContext } from "#veryfront/provider";
 import { VeryfrontCloudBlobStorage } from "./veryfront-cloud-storage.ts";
 
 const originalFetch = globalThis.fetch;
@@ -377,6 +378,41 @@ describe("VeryfrontCloudBlobStorage", () => {
     }
   });
 
+  it("never pairs host credentials with a source-selected cloud endpoint", async () => {
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+    Deno.env.set("VERYFRONT_API_BASE_URL", "https://93.184.216.34");
+    Deno.env.set("VERYFRONT_API_TOKEN", "host-token");
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      return Promise.resolve(new Response("unexpected"));
+    }) as typeof fetch;
+
+    try {
+      await runWithVeryfrontCloudContext(
+        {
+          apiBaseUrl: "https://93.184.216.35",
+          projectSlug: "tenant-project",
+        },
+        async () => {
+          const storage = new VeryfrontCloudBlobStorage();
+          await assertRejects(
+            () => storage.put("secret"),
+            Error,
+            "VeryfrontCloudBlobStorage requires auth",
+          );
+        },
+      );
+      assertEquals(fetchCalls, 0);
+    } finally {
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+      else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+    }
+  });
+
   it("rejects blob IDs containing path traversal sequences", async () => {
     const storage = new VeryfrontCloudBlobStorage({
       apiBaseUrl: "https://93.184.216.34",
@@ -454,5 +490,87 @@ describe("VeryfrontCloudBlobStorage", () => {
     });
 
     await assertRejects(() => storage.getBytes("blob-id"), RangeError, "exceeds 4 bytes");
+  });
+
+  it("rejects known-size uploads before opening a network request", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      return Promise.resolve(new Response("unexpected"));
+    }) as typeof fetch;
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_test",
+      projectSlug: "project",
+      maxUploadBytes: 4,
+    });
+
+    for (
+      const data of [
+        "12345",
+        new Uint8Array([1, 2, 3, 4, 5]),
+        new Blob([new Uint8Array([1, 2, 3, 4, 5])]),
+      ]
+    ) {
+      await assertRejects(
+        () => storage.put(data),
+        Error,
+        "upload exceeds 4 bytes",
+      );
+    }
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("bounds and cancels streamed upload preprocessing", async () => {
+    let cancelled = false;
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      return Promise.resolve(new Response("unexpected"));
+    }) as typeof fetch;
+    const input = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.enqueue(new Uint8Array([4, 5, 6]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_test",
+      projectSlug: "project",
+      maxUploadBytes: 5,
+    });
+
+    await assertRejects(() => storage.put(input), Error, "Blob upload exceeds 5 bytes");
+    assertEquals(cancelled, true);
+    assertEquals(fetchCalls, 0);
+  });
+
+  it("times out and cancels a stalled upload stream before network access", async () => {
+    let cancelled = false;
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls++;
+      return Promise.resolve(new Response("unexpected"));
+    }) as typeof fetch;
+    const input = new ReadableStream<Uint8Array>({
+      pull: () => new Promise<void>(() => {}),
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const storage = new VeryfrontCloudBlobStorage({
+      apiBaseUrl: "https://93.184.216.34",
+      apiToken: "vf_test",
+      projectSlug: "project",
+      requestTimeoutMs: 5,
+    });
+
+    await assertRejects(() => storage.put(input), Error, "timed out");
+    assertEquals(cancelled, true);
+    assertEquals(fetchCalls, 0);
   });
 });
