@@ -480,6 +480,55 @@ describe("validateExtension", () => {
     assertEquals(issues.some((issue) => issue.includes("extends")), true);
   });
 
+  it("requires preset children to be a bounded dense descriptor snapshot", () => {
+    const child: Extension = {
+      name: "child",
+      version: "1.0.0",
+      capabilities: [],
+    };
+    const children = new Proxy([child], {
+      get(target, property, receiver) {
+        if (property === "length" || property === "0") {
+          throw new Error(`must not read ${String(property)}`);
+        }
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    assertEquals(
+      validateExtension({
+        name: "preset",
+        version: "1.0.0",
+        capabilities: [],
+        extends: children,
+      }),
+      [],
+    );
+
+    const sparse = new Array<Extension>(1);
+    const sparseIssues = validateExtension({
+      name: "sparse-preset",
+      version: "1.0.0",
+      capabilities: [],
+      extends: sparse,
+    });
+    assertEquals(
+      sparseIssues.some((issue) => issue.includes("dense array")),
+      true,
+    );
+
+    const oversized = Array.from({ length: 257 }, () => child);
+    const oversizedIssues = validateExtension({
+      name: "oversized-preset",
+      version: "1.0.0",
+      capabilities: [],
+      extends: oversized,
+    });
+    assertEquals(
+      oversizedIssues.some((issue) => issue.includes("at most 256 entries")),
+      true,
+    );
+  });
+
   it("rejects null input", () => {
     const issues = validateExtension(null);
     assertEquals(issues.length, 1);

@@ -49,7 +49,11 @@ import {
   containsUnicodeControlOrLineSeparator,
   isWellFormedUnicode,
   MAX_EXTENSION_NAME_CHARACTERS,
+  MAX_EXTENSION_PRESET_CHILDREN,
+  MAX_EXTENSION_PRESET_DEPTH,
+  MAX_EXTENSION_PRESET_NODES,
   MAX_EXTENSION_VERSION_CHARACTERS,
+  snapshotDenseMetadataArray,
 } from "./metadata-policy.ts";
 import {
   createIntrinsicPromise,
@@ -265,33 +269,47 @@ export class ExtensionLoader {
    * than stack-overflowing.
    */
   flattenPresets(extensions: ResolvedExtension[]): ResolvedExtension[] {
-    return this.flattenPresetsInner(extensions, new Set());
+    return this.flattenPresetsInner(extensions, new Set(), 0, { visited: 0 });
   }
 
   private flattenPresetsInner(
     extensions: ResolvedExtension[],
     path: Set<Extension>,
+    depth: number,
+    budget: { visited: number },
   ): ResolvedExtension[] {
+    if (depth > MAX_EXTENSION_PRESET_DEPTH) {
+      throw EXTENSION_VALIDATION_ERROR.create({
+        message: `Extension preset nesting exceeds ${MAX_EXTENSION_PRESET_DEPTH} levels`,
+      });
+    }
     const result: ResolvedExtension[] = [];
 
     for (const resolved of extensions) {
+      budget.visited += 1;
+      if (budget.visited > MAX_EXTENSION_PRESET_NODES) {
+        throw EXTENSION_VALIDATION_ERROR.create({
+          message: `Extension preset graph exceeds ${MAX_EXTENSION_PRESET_NODES} nodes`,
+        });
+      }
       const candidate = resolved.extension as unknown;
       this.assertValidExtension(candidate);
       const ext = candidate;
+      const preset = this.snapshotPresetMetadata(ext);
 
-      if (ext.extends && ext.extends.length > 0) {
+      if (preset.children.length > 0) {
         if (path.has(ext)) {
           throw EXTENSION_VALIDATION_ERROR.create({
-            message: `Circular preset extends chain detected via "${ext.name}"`,
+            message: `Circular preset extends chain detected via "${preset.extensionName}"`,
           });
         }
         path.add(ext);
-        const children = ext.extends.map((child) => ({
+        const children = preset.children.map((child) => ({
           extension: child,
           source: resolved.source,
           origin: resolved.origin,
         }));
-        result.push(...this.flattenPresetsInner(children, path));
+        result.push(...this.flattenPresetsInner(children, path, depth + 1, budget));
         path.delete(ext);
       } else {
         result.push(resolved);
@@ -299,6 +317,50 @@ export class ExtensionLoader {
     }
 
     return result;
+  }
+
+  private snapshotPresetMetadata(
+    extension: Extension,
+  ): Readonly<{ extensionName: string; children: readonly Extension[] }> {
+    const read = (field: "name" | "extends"): unknown => {
+      let descriptor: PropertyDescriptor | undefined;
+      try {
+        descriptor = Object.getOwnPropertyDescriptor(extension, field);
+      } catch (cause) {
+        throw new TypeError(`extension.${field} could not be inspected`, { cause });
+      }
+      if (!descriptor) return undefined;
+      if (!descriptor.enumerable || !("value" in descriptor)) {
+        throw new TypeError(
+          `extension.${field} must be an enumerable own data property`,
+        );
+      }
+      return descriptor.value;
+    };
+
+    const extensionName = read("name");
+    if (
+      typeof extensionName !== "string" || extensionName.trim().length === 0 ||
+      extensionName.trim() !== extensionName ||
+      extensionName.length > MAX_EXTENSION_NAME_CHARACTERS ||
+      !isWellFormedUnicode(extensionName) ||
+      containsUnicodeControlOrLineSeparator(extensionName)
+    ) {
+      throw new TypeError("extension.name changed after validation");
+    }
+    const extendsValue = read("extends");
+    const children = extendsValue === undefined
+      ? Object.freeze([]) as readonly unknown[]
+      : snapshotDenseMetadataArray(
+        extendsValue,
+        "extension.extends",
+        0,
+        MAX_EXTENSION_PRESET_CHILDREN,
+      );
+    return Object.freeze({
+      extensionName,
+      children: children as readonly Extension[],
+    });
   }
 
   /**
