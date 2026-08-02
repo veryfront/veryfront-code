@@ -69,6 +69,31 @@ Ambiguous environment configuration fails closed. Unauthorized responses are
 non-cacheable and receive the resolved CORS and security policy. Credential
 verification uses constant-time comparison.
 
+### Shared proxy identity and project environments
+
+Production shared-proxy mode requires an operator-owned, private edge and
+`VERYFRONT_TRUST_FORWARDED_HEADERS=1`. That edge must remove client-supplied
+forwarding, project, environment, release, branch, path, and token headers
+before setting the canonical values. The runtime origin must not be reachable
+directly. Every tenant-bearing route, including module and WebSocket routes,
+requires the edge-supplied project slug and request credential; a process-level
+API token is never substituted for a missing shared-request credential.
+
+Project and environment IDs become cache or secret-fetch authority only after
+that same proxy trust check succeeds. Environment cache identity includes the
+canonical project slug, project ID, environment ID, and a digest of the
+request credential. Fetch failure, timeout, credential rejection, or explicit
+invalidation never returns stale or empty secret data.
+
+If both `VERYFRONT_API_INTERNAL_USER` and `VERYFRONT_API_INTERNAL_PASS` are
+configured, `VERYFRONT_API_BASE_URL` must provide the canonical
+`/internal/project-environment-variables` endpoint. Before using those host
+credentials, the runtime verifies the request bearer token against the
+project-scoped management endpoint. A missing, redirected, or failed internal
+endpoint is an error; there is no compatibility fallback to masked management
+values. Leave both internal credential variables unset when that endpoint is
+not deployed.
+
 ### Input validation
 
 Each standalone body, form, and query parser applies the same snapshotted
