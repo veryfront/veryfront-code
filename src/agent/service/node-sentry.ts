@@ -6,6 +6,7 @@ import {
   flushApplicationErrors,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
+import { isSentryEnabled } from "#veryfront/observability/sentry.ts";
 import type { LogEntry, LogRecordEmitter } from "#veryfront/utils/logger/index.ts";
 import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/index.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
@@ -40,6 +41,8 @@ type SentryExtensionLoader = () => Promise<SentryExtensionModule>;
 const DEFAULT_SERVICE_NAME = "veryfront-agent";
 const DEFAULT_ENVIRONMENT = "production";
 const DEFAULT_FLUSH_TIMEOUT_MS = 2_000;
+const MISSING_DSN_WARNING =
+  "Sentry is enabled, but SENTRY_DSN is empty. Sentry reporting is disabled.";
 const EXPECTED_ERROR_CODES = new Set([
   "AUTHENTICATION_REQUIRED",
   "CONTROL_PLANE_RUN_ID_MISMATCH",
@@ -53,6 +56,7 @@ const EXPECTED_ERROR_CODES = new Set([
 let currentInitializationId = 0;
 let currentLifecycle: NodeAgentServiceApplicationErrorLifecycle | undefined;
 let currentLifecycleOwner: symbol | undefined;
+let missingDsnWarningEmitted = false;
 
 function readTrimmedEnv(
   env: NodeAgentServiceApplicationErrorEnv,
@@ -68,6 +72,7 @@ export function resolveNodeAgentServiceSentryConfig(
   defaultServiceName = DEFAULT_SERVICE_NAME,
 ): NodeAgentServiceSentryConfig | undefined {
   const dsn = readTrimmedEnv(env, "SENTRY_DSN");
+  if (!isSentryEnabled(env.SENTRY_ENABLED, true)) return undefined;
   if (!dsn) return undefined;
 
   const serviceName = readTrimmedEnv(env, "SENTRY_SERVICE_NAME") ??
@@ -235,7 +240,15 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
   deactivateCurrentLifecycle();
 
   const config = resolveNodeAgentServiceSentryConfig(options.env, options.defaultServiceName);
-  if (!config) return defaultLifecycle();
+  if (!config) {
+    if (
+      isSentryEnabled(options.env.SENTRY_ENABLED, false) &&
+      !readTrimmedEnv(options.env, "SENTRY_DSN")
+    ) {
+      warnAboutMissingDsnOnce();
+    }
+    return defaultLifecycle();
+  }
 
   const extension = await (options.loadExtension ?? loadNodeSentryExtension)();
   if (initializationId !== currentInitializationId) return defaultLifecycle();
@@ -287,6 +300,19 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
   };
   currentLifecycle = lifecycle;
   return lifecycle;
+}
+
+/** Reset node agent service Sentry state for tests. */
+export function resetNodeAgentServiceSentryForTests(): void {
+  currentInitializationId += 1;
+  deactivateCurrentLifecycle();
+  missingDsnWarningEmitted = false;
+}
+
+function warnAboutMissingDsnOnce(): void {
+  if (missingDsnWarningEmitted) return;
+  missingDsnWarningEmitted = true;
+  console.warn(MISSING_DSN_WARNING);
 }
 
 async function loadNodeSentryExtension(): Promise<SentryExtensionModule> {
