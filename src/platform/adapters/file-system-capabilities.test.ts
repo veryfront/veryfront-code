@@ -105,6 +105,19 @@ describe("platform/adapters/file-system-capabilities", () => {
     await assertRejects(() => captured.exact!("/a", 0), RangeError, "positive safe integer");
   });
 
+  it("separates size overflow from malformed result types", () => {
+    assertThrows(
+      () => capabilityModule.copyFixedUint8ArrayWithinLimit(new Uint8Array(3), 2, "Payload"),
+      RangeError,
+      "Payload exceeds 2 bytes",
+    );
+    assertThrows(
+      () => capabilityModule.copyFixedUint8ArrayWithinLimit("not bytes", 2, "Payload"),
+      TypeError,
+      "Payload reader returned invalid bytes",
+    );
+  });
+
   it("captures byte readers without inspecting an unrelated malformed writer", async () => {
     const captured = captureByteReadCapabilities({
       readFileBytesWithinLimit: () => Promise.resolve(new Uint8Array([4])),
