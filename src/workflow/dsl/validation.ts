@@ -23,7 +23,9 @@ function rebaseWorkflowNodes(
 ): WorkflowNode[] {
   const rebaseId = (id: string): string => {
     if (id.startsWith(newPrefix)) return id;
-    if (id.startsWith(oldPrefix)) return `${newPrefix}${id.slice(oldPrefix.length)}`;
+    if (oldPrefix && id.startsWith(oldPrefix)) {
+      return `${newPrefix}${id.slice(oldPrefix.length)}`;
+    }
     return `${newPrefix}${id}`;
   };
 

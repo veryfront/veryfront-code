@@ -96,7 +96,7 @@ describe("composite node namespacing", () => {
     assertEquals(config.nodes[1]?.dependsOn, ["fanout/first"]);
   });
 
-  it("preserves references to nodes outside the composite namespace", () => {
+  it("preserves an empty dependency list", () => {
     const node = parallel("fanout", [
       dependentStep("only", []),
     ]);
