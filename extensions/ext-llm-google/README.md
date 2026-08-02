@@ -36,7 +36,7 @@ const response = await ai.chat("google/gemini-2.5-pro", {
 ### Embeddings
 
 ```ts
-const result = await ai.embed("google/text-embedding-005", {
+const result = await ai.embed("google/gemini-embedding-2", {
   values: ["search query"],
 });
 ```
