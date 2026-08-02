@@ -124,10 +124,13 @@ function readGoogleRawToolHistory(
     const dataField = readGooglePartDataField(part);
     if (dataField === "functionCall") {
       const functionCall = readRecord(part.functionCall);
+      const functionCallArgs = functionCall?.args === undefined
+        ? {}
+        : readRecord(functionCall.args);
       if (
         !functionCall ||
         typeof functionCall.name !== "string" ||
-        !readRecord(functionCall.args)
+        !functionCallArgs
       ) {
         throw invalidGoogleProviderHistory();
       }
@@ -139,7 +142,7 @@ function readGoogleRawToolHistory(
       const legacyId = providerId === undefined ? `tool-${anonymousFunctionCallIndex++}` : id;
       const call = {
         name: functionCall.name,
-        input: functionCall.args,
+        input: functionCallArgs,
       };
       ordinaryCalls.push({ id, ...call });
       legacyOrdinaryCalls.push({ id: legacyId, ...call });

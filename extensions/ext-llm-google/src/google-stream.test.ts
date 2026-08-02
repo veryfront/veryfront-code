@@ -819,10 +819,14 @@ describe("ext-llm-google/google-stream", () => {
   });
 
   it("treats an omitted function call args field as empty arguments", async () => {
+    const rawAssistantParts = [{
+      functionCall: { id: "tool_1", name: "ping" },
+      thoughtSignature: "signed-zero-argument-call",
+    }];
     const parts = await collectParts(streamFromText([
       data({
         candidates: [{
-          content: { role: "model", parts: [{ functionCall: { id: "tool_1", name: "ping" } }] },
+          content: { role: "model", parts: rawAssistantParts },
           finishReason: "STOP",
         }],
       }),
@@ -843,6 +847,37 @@ describe("ext-llm-google/google-stream", () => {
         input: "{}",
       }],
     );
+
+    assertEquals(parts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "STOP" },
+      providerMetadata: {
+        google: { rawAssistantParts },
+      },
+    });
+
+    const continuation = buildGoogleGenerateContentRequest(
+      "google",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "tool_1",
+            toolName: "ping",
+            input: {},
+          }],
+          providerMetadata: {
+            google: { rawAssistantParts },
+          },
+        }],
+      },
+      createWarningCollector(),
+    );
+    assertEquals(continuation.contents, [{
+      role: "model",
+      parts: rawAssistantParts,
+    }]);
   });
 
   it("fully processes a trailing terminal record without a final delimiter", async () => {

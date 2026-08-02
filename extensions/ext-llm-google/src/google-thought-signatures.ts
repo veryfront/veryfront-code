@@ -192,7 +192,7 @@ function validateReplayableGooglePart(
         !functionCall ||
         typeof functionCall.name !== "string" ||
         functionCall.name.length === 0 ||
-        !readRecord(functionCall.args)
+        (functionCall.args !== undefined && !readRecord(functionCall.args))
       ) {
         throw new TypeError("Google raw assistant function call is malformed");
       }

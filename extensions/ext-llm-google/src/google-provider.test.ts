@@ -8,6 +8,7 @@ import {
 } from "veryfront/provider/shared";
 
 import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./google-provider.ts";
+import { buildGoogleGenerateContentRequest } from "./google-request-builder.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
@@ -932,6 +933,10 @@ describe("ext-llm-google/google-provider", () => {
     });
 
     it("treats an omitted function call args field as empty arguments", async () => {
+      const rawAssistantParts = [{
+        functionCall: { id: "tool_1", name: "ping" },
+        thoughtSignature: "signed-zero-argument-call",
+      }];
       const runtime = createGoogleModelRuntime({
         apiKey: "k",
         fetch: () =>
@@ -940,7 +945,7 @@ describe("ext-llm-google/google-provider", () => {
               candidates: [{
                 content: {
                   role: "model",
-                  parts: [{ functionCall: { id: "tool_1", name: "ping" } }],
+                  parts: rawAssistantParts,
                 },
                 finishReason: "STOP",
               }],
@@ -955,6 +960,28 @@ describe("ext-llm-google/google-provider", () => {
         toolCallId: "tool_1",
         toolName: "ping",
         input: "{}",
+      }]);
+      assertEquals(result.providerMetadata, {
+        google: { rawAssistantParts },
+      });
+      if (!result.content) {
+        throw new Error("Expected Google tool-call content");
+      }
+
+      const continuation = buildGoogleGenerateContentRequest(
+        "google",
+        {
+          prompt: [{
+            role: "assistant",
+            content: result.content,
+            providerMetadata: result.providerMetadata,
+          }],
+        },
+        { push() {}, drain: () => [] },
+      );
+      assertEquals(continuation.contents, [{
+        role: "model",
+        parts: rawAssistantParts,
       }]);
     });
 
