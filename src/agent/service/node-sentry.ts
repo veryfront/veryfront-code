@@ -229,7 +229,12 @@ async function withWallClockTimeout(
   }
 }
 
-/** Initialize node agent service Sentry application-error reporting. */
+/**
+ * Initialize or replace node agent service Sentry application-error reporting.
+ *
+ * An active lifecycle remains installed while an enabled replacement loads
+ * and is only retired after the replacement reporter is ready to take over.
+ */
 export async function initializeNodeAgentServiceSentryApplicationErrors(options: {
   env: NodeAgentServiceApplicationErrorEnv;
   defaultServiceName?: string;
@@ -237,10 +242,10 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
   flushTimeoutMs?: number;
 }): Promise<NodeAgentServiceApplicationErrorLifecycle> {
   const initializationId = ++currentInitializationId;
-  deactivateCurrentLifecycle();
 
   const config = resolveNodeAgentServiceSentryConfig(options.env, options.defaultServiceName);
   if (!config) {
+    deactivateCurrentLifecycle();
     if (
       isSentryEnabled(options.env.SENTRY_ENABLED, false) &&
       !readTrimmedEnv(options.env, "SENTRY_DSN")
@@ -259,13 +264,12 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
     release: config.release ?? "",
     serviceName: config.serviceName,
   });
-  setApplicationErrorReporter(reporter);
 
+  const previousLifecycle = currentLifecycle;
   const owner = Symbol("node-agent-service-sentry");
   const unsubscribeLogCapture = __subscribeLogRecordEmitter(
     createNodeAgentServiceLogApplicationErrorEmitter(),
   );
-  currentLifecycleOwner = owner;
   let active = true;
   let logCaptureActive = true;
   const flushTimeoutMs = options.flushTimeoutMs ?? DEFAULT_FLUSH_TIMEOUT_MS;
@@ -298,7 +302,10 @@ export async function initializeNodeAgentServiceSentryApplicationErrors(options:
       }
     },
   };
+  setApplicationErrorReporter(reporter);
+  currentLifecycleOwner = owner;
   currentLifecycle = lifecycle;
+  previousLifecycle?.reset();
   return lifecycle;
 }
 

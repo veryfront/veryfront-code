@@ -392,6 +392,114 @@ describe("agent/service/node-sentry", () => {
     }
   });
 
+  it("keeps the current reporter active until a concurrent replacement is ready", async () => {
+    const firstReporter = createReporter();
+    const secondReporter = createReporter();
+    const firstLifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
+      loadExtension: () =>
+        Promise.resolve({
+          createNodeSentryApplicationErrorReporter: () => firstReporter,
+        }),
+    });
+    let resolveReplacement:
+      | ((
+        extension: { createNodeSentryApplicationErrorReporter: () => ApplicationErrorReporter },
+      ) => void)
+      | undefined;
+    const replacement = initializeNodeAgentServiceSentryApplicationErrors({
+      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
+      loadExtension: () =>
+        new Promise((resolve) => {
+          resolveReplacement = resolve;
+        }),
+    });
+
+    try {
+      withMutedConsole(() => {
+        agentLogger.error("while replacement loads");
+      });
+      assertEquals(firstReporter.captured.length, 1);
+      assertEquals(secondReporter.captured, []);
+
+      resolveReplacement?.({
+        createNodeSentryApplicationErrorReporter: () => secondReporter,
+      });
+      const secondLifecycle = await replacement;
+      try {
+        withMutedConsole(() => {
+          agentLogger.error("after replacement");
+        });
+        assertEquals(firstReporter.captured.length, 1);
+        assertEquals(secondReporter.captured.length, 1);
+
+        firstLifecycle.reset();
+        withMutedConsole(() => {
+          agentLogger.error("after stale reset");
+        });
+        assertEquals(secondReporter.captured.length, 2);
+      } finally {
+        secondLifecycle.reset();
+      }
+    } finally {
+      firstLifecycle.reset();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+
+  it("preserves the current reporter when replacement loading or construction fails", async () => {
+    const reporter = createReporter();
+    const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
+      env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/1" },
+      loadExtension: () =>
+        Promise.resolve({
+          createNodeSentryApplicationErrorReporter: () => reporter,
+        }),
+    });
+
+    try {
+      for (
+        const loadExtension of [
+          () => Promise.reject(new Error("replacement load failed")),
+          () =>
+            Promise.resolve({
+              createNodeSentryApplicationErrorReporter: () => {
+                throw new Error("replacement construction failed");
+              },
+            }),
+        ]
+      ) {
+        try {
+          await initializeNodeAgentServiceSentryApplicationErrors({
+            env: { SENTRY_DSN: "https://public@example.ingest.sentry.io/2" },
+            loadExtension,
+          });
+          throw new Error("Expected replacement initialization to fail");
+        } catch (error) {
+          assertEquals(
+            error instanceof Error && error.message.startsWith("replacement "),
+            true,
+          );
+        }
+        withMutedConsole(() => {
+          agentLogger.error("after failed replacement");
+        });
+      }
+
+      assertEquals(reporter.captured.length, 2);
+      lifecycle.reset();
+      withMutedConsole(() => {
+        agentLogger.error("after cleanup");
+      });
+      assertEquals(reporter.captured.length, 2);
+    } finally {
+      lifecycle.reset();
+      __resetLogRecordEmitterForTests();
+      setApplicationErrorReporter(undefined);
+    }
+  });
+
   it("prevents stale concurrent initialization from winning reporter ownership", async () => {
     const firstReporter = createReporter();
     const secondReporter = createReporter();

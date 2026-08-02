@@ -28,10 +28,11 @@ type SentryExtensionModule = {
 
 type SentryExtensionLoader = () => Promise<SentryExtensionModule>;
 
-let initialized = false;
 let initializationGeneration = 0;
 let initializationPromise: Promise<boolean> | undefined;
 let initializationOwner: symbol | undefined;
+let initializingConfig: Required<SentryConfig> | undefined;
+let installedConfig: Required<SentryConfig> | undefined;
 let missingDsnWarningEmitted = false;
 
 /**
@@ -88,16 +89,32 @@ export function initializeSentryFromEnv(
   return config ? initializeSentry(config, loadExtension) : Promise.resolve(false);
 }
 
+/**
+ * Initialize the process-wide Sentry reporter once.
+ *
+ * Concurrent calls coalesce only when their normalized configurations are
+ * identical. Once installed, an identical configuration remains idempotent;
+ * a different configuration returns `false` because it was not applied.
+ */
 export async function initializeSentry(
   config: SentryConfig,
   loadExtension: SentryExtensionLoader = loadSentryExtension,
 ): Promise<boolean> {
-  if (initialized) return true;
-
   const dsn = config.dsn?.trim();
   if (!dsn) return false;
 
-  if (initializationPromise) return await initializationPromise;
+  const normalizedConfig: Required<SentryConfig> = {
+    dsn,
+    environment: config.environment?.trim() ?? "",
+    release: config.release?.trim() ?? "",
+    serviceName: config.serviceName?.trim() || DEFAULT_SERVICE_NAME,
+  };
+  if (installedConfig) return sentryConfigsEqual(installedConfig, normalizedConfig);
+  if (initializationPromise) {
+    return initializingConfig && sentryConfigsEqual(initializingConfig, normalizedConfig)
+      ? await initializationPromise
+      : false;
+  }
 
   const generation = initializationGeneration;
   const owner = Symbol("sentry-initialization");
@@ -105,24 +122,21 @@ export async function initializeSentry(
     const extension = await loadExtension();
     if (generation !== initializationGeneration) return false;
 
-    const reporter = extension.createSentryApplicationErrorReporter({
-      dsn,
-      environment: config.environment?.trim() ?? "",
-      release: config.release?.trim() ?? "",
-      serviceName: config.serviceName?.trim() || DEFAULT_SERVICE_NAME,
-    });
+    const reporter = extension.createSentryApplicationErrorReporter({ ...normalizedConfig });
     setApplicationErrorReporter(reporter);
-    initialized = true;
+    installedConfig = normalizedConfig;
     return true;
   })();
   initializationPromise = pending;
   initializationOwner = owner;
+  initializingConfig = normalizedConfig;
   try {
     return await pending;
   } finally {
     if (generation === initializationGeneration && initializationOwner === owner) {
       initializationPromise = undefined;
       initializationOwner = undefined;
+      initializingConfig = undefined;
     }
   }
 }
@@ -131,9 +145,18 @@ export function resetSentryForTests(): void {
   initializationGeneration += 1;
   initializationPromise = undefined;
   initializationOwner = undefined;
+  initializingConfig = undefined;
+  installedConfig = undefined;
   missingDsnWarningEmitted = false;
-  initialized = false;
   setApplicationErrorReporter(undefined);
+}
+
+function sentryConfigsEqual(
+  left: Required<SentryConfig>,
+  right: Required<SentryConfig>,
+): boolean {
+  return left.dsn === right.dsn && left.environment === right.environment &&
+    left.release === right.release && left.serviceName === right.serviceName;
 }
 
 function shouldWarnAboutMissingDsn(): boolean {

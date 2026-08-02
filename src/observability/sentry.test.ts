@@ -258,6 +258,49 @@ describe("observability/sentry", () => {
     assertEquals(state.config?.dsn, "https://public@errors.example.test/42");
   });
 
+  it("does not report success for a concurrent or installed different configuration", async () => {
+    resetSentryForTests();
+    const { load, state } = createSentryExtension();
+    let resolveLoad: (() => void) | undefined;
+    let firstLoadCount = 0;
+    let conflictingLoadCount = 0;
+    const firstConfig = {
+      dsn: "https://public@errors.example.test/1",
+      environment: " production ",
+      serviceName: " veryfront-server ",
+    };
+    const conflictingConfig = {
+      dsn: "https://public@errors.example.test/2",
+      environment: "production",
+      serviceName: "veryfront-proxy",
+    };
+    const first = initializeSentry(firstConfig, async () => {
+      firstLoadCount += 1;
+      await new Promise<void>((resolve) => {
+        resolveLoad = resolve;
+      });
+      return await load();
+    });
+    const conflicting = initializeSentry(conflictingConfig, async () => {
+      conflictingLoadCount += 1;
+      return await load();
+    });
+
+    assertEquals(await conflicting, false);
+    resolveLoad?.();
+    assertEquals(await first, true);
+    assertEquals(firstLoadCount, 1);
+    assertEquals(conflictingLoadCount, 0);
+    assertEquals(state.config, {
+      dsn: "https://public@errors.example.test/1",
+      environment: "production",
+      release: "",
+      serviceName: "veryfront-server",
+    });
+    assertEquals(await initializeSentry({ ...firstConfig, environment: "production" }), true);
+    assertEquals(await initializeSentry(conflictingConfig), false);
+  });
+
   it("a reset initialization cannot clear the replacement initialization", async () => {
     resetSentryForTests();
     const { load } = createSentryExtension();
