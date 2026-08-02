@@ -1,4 +1,3 @@
-import { getHeapStatistics } from "node:v8";
 import type {
   Meter,
   ObservableGauge,
@@ -24,24 +23,37 @@ export function parseV8HeapLimitBytes(flags: string): number | undefined {
 }
 
 let cachedV8HeapLimitBytes: number | null | undefined;
-function getV8HeapLimitBytes(): number | undefined {
+let pendingV8HeapLimitBytes: Promise<number | undefined> | undefined;
+
+async function getV8HeapLimitBytes(): Promise<number | undefined> {
   if (cachedV8HeapLimitBytes !== undefined) return cachedV8HeapLimitBytes ?? undefined;
 
-  const configuredLimit = parseV8HeapLimitBytes(getV8FlagsEnv());
+  let configuredLimit: number | undefined;
+  try {
+    configuredLimit = parseV8HeapLimitBytes(getV8FlagsEnv());
+  } catch (_) {
+    // Host environment access is optional for metrics collection.
+  }
   if (configuredLimit !== undefined) {
     cachedV8HeapLimitBytes = configuredLimit;
     return configuredLimit;
   }
 
-  try {
-    const runtimeLimit = getHeapStatistics().heap_size_limit;
-    cachedV8HeapLimitBytes = Number.isFinite(runtimeLimit) && runtimeLimit > 0
-      ? runtimeLimit
-      : null;
-  } catch (_) {
-    cachedV8HeapLimitBytes = null;
+  if (!pendingV8HeapLimitBytes) {
+    pendingV8HeapLimitBytes = (async () => {
+      try {
+        const { getHeapStatistics } = await import("node:v8");
+        const runtimeLimit = getHeapStatistics().heap_size_limit;
+        cachedV8HeapLimitBytes = Number.isFinite(runtimeLimit) && runtimeLimit > 0
+          ? runtimeLimit
+          : null;
+      } catch (_) {
+        cachedV8HeapLimitBytes = null;
+      }
+      return cachedV8HeapLimitBytes ?? undefined;
+    })();
   }
-  return cachedV8HeapLimitBytes ?? undefined;
+  return await pendingV8HeapLimitBytes;
 }
 
 export interface MemoryInstruments {
@@ -113,12 +125,14 @@ export function createMemoryObservableBindings(
   if (instruments.heapPercentGauge) {
     bindings.push({
       instrument: instruments.heapPercentGauge,
-      callback: createMemoryCallback((result, memoryUsage) => {
-        const heapLimitBytes = getV8HeapLimitBytes();
+      callback: async (result) => {
+        const heapLimitBytes = await getV8HeapLimitBytes();
         if (heapLimitBytes === undefined) return;
+        const memoryUsage = getMemoryUsage();
+        if (!memoryUsage) return;
         const percent = (memoryUsage.heapUsed / heapLimitBytes) * 100;
         result.observe(Math.round(percent * 100) / 100);
-      }),
+      },
     });
   }
   return bindings;

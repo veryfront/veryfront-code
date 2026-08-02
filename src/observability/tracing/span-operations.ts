@@ -40,7 +40,16 @@ export class SpanOperations {
     }
   }
 
-  endSpan(span: Span | null, ...failure: [] | [error: unknown]): void {
+  endSpan(span: Span | null, error?: unknown): void {
+    this.finishSpan(span, error === undefined ? [] : [error]);
+  }
+
+  /** @internal Preserve an observed failure even when JavaScript throws undefined. */
+  endSpanWithFailure(span: Span | null, error: unknown): void {
+    this.finishSpan(span, [error]);
+  }
+
+  private finishSpan(span: Span | null, failure: [] | [error: unknown]): void {
     if (!span) return;
 
     if (failure.length > 0) {
@@ -134,7 +143,11 @@ export class SpanOperations {
 
   private resolveParent(parent: SpanOptions["parent"]): Context | undefined {
     if (!parent) return undefined;
-    if (typeof (parent as Span).spanContext !== "function") return parent as Context;
-    return this.api.trace.setSpan(this.api.context.active(), parent as Span);
+    try {
+      if (typeof (parent as Span).spanContext !== "function") return parent as Context;
+      return this.api.trace.setSpan(this.api.context.active(), parent as Span);
+    } catch (_) {
+      return parent as Context;
+    }
   }
 }

@@ -498,14 +498,12 @@ export class FileLogSubscriber {
       }
       this.throwFailures(failures, "File log close failed");
     })();
-    this.closePromise = closeAttempt;
-
-    try {
-      return await closeAttempt;
-    } catch (error) {
-      if (this.closePromise === closeAttempt) this.closePromise = null;
+    const trackedClose = closeAttempt.catch((error) => {
+      this.closePromise = null;
       throw error;
-    }
+    });
+    this.closePromise = trackedClose;
+    return await trackedClose;
   }
 
   private throwFailures(failures: readonly unknown[], message: string): void {

@@ -1,9 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MAX_SPAN_NAME_LENGTH } from "#veryfront/utils/constants/index.ts";
 import { SpanOperations } from "./span-operations.ts";
-import type { OpenTelemetryAPI, Span, Tracer } from "./types.ts";
+import type { Context, OpenTelemetryAPI, Span, Tracer } from "./types.ts";
 
 type MockSpan = Span & {
   _ended: boolean;
@@ -150,6 +150,48 @@ describe("observability/tracing/span-operations", () => {
       assertEquals(receivedContext, expectedContext);
     });
 
+    it("passes through a Context whose spanContext getter throws", () => {
+      const parent = Object.defineProperty({}, "spanContext", {
+        get(): never {
+          throw new Error("span context unavailable");
+        },
+      });
+      let receivedContext: unknown;
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      const span = ops.startSpan("child", { parent: parent as Context });
+
+      assertEquals(span !== null, true);
+      assertStrictEquals(receivedContext, parent);
+    });
+
+    it("passes through a revoked Proxy Context without probing it", () => {
+      const revocable = Proxy.revocable({}, {});
+      const parent = revocable.proxy;
+      revocable.revoke();
+      let receivedContext: unknown;
+      tracer = {
+        startSpan: (_name, _options, context) => {
+          receivedContext = context;
+          return createMockSpan();
+        },
+        startActiveSpan: (() => {}) as never,
+      };
+      ops = new SpanOperations(api, tracer);
+
+      const span = ops.startSpan("child", { parent: parent as Context });
+
+      assertEquals(span !== null, true);
+      assertStrictEquals(receivedContext, parent);
+    });
+
     it("should create a span with given name", () => {
       const span = ops.startSpan("test.operation");
       assertEquals(span !== null, true);
@@ -225,6 +267,26 @@ describe("observability/tracing/span-operations", () => {
       ops.endSpan(mockSpan);
       assertEquals(mockSpan._ended, true);
       assertEquals(mockSpan._status?.code, 1);
+    });
+
+    it("treats an explicitly forwarded undefined error as success", () => {
+      const mockSpan = createMockSpan();
+
+      ops.endSpan(mockSpan, undefined);
+
+      assertEquals(mockSpan._ended, true);
+      assertEquals(mockSpan._status?.code, 1);
+      assertEquals(mockSpan._exception, null);
+    });
+
+    it("records an observed thrown undefined value as a failure", () => {
+      const mockSpan = createMockSpan();
+
+      ops.endSpanWithFailure(mockSpan, undefined);
+
+      assertEquals(mockSpan._ended, true);
+      assertEquals(mockSpan._status?.code, 2);
+      assertEquals(mockSpan._exception?.message, "undefined");
     });
 
     it("should end a span with error status", () => {

@@ -121,7 +121,10 @@ export async function withSpan<T>(
     name,
     fn,
     (n) => spanOps.startSpan(n, options),
-    (s: Span | null, ...failure: [] | [error: unknown]) => spanOps.endSpan(s, ...failure),
+    (s: Span | null, ...failure: [] | [error: unknown]) => {
+      if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
+      else spanOps.endSpan(s);
+    },
   );
 }
 
@@ -140,7 +143,10 @@ export function withSpanSync<T>(
     name,
     fn,
     (n) => spanOps.startSpan(n, options),
-    (s: Span | null, ...failure: [] | [error: unknown]) => spanOps.endSpan(s, ...failure),
+    (s: Span | null, ...failure: [] | [error: unknown]) => {
+      if (failure.length > 0) spanOps.endSpanWithFailure(s, failure[0]);
+      else spanOps.endSpan(s);
+    },
   );
 }
 

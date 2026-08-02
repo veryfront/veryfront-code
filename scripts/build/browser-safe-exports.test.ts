@@ -76,3 +76,26 @@ Deno.test("browser error adapters do not retain Node imports", async () => {
 		"the useAgent browser bundle must not retain a Node builtin import",
 	);
 });
+
+Deno.test("the public observability barrel does not eagerly import Node v8", async () => {
+	const output = await new Deno.Command(Deno.execPath(), {
+		args: [
+			"bundle",
+			"--platform=browser",
+			"--no-check",
+			"src/observability/index.ts",
+		],
+		cwd: new URL("../../", import.meta.url),
+		stdin: "null",
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	const stderr = new TextDecoder().decode(output.stderr);
+	assert(output.success, `observability browser bundle failed:\n${stderr}`);
+
+	const bundle = new TextDecoder().decode(output.stdout);
+	assert(
+		!/\b(?:from|import)\s*["']node:v8["']/.test(bundle),
+		"the public observability barrel must not retain a browser-eager node:v8 import",
+	);
+});
