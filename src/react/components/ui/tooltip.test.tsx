@@ -442,7 +442,7 @@ describe("Tooltip", () => {
       const unmountedTrigger = document.querySelector<HTMLButtonElement>("button");
       assert(unmountedTrigger);
       flushSync(() => hover(dom.window, unmountedTrigger));
-      flushSync(() => root.unmount());
+      await unmount(root);
       rootMounted = false;
       await new Promise((resolve) => setTimeout(resolve, 50));
       assert(document.querySelector('[role="tooltip"]') === null);

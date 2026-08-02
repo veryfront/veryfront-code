@@ -32,7 +32,9 @@ function installDom(dom: JSDOM): () => void {
   };
 }
 
-function render(element: React.ReactElement): { host: HTMLElement; unmount: () => void } {
+function render(
+  element: React.ReactElement,
+): { host: HTMLElement; unmount: () => Promise<void> } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
   const restore = installDom(dom);
   const host = dom.window.document.getElementById("root")!;
@@ -40,9 +42,13 @@ function render(element: React.ReactElement): { host: HTMLElement; unmount: () =
   flushSync(() => root.render(element));
   return {
     host: host as unknown as HTMLElement,
-    unmount: () => {
+    // React's scheduler holds a `setImmediate` until it next runs. It completes
+    // on its own, but the test has to yield once more or Deno's leak sanitizer
+    // sees the timer still pending.
+    unmount: async () => {
       try {
-        root.unmount();
+        flushSync(() => root.unmount());
+        await new Promise((resolve) => setTimeout(resolve, 0));
       } finally {
         restore();
       }
@@ -62,7 +68,7 @@ function runToggleGroupConformance(
   Wrap: React.FC<{ children: React.ReactNode }>,
 ): void {
   describe(`ToggleGroup adapter conformance: ${label}`, () => {
-    it("single-select: click sets aria-pressed/data-state; click again clears", () => {
+    it("single-select: click sets aria-pressed/data-state; click again clears", async () => {
       const { host, unmount } = render(
         <Wrap>
           <ToggleGroup type="single">
@@ -88,11 +94,11 @@ function runToggleGroupConformance(
         click(b!);
         assert(b!.getAttribute("aria-pressed") === "false", "click selected again clears it");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("blocks native, composed-link, and consumer-cancelled toggles", () => {
+    it("blocks native, composed-link, and consumer-cancelled toggles", async () => {
       let disabledWrapperClickCount = 0;
       let disabledChildClickCount = 0;
       let disabledWrapperAuxClickCount = 0;
@@ -167,11 +173,11 @@ function runToggleGroupConformance(
         );
         assert(cancelled.getAttribute("aria-pressed") === "false", "cancelled item stays off");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("normalizes retained uncontrolled state when selection mode changes", () => {
+    it("normalizes retained uncontrolled state when selection mode changes", async () => {
       function Probe(): React.ReactElement {
         const [multiple, setMultiple] = React.useState(true);
         return (
@@ -200,7 +206,7 @@ function runToggleGroupConformance(
         assert(items[0]?.dataset.state === "on", "first retained selection remains");
         assert(items[1]?.dataset.state === "off", "single mode drops extra retained selections");
       } finally {
-        unmount();
+        await unmount();
       }
     });
   });

@@ -43,7 +43,9 @@ function installDom(dom: JSDOM): () => void {
   };
 }
 
-function render(element: React.ReactElement): { host: HTMLElement; unmount: () => void } {
+function render(
+  element: React.ReactElement,
+): { host: HTMLElement; unmount: () => Promise<void> } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
   const restore = installDom(dom);
   const host = dom.window.document.getElementById("root")!;
@@ -51,9 +53,13 @@ function render(element: React.ReactElement): { host: HTMLElement; unmount: () =
   flushSync(() => root.render(element));
   return {
     host: host as unknown as HTMLElement,
-    unmount: () => {
+    // React's scheduler holds a `setImmediate` until it next runs. It completes
+    // on its own, but the test has to yield once more or Deno's leak sanitizer
+    // sees the timer still pending.
+    unmount: async () => {
       try {
-        root.unmount();
+        flushSync(() => root.unmount());
+        await new Promise((resolve) => setTimeout(resolve, 0));
       } finally {
         restore();
       }
@@ -126,7 +132,7 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
       assert(document.querySelector<HTMLElement>("[data-toolbar-item]")!.tabIndex === -1);
     });
 
-    it("renders role=toolbar with one roving tab stop; items click", () => {
+    it("renders role=toolbar with one roving tab stop; items click", async () => {
       let clicked = false;
       const { host, unmount } = render(
         <Wrap>
@@ -148,11 +154,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         click(items[0]!);
         assert(clicked, "item click fires");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("moves focus with arrows and preserves the focused stop across rerenders", () => {
+    it("moves focus with arrows and preserves the focused stop across rerenders", async () => {
       function Probe(): React.ReactElement {
         const [renders, setRenders] = React.useState(0);
         return (
@@ -177,11 +183,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(bar.dataset.renders === "1", "parent rerender occurred");
         assert(second!.tabIndex === 0 && first!.tabIndex === -1, "focused stop survives rerender");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("skips disabled items and honors a consumer-cancelled navigation event", () => {
+    it("skips disabled items and honors a consumer-cancelled navigation event", async () => {
       let cancel = true;
       const { host, unmount } = render(
         <Wrap>
@@ -205,11 +211,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(document.activeElement === last, "navigation skips disabled item");
         assert(disabled!.tabIndex === -1, "disabled item is never the resting stop");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("blocks and skips a disabled toolbar link", () => {
+    it("blocks and skips a disabled toolbar link", async () => {
       const linkActivations: string[] = [];
       const { host, unmount } = render(
         <Wrap>
@@ -259,11 +265,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         keydown(bar, "ArrowRight");
         assert(document.activeElement === last, "roving focus skips the disabled link");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("moves focus when the active item becomes disabled", () => {
+    it("moves focus when the active item becomes disabled", async () => {
       let disableActive!: () => void;
       function Probe(): React.ReactElement {
         const [disabled, setDisabled] = React.useState(false);
@@ -290,11 +296,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(second!.tabIndex === 0, "next enabled item becomes the roving stop");
         assert(document.activeElement === second, "focus follows the enabled fallback");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("updates the resting stop on focus and isolates nested, hidden, inert, and editable content", () => {
+    it("updates the resting stop on focus and isolates nested, hidden, inert, and editable content", async () => {
       const { host, unmount } = render(
         <Wrap>
           <Toolbar>
@@ -333,11 +339,11 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
         assert(document.activeElement === nestedItems[1], "nested toolbar owns its event");
         assert(direct[2]!.tabIndex !== 0 && direct[3]!.tabIndex !== 0, "hidden and inert excluded");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("uses visual arrow direction in RTL and runs React 19 callback-ref cleanup", () => {
+    it("uses visual arrow direction in RTL and runs React 19 callback-ref cleanup", async () => {
       let firstCleanups = 0;
       let secondCleanups = 0;
       function Probe(): React.ReactElement {
@@ -365,7 +371,7 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
       assert(second === document.activeElement, "ArrowLeft moves forward in RTL");
       click(second!);
       assert(firstCleanups === 1, "old callback ref cleanup runs when the ref changes");
-      unmount();
+      await unmount();
       assert(secondCleanups === 1, "current callback ref cleanup runs on unmount");
     });
   });

@@ -36,7 +36,9 @@ function installDom(dom: JSDOM): () => void {
   };
 }
 
-function render(element: React.ReactElement): { host: HTMLElement; unmount: () => void } {
+function render(
+  element: React.ReactElement,
+): { host: HTMLElement; unmount: () => Promise<void> } {
   const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`);
   const restore = installDom(dom);
   const host = dom.window.document.getElementById("root")!;
@@ -44,9 +46,13 @@ function render(element: React.ReactElement): { host: HTMLElement; unmount: () =
   flushSync(() => root.render(element));
   return {
     host: host as unknown as HTMLElement,
-    unmount: () => {
+    // React's scheduler holds a `setImmediate` until it next runs. It completes
+    // on its own, but the test has to yield once more or Deno's leak sanitizer
+    // sees the timer still pending.
+    unmount: async () => {
       try {
-        root.unmount();
+        flushSync(() => root.unmount());
+        await new Promise((resolve) => setTimeout(resolve, 0));
       } finally {
         restore();
       }
@@ -107,7 +113,7 @@ function runDisclosureConformance(
       assert(content.getAttribute("aria-labelledby") === null, "SSR emits no dangling label id");
     });
 
-    it("starts closed, toggles content + aria-expanded on trigger click", () => {
+    it("starts closed, toggles content + aria-expanded on trigger click", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureProbe />
@@ -131,11 +137,11 @@ function runDisclosureConformance(
         assert(trigger.getAttribute("aria-expanded") === "false", "collapsed after second click");
         assert(content.hidden, "content hidden after collapse");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("honours disabled state and a consumer-cancelled trigger event", () => {
+    it("honours disabled state and a consumer-cancelled trigger event", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureProbe disabled preventToggle />
@@ -146,7 +152,7 @@ function runDisclosureConformance(
         click(trigger);
         assert(trigger.getAttribute("aria-expanded") === "false", "disabled trigger stays closed");
       } finally {
-        unmount();
+        await unmount();
       }
 
       const second = render(
@@ -162,11 +168,11 @@ function runDisclosureConformance(
           "preventDefault cancels the internal toggle",
         );
       } finally {
-        second.unmount();
+        await second.unmount();
       }
     });
 
-    it("prevents disabled asChild link navigation", () => {
+    it("prevents disabled asChild link navigation", async () => {
       let disabledWrapperClickCount = 0;
       let disabledChildClickCount = 0;
       let disabledWrapperAuxClickCount = 0;
@@ -209,11 +215,11 @@ function runDisclosureConformance(
           "disabled composed trigger skips its child auxiliary handler",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("keeps realized trigger and content ids wired in both directions", () => {
+    it("keeps realized trigger and content ids wired in both directions", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureCustomIdProbe />
@@ -228,11 +234,11 @@ function runDisclosureConformance(
           "region names trigger",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("preserves ids declared directly on public Collapsible parts", () => {
+    it("preserves ids declared directly on public Collapsible parts", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosurePartIdProbe />
@@ -252,11 +258,11 @@ function runDisclosureConformance(
           "declared content is named by declared trigger",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("preserves an id declared on a composed trigger child", () => {
+    it("preserves an id declared on a composed trigger child", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureComposedIdProbe />
@@ -271,11 +277,11 @@ function runDisclosureConformance(
           "content is named by the composed trigger",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("preserves ids declared by opaque public-part wrappers", () => {
+    it("preserves ids declared by opaque public-part wrappers", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureWrappedPartIdProbe />
@@ -295,11 +301,11 @@ function runDisclosureConformance(
           "wrapped content is named by the realized trigger id",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("preserves a composed child id declared by an opaque trigger wrapper", () => {
+    it("preserves a composed child id declared by an opaque trigger wrapper", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureWrappedComposedIdProbe />
@@ -309,11 +315,11 @@ function runDisclosureConformance(
         const trigger = host.querySelector("a")!;
         assert(trigger.id === "wrapped-composed-trigger", "keeps the wrapped child id");
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("supports several distinct triggers for one collapsible region", () => {
+    it("supports several distinct triggers for one collapsible region", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureMultipleTriggerProbe />
@@ -334,11 +340,11 @@ function runDisclosureConformance(
           "the region is named by every trigger in DOM order",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("generates unique ids for several id-less triggers", () => {
+    it("generates unique ids for several id-less triggers", async () => {
       const { host, unmount } = render(
         <Wrap>
           <DisclosureGeneratedMultipleTriggerProbe />
@@ -357,11 +363,11 @@ function runDisclosureConformance(
           "the region references both generated trigger ids",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
-    it("preserves an Accordion asChild trigger id and its region relationship", () => {
+    it("preserves an Accordion asChild trigger id and its region relationship", async () => {
       const { host, unmount } = render(
         <Wrap>
           <Accordion>
@@ -387,7 +393,7 @@ function runDisclosureConformance(
           "the item region references the composed child id",
         );
       } finally {
-        unmount();
+        await unmount();
       }
     });
 
