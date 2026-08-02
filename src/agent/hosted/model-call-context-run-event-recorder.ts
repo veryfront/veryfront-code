@@ -22,6 +22,7 @@ import type {
   ModelCallContextBarrierOutcome,
   ModelCallContextWriterOutcome,
 } from "../../observability/metrics/types.ts";
+import { isVeryfrontError } from "#veryfront/errors";
 
 /** Maximum time a required model-call context append may block dispatch. */
 export const DEFAULT_MODEL_CALL_CONTEXT_PERSISTENCE_TIMEOUT_MS = 30_000;
@@ -337,7 +338,10 @@ export function createModelCallContextRunEventRecorder(input: {
           partCount = events.length;
           await input.mirror.appendEvents(events);
           abortSignal.throwIfAborted();
-          const resolvedSnapshot = await input.mirror.flush({ abortSignal });
+          const resolvedSnapshot = await input.mirror.flush({
+            abortSignal,
+            throwOnTimeoutRetry: true,
+          });
           assertQuiescent(resolvedSnapshot, "after");
           assertQuiescent(input.mirror.getSnapshot(), "after");
         },
@@ -347,7 +351,9 @@ export function createModelCallContextRunEventRecorder(input: {
       if (input.abortSignal?.aborted || error instanceof DOMException) {
         barrierOutcome = "aborted";
       } else if (
-        error instanceof ModelCallContextPersistenceError && error.message.includes("timed out")
+        (error instanceof ModelCallContextPersistenceError &&
+          error.message.includes("timed out")) ||
+        (isVeryfrontError(error) && error.slug === "timeout-error")
       ) {
         barrierOutcome = "timeout";
       } else {

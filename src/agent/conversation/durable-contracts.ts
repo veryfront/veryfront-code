@@ -261,6 +261,7 @@ export interface ConversationRunEventQueueController {
       consecutiveFailures: number;
       disabled: false;
       errorMessage: string;
+      retryCause?: "timeout";
     }
   >;
   getSnapshot(): {

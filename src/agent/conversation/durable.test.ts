@@ -681,6 +681,37 @@ describe("agent/durable", () => {
     await assertion;
   });
 
+  it("keeps timeout origin when the caller aborts after the deadline", async () => {
+    using time = new FakeTime();
+    const caller = new AbortController();
+    let rejectRequest: (() => void) | undefined;
+    globalThis.fetch =
+      ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (!signal) throw new Error("expected request abort signal");
+          rejectRequest = () => reject(signal.reason);
+        })) as typeof fetch;
+
+    const assertion = assertRejects(
+      () =>
+        getConversationRun({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          runId: "run_lookup_timeout_race",
+          abortSignal: caller.signal,
+        }),
+      Error,
+      "Read conversation durable run projection timed out after 15000ms",
+    );
+
+    await time.tickAsync(15_000);
+    caller.abort(new DOMException("Caller aborted too late", "AbortError"));
+    rejectRequest?.();
+    await assertion;
+  });
+
   it("fails closed without projection resync on ambiguous durable-ID replay", async () => {
     const [event] = await createModelCallContextRunEvents({
       messages: [{ role: "system", content: "A then B" }],

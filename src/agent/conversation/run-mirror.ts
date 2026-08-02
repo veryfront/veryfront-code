@@ -1,4 +1,5 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
+import { TIMEOUT_ERROR } from "#veryfront/errors";
 import { agentLogger } from "#veryfront/utils";
 
 export type ConversationRunMirrorDisableReason =
@@ -58,7 +59,10 @@ export interface ConversationRunMirrorHighBacklogState {
 /** Public API contract for conversation run mirror. */
 export interface ConversationRunMirror {
   enqueue(events: unknown[]): void;
-  flush(options?: { abortSignal?: AbortSignal }): Promise<ConversationRunMirrorSnapshot>;
+  flush(options?: {
+    abortSignal?: AbortSignal;
+    throwOnTimeoutRetry?: boolean;
+  }): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ConversationRunMirrorSnapshot;
   dispose(): void;
 }
@@ -108,6 +112,7 @@ export function createConversationRunMirror(input: {
   // while its last events are still queued.
   let escapedFlushFailures = 0;
   let escapedFlushError: { error: unknown } | null = null;
+  let retryCause: "timeout" | null = null;
   let disposed = false;
   const lifecycleAbortController = new AbortController();
 
@@ -210,10 +215,12 @@ export function createConversationRunMirror(input: {
     escapedFlushError = null;
 
     if (flushed.outcome === "idle" || flushed.outcome === "flushed") {
+      retryCause = null;
       return;
     }
 
     if (flushed.outcome === "stopped") {
+      retryCause = null;
       clearFlushTimer();
       clearRetryTimer();
       await input.onStopped?.(flushed);
@@ -224,9 +231,17 @@ export function createConversationRunMirror(input: {
       return;
     }
 
+    retryCause = flushed.retryCause ?? null;
+
     const retryDelayMs = getRetryDelayMs(flushed.consecutiveFailures);
     await input.onRetryScheduled?.({
-      ...flushed,
+      outcome: "retry_scheduled",
+      latestEventId: flushed.latestEventId,
+      latestExternalEventSequence: flushed.latestExternalEventSequence,
+      pendingEventCount: flushed.pendingEventCount,
+      consecutiveFailures: flushed.consecutiveFailures,
+      disabled: false,
+      errorMessage: flushed.errorMessage,
       retryDelayMs,
     });
     scheduleRetry();
@@ -322,6 +337,12 @@ export function createConversationRunMirror(input: {
         // to complete the run"; a flush error that escaped the controller
         // must reject here instead of silently leaving events queued.
         throw escapedFlushError.error;
+      }
+
+      if (options?.throwOnTimeoutRetry && retryCause === "timeout") {
+        throw TIMEOUT_ERROR.create({
+          detail: "Append conversation run events timed out",
+        });
       }
 
       return getSnapshot();
