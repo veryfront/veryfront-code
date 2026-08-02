@@ -17,15 +17,16 @@ import {
   resolveNodeAgentServiceTelemetryConfig,
 } from "./node-telemetry.ts";
 import {
-  initializeNodeAgentServiceSentryApplicationErrors,
-  type NodeAgentServiceApplicationErrorEnv,
+  initializeNodeAgentServiceApplicationErrors,
   type NodeAgentServiceApplicationErrorLifecycle,
-} from "./node-sentry.ts";
+} from "./node-application-errors.ts";
+import type { ApplicationErrorReporterInitializer } from "../../observability/application-errors.ts";
 
 /** Options accepted by create node agent service runtime infrastructure. */
 export type CreateNodeAgentServiceRuntimeInfrastructureOptions = {
   serviceName: string;
-  env: AgentServiceConfigInput & NodeAgentServiceTelemetryEnv & NodeAgentServiceApplicationErrorEnv;
+  env: AgentServiceConfigInput & NodeAgentServiceTelemetryEnv;
+  applicationErrorReporterInitializer?: ApplicationErrorReporterInitializer;
   telemetryLogger?: NodeAgentServiceTelemetryLogger;
   processTarget?: NodeAgentServiceTelemetryProcessTarget;
 };
@@ -70,17 +71,9 @@ export function createNodeAgentServiceRuntimeInfrastructure(
     setActiveSpanAttributes: serviceTracer.setActiveSpanAttributes,
     getTraceContext: serviceTracer.getTraceContext,
     initializeApplicationErrors: () =>
-      initializeNodeAgentServiceSentryApplicationErrors({
-        env: options.env,
+      initializeNodeAgentServiceApplicationErrors({
+        initializer: options.applicationErrorReporterInitializer,
         defaultServiceName: telemetryConfig.serviceName,
-      }).catch((error) => {
-        agentLogger.error("Failed to initialize Sentry application error reporting:", { error });
-        return {
-          enabled: false,
-          captureStartupError: () => {},
-          flush: () => Promise.resolve(true),
-          reset: () => {},
-        };
       }),
     initializeOpenTelemetry: () =>
       initializeNodeAgentServiceOpenTelemetry({

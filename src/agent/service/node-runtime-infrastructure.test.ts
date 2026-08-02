@@ -1,4 +1,9 @@
-import { assertEquals, assertObjectMatch } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertObjectMatch,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createNodeAgentServiceRuntimeInfrastructure,
@@ -53,5 +58,22 @@ describe("createNodeAgentServiceRuntimeInfrastructure", () => {
     assertEquals(infrastructure.getTraceContext(), {});
     assertEquals(await infrastructure.initializeOpenTelemetry(), false);
     assertEquals(infoMessages, ["OpenTelemetry disabled"]);
+  });
+
+  it("propagates a selected application-error initializer failure unchanged", async () => {
+    const initializationError = new Error("application-error provider failed");
+    const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
+      serviceName: "custom-service",
+      env: {
+        VERYFRONT_API_URL: "https://api.example.com",
+        OTEL_ENABLED: "false",
+      },
+      applicationErrorReporterInitializer: {
+        initialize: () => Promise.reject(initializationError),
+      },
+    });
+
+    const thrown = await assertRejects(() => infrastructure.initializeApplicationErrors());
+    assertStrictEquals(thrown, initializationError);
   });
 });

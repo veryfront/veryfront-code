@@ -43,7 +43,7 @@ describe("agent/runtime-step", () => {
         toolDefinition("get_release"),
         toolDefinition("load_skill"),
       ],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -74,7 +74,7 @@ describe("agent/runtime-step", () => {
       config: { model: "anthropic/claude-opus-4-6", system: "Base", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [toolDefinition("create_release")],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       providerToolNames: ["web_search"],
@@ -96,6 +96,7 @@ describe("agent/runtime-step", () => {
   it("does not let runtime context shadow the trusted abort signal", async () => {
     const trustedAbort = new AbortController();
     const shadowAbort = new AbortController();
+    let resolverAbortSignal: AbortSignal | undefined;
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -104,20 +105,31 @@ describe("agent/runtime-step", () => {
       config: { model: "auto", system: "Base", __vfToolLoadingMode: "eager" } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
-      resolveRuntimeState: async () => ({
-        systemPrompt: "Base",
-        context: { abortSignal: shadowAbort.signal },
-      }),
+      resolveRuntimeState: async (
+        _messages,
+        _context,
+        _mode,
+        _step,
+        _systemPrompt,
+        abortSignal?: AbortSignal,
+      ) => {
+        resolverAbortSignal = abortSignal;
+        return {
+          systemPrompt: "Base",
+          context: { abortSignal: shadowAbort.signal },
+        };
+      },
       runtimeContext: undefined,
       step: 0,
       systemPrompt: "Base",
       toolContextBase: { abortSignal: trustedAbort.signal },
     });
 
+    assertStrictEquals(resolverAbortSignal, trustedAbort.signal);
     assertStrictEquals(prepared.toolContext.abortSignal, trustedAbort.signal);
   });
 
@@ -138,7 +150,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.remoteToolContext?.allowedSkillIds, ["selected"]);
         return [];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "generate",
       remoteToolSources: undefined,
@@ -179,7 +191,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: ["remote_allowed"],
       config,
       forwardedRemoteToolDefinitions: [toolDefinition("forwarded_remote")],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "generate",
       remoteToolSources: [remoteSource],
@@ -249,7 +261,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -287,7 +299,7 @@ describe("agent/runtime-step", () => {
         assertEquals(options?.includeSkillTools, false);
         return [toolDefinition("ordinary_tool")];
       },
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -320,7 +332,7 @@ describe("agent/runtime-step", () => {
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
       getAvailableTools: async () => [],
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: undefined,
@@ -342,7 +354,7 @@ describe("agent/runtime-step", () => {
     assertEquals(prepared.toolContext.__vfSourceIntegrationPolicy, sourceIntegrationPolicy);
   });
 
-  it("uses the canonical deferred exposure contract for local models", async () => {
+  it("skips tool loading when the runtime declares no tool support", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
       activeSkillPolicy: undefined,
@@ -350,7 +362,7 @@ describe("agent/runtime-step", () => {
       allowedRemoteToolNames: undefined,
       config: { model: "local/test", system: "Local", tools: true } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: true,
+      supportsToolCalling: false,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -359,7 +371,7 @@ describe("agent/runtime-step", () => {
       systemPrompt: "Local",
       toolContextBase: undefined,
       getAvailableTools: async () => {
-        throw new Error("local model should not load tools");
+        throw new Error("unsupported tools should not be loaded");
       },
       resolveRuntimeState: async () => ({ systemPrompt: "Local", context: undefined }),
     });
@@ -394,7 +406,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -433,7 +445,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -458,6 +470,71 @@ describe("agent/runtime-step", () => {
       "invoke_agent",
       "list_integrations",
       "create_agent",
+    ]);
+  });
+
+  it("narrows load_skill to exact active references after submitted form input", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillId: "plan",
+      activeSkillPolicy: ["load_skill", "invoke_agent"],
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md", "assets/template.md"],
+        scripts: [],
+      },
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: true,
+      messages: [{
+        id: "submitted-form",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "submitted-form-call",
+          toolName: "form_input",
+          result: { submitted: true },
+        }],
+      }],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 2,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+        toolDefinition("invoke_agent"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools, [
+      {
+        name: "load_skill",
+        description: "load_skill tool",
+        parameters: {
+          type: "object",
+          properties: {
+            skillId: { type: "string", enum: ["plan"] },
+            file: {
+              type: "string",
+              enum: ["references/guide.md", "assets/template.md"],
+            },
+          },
+          required: ["skillId", "file"],
+          additionalProperties: false,
+        },
+      },
+      toolDefinition("invoke_agent"),
     ]);
   });
 
@@ -495,7 +572,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages,
       mode: "stream",
       remoteToolSources: [],
@@ -537,7 +614,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],
@@ -560,6 +637,44 @@ describe("agent/runtime-step", () => {
     ]);
   });
 
+  it("hides advertised skill file tools under an explicit deny-all policy", async () => {
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillPolicy: [],
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: ["scripts/run.sh"],
+      },
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      supportsToolCalling: true,
+      messages: [],
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("read_file"),
+        toolDefinition("load_skill"),
+        toolDefinition("load_skill_reference"),
+        toolDefinition("execute_skill_script"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill"]);
+  });
+
   it("hides skill file tools before any skill is active", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",
@@ -578,7 +693,7 @@ describe("agent/runtime-step", () => {
         __vfToolLoadingMode: "eager",
       } as AgentConfig,
       forwardedRemoteToolDefinitions: undefined,
-      isLocalModel: false,
+      supportsToolCalling: true,
       messages: [],
       mode: "stream",
       remoteToolSources: [],

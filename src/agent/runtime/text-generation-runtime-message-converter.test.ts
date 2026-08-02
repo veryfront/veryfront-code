@@ -12,6 +12,7 @@ import type {
   TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
+import { markRuntimeGeneratedUserMessage } from "./runtime-message-origin.ts";
 
 describe("text-generation-runtime-message-converter", () => {
   describe("convertToTextGenerationRuntimeMessage", () => {
@@ -146,6 +147,29 @@ describe("text-generation-runtime-message-converter", () => {
       const content = (result as TextGenerationRuntimeAssistantMessage).content;
       assertEquals(content.length, 1);
       assertEquals(content[0], { type: "text", text: "Sure, I can help." });
+    });
+
+    it("preserves signed and redacted reasoning for provider replay", () => {
+      const msg: Message = {
+        id: "a-reasoning",
+        role: "assistant",
+        parts: [
+          { type: "reasoning", text: "Checked evidence.", signature: "sig_123" },
+          { type: "reasoning", redactedData: "encrypted_123" },
+          { type: "text", text: "Here is the answer." },
+        ],
+      };
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      assertEquals(result, {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Checked evidence.", signature: "sig_123" },
+          { type: "reasoning", redactedData: "encrypted_123" },
+          { type: "text", text: "Here is the answer." },
+        ],
+      });
     });
 
     it("converts an assistant message with tool calls", () => {
@@ -356,6 +380,33 @@ describe("text-generation-runtime-message-converter", () => {
       assertEquals(convertToTextGenerationRuntimeMessages([]), []);
     });
 
+    it("keeps reasoning-only assistant history available for provider replay", () => {
+      const messages: Message[] = [{
+        id: "u-reasoning-1",
+        role: "user",
+        parts: [{ type: "text", text: "Think carefully" }],
+      }, {
+        id: "a-reasoning-1",
+        role: "assistant",
+        parts: [{ type: "reasoning", text: "Checked evidence.", signature: "sig_123" }],
+      }, {
+        id: "u-reasoning-2",
+        role: "user",
+        parts: [{ type: "text", text: "Continue" }],
+      }];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [{
+        role: "user",
+        content: "Think carefully",
+      }, {
+        role: "assistant",
+        content: [{ type: "reasoning", text: "Checked evidence.", signature: "sig_123" }],
+      }, {
+        role: "user",
+        content: "Continue",
+      }]);
+    });
+
     it("omits assistant messages that have no provider-sendable content", () => {
       const messages: Message[] = [
         { id: "u1", role: "user", parts: [{ type: "text", text: "list my repos" }] },
@@ -461,6 +512,235 @@ describe("text-generation-runtime-message-converter", () => {
         },
         { role: "user", content: "cite the source" },
       ]);
+    });
+
+    it("retains mixed-turn raw metadata and pending provider calls for local-tool continuation", () => {
+      const rawAssistantMessages = [[{
+        type: "server_tool_use",
+        id: "server_search_1",
+        name: "web_search",
+        input: { query: "Veryfront" },
+      }, {
+        type: "tool_use",
+        id: "local_lookup_1",
+        name: "local_lookup",
+        input: { query: "runtime" },
+      }]];
+      const messages = [{
+        id: "u1",
+        role: "user",
+        parts: [{ type: "text", text: "Search and inspect" }],
+      }, {
+        id: "a1",
+        role: "assistant",
+        parts: [{
+          type: "tool-web_search",
+          toolCallId: "server_search_1",
+          toolName: "web_search",
+          args: { query: "Veryfront" },
+          providerExecuted: true,
+          supportsDeferredResults: true,
+        }, {
+          type: "tool-local_lookup",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          args: { query: "runtime" },
+        }],
+        metadata: { providerMetadata: { anthropic: { rawAssistantMessages } } },
+      }, {
+        id: "t1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          result: { matches: 1 },
+        }],
+      }] as unknown as Message[];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [{
+        role: "user",
+        content: "Search and inspect",
+      }, {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          input: { query: "runtime" },
+        }],
+        providerToolCalls: [{
+          toolCallId: "server_search_1",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          supportsDeferredResults: true,
+        }],
+        providerMetadata: { anthropic: { rawAssistantMessages } },
+      }, {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          output: { type: "json", value: { matches: 1 } },
+        }],
+      }]);
+    });
+
+    it("retains pending provider correlation across a runtime recovery user message", () => {
+      const messages = [
+        {
+          id: "u1",
+          role: "user",
+          parts: [{ type: "text", text: "Search and inspect" }],
+        },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [{
+            type: "tool-web_search",
+            toolCallId: "server_search_1",
+            toolName: "web_search",
+            args: { query: "Veryfront" },
+            providerExecuted: true,
+            supportsDeferredResults: true,
+          }, {
+            type: "tool-local_lookup",
+            toolCallId: "local_lookup_1",
+            toolName: "local_lookup",
+            args: { query: "runtime" },
+          }],
+        },
+        {
+          id: "local-result",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "local_lookup_1",
+            toolName: "local_lookup",
+            result: { matches: 1 },
+          }],
+        },
+        markRuntimeGeneratedUserMessage({
+          id: "runtime-recovery",
+          role: "user",
+          parts: [{ type: "text", text: "Retry with available tools." }],
+        }),
+      ] as unknown as Message[];
+
+      const converted = convertToTextGenerationRuntimeMessages(messages);
+      const assistant = converted.find(
+        (message): message is TextGenerationRuntimeAssistantMessage => message.role === "assistant",
+      );
+
+      assertEquals(assistant?.providerToolCalls, [{
+        toolCallId: "server_search_1",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        supportsDeferredResults: true,
+      }]);
+      assertEquals(converted.at(-1), {
+        role: "user",
+        content: "Retry with available tools.",
+      });
+    });
+
+    it("retires a pending provider call after its correlated result is persisted", () => {
+      const messages = [{
+        id: "u1",
+        role: "user",
+        parts: [{ type: "text", text: "Search, then inspect locally" }],
+      }, {
+        id: "a1",
+        role: "assistant",
+        parts: [{
+          type: "tool-web_search",
+          toolCallId: "server_search_1",
+          toolName: "web_search",
+          args: { query: "Veryfront" },
+          providerExecuted: true,
+          supportsDeferredResults: true,
+        }, {
+          type: "tool-local_lookup",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          args: { query: "first step" },
+        }],
+      }, {
+        id: "local-result-1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          result: { matches: 1 },
+        }],
+      }, {
+        id: "provider-result-1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "server_search_1",
+          toolName: "web_search",
+          result: { results: [{ title: "Veryfront" }] },
+          providerExecuted: true,
+        }],
+      }, {
+        id: "a2",
+        role: "assistant",
+        parts: [{
+          type: "tool-local_lookup",
+          toolCallId: "local_lookup_2",
+          toolName: "local_lookup",
+          args: { query: "runtime" },
+        }],
+      }, {
+        id: "local-result-2",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "local_lookup_2",
+          toolName: "local_lookup",
+          result: { matches: 1 },
+        }],
+      }] as unknown as Message[];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [{
+        role: "user",
+        content: "Search, then inspect locally",
+      }, {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          input: { query: "first step" },
+        }],
+      }, {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "local_lookup_1",
+          toolName: "local_lookup",
+          output: { type: "json", value: { matches: 1 } },
+        }],
+      }, {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "local_lookup_2",
+          toolName: "local_lookup",
+          input: { query: "runtime" },
+        }],
+      }, {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "local_lookup_2",
+          toolName: "local_lookup",
+          output: { type: "json", value: { matches: 1 } },
+        }],
+      }]);
     });
 
     it("keeps a later local tool result when its id matches an earlier provider tool call", () => {

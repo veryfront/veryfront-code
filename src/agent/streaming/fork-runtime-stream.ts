@@ -100,6 +100,16 @@ type ForkRuntimeStepPreparation = {
   forkToolNames?: readonly string[];
 };
 
+/** Credential-bound project identity resolved immediately before a fork step. */
+export type AgentRuntimeForkStepContext = {
+  authToken: string;
+  projectId: string | null;
+  projectSlug?: string;
+};
+
+/** Resolve the current credential-bound project identity for a fork step. */
+export type AgentRuntimeForkStepContextResolver = () => AgentRuntimeForkStepContext;
+
 /** Public API contract for fork runtime step preparer. */
 export type ForkRuntimeStepPreparer = (
   input: ForkRuntimeStepPreparationInput,
@@ -118,6 +128,8 @@ export type StartAgentRuntimeForkInput = {
   apiUrl: string;
   authToken: string;
   projectId: string | null;
+  projectSlug?: string;
+  resolveStepContext?: AgentRuntimeForkStepContextResolver;
   model: string;
   temperature?: number;
   maxSteps: number;
@@ -193,6 +205,8 @@ export function startAgentRuntimeForkWithHostTools<
       apiUrl: input.apiUrl,
       authToken: input.authToken,
       projectId: input.projectId,
+      projectSlug: input.projectSlug,
+      resolveStepContext: input.resolveStepContext,
       model: input.forkModel,
       temperature: input.temperature,
       maxSteps: input.maxSteps,
@@ -261,6 +275,8 @@ export type RunAgentRuntimeForkStepInput = {
   apiUrl: string;
   authToken: string;
   projectId: string | null;
+  projectSlug?: string;
+  resolveToolExecutionContext?: AgentRuntimeForkStepContextResolver;
   model: string;
   temperature?: number;
   messages: AgentMessage[];
@@ -278,6 +294,21 @@ export type RunAgentRuntimeForkStepInput = {
 export type RunFrameworkForkStepInput = Omit<RunAgentRuntimeForkStepInput, "runtimeTools"> & {
   frameworkTools: Record<string, Tool | boolean>;
 };
+
+function resolveForkToolExecutionIdentity(
+  resolveContext: AgentRuntimeForkStepContextResolver,
+): {
+  authToken: string;
+  projectId?: string;
+  projectSlug?: string;
+} {
+  const currentContext = resolveContext();
+  return {
+    authToken: currentContext.authToken,
+    ...(currentContext.projectId ? { projectId: currentContext.projectId } : {}),
+    ...(currentContext.projectSlug ? { projectSlug: currentContext.projectSlug } : {}),
+  };
+}
 
 function getForkRuntimeAuthorizationToolNames(
   toolNames: readonly string[],
@@ -317,6 +348,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     }
   }
 
+  const resolveToolExecutionContext = input.resolveToolExecutionContext;
   const runtimeConfig = {
     model: input.model,
     ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
@@ -339,6 +371,12 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     ...(input.sourceIntegrationPolicy
       ? { __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy }
       : {}),
+    ...(resolveToolExecutionContext
+      ? {
+        __vfResolveToolExecutionContext: () =>
+          resolveForkToolExecutionIdentity(resolveToolExecutionContext),
+      }
+      : {}),
   };
   const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
 
@@ -348,12 +386,17 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
       {
         apiBaseUrl: input.apiUrl,
         apiToken: input.authToken,
+        projectSlug: input.projectSlug,
         serviceLayer: "cloud",
       },
       () =>
         runtime.stream(
           input.messages,
-          input.projectId ? { projectId: input.projectId } : undefined,
+          {
+            authToken: input.authToken,
+            ...(input.projectId ? { projectId: input.projectId } : {}),
+            ...(input.projectSlug ? { projectSlug: input.projectSlug } : {}),
+          },
           {
             onFinish: (response) => {
               input.abortSignal?.removeEventListener("abort", abortHandler);
@@ -389,6 +432,10 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
     apiUrl: input.apiUrl,
     authToken: input.authToken,
     projectId: input.projectId,
+    ...(input.projectSlug ? { projectSlug: input.projectSlug } : {}),
+    ...(input.resolveToolExecutionContext
+      ? { resolveToolExecutionContext: input.resolveToolExecutionContext }
+      : {}),
     model: input.model,
     messages: input.messages,
     system: input.system,
@@ -521,10 +568,19 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
           const effectiveForkToolNames: string[] = [
             ...(prepared.forkToolNames ?? input.forkToolNames),
           ];
-          const { stream, responsePromise } = await runStep({
-            apiUrl: input.apiUrl,
+          const stepContext = input.resolveStepContext?.() ?? {
             authToken: input.authToken,
             projectId: input.projectId,
+            ...(input.projectSlug ? { projectSlug: input.projectSlug } : {}),
+          };
+          const { stream, responsePromise } = await runStep({
+            apiUrl: input.apiUrl,
+            authToken: stepContext.authToken,
+            projectId: stepContext.projectId,
+            ...(stepContext.projectSlug ? { projectSlug: stepContext.projectSlug } : {}),
+            ...(input.resolveStepContext
+              ? { resolveToolExecutionContext: input.resolveStepContext }
+              : {}),
             model: input.model,
             ...(input.temperature === undefined ? {} : { temperature: input.temperature }),
             messages: prepared.messages,

@@ -9,8 +9,8 @@
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { assertLocalToolId, toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { createError, PERMISSION_DENIED, toError } from "#veryfront/errors";
 import {
@@ -213,7 +213,7 @@ async function getRemoteToolDefinitions(options?: {
     const { getRemoteIntegrationToolDefinitions } = await import(
       "#veryfront/integrations/remote-tools.ts"
     );
-    for (const def of await getRemoteIntegrationToolDefinitions()) {
+    for (const def of await getRemoteIntegrationToolDefinitions(remoteToolContext)) {
       addDefinition(def);
     }
   } catch {
@@ -451,7 +451,7 @@ export async function getAvailableTools(
       return def;
     }).filter((def) => {
       // Exclude skill tools unless explicitly included
-      if (SKILL_TOOL_IDS.has(def.name) && !options?.includeSkillTools) return false;
+      if (isSkillInfrastructureToolId(def.name) && !options?.includeSkillTools) return false;
       return true;
     });
 

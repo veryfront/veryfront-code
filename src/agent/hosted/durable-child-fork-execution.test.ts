@@ -14,11 +14,13 @@ import {
   createHostedDurableChildInvokeTraceRecorder,
   executeHostedDurableChildFork,
   executeHostedLocalChildInvoke,
+  type HostedDurableChildExecutionOptions,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
 } from "./durable-child-fork-execution.ts";
 import type { InvokeAgentChildRunProgressEvent } from "../child-run/invoke-agent-child-runs.ts";
 import { bootstrapHostedChildRun, type BootstrapHostedChildRunInput } from "./child-bootstrap.ts";
+import { createConversationChildLifecycleAdapter } from "../conversation/hosted-lifecycle.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -27,6 +29,7 @@ const CHILD_CONVERSATION_ID = "22222222-2222-4222-a222-222222222222";
 const PARENT_MESSAGE_ID = "33333333-3333-4333-a333-333333333333";
 const CHILD_MESSAGE_ID = "44444444-4444-4444-8444-444444444444";
 const PROJECT_ID = "55555555-5555-4555-8555-555555555555";
+const TARGET_PROJECT_ID = "88888888-8888-4888-8888-888888888888";
 const ENVIRONMENT_ID = "77777777-7777-4777-8777-777777777777";
 const BRANCH_ID = "66666666-6666-4666-8666-666666666666";
 const originalFetch = globalThis.fetch;
@@ -723,18 +726,99 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(result, { status: "missing_context", message: "missing context" });
   });
 
-  it("bootstraps environment-targeted child runs and returns host-shaped success", async () => {
-    let projectId = PROJECT_ID;
+  it("rejects malformed or unbound custom project resolver identities before side effects", async () => {
+    const invalidResolutions = [
+      {
+        projectId: ` ${TARGET_PROJECT_ID}`,
+        slug: "target-project",
+      },
+      {
+        projectId: "different-project-id",
+        slug: "different-project",
+      },
+    ];
+
+    for (const invalidResolution of invalidResolutions) {
+      let projectNotificationCalled = false;
+      let bootstrapCalled = false;
+
+      await assertRejects(
+        () =>
+          executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>({
+            authToken: AUTH_TOKEN,
+            apiUrl: API_URL,
+            forkInput: {
+              description: "Inspect logs",
+              prompt: "Find logs",
+              project_reference: "target-project",
+            },
+            executionOptions: { toolCallId: "tool-call-1" },
+            childAgentId: "invoke-agent-child",
+            parentConversationId: PARENT_CONVERSATION_ID,
+            parentRunId: "run_parent_1",
+            parentMessageId: PARENT_MESSAGE_ID,
+            getProjectId: () => PROJECT_ID,
+            defaultModel: "opus",
+            resolveModelId: (model) => model,
+            resolveProvider: () => "anthropic",
+            resolveProjectReference: () => Promise.resolve(invalidResolution),
+            onRequestedProjectId: () => {
+              projectNotificationCalled = true;
+            },
+            contextUnavailableMessage: "missing context",
+            setupFailedCode: "SETUP_FAILED",
+            executionFailedCode: "INVOKE_AGENT_FAILED",
+            executeLocal: () => baseSuccessResult(),
+            getExecutionSnapshot: () => null,
+            buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
+            buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
+            buildTerminalFailureResult: () => ({
+              status: "missing_context",
+              message: "unexpected",
+            }),
+            buildSuccessResult: (success) => ({ status: "completed", success }),
+            runtime: {
+              bootstrapChildRun: () => {
+                bootstrapCalled = true;
+                throw new Error("Unexpected bootstrap");
+              },
+            },
+          }),
+        Error,
+        "Project reference resolver returned an unconfirmed project identity",
+      );
+
+      assertEquals(projectNotificationCalled, false);
+      assertEquals(bootstrapCalled, false);
+    }
+  });
+
+  it("uses resolved cross-project identity without relying on callback mutation", async () => {
+    const projectId = PROJECT_ID;
     const lifecycleStatuses: string[] = [];
     const bootstrapCalls: string[] = [];
     const capturedBootstrapInputs: BootstrapHostedChildRunInput[] = [];
+    const capturedExecutionOptions: HostedDurableChildExecutionOptions[] = [];
+    const capturedLifecycleProjectIds: (string | null | undefined)[] = [];
+    const requestedProjectNotifications: [string, string | undefined][] = [];
+    const forkInput = {
+      description: "Inspect logs",
+      prompt: "Find logs",
+      project_reference: "target-project",
+      context: {
+        veryfront_invocation_context: {
+          root_conversation_id: "root-conversation-1",
+          root_run_id: "run_root_1",
+        },
+      },
+    };
     const { requests } = stubFetchWithRecorder((_input, _init) => {
       const requestCount = requests.length;
       if (requestCount === 1) {
-        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: projectId }, 200);
+        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: TARGET_PROJECT_ID }, 200);
       }
       if (requestCount === 2) {
-        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: projectId }, 200);
+        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: TARGET_PROJECT_ID }, 200);
       }
       if (requestCount === 3) {
         return jsonResponse({ id: CHILD_MESSAGE_ID }, 200);
@@ -772,17 +856,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       {
         authToken: AUTH_TOKEN,
         apiUrl: API_URL,
-        forkInput: {
-          description: "Inspect logs",
-          prompt: "Find logs",
-          project_reference: "target-project",
-          context: {
-            veryfront_invocation_context: {
-              root_conversation_id: "root-conversation-1",
-              root_run_id: "run_root_1",
-            },
-          },
-        },
+        forkInput,
         executionOptions: { toolCallId: "tool-call-1" },
         childAgentId: "invoke-agent-child",
         runProjectId: projectId,
@@ -797,7 +871,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         getProjectId: () => projectId,
         getRuntimeTargetKind: () => "environment",
         getRuntimeTargetEnvironmentId: () => ENVIRONMENT_ID,
-        getBranchId: () => null,
+        getBranchId: () => BRANCH_ID,
         getContextModel: () => "sonnet",
         defaultModel: "opus",
         resolveModelId: (model) => `resolved-${model}`,
@@ -805,12 +879,12 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         resolveProjectReference: ({ projectReference }) => {
           assertEquals(projectReference, "target-project");
           return Promise.resolve({
-            projectId: "77777777-7777-4777-8777-777777777777",
-            slug: "target-project",
+            projectId: TARGET_PROJECT_ID,
+            slug: " target-project ",
           });
         },
-        onRequestedProjectId: (requestedProjectId) => {
-          projectId = requestedProjectId;
+        onRequestedProjectId: (requestedProjectId, requestedProjectSlug) => {
+          requestedProjectNotifications.push([requestedProjectId, requestedProjectSlug]);
         },
         publishParentRunEvents: (events: InvokeAgentChildRunProgressEvent[]) => {
           for (const event of events) {
@@ -822,16 +896,38 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         contextUnavailableMessage: "missing context",
         setupFailedCode: "SETUP_FAILED",
         executionFailedCode: "INVOKE_AGENT_FAILED",
-        executeLocal: () => baseSuccessResult(),
+        executeLocal: (options) => {
+          capturedExecutionOptions.push({
+            ...(options ?? {}),
+            ...(options?.durableChildRun
+              ? { durableChildRun: { ...options.durableChildRun } }
+              : {}),
+          });
+          if (options?.durableChildRun) {
+            options.durableChildRun.childConversationId = "mutated-execution-conversation";
+            options.durableChildRun.childRunId = "mutated-execution-run";
+            options.durableChildRun.childMessageId = "mutated-execution-message";
+          }
+          return baseSuccessResult();
+        },
         getExecutionSnapshot: () => null,
         buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
         buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
         buildTerminalFailureResult: () => ({ status: "missing_context", message: "unexpected" }),
         buildSuccessResult: (success) => ({ status: "completed", success }),
+        onLifecycleFinalized: ({ identifiers }) => {
+          identifiers.childConversationId = "mutated-finalized-conversation";
+          identifiers.childRunId = "mutated-finalized-run";
+          identifiers.childMessageId = "mutated-finalized-message";
+        },
         runtime: {
           bootstrapChildRun: (input) => {
             capturedBootstrapInputs.push(input);
             return bootstrapHostedChildRun(input);
+          },
+          createLifecycleAdapter: (input) => {
+            capturedLifecycleProjectIds.push(input.projectId);
+            return createConversationChildLifecycleAdapter(input);
           },
         },
         bootstrap: {
@@ -841,9 +937,22 @@ describe("agent/hosted-durable-child-fork-execution", () => {
           },
           onBootstrapStart: (bootstrapContext) => {
             bootstrapCalls.push(`start:${bootstrapContext.resolvedModel}`);
+            assertEquals(bootstrapContext.projectId, TARGET_PROJECT_ID);
+            assertEquals(bootstrapContext.projectSlug, "target-project");
+            forkInput.project_reference = "mutated-project";
+            bootstrapContext.projectId = PROJECT_ID;
+            bootstrapContext.projectSlug = "mutated-project";
+            bootstrapContext.targets.runtimeTargetKind = "environment";
+            bootstrapContext.targets.targetEnvironmentId = ENVIRONMENT_ID;
           },
           onBootstrapComplete: (bootstrapContext) => {
             bootstrapCalls.push(`complete:${bootstrapContext.identifiers.childRunId}`);
+            bootstrapContext.projectId = PROJECT_ID;
+            bootstrapContext.targets.runtimeTargetKind = "preview_branch";
+            bootstrapContext.targets.targetBranchId = BRANCH_ID;
+            bootstrapContext.identifiers.childConversationId = "mutated-conversation";
+            bootstrapContext.identifiers.childRunId = "mutated-run";
+            bootstrapContext.identifiers.childMessageId = "mutated-message";
           },
         },
       },
@@ -853,12 +962,17 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       throw new Error("Expected completed result");
     }
 
-    assertEquals(projectId, "77777777-7777-4777-8777-777777777777");
+    assertEquals(projectId, PROJECT_ID);
+    assertEquals(requestedProjectNotifications, [[TARGET_PROJECT_ID, "target-project"]]);
     assertEquals(
       capturedBootstrapInputs[0]?.ensureProjectId,
-      "77777777-7777-4777-8777-777777777777",
+      TARGET_PROJECT_ID,
     );
-    assertEquals(capturedBootstrapInputs[0]?.runProjectId, "77777777-7777-4777-8777-777777777777");
+    assertEquals(capturedBootstrapInputs[0]?.runProjectId, TARGET_PROJECT_ID);
+    assertEquals(capturedBootstrapInputs[0]?.runtimeTargetKind, "main_branch");
+    assertEquals(capturedBootstrapInputs[0]?.runtimeTargetEnvironmentId, null);
+    assertEquals(capturedBootstrapInputs[0]?.branchId, null);
+    assertEquals(capturedLifecycleProjectIds, [TARGET_PROJECT_ID]);
     assertEquals(bootstrapCalls, ["wrapped", "start:resolved-sonnet", "complete:run_child_1"]);
     assertEquals(lifecycleStatuses, ["pending", "running", "completed"]);
     assertEquals(result.success.identifiers, {
@@ -869,16 +983,24 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       latestExternalEventSequence: 3,
     });
     assertEquals(result.success.targets, {
-      sourceTargetKind: "environment",
-      runtimeTargetKind: "environment",
-      targetEnvironmentId: ENVIRONMENT_ID,
+      sourceTargetKind: "project",
+      runtimeTargetKind: "main_branch",
+      targetEnvironmentId: null,
       targetBranchId: null,
     });
+    assertEquals(capturedExecutionOptions, [{
+      durableChildRun: result.success.identifiers,
+      projectId: TARGET_PROJECT_ID,
+      projectSlug: "target-project",
+      runtimeTargetKind: "main_branch",
+      runtimeTargetEnvironmentId: null,
+      branchId: null,
+    }]);
     assertEquals(result.success.snapshot.success, true);
     const childConversationBody = getRecordedRequest(requests, 1).body;
     assertEquals(
       (childConversationBody as { project_id?: string }).project_id,
-      "77777777-7777-4777-8777-777777777777",
+      TARGET_PROJECT_ID,
     );
     const handoffMessageBody = getRecordedRequest(requests, 2).body;
     assertEquals(handoffMessageBody, {
@@ -904,10 +1026,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         mode: "agent",
         agent_id: "invoke-agent-child",
         initial_status: "running",
-        source_target_kind: "environment",
-        runtime_target_kind: "environment",
-        source_target_environment_id: ENVIRONMENT_ID,
-        runtime_target_environment_id: ENVIRONMENT_ID,
+        source_target_kind: "project",
+        runtime_target_kind: "main_branch",
       },
     });
     assertEquals(getRecordedRequest(requests, 5).body, {

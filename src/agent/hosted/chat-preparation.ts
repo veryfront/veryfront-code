@@ -83,7 +83,7 @@ export type HostedChatRuntimePreparationRootRunContext = {
 /** Public API contract for hosted chat runtime preparation steering. */
 export type HostedChatRuntimePreparationSteering = {
   instructions: string;
-  skills: RuntimeSkillDefinition[];
+  skills: readonly RuntimeSkillDefinition[];
 };
 
 /** Input payload for hosted chat runtime instructions. */
@@ -93,7 +93,7 @@ export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   branchId?: string | null;
   environmentContext?: string;
   instructions: string;
-  skills: RuntimeSkillDefinition[];
+  skills: readonly RuntimeSkillDefinition[];
   availableToolNames?: readonly string[];
 };
 
@@ -310,7 +310,7 @@ function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
   skillSelectorPolicy: ResolvedSkillSelectorPolicy;
   environmentContext?: string;
   instructions: string;
-  skills: RuntimeSkillDefinition[];
+  skills: readonly RuntimeSkillDefinition[];
 }): HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> {
   return {
     agent: input.agentConfig,
@@ -436,7 +436,9 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.rootRunContext?.effectiveParentMessageId
         ? { parentMessageId: input.rootRunContext.effectiveParentMessageId }
         : {}),
-      availableSkillIds: skillSelectorSnapshot.allowedSkillIds,
+      // Runtime creation state remains mutable across project switches. Copy
+      // the immutable selector snapshot at that ownership boundary.
+      availableSkillIds: [...skillSelectorSnapshot.allowedSkillIds],
       skillSelectorPolicy: skillSelectorSnapshot.policy,
       ...(Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
         ? {

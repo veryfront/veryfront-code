@@ -1,6 +1,5 @@
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
-import { agentLogger } from "#veryfront/utils";
-import { __registerTraceContextGetter } from "../../utils/logger/logger.ts";
+import { __registerTraceContextGetter, agentLogger } from "#veryfront/utils";
 import {
   type BootstrapAgentServiceOptions,
   runAgentServiceMain,
@@ -19,7 +18,7 @@ import {
 } from "../service/runtime.ts";
 import type { AgentServiceServerLifecycle } from "../service/server.ts";
 import type { CreateNodeAgentServiceRuntimeInfrastructureOptions } from "../service/node-runtime-infrastructure.ts";
-import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-sentry.ts";
+import type { NodeAgentServiceApplicationErrorLifecycle } from "../service/node-application-errors.ts";
 import type { ProjectAgentRuntimeAgentSource } from "../project/agent-runtime.ts";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
 import type { HostedHostToolPolicy } from "./chat-runtime-tool-assembly.ts";
@@ -119,6 +118,10 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   /** Framework host tools this service deployment authorizes. */
   hostToolPolicy?: HostedHostToolPolicy;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
+  /** Explicit application-owned error reporter initialization boundary. */
+  applicationErrorReporterInitializer?: CreateNodeAgentServiceRuntimeInfrastructureOptions[
+    "applicationErrorReporterInitializer"
+  ];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;
   drainTimeoutMs?: number;
@@ -160,20 +163,35 @@ export const veryfrontCloudAgentServiceInternals = {
   },
 };
 
-function createApplicationErrorShutdownLifecycle(
+interface ApplicationErrorShutdownOwnership {
+  readonly lifecycle: AgentServiceServerLifecycle;
+  activateRuntimeOwnership(): void;
+}
+
+function createApplicationErrorShutdownOwnership(
   getApplicationErrors: () => NodeAgentServiceApplicationErrorLifecycle,
-): AgentServiceServerLifecycle {
+): ApplicationErrorShutdownOwnership {
+  let runtimeOwnsCleanup = false;
   let cleanedUp = false;
   return {
-    stop: async () => {
-      if (cleanedUp) return;
-      cleanedUp = true;
-      const applicationErrors = getApplicationErrors();
-      try {
-        await applicationErrors.flush();
-      } finally {
-        applicationErrors.reset();
-      }
+    lifecycle: {
+      stop: async () => {
+        // Listener startup rollback must leave this lifecycle intact for
+        // onStartupError, which first captures the primary failure and then
+        // performs the single terminal flush/reset. Normal server shutdown
+        // takes ownership only after listener readiness has succeeded.
+        if (!runtimeOwnsCleanup || cleanedUp) return;
+        cleanedUp = true;
+        const applicationErrors = getApplicationErrors();
+        try {
+          await applicationErrors.flush();
+        } finally {
+          await applicationErrors.dispose();
+        }
+      },
+    },
+    activateRuntimeOwnership: () => {
+      runtimeOwnsCleanup = true;
     },
   };
 }
@@ -243,7 +261,7 @@ export async function startAgentService(
     enabled: false,
     captureStartupError: (_error: unknown) => {},
     flush: () => Promise.resolve(true),
-    reset: () => {},
+    dispose: () => Promise.resolve(),
   };
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
 
@@ -269,7 +287,7 @@ export async function startAgentService(
     start: async () => {
       await initializeNodeVeryfrontCloudAgentServiceContext(context);
       const registrationLifecycle = await createControlPlaneRegistrationLifecycle(context);
-      const applicationErrorLifecycle = createApplicationErrorShutdownLifecycle(() =>
+      const applicationErrorShutdown = createApplicationErrorShutdownOwnership(() =>
         applicationErrors
       );
       try {
@@ -277,11 +295,12 @@ export async function startAgentService(
           ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
           lifecycle: combineAgentServiceLifecycle(
             registrationLifecycle ?? {},
-            applicationErrorLifecycle,
+            applicationErrorShutdown.lifecycle,
           ),
           signals: options.signals,
           hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
         });
+        applicationErrorShutdown.activateRuntimeOwnership();
       } catch (error) {
         await stopRegistrationForStartupFailure(
           registrationLifecycle,
@@ -300,7 +319,7 @@ export async function startAgentService(
           error: flushError instanceof Error ? flushError.message : String(flushError),
         });
       } finally {
-        applicationErrors.reset();
+        await applicationErrors.dispose();
       }
     },
     exit: processTarget?.exit,

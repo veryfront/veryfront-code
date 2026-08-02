@@ -20,6 +20,8 @@ import {
 import { type AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import {
   createHostedProjectRemoteToolSources,
+  type HostedProjectRemoteToolSourceContextualMutationHandler,
+  type HostedProjectRemoteToolSourceContextualProjectSwitchHandler,
   type HostedProjectRemoteToolSourceMutationHandler,
   type HostedProjectRemoteToolSourcePrepareToolInput,
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
@@ -41,6 +43,8 @@ import {
   isIntegrationToolAllowedBySourcePolicy,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
+import { resolveHostedToolExecutionIdentity } from "./runtime-state-resolver.ts";
+import { FORM_INPUT_TOOL_ID } from "../runtime/skill-policy-enforcement.ts";
 import type { RuntimeToolLoadingMode } from "../runtime/runtime-tool-config.ts";
 import { TOOL_SEARCH_TOOL_NAME } from "../runtime/tool-exposure.ts";
 
@@ -49,6 +53,7 @@ export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContex
   authToken: string;
   agentId?: string;
   projectId?: string | null;
+  projectSlug?: string;
   branchId?: string | null;
   model?: string;
   clientProfile?: RuntimeClientProfile | null;
@@ -112,6 +117,8 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   shouldRetryWithRemoteTool?: HostedProjectRemoteToolSourceRetryPolicy;
   onSteeringMutation?: HostedProjectRemoteToolSourceMutationHandler;
   onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
+  onSteeringMutationWithContext?: HostedProjectRemoteToolSourceContextualMutationHandler;
+  onStudioProjectSwitchWithContext?: HostedProjectRemoteToolSourceContextualProjectSwitchHandler;
   preloadLatestConversationUserText?: boolean;
   /**
    * Per-run tool discovery context. When provided, its `activatedRemoteToolNames`
@@ -162,9 +169,8 @@ function filterPostFormInputLocalTools(
     return tools;
   }
 
-  const blockedToolNames = new Set(["form_input", "load_skill"]);
   return Object.fromEntries(
-    Object.entries(tools).filter(([toolName]) => !blockedToolNames.has(toolName)),
+    Object.entries(tools).filter(([toolName]) => toolName !== FORM_INPUT_TOOL_ID),
   );
 }
 
@@ -329,9 +335,12 @@ export async function prepareHostedChatRuntimeToolAssembly<
     shouldRetryWithTool: input.shouldRetryWithRemoteTool,
     onSteeringMutation: input.onSteeringMutation,
     onStudioProjectSwitch: input.onStudioProjectSwitch,
+    onSteeringMutationWithContext: input.onSteeringMutationWithContext,
+    onStudioProjectSwitchWithContext: input.onStudioProjectSwitchWithContext,
   });
   const listedRemoteToolNames = await listProjectScopedRemoteToolNames(remoteToolSources, {
     projectId: activeProjectId(input.taskContext),
+    context: resolveHostedToolExecutionIdentity(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
   const remoteToolNames = applySourceIntegrationPolicy(

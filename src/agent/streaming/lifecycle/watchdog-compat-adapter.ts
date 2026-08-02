@@ -1,5 +1,6 @@
 import type { ChatUiMessageChunk, MessageMetadata } from "#veryfront/chat/types.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { normalizeTimerDurationMs } from "#veryfront/utils/timer.ts";
 import { type AbsoluteDeadlineTimer, createAbsoluteDeadline } from "./deadlines.ts";
 import type { StreamLifecyclePhase } from "./types.ts";
 
@@ -15,12 +16,20 @@ export type ChatStreamWatchdogPhase =
   | "tool_running"
   | "post_tool_idle";
 
+/** Active tool tracked by a chat stream watchdog. */
+export type ChatStreamWatchdogActiveTool = {
+  phase: "tool_input_streaming" | "tool_running";
+  toolCallId: string;
+  toolName?: string;
+};
+
 /** State for chat stream watchdog. */
 export type ChatStreamWatchdogState = {
   phase: ChatStreamWatchdogPhase;
   timeoutMs: number;
   toolCallId?: string;
   toolName?: string;
+  activeToolCalls?: readonly ChatStreamWatchdogActiveTool[];
 };
 
 /** Options accepted by chat stream watchdog. */
@@ -78,9 +87,17 @@ export function createChatStreamWatchdogState(
     toolRunningTimeoutMs: DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
   },
 ): ChatStreamWatchdogState {
+  const idleTimeoutMs = requirePositiveTimeout(
+    options.idleTimeoutMs,
+    "idleTimeoutMs",
+  );
+  const toolRunningTimeoutMs = requirePositiveTimeout(
+    options.toolRunningTimeoutMs,
+    "toolRunningTimeoutMs",
+  );
   return {
     phase,
-    timeoutMs: phase === "tool_running" ? options.toolRunningTimeoutMs : options.idleTimeoutMs,
+    timeoutMs: phase === "tool_running" ? toolRunningTimeoutMs : idleTimeoutMs,
     ...(metadata?.toolCallId ? { toolCallId: metadata.toolCallId } : {}),
     ...(metadata?.toolName ? { toolName: metadata.toolName } : {}),
   };
@@ -100,8 +117,85 @@ export function isLongRunningToolRunning(
     current.phase === "tool_running" &&
     typeof current.toolName === "string" &&
     (longRunningToolNames.has(current.toolName) ||
-      longRunningToolPrefixes.some((prefix) => current.toolName?.startsWith(prefix)))
+      longRunningToolPrefixes.some(
+        (prefix) => prefix.length > 0 && current.toolName?.startsWith(prefix),
+      ))
   );
+}
+
+function getActiveToolCalls(
+  state: ChatStreamWatchdogState,
+): ChatStreamWatchdogActiveTool[] {
+  if (state.activeToolCalls) {
+    return state.activeToolCalls.map((tool) => ({ ...tool }));
+  }
+  if (
+    (state.phase === "tool_input_streaming" || state.phase === "tool_running") &&
+    state.toolCallId
+  ) {
+    return [{
+      phase: state.phase,
+      toolCallId: state.toolCallId,
+      ...(state.toolName ? { toolName: state.toolName } : {}),
+    }];
+  }
+  return [];
+}
+
+function isLongRunningTool(
+  tool: ChatStreamWatchdogActiveTool,
+  options: ReturnType<typeof resolveChatStreamWatchdogOptions>,
+): boolean {
+  return tool.phase === "tool_running" &&
+    typeof tool.toolName === "string" &&
+    (
+      options.longRunningToolNames.has(tool.toolName) ||
+      options.longRunningToolPrefixes.some((prefix) => tool.toolName?.startsWith(prefix))
+    );
+}
+
+function createActiveToolState(
+  activeTools: ChatStreamWatchdogActiveTool[],
+  options: ReturnType<typeof resolveChatStreamWatchdogOptions>,
+): ChatStreamWatchdogState {
+  const selected = activeTools.findLast((tool) => !isLongRunningTool(tool, options)) ??
+    activeTools.at(-1);
+  if (!selected) {
+    return createChatStreamWatchdogState(
+      "response_pending",
+      undefined,
+      options,
+    );
+  }
+
+  return {
+    ...createChatStreamWatchdogState(selected.phase, selected, options),
+    ...(activeTools.length > 1
+      ? { activeToolCalls: activeTools.map((tool) => ({ ...tool })) }
+      : {}),
+  };
+}
+
+function upsertActiveTool(
+  currentState: ChatStreamWatchdogState,
+  tool: ChatStreamWatchdogActiveTool,
+  options: ReturnType<typeof resolveChatStreamWatchdogOptions>,
+): ChatStreamWatchdogState {
+  const activeTools = getActiveToolCalls(currentState);
+  const existingIndex = activeTools.findIndex((active) => active.toolCallId === tool.toolCallId);
+  if (existingIndex === -1) {
+    activeTools.push(tool);
+  } else {
+    const existing = activeTools[existingIndex]!;
+    activeTools[existingIndex] = {
+      ...existing,
+      ...tool,
+      ...(tool.toolName ?? existing.toolName
+        ? { toolName: tool.toolName ?? existing.toolName }
+        : {}),
+    };
+  }
+  return createActiveToolState(activeTools, options);
 }
 
 /** State for get next chat stream watchdog. */
@@ -114,9 +208,10 @@ export function getNextChatStreamWatchdogState(
 
   switch (chunk.type) {
     case "tool-input-start":
-      return createChatStreamWatchdogState(
-        "tool_input_streaming",
+      return upsertActiveTool(
+        currentState,
         {
+          phase: "tool_input_streaming",
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
         },
@@ -124,21 +219,24 @@ export function getNextChatStreamWatchdogState(
       );
 
     case "tool-input-delta":
-      return createChatStreamWatchdogState(
-        "tool_input_streaming",
+      return upsertActiveTool(
+        currentState,
         {
+          phase: "tool_input_streaming",
           toolCallId: chunk.toolCallId,
-          toolName: currentState.toolCallId === chunk.toolCallId
-            ? currentState.toolName
-            : undefined,
+          ...(currentState.toolCallId === chunk.toolCallId &&
+              currentState.toolName
+            ? { toolName: currentState.toolName }
+            : {}),
         },
         resolvedOptions,
       );
 
     case "tool-input-available":
-      return createChatStreamWatchdogState(
-        "tool_running",
+      return upsertActiveTool(
+        currentState,
         {
+          phase: "tool_running",
           toolCallId: chunk.toolCallId,
           toolName: chunk.toolName,
         },
@@ -147,7 +245,12 @@ export function getNextChatStreamWatchdogState(
 
     case "tool-output-available":
     case "tool-output-error":
-    case "tool-output-denied":
+    case "tool-output-denied": {
+      const activeTools = getActiveToolCalls(currentState);
+      const remainingTools = activeTools.filter((tool) => tool.toolCallId !== chunk.toolCallId);
+      if (remainingTools.length > 0) {
+        return createActiveToolState(remainingTools, resolvedOptions);
+      }
       return createChatStreamWatchdogState(
         "post_tool_idle",
         {
@@ -158,19 +261,7 @@ export function getNextChatStreamWatchdogState(
         },
         resolvedOptions,
       );
-
-    case "message-metadata":
-      return isLongRunningToolRunning(
-          currentState,
-          resolvedOptions.longRunningToolNames,
-          resolvedOptions.longRunningToolPrefixes,
-        )
-        ? currentState
-        : createChatStreamWatchdogState(
-          "response_pending",
-          undefined,
-          resolvedOptions,
-        );
+    }
 
     case "finish":
       return createChatStreamWatchdogState(
@@ -179,18 +270,16 @@ export function getNextChatStreamWatchdogState(
         resolvedOptions,
       );
 
-    default:
-      return isLongRunningToolRunning(
-          currentState,
-          resolvedOptions.longRunningToolNames,
-          resolvedOptions.longRunningToolPrefixes,
-        )
-        ? currentState
+    default: {
+      const activeTools = getActiveToolCalls(currentState);
+      return activeTools.length > 0
+        ? createActiveToolState(activeTools, resolvedOptions)
         : createChatStreamWatchdogState(
           "response_pending",
           undefined,
           resolvedOptions,
         );
+    }
   }
 }
 
@@ -299,6 +388,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
   );
   let deadline: { dispose(): void } | null = null;
   let lastTimeoutState: ChatStreamWatchdogState | null = null;
+  let disposed = false;
 
   const clearDeadline = () => {
     deadline?.dispose();
@@ -315,7 +405,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
     );
 
   const arm = () => {
-    if (controller.signal.aborted) {
+    if (disposed || controller.signal.aborted) {
       return;
     }
     clearDeadline();
@@ -348,17 +438,25 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       return lastTimeoutState;
     },
     keepAlive() {
+      if (disposed) {
+        return;
+      }
       if (legacyLongRunningToolActive()) {
         return;
       }
-      state = createChatStreamWatchdogState(
-        "response_pending",
-        undefined,
-        resolvedOptions,
-      );
+      if (getActiveToolCalls(state).length === 0) {
+        state = createChatStreamWatchdogState(
+          "response_pending",
+          undefined,
+          resolvedOptions,
+        );
+      }
       arm();
     },
     observe(chunk: ChatUiMessageChunk<MessageMetadata>) {
+      if (disposed) {
+        return;
+      }
       if (!strict) {
         // Legacy mode is byte-compatible with the pre-lifecycle watchdog:
         // only heartbeat-only metadata is inert; any other chunk (including
@@ -392,6 +490,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       arm();
     },
     dispose() {
+      disposed = true;
       clearDeadline();
     },
   };
@@ -402,18 +501,56 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
   const defaultClearTimeout = globalThis.clearTimeout.bind(globalThis);
 
   return {
-    idleTimeoutMs: options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
-    toolRunningTimeoutMs: options?.toolRunningTimeoutMs ??
-      DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+    idleTimeoutMs: requirePositiveTimeout(
+      options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+      "idleTimeoutMs",
+    ),
+    toolRunningTimeoutMs: requirePositiveTimeout(
+      options?.toolRunningTimeoutMs ??
+        DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+      "toolRunningTimeoutMs",
+    ),
     strictDeadlines: options?.strictDeadlines ?? defaultStrictDeadlines(),
     // Default to an empty set — callers must opt in to classify specific tool
     // names as long-running. Embedding product-specific names here as a
     // default couples this shared utility to application concerns.
     longRunningToolNames: new Set(options?.longRunningToolNames ?? []),
-    longRunningToolPrefixes: [...(options?.longRunningToolPrefixes ?? [])],
+    longRunningToolPrefixes: normalizeLongRunningToolPrefixes(
+      options?.longRunningToolPrefixes ?? [],
+    ),
     setTimeoutFn: options?.setTimeoutFn ?? defaultSetTimeout,
     clearTimeoutFn: options?.clearTimeoutFn ?? defaultClearTimeout,
   };
+}
+
+function requirePositiveTimeout(value: number, optionName: string): number {
+  const normalized = normalizeTimerDurationMs(
+    value,
+    `Chat stream watchdog ${optionName}`,
+  );
+  if (normalized === 0) {
+    throw new RangeError(
+      `Chat stream watchdog ${optionName} must be greater than zero`,
+    );
+  }
+  return normalized;
+}
+
+function normalizeLongRunningToolPrefixes(
+  prefixes: Iterable<string>,
+): string[] {
+  const normalized = [...prefixes];
+  if (
+    normalized.some((prefix) =>
+      typeof prefix !== "string" || prefix.length === 0 ||
+      prefix.trim().length === 0
+    )
+  ) {
+    throw new TypeError(
+      "Chat stream watchdog longRunningToolPrefixes must contain non-empty strings",
+    );
+  }
+  return normalized;
 }
 
 function defaultStrictDeadlines(): boolean {

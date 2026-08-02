@@ -143,13 +143,16 @@ describe("agent/runtime/call-context", () => {
       assertStringIncludes(content, "<available_skills>");
       assertStringIncludes(
         content,
-        "- Deploy Skill (`deploy`): Deployment guidance (model: openai/gpt-5.4; thinking: 512; max-steps: 4)",
+        '- {"skillId":"deploy","name":"Deploy","displayName":"Deploy Skill","description":"Deployment guidance","allowedTools":[],"model":"openai/gpt-5.4","thinking":512,"maxSteps":4}',
       );
       assertEquals(content.includes("create_file"), false);
-      assertStringIncludes(content, "- review: Review guidance");
       assertStringIncludes(
         content,
-        "When delegating, use only these available scoped delegation tools: `agent_reviewer`.",
+        '- {"skillId":"review","name":"Review","description":"Review guidance"}',
+      );
+      assertStringIncludes(
+        content,
+        'When delegating, use only these available scoped delegation tools: "agent_reviewer".',
       );
     });
 
@@ -261,7 +264,10 @@ describe("agent/runtime/call-context", () => {
         skills: createSkills(),
       });
 
-      assertStringIncludes(message?.content ?? "", "- review: Review guidance");
+      assertStringIncludes(
+        message?.content ?? "",
+        '- {"skillId":"review","name":"Review","description":"Review guidance"}',
+      );
       assertStringIncludes(message?.content ?? "", "</available_skills>");
     });
 

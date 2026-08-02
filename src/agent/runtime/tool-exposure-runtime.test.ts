@@ -59,6 +59,7 @@ function restrictedSkillMessages(input: string): Message[] {
         toolName: "load_skill",
         result: {
           skillId: "restricted-runtime-test",
+          instructions: "Use form input only.",
           allowedTools: ["form_input"],
           references: [],
           scripts: [],
@@ -800,13 +801,19 @@ it("provider-executed tools bypass local deferred exposure gating", async () => 
             type: "tool-call",
             toolCallId: "web-search-1",
             toolName: "web_search",
-            input: "{}",
+            input: '{"query":"release"}',
           },
           {
             type: "tool-result",
             toolCallId: "web-search-1",
             toolName: "web_search",
-            result: { results: ["release"] },
+            result: [{
+              url: "https://example.test/releases",
+              title: "Release",
+              pageAge: null,
+              encryptedContent: "opaque-release-result",
+              type: "web_search_result",
+            }],
             providerExecuted: true,
           },
         ],
@@ -830,7 +837,13 @@ it("provider-executed tools bypass local deferred exposure gating", async () => 
   const response = await assistant.generate({ input: "Find a release" });
 
   assertEquals(response.toolCalls[0]?.status, "completed");
-  assertEquals(response.toolCalls[0]?.result, { results: ["release"] });
+  assertEquals(response.toolCalls[0]?.result, [{
+    url: "https://example.test/releases",
+    title: "Release",
+    pageAge: null,
+    encryptedContent: "opaque-release-result",
+    type: "web_search_result",
+  }]);
 });
 
 it("veryfront-cloud Anthropic and OpenAI transports default to framework fallback", async () => {

@@ -2,9 +2,10 @@ import {
   type HostToolSet,
   type RemoteMCPToolSourceConfig,
   type RemoteToolSource,
+  type ToolExecutionContext,
 } from "#veryfront/tool";
 import { runWithRequestContextAsync, serverLogger } from "#veryfront/utils";
-import { runWithRequestContext as runWithProjectRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import { runWithRequestContextResponse as runWithProjectRequestContextResponse } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
@@ -39,6 +40,8 @@ import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-m
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
+  type HostedRuntimeSystemRefreshInput,
+  resolveHostedToolExecutionIdentity,
 } from "./runtime-state-resolver.ts";
 import type { ProjectSteeringMutationResult } from "../project/steering-mutation.ts";
 import type {
@@ -107,20 +110,25 @@ export type CreateDefaultHostedChatRuntimeContextInput = {
 /** Input payload for default hosted chat runtime system refresh. */
 export type DefaultHostedChatRuntimeSystemRefreshInput = {
   taskContext: DefaultHostedChatRuntimeTaskContext;
+  initialProjectId?: string | null;
   liveProjectSteering: NonNullable<DefaultHostedChatRuntimeCreationOptions["liveProjectSteering"]>;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
+  abortSignal?: AbortSignal;
 };
 
 /** Input payload for default hosted chat runtime steering mutation. */
 export type DefaultHostedChatRuntimeSteeringMutationInput = {
   mutation: ProjectSteeringMutationResult;
   taskContext: DefaultHostedChatRuntimeTaskContext;
+  executionContext?: ToolExecutionContext;
 };
 
 /** Input payload for default hosted chat runtime project switch. */
 export type DefaultHostedChatRuntimeProjectSwitchInput = {
   projectId: string;
+  projectSlug?: string;
   taskContext: DefaultHostedChatRuntimeTaskContext;
+  executionContext?: ToolExecutionContext;
 };
 
 /** Options accepted by create default hosted chat runtime. */
@@ -230,16 +238,26 @@ async function buildToolAssembly(
         taskContext: input.taskContext,
         error,
       }),
-    onSteeringMutation: async (mutation) => {
-      await input.onSteeringMutation?.({ mutation, taskContext: input.taskContext });
+    onSteeringMutationWithContext: async (mutation, executionContext) => {
+      await input.onSteeringMutation?.({
+        mutation,
+        taskContext: input.taskContext,
+        ...(executionContext === undefined ? {} : { executionContext }),
+      });
       if (mutation.instructionsChanged || mutation.skillsChanged) {
         incrementSteeringRevision(input.taskContext);
       }
     },
-    onStudioProjectSwitch: async (projectId) => {
+    onStudioProjectSwitchWithContext: async (
+      projectId,
+      projectSlug,
+      executionContext,
+    ) => {
       const changed = await input.onStudioProjectSwitch?.({
         projectId,
+        projectSlug,
         taskContext: input.taskContext,
+        ...(executionContext === undefined ? {} : { executionContext }),
       });
       if (changed) {
         incrementSteeringRevision(input.taskContext);
@@ -259,11 +277,17 @@ function createRuntimeAgentConfig(input: {
   const liveProjectSteering = input.options.liveProjectSteering;
   const systemRefresh = input.refreshSystem;
   const refreshSystem = systemRefresh && liveProjectSteering
-    ? () =>
+    ? (
+      refreshInput: HostedRuntimeSystemRefreshInput<DefaultHostedChatRuntimeTaskContext>,
+    ) =>
       systemRefresh({
         taskContext: input.taskContext,
+        initialProjectId: input.options.projectId,
         liveProjectSteering,
         toolAssembly: input.toolAssembly,
+        ...(refreshInput.abortSignal === undefined
+          ? {}
+          : { abortSignal: refreshInput.abortSignal }),
       })
     : undefined;
 
@@ -284,6 +308,7 @@ function createRuntimeAgentConfig(input: {
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     __vfSourceIntegrationPolicy: input.sourceIntegrationPolicy,
+    __vfResolveToolExecutionContext: () => resolveHostedToolExecutionIdentity(input.taskContext),
     __vfToolExposureCheckpoint: input.options.serverResolvedToolExposureCheckpoint,
     __vfPersistToolExposureCheckpoint: input.options.persistToolExposureCheckpoint,
     __vfToolExposureCheckpointPersistenceRequired:
@@ -324,13 +349,13 @@ function createCloudContext(input: {
   };
 }
 
-function runWithDefaultHostedRequestContext<TResult>(
+function runWithDefaultHostedRequestContext(
   input: {
     taskContext: DefaultHostedChatRuntimeTaskContext;
     cloudContext: VeryfrontCloudContext;
-    operation: () => Promise<TResult>;
+    operation: () => Promise<Response>;
   },
-): Promise<TResult> {
+): Promise<Response> {
   const requestContext = {
     logger: serverLogger.child({
       project_id: input.taskContext.projectId || undefined,
@@ -352,7 +377,7 @@ function runWithDefaultHostedRequestContext<TResult>(
       if (!input.taskContext.projectSlug) {
         return runWithCloudContext();
       }
-      return runWithProjectRequestContext(
+      return runWithProjectRequestContextResponse(
         {
           projectSlug: input.taskContext.projectSlug,
           projectId: input.taskContext.projectId || undefined,
@@ -410,6 +435,8 @@ export async function createDefaultHostedChatRuntime(
             runId: taskContext.runId,
             agentId: taskContext.agentId,
             conversationId: taskContext.conversationId,
+            projectId: taskContext.projectId || undefined,
+            projectSlug: taskContext.projectSlug,
             authToken: taskContext.authToken,
             maxOutputTokens: input.options.maxOutputTokens,
             runStream: (operation) =>

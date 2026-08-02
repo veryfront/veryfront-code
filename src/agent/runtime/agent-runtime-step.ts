@@ -21,7 +21,6 @@ import {
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
-import { getProviderToolProfile } from "./provider-tool-compat.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -51,6 +50,7 @@ export type RuntimeStepStateResolver = (
   mode: AgentRuntimeStepMode,
   step: number,
   systemPrompt: string,
+  abortSignal?: AbortSignal,
 ) => Promise<AgentRuntimeStepState>;
 
 export interface PrepareAgentRuntimeStepInput {
@@ -60,11 +60,9 @@ export interface PrepareAgentRuntimeStepInput {
   activeSkillToolAvailability: SkillToolAvailability | undefined;
   allowedRemoteToolNames: string[] | undefined;
   config: AgentConfig;
-  effectiveModel?: string;
-  excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
   getAvailableTools: RuntimeStepToolLoader;
-  isLocalModel: boolean;
+  supportsToolCalling: boolean;
   messages: Message[];
   mode: AgentRuntimeStepMode;
   providerToolNames?: readonly string[];
@@ -112,6 +110,7 @@ export async function prepareAgentRuntimeStep(
     input.mode,
     input.step,
     input.systemPrompt,
+    input.toolContextBase?.abortSignal,
   );
   const toolContext: ToolExecutionContext = { ...input.toolContextBase, ...runtimeState.context };
   if (input.toolContextBase?.abortSignal !== undefined) {
@@ -131,16 +130,18 @@ export async function prepareAgentRuntimeStep(
     toolContext.activeSkillToolAvailability = input.activeSkillToolAvailability;
   }
 
-  let tools = input.isLocalModel ? [] : await input.getAvailableTools(input.config.tools, {
-    callerAgentId: input.agentId,
-    includeSkillTools: shouldIncludeSkillTools(input.config),
-    allowedRemoteToolNames: input.allowedRemoteToolNames,
-    forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
-    remoteToolSources: input.remoteToolSources,
-    remoteToolContext: toolContext,
-    sourceIntegrationPolicy: input.sourceIntegrationPolicy,
-    strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
-  });
+  let tools = input.supportsToolCalling
+    ? await input.getAvailableTools(input.config.tools, {
+      callerAgentId: input.agentId,
+      includeSkillTools: shouldIncludeSkillTools(input.config),
+      allowedRemoteToolNames: input.allowedRemoteToolNames,
+      forwardedRemoteToolDefinitions: input.forwardedRemoteToolDefinitions,
+      remoteToolSources: input.remoteToolSources,
+      remoteToolContext: toolContext,
+      sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+      strictConfiguredToolsOnly: input.strictConfiguredToolsOnly,
+    })
+    : [];
 
   if (input.activeSkillPolicy || input.activeSkillToolAvailability) {
     tools = filterToolsForSkill(
@@ -149,11 +150,15 @@ export async function prepareAgentRuntimeStep(
       input.activeSkillToolAvailability,
     );
   }
-  tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
-  const excludedToolNames = input.excludedToolNames;
-  if (excludedToolNames !== undefined) {
-    tools = tools.filter((tool) => !excludedToolNames.has(tool.name));
-  }
+  tools = filterToolsAfterSubmittedFormInput(
+    tools,
+    input.messages,
+    runtimeState.context,
+    {
+      id: input.activeSkillId,
+      toolAvailability: input.activeSkillToolAvailability,
+    },
+  );
   const toolExposureState = input.toolExposureState ?? createToolExposureState();
   if (input.toolExposureCheckpoint) {
     const restoredState = restoreToolExposureState(input.toolExposureCheckpoint, tools);
@@ -166,7 +171,6 @@ export async function prepareAgentRuntimeStep(
     authorized: tools,
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
-    maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
   });
   const systemPrompt = hasRuntimeToolInventory(runtimeState.systemPrompt)
     ? flattenSystemInstructions(

@@ -1,9 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
+import "#veryfront/skill/_test-setup.ts";
 import {
   assert,
   assertEquals,
   assertRejects,
   assertStrictEquals,
+  assertThrows,
 } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,18 +13,25 @@ import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import {
   type ApplicationErrorContext,
   type ApplicationErrorReporter,
+  type ApplicationErrorReporterInitializer,
   setApplicationErrorReporter,
 } from "#veryfront/observability/application-errors.ts";
-import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
+import {
+  type NodeTelemetryProvider,
+  NodeTelemetryProviderName,
+} from "#veryfront/extensions/observability/index.ts";
 import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { tool, toolRegistry } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { __resetLogRecordEmitterForTests, agentLogger } from "#veryfront/utils/logger/index.ts";
 import {
   createExecuteSkillScriptTool,
   createLoadSkillReferenceTool,
 } from "#veryfront/skill/tools.ts";
-import { agentRegistry } from "../composition/index.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { agentRegistryInternal } from "../composition/composition.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
   getDiscoveredHostTools,
@@ -35,7 +44,8 @@ import {
 import type { NodeVeryfrontCloudAgentServiceOptions } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import type { HostedRuntimeSourceIdentity } from "./runtime-source-binding.ts";
-import { initializeNodeAgentServiceSentryApplicationErrors } from "../service/node-sentry.ts";
+import { cloudAgentProviderBootstrapInternals } from "./cloud-agent-provider-bootstrap.ts";
+import { initializeNodeAgentServiceApplicationErrors } from "../service/node-application-errors.ts";
 
 type CaptureRecord = {
   error: unknown;
@@ -76,6 +86,14 @@ function createReporter(options: {
     },
   };
   return reporter;
+}
+
+function createApplicationErrorReporterInitializer(
+  reporter: ApplicationErrorReporter,
+): ApplicationErrorReporterInitializer {
+  return {
+    initialize: () => ({ reporter, dispose: () => {} }),
+  };
 }
 
 async function withMockDenoServiceServer(
@@ -158,8 +176,8 @@ async function withTempDir(
   } finally {
     await stopEsbuild();
     Deno.removeSync(dir, { recursive: true });
-    agentRegistry.clearAll();
-    toolRegistry.clearAll();
+    agentRegistryInternal.clearAll();
+    toolRegistryInternal.clearAll();
     unregister(SandboxShellToolsProviderName);
   }
 }
@@ -225,6 +243,19 @@ function registerTestSandboxShellToolsProvider(): void {
   register(SandboxShellToolsProviderName, createBashTool);
 }
 
+function withIsolatedNodeTelemetryProvider(run: () => void): void {
+  const previousProvider = tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName);
+  unregister(NodeTelemetryProviderName);
+  try {
+    run();
+  } finally {
+    unregister(NodeTelemetryProviderName);
+    if (previousProvider !== undefined) {
+      register(NodeTelemetryProviderName, previousProvider);
+    }
+  }
+}
+
 function getRuntimeAgent(
   bundle: Awaited<ReturnType<typeof createNodeVeryfrontCloudAgentServiceRuntime>>,
   agentId: string,
@@ -234,11 +265,138 @@ function getRuntimeAgent(
   return runtimeAgent;
 }
 
+Deno.test("cloud provider bootstrap only ignores a missing telemetry extension", () => {
+  const missingExtension = Object.assign(
+    new Error(
+      "Cannot find package '@veryfront/ext-observability-opentelemetry' imported from /app/loader.js",
+    ),
+    { code: "ERR_MODULE_NOT_FOUND" },
+  );
+  assertEquals(
+    cloudAgentProviderBootstrapInternals.isMissingOpenTelemetryExtension(
+      missingExtension,
+    ),
+    true,
+  );
+
+  const missingTransitiveDependency = Object.assign(
+    new Error(
+      "Cannot find package '@opentelemetry/sdk-node' imported from /app/node_modules/@veryfront/ext-observability-opentelemetry/esm/index.js",
+    ),
+    { code: "ERR_MODULE_NOT_FOUND" },
+  );
+  assertEquals(
+    cloudAgentProviderBootstrapInternals.isMissingOpenTelemetryExtension(
+      missingTransitiveDependency,
+    ),
+    false,
+  );
+});
+
+Deno.test("cloud provider bootstrap rejects malformed telemetry extension exports", () => {
+  const {
+    createOptionalOpenTelemetryProvider,
+    resolveOptionalOpenTelemetryProviderConstructor,
+  } = cloudAgentProviderBootstrapInternals;
+
+  assertEquals(resolveOptionalOpenTelemetryProviderConstructor(null), null);
+  assertThrows(
+    () => resolveOptionalOpenTelemetryProviderConstructor(undefined),
+    TypeError,
+    "expected a module namespace",
+  );
+  assertThrows(
+    () => resolveOptionalOpenTelemetryProviderConstructor({}),
+    TypeError,
+    'export "OpenTelemetryNodeTelemetryProvider" must be constructible',
+  );
+  assertThrows(
+    () =>
+      resolveOptionalOpenTelemetryProviderConstructor({
+        OpenTelemetryNodeTelemetryProvider: () => ({}),
+      }),
+    TypeError,
+    'export "OpenTelemetryNodeTelemetryProvider" must be constructible',
+  );
+
+  class EmptyTelemetryProviderFixture {}
+  assertThrows(
+    () =>
+      createOptionalOpenTelemetryProvider({
+        OpenTelemetryNodeTelemetryProvider: EmptyTelemetryProviderFixture,
+      }),
+    TypeError,
+    'instance must implement method "initialize"',
+  );
+
+  class TelemetryProviderFixture {
+    initialize(): Promise<boolean> {
+      return Promise.resolve(true);
+    }
+  }
+  assertEquals(
+    resolveOptionalOpenTelemetryProviderConstructor({
+      OpenTelemetryNodeTelemetryProvider: TelemetryProviderFixture,
+    }),
+    TelemetryProviderFixture,
+  );
+});
+
+Deno.test("cloud provider bootstrap preserves telemetry providers registered during loading", () => {
+  withIsolatedNodeTelemetryProvider(() => {
+    const explicitProvider: NodeTelemetryProvider = {
+      initialize: () => Promise.resolve(true),
+    };
+    register(NodeTelemetryProviderName, explicitProvider);
+
+    let defaultConstructions = 0;
+    class DefaultTelemetryProviderFixture {
+      constructor() {
+        defaultConstructions += 1;
+      }
+
+      initialize(): Promise<boolean> {
+        return Promise.resolve(false);
+      }
+    }
+
+    cloudAgentProviderBootstrapInternals.registerOpenTelemetryProviderIfMissing({
+      OpenTelemetryNodeTelemetryProvider: DefaultTelemetryProviderFixture,
+    });
+
+    assertEquals(tryResolve(NodeTelemetryProviderName), explicitProvider);
+    assertEquals(defaultConstructions, 0);
+  });
+});
+
+Deno.test("cloud provider bootstrap preserves a provider registered by default construction", () => {
+  withIsolatedNodeTelemetryProvider(() => {
+    const explicitProvider: NodeTelemetryProvider = {
+      initialize: () => Promise.resolve(true),
+    };
+    class ReentrantTelemetryProviderFixture {
+      constructor() {
+        register(NodeTelemetryProviderName, explicitProvider);
+      }
+
+      initialize(): Promise<boolean> {
+        return Promise.resolve(false);
+      }
+    }
+
+    cloudAgentProviderBootstrapInternals.registerOpenTelemetryProviderIfMissing({
+      OpenTelemetryNodeTelemetryProvider: ReentrantTelemetryProviderFixture,
+    });
+
+    assertEquals(tryResolve(NodeTelemetryProviderName), explicitProvider);
+  });
+});
+
 Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", () => {
   try {
-    toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
-    toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
-    toolRegistry.registerShared(
+    toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+    toolRegistryInternal.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+    toolRegistryInternal.registerShared(
       "shared_echo",
       tool({
         id: "shared_echo",
@@ -254,7 +412,21 @@ Deno.test("getDiscoveredHostTools excludes shared skill infrastructure tools", (
     assertEquals("load_skill_reference" in tools, false);
     assertEquals("execute_skill_script" in tools, false);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
+  }
+});
+
+Deno.test("host tool filtering ignores mutations of the public skill-tool snapshot", () => {
+  try {
+    toolRegistryInternal.registerShared("load_skill_reference", createLoadSkillReferenceTool());
+    SKILL_TOOL_IDS.delete("load_skill_reference");
+
+    const tools = getDiscoveredHostTools();
+
+    assertEquals("load_skill_reference" in tools, false);
+  } finally {
+    SKILL_TOOL_IDS.add("load_skill_reference");
+    toolRegistryInternal.clearAll();
   }
 });
 
@@ -339,15 +511,9 @@ Deno.test("startAgentService keeps application-error reporting active after read
     const events: string[] = [];
     const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
       .setInitializeApplicationErrorsForTests(async () => {
-        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-          env: {
-            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-          },
+        const lifecycle = await initializeNodeAgentServiceApplicationErrors({
+          initializer: createApplicationErrorReporterInitializer(reporter),
           flushTimeoutMs: 5,
-          loadExtension: () =>
-            Promise.resolve({
-              createNodeSentryApplicationErrorReporter: () => reporter,
-            }),
         });
         return {
           ...lifecycle,
@@ -355,9 +521,9 @@ Deno.test("startAgentService keeps application-error reporting active after read
             events.push(`flush:${timeoutMs ?? "default"}`);
             return await lifecycle.flush(timeoutMs);
           },
-          reset: () => {
-            events.push("reset");
-            lifecycle.reset();
+          dispose: async () => {
+            events.push("dispose");
+            await lifecycle.dispose();
           },
         };
       });
@@ -389,7 +555,7 @@ Deno.test("startAgentService keeps application-error reporting active after read
         assertEquals(await waitForExit(), 0);
       });
 
-      assertEquals(events, ["flush:default", "reset"]);
+      assertEquals(events, ["flush:default", "dispose"]);
       assertEquals(reporter.flushTimeouts, [5]);
       withMutedConsole(() => {
         agentLogger.error("framework error after shutdown");
@@ -403,7 +569,7 @@ Deno.test("startAgentService keeps application-error reporting active after read
   });
 });
 
-Deno.test("startAgentService resets application-error reporting when shutdown flush fails", async () => {
+Deno.test("startAgentService disposes application-error reporting when shutdown flush fails", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
     const events: string[] = [];
@@ -415,8 +581,9 @@ Deno.test("startAgentService resets application-error reporting when shutdown fl
           events.push("flush");
           return Promise.reject(new Error("flush failed"));
         },
-        reset: () => {
-          events.push("reset");
+        dispose: () => {
+          events.push("dispose");
+          return Promise.resolve();
         },
       }));
 
@@ -441,7 +608,7 @@ Deno.test("startAgentService resets application-error reporting when shutdown fl
         assertEquals(await waitForExit(), 1);
       });
 
-      assertEquals(events, ["flush", "reset"]);
+      assertEquals(events, ["flush", "dispose"]);
     } finally {
       restoreInitializeApplicationErrors();
       __resetLogRecordEmitterForTests();
@@ -450,7 +617,7 @@ Deno.test("startAgentService resets application-error reporting when shutdown fl
   });
 });
 
-Deno.test("startAgentService captures, flushes, and resets terminal startup failures", async () => {
+Deno.test("startAgentService captures, flushes, and disposes terminal startup failures", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
     const startupError = new Error("listen failed");
@@ -459,15 +626,9 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
     const exitCodes: number[] = [];
     const restoreInitializeApplicationErrors = veryfrontCloudAgentServiceInternals
       .setInitializeApplicationErrorsForTests(async () => {
-        const lifecycle = await initializeNodeAgentServiceSentryApplicationErrors({
-          env: {
-            SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-          },
+        const lifecycle = await initializeNodeAgentServiceApplicationErrors({
+          initializer: createApplicationErrorReporterInitializer(reporter),
           flushTimeoutMs: 5,
-          loadExtension: () =>
-            Promise.resolve({
-              createNodeSentryApplicationErrorReporter: () => reporter,
-            }),
         });
         return {
           ...lifecycle,
@@ -479,9 +640,9 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
             events.push(`flush:${timeoutMs ?? "default"}`);
             return await lifecycle.flush(timeoutMs);
           },
-          reset: () => {
-            events.push("reset");
-            lifecycle.reset();
+          dispose: async () => {
+            events.push("dispose");
+            await lifecycle.dispose();
           },
         };
       });
@@ -518,7 +679,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
         denoRuntime.serve = originalServe;
       }
 
-      assertEquals(events, ["capture-startup", "flush:default", "reset"]);
+      assertEquals(events, ["capture-startup", "flush:default", "dispose"]);
       assertEquals(reporter.captured, [
         { error: startupError, context: { boundary: "agent.process.startup" } },
       ]);
@@ -532,7 +693,7 @@ Deno.test("startAgentService captures, flushes, and resets terminal startup fail
   });
 });
 
-Deno.test("startAgentService resets and exits when startup error flush rejects", async () => {
+Deno.test("startAgentService disposes and exits when startup error flush rejects", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
     const startupError = new Error("listen failed");
@@ -549,8 +710,9 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
           events.push("flush");
           return Promise.reject(new Error("flush failed"));
         },
-        reset: () => {
-          events.push("reset");
+        dispose: () => {
+          events.push("dispose");
+          return Promise.resolve();
         },
       }));
 
@@ -586,7 +748,7 @@ Deno.test("startAgentService resets and exits when startup error flush rejects",
         denoRuntime.serve = originalServe;
       }
 
-      assertEquals(events, ["capture-startup", "flush", "reset"]);
+      assertEquals(events, ["capture-startup", "flush", "dispose"]);
       assertEquals(exitCodes, [1]);
     } finally {
       restoreInitializeApplicationErrors();
@@ -1340,18 +1502,28 @@ Deno.test("hosted child execution config resolves steering against the target pr
     authToken: string;
     branchId?: string | null;
   }> = [];
+  const steeringSignals: Array<AbortSignal | undefined> = [];
+  const abortController = new AbortController();
   const config = await veryfrontCloudAgentServiceInternals.resolveHostedChildAgentExecutionConfig(
     {
       options: { mcpServers: [] },
       discoveryResult: { agents: new Map([["extraction-agent", null]]) },
       agentConfigs: new Map([["extraction-agent", childAgent]]),
       projectSteeringByAgentId: new Map([["extraction-agent", {
-        getProjectInstructions: (lookup: typeof steeringLookups[number]) => {
+        getProjectInstructionsForRequest: (
+          lookup: typeof steeringLookups[number],
+          signal: AbortSignal | undefined,
+        ) => {
           steeringLookups.push(lookup);
+          steeringSignals.push(signal);
           return Promise.resolve("Use the target project's extraction policy.");
         },
-        getSkillsConfig: (lookup: typeof steeringLookups[number]) => {
+        getSkillsConfigForRequest: (
+          lookup: typeof steeringLookups[number],
+          signal: AbortSignal | undefined,
+        ) => {
           steeringLookups.push(lookup);
+          steeringSignals.push(signal);
           return Promise.resolve([]);
         },
       }]]),
@@ -1365,6 +1537,7 @@ Deno.test("hosted child execution config resolves steering against the target pr
     },
     "extraction-agent",
     "target-project",
+    abortController.signal,
   );
 
   assertEquals(config?.model, "openai/gpt-5.4");
@@ -1374,12 +1547,14 @@ Deno.test("hosted child execution config resolves steering against the target pr
     { projectId: "target-project", authToken: "token-1", branchId: null },
     { projectId: "target-project", authToken: "token-1", branchId: null },
   ]);
+  assert(steeringSignals[0] instanceof AbortSignal);
+  assertEquals(steeringSignals[0], steeringSignals[1]);
 });
 
 Deno.test("hosted child execution config hides skill infrastructure for skills empty and false", async () => {
   for (const skills of [[], false] as const) {
     try {
-      toolRegistry.registerShared(
+      toolRegistryInternal.registerShared(
         "get_file",
         tool({
           id: "get_file",
@@ -1388,8 +1563,14 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
           execute: () => ({ ok: true }),
         }),
       );
-      toolRegistry.registerShared("load_skill_reference", createLoadSkillReferenceTool());
-      toolRegistry.registerShared("execute_skill_script", createExecuteSkillScriptTool());
+      toolRegistryInternal.registerShared(
+        "load_skill_reference",
+        createLoadSkillReferenceTool(),
+      );
+      toolRegistryInternal.registerShared(
+        "execute_skill_script",
+        createExecuteSkillScriptTool(),
+      );
 
       const childAgent = {
         id: "extraction-agent",
@@ -1409,8 +1590,8 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
         discoveryResult: { agents: new Map([["extraction-agent", null]]) },
         agentConfigs: new Map([["extraction-agent", childAgent]]),
         projectSteeringByAgentId: new Map([["extraction-agent", {
-          getProjectInstructions: () => Promise.resolve("Use extraction policy."),
-          getSkillsConfig: () =>
+          getProjectInstructionsForRequest: () => Promise.resolve("Use extraction policy."),
+          getSkillsConfigForRequest: () =>
             Promise.resolve([{
               id: "global-skill",
               name: "Global skill",
@@ -1471,14 +1652,14 @@ Deno.test("hosted child execution config hides skill infrastructure for skills e
       assertEquals("load_skill_reference" in hostTools, false);
       assertEquals("execute_skill_script" in hostTools, false);
     } finally {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     }
   }
 });
 
 Deno.test("hosted child execution config keeps exact non-empty skill authorization", async () => {
   try {
-    toolRegistry.registerShared(
+    toolRegistryInternal.registerShared(
       "get_file",
       tool({
         id: "get_file",
@@ -1500,8 +1681,8 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
       discoveryResult: { agents: new Map([["extraction-agent", null]]) },
       agentConfigs: new Map([["extraction-agent", childAgent]]),
       projectSteeringByAgentId: new Map([["extraction-agent", {
-        getProjectInstructions: () => Promise.resolve("Use extraction policy."),
-        getSkillsConfig: () =>
+        getProjectInstructionsForRequest: () => Promise.resolve("Use extraction policy."),
+        getSkillsConfigForRequest: () =>
           Promise.resolve([{
             id: "extraction-agent--extract",
             name: "Extract",
@@ -1568,7 +1749,7 @@ Deno.test("hosted child execution config keeps exact non-empty skill authorizati
     assertEquals("get_file" in hostTools, true);
     assertEquals("load_skill" in hostTools, true);
   } finally {
-    toolRegistry.clearAll();
+    toolRegistryInternal.clearAll();
   }
 });
 

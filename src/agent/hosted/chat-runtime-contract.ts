@@ -103,7 +103,7 @@ export type HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> = {
   skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   environmentContext?: string;
   initialProjectInstructions?: string;
-  initialSkills?: RuntimeSkillDefinition[];
+  initialSkills?: readonly RuntimeSkillDefinition[];
 };
 
 /** Submitted form_input result carried across hosted runtime continuations. */

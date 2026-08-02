@@ -89,7 +89,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly preserves runtime-essential skil
   assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
 });
 
-Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools but keeps delegation after submitted form input", async () => {
+Deno.test("prepareHostedChatRuntimeToolAssembly hides repeated intake but keeps skill references after submission", async () => {
   const taskContext: HostedChatRuntimeToolAssemblyContext = {
     authToken: "token",
     projectId: "project-1",
@@ -118,8 +118,8 @@ Deno.test("prepareHostedChatRuntimeToolAssembly hides intake tools but keeps del
     preloadLatestConversationUserText: false,
   });
 
-  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "sleep"]);
-  assertEquals(taskContext.availableToolNames, ["invoke_agent", "sleep"]);
+  assertEquals(toolAssembly.localToolNames, ["invoke_agent", "load_skill", "sleep"]);
+  assertEquals(taskContext.availableToolNames, ["invoke_agent", "load_skill", "sleep"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly keeps empty allowed tools as explicit deny-all", async () => {
@@ -351,6 +351,60 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   assertExists(runtimeSleepTool);
   await runtimeSleepTool.execute?.({});
   assertEquals(traceSpans, ["tool.sleep"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly lists Studio tools with one live credential tuple", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "initial-token",
+    projectId: "project-1",
+    projectSlug: "project-one",
+    model: "openai/gpt-4.1",
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+  };
+  let observedHeaders: HeadersInit | undefined;
+
+  await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    studioMcpUrl: "https://studio.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-studio" }],
+    conversationId: "conversation-1",
+    allowedToolNames: ["studio_open_project"],
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    createRemoteToolSource: (config) => {
+      taskContext.authToken = "rotated-token";
+      taskContext.projectId = "project-2";
+      taskContext.projectSlug = "project-two";
+      return {
+        id: config.id ?? "studio-mcp",
+        listTools: async (context) => {
+          observedHeaders = typeof config.headers === "function"
+            ? await config.headers(context)
+            : config.headers;
+          return [remoteTool("studio_open_project", "Open a project")];
+        },
+        executeTool: () => Promise.resolve({ ok: true }),
+      };
+    },
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(observedHeaders, {
+    Authorization: "Bearer rotated-token",
+    "x-conversation-id": "conversation-1",
+    "x-project-id": "project-2",
+  });
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly removes source-denied integration tools from execution and inventory", async () => {

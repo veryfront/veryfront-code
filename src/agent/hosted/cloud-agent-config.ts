@@ -4,8 +4,8 @@ import { createNodeAgentServiceRuntimeInfrastructure } from "../service/node-run
 import { createDetachedRunTracker } from "../service/detached-run-tracker.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import {
-  createHostedAgentProjectSteering,
-  type HostedAgentProjectSteering,
+  createStrictHostedAgentProjectSteering,
+  type StrictHostedAgentProjectSteering,
 } from "./agent-project-steering.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
@@ -42,6 +42,7 @@ export function createNodeVeryfrontCloudAgentServiceContext(
   const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
     serviceName: options.serviceName,
     env: resolveEnvironment({ env: options.env, processTarget }),
+    applicationErrorReporterInitializer: options.applicationErrorReporterInitializer,
     processTarget,
   });
   function trace<TResult>(
@@ -63,7 +64,7 @@ export function createNodeVeryfrontCloudAgentServiceContext(
     infrastructure,
     trace,
     defaultAgentId: null as string | null,
-    projectSteeringByAgentId: new Map<string, HostedAgentProjectSteering>(),
+    projectSteeringByAgentId: new Map<string, StrictHostedAgentProjectSteering>(),
     tracker: createDetachedRunTracker<AgUiResumeValue>(),
     discoveryResult: null as ProjectAgentRuntimeDiscovery | null,
     agentConfig: null as RuntimeAgentMarkdownDefinition | null,
@@ -189,13 +190,13 @@ export function getDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext
 export function getProjectSteering(
   context: NodeVeryfrontCloudAgentServiceContext,
   agentId: string = getDefaultAgentId(context),
-): HostedAgentProjectSteering {
+): StrictHostedAgentProjectSteering {
   const cachedProjectSteering = context.projectSteeringByAgentId.get(agentId);
   if (cachedProjectSteering) {
     return cachedProjectSteering;
   }
 
-  const projectSteering = createHostedAgentProjectSteering({
+  const projectSteering = createStrictHostedAgentProjectSteering({
     baseDir: resolveBaseDir(context.options),
     agentId,
     getApiUrl: () => context.infrastructure.getConfig().VERYFRONT_API_URL,

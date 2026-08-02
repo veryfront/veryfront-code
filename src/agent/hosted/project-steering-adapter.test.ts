@@ -1,8 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import "#veryfront/skill/_test-setup.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { join } from "node:path";
 import {
   createHostedProjectSteeringAdapter,
+  createStrictHostedProjectSteeringAdapter,
   type HostedProjectSkillIdsContext,
 } from "./project-steering-adapter.ts";
 import type {
@@ -20,7 +22,7 @@ async function createSkillsDir(): Promise<string> {
   await Deno.writeTextFile(
     join(skillDir, "SKILL.md"),
     `---
-name: Builtin
+name: builtin
 description: Builtin skill
 ---
 Use builtin instructions.`,
@@ -65,7 +67,7 @@ Deno.test("hosted project steering adapter loads instructions and project skills
             return {
               path: options.path,
               content: `---
-name: Project Skill
+name: project
 description: Project skill
 ---
 Use project instructions.`,
@@ -101,6 +103,232 @@ Use project instructions.`,
   });
 });
 
+Deno.test("hosted project steering adapter uses the strict default project files client", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    let fetchCalls = 0;
+    const adapter = createStrictHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    await assertRejects(
+      () =>
+        adapter.getProjectInstructions({
+          projectId: "..",
+          authToken: "token-1",
+        }),
+      TypeError,
+      "route-safe",
+    );
+    assertEquals(fetchCalls, 0);
+  });
+});
+
+Deno.test("strict hosted project steering propagates in-flight caller cancellation", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("stop project steering", "AbortError");
+    let notifyFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    const observedSignals: AbortSignal[] = [];
+    const adapter = createStrictHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: (_url, init) => {
+        observedSignals.push(init.signal as AbortSignal);
+        notifyFetchStarted();
+        return new Promise(() => undefined);
+      },
+    });
+
+    const instructions = adapter.getProjectInstructionsForRequest(
+      {
+        projectId: "project-1",
+        authToken: "token-1",
+      },
+      controller.signal,
+    );
+    await fetchStarted;
+    controller.abort(cancellation);
+    const error = await assertRejects(() => instructions);
+
+    assertEquals(error, cancellation);
+    assertEquals(observedSignals[0]?.aborted, true);
+    assertEquals(observedSignals[0]?.reason, cancellation);
+  });
+});
+
+Deno.test("strict hosted load_skill routes execution cancellation to the project-files request", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("cancel load_skill", "AbortError");
+    let observedSignal: AbortSignal | undefined;
+    let notifyFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    let releaseFetch!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const adapter = createStrictHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: (_url, init) => {
+        observedSignal = init.signal as AbortSignal;
+        notifyFetchStarted();
+        return pendingResponse;
+      },
+    });
+    const loadSkill = adapter.createLoadSkillTool({
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: null,
+      availableSkillIds: ["project"],
+      skillSourcePaths: {
+        project: "skills/project/SKILL.md",
+      },
+    });
+
+    const result = loadSkill.execute(
+      { skillId: "project" },
+      { abortSignal: controller.signal },
+    );
+    await fetchStarted;
+    controller.abort(cancellation);
+    await Promise.resolve();
+    releaseFetch(new Response(null, { status: 404 }));
+    const error = await assertRejects(() => result);
+
+    assertEquals(error, cancellation);
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, cancellation);
+  });
+});
+
+Deno.test("strict hosted skill refresh routes caller cancellation to the project-files request", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const controller = new AbortController();
+    const cancellation = new DOMException("cancel skill refresh", "AbortError");
+    let observedSignal: AbortSignal | undefined;
+    let notifyFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      notifyFetchStarted = resolve;
+    });
+    let releaseFetch!: (response: Response) => void;
+    const pendingResponse = new Promise<Response>((resolve) => {
+      releaseFetch = resolve;
+    });
+    const adapter = createStrictHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: (_url, init) => {
+        observedSignal = init.signal as AbortSignal;
+        notifyFetchStarted();
+        return pendingResponse;
+      },
+    });
+    const requestAdapter = adapter as typeof adapter & {
+      refreshProjectSkillIdsForRequest?: (
+        context: {
+          projectId: string;
+          authToken: string;
+          branchId: null;
+          availableSkillIds: string[];
+        },
+        signal: AbortSignal,
+      ) => Promise<void>;
+    };
+
+    assert(
+      typeof requestAdapter.refreshProjectSkillIdsForRequest === "function",
+      "strict adapter must expose request-scoped skill refresh",
+    );
+    const result = requestAdapter.refreshProjectSkillIdsForRequest(
+      {
+        projectId: "project-1",
+        authToken: "token-1",
+        branchId: null,
+        availableSkillIds: [],
+      },
+      controller.signal,
+    );
+    await fetchStarted;
+    controller.abort(cancellation);
+    await Promise.resolve();
+    releaseFetch(new Response(null, { status: 404 }));
+    const error = await assertRejects(() => result);
+
+    assertEquals(error, cancellation);
+    assertEquals(observedSignal?.aborted, true);
+    assertEquals(observedSignal?.reason, cancellation);
+  });
+});
+
+Deno.test("strict hosted project steering rejects signal-unaware client injection", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    type StrictOptions = Parameters<typeof createStrictHostedProjectSteeringAdapter>[0];
+    const strictTypeRejectsPublicClient: RuntimeProjectFilesClient extends
+      NonNullable<StrictOptions["projectFilesClient"]> ? false
+      : true = true;
+    assertEquals(strictTypeRejectsPublicClient, true);
+
+    const projectFilesClient = createProjectFilesClient();
+    const publicAdapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      projectFilesClient,
+    });
+    assertEquals(
+      await publicAdapter.getProjectInstructions({
+        projectId: "project-1",
+        authToken: "token-1",
+      }),
+      "",
+    );
+
+    assertThrows(
+      () =>
+        createStrictHostedProjectSteeringAdapter({
+          apiUrl: "https://api.example.test",
+          skillsDir,
+          projectFilesClient,
+        } as never),
+      TypeError,
+      "signal-unaware projectFilesClient",
+    );
+  });
+});
+
+Deno.test("public hosted project steering adapter preserves the legacy project files client", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    let fetchCalls = 0;
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      fetch: async () => {
+        fetchCalls += 1;
+        return new Response(null, { status: 404 });
+      },
+    });
+
+    assertEquals(
+      await adapter.getProjectInstructions({
+        projectId: "..",
+        authToken: "",
+      }),
+      "",
+    );
+    assertEquals(fetchCalls, 1);
+  });
+});
+
 Deno.test("hosted project steering adapter creates load_skill and refreshes project skill ids", async () => {
   await withSkillsDir(async (skillsDir) => {
     const adapter = createHostedProjectSteeringAdapter({
@@ -112,7 +340,7 @@ Deno.test("hosted project steering adapter creates load_skill and refreshes proj
             ? {
               path,
               content: `---
-name: Project Skill
+name: project
 description: Project skill
 ---
 Use project instructions.`,
@@ -198,15 +426,21 @@ Body.`;
       apiUrl: "https://api.example.test",
       skillsDir,
       projectFilesClient: createProjectFilesClient({
-        getProjectFile: async ({ path }) =>
-          path === "skills/global/SKILL.md" ||
-            path === "agents/researcher/skills/cite/SKILL.md" ||
-            path === "agents/writer/skills/style/SKILL.md"
-            ? { path, content: skillMd(path) }
-            : null,
+        getProjectFile: async ({ path }) => {
+          const skillName = path === "skills/global/SKILL.md"
+            ? "global"
+            : path === "agents/researcher/skills/cite/SKILL.md"
+            ? "cite"
+            : path === "agents/writer/skills/style/SKILL.md"
+            ? "style"
+            : null;
+          return skillName ? { path, content: skillMd(skillName) } : null;
+        },
         getProjectFiles: async () => [
           { path: "skills/global/SKILL.md" },
+          { path: "agents/researcher/AGENT.md" },
           { path: "agents/researcher/skills/cite/SKILL.md" },
+          { path: "agents/writer/AGENT.md" },
           { path: "agents/writer/skills/style/SKILL.md" },
         ],
       }),

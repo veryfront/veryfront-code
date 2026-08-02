@@ -193,38 +193,40 @@ export function combineAgentServiceLifecycle(
     return primary;
   }
 
+  const throwFailures = (failures: readonly unknown[], operation: string): void => {
+    if (failures.length === 0) return;
+    if (failures.length === 1) throw failures[0];
+    throw new AggregateError(failures, `Agent service ${operation} failed`);
+  };
+
   return {
     setShuttingDown: () => {
-      let failure: unknown;
+      const failures: unknown[] = [];
       try {
         primary.setShuttingDown?.();
       } catch (error) {
-        failure = error;
+        failures.push(error);
       }
       try {
         secondary.setShuttingDown?.();
       } catch (error) {
-        failure ??= error;
+        failures.push(error);
       }
-      if (failure !== undefined) {
-        throw failure;
-      }
+      throwFailures(failures, "shutdown notification");
     },
     stop: async () => {
-      let failure: unknown;
+      const failures: unknown[] = [];
       try {
         await primary.stop?.();
       } catch (error) {
-        failure = error;
+        failures.push(error);
       }
       try {
         await secondary.stop?.();
       } catch (error) {
-        failure ??= error;
+        failures.push(error);
       }
-      if (failure !== undefined) {
-        throw failure;
-      }
+      throwFailures(failures, "cleanup");
     },
   };
 }

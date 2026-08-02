@@ -15,6 +15,7 @@ import {
 import type { MutableAgentProjectContext } from "../project/context.ts";
 import {
   createRuntimeProjectFilesClient,
+  createStrictRuntimeProjectFilesClient,
   type RuntimeProjectFilesClient,
   type RuntimeProjectFilesClientOptions,
   type RuntimeProjectFilesFetch,
@@ -62,6 +63,13 @@ export type HostedProjectSteeringAdapterOptions = {
   builtinStore?: RuntimeLoadSkillBuiltinStore;
 };
 
+/** Internal strict options forbid signal-unaware public project-files clients. */
+export type StrictHostedProjectSteeringAdapterOptions =
+  & Omit<HostedProjectSteeringAdapterOptions, "projectFilesClient">
+  & {
+    projectFilesClient?: never;
+  };
+
 /** Context for hosted project skill IDs. */
 export type HostedProjectSkillIdsContext = MutableAgentProjectContext & {
   authToken: string;
@@ -99,6 +107,22 @@ export type HostedProjectSteeringAdapter = {
   refreshProjectSkillIds: (context: HostedProjectSkillIdsContext) => Promise<void>;
 };
 
+/** Internal request-scoped extension used only by fail-closed cloud composition. */
+export type StrictHostedProjectSteeringAdapter = HostedProjectSteeringAdapter & {
+  getProjectInstructionsForRequest: (
+    lookup: RuntimeProjectSteeringLookup,
+    signal: AbortSignal | undefined,
+  ) => Promise<string>;
+  getSkillsConfigForRequest: (
+    lookup: RuntimeProjectSteeringLookup,
+    signal: AbortSignal | undefined,
+  ) => Promise<RuntimeSkillDefinition[]>;
+  refreshProjectSkillIdsForRequest: (
+    context: HostedProjectSkillIdsContext,
+    signal: AbortSignal | undefined,
+  ) => Promise<void>;
+};
+
 function createProjectFilesAccessDeniedError(statusCode: number, message: string): Error {
   return new HostedServiceAuthError(statusCode, message);
 }
@@ -116,8 +140,12 @@ function createProjectFilesClientOptions(
 
 function createDefaultProjectFilesClient(
   options: HostedProjectSteeringAdapterOptions,
-): RuntimeProjectFilesClient {
-  return createRuntimeProjectFilesClient(createProjectFilesClientOptions(options));
+  strict: boolean,
+): RuntimeProjectFilesClient | ReturnType<typeof createStrictRuntimeProjectFilesClient> {
+  const clientOptions = createProjectFilesClientOptions(options);
+  return strict
+    ? createStrictRuntimeProjectFilesClient(clientOptions)
+    : createRuntimeProjectFilesClient(clientOptions);
 }
 
 function createDefaultProjectSkillLoader(
@@ -165,11 +193,26 @@ function resolveRefreshedSkillSnapshot(input: {
   });
 }
 
-/** Create hosted project steering adapter. */
-export function createHostedProjectSteeringAdapter(
+function createProjectSteeringAdapter(
   options: HostedProjectSteeringAdapterOptions,
-): HostedProjectSteeringAdapter {
-  const projectFilesClient = options.projectFilesClient ?? createDefaultProjectFilesClient(options);
+  strictProjectFiles: false,
+): HostedProjectSteeringAdapter;
+function createProjectSteeringAdapter(
+  options: StrictHostedProjectSteeringAdapterOptions,
+  strictProjectFiles: true,
+): StrictHostedProjectSteeringAdapter;
+function createProjectSteeringAdapter(
+  options: HostedProjectSteeringAdapterOptions,
+  strictProjectFiles: boolean,
+): HostedProjectSteeringAdapter | StrictHostedProjectSteeringAdapter {
+  if (strictProjectFiles && options.projectFilesClient !== undefined) {
+    throw new TypeError(
+      "Strict hosted project steering does not accept a signal-unaware projectFilesClient",
+    );
+  }
+  const projectFilesClient = strictProjectFiles
+    ? createDefaultProjectFilesClient(options, true)
+    : options.projectFilesClient ?? createDefaultProjectFilesClient(options, false);
   const projectSkillLoader = options.projectSkillLoader ??
     createDefaultProjectSkillLoader(options, projectFilesClient);
   const builtinSkills = options.builtinSkills ??
@@ -178,26 +221,64 @@ export function createHostedProjectSteeringAdapter(
 
   async function getProjectInstructions(
     lookup: RuntimeProjectSteeringLookup,
+    signal?: AbortSignal,
   ): Promise<string> {
     return getRuntimeProjectInstructions({
       ...lookup,
-      getProjectFile: projectFilesClient.getProjectFile,
+      getProjectFile: (fileOptions) =>
+        projectFilesClient.getProjectFile({
+          ...fileOptions,
+          ...(strictProjectFiles && signal ? { signal } : {}),
+        }),
     });
   }
 
   async function getSkillsConfig(
     lookup: RuntimeProjectSteeringLookup,
+    signal?: AbortSignal,
   ): Promise<RuntimeSkillDefinition[]> {
     return getRuntimeProjectSkillCatalog({
       ...lookup,
       builtinSkills,
       logger: options.logger,
-      getProjectFile: projectFilesClient.getProjectFile,
-      getProjectFiles: projectFilesClient.getProjectFiles,
+      getProjectFile: (fileOptions) =>
+        projectFilesClient.getProjectFile({
+          ...fileOptions,
+          ...(strictProjectFiles && signal ? { signal } : {}),
+        }),
+      getProjectFiles: (fileOptions) =>
+        projectFilesClient.getProjectFiles({
+          ...fileOptions,
+          ...(strictProjectFiles && signal ? { signal } : {}),
+        }),
     });
   }
 
-  return {
+  async function refreshProjectSkillIds(
+    context: HostedProjectSkillIdsContext,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    const skills = await getSkillsConfig(
+      {
+        projectId: context.projectId,
+        authToken: context.authToken,
+        branchId: context.branchId,
+      },
+      signal,
+    );
+
+    const snapshot = resolveRefreshedSkillSnapshot({ skills, context });
+    assertResolvedSkillSelector(snapshot);
+    // Project context is mutable across navigation and refresh. Give it an
+    // owned array without weakening the selector snapshot's immutability.
+    context.availableSkillIds = [...snapshot.allowedSkillIds];
+    context.skillSelectorPolicy = snapshot.policy;
+    context.skillSourcePaths = Object.keys(snapshot.skillSourcePaths).length > 0
+      ? snapshot.skillSourcePaths
+      : undefined;
+  }
+
+  const adapter: HostedProjectSteeringAdapter = {
     listBuiltinSkillIds: () => builtinSkills.map((skill) => skill.id),
     getProjectInstructions,
     getSkillsConfig,
@@ -215,20 +296,34 @@ export function createHostedProjectSteeringAdapter(
         builtinStore,
         logger: options.logger,
       }),
-    refreshProjectSkillIds: async (context) => {
-      const skills = await getSkillsConfig({
-        projectId: context.projectId,
-        authToken: context.authToken,
-        branchId: context.branchId,
-      });
-
-      const snapshot = resolveRefreshedSkillSnapshot({ skills, context });
-      assertResolvedSkillSelector(snapshot);
-      context.availableSkillIds = snapshot.allowedSkillIds;
-      context.skillSelectorPolicy = snapshot.policy;
-      context.skillSourcePaths = Object.keys(snapshot.skillSourcePaths).length > 0
-        ? snapshot.skillSourcePaths
-        : undefined;
-    },
+    refreshProjectSkillIds,
   };
+  if (!strictProjectFiles) {
+    return adapter;
+  }
+  return {
+    ...adapter,
+    getProjectInstructionsForRequest: getProjectInstructions,
+    getSkillsConfigForRequest: getSkillsConfig,
+    refreshProjectSkillIdsForRequest: refreshProjectSkillIds,
+  };
+}
+
+/**
+ * Create a hosted project steering adapter.
+ *
+ * The public factory retains the established permissive project-files client
+ * contract. Hosted service composition uses the strict internal factory below.
+ */
+export function createHostedProjectSteeringAdapter(
+  options: HostedProjectSteeringAdapterOptions,
+): HostedProjectSteeringAdapter {
+  return createProjectSteeringAdapter(options, false);
+}
+
+/** Create the fail-closed project steering adapter used by hosted services. */
+export function createStrictHostedProjectSteeringAdapter(
+  options: StrictHostedProjectSteeringAdapterOptions,
+): StrictHostedProjectSteeringAdapter {
+  return createProjectSteeringAdapter(options, true);
 }

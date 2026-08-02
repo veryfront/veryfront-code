@@ -5,8 +5,8 @@ import {
   resolveVeryfrontCloudModelId,
   runWithVeryfrontCloudContextAsync,
 } from "../../provider/index.ts";
-import { generateText } from "../../runtime/runtime-bridge.ts";
-import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils";
+import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
+import { redactForSerialization, sanitizeUrlCredentials } from "#veryfront/utils";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";
 import type { AgentRuntimeMessage, AgentRuntimeMessagePart } from "../runtime/message-adapter.ts";
 import type { ContextSummaryGenerator } from "./context-budget-manager.ts";
@@ -41,7 +41,7 @@ function truncateText(text: string, maxCharacters: number): string {
 function stringifyUnknown(value: unknown): string {
   try {
     return JSON.stringify(
-      redactSensitive(value),
+      redactForSerialization(value),
       (_key, candidate) =>
         typeof candidate === "string" ? sanitizeUrlCredentials(candidate) : candidate,
     );

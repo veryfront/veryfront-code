@@ -100,6 +100,7 @@ describe("agent/runtime/model-resolution", () => {
       resolveConfiguredAgentModel("mistral-large"),
       "mistral/mistral-large-2512",
     );
+    assertEquals(resolveConfiguredAgentModel("constructor"), "constructor");
   });
 
   it("uses the default model through Veryfront Cloud when cloud bootstrap is available", () => {
@@ -142,13 +143,17 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
-  it("keeps explicit local runtime models explicit", () => {
+  it("keeps explicit non-hosted provider models unchanged", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
 
     assertEquals(
       resolveRuntimeModel("local/qwen3.5-0.8b"),
       "local/qwen3.5-0.8b",
+    );
+    assertEquals(
+      resolveRuntimeModel("acme/custom-model"),
+      "acme/custom-model",
     );
   });
 

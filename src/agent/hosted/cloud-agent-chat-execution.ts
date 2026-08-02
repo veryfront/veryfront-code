@@ -28,6 +28,7 @@ import {
   type AgentServiceRuntimeConfig,
   type CreateAgentServiceRuntimeOptions,
 } from "../service/runtime.ts";
+import { resolveHostedRequestPreparationSignal } from "../service/request-preparation-context.ts";
 import type { AgentServiceServerLifecycle } from "../service/server.ts";
 import {
   createAgentServiceRegistrationLifecycle,
@@ -121,8 +122,9 @@ export function buildLocalTools(
 /** Creates the project steering refresh object for the chat runtime. */
 export function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentServiceContext) {
   return createDefaultHostedProjectSteeringRefresh({
-    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
-    fetchSkills: (lookup) => getSkillsConfig(context, lookup),
+    fetchProjectInstructions: ({ signal, ...lookup }) =>
+      getProjectInstructions(context, lookup, undefined, signal),
+    fetchSkills: ({ signal, ...lookup }) => getSkillsConfig(context, lookup, undefined, signal),
     buildInstructions: buildVeryfrontCloudRuntimeInstructions,
     projectScopedRemoteToolOptions: {
       projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
@@ -163,19 +165,32 @@ export function createAgentRuntime(
     buildLocalTools: localToolRuntime.buildLocalTools,
     cleanup: localToolRuntime.cleanup,
     refreshSystem,
-    onSteeringMutation: async ({ mutation, taskContext }) => {
+    onSteeringMutation: async ({ mutation, taskContext, executionContext }) => {
       if (mutation.skillsChanged) {
         // Pass the live task context (not a spread copy) so the refreshed
         // owner-scoped skill ids and source paths actually land on the run.
-        await refreshProjectSkillIds(context, taskContext);
+        await refreshProjectSkillIds(
+          context,
+          taskContext,
+          executionContext?.abortSignal,
+        );
       }
     },
-    onStudioProjectSwitch: async ({ projectId, taskContext }) => {
-      if (!applyAgentProjectContextChange(taskContext, projectId)) {
+    onStudioProjectSwitch: async ({
+      projectId,
+      projectSlug,
+      taskContext,
+      executionContext,
+    }) => {
+      if (!applyAgentProjectContextChange(taskContext, projectId, projectSlug)) {
         return false;
       }
 
-      await refreshProjectSkillIds(context, taskContext);
+      await refreshProjectSkillIds(
+        context,
+        taskContext,
+        executionContext?.abortSignal,
+      );
       return true;
     },
     projectScopedRemoteToolOptions: {
@@ -309,10 +324,12 @@ export async function prepareChatExecutionWithinProjectRuntime(
 
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
+  const abortSignal = resolveHostedRequestPreparationSignal();
+  abortSignal.throwIfAborted();
   const requestedAgentId = req.agentId ?? getDefaultAgentId(context);
   // veryfront-api is the trusted caller for request-scoped project-agent config.
   const agentConfig = req.agentConfig ?? await resolveAgentConfig(context, requestedAgentId);
-  const abortController = new AbortController();
+  abortSignal.throwIfAborted();
   const {
     effectiveMessages,
     rootRunContext,
@@ -327,7 +344,7 @@ export async function prepareChatExecutionWithinProjectRuntime(
     ),
     agentConfig,
     apiUrl: config.VERYFRONT_API_URL,
-    abortSignal: abortController.signal,
+    abortSignal,
     logger: context.infrastructure.logger,
     rootRun: {
       instrumentation: {
@@ -338,13 +355,14 @@ export async function prepareChatExecutionWithinProjectRuntime(
         error: (message, metadata) => context.infrastructure.logger.error(message, metadata),
       },
     },
-    fetchSteering: (steeringInput) => fetchProjectSteering(context, steeringInput),
+    fetchSteering: (steeringInput) =>
+      fetchProjectSteering(context, steeringInput, undefined, abortSignal),
     buildInstructions: buildVeryfrontCloudRuntimeInstructions,
     contextBudget: createHostedChatContextBudgetOptions(
       context,
       req,
       agentConfig,
-      abortController.signal,
+      abortSignal,
     ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () =>

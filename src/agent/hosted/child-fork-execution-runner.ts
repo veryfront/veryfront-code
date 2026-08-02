@@ -59,6 +59,16 @@ import {
   type HostedProjectReferenceResolver,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
+import {
+  applyAgentProjectContextChange,
+  type ConfirmedAgentProjectContextSwitch,
+  getConfirmedResolvedAgentProjectIdentity,
+  INVALID_AGENT_PROJECT_REFERENCE_MESSAGE,
+  type MutableAgentProjectContext,
+  normalizeAgentProjectIdentity,
+  normalizeAgentProjectReference,
+  UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE,
+} from "../project/context.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
@@ -102,6 +112,16 @@ export type HostedChildForkExecutionRunContextFactoryInput<
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
 };
 
+/** Project context carried from child tool preparation into fork execution. */
+export type HostedChildForkExecutionProjectContext =
+  & HostedChildForkInstructionsContext
+  & {
+    projectSlug?: string;
+    runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
+    runtimeTargetEnvironmentId?: string | null;
+    skillSourcePaths?: Readonly<Record<string, string>>;
+  };
+
 /** Input payload for execute hosted child fork with prepared tools. */
 export type ExecuteHostedChildForkWithPreparedToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
@@ -109,6 +129,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   authToken: string;
   apiUrl: string;
   projectId?: string | null;
+  projectSlug?: string;
   description: string;
   kind: string;
   provider: string;
@@ -116,7 +137,11 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   temperature?: number;
   maxSteps: number;
   effectivePrompt: string;
-  forkContext?: HostedChildForkInstructionsContext;
+  forkContext?: HostedChildForkExecutionProjectContext;
+  resolveForkContext?: () => HostedChildForkExecutionProjectContext | undefined;
+  resolveStepContext?: StartHostedChildForkRuntimeWithHostToolsInput<
+    TAttributes
+  >["resolveStepContext"];
   toolAssembly: DefaultHostedChildForkToolAssemblyResult;
   abortSignal?: AbortSignal;
   durableChildRun?: HostedChildRunIdentifiers;
@@ -222,12 +247,18 @@ export type ExecuteHostedChildForkToolInputOptions<
     defaultModel: string;
     defaultMaxSteps: number;
     contextModel?: string;
-    onRequestedProjectId?: (projectId: string) => void | Promise<void>;
+    onRequestedProjectId?: (
+      projectId: string,
+      projectSlug?: string,
+    ) => void | Promise<void>;
     resolveProjectReference?: HostedProjectReferenceResolver;
     prepareToolAssembly: (input: {
       runtimeConfig: HostedChildForkRuntimeConfig;
       requestedTools?: HostedChildForkToolInput["tools"];
       abortSignal?: AbortSignal;
+      projectId: string | null;
+      projectSlug?: string;
+      forkContext?: HostedChildForkExecutionProjectContext;
     }) =>
       | DefaultHostedChildForkToolAssemblyResult
       | Promise<DefaultHostedChildForkToolAssemblyResult>;
@@ -246,23 +277,227 @@ export type ExecuteHostedChildForkToolInputOptions<
     inputAlreadyHasInvocationContext?: boolean;
   };
 
+type HostedChildForkProjectContextSnapshot = {
+  projectId: string;
+  projectSlug?: string;
+};
+
+const INCONSISTENT_HOSTED_CHILD_FORK_PROJECT_CONTEXT_MESSAGE =
+  "Hosted child fork project identity inputs must describe one canonical project";
+
+function getHostedChildForkProjectContextSnapshot(
+  context: HostedChildForkExecutionProjectContext | undefined,
+): HostedChildForkProjectContextSnapshot | null {
+  if (!context?.projectId) {
+    return null;
+  }
+
+  return normalizeAgentProjectIdentity(context.projectId, context.projectSlug);
+}
+
+function isSameHostedChildForkProjectContext(
+  left: HostedChildForkProjectContextSnapshot | null,
+  right: HostedChildForkProjectContextSnapshot | null,
+): boolean {
+  return left?.projectId === right?.projectId &&
+    left?.projectSlug === right?.projectSlug;
+}
+
+function isAuthoritativeResolvedHostedChildForkContext(
+  candidate: HostedChildForkExecutionProjectContext | undefined,
+  resolved: HostedChildForkExecutionProjectContext | undefined,
+): boolean {
+  return isSameHostedChildForkProjectContext(
+    getHostedChildForkProjectContextSnapshot(candidate),
+    getHostedChildForkProjectContextSnapshot(resolved),
+  ) &&
+    candidate?.branchId === resolved?.branchId &&
+    candidate?.runtimeTargetKind === resolved?.runtimeTargetKind &&
+    candidate?.runtimeTargetEnvironmentId === resolved?.runtimeTargetEnvironmentId;
+}
+
+function hasConsistentHostedChildForkRuntimeTarget(
+  context: HostedChildForkExecutionProjectContext,
+): boolean {
+  if (context.runtimeTargetKind === "main_branch") {
+    return context.branchId == null && context.runtimeTargetEnvironmentId == null;
+  }
+  if (context.runtimeTargetKind === "environment") {
+    return context.branchId == null &&
+      typeof context.runtimeTargetEnvironmentId === "string" &&
+      context.runtimeTargetEnvironmentId.trim().length > 0;
+  }
+  if (context.runtimeTargetKind === "preview_branch") {
+    return typeof context.branchId === "string" &&
+      context.branchId.trim().length > 0 &&
+      context.runtimeTargetEnvironmentId == null;
+  }
+  return false;
+}
+
+function createResolvedHostedChildForkProjectContext(input: {
+  forkContext?: HostedChildForkExecutionProjectContext;
+  projectId?: string | null;
+  resolvedProject: ConfirmedAgentProjectContextSwitch;
+}): HostedChildForkExecutionProjectContext {
+  const { availableSkillIds, ...forkContext } = input.forkContext ?? {};
+  const priorProjectId = input.projectId &&
+      input.projectId !== input.resolvedProject.projectId
+    ? input.projectId
+    : input.forkContext?.projectId ?? input.projectId ?? "";
+  const context: MutableAgentProjectContext = {
+    ...forkContext,
+    projectId: priorProjectId,
+    ...(availableSkillIds ? { availableSkillIds: [...availableSkillIds] } : {}),
+  };
+  applyAgentProjectContextChange(
+    context,
+    input.resolvedProject.projectId,
+    input.resolvedProject.projectSlug,
+  );
+  return context;
+}
+
+function resolveInitialHostedChildForkProjectContext(input: {
+  projectId?: string | null;
+  projectSlug?: string;
+  forkContext?: HostedChildForkExecutionProjectContext;
+}): HostedChildForkProjectContextSnapshot | null {
+  const hasInputProjectId = input.projectId !== undefined && input.projectId !== null;
+  const inputIdentity = hasInputProjectId
+    ? normalizeAgentProjectIdentity(input.projectId, input.projectSlug)
+    : null;
+  const hasForkContextProjectId = input.forkContext?.projectId !== undefined &&
+    input.forkContext.projectId !== null;
+  const forkContextIdentity = hasForkContextProjectId
+    ? getHostedChildForkProjectContextSnapshot(input.forkContext)
+    : null;
+
+  if (
+    (hasInputProjectId && !inputIdentity) ||
+    (!hasInputProjectId && input.projectSlug !== undefined) ||
+    (hasForkContextProjectId && !forkContextIdentity) ||
+    (!hasForkContextProjectId && input.forkContext?.projectSlug !== undefined) ||
+    (
+      inputIdentity &&
+      forkContextIdentity &&
+      (
+        inputIdentity.projectId !== forkContextIdentity.projectId ||
+        (
+          inputIdentity.projectSlug !== undefined &&
+          forkContextIdentity.projectSlug !== undefined &&
+          inputIdentity.projectSlug !== forkContextIdentity.projectSlug
+        )
+      )
+    )
+  ) {
+    throw new TypeError(INCONSISTENT_HOSTED_CHILD_FORK_PROJECT_CONTEXT_MESSAGE);
+  }
+
+  if (inputIdentity) {
+    const projectSlug = inputIdentity.projectSlug ?? forkContextIdentity?.projectSlug;
+    return {
+      projectId: inputIdentity.projectId,
+      ...(projectSlug ? { projectSlug } : {}),
+    };
+  }
+  return forkContextIdentity;
+}
+
+function createInitialHostedChildForkExecutionContext(
+  forkContext: HostedChildForkExecutionProjectContext | undefined,
+  projectContext: HostedChildForkProjectContextSnapshot | null,
+): HostedChildForkExecutionProjectContext | undefined {
+  if (!forkContext || !projectContext) {
+    return forkContext;
+  }
+
+  const { projectSlug: _projectSlug, ...context } = forkContext;
+  return {
+    ...context,
+    projectId: projectContext.projectId,
+    ...(projectContext.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
+  };
+}
+
 /** Input payload for execute hosted child fork tool. */
 export async function executeHostedChildForkToolInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
   input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
 ): Promise<ChildRunExecutionResult> {
-  const requestedProjectReference = input.forkInput.project_reference;
+  const rawRequestedProjectReference = input.forkInput.project_reference;
+  const requestedProjectReference = rawRequestedProjectReference === undefined
+    ? undefined
+    : normalizeAgentProjectReference(rawRequestedProjectReference);
+  if (rawRequestedProjectReference !== undefined && !requestedProjectReference) {
+    throw new TypeError(INVALID_AGENT_PROJECT_REFERENCE_MESSAGE);
+  }
+  const initialProjectContext = resolveInitialHostedChildForkProjectContext(input);
+  let resolvedProject: ConfirmedAgentProjectContextSwitch | null = null;
+  let effectiveForkContext = createInitialHostedChildForkExecutionContext(
+    input.forkContext,
+    initialProjectContext,
+  );
+  let effectiveProjectId = initialProjectContext?.projectId ?? null;
+  let effectiveProjectSlug = initialProjectContext?.projectSlug;
+
   if (requestedProjectReference) {
     const resolver = input.resolveProjectReference ?? resolveHostedProjectReference;
-    const resolvedProject = await resolver({
+    const rawResolvedProject = await resolver({
       projectReference: requestedProjectReference,
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       abortSignal: input.abortSignal,
     });
-    await input.onRequestedProjectId?.(resolvedProject.projectId);
+    resolvedProject = getConfirmedResolvedAgentProjectIdentity(
+      rawResolvedProject,
+      requestedProjectReference,
+    );
+    if (!resolvedProject) {
+      throw new Error(UNCONFIRMED_AGENT_PROJECT_IDENTITY_MESSAGE);
+    }
+
+    effectiveProjectId = resolvedProject.projectId;
+    effectiveProjectSlug = resolvedProject.projectSlug;
+    effectiveForkContext = createResolvedHostedChildForkProjectContext({
+      forkContext: input.forkContext,
+      projectId: input.projectId,
+      resolvedProject,
+    });
+    await input.onRequestedProjectId?.(
+      resolvedProject.projectId,
+      resolvedProject.projectSlug,
+    );
   }
+
+  const externalContextBaseline = getHostedChildForkProjectContextSnapshot(input.forkContext);
+  let followExternalForkContext = isAuthoritativeResolvedHostedChildForkContext(
+    input.forkContext,
+    effectiveForkContext,
+  );
+  const resolveForkContext = (): HostedChildForkExecutionProjectContext | undefined => {
+    if (!input.forkContext) {
+      return effectiveForkContext;
+    }
+
+    const liveContextSnapshot = getHostedChildForkProjectContextSnapshot(input.forkContext);
+    if (
+      !followExternalForkContext &&
+      liveContextSnapshot &&
+      hasConsistentHostedChildForkRuntimeTarget(input.forkContext) &&
+      !isSameHostedChildForkProjectContext(liveContextSnapshot, externalContextBaseline)
+    ) {
+      // A later complete identity/target change is the child tool layer's
+      // confirmed navigation result. Follow that live object so sibling tool
+      // calls and subsequent steps observe the new project.
+      followExternalForkContext = true;
+    }
+
+    return followExternalForkContext && liveContextSnapshot
+      ? input.forkContext
+      : effectiveForkContext;
+  };
 
   const forkInput = input.inputAlreadyHasInvocationContext
     ? input.forkInput
@@ -287,14 +522,32 @@ export async function executeHostedChildForkToolInput<
 
   await input.onRuntimeConfig?.(runtimeConfig);
 
+  const preparedForkContext = resolveForkContext();
   const toolAssembly = await input.prepareToolAssembly({
     runtimeConfig,
     requestedTools: runtimeConfig.requestedTools,
     abortSignal: input.abortSignal,
+    projectId: effectiveProjectId,
+    ...(effectiveProjectSlug ? { projectSlug: effectiveProjectSlug } : {}),
+    forkContext: preparedForkContext,
   });
 
   return executeHostedChildForkWithPreparedTools({
     ...input,
+    projectId: effectiveProjectId,
+    projectSlug: effectiveProjectSlug,
+    forkContext: effectiveForkContext,
+    resolveForkContext,
+    resolveStepContext: () => {
+      const currentForkContext = resolveForkContext();
+      const currentProject = getHostedChildForkProjectContextSnapshot(currentForkContext);
+      const currentProjectSlug = currentProject ? currentProject.projectSlug : effectiveProjectSlug;
+      return {
+        authToken: input.authToken,
+        projectId: currentProject?.projectId ?? effectiveProjectId,
+        ...(currentProjectSlug ? { projectSlug: currentProjectSlug } : {}),
+      };
+    },
     description: runtimeConfig.description,
     provider: runtimeConfig.provider,
     forkModel: runtimeConfig.forkModel,
@@ -356,7 +609,10 @@ export async function executeHostedChildForkWithPreparedTools<
     closeTooling = input.toolAssembly.closeTooling;
     closeRuntime = input.toolAssembly.closeRuntime;
     const buildInstructions = input.buildInstructions ??
-      (() => buildHostedChildForkInstructions(input.forkContext));
+      (() =>
+        buildHostedChildForkInstructions(
+          input.resolveForkContext?.() ?? input.forkContext,
+        ));
     const sourceInstrumentation = input.instrumentation;
     const sourceTrace = sourceInstrumentation?.trace;
     const traceTools = sourceTrace
@@ -372,6 +628,8 @@ export async function executeHostedChildForkWithPreparedTools<
       apiUrl: input.apiUrl,
       authToken: input.authToken,
       projectId: input.projectId ?? null,
+      ...(input.projectSlug ? { projectSlug: input.projectSlug } : {}),
+      ...(input.resolveStepContext ? { resolveStepContext: input.resolveStepContext } : {}),
       provider: input.provider,
       forkModel: input.forkModel,
       temperature: input.temperature,

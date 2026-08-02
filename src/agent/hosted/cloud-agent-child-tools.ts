@@ -10,7 +10,7 @@ import {
   isToolVisibleTo,
   toolRegistry,
 } from "#veryfront/tool";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
+import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { parseProviderError } from "../../chat/provider-errors.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
@@ -159,7 +159,7 @@ export function getDiscoveredHostTools(scope?: { agentId?: string }): HostToolSe
   return Object.fromEntries(
     [...toolRegistry.getAll()]
       .filter(([toolId, registryTool]) =>
-        !SKILL_TOOL_IDS.has(toolId) && isToolVisibleTo(registryTool, scope)
+        !isSkillInfrastructureToolId(toolId) && isToolVisibleTo(registryTool, scope)
       )
       .sort(([left], [right]) => left.localeCompare(right)),
   );
@@ -170,9 +170,13 @@ export function getProjectInstructions(
   context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
   agentId?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   return context.trace("chat.getProjectInstructions", async () => {
-    return await getProjectSteering(context, agentId).getProjectInstructions(lookup);
+    return await getProjectSteering(context, agentId).getProjectInstructionsForRequest(
+      lookup,
+      signal,
+    );
   });
 }
 
@@ -181,9 +185,13 @@ export function getSkillsConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
   agentId?: string,
+  signal?: AbortSignal,
 ): Promise<RuntimeSkillDefinition[]> {
   return context.trace("chat.getSkillsConfig", async () => {
-    return await getProjectSteering(context, agentId).getSkillsConfig(lookup);
+    return await getProjectSteering(context, agentId).getSkillsConfigForRequest(
+      lookup,
+      signal,
+    );
   });
 }
 
@@ -199,8 +207,12 @@ export function createLoadSkillTool(
 export async function refreshProjectSkillIds(
   context: NodeVeryfrontCloudAgentServiceContext,
   skillContext: HostedProjectSkillIdsContext,
+  signal?: AbortSignal,
 ): Promise<void> {
-  await getProjectSteering(context, skillContext.agentId).refreshProjectSkillIds(skillContext);
+  await getProjectSteering(context, skillContext.agentId).refreshProjectSkillIdsForRequest(
+    skillContext,
+    signal,
+  );
 }
 
 /** Sets filtered trace attributes on the active span. */
@@ -314,11 +326,15 @@ export function fetchProjectSteering(
   context: NodeVeryfrontCloudAgentServiceContext,
   input: { projectId: string | null; authToken: string; branchId?: string | null },
   agentId?: string,
+  signal?: AbortSignal,
 ) {
   return fetchDefaultHostedProjectSteering({
     ...input,
-    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup, agentId),
-    fetchSkills: (lookup) => getSkillsConfig(context, lookup, agentId),
+    ...(signal === undefined ? {} : { signal }),
+    fetchProjectInstructions: ({ signal: requestSignal, ...lookup }) =>
+      getProjectInstructions(context, lookup, agentId, requestSignal),
+    fetchSkills: ({ signal: requestSignal, ...lookup }) =>
+      getSkillsConfig(context, lookup, agentId, requestSignal),
     trace: context.trace,
     traceOperationName: "chat.fetchSteering",
   });
@@ -330,6 +346,7 @@ export async function resolveHostedChildAgentExecutionConfig(
   taskContext: ChildRunContext,
   childAgentId: string,
   projectId: string,
+  signal?: AbortSignal,
 ): Promise<DefaultHostedChildAgentExecutionConfig | undefined> {
   if (!getProjectAgentRuntime(context).agents.has(childAgentId)) {
     return undefined;
@@ -337,11 +354,16 @@ export async function resolveHostedChildAgentExecutionConfig(
 
   const agentConfig = await resolveAgentConfig(context, childAgentId);
   const branchId = projectId === taskContext.projectId ? taskContext.branchId : null;
-  const steering = await fetchProjectSteering(context, {
-    projectId: projectId || null,
-    authToken: taskContext.authToken,
-    branchId,
-  }, childAgentId);
+  const steering = await fetchProjectSteering(
+    context,
+    {
+      projectId: projectId || null,
+      authToken: taskContext.authToken,
+      branchId,
+    },
+    childAgentId,
+    signal,
+  );
   const skillSelectorSnapshot = resolveRuntimeSkillSelectorForAgent({
     skills: steering.skills,
     agentId: childAgentId,
@@ -365,7 +387,9 @@ export async function resolveHostedChildAgentExecutionConfig(
     ...(thinking === undefined ? {} : { thinking }),
     ...(toolNames === undefined ? {} : { toolNames }),
     mcpServers: resolveMcpServers(context.options, agentConfig),
-    availableSkillIds: skillSelectorSnapshot.allowedSkillIds,
+    // Child execution config is copied into mutable per-run state. Do not
+    // expose the selector snapshot's frozen array through that boundary.
+    availableSkillIds: [...skillSelectorSnapshot.allowedSkillIds],
     skillSelectorPolicy: skillSelectorSnapshot.policy,
     ...(Object.keys(skillSelectorSnapshot.skillSourcePaths).length > 0
       ? { skillSourcePaths: skillSelectorSnapshot.skillSourcePaths }
@@ -406,10 +430,16 @@ export function createInvokeAgentTool(
         childToolContext,
       });
     },
-    resolveChildAgentExecutionConfig: (childAgentId, projectId) =>
-      resolveHostedChildAgentExecutionConfig(context, childContext, childAgentId, projectId),
-    refreshProjectSkillIds: (projectSkillContext) =>
-      refreshProjectSkillIds(context, projectSkillContext),
+    resolveChildAgentExecutionConfig: (childAgentId, projectId, signal) =>
+      resolveHostedChildAgentExecutionConfig(
+        context,
+        childContext,
+        childAgentId,
+        projectId,
+        signal,
+      ),
+    refreshProjectSkillIds: (projectSkillContext, signal) =>
+      refreshProjectSkillIds(context, projectSkillContext, signal),
     createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
     createRemoteToolSource: createRemoteMCPToolSource,

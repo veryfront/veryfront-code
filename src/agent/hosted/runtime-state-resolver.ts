@@ -12,10 +12,17 @@ import {
 import { evaluateSlashCommandArtifactPolicy } from "../artifacts/slash-command-artifact-policy.ts";
 import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 import { SUBMITTED_FORM_INPUT_CONTEXT_KEY } from "../runtime/skill-policy-enforcement.ts";
+import type { ToolExecutionContext } from "#veryfront/tool";
+import {
+  applyRuntimeToolExecutionIdentity,
+  type RuntimeToolExecutionIdentity,
+} from "../runtime/runtime-tool-config.ts";
 
 /** Context for hosted runtime state resolver. */
 export type HostedRuntimeStateResolverContext = DefaultResearchArtifactContext & {
+  authToken?: string;
   projectId?: string | null;
+  projectSlug?: string;
   branchId?: string | null;
   steeringRevision?: number;
   slashCommandArtifactPathSeen?: boolean;
@@ -29,6 +36,7 @@ export type HostedRuntimeStateResolverInput = {
   system: string;
   messages: readonly unknown[];
   step: number;
+  abortSignal?: AbortSignal;
 };
 
 /** Result returned from hosted runtime state resolver. */
@@ -41,6 +49,7 @@ export type HostedRuntimeStateResolverResult = {
 export type HostedRuntimeSystemRefreshInput<TContext extends HostedRuntimeStateResolverContext> = {
   taskContext: TContext;
   system: string;
+  abortSignal?: AbortSignal;
 };
 
 /** Public API contract for hosted runtime system refresh. */
@@ -68,6 +77,54 @@ function steeringRevision(context: HostedRuntimeStateResolverContext): number {
   return context.steeringRevision ?? 0;
 }
 
+/**
+ * Read the host-owned credential identity as one atomic bundle.
+ *
+ * The task context is intentionally read when this function is called. Project
+ * navigation mutates that live context, so execution boundaries can bind every
+ * sibling tool call to the identity that is current at that exact moment.
+ */
+export function resolveHostedToolExecutionIdentity(
+  taskContext: HostedRuntimeStateResolverContext,
+): RuntimeToolExecutionIdentity {
+  if (!Object.hasOwn(taskContext, "authToken")) {
+    // An installed hosted resolver owns credential selection even when the
+    // application removes its credential. Preserve that ownership explicitly
+    // so downstream integration and MCP resolution cannot fall back to
+    // request-scoped or process-wide credentials. Project identity is omitted
+    // with the missing credential as one atomic bundle.
+    return { authToken: undefined };
+  }
+
+  // Keep an explicitly owned (including invalid/undefined) credential
+  // explicit so downstream resolution fails closed instead of falling back to
+  // process credentials.
+  const identity: RuntimeToolExecutionIdentity = {
+    authToken: taskContext.authToken,
+  };
+  const currentProjectId = activeProjectId(taskContext);
+  if (currentProjectId) {
+    identity.projectId = currentProjectId;
+  }
+  const currentProjectSlug = taskContext.projectSlug?.trim() || undefined;
+  if (currentProjectSlug) {
+    identity.projectSlug = currentProjectSlug;
+  }
+
+  return identity;
+}
+
+/** Merge the current hosted credential identity into a tool context. */
+export function resolveHostedToolExecutionContext(
+  taskContext: HostedRuntimeStateResolverContext,
+  context: Record<string, unknown> | undefined,
+): ToolExecutionContext {
+  return applyRuntimeToolExecutionIdentity(
+    { ...(context ?? {}) },
+    resolveHostedToolExecutionIdentity(taskContext),
+  );
+}
+
 /** Create hosted runtime state resolver. */
 export function createHostedRuntimeStateResolver<
   TContext extends HostedRuntimeStateResolverContext,
@@ -78,7 +135,7 @@ export function createHostedRuntimeStateResolver<
   let lastAppliedProjectId = activeProjectId(options.taskContext);
   let lastAppliedBranchId = activeBranchId(options.taskContext);
 
-  return async ({ context, system, messages, step }) => {
+  return async ({ context, system, messages, step, abortSignal }) => {
     const currentSteeringRevision = steeringRevision(options.taskContext);
     const currentProjectId = activeProjectId(options.taskContext);
     const currentBranchId = activeBranchId(options.taskContext);
@@ -87,7 +144,9 @@ export function createHostedRuntimeStateResolver<
       currentBranchId !== lastAppliedBranchId;
 
     let nextSystem = system;
-    const nextContextRecord = { ...(context ?? {}) };
+    // Step boundaries and individual tool execution share one credential
+    // identity normalization path.
+    const nextContextRecord = resolveHostedToolExecutionContext(options.taskContext, context);
     if (options.taskContext.submittedFormInputResult) {
       nextContextRecord[SUBMITTED_FORM_INPUT_CONTEXT_KEY] = true;
     }
@@ -96,6 +155,7 @@ export function createHostedRuntimeStateResolver<
       nextSystem = await options.refreshSystem({
         taskContext: options.taskContext,
         system,
+        ...(abortSignal === undefined ? {} : { abortSignal }),
       });
 
       lastAppliedSteeringRevision = currentSteeringRevision;

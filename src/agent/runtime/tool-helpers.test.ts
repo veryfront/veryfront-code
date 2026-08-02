@@ -9,6 +9,8 @@ import {
   tool,
   toolRegistry,
 } from "#veryfront/tool";
+import { toolRegistryInternal } from "#veryfront/tool/registry.ts";
+import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   executeConfiguredTool,
@@ -136,7 +138,7 @@ describe("tool-helpers", () => {
     });
 
     it("falls back to the shared registry when the config entry is true", () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const sharedTool = tool({
         id: "shared-search",
@@ -154,13 +156,13 @@ describe("tool-helpers", () => {
       );
 
       assertEquals(resolvedTool, sharedTool);
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     });
   });
 
   describe("executeConfiguredTool", () => {
     it("executes an inline configured tool before consulting the registry", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const injectedTool = tool({
         id: "studio_invoke_agent",
@@ -182,7 +184,7 @@ describe("tool-helpers", () => {
     });
 
     it("falls back to the registry when no inline tool is configured", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const sharedTool = tool({
         id: "shared-search",
@@ -200,11 +202,11 @@ describe("tool-helpers", () => {
       );
 
       assertEquals(result, { source: "registry", query: "docs" });
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     });
 
     it("preserves the missing-tool error when nothing is configured", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       await assertRejects(
         () => executeConfiguredTool("studio_invoke_agent", { prompt: "test" }, undefined),
@@ -214,7 +216,7 @@ describe("tool-helpers", () => {
     });
 
     it("strict configured-tool execution does not fall through to the registry", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       toolRegistry.register(
         "shared-search",
@@ -241,7 +243,7 @@ describe("tool-helpers", () => {
         Error,
         'Tool "shared-search" is not available in request-scoped replacement tools',
       );
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
     });
 
     it("rejects remote integration tools excluded by the runtime allowlist", async () => {
@@ -513,7 +515,7 @@ describe("tool-helpers", () => {
 
   describe("getAvailableTools", () => {
     it("fails loudly when an explicit configured tool name does not match a discovered tool id", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       toolRegistry.register(
         "roll-dice",
@@ -539,7 +541,7 @@ describe("tool-helpers", () => {
     });
 
     it("filters remote integration tool definitions by the runtime allowlist", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       try {
         const defs = await withMockRemoteIntegrationTools([
           "gmail__list_emails",
@@ -551,7 +553,32 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
+      }
+    });
+
+    it("does not let public skill-tool metadata mutations change tool visibility", async () => {
+      toolRegistryInternal.clearAll();
+      try {
+        toolRegistryInternal.registerShared(
+          "load_skill_reference",
+          tool({
+            id: "load_skill_reference",
+            description: "Load a reference",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: async () => ({ ok: true }),
+          }),
+        );
+        SKILL_TOOL_IDS.delete("load_skill_reference");
+
+        const defs = await getAvailableTools(true, {
+          includeIntegrationTools: false,
+        });
+
+        assertEquals(defs.some((definition) => definition.name === "load_skill_reference"), false);
+      } finally {
+        SKILL_TOOL_IDS.add("load_skill_reference");
+        toolRegistryInternal.clearAll();
       }
     });
 
@@ -670,7 +697,7 @@ describe("tool-helpers", () => {
     });
 
     it("enforces source integration policy for tools true and unknown connector versions", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       try {
         toolRegistry.register(
           "local_search",
@@ -713,12 +740,12 @@ describe("tool-helpers", () => {
           "local_search",
         ]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("removes denied explicit integration selectors before resolution diagnostics", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
       try {
         const defs = await withMockRemoteIntegrationTools([], () =>
           getAvailableTools(
@@ -734,12 +761,12 @@ describe("tool-helpers", () => {
 
         assertEquals(defs, []);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("fails loudly when an explicit remote tool is missing from the discovered allowlist", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         await assertRejects(
@@ -755,12 +782,12 @@ describe("tool-helpers", () => {
           'Unknown tool reference: gmail__get_email. Tool names must exactly match tool({ id: "..." }). Available tools: gmail__list_emails',
         );
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("fails loudly when an explicit integration tool has no discovered tools", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         await assertRejects(
@@ -773,7 +800,7 @@ describe("tool-helpers", () => {
           'Unknown tool reference: github__get_pr_diff. Tool names must exactly match tool({ id: "..." }). Available tools: (none)',
         );
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
@@ -793,7 +820,7 @@ describe("tool-helpers", () => {
     });
 
     it("only appends explicitly requested remote definitions for explicit tool maps", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         const defs = await withMockRemoteIntegrationTools([
@@ -809,12 +836,12 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("resolves explicit integration tools from forwarded definitions when remote fetch is unavailable", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         // Simulates production: remote integration tool fetch fails (no API token),
@@ -854,7 +881,7 @@ describe("tool-helpers", () => {
           "Get a specific email by ID",
         );
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
@@ -896,7 +923,7 @@ describe("tool-helpers", () => {
     });
 
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       try {
         const defs = await getAvailableTools(true, {
@@ -918,12 +945,12 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["gmail__list_emails"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
 
     it("merges generic remote MCP tool sources into available tools", async () => {
-      toolRegistry.clearAll();
+      toolRegistryInternal.clearAll();
 
       const remoteSource = createRemoteMCPToolSource({
         id: "docs",
@@ -954,7 +981,7 @@ describe("tool-helpers", () => {
 
         assertEquals(defs.map((def) => def.name), ["search_docs"]);
       } finally {
-        toolRegistry.clearAll();
+        toolRegistryInternal.clearAll();
       }
     });
   });

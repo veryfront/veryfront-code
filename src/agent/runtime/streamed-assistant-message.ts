@@ -11,7 +11,10 @@ export interface StreamedAssistantMessageIdentity {
 }
 
 export function buildStreamedAssistantMessage(
-  state: Pick<ChatStreamState, "accumulatedText" | "reasoningParts" | "toolCalls">,
+  state: Pick<
+    ChatStreamState,
+    "accumulatedText" | "reasoningParts" | "toolCalls" | "providerMetadata"
+  >,
   identity: StreamedAssistantMessageIdentity,
 ): Message {
   const parts: MessagePart[] = [];
@@ -37,6 +40,9 @@ export function buildStreamedAssistantMessage(
   }
 
   for (const toolCall of state.toolCalls.values()) {
+    if (toolCall.synthesizedFromResult === true) {
+      continue;
+    }
     if (shouldOmitRecoverablePlaceholderToolCall(state, toolCall)) {
       continue;
     }
@@ -48,5 +54,6 @@ export function buildStreamedAssistantMessage(
     role: "assistant",
     parts,
     timestamp: identity.timestamp,
+    ...(state.providerMetadata ? { metadata: { providerMetadata: state.providerMetadata } } : {}),
   };
 }

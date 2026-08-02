@@ -46,7 +46,7 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, true);
   });
 
-  it("continues after provider-executed tool results arrive without assistant text", () => {
+  it("does not repeat a provider-executed call after its correlated result arrives", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",
       finishReason: "stop",
@@ -74,7 +74,7 @@ describe("agent runtime streamed tool result collection", () => {
       ],
     });
 
-    assertEquals(shouldContinue, true);
+    assertEquals(shouldContinue, false);
   });
 
   it("stops after provider-executed tool results when the assistant already answered", () => {

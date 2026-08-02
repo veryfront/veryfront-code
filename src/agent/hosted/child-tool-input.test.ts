@@ -8,6 +8,7 @@ import {
   resolveHostedChildForkThinkingOverride,
   withHostedChildInvocationContext,
 } from "./child-tool-input.ts";
+import { MAX_OPAQUE_ID_CODE_UNITS } from "#veryfront/utils/project-identity.ts";
 
 Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields", () => {
   const parsed = hostedChildForkToolInputSchema.parse({
@@ -141,6 +142,26 @@ Deno.test("hostedChildForkToolInputSchema rejects negative thinking budgets", ()
   });
 
   assertEquals(result.success, false);
+});
+
+Deno.test("hostedChildForkToolInputSchema rejects unsafe project references", () => {
+  for (
+    const projectReference of [
+      "",
+      " project-123",
+      "project-\n123",
+      "p".repeat(MAX_OPAQUE_ID_CODE_UNITS + 1),
+    ]
+  ) {
+    const result = hostedChildForkToolInputSchema.safeParse({
+      description: "invalid project",
+      prompt: "Try an invalid project reference.",
+      context: {},
+      project_reference: projectReference,
+    });
+
+    assertEquals(result.success, false);
+  }
 });
 
 Deno.test("DEFAULT_HOSTED_CHILD_AGENT_ID names the hosted child runtime agent", () => {
