@@ -229,6 +229,7 @@ export function ToastClose({
   className,
   children,
   ref,
+  "aria-label": ariaLabel = "Dismiss notification",
   ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
   ref?: React.Ref<HTMLButtonElement>;
@@ -238,7 +239,7 @@ export function ToastClose({
       {...props}
       ref={ref}
       type="button"
-      aria-label="Dismiss notification"
+      aria-label={ariaLabel}
       className={cn(
         "absolute right-2 top-2 inline-flex size-6 items-center justify-center rounded-md text-[var(--muted-foreground)] transition-colors hover:text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--edge-medium)]",
         className,

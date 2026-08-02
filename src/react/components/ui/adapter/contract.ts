@@ -147,7 +147,14 @@ export interface ToolbarParts {
       ref?: React.Ref<HTMLDivElement>;
     }
   >;
-  /** A roving-focus stop. It must render with `tabIndex={-1}` until the Root assigns ownership. */
+  /**
+   * A roving-focus stop. It must render with `tabIndex={-1}` until the Root
+   * assigns ownership. When disabled, native items must be inert and composed
+   * (`asChild`) items must expose `aria-disabled`, leave sequential focus,
+   * remove navigation targets, and suppress primary, auxiliary, and keyboard
+   * activation before consumer or child handlers run. Public toolbar skins rely
+   * on that boundary remaining intact when adapters are swapped.
+   */
   Item: React.FC<
     & React.ButtonHTMLAttributes<HTMLButtonElement>
     & { asChild?: boolean; ref?: React.Ref<HTMLButtonElement> }

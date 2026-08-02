@@ -20,7 +20,7 @@ import { assert, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ToastProvider, ToastViewport, useToast } from "../toast.tsx";
 import { UIAdapterProvider } from "./context.tsx";
-import type { ToastFn, ToastOptions } from "../toast-parts.tsx";
+import { ToastClose, type ToastFn, type ToastOptions } from "../toast-parts.tsx";
 import type { ToastParts, ToastProviderProps, ToastState, ToastViewportProps } from "./contract.ts";
 
 function installDomGlobals(dom: JSDOM): () => void {
@@ -249,6 +249,30 @@ function BuiltinWrap({ children }: { children: React.ReactNode }): React.ReactEl
   return <>{children}</>;
 }
 runToastConformance("builtin", BuiltinWrap);
+
+describe("Toast presentational parts", () => {
+  it("uses the default close label without overwriting a caller label", () => {
+    const defaultDom = new JSDOM(renderToString(<ToastClose />));
+    const localizedDom = new JSDOM(
+      renderToString(<ToastClose aria-label="Benachrichtigung schliessen" />),
+    );
+    try {
+      assert(
+        defaultDom.window.document.querySelector("button")?.getAttribute("aria-label") ===
+          "Dismiss notification",
+        "supplies the default close label",
+      );
+      assert(
+        localizedDom.window.document.querySelector("button")?.getAttribute("aria-label") ===
+          "Benachrichtigung schliessen",
+        "preserves the caller-provided close label",
+      );
+    } finally {
+      defaultDom.window.close();
+      localizedDom.window.close();
+    }
+  });
+});
 
 describe("Builtin Toast viewport and timer lifecycle", () => {
   it("renders zero and empty-string structured content", () => {

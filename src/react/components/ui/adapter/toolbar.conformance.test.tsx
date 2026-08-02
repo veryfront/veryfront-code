@@ -68,12 +68,27 @@ function click(node: Element): void {
   );
 }
 
-function keydown(node: Element, key: string): void {
+function keydown(node: Element, key: string): KeyboardEvent {
   const KeyboardEventCtor = (globalThis as unknown as { KeyboardEvent: typeof KeyboardEvent })
     .KeyboardEvent;
+  let event!: KeyboardEvent;
   flushSync(() =>
-    node.dispatchEvent(new KeyboardEventCtor("keydown", { bubbles: true, cancelable: true, key }))
+    node.dispatchEvent(
+      event = new KeyboardEventCtor("keydown", { bubbles: true, cancelable: true, key }),
+    )
   );
+  return event;
+}
+
+function auxclick(node: Element): MouseEvent {
+  const MouseEventCtor = (globalThis as unknown as { MouseEvent: typeof MouseEvent }).MouseEvent;
+  let event!: MouseEvent;
+  flushSync(() =>
+    node.dispatchEvent(
+      event = new MouseEventCtor("auxclick", { bubbles: true, button: 1, cancelable: true }),
+    )
+  );
+  return event;
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void> {
@@ -170,12 +185,18 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
     });
 
     it("blocks and skips a disabled toolbar link", () => {
-      let linkClicks = 0;
+      const linkActivations: string[] = [];
       const { host, unmount } = render(
         <Wrap>
           <Toolbar>
             <ToolbarButton>A</ToolbarButton>
-            <ToolbarLink disabled href="#danger" onClick={() => linkClicks += 1}>
+            <ToolbarLink
+              disabled
+              href="#danger"
+              onClick={() => linkActivations.push("click")}
+              onAuxClick={() => linkActivations.push("auxclick")}
+              onKeyDown={() => linkActivations.push("keydown")}
+            >
               Disabled link
             </ToolbarLink>
             <ToolbarButton>B</ToolbarButton>
@@ -196,10 +217,46 @@ function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.R
           "exposes the disabled visual state",
         );
         click(link!);
-        assert(linkClicks === 0, "suppresses the disabled link click handler");
+        const auxiliary = auxclick(link!);
+        const enter = keydown(link!, "Enter");
+        const space = keydown(link!, " ");
+        assert(auxiliary.defaultPrevented, "prevents disabled auxiliary navigation");
+        assert(enter.defaultPrevented && space.defaultPrevented, "prevents keyboard activation");
+        assert(linkActivations.length === 0, "suppresses every disabled activation handler");
         first!.focus();
         keydown(bar, "ArrowRight");
         assert(document.activeElement === last, "roving focus skips the disabled link");
+      } finally {
+        unmount();
+      }
+    });
+
+    it("moves focus when the active item becomes disabled", () => {
+      let disableActive!: () => void;
+      function Probe(): React.ReactElement {
+        const [disabled, setDisabled] = React.useState(false);
+        disableActive = () => setDisabled(true);
+        return (
+          <Wrap>
+            <Toolbar>
+              <ToolbarButton disabled={disabled}>A</ToolbarButton>
+              <ToolbarButton>B</ToolbarButton>
+            </Toolbar>
+          </Wrap>
+        );
+      }
+
+      const { host, unmount } = render(<Probe />);
+      try {
+        const [first, second] = Array.from(
+          host.querySelectorAll<HTMLElement>("[data-toolbar-item]"),
+        );
+        first!.focus();
+        assert(document.activeElement === first, "first item owns focus before disabling");
+        flushSync(() => disableActive());
+        assert(first!.tabIndex === -1, "disabled item releases the roving stop");
+        assert(second!.tabIndex === 0, "next enabled item becomes the roving stop");
+        assert(document.activeElement === second, "focus follows the enabled fallback");
       } finally {
         unmount();
       }
@@ -374,15 +431,25 @@ const altToolbar: ToolbarParts = {
     ...props
   }) => {
     const innerRef = React.useRef<HTMLDivElement | null>(null);
+    const lastFocusedItemRef = React.useRef<HTMLElement | null>(null);
     const composedRef = React.useMemo(() => composeRefs(innerRef, ref), [ref]);
     React.useLayoutEffect(() => {
       const root = innerRef.current;
       if (!root) return;
       const items = altItems(root);
-      const active = items.find((item) =>
-        item === root.ownerDocument.activeElement || item.tabIndex === 0
-      ) ?? items[0];
+      const previousFocusedItem = lastFocusedItemRef.current;
+      const activeElement = root.ownerDocument.activeElement;
+      const focusBecameDisabled = previousFocusedItem !== null &&
+        !items.includes(previousFocusedItem) &&
+        (activeElement === previousFocusedItem ||
+          (activeElement === root.ownerDocument.body && root.ownerDocument.hasFocus()));
+      const active = items.find((item) => item === activeElement || item.tabIndex === 0) ??
+        items[0];
       altScopedItems(root).forEach((item) => item.tabIndex = item === active ? 0 : -1);
+      if (focusBecameDisabled && active) {
+        lastFocusedItemRef.current = active;
+        active.focus();
+      }
     });
     const move = (event: React.KeyboardEvent<HTMLDivElement>) => {
       onKeyDown?.(event);
@@ -423,6 +490,7 @@ const altToolbar: ToolbarParts = {
           if (!root || target.closest("[data-alt-toolbar]") !== root) return;
           const items = altItems(root);
           if (items.includes(target)) {
+            lastFocusedItemRef.current = target;
             items.forEach((item) => item.tabIndex = item === target ? 0 : -1);
           }
         }}

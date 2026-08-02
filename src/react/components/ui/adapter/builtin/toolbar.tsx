@@ -36,9 +36,18 @@ function isEditable(element: Element): boolean {
 }
 
 const ToolbarRoot: ToolbarParts["Root"] = (
-  { orientation = "horizontal", children, onKeyDown, onFocusCapture, ref, ...props },
+  {
+    orientation = "horizontal",
+    children,
+    onKeyDown,
+    onFocusCapture,
+    onBlurCapture,
+    ref,
+    ...props
+  },
 ) => {
   const innerRef = React.useRef<HTMLDivElement | null>(null);
+  const lastFocusedItemRef = React.useRef<HTMLElement | null>(null);
   const composedRef = React.useMemo(() => composeRefs(innerRef, ref), [ref]);
 
   // Keep the current roving stop across rerenders. Fall back to the first enabled
@@ -47,15 +56,29 @@ const ToolbarRoot: ToolbarParts["Root"] = (
     const root = innerRef.current;
     if (!root) return;
     const items = enabledItems(root);
-    const focused = root.contains(root.ownerDocument.activeElement)
-      ? root.ownerDocument.activeElement as HTMLElement
+    const activeElement = root.ownerDocument.activeElement;
+    const focused = activeElement && root.contains(activeElement)
+      ? activeElement as HTMLElement
       : null;
+    const lastFocusedItem = lastFocusedItemRef.current;
+    const focusBecameDisabled = lastFocusedItem !== null &&
+      (lastFocusedItem.closest<HTMLElement>("[data-toolbar-root]") === root ||
+        !lastFocusedItem.isConnected) &&
+      !items.includes(lastFocusedItem) &&
+      (focused === lastFocusedItem ||
+        (focused === null &&
+          activeElement === root.ownerDocument.body &&
+          root.ownerDocument.hasFocus()));
     const resting = items.find((element) => element === focused || element.tabIndex === 0) ??
       items[0];
     root.tabIndex = resting ? -1 : 0;
     scopedItems(root).forEach((el) => {
       el.tabIndex = el === resting ? 0 : -1;
     });
+    if (focusBecameDisabled) {
+      lastFocusedItemRef.current = resting ?? null;
+      (resting ?? root).focus();
+    }
   });
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -102,12 +125,30 @@ const ToolbarRoot: ToolbarParts["Root"] = (
       if (!first) return;
       root.tabIndex = -1;
       items.forEach((item) => item.tabIndex = item === first ? 0 : -1);
+      lastFocusedItemRef.current = first;
       first.focus();
       return;
     }
     if (!items.includes(target)) return;
+    lastFocusedItemRef.current = target;
     root.tabIndex = -1;
     items.forEach((item) => item.tabIndex = item === target ? 0 : -1);
+  };
+
+  const handleBlurCapture = (event: React.FocusEvent<HTMLDivElement>) => {
+    onBlurCapture?.(event);
+    const root = innerRef.current;
+    const target = event.target as HTMLElement;
+    if (!root || target !== lastFocusedItemRef.current) return;
+    const relatedTarget = event.relatedTarget as Node | null;
+    if (
+      relatedTarget !== null && typeof relatedTarget.nodeType === "number" &&
+      root.contains(relatedTarget)
+    ) return;
+    if (target.hasAttribute("disabled") || target.getAttribute("aria-disabled") === "true") {
+      return;
+    }
+    lastFocusedItemRef.current = null;
   };
 
   return (
@@ -121,6 +162,7 @@ const ToolbarRoot: ToolbarParts["Root"] = (
       data-orientation={orientation}
       onKeyDown={handleKeyDown}
       onFocusCapture={handleFocusCapture}
+      onBlurCapture={handleBlurCapture}
     >
       {children}
     </div>
