@@ -56,7 +56,7 @@ export interface HandlerContextOptions {
   allowHostProjectCodeExecution?: boolean;
   /** Module server URL */
   moduleServerUrl: string | undefined;
-  /** Environment ID for env var resolution (from proxy x-environment-id header) */
+  /** Canonical environment ID resolved at the operator-authenticated proxy boundary. */
   environmentId: string | undefined;
   /** Skip render-specific enriched context requirements for non-render control-plane routes */
   skipEnrichedContext?: boolean;

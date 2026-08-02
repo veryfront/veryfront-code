@@ -1,196 +1,187 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { EnvironmentVariableCache } from "./cache.ts";
+import { EnvironmentVariableCache, type ProjectEnvironmentScope } from "./cache.ts";
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function scope(overrides: Partial<ProjectEnvironmentScope> = {}): ProjectEnvironmentScope {
+  return {
+    projectSlug: "project-a",
+    projectId: "project-id-a",
+    environmentId: "env-shared",
+    token: "token-a",
+    ...overrides,
+  };
+}
+
 describe("project-env/cache", () => {
-  it("returns fresh data on first call", async () => {
-    let fetchCount = 0;
-    const cache = new EnvironmentVariableCache(async () => {
-      fetchCount++;
+  it("fetches cold data for the complete canonical scope", async () => {
+    let received: ProjectEnvironmentScope | undefined;
+    const cache = new EnvironmentVariableCache(async (input) => {
+      received = input;
       return { API_KEY: "secret" };
     });
 
-    const result = await cache.get("env-1", "token", "my-project");
-    assertEquals(result, { API_KEY: "secret" });
-    assertEquals(fetchCount, 1);
+    const input = scope();
+    assertEquals(await cache.get(input), { API_KEY: "secret" });
+    assertEquals(received, input);
   });
 
-  it("returns cached data within TTL", async () => {
-    let fetchCount = 0;
-    const cache = new EnvironmentVariableCache(async () => {
-      fetchCount++;
+  it("snapshots scope and fetched values before retaining them", async () => {
+    let received: ProjectEnvironmentScope | undefined;
+    const cache = new EnvironmentVariableCache(async (input) => {
+      received = input;
       return { API_KEY: "secret" };
-    }, 10_000);
+    });
+    const input = scope();
 
-    await cache.get("env-1", "token", "my-project");
-    await cache.get("env-1", "token", "my-project");
-    assertEquals(fetchCount, 1);
+    const pending = cache.get(input);
+    input.projectSlug = "mutated-project";
+    input.token = "mutated-token";
+    const result = await pending;
+
+    assertEquals(received?.projectSlug, "project-a");
+    assertEquals(received?.token, "token-a");
+    assertEquals(Object.isFrozen(received), true);
+    assertEquals(Object.isFrozen(result), true);
+    assertEquals(Object.getPrototypeOf(result), null);
   });
 
-  it("fetches again after TTL expires", async () => {
+  it("reuses warm data only for the identical scope and credential", async () => {
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(async () => {
       fetchCount++;
       return { API_KEY: `v${fetchCount}` };
-    }, 50); // 50ms TTL
+    });
 
-    const first = await cache.get("env-1", "token", "my-project");
-    assertEquals(first, { API_KEY: "v1" });
+    assertEquals(await cache.get(scope()), { API_KEY: "v1" });
+    assertEquals(await cache.get(scope()), { API_KEY: "v1" });
+    assertEquals(fetchCount, 1);
+  });
 
-    await delay(60);
+  it("does not share a warm environment ID across projects", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async (input) => {
+      fetchCount++;
+      return { OWNER: input.projectSlug };
+    });
 
-    const second = await cache.get("env-1", "token", "my-project");
-    assertEquals(second, { API_KEY: "v2" });
+    const projectA = await cache.get(scope());
+    const projectB = await cache.get(scope({
+      projectSlug: "project-b",
+      projectId: "project-id-b",
+    }));
+
+    assertEquals(projectA, { OWNER: "project-a" });
+    assertEquals(projectB, { OWNER: "project-b" });
     assertEquals(fetchCount, 2);
   });
 
-  it("deduplicates concurrent fetches", async () => {
+  it("does not share a warm project environment across credential principals", async () => {
     let fetchCount = 0;
-    const cache = new EnvironmentVariableCache(async () => {
+    const cache = new EnvironmentVariableCache(async (input) => {
+      fetchCount++;
+      return { PRINCIPAL: input.token };
+    });
+
+    assertEquals(await cache.get(scope()), { PRINCIPAL: "token-a" });
+    assertEquals(await cache.get(scope({ token: "token-b" })), {
+      PRINCIPAL: "token-b",
+    });
+    assertEquals(fetchCount, 2);
+  });
+
+  it("deduplicates identical in-flight work without coalescing other tenants", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async (input) => {
       fetchCount++;
       await delay(20);
-      return { API_KEY: "secret" };
+      return { OWNER: `${input.projectSlug}:${input.token}` };
     });
 
-    const [r1, r2, r3] = await Promise.all([
-      cache.get("env-1", "token", "my-project"),
-      cache.get("env-1", "token", "my-project"),
-      cache.get("env-1", "token", "my-project"),
+    const [a1, a2, b] = await Promise.all([
+      cache.get(scope()),
+      cache.get(scope()),
+      cache.get(scope({
+        projectSlug: "project-b",
+        projectId: "project-id-b",
+        token: "token-b",
+      })),
     ]);
 
-    assertEquals(r1, { API_KEY: "secret" });
-    assertEquals(r2, { API_KEY: "secret" });
-    assertEquals(r3, { API_KEY: "secret" });
-    assertEquals(fetchCount, 1);
-  });
-
-  it("returns stale data on fetch error", async () => {
-    let fetchCount = 0;
-    const cache = new EnvironmentVariableCache(async () => {
-      fetchCount++;
-      if (fetchCount === 1) return { API_KEY: "stale" };
-      throw new Error("Network error");
-    }, 50); // 50ms TTL
-
-    // First call succeeds
-    const first = await cache.get("env-1", "token", "my-project");
-    assertEquals(first, { API_KEY: "stale" });
-
-    // Wait for TTL to expire
-    await delay(60);
-
-    // Second call fails but returns stale
-    const second = await cache.get("env-1", "token", "my-project");
-    assertEquals(second, { API_KEY: "stale" });
-  });
-
-  it("returns empty object on fetch error with no stale data", async () => {
-    const cache = new EnvironmentVariableCache(async () => {
-      throw new Error("Network error");
-    });
-
-    const result = await cache.get("env-1", "token", "my-project");
-    assertEquals(result, {});
-  });
-
-  it("invalidate clears specific entry", async () => {
-    let fetchCount = 0;
-    const cache = new EnvironmentVariableCache(async () => {
-      fetchCount++;
-      return { API_KEY: `v${fetchCount}` };
-    });
-
-    await cache.get("env-1", "token", "my-project");
-    cache.invalidate("env-1");
-    const result = await cache.get("env-1", "token", "my-project");
-    assertEquals(result, { API_KEY: "v2" });
+    assertEquals(a1, { OWNER: "project-a:token-a" });
+    assertEquals(a2, a1);
+    assertEquals(b, { OWNER: "project-b:token-b" });
     assertEquals(fetchCount, 2);
   });
 
-  it("invalidate with no arg clears all entries", async () => {
+  it("fails closed after TTL instead of serving stale secrets", async () => {
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(async () => {
       fetchCount++;
-      return { API_KEY: `v${fetchCount}` };
-    });
+      if (fetchCount === 1) return { API_KEY: "now-stale" };
+      throw new Error("credential revoked");
+    }, 20);
 
-    await cache.get("env-1", "token", "my-project");
-    await cache.get("env-2", "token", "my-project");
-    assertEquals(fetchCount, 2);
+    assertEquals(await cache.get(scope()), { API_KEY: "now-stale" });
+    await delay(30);
+    await assertRejects(() => cache.get(scope()), Error, "credential revoked");
+  });
 
-    cache.invalidate();
+  it("fails closed on a cold fetch error", async () => {
+    const cache = new EnvironmentVariableCache(() => Promise.reject(new Error("network error")));
+    await assertRejects(() => cache.get(scope()), Error, "network error");
+  });
 
-    await cache.get("env-1", "token", "my-project");
-    await cache.get("env-2", "token", "my-project");
+  it("does not leak another scope's stale value after a failed fetch", async () => {
+    const cache = new EnvironmentVariableCache(async (input) => {
+      if (input.projectSlug === "project-a") return { OWNER: "project-a" };
+      throw new Error("project-b denied");
+    }, 1);
+
+    assertEquals(await cache.get(scope()), { OWNER: "project-a" });
+    await delay(5);
+    await assertRejects(
+      () =>
+        cache.get(scope({
+          projectSlug: "project-b",
+          projectId: "project-id-b",
+          token: "token-b",
+        })),
+      Error,
+      "project-b denied",
+    );
+  });
+
+  it("invalidates every credential-scoped entry for an environment", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => ({ VALUE: `${++fetchCount}` }));
+
+    await cache.get(scope());
+    await cache.get(scope({ token: "token-b" }));
+    cache.invalidate("env-shared");
+    await cache.get(scope());
+    await cache.get(scope({ token: "token-b" }));
+
     assertEquals(fetchCount, 4);
   });
 
-  it("evicts oldest entries when maxEntries exceeded", async () => {
+  it("keeps the scoped cache bounded", async () => {
     let fetchCount = 0;
     const cache = new EnvironmentVariableCache(
-      async () => {
-        fetchCount++;
-        return { KEY: `v${fetchCount}` };
-      },
+      async () => ({ VALUE: `${++fetchCount}` }),
       60_000,
-      3, // maxEntries = 3
+      2,
     );
 
-    await cache.get("env-1", "token", "p");
-    await cache.get("env-2", "token", "p");
-    await cache.get("env-3", "token", "p");
-    assertEquals(fetchCount, 3);
+    await cache.get(scope({ environmentId: "env-1" }));
+    await cache.get(scope({ environmentId: "env-2" }));
+    await cache.get(scope({ environmentId: "env-3" }));
+    await cache.get(scope({ environmentId: "env-1" }));
 
-    // Adding a 4th should evict env-1
-    await cache.get("env-4", "token", "p");
     assertEquals(fetchCount, 4);
-
-    // env-1 was evicted, so it should re-fetch
-    await cache.get("env-1", "token", "p");
-    assertEquals(fetchCount, 5);
-
-    // env-3 should still be cached
-    await cache.get("env-3", "token", "p");
-    assertEquals(fetchCount, 5);
-  });
-
-  it("refreshed entries move to end of eviction order (LRU)", async () => {
-    let fetchCount = 0;
-    const cache = new EnvironmentVariableCache(
-      async () => {
-        fetchCount++;
-        return { KEY: `v${fetchCount}` };
-      },
-      50, // 50ms TTL
-      3,
-    );
-
-    // Fill cache: env-1, env-2, env-3
-    await cache.get("env-1", "token", "p");
-    await cache.get("env-2", "token", "p");
-    await cache.get("env-3", "token", "p");
-    assertEquals(fetchCount, 3);
-
-    // Wait for TTL to expire, then refresh env-1 (moves it to end)
-    await delay(60);
-    await cache.get("env-1", "token", "p");
-    assertEquals(fetchCount, 4);
-
-    // Add env-4 — should evict env-2 (oldest), NOT env-1 (just refreshed)
-    await cache.get("env-4", "token", "p");
-    assertEquals(fetchCount, 5);
-
-    // env-1 should still be cached (was refreshed, moved to end)
-    await cache.get("env-1", "token", "p");
-    assertEquals(fetchCount, 5);
-
-    // env-2 should have been evicted
-    await cache.get("env-2", "token", "p");
-    assertEquals(fetchCount, 6);
   });
 });

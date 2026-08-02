@@ -32,12 +32,14 @@ async function fetchEnvironmentVariables(
   authorization: string,
   projectSlug: string,
   environmentId: string,
+  headers: HeadersInit = {},
 ): Promise<Response> {
   try {
     return await fetch(url, {
       headers: {
         Authorization: authorization,
         Accept: "application/json",
+        ...headers,
       },
     });
   } catch (error) {
@@ -53,8 +55,13 @@ async function fetchEnvironmentVariables(
 /**
  * Fetch environment variables for a project from the Veryfront API.
  *
- * Hosted runtimes call the internal Basic-auth endpoint first. Older API deployments
- * without that endpoint fall back to the bearer-auth management endpoint.
+ * The caller's project credential is always checked against the project-scoped
+ * management endpoint before host-level internal credentials may retrieve secret
+ * values. This prevents a tenant-controlled environment ID from turning the
+ * runtime's internal credentials into a cross-project confused deputy.
+ *
+ * Deployments that configure internal credentials must expose the internal
+ * endpoint. There is intentionally no fallback after that privileged path fails.
  * Response: { data: [{ key: string, value: string }] }
  */
 export async function fetchProjectEnvVars(
@@ -70,30 +77,36 @@ export async function fetchProjectEnvVars(
   }&limit=${ENV_VARS_FETCH_LIMIT}`;
   const internalUrl = `${apiBaseUrl}/internal/project-environment-variables?environment_id=${
     encodeURIComponent(environmentId)
-  }`;
+  }&project_slug=${encodeURIComponent(projectSlug)}`;
 
   const internalAuthorization = getInternalAuthorization();
-  let response = internalAuthorization
-    ? await fetchEnvironmentVariables(
+  let response = await fetchEnvironmentVariables(
+    managementUrl,
+    `Bearer ${token}`,
+    projectSlug,
+    environmentId,
+  );
+
+  if (!response.ok) {
+    await response.body?.cancel();
+    logger.warn("Project credential cannot access requested environment", {
+      projectSlug,
+      environmentId,
+      status: response.status,
+    });
+    throw NETWORK_ERROR.create({
+      detail: `Project credential cannot access requested environment: ${response.status}`,
+    });
+  }
+
+  if (internalAuthorization) {
+    await response.body?.cancel();
+    response = await fetchEnvironmentVariables(
       internalUrl,
       internalAuthorization,
       projectSlug,
       environmentId,
-    )
-    : await fetchEnvironmentVariables(
-      managementUrl,
-      `Bearer ${token}`,
-      projectSlug,
-      environmentId,
-    );
-
-  if (internalAuthorization && response.status === 404) {
-    await response.body?.cancel();
-    response = await fetchEnvironmentVariables(
-      managementUrl,
-      `Bearer ${token}`,
-      projectSlug,
-      environmentId,
+      { "x-project-slug": projectSlug },
     );
   }
 

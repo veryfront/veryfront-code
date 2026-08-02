@@ -116,12 +116,22 @@ describe("project-env/fetcher", () => {
     }
   });
 
-  it("uses the internal endpoint when Basic auth credentials are configured", async () => {
+  it("authorizes the canonical project before using host-level internal credentials", async () => {
+    const paths: string[] = [];
     const { server, port } = createMockServer((req: Request) => {
       const url = new URL(req.url);
+      paths.push(url.pathname);
+
+      if (url.pathname === "/projects/my-project/environment-variables") {
+        assertEquals(url.searchParams.get("environment_id"), "env-123");
+        assertEquals(req.headers.get("authorization"), "Bearer test-token");
+        return Response.json({ data: [{ key: "API_KEY", value: "********" }] });
+      }
 
       assertEquals(url.pathname, "/internal/project-environment-variables");
       assertEquals(url.searchParams.get("environment_id"), "env-123");
+      assertEquals(url.searchParams.get("project_slug"), "my-project");
+      assertEquals(req.headers.get("x-project-slug"), "my-project");
       assertEquals(req.headers.get("authorization"), `Basic ${btoa("runtime-user:runtime-pass")}`);
 
       return Response.json({ data: [{ key: "API_KEY", value: "plaintext-value" }] });
@@ -134,16 +144,25 @@ describe("project-env/fetcher", () => {
       });
 
       assertEquals(result, { API_KEY: "plaintext-value" });
+      assertEquals(paths, [
+        "/projects/my-project/environment-variables",
+        "/internal/project-environment-variables",
+      ]);
     } finally {
       await server.shutdown();
     }
   });
 
-  it("falls back to the management endpoint when the internal endpoint is absent", async () => {
+  it("fails closed when the configured internal endpoint is absent", async () => {
     const paths: string[] = [];
     const { server, port } = createMockServer((req: Request) => {
       const url = new URL(req.url);
       paths.push(url.pathname);
+
+      if (url.pathname === "/projects/my-project/environment-variables") {
+        assertEquals(req.headers.get("authorization"), "Bearer test-token");
+        return Response.json({ data: [] });
+      }
 
       if (url.pathname === "/internal/project-environment-variables") {
         assertEquals(
@@ -153,36 +172,33 @@ describe("project-env/fetcher", () => {
         return new Response(null, { status: 404 });
       }
 
-      assertEquals(req.headers.get("authorization"), "Bearer test-token");
-      return Response.json({ data: [{ key: "API_KEY", value: "legacy-plaintext" }] });
+      throw new Error(`Unexpected path: ${url.pathname}`);
     });
 
     try {
-      const result = await fetchFromMockApi(port, {
-        username: "runtime-user",
-        password: "runtime-pass",
-      });
+      await assertRejects(() =>
+        fetchFromMockApi(port, {
+          username: "runtime-user",
+          password: "runtime-pass",
+        })
+      );
 
       assertEquals(paths, [
-        "/internal/project-environment-variables",
         "/projects/my-project/environment-variables",
+        "/internal/project-environment-variables",
       ]);
-      assertEquals(result, { API_KEY: "legacy-plaintext" });
     } finally {
       await server.shutdown();
     }
   });
 
-  it("does not fall back when the internal endpoint rejects the request", async () => {
+  it("does not use internal credentials when project authorization is denied", async () => {
     let requestCount = 0;
     const { server, port } = createMockServer((req: Request) => {
       requestCount++;
-      assertEquals(new URL(req.url).pathname, "/internal/project-environment-variables");
-      assertEquals(
-        req.headers.get("authorization"),
-        `Basic ${btoa("runtime-user:runtime-pass")}`,
-      );
-      return new Response(null, { status: 401 });
+      assertEquals(new URL(req.url).pathname, "/projects/my-project/environment-variables");
+      assertEquals(req.headers.get("authorization"), "Bearer test-token");
+      return new Response(null, { status: 403 });
     });
 
     try {
@@ -199,7 +215,10 @@ describe("project-env/fetcher", () => {
   });
 
   it("rejects masked values returned by the internal endpoint", async () => {
-    const { server, port } = createMockServer(() => {
+    const { server, port } = createMockServer((req: Request) => {
+      if (new URL(req.url).pathname === "/projects/my-project/environment-variables") {
+        return Response.json({ data: [] });
+      }
       return Response.json({ data: [{ key: "API_KEY", value: "********" }] });
     });
 

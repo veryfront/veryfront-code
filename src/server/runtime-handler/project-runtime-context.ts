@@ -34,7 +34,12 @@ type ProjectEnvironmentResolution = ReturnType<typeof resolveEnvironment>;
 type SourceIntegrationPolicy = ReturnType<typeof normalizeSourceIntegrationPolicy>;
 
 type ProjectEnvVarCacheLike = {
-  get(environmentId: string, token: string, projectSlug: string): Promise<Record<string, string>>;
+  get(scope: {
+    environmentId: string;
+    token: string;
+    projectSlug: string;
+    projectId?: string;
+  }): Promise<Record<string, string>>;
 };
 
 type RuntimeContextProfiler = <T>(operation: () => Promise<T>) => Promise<T>;
@@ -45,6 +50,7 @@ export interface PreparedProjectRequest {
   requestContext: ProjectRequestContext;
   proxyTrust: {
     proxyTrusted: boolean | undefined;
+    identityHeadersTrusted: boolean;
   };
   loggerFacts: RequestContextFacts;
   trackingFacts: RequestTrackingFacts;
@@ -133,7 +139,11 @@ export async function prepareProjectRequest(
 ): Promise<PreparedProjectRequest> {
   const { req, url, isProxyMode } = input;
   const proxyTrusted = isProxyMode ? await (input.trustProxy ?? isProxyTrusted)(req) : undefined;
-  const headers = extractRequestHeaders(req, url, proxyTrusted);
+  // In shared mode, only the same operator-owned proxy decision that admits
+  // the request may authorize canonical cache and secret-fetch identity.
+  // Standalone runtimes retain their existing direct-header contract.
+  const identityHeadersTrusted = !isProxyMode || proxyTrusted === true;
+  const headers = extractRequestHeaders(req, url, proxyTrusted, identityHeadersTrusted);
   const requestContext = createRequestContext(req, {
     proxyTrusted,
     allowHostTokenFallback: !isProxyMode,
@@ -146,7 +156,7 @@ export async function prepareProjectRequest(
     url,
     headers,
     requestContext,
-    proxyTrust: { proxyTrusted },
+    proxyTrust: { proxyTrusted, identityHeadersTrusted },
     loggerFacts: {
       domain,
       projectSlug: headers.projectSlug,
@@ -163,7 +173,13 @@ export async function prepareProjectRequest(
       environment: headers.environment,
       releaseId: headers.releaseId,
     },
-    proxyGuard: createProxyGuard(req, isProxyMode, headers, proxyTrusted),
+    proxyGuard: createProxyGuard(
+      req,
+      isProxyMode,
+      headers,
+      proxyTrusted,
+      identityHeadersTrusted,
+    ),
   };
 }
 
@@ -220,7 +236,12 @@ export async function resolveProjectRuntimeContext(
       const environment = mayLoadEnvironment && environmentId && reqCtx.token &&
           projectRes.projectSlug
         ? await profileEnvVars(() =>
-          input.envVarCache.get(environmentId, reqCtx.token!, projectRes.projectSlug!)
+          input.envVarCache.get({
+            environmentId,
+            token: reqCtx.token!,
+            projectSlug: projectRes.projectSlug!,
+            projectId: projectRes.projectId,
+          })
         )
         : {};
 
@@ -343,11 +364,12 @@ export async function resolveProjectRuntimeContext(
   ) {
     const projectSlug = projectRes.projectSlug;
     rawEnvVars = await profileEnvVars(() =>
-      input.envVarCache.get(
+      input.envVarCache.get({
         environmentId,
-        reqCtx.token,
+        token: reqCtx.token,
         projectSlug,
-      )
+        projectId: projectRes.projectId,
+      })
     );
 
     input.logDebug?.("[runtime-handler] Project env vars fetched", {
@@ -375,11 +397,19 @@ function createProxyGuard(
   isProxyMode: boolean,
   headers: ProjectRequestHeaders,
   proxyTrusted: boolean | undefined,
+  identityHeadersTrusted: boolean,
 ): ProxyGuardResult | undefined {
   if (!isProxyMode) return undefined;
 
   const token = req.headers.get("x-token");
-  const body = !headers.projectSlug
+  const hasUntrustedIdentityHeaders = !identityHeadersTrusted &&
+    (req.headers.has("x-project-id") || req.headers.has("x-environment-id"));
+  const body = hasUntrustedIdentityHeaders
+    ? {
+      error: "Untrusted identity context",
+      detail: "x-project-id and x-environment-id require an operator-authenticated proxy boundary",
+    }
+    : !headers.projectSlug
     ? {
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",

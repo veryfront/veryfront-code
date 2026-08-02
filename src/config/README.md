@@ -65,6 +65,15 @@ without a query or fragment. Project configuration must not override `fs`; an
 attempted override is rejected instead of producing a mixed backend
 configuration.
 
+The renderer accepts `x-project-id` and `x-environment-id` as canonical
+identity only when its operator sets `VERYFRONT_TRUST_FORWARDED_HEADERS=1` and
+the renderer is reachable exclusively through that trusted proxy boundary. A
+dispatch signature alone does not bind those headers. Untrusted proxy-mode
+requests carrying either header are rejected, while standalone requests ignore
+them. When host-level internal API credentials are configured, tenant
+environment retrieval still requires a successful project-scoped bearer
+authorization before the internal secret endpoint is called.
+
 ### Hosted configuration boundary
 
 Local filesystems, standalone deployments, and trusted single-project virtual

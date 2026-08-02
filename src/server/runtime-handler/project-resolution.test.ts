@@ -29,11 +29,19 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.projectSlug, "my-project");
     });
 
-    it("extracts project id from header", () => {
+    it("ignores project id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-id": "proj-123" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.projectId, undefined);
+    });
+
+    it("extracts project id only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-project-id": "proj-123" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.projectId, "proj-123");
     });
 
@@ -116,11 +124,19 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.proxyEnv, undefined);
     });
 
-    it("extracts environment-id from header", () => {
+    it("ignores environment-id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-environment-id": "env-1" },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.environmentId, undefined);
+    });
+
+    it("extracts environment-id only at an operator-authenticated proxy boundary", () => {
+      const req = new Request("http://localhost/", {
+        headers: { "x-environment-id": "env-1" },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.environmentId, "env-1");
     });
 

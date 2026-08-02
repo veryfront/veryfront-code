@@ -79,9 +79,8 @@ function trustForwardedHeaders(): boolean {
 
 function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): string {
   // x-forwarded-host is client-controlled and only trustworthy behind a trusted
-  // upstream proxy. Honour it only after the operator opt-in or a verified
-  // dispatch JWS, matching createRequestContext; otherwise fall back to Host.
-  // The runtime handler performs async verification and passes the result here.
+  // upstream proxy. Honour it only after the operator opt-in; otherwise fall
+  // back to Host. Signed application requests are not general proxy authority.
   return getEffectiveRequestHost(req, url, proxyTrusted ?? trustForwardedHeaders());
 }
 
@@ -97,6 +96,7 @@ export function extractRequestHeaders(
   req: Request,
   url: URL,
   proxyTrusted?: boolean,
+  identityHeadersTrusted = trustForwardedHeaders(),
 ): RequestHeaders {
   const host = getEffectiveHost(req, url, proxyTrusted);
   const parsedDomain = parseProjectDomain(host);
@@ -110,12 +110,14 @@ export function extractRequestHeaders(
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
-    projectId: req.headers.get("x-project-id") ?? undefined,
+    projectId: identityHeadersTrusted ? req.headers.get("x-project-id") ?? undefined : undefined,
     releaseId: req.headers.get("x-release-id") ?? undefined,
     branchId: req.headers.get("x-branch-id") ?? undefined,
     branchName: req.headers.get("x-branch-name") ?? undefined,
     environment,
-    environmentId: req.headers.get("x-environment-id") ?? undefined,
+    environmentId: identityHeadersTrusted
+      ? req.headers.get("x-environment-id") ?? undefined
+      : undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
     projectPath: req.headers.get("x-project-path") ?? undefined,

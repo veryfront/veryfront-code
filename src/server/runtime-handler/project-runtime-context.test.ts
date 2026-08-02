@@ -7,6 +7,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import type { ProjectEnvironmentScope } from "#veryfront/server/project-env/cache.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   __registerLogRecordEmitter,
@@ -142,7 +143,7 @@ function makeRuntimeContextInput(
     },
   });
   const url = new URL(req.url);
-  const headers = extractRequestHeaders(req, url);
+  const headers = extractRequestHeaders(req, url, false, true);
   const requestContext = createRequestContext(req);
   const adapter = createMockAdapter();
   const config = {
@@ -229,6 +230,7 @@ describe("prepareProjectRequest", () => {
 
     assertEquals(trustChecks, 1);
     assertStrictEquals(prepared.proxyTrust.proxyTrusted, false);
+    assertStrictEquals(prepared.proxyTrust.identityHeadersTrusted, false);
     assertEquals(prepared.headers, extractRequestHeaders(req, url, false));
     assertEquals(
       prepared.requestContext,
@@ -328,6 +330,54 @@ describe("prepareProjectRequest", () => {
       error: "Untrusted proxy context",
       detail: "proxy mode requires an operator-trusted upstream proxy",
     });
+  });
+
+  it("rejects unbound identity IDs even when a dispatch signature is trusted", async () => {
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "project-a",
+        "x-project-id": "victim-project-id",
+        "x-environment-id": "victim-environment-id",
+        "x-token": "project-token",
+      },
+    });
+
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: true,
+      trustProxy: () => Promise.resolve(false),
+    });
+
+    assertEquals(prepared.headers.projectId, undefined);
+    assertEquals(prepared.headers.environmentId, undefined);
+    await assertJsonResponse(prepared.proxyGuard!.response, 502, {
+      error: "Untrusted identity context",
+      detail: "x-project-id and x-environment-id require an operator-authenticated proxy boundary",
+    });
+  });
+
+  it("accepts canonical identity IDs from an operator-authenticated proxy", async () => {
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "project-a",
+        "x-project-id": "project-id-a",
+        "x-environment-id": "environment-id-a",
+        "x-token": "project-token",
+      },
+    });
+
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: true,
+      trustProxy: () => Promise.resolve(true),
+    });
+
+    assertEquals(prepared.proxyTrust.identityHeadersTrusted, true);
+    assertEquals(prepared.headers.projectId, "project-id-a");
+    assertEquals(prepared.headers.environmentId, "environment-id-a");
+    assertEquals(prepared.proxyGuard, undefined);
   });
 
   it("rejects untrusted websocket query identity", async () => {
@@ -574,15 +624,12 @@ describe("resolveProjectRuntimeContext", () => {
       securityConfig,
       cspUserHeader,
       envVarCache: {
-        get: (
-          environmentId: string,
-          token: string,
-          projectSlug: string,
-        ) => {
+        get: ({ environmentId, token, projectSlug, projectId }: ProjectEnvironmentScope) => {
           envLoadCount += 1;
           assertEquals(environmentId, "env-remote");
           assertEquals(token, "proxy-token");
           assertEquals(projectSlug, "remote-project");
+          assertEquals(projectId, "proj-remote");
           return Promise.resolve({ REMOTE_ONLY: "1", SECRET_VALUE: "present" });
         },
       },
@@ -718,6 +765,7 @@ describe("resolveProjectRuntimeContext", () => {
       requestContext: createRequestContext(req, { proxyTrusted: false }),
       isProxyMode: true,
       proxyTrust: { proxyTrusted: false },
+      environmentId: "env-remote",
       projectIdentity: {
         projectSlug: "remote-project",
         projectId: "proj-remote",
