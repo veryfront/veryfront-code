@@ -136,6 +136,10 @@ export class AdapterRegistry {
             await this.shutdownAdapter(oldAdapter);
           }
         }),
+      {
+        "registry.adapter.id": typeof adapter?.id === "string" ? adapter.id : "",
+        "registry.adapter.name": typeof adapter?.name === "string" ? adapter.name : "",
+      },
     );
   }
 
