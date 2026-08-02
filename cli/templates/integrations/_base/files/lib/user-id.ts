@@ -1,40 +1,66 @@
 import type { ToolExecutionContext } from "veryfront/tool";
 
-function isDevelopmentRuntime(): boolean {
-  const mode = Deno.env.get("NODE_ENV") ?? Deno.env.get("DENO_ENV");
-  return mode === "development" || mode === "test";
+export type RequestIdentityResolver = (
+  request: Request,
+) => string | null | Promise<string | null>;
+
+const IDENTITY_RESOLVER_KEY = Symbol.for(
+  "veryfront.application.request-identity-resolver",
+);
+const registry = globalThis as unknown as Record<PropertyKey, unknown>;
+
+function normalizeUserId(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0 || value.length > 1_024) {
+    return null;
+  }
+  return value.trim() === value ? value : null;
 }
 
-function devUserId(): string {
-  return Deno.env.get("VERYFRONT_DEV_USER_ID") ?? "dev-user";
+/**
+ * Install the application's verified session/JWT identity resolver.
+ *
+ * The resolver must authenticate the request using server-side session state
+ * or a cryptographically verified token. Never copy an untrusted request
+ * header into the returned user id.
+ */
+export function installRequestIdentityResolver(
+  resolver: RequestIdentityResolver,
+): void {
+  if (typeof resolver !== "function") {
+    throw new TypeError("Request identity resolver must be a function");
+  }
+  const existing = registry[IDENTITY_RESOLVER_KEY];
+  if (existing !== undefined && existing !== resolver) {
+    throw new Error("Request identity resolver has already been installed");
+  }
+  registry[IDENTITY_RESOLVER_KEY] = resolver;
 }
 
-function requireUserId(value: string | null | undefined): string {
-  if (typeof value === "string" && value.length > 0) {
-    return value;
+/**
+ * Resolve the authenticated user for a request, or null when anonymous.
+ *
+ * Throws until the application installs a resolver: there is deliberately no
+ * environment-gated default, because an ambient identity collapses every
+ * visitor onto a single OAuth token owner.
+ */
+export async function requireUserIdFromRequest(
+  request: Request,
+): Promise<string | null> {
+  const resolver = registry[IDENTITY_RESOLVER_KEY];
+  if (typeof resolver !== "function") {
+    throw new Error(
+      "Request identity resolver is not configured. Install a verified session/JWT " +
+        "resolver during application startup.",
+    );
   }
 
-  if (isDevelopmentRuntime()) {
-    return devUserId();
-  }
-
-  throw new Error(
-    "Authenticated user id is required outside explicit development and test modes. " +
-      "Pass the authenticated user's id from your session, JWT, or auth provider.",
-  );
+  return normalizeUserId(await (resolver as RequestIdentityResolver)(request));
 }
 
-export function requireUserIdFromRequest(_request: Request): string {
-  if (isDevelopmentRuntime()) {
-    return devUserId();
-  }
-
-  throw new Error(
-    "Authenticated request identity is not configured. " +
-      "Implement requireUserIdFromRequest in lib/user-id.ts using your verified session, JWT, or auth provider.",
-  );
-}
-
-export function requireUserIdFromContext(context?: ToolExecutionContext): string {
-  return requireUserId(context?.userId);
+export function requireUserIdFromContext(
+  context?: ToolExecutionContext,
+): string {
+  const userId = normalizeUserId(context?.userId);
+  if (userId) return userId;
+  throw new Error("Authenticated tool context userId is required");
 }
