@@ -361,6 +361,30 @@ describe("prepareProjectRequest", () => {
     });
   });
 
+  it("rejects an untrusted default branch identity on its own", async () => {
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "project-a",
+        "x-default-branch-name": "attacker-branch",
+        "x-token": "project-token",
+      },
+    });
+
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: true,
+      trustProxy: () => Promise.resolve(false),
+    });
+
+    assertEquals(prepared.headers.defaultBranchName, undefined);
+    await assertJsonResponse(prepared.proxyGuard!.response, 502, {
+      error: "Untrusted identity context",
+      detail:
+        "project, environment, and branch identity headers require an operator-authenticated proxy boundary",
+    });
+  });
+
   it("accepts canonical identity IDs from an operator-authenticated proxy", async () => {
     const req = new Request("http://localhost/page", {
       headers: {

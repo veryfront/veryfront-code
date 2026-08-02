@@ -414,7 +414,8 @@ function createProxyGuard(
       req.headers.has("x-environment-id") ||
       req.headers.has("x-environment-name") ||
       req.headers.has("x-branch-id") ||
-      req.headers.has("x-branch-name")
+      req.headers.has("x-branch-name") ||
+      req.headers.has("x-default-branch-name")
     );
   const hasIncompleteEnvironmentIdentity = identityHeadersTrusted &&
     Boolean(headers.environmentId) !== Boolean(headers.environmentName);
