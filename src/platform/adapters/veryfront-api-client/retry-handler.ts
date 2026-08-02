@@ -13,8 +13,12 @@ export function requestWithRetry(
   apiToken: string,
   retryConfig: RetryConfig,
   options: RequestOptions = {},
+  outboundPolicy?: {
+    fetchImpl?: typeof fetch;
+    authorizeUrl?: (url: URL) => void | Promise<void>;
+  },
 ): Promise<unknown> {
   const { origin } = new URL(url);
-  return createCanonicalVeryfrontApiTransport(origin, () => apiToken, retryConfig)
+  return createCanonicalVeryfrontApiTransport(origin, () => apiToken, retryConfig, outboundPolicy)
     .request(url, options);
 }

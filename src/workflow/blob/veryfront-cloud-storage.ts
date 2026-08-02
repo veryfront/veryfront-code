@@ -6,6 +6,10 @@ import {
   getVeryfrontCloudBootstrap,
   getVeryfrontCloudProjectSlug,
 } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  guardedOutboundFetch,
+  OutboundRequestBlockedError,
+} from "#veryfront/security/http/outbound-fetch.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "./types.ts";
 import { assertSafeBlobId, isSafeBlobId } from "./blob-id.ts";
 
@@ -423,10 +427,11 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const headers = new Headers(upload.required_headers);
     if (!headers.has("Content-Type")) headers.set("Content-Type", mimeType);
 
-    const response = await fetch(upload.file_upload_url, {
+    const response = await guardedOutboundFetch(upload.file_upload_url, {
       method: "PUT",
       headers,
       body,
+      redirect: "error",
     });
 
     if (!response.ok) {
@@ -505,7 +510,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const download = await this.getDownloadUrl(path, resolved);
     if (!download) return null;
 
-    const response = await fetch(download.signedUrl);
+    const response = await guardedOutboundFetch(download.signedUrl, { redirect: "error" });
     if (response.status === 404) return null;
 
     if (!response.ok) {
@@ -544,11 +549,19 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const headers = new Headers(options.headers);
     headers.set("Authorization", `Bearer ${resolved.apiToken}`);
 
-    const response = await fetch(joinUrl(resolved.apiBaseUrl, path), {
-      method,
-      headers,
-      body: options.body,
-    });
+    const response = await guardedOutboundFetch(
+      joinUrl(resolved.apiBaseUrl, path),
+      { method, headers, body: options.body, redirect: "error" },
+      {
+        authorizeUrl: (target) => {
+          if (target.origin !== new URL(resolved.apiBaseUrl).origin) {
+            throw new OutboundRequestBlockedError(
+              "Veryfront Cloud Blob request blocked: destination origin is not authorized",
+            );
+          }
+        },
+      },
+    );
 
     if (options.allowNotFound && response.status === 404) {
       return null;

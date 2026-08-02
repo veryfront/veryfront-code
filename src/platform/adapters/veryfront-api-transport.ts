@@ -13,6 +13,7 @@ import {
 } from "#veryfront/utils/config-resource-limits.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { sanitizeUrlCredentials, sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import {
   JsonStringValueTooLargeError,
   maximumJsonStringDocumentBytes,
@@ -77,6 +78,11 @@ export interface VeryfrontApiTransportConfig<T> {
   }) => void;
   wrapFinalError?: (lastError: Error, lastAttempt: number) => Error;
   wrapFetch?: (fn: () => Promise<T>, url: string, method: string, attempt: number) => Promise<T>;
+  /** Optional host egress policy; its fetch seam never bypasses the policy. */
+  outboundPolicy?: {
+    fetchImpl?: typeof fetch;
+    authorizeUrl?: (url: URL) => void | Promise<void>;
+  };
 }
 
 export interface VeryfrontApiTransport<T> {
@@ -160,12 +166,18 @@ function createValidatedVeryfrontApiTransport<T>(
             headers.set("Authorization", `Bearer ${token}`);
             injectContext(headers);
             const start = performance.now();
-            const res = await fetch(url, {
+            const requestInit: RequestInit = {
               method,
               headers,
               body,
               signal,
-            });
+            };
+            const res = config.outboundPolicy
+              ? await guardedOutboundFetch(url, { ...requestInit, redirect: "error" }, {
+                fetchImpl: config.outboundPolicy.fetchImpl,
+                authorizeUrl: config.outboundPolicy.authorizeUrl,
+              })
+              : await fetch(url, requestInit);
             afterFetch?.(res.status, performance.now() - start);
             return await onResponse(res, responseInit, url, signal);
           };
@@ -213,6 +225,7 @@ export function createCanonicalVeryfrontApiTransport(
   baseUrl: string,
   getToken: () => string,
   retry: TransportRetryConfig,
+  outboundPolicy?: VeryfrontApiTransportConfig<unknown>["outboundPolicy"],
 ): VeryfrontApiTransport<unknown> {
   const normalizedRetry = requireVeryfrontApiRetryConfig(retry);
   return createValidatedVeryfrontApiTransport(
@@ -220,6 +233,7 @@ export function createCanonicalVeryfrontApiTransport(
       baseUrl,
       getToken,
       retry: normalizedRetry,
+      outboundPolicy,
       defaultHeaders: { "Content-Type": "application/json" },
       afterFetch(status) {
         recordApiRequest(status);
