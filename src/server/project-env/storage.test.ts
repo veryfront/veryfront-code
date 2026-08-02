@@ -1,6 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import {
+  getEnv,
+  getTrustedProjectEnvSnapshot,
+  registerTrustedProjectEnvSnapshot,
+} from "#veryfront/platform/compat/process/env.ts";
 import {
   getProjectEnv,
   getProjectEnvSnapshot,
@@ -58,16 +63,77 @@ describe("project-env/storage", () => {
   });
 
   it("getProjectEnvSnapshot returns full env overlay inside context", () => {
-    runWithProjectEnv({ FOO: "bar", BAZ: "qux" }, () => {
+    const input = { FOO: "bar", BAZ: "qux" };
+    runWithProjectEnv(input, () => {
       const snapshot = getProjectEnvSnapshot();
       assertEquals(snapshot, { FOO: "bar", BAZ: "qux" });
+      assertEquals(Object.getPrototypeOf(snapshot!), null);
+      assertEquals(Object.isFrozen(snapshot!), true);
+      input.FOO = "mutated";
+      assertEquals(getProjectEnv("FOO"), "bar");
     });
+  });
+
+  it("exposes the current snapshot to isolated route workers", () => {
+    const getter = (globalThis as Record<string, unknown>).__vfProjectEnvSnapshotGetter;
+    assertEquals(typeof getter, "function");
+
+    runWithProjectEnv({ TENANT_SECRET: "scoped" }, () => {
+      assertEquals((getter as () => unknown)(), { TENANT_SECRET: "scoped" });
+    });
+    assertEquals((getter as () => unknown)(), undefined);
+  });
+
+  it("rejects accessor-backed overlays without invoking getters", () => {
+    let calls = 0;
+    const input = Object.create(null);
+    Object.defineProperty(input, "SECRET", {
+      enumerable: true,
+      get() {
+        calls += 1;
+        return "leaked";
+      },
+    });
+
+    assertThrows(() => runWithProjectEnv(input, () => undefined), TypeError);
+    assertEquals(calls, 0);
   });
 
   it("getProjectEnvSnapshot returns empty object for empty overlay", () => {
     runWithProjectEnv({}, () => {
       assertEquals(getProjectEnvSnapshot(), {});
     });
+  });
+
+  it("does not allow the trusted snapshot bridge to be replaced", () => {
+    assertThrows(
+      () => registerTrustedProjectEnvSnapshot(() => ({ FOO: "attacker" })),
+      Error,
+      "Project environment snapshot bridge is already registered",
+    );
+
+    const globals = globalThis as Record<string, unknown>;
+    const previousLegacyGetter = globals.__vfProjectEnvGetter;
+    const previousLegacyActiveChecker = globals.__vfProjectEnvActiveChecker;
+    globals.__vfProjectEnvGetter = () => "legacy-replacement";
+    globals.__vfProjectEnvActiveChecker = () => false;
+    try {
+      runWithProjectEnv({ FOO: "trusted" }, () => {
+        assertEquals(getTrustedProjectEnvSnapshot(), { FOO: "trusted" });
+        assertEquals(getEnv("FOO"), "trusted");
+      });
+    } finally {
+      if (previousLegacyGetter === undefined) {
+        delete globals.__vfProjectEnvGetter;
+      } else {
+        globals.__vfProjectEnvGetter = previousLegacyGetter;
+      }
+      if (previousLegacyActiveChecker === undefined) {
+        delete globals.__vfProjectEnvActiveChecker;
+      } else {
+        globals.__vfProjectEnvActiveChecker = previousLegacyActiveChecker;
+      }
+    }
   });
 
   it("concurrent async contexts are isolated", async () => {

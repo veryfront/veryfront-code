@@ -1,4 +1,6 @@
-type DenoEnvShim = {
+import process from "node:process";
+
+export type DenoEnvShim = {
   env: {
     get(key: string): string | undefined;
     set(key: string, value: string): void;
@@ -14,22 +16,33 @@ type DenoEnvShimGlobal = Omit<typeof globalThis, "Deno"> & {
 
 const global = globalThis as DenoEnvShimGlobal;
 
-global.Deno ??= {
-  env: {
+/** @internal Builds the environment facade without mutating runtime globals. */
+export function createDenoEnvShim(
+  env: Record<string, string | undefined>,
+): DenoEnvShim["env"] {
+  return {
     get(key: string): string | undefined {
-      return process.env[key];
+      return env[key];
     },
     set(key: string, value: string): void {
-      process.env[key] = value;
+      env[key] = value;
     },
     delete(key: string): void {
-      delete process.env[key];
+      delete env[key];
     },
     has(key: string): boolean {
-      return key in process.env;
+      return env[key] !== undefined;
     },
     toObject(): Record<string, string> {
-      return { ...process.env } as Record<string, string>;
+      return Object.fromEntries(
+        Object.entries(env).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
     },
-  },
+  };
+}
+
+global.Deno ??= {
+  env: createDenoEnvShim(process.env),
 };

@@ -8,14 +8,30 @@
  * @module platform/environment
  */
 
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 export type Environment = "development" | "production" | "test";
 
 function resolveEnvironment(): Environment {
-  const raw = getEnv("VERYFRONT_ENV") || getEnv("NODE_ENV") || getEnv("DENO_ENV");
-  if (raw === "production" || raw === "test") return raw;
-  return "development";
+  let configured: string | undefined;
+  for (const key of ["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const) {
+    // Runtime posture is framework-owned configuration. A tenant/project
+    // environment overlay must never be able to weaken it for one request.
+    const value = getHostEnv(key)?.trim().toLowerCase();
+    if (value) {
+      configured = value;
+      break;
+    }
+  }
+
+  if (configured === undefined || configured === "development") return "development";
+  if (configured === "test") return "test";
+
+  // Development-only behavior can relax authentication, diagnostics, and
+  // storage defaults. Treat every explicit non-development deployment label
+  // (including conventional values such as "preview" and "staging") with the
+  // production posture so a typo cannot silently weaken those boundaries.
+  return "production";
 }
 
 export function getEnvironment(): Environment {

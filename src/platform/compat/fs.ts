@@ -21,6 +21,24 @@ function denoGlobal(): typeof Deno {
   return (globalThis as { Deno: typeof Deno }).Deno;
 }
 
+/** Stable native identity for one filesystem object. */
+export interface PathIdentity {
+  readonly device: string;
+  readonly inode: string;
+}
+
+function normalizePathIdentity(
+  device: number | bigint | null,
+  inode: number | bigint | null,
+): PathIdentity | undefined {
+  const isValidPart = (value: number | bigint | null): value is number | bigint =>
+    (typeof value === "bigint" && value >= 0n) ||
+    (typeof value === "number" && Number.isSafeInteger(value) && value >= 0);
+
+  if (!isValidPart(device) || !isValidPart(inode)) return undefined;
+  return Object.freeze({ device: String(device), inode: String(inode) });
+}
+
 /** Public API contract for file system. */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
@@ -439,6 +457,18 @@ export function exists(path: string): Promise<boolean> {
 /** Read file metadata. */
 export function stat(path: string): Promise<FileInfo> {
   return getFs().stat(path);
+}
+
+/** Read native device/inode identity without following a terminal symlink. */
+export async function getPathIdentity(path: string): Promise<PathIdentity | undefined> {
+  if (isDeno) {
+    const info = await denoGlobal().lstat(path);
+    return normalizePathIdentity(info.dev, info.ino);
+  }
+
+  const fs = await import("node:fs/promises");
+  const info = await fs.lstat(path, { bigint: true });
+  return normalizePathIdentity(info.dev, info.ino);
 }
 
 /** Read file metadata without following a terminal symbolic link. */

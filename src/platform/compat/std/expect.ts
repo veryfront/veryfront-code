@@ -57,7 +57,18 @@ type ExternalExpectFn = (actual: unknown) => unknown;
 // deno-lint-ignore no-explicit-any -- external matchers (Deno std, Bun) may expose additional methods beyond our Matchers<T> interface
 type ExpectFn = <T>(actual: T) => Matchers<T> & Record<string, any>;
 
-function createNodeExpect(): ExpectFn {
+function testRegExp(pattern: RegExp, value: string): boolean {
+  const previousLastIndex = pattern.lastIndex;
+  pattern.lastIndex = 0;
+  try {
+    return pattern.test(value);
+  } finally {
+    pattern.lastIndex = previousLastIndex;
+  }
+}
+
+/** @internal Node matcher implementation exposed for cross-runtime regression tests. */
+export function createNodeExpect(): ExpectFn {
   function createMatchers<T>(actual: T, isNot = false): Matchers<T> {
     function check(condition: boolean, message: string): void {
       assertExpectation(condition, isNot, message);
@@ -257,6 +268,7 @@ function createNodeExpect(): ExpectFn {
       },
 
       toHaveProperty(keyPath: string | string[], value?: unknown) {
+        const hasExpectedValue = arguments.length >= 2;
         const keys = Array.isArray(keyPath) ? keyPath : keyPath.split(".");
         let current: unknown = actual;
         let hasProperty = true;
@@ -270,7 +282,7 @@ function createNodeExpect(): ExpectFn {
           break;
         }
 
-        if (value !== undefined && hasProperty) {
+        if (hasExpectedValue && hasProperty) {
           hasProperty = deepEquals(current, value);
         }
 
@@ -285,7 +297,9 @@ function createNodeExpect(): ExpectFn {
 
       toMatch(expected: string | RegExp) {
         const str = actual as string;
-        const matches = typeof expected === "string" ? str.includes(expected) : expected.test(str);
+        const matches = typeof expected === "string"
+          ? str.includes(expected)
+          : testRegExp(expected, str);
 
         check(
           matches,
@@ -297,10 +311,10 @@ function createNodeExpect(): ExpectFn {
       },
 
       toMatchObject(expected: Record<string, unknown>) {
-        const actualObj = actual as Record<string, unknown>;
-        const matches = Object.keys(expected).every((key) =>
-          deepEquals(actualObj[key], expected[key])
-        );
+        const matches = typeof actual === "object" && actual !== null &&
+          Object.keys(expected).every((key) =>
+            deepEquals((actual as Record<string, unknown>)[key], expected[key])
+          );
 
         check(
           matches,
@@ -340,7 +354,8 @@ function createNodeExpect(): ExpectFn {
 
         if (expected instanceof RegExp) {
           check(
-            threw && thrownError instanceof Error && expected.test(thrownError.message),
+            threw && thrownError instanceof Error &&
+              testRegExp(expected, thrownError.message),
             getMessage(
               `Expected function to throw matching ${expected}`,
               `Expected function not to throw matching ${expected}`,
@@ -425,14 +440,15 @@ function createNodeExpect(): ExpectFn {
       },
 
       get rejects(): AsyncMatchers<unknown> {
+        const requireRejection = async (): Promise<unknown> => {
+          const { rejected, error } = await getRejection();
+          if (!rejected) throw new Error("Expected promise to reject");
+          return error;
+        };
+
         return {
           async toBe(expected: unknown) {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (Object.is(error, expected)) {
@@ -451,12 +467,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toEqual(expected: unknown) {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (deepEquals(error, expected)) {
@@ -479,12 +490,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toBeTruthy() {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (error) throw new Error("Expected promise not to reject with truthy value");
@@ -495,12 +501,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toBeFalsy() {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (!error) throw new Error("Expected promise not to reject with falsy value");
@@ -511,12 +512,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toBeNull() {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (error === null) throw new Error("Expected promise not to reject with null");
@@ -527,12 +523,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toBeUndefined() {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (error === undefined) {
@@ -545,12 +536,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toBeDefined() {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (error !== undefined) {
@@ -565,12 +551,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toBeInstanceOf(expected: new (...args: unknown[]) => unknown) {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             if (isNot) {
               if (error instanceof expected) {
@@ -585,12 +566,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toContain(expected: unknown) {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             const contains = typeof error === "string" && error.includes(expected as string);
 
@@ -609,12 +585,7 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toHaveLength(expected: number) {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             const length = (error as { length?: number })?.length;
 
@@ -631,17 +602,12 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toMatch(expected: string | RegExp) {
-            const { rejected, error } = await getRejection();
-
-            if (!rejected) {
-              if (!isNot) throw new Error("Expected promise to reject");
-              return;
-            }
+            const error = await requireRejection();
 
             const str = error instanceof Error ? error.message : String(error);
             const matches = typeof expected === "string"
               ? str.includes(expected)
-              : expected.test(str);
+              : testRegExp(expected, str);
 
             if (isNot) {
               if (matches) throw new Error(`Expected promise not to reject matching ${expected}`);
@@ -652,19 +618,15 @@ function createNodeExpect(): ExpectFn {
           },
 
           async toThrow(expected?: string | RegExp | Error | (new (...args: unknown[]) => Error)) {
-            const { rejected, error } = await getRejection();
+            const error = await requireRejection();
 
             if (expected === undefined) {
-              if (!(isNot ? !rejected : rejected)) {
-                throw new Error(
-                  isNot ? "Expected promise not to reject" : "Expected promise to reject",
-                );
-              }
+              if (isNot) throw new Error("Expected promise not to reject");
               return;
             }
 
             if (typeof expected === "string") {
-              const matches = rejected && error instanceof Error &&
+              const matches = error instanceof Error &&
                 error.message.includes(expected);
               if (isNot) {
                 if (matches) {
@@ -679,7 +641,8 @@ function createNodeExpect(): ExpectFn {
             }
 
             if (expected instanceof RegExp) {
-              const matches = rejected && error instanceof Error && expected.test(error.message);
+              const matches = error instanceof Error &&
+                testRegExp(expected, error.message);
               if (isNot) {
                 if (matches) throw new Error(`Expected promise not to reject matching ${expected}`);
                 return;
@@ -689,7 +652,7 @@ function createNodeExpect(): ExpectFn {
             }
 
             if (expected instanceof Error) {
-              const matches = rejected && error instanceof Error &&
+              const matches = error instanceof Error &&
                 error.message === expected.message;
               if (isNot) {
                 if (matches) {
@@ -701,7 +664,7 @@ function createNodeExpect(): ExpectFn {
               return;
             }
 
-            const matches = rejected && error instanceof expected;
+            const matches = error instanceof expected;
             if (isNot) {
               if (matches) throw new Error(`Expected promise not to reject with ${expected.name}`);
               return;
