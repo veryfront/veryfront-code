@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { computeHashBytes } from "#veryfront/utils";
+import { FakeTime } from "#std/testing/time";
 import {
   buildDependencyArtifactGraph,
   type DependencyArtifactBuildClient,
@@ -14,6 +15,7 @@ import {
 import { materializeDependencyArtifactGraph } from "./dependency-artifact-graph.ts";
 
 const encoder = new TextEncoder();
+const CONTROLLED_TIMEOUT_MS = 30_000;
 
 const standardIdentity = {
   origin_key: "npm:public",
@@ -399,19 +401,46 @@ describe("release-assets/dependency-artifact-builder", () => {
   it("bounds an upstream fetch that ignores AbortSignal", async () => {
     const { client } = recordingClient();
     const upstreamSignals: AbortSignal[] = [];
-    const result = await settleBeforeWatchdog(
-      runDependencyArtifactBuild(buildTaskInput(), client, {
+    let build!: ReturnType<typeof runDependencyArtifactBuild>;
+
+    {
+      using time = new FakeTime();
+      build = runDependencyArtifactBuild(buildTaskInput(), client, {
         fetch: ((_input: RequestInfo | URL, init?: RequestInit) => {
           if (init?.signal) upstreamSignals.push(init.signal);
           return new Promise<Response>(() => undefined);
         }) as typeof fetch,
-        limits: { timeoutMs: 1 },
+        limits: { timeoutMs: CONTROLLED_TIMEOUT_MS },
+      });
+
+      assertEquals(upstreamSignals.length, 1);
+      assertEquals(upstreamSignals[0]?.aborted, false);
+      await time.tickAsync(CONTROLLED_TIMEOUT_MS);
+    }
+
+    const result = await settleBeforeWatchdog(build);
+
+    assertEquals(result.success, false);
+    assertEquals(failureCodeOf(result), "upstream_timeout");
+    assertEquals(upstreamSignals[0]?.aborted, true);
+  });
+
+  it("does not start an upstream fetch after its deadline expires", async () => {
+    const { client } = recordingClient();
+    let fetchCalls = 0;
+    const result = await settleBeforeWatchdog(
+      runDependencyArtifactBuild(buildTaskInput(), client, {
+        fetch: (() => {
+          fetchCalls++;
+          return new Promise<Response>(() => undefined);
+        }) as typeof fetch,
+        limits: { timeoutMs: 0 },
       }),
     );
 
     assertEquals(result.success, false);
     assertEquals(failureCodeOf(result), "upstream_timeout");
-    assertEquals(upstreamSignals[0]?.aborted, true);
+    assertEquals(fetchCalls, 0);
   });
 
   it("bounds an upstream body read that never settles", async () => {
@@ -426,8 +455,10 @@ describe("release-assets/dependency-artifact-builder", () => {
       },
     });
 
-    const result = await settleBeforeWatchdog(
-      runDependencyArtifactBuild(buildTaskInput(), client, {
+    let build!: ReturnType<typeof runDependencyArtifactBuild>;
+    {
+      using time = new FakeTime();
+      build = runDependencyArtifactBuild(buildTaskInput(), client, {
         fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
           if (init?.signal) upstreamSignals.push(init.signal);
           assertEquals(String(input), rootUrl);
@@ -435,9 +466,17 @@ describe("release-assets/dependency-artifact-builder", () => {
             headers: { "content-type": "text/javascript" },
           });
         }) as typeof fetch,
-        limits: { timeoutMs: 1 },
-      }),
-    );
+        limits: { timeoutMs: CONTROLLED_TIMEOUT_MS },
+      });
+
+      await time.tickAsync(0);
+      assertEquals(upstreamSignals.length, 1);
+      assertEquals(upstreamSignals[0]?.aborted, false);
+      assertEquals(bodyCancelCalls, 0);
+      await time.tickAsync(CONTROLLED_TIMEOUT_MS);
+    }
+
+    const result = await settleBeforeWatchdog(build);
 
     assertEquals(result.success, false);
     assertEquals(failureCodeOf(result), "upstream_timeout");
