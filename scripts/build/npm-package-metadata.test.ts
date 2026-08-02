@@ -580,6 +580,8 @@ describe("npm supply-chain policy", () => {
     }
 
     assertStringIncludes(source, "CodeParser was not registered");
+    assertStringIncludes(source, "getDeferredExtensionState(resolved)");
+    assertStringIncludes(source, "await deferred.load(logger)");
     assertStringIncludes(source, "app/page.tsx");
   });
 
