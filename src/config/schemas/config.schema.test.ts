@@ -718,33 +718,18 @@ describe("configSchema", () => {
     }
   });
 
-  it("preserves distributed render-cache prefixes and rejects unsafe values", () => {
-    const config = validateVeryfrontConfig({
-      cache: { render: { type: "distributed", keyPrefix: "vf:cache:tenant-render:" } },
-    });
-    assertEquals(config.cache?.render?.keyPrefix, "vf:cache:tenant-render:");
-
+  it("rejects unwired distributed render-cache configuration", () => {
     for (
-      const keyPrefix of [
-        "",
-        "   ",
-        "unsafe\nprefix",
-        "x".repeat(512),
-        "custom:",
-        "vf:cache:",
-        "vf:workflow",
-        "vf:transform",
-        "vf:render",
-        "vf",
+      const render of [
+        { type: "distributed" },
+        { type: "distributed", keyPrefix: "vf:cache:tenant-render:" },
+        { type: "memory", keyPrefix: "vf:cache:tenant-render:" },
       ]
     ) {
       assertThrows(
-        () =>
-          validateVeryfrontConfig({
-            cache: { render: { type: "distributed", keyPrefix } },
-          }),
+        () => validateVeryfrontConfig({ cache: { render } }),
         Error,
-        "Invalid veryfront.config at cache.render.keyPrefix:",
+        "Invalid veryfront.config at cache.render",
       );
     }
 
@@ -764,7 +749,6 @@ describe("configSchema", () => {
         { type: "memory", keyPrefix: "vf:cache:tenant-render:" },
         { type: "filesystem", kvPath: "/tmp/cache.sqlite" },
         { type: "kv", keyPrefix: "vf:cache:tenant-render:" },
-        { type: "distributed", maxEntries: 100 },
         { type: "memory", typoMaxEntry: 100 },
       ]
     ) {
@@ -784,14 +768,6 @@ describe("configSchema", () => {
       validateVeryfrontConfig({ cache: { render: { type: "kv", kvPath: "/cache.sqlite" } } })
         .cache?.render?.type,
       "kv",
-    );
-    assertEquals(
-      validateVeryfrontConfig({
-        cache: {
-          render: { type: "distributed", keyPrefix: "vf:cache:tenant-render:" },
-        },
-      }).cache?.render?.type,
-      "distributed",
     );
   });
 

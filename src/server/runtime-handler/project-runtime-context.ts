@@ -1,5 +1,7 @@
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
+import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { SecurityConfig } from "#veryfront/types";
@@ -198,6 +200,49 @@ export async function resolveProjectRuntimeContext(
   const profileAdapter = input.profileAdapter ?? ((operation) => operation());
   const profileEnvVars = input.profileEnvVars ?? ((operation) => operation());
 
+  type HostedConfigLoad = {
+    readonly sourceContext: VirtualConfigSourceContext;
+    readonly preparedContext: Awaited<ReturnType<typeof prepareDeclarativeConfigContext>>;
+    readonly environment: Record<string, string>;
+  };
+  let hostedConfigLoadPromise: Promise<HostedConfigLoad> | undefined;
+  const prepareHostedConfigContext = (isLocalProject: boolean): Promise<HostedConfigLoad> => {
+    hostedConfigLoadPromise ??= (async () => {
+      const productionMode = projectRes.proxyEnv === "production";
+      const environmentName = productionMode ? projectRes.environmentName ?? "release" : "preview";
+      const sourceContext: VirtualConfigSourceContext = productionMode
+        ? {
+          productionMode: true,
+          releaseId: projectRes.releaseId ?? null,
+          environmentName: projectRes.environmentName,
+        }
+        : {
+          productionMode: false,
+          branch: reqCtx.branch ?? projectRes.parsedDomain.branch ?? "main",
+        };
+
+      const environmentId = input.environmentId ?? input.headers.environmentId;
+      const mayLoadEnvironment = !isLocalProject &&
+        (!productionMode || projectRes.environmentName !== undefined);
+      const environment = mayLoadEnvironment && environmentId && reqCtx.token &&
+          projectRes.projectSlug
+        ? await profileEnvVars(() =>
+          input.envVarCache.get(environmentId, reqCtx.token!, projectRes.projectSlug!)
+        )
+        : {};
+
+      return {
+        sourceContext,
+        preparedContext: await prepareDeclarativeConfigContext({
+          environmentName,
+          environment,
+        }),
+        environment,
+      };
+    })();
+    return hostedConfigLoadPromise;
+  };
+
   const adapterRes = await profileAdapter(() =>
     resolveAdapter({
       req: input.req,
@@ -215,6 +260,7 @@ export async function resolveProjectRuntimeContext(
       pathname: input.url.pathname,
       isProxyMode: input.isProxyMode,
       proxyTrusted: input.proxyTrust.proxyTrusted,
+      ...(input.isProxyMode ? { prepareHostedConfigContext } : {}),
     })
   );
 
@@ -270,9 +316,12 @@ export async function resolveProjectRuntimeContext(
     skipEnrichedContext: input.skipEnrichedContext ?? shouldSkipEnrichedContext(input.url.pathname),
   });
 
-  let rawEnvVars: Record<string, string> = {};
+  let rawEnvVars: Record<string, string> = hostedConfigLoadPromise
+    ? (await hostedConfigLoadPromise).environment
+    : {};
   const environmentId = input.environmentId ?? input.headers.environmentId;
   if (
+    !hostedConfigLoadPromise &&
     !adapterRes.isLocalProject &&
     environmentId &&
     reqCtx.token &&

@@ -13,7 +13,6 @@ import type {
   SourceIntegrationPolicyConfig,
   SourceIntegrationRestriction,
 } from "#veryfront/integrations/source-policy.ts";
-import { validateRenderDistributedCacheKeyPrefix } from "#veryfront/cache/backends/distributed-keyspace.ts";
 import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 import { MAX_PORT, MIN_PORT } from "#veryfront/utils/constants/network.ts";
 import {
@@ -76,15 +75,6 @@ function isBoundedSourceIntegrationAllowlist(
     }
   }
   return true;
-}
-
-function isSafeDistributedRenderCacheKeyPrefix(prefix: string): boolean {
-  try {
-    validateRenderDistributedCacheKeyPrefix(prefix);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function isCanonicalCsrfExcludePath(path: string): boolean {
@@ -396,18 +386,13 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
             .optional(),
           render: v
             .object({
-              type: v.enum(["memory", "filesystem", "kv", "redis", "distributed"]).optional(),
+              type: v.enum(["memory", "filesystem", "kv", "redis"]).optional(),
               ttl: v.number().positive().max(MAX_CACHE_TTL_MILLISECONDS).optional(),
               maxEntries: v.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
               kvPath: v.string().optional(),
               /** Legacy Redis connection settings retained for the built-in Redis backend. */
               redisUrl: v.string().optional(),
               redisKeyPrefix: v.string().max(512).optional(),
-              /** Namespace owned by the selected distributed cache provider. */
-              keyPrefix: v.string().refine(
-                isSafeDistributedRenderCacheKeyPrefix,
-                "Expected a bounded distributed render-cache prefix below vf:cache:",
-              ).optional(),
               /**
                * Explicit contract for caching SSR responses that execute
                * request-aware project data hooks. Disabled unless opted in.
@@ -437,25 +422,19 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
                 const type = config.type ?? "memory";
                 if (type === "memory" || type === "filesystem") {
                   return config.kvPath === undefined &&
-                    config.keyPrefix === undefined &&
                     config.redisUrl === undefined &&
                     config.redisKeyPrefix === undefined;
                 }
                 if (type === "kv") {
                   return config.maxEntries === undefined &&
-                    config.keyPrefix === undefined &&
                     config.redisUrl === undefined &&
                     config.redisKeyPrefix === undefined;
                 }
                 if (type === "redis") {
                   return config.maxEntries === undefined &&
-                    config.kvPath === undefined &&
-                    config.keyPrefix === undefined;
+                    config.kvPath === undefined;
                 }
-                return config.maxEntries === undefined &&
-                  config.kvPath === undefined &&
-                  config.redisUrl === undefined &&
-                  config.redisKeyPrefix === undefined;
+                return false;
               },
               "Render cache options must belong to the selected backend type",
             )
