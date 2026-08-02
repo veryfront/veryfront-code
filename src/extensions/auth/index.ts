@@ -31,6 +31,7 @@ export {
   RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_PROPERTIES,
   RSC_ACTION_AUTHORIZATION_TERMINATION_GRACE_MS,
   RSC_ACTION_AUTHORIZATION_TIMEOUT_MS,
+  RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS,
   RscActionAuthorizationProviderName,
   snapshotRscActionAuthorizationProvider,
 } from "./rsc-action-authorization-provider.ts";
