@@ -1,6 +1,6 @@
 import * as React from "react";
 import type { ChatDynamicToolPart, ChatToolPart, ChatToolState } from "#veryfront/agent/react";
-import { toChatJsonValue } from "../../chat/json-value.ts";
+import { toChatJsonValue } from "#veryfront/chat/json-value.ts";
 
 const TOOL_VALUE_LIMITS = Object.freeze({
   maxContainerEntries: 500,

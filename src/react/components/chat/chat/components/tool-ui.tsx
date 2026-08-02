@@ -16,7 +16,7 @@ import {
 import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
-import { type ChatJsonValue, toChatJsonValue } from "../../../../../chat/json-value.ts";
+import { type ChatJsonValue, toChatJsonValue } from "#veryfront/chat/json-value.ts";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { isSkillToolPart } from "../utils/message-parts.ts";
 import { getSkillToolProps, SkillTool } from "./skill-tool.tsx";
