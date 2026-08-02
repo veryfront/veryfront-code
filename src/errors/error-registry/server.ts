@@ -133,6 +133,15 @@ export const FALLBACK_EXHAUSTED = defineError({
   suggestion: "Check service availability and connectivity",
 });
 
+/** Persisted RAG index failed validation and was left untouched. */
+export const RAG_STORE_CORRUPT = defineError({
+  slug: "rag-store-corrupt",
+  category: "SERVER",
+  status: 500,
+  title: "RAG store file is corrupt",
+  suggestion: "Repair or move the store file aside, then retry; it was not overwritten",
+});
+
 /** Registry fragment for SERVER errors (slug → definition). */
 export const SERVER_REGISTRY = {
   "port-in-use": PORT_IN_USE,
@@ -151,4 +160,5 @@ export const SERVER_REGISTRY = {
   "cache-invariant-violation": CACHE_INVARIANT_VIOLATION,
   "release-not-found": RELEASE_NOT_FOUND,
   "fallback-exhausted": FALLBACK_EXHAUSTED,
+  "rag-store-corrupt": RAG_STORE_CORRUPT,
 } as const;

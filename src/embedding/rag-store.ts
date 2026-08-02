@@ -40,7 +40,7 @@ interface LegacyUploadStoreData {
   uploads: RagDocumentMeta[];
   chunks: LegacyStoredChunk[];
 }
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT, RAG_STORE_CORRUPT } from "#veryfront/errors";
 
 type ResolvedRagStoreConfig = RagStoreConfig & { model: string };
 
@@ -369,47 +369,59 @@ function createLocalJsonRagStore(config: ResolvedRagStoreConfig): RagStore {
     };
   }
 
+  function corruptStoreError(detail: string, cause?: unknown): Error {
+    return RAG_STORE_CORRUPT.create({
+      detail: `RAG store file "${storagePath}" is corrupt (${detail}). ` +
+        "It was preserved as-is and no data was overwritten.",
+      cause,
+      context: { storagePath },
+    });
+  }
+
   async function load(): Promise<RagStoreData> {
+    let snapshot: StoreFileSnapshot | null;
     try {
-      const snapshot = await readStoreFileSnapshot();
-      if (snapshot === null) {
-        storeDataCache = null;
-        return { documents: [], chunks: [] };
-      }
-
-      if (
-        storeDataCache !== null &&
-        sameStoreFileSignature(storeDataCache.signature, snapshot.signature)
-      ) {
-        return cloneRagStoreData(storeDataCache.data);
-      }
-
-      const parsed = JSON.parse(snapshot.text);
-      if (isLegacyUploadStoreData(parsed)) {
-        const migrated = migrateLegacyUploadStoreData(parsed);
-        storeDataCache = {
-          signature: snapshot.signature,
-          data: cloneRagStoreData(migrated),
-        };
-        return cloneRagStoreData(migrated);
-      }
-      if (!isRagStoreData(parsed)) {
-        serverLogger.warn("[rag-store] Corrupted store file, resetting", { storagePath });
-        storeDataCache = null;
-        return { documents: [], chunks: [] };
-      }
-      storeDataCache = { signature: snapshot.signature, data: cloneRagStoreData(parsed) };
-      return cloneRagStoreData(parsed);
+      snapshot = await readStoreFileSnapshot();
     } catch (err) {
-      // File not found is expected on first run; anything else is worth logging
-      if (isNotFoundError(err)) {
-        storeDataCache = null;
-        return { documents: [], chunks: [] };
-      }
-      serverLogger.warn("[rag-store] Failed to load store, resetting", err);
+      // Expected on first run, and when the file disappears between stat and read.
+      if (!isNotFoundError(err)) throw err;
+      snapshot = null;
+    }
+
+    if (snapshot === null) {
       storeDataCache = null;
       return { documents: [], chunks: [] };
     }
+
+    if (
+      storeDataCache !== null &&
+      sameStoreFileSignature(storeDataCache.signature, snapshot.signature)
+    ) {
+      return cloneRagStoreData(storeDataCache.data);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(snapshot.text);
+    } catch (cause) {
+      storeDataCache = null;
+      throw corruptStoreError("malformed JSON", cause);
+    }
+
+    if (isLegacyUploadStoreData(parsed)) {
+      const migrated = migrateLegacyUploadStoreData(parsed);
+      storeDataCache = {
+        signature: snapshot.signature,
+        data: cloneRagStoreData(migrated),
+      };
+      return cloneRagStoreData(migrated);
+    }
+    if (!isRagStoreData(parsed)) {
+      storeDataCache = null;
+      throw corruptStoreError("document or chunk entries failed validation");
+    }
+    storeDataCache = { signature: snapshot.signature, data: cloneRagStoreData(parsed) };
+    return cloneRagStoreData(parsed);
   }
 
   async function save(data: RagStoreData): Promise<void> {

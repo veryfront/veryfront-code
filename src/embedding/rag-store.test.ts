@@ -260,63 +260,100 @@ describe("ragStore", () => {
     });
   });
 
-  it("resets local store when document entries fail validation", async () => {
+  it("fails closed without overwriting invalid document entries", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
-      await Deno.writeTextFile(
-        storagePath,
-        JSON.stringify({
-          documents: [{
-            id: 123,
-            title: "Invalid Doc",
-            source: "upload:invalid.txt",
-            type: "txt",
-            createdAt: 1,
-          }],
-          chunks: [],
-        }),
-      );
+      const original = JSON.stringify({
+        documents: [{
+          id: 123,
+          title: "Invalid Doc",
+          source: "upload:invalid.txt",
+          type: "txt",
+          createdAt: 1,
+        }],
+        chunks: [],
+      });
+      await Deno.writeTextFile(storagePath, original);
 
       const store = ragStore({
         model: "local/test-model",
         storagePath,
       });
 
-      assertEquals(await store.listDocuments(), []);
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "failed validation",
+      );
+      await assertRejects(
+        () => store.ingest("Replacement", "must not overwrite"),
+        Error,
+        "failed validation",
+      );
+      assertEquals(await readTextFile(storagePath), original);
     });
   });
 
-  it("resets local store when chunk entries fail validation", async () => {
+  it("fails closed without overwriting invalid chunk entries", async () => {
     await withTempDir(async (tempDir) => {
       const storagePath = join(tempDir, "data", "index.json");
       await Deno.mkdir(join(tempDir, "data"), { recursive: true });
-      await Deno.writeTextFile(
-        storagePath,
-        JSON.stringify({
-          documents: [{
-            id: "doc-1",
-            title: "Valid Doc",
-            source: "upload:valid.txt",
-            type: "txt",
-            createdAt: 1,
-          }],
-          chunks: [{
-            id: "chunk-1",
-            documentId: "doc-1",
-            text: "content",
-            embedding: ["not-a-number"],
-            index: 0,
-          }],
-        }),
-      );
+      const original = JSON.stringify({
+        documents: [{
+          id: "doc-1",
+          title: "Valid Doc",
+          source: "upload:valid.txt",
+          type: "txt",
+          createdAt: 1,
+        }],
+        chunks: [{
+          id: "chunk-1",
+          documentId: "doc-1",
+          text: "content",
+          embedding: ["not-a-number"],
+          index: 0,
+        }],
+      });
+      await Deno.writeTextFile(storagePath, original);
 
       const store = ragStore({
         model: "local/test-model",
         storagePath,
       });
 
-      assertEquals(await store.listDocuments(), []);
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "failed validation",
+      );
+      assertEquals(await readTextFile(storagePath), original);
+    });
+  });
+
+  it("fails closed without overwriting malformed JSON", async () => {
+    await withTempDir(async (tempDir) => {
+      const storagePath = join(tempDir, "data", "index.json");
+      await Deno.mkdir(join(tempDir, "data"), { recursive: true });
+      const original = '{"documents":[';
+      await Deno.writeTextFile(storagePath, original);
+
+      const store = ragStore({
+        model: "local/test-model",
+        storagePath,
+      });
+
+      await assertRejects(
+        () => store.listDocuments(),
+        Error,
+        "malformed JSON",
+      );
+      await assertRejects(
+        () => store.removeDocument("anything"),
+        Error,
+        "malformed JSON",
+      );
+      assertEquals(await readTextFile(storagePath), original);
     });
   });
 
