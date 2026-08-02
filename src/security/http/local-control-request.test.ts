@@ -16,6 +16,7 @@ function requestFromPeer(hostname?: string, headers: HeadersInit = {}): Request 
       runtime: "node",
       transport: "tcp",
       hostname,
+      protocol: "http:",
     });
   }
   return request;

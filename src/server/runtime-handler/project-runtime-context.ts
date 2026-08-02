@@ -302,6 +302,8 @@ export async function resolveProjectRuntimeContext(
     isLocalProject: adapterRes.isLocalProject,
     moduleServerUrl: input.moduleServerUrl,
     environmentId: input.environmentId ?? input.headers.environmentId,
+    contentSourceId: input.headers.contentSourceId,
+    publicOrigin: input.headers.publicOrigin,
     skipEnrichedContext: input.skipEnrichedContext ?? shouldSkipEnrichedContext(input.url.pathname),
     // Handlers that load config themselves reuse this request's identity
     // instead of deriving their own.

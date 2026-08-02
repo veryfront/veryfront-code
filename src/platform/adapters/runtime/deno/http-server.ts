@@ -188,6 +188,7 @@ export async function createDenoServerWithRuntime(
             runtime: "deno",
             transport: "tcp",
             hostname: remoteAddress.hostname,
+            protocol: "http:",
           });
         }
         const response = await wrappedHandler(request);

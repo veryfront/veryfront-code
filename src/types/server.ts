@@ -70,6 +70,10 @@ export interface HandlerContext {
   isLocalProject?: boolean;
   /** Environment ID for per-project env var resolution (from proxy x-environment-id header) */
   environmentId?: string;
+  /** Canonical content source resolved at request entry, independent of render enrichment. */
+  contentSourceId?: string;
+  /** Canonical public origin established once at the trusted proxy boundary. */
+  publicOrigin?: string;
   /**
    * Prepares this request's authenticated hosted evaluation context.
    *

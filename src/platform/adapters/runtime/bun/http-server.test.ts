@@ -105,6 +105,7 @@ describe("Bun HTTP server lifecycle", () => {
         runtime: "bun",
         transport: "tcp",
         hostname: "203.0.113.8",
+        protocol: "http:",
       },
       loopback: false,
     });

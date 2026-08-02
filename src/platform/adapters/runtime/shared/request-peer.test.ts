@@ -11,7 +11,12 @@ import {
 function requestFromPeer(hostname?: string, runtime: RequestPeerRuntime = "node"): Request {
   const request = new Request("http://localhost/");
   if (hostname !== undefined) {
-    recordRequestPeerFromTransport(request, { runtime, transport: "tcp", hostname });
+    recordRequestPeerFromTransport(request, {
+      runtime,
+      transport: "tcp",
+      hostname,
+      protocol: "http:",
+    });
   }
   return request;
 }
@@ -66,6 +71,7 @@ describe("runtime request peer provenance", () => {
       runtime: "deno",
       transport: "tcp",
       hostname: "127.0.0.1",
+      protocol: "http:",
     });
     assertEquals(Object.isFrozen(first), true);
 
@@ -74,6 +80,7 @@ describe("runtime request peer provenance", () => {
         runtime: "node",
         transport: "tcp",
         hostname: "203.0.113.9",
+        protocol: "https:",
       }),
       false,
     );

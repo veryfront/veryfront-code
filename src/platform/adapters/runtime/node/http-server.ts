@@ -483,6 +483,7 @@ export function createNodeRequestListener(
           runtime: "node",
           transport: "tcp",
           hostname: _req.socket.remoteAddress,
+          protocol: "http:",
         });
       }
       const response = await handler(request);
@@ -724,6 +725,7 @@ async function createNodeServerInternal(
             runtime: "node",
             transport: "tcp",
             hostname: request.socket.remoteAddress,
+            protocol: "http:",
           });
         }
         const response = await handler(webRequest);

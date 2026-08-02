@@ -69,6 +69,8 @@ interface RequestHeaders {
   token: string | undefined;
   /** Content source ID from x-content-source-id header */
   contentSourceId: string | undefined;
+  /** Canonical public request origin resolved at the trusted topology boundary */
+  publicOrigin: string | undefined;
   /** Project path from x-project-path header */
   projectPath: string | undefined;
 }
@@ -78,6 +80,24 @@ function getEffectiveHost(req: Request, url: URL, proxyTrusted?: boolean): strin
   // upstream proxy. Honour it only after the operator opt-in; request
   // credentials such as dispatch JWSs do not establish proxy topology.
   return getEffectiveRequestHost(req, url, proxyTrusted ?? isProxyTopologyTrusted());
+}
+
+function resolvePublicOrigin(
+  req: Request,
+  url: URL,
+  effectiveHost: string,
+  trustProxy: boolean,
+): string | undefined {
+  if (!trustProxy) return url.origin;
+
+  const forwardedProtocol = req.headers.get("x-forwarded-proto");
+  if (forwardedProtocol !== "http" && forwardedProtocol !== "https") return undefined;
+
+  try {
+    return new URL(`${forwardedProtocol}://${effectiveHost}`).origin;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -113,7 +133,10 @@ export function extractRequestHeaders(
     environment,
     environmentId: trustProxy ? req.headers.get("x-environment-id") ?? undefined : undefined,
     token: undefined, // Extracted separately from request context
-    contentSourceId: trustProxy ? req.headers.get("x-content-source-id") ?? undefined : undefined,
+    contentSourceId: trustProxy
+      ? req.headers.get("x-content-source-id")?.trim() || undefined
+      : undefined,
+    publicOrigin: resolvePublicOrigin(req, url, host, trustProxy),
     projectPath: trustProxy ? req.headers.get("x-project-path") ?? undefined : undefined,
   };
 }

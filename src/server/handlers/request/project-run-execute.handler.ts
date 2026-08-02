@@ -491,11 +491,12 @@ function getRuntimeApiToken(ctx: HandlerContext): string {
   return ctx.proxyToken ?? ctx.requestContext?.token ?? "";
 }
 
-function isRequestSiblingAgUiEndpoint(endpoint: string, req: Request): boolean {
+function isRequestSiblingAgUiEndpoint(endpoint: string, publicOrigin?: string): boolean {
+  if (!publicOrigin) return false;
   try {
     const endpointUrl = new URL(endpoint);
     if (endpointUrl.pathname !== "/api/ag-ui") return false;
-    return endpointUrl.origin === new URL(req.url).origin;
+    return endpointUrl.origin === publicOrigin;
   } catch {
     return false;
   }
@@ -558,11 +559,12 @@ function resolveEvalAgUiEndpoint(
   req: Request,
   endpoint?: string,
   projectSlug?: string,
+  publicOrigin?: string,
 ): string {
   if (!endpoint) {
     return getLocalAgUiEndpoint(req);
   }
-  const shouldUseLocalEndpoint = isRequestSiblingAgUiEndpoint(endpoint, req) ||
+  const shouldUseLocalEndpoint = isRequestSiblingAgUiEndpoint(endpoint, publicOrigin) ||
     !!getManagedProjectAgUiEndpointContext(endpoint, projectSlug) ||
     isLocalAgUiEndpoint(endpoint);
   if (!shouldUseLocalEndpoint) {
@@ -946,6 +948,7 @@ function createEvalAdapterConfig(input: {
     input.req,
     input.request.runtimeAgUiEndpoint,
     input.ctx.projectSlug,
+    input.ctx.publicOrigin,
   );
   const agentId = getEvalTargetAgentId(input.definition);
 
@@ -956,7 +959,7 @@ function createEvalAdapterConfig(input: {
     projectId: input.request.projectId,
     projectSlug: input.ctx.projectSlug,
     releaseId: input.ctx.releaseId,
-    contentSourceId: input.ctx.enriched?.contentSourceId,
+    contentSourceId: input.ctx.contentSourceId,
     branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
       getStringConfig(runInput, ["branch_id", "branchId"]) ??
       input.request.runtimeTargetBranchId ?? undefined,

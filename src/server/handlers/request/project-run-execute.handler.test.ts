@@ -31,6 +31,8 @@ function createCtx(publicKeyPem?: string): HandlerContext {
     ...createBaseCtx(publicKeyPem),
     proxyToken: "runtime-token",
     environmentId: "env-1",
+    contentSourceId: "preview-main",
+    publicOrigin: "https://demo-project.preview.veryfront.org",
     resolvedEnvironment: "preview",
     requestContext: {
       token: "runtime-token",
@@ -877,7 +879,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
     const ctx = createCtx(publicKeyPem);
     ctx.releaseId = "rel-trusted";
-    ctx.enriched = { contentSourceId: "preview-main" } as HandlerContext["enriched"];
     const result = await withEnvValue(
       "PORT",
       "4311",
@@ -997,6 +998,47 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
+  });
+
+  it("localizes a custom-domain sibling endpoint from trusted split-proxy context", async () => {
+    let receivedEndpoint: string | undefined;
+    let receivedAuthToken: string | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createEvalAgentAdapter: (config) => {
+        receivedEndpoint = config.endpoint;
+        receivedAuthToken = config.authToken;
+        return async () => ({ text: "Paris" });
+      },
+    }));
+    const body = {
+      runId: "run_eval_custom_domain_sibling",
+      kind: "eval",
+      target: "eval:deep-research",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "https://customer.example/api/ag-ui",
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_custom_domain_sibling/execute",
+      body,
+      {
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "http",
+      },
+      "http://renderer.internal",
+    );
+    const ctx = createCtx(publicKeyPem);
+    ctx.publicOrigin = "https://customer.example";
+
+    const result = await withEnvValue(
+      "PORT",
+      "4311",
+      () => handler.handle(request, ctx),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(receivedEndpoint, "http://127.0.0.1:4311/api/ag-ui");
+    assertEquals(receivedAuthToken, "runtime-token");
   });
 
   it("runs localized eval AG-UI requests through discovered source agents", async () => {

@@ -56,6 +56,10 @@ export interface HandlerContextOptions {
   moduleServerUrl: string | undefined;
   /** Environment ID for env var resolution (from proxy x-environment-id header) */
   environmentId: string | undefined;
+  /** Proxy-resolved content source identity */
+  contentSourceId: string | undefined;
+  /** Canonical public request origin */
+  publicOrigin: string | undefined;
   /** Skip render-specific enriched context requirements for non-render control-plane routes */
   skipEnrichedContext?: boolean;
   /**
@@ -69,12 +73,15 @@ export interface HandlerContextOptions {
  * Build the HandlerContext for route handlers.
  */
 export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext {
-  const contentSourceId = opts.skipEnrichedContext ? undefined : computeContentSourceId(
-    opts.isLocalProject,
-    opts.resolvedEnvironment,
-    opts.requestContext.branch,
-    opts.releaseId,
-  );
+  const contentSourceId = opts.contentSourceId ??
+    (opts.resolvedEnvironment === "production" && !opts.releaseId
+      ? undefined
+      : computeContentSourceId(
+        opts.isLocalProject,
+        opts.resolvedEnvironment,
+        opts.requestContext.branch,
+        opts.releaseId,
+      ));
 
   // Build enriched context if we have config and project slug
   const enrichedContext = !opts.skipEnrichedContext && opts.config && opts.projectSlug &&
@@ -117,6 +124,8 @@ export function buildHandlerContext(opts: HandlerContextOptions): HandlerContext
     routeRegistry: opts.routeRegistry,
     isLocalProject: opts.isLocalProject,
     environmentId: opts.environmentId,
+    contentSourceId,
+    publicOrigin: opts.publicOrigin,
     prepareHostedConfigContext: opts.prepareHostedConfigContext,
     enriched: enrichedContext,
   };

@@ -91,6 +91,7 @@ function createLocalRequest(url: string, init: RequestInit = {}): Request {
     runtime: "deno",
     transport: "tcp",
     hostname: "127.0.0.1",
+    protocol: "http:",
   });
   return request;
 }

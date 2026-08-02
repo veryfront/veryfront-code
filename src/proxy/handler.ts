@@ -30,6 +30,7 @@ import {
 import { resolveProxyRequestHost } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 import { withProxyStreamingBodyDuplex } from "./request-init.ts";
+import { getRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 export const INTERNAL_PROXY_HEADERS = [
   "forwarded",
@@ -1268,10 +1269,10 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 export type ProxyHandler = ReturnType<typeof createProxyHandler>;
 
 export function createProxyContextHeaders(
-  sourceHeaders: Headers,
+  request: Request,
   ctx: ProxyContext,
 ): Headers {
-  const headers = createProxyEndToEndHeaders(sourceHeaders);
+  const headers = createProxyEndToEndHeaders(request.headers);
   for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
 
   // The `x-veryfront-*-jws` signature headers are deliberately NOT stripped:
@@ -1286,6 +1287,12 @@ export function createProxyContextHeaders(
   headers.set("x-environment", ctx.environment);
   headers.set("x-content-source-id", ctx.contentSourceId);
   headers.set("x-forwarded-host", ctx.host);
+  const peer = getRequestPeerProvenance(request);
+  if (peer) {
+    headers.set("x-forwarded-for", peer.hostname);
+    headers.set("x-real-ip", peer.hostname);
+    headers.set("x-forwarded-proto", peer.protocol.slice(0, -1));
+  }
   if (ctx.localPath) headers.set("x-project-path", ctx.localPath);
 
   if (ctx.projectId) headers.set("x-project-id", ctx.projectId);
@@ -1304,7 +1311,7 @@ export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
     req.url,
     withProxyStreamingBodyDuplex({
       method: req.method,
-      headers: createProxyContextHeaders(req.headers, ctx),
+      headers: createProxyContextHeaders(req, ctx),
       body: req.body,
       redirect: "manual",
       signal: req.signal,

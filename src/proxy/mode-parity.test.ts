@@ -6,14 +6,18 @@ import "#veryfront/schemas/_test-setup.ts";
  * Verifies: Combined mode and split mode produce identical header values
  * for the same input request.
  */
-import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertStrictEquals, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
+import { resolveRateLimitClientKey } from "#veryfront/security/rate-limit/client-key.ts";
+import { applyCsrfCookie } from "#veryfront/security/csrf/helpers.ts";
 import {
   createProxyHandler,
   injectContextHeaders,
   INTERNAL_PROXY_HEADERS,
   type ProxyContext,
 } from "./handler.ts";
+import { createSplitForwardRequestInit } from "./split-forward-request.ts";
 import { createMockServer } from "../../tests/_helpers/utils.ts";
 
 function extractProxyHeaders(req: Request): Record<string, string | null> {
@@ -34,6 +38,70 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
 
 describe("Proxy-Renderer Mode Parity", () => {
   describe("injectContextHeaders produces correct headers", () => {
+    it("replaces spoofed provenance with native edge identity in combined and split modes", () => {
+      const request = new Request("https://customer.example/account", {
+        headers: {
+          accept: "text/html",
+          "x-forwarded-for": "198.51.100.99",
+          "x-real-ip": "198.51.100.99",
+          "x-forwarded-proto": "http",
+        },
+      });
+      recordRequestPeerFromTransport(request, {
+        runtime: "deno",
+        transport: "tcp",
+        hostname: "203.0.113.8",
+        protocol: "https:",
+      });
+      const ctx: ProxyContext = {
+        projectSlug: "customer",
+        environment: "production",
+        contentSourceId: "release-rel-1",
+        host: "customer.example",
+        parsedDomain: {
+          slug: null,
+          isVeryfrontDomain: false,
+          environment: null,
+          branch: null,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isLocalProject: false,
+      };
+
+      const combined = injectContextHeaders(request, ctx);
+      const splitInit = createSplitForwardRequestInit(
+        request,
+        ctx,
+        null,
+        new AbortController().signal,
+      );
+      const split = new Request("http://renderer.internal/account", splitInit);
+
+      for (const forwarded of [combined, split]) {
+        assertEquals(forwarded.headers.get("x-forwarded-for"), "203.0.113.8");
+        assertEquals(forwarded.headers.get("x-real-ip"), "203.0.113.8");
+        assertEquals(forwarded.headers.get("x-forwarded-proto"), "https");
+        assertEquals(resolveRateLimitClientKey(forwarded, true, "anonymous"), "203.0.113.8");
+      }
+
+      const previousTrust = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+      try {
+        for (const forwarded of [combined, split]) {
+          const rendererRequest = new Request("http://renderer.internal/account", {
+            headers: forwarded.headers,
+          });
+          const responseHeaders = new Headers();
+          applyCsrfCookie(rendererRequest, responseHeaders, { cookieName: "vf_csrf" });
+          assertStringIncludes(responseHeaders.get("set-cookie") ?? "", "Secure");
+        }
+      } finally {
+        if (previousTrust === undefined) Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+        else Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previousTrust);
+      }
+    });
+
     it("injects all core headers for preview environment", () => {
       const ctx: ProxyContext = {
         token: "preview-token-abc",

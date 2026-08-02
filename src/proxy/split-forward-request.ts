@@ -12,12 +12,12 @@ import { injectContext } from "./tracing.ts";
  * caller-supplied internal headers have been removed.
  */
 export function createSplitForwardRequestInit(
-  request: Pick<Request, "headers" | "method">,
+  request: Request,
   context: ProxyContext,
   body: ReadableStream<Uint8Array> | null,
   signal: AbortSignal,
 ): ProxyRequestInit {
-  const headers = createProxyContextHeaders(request.headers, context);
+  const headers = createProxyContextHeaders(request, context);
   injectContext(headers);
   return withProxyStreamingBodyDuplex({
     method: request.method,

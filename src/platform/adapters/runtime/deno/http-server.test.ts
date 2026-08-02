@@ -106,6 +106,7 @@ describe("Deno HTTP server lifecycle", () => {
         runtime: "deno",
         transport: "tcp",
         hostname: "192.168.1.25",
+        protocol: "http:",
       },
       loopback: false,
     });

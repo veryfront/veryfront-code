@@ -2,10 +2,44 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertNotEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
+import { getRequestPeerProvenance } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { DenoHttpServer } from "./deno-server.ts";
 
 describe("DenoHttpServer", () => {
   describe("serve", () => {
+    it("records immutable native peer and transport provenance", async () => {
+      if (!isDeno) return;
+      const server = new DenoHttpServer();
+      let resolvePort!: (port: number) => void;
+      const listening = new Promise<number>((resolve) => {
+        resolvePort = resolve;
+      });
+      let observed: ReturnType<typeof getRequestPeerProvenance>;
+      const servePromise = server.serve(
+        (request) => {
+          observed = getRequestPeerProvenance(request);
+          return new Response("ok");
+        },
+        { hostname: "127.0.0.1", port: 0, onListen: ({ port }) => resolvePort(port) },
+      );
+
+      const port = await listening;
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}`);
+        assertEquals(response.status, 200);
+        assertEquals(await response.text(), "ok");
+        assertEquals(observed, {
+          runtime: "deno",
+          transport: "tcp",
+          hostname: "127.0.0.1",
+          protocol: "http:",
+        });
+      } finally {
+        await server.close();
+        await servePromise;
+      }
+    });
+
     it("reports the native bound address before accepting requests", async () => {
       if (!isDeno) return;
       const server = new DenoHttpServer();

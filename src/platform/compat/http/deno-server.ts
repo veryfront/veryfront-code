@@ -6,6 +6,7 @@ import {
   INVALID_ARGUMENT,
   NOT_SUPPORTED,
 } from "#veryfront/errors/error-registry/general.ts";
+import { recordRequestPeerFromTransport } from "../../adapters/runtime/shared/request-peer.ts";
 
 const DEFAULT_COMPAT_HTTP_PORT = 8000;
 
@@ -70,7 +71,15 @@ export class DenoHttpServer implements HttpServer {
     }
     const NativeResponse = getNativeResponse();
     const controller = new AbortController();
-    const wrappedHandler: Handler = async (request) => {
+    const wrappedHandler = async (request: Request, info?: Deno.ServeHandlerInfo<Deno.NetAddr>) => {
+      if (info?.remoteAddr.transport === "tcp") {
+        recordRequestPeerFromTransport(request, {
+          runtime: "deno",
+          transport: "tcp",
+          hostname: info.remoteAddr.hostname,
+          protocol: "http:",
+        });
+      }
       const response = await handler(request);
       return toNativeResponse(response, NativeResponse);
     };

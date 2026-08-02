@@ -32,6 +32,8 @@ function makeOpts(overrides: Partial<HandlerContextOptions> = {}): HandlerContex
     isLocalProject: false,
     moduleServerUrl: "https://modules.example.com",
     environmentId: "env-789",
+    contentSourceId: undefined,
+    publicOrigin: "https://my-project.example.com",
     ...overrides,
   };
 }
@@ -58,6 +60,8 @@ describe("buildHandlerContext", () => {
     assertEquals(ctx.routeRegistry, opts.routeRegistry);
     assertEquals(ctx.isLocalProject, false);
     assertEquals(ctx.environmentId, "env-789");
+    assertEquals(ctx.contentSourceId, "release-rel-456");
+    assertEquals(ctx.publicOrigin, "https://my-project.example.com");
     assertEquals(ctx.enriched !== undefined, true);
   });
 
@@ -132,12 +136,14 @@ describe("buildHandlerContext", () => {
       releaseId: undefined,
       resolvedEnvironment: "production",
       skipEnrichedContext: true,
+      contentSourceId: "release-edge-selected",
     });
 
     const ctx = buildHandlerContext(opts);
 
     assertEquals(ctx.releaseId, undefined);
     assertEquals(ctx.projectSlug, "my-project");
+    assertEquals(ctx.contentSourceId, "release-edge-selected");
     assertEquals(ctx.enriched, undefined);
   });
 });

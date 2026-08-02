@@ -616,6 +616,9 @@ describe("resolveProjectRuntimeContext", () => {
         "x-project-id": "proj-local",
         "x-token": "proxy-token",
         "x-project-path": "/trusted/project",
+        "x-content-source-id": "local-main",
+        "x-forwarded-host": "local-project.preview.example.com",
+        "x-forwarded-proto": "https",
       },
     });
     const url = new URL(req.url);
@@ -658,6 +661,8 @@ describe("resolveProjectRuntimeContext", () => {
     assertStrictEquals(ctx.adapter, adapter);
     assertEquals(ctx.config, undefined);
     assertEquals(ctx.proxyToken, undefined);
+    assertEquals(ctx.contentSourceId, "local-main");
+    assertEquals(ctx.publicOrigin, "https://local-project.preview.example.com");
     assertEquals(ctx.enriched, undefined);
     assertEquals(result.rawEnvVars, {});
   });

@@ -147,6 +147,7 @@ describe("server/runtime-handler/project-resolution", () => {
         environmentId: undefined,
         token: undefined,
         contentSourceId: undefined,
+        publicOrigin: "http://localhost",
         projectPath: undefined,
       });
     });
@@ -261,7 +262,32 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.environmentId, undefined);
       assertEquals(headers.token, undefined);
       assertEquals(headers.contentSourceId, undefined);
+      assertEquals(headers.publicOrigin, "http://localhost");
       assertEquals(headers.projectPath, undefined);
+    });
+
+    it("resolves public origin only from canonical trusted proxy metadata", () => {
+      const trusted = new Request("http://renderer.internal/api/control-plane/runs/run_1", {
+        headers: {
+          "x-forwarded-host": "customer.example",
+          "x-forwarded-proto": "https",
+        },
+      });
+      assertEquals(
+        extractRequestHeaders(trusted, new URL(trusted.url), true).publicOrigin,
+        "https://customer.example",
+      );
+
+      const malformed = new Request(trusted.url, {
+        headers: {
+          "x-forwarded-host": "customer.example",
+          "x-forwarded-proto": "https, http",
+        },
+      });
+      assertEquals(
+        extractRequestHeaders(malformed, new URL(malformed.url), true).publicOrigin,
+        undefined,
+      );
     });
   });
 

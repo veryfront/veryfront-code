@@ -1,8 +1,9 @@
 /**
- * Transport-authenticated peer provenance for inbound Web Requests.
+ * Transport-authenticated peer and protocol provenance for inbound Web Requests.
  *
  * Fetch Request headers and URLs are caller-controlled. Runtime adapters must
- * record the native socket peer before application code or interceptors run.
+ * record the native socket peer and listener protocol before application code
+ * or interceptors run.
  * This module is internal and is intentionally not re-exported from a public
  * platform barrel.
  *
@@ -15,6 +16,7 @@ export interface RequestPeerProvenance {
   readonly runtime: RequestPeerRuntime;
   readonly transport: "tcp";
   readonly hostname: string;
+  readonly protocol: "http:" | "https:";
 }
 
 const requestPeerProvenance = new WeakMap<Request, RequestPeerProvenance>();
@@ -72,6 +74,7 @@ export function recordRequestPeerFromTransport(
       provenance.runtime !== "deno" &&
       provenance.runtime !== "bun") ||
     provenance.transport !== "tcp" ||
+    (provenance.protocol !== "http:" && provenance.protocol !== "https:") ||
     !isBoundedPeerHostname(provenance.hostname)
   ) {
     return false;
@@ -83,6 +86,7 @@ export function recordRequestPeerFromTransport(
       runtime: provenance.runtime,
       transport: "tcp",
       hostname: provenance.hostname,
+      protocol: provenance.protocol,
     }),
   );
   return true;

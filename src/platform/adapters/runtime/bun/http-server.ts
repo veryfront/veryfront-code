@@ -124,6 +124,7 @@ export async function createBunServerWithRuntime(
             runtime: "bun",
             transport: "tcp",
             hostname: address,
+            protocol: "http:",
           });
         }
         const result = await dispatchBunRequest(request, server, handler);
