@@ -3,6 +3,7 @@ import { replaceDiscoveredProjectPrimitives } from "#veryfront/discovery/registr
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
+import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getLocalAdapter } from "#veryfront/platform/adapters/registry.ts";
@@ -109,6 +110,10 @@ function resolveSerializableMcpServers(
 /** Clear project agent runtime registries. */
 export function clearProjectAgentRuntimeRegistries(): void {
   clearTranspileCache();
+  clearProjectAgentRuntimePrimitiveRegistries();
+}
+
+function clearProjectAgentRuntimePrimitiveRegistries(): void {
   agentRegistry.clear();
   clearMCPRegistry();
   workflowRegistry.clear();
@@ -140,11 +145,17 @@ export async function discoverProjectAgentRuntime(
         async () => {
           const sourceIntegrationPolicy = getActiveSourceIntegrationPolicy() ??
             currentSourcePolicy;
-          const discovery = await replaceDiscoveredProjectPrimitives(discoveryOptions, {
-            // Preserve the one-shot runtime contract: callers receive every
-            // discovery error alongside the valid primitives and decide
-            // whether those errors are fatal. Publication is still atomic.
-            errorPolicy: "publish-valid",
+          const discovery = await runWithRegistryTransaction(async () => {
+            // Reset the previous project generation inside the same transaction
+            // that publishes its replacement. Concurrent readers therefore see
+            // either complete generation, never an empty or partially updated one.
+            clearProjectAgentRuntimePrimitiveRegistries();
+            return await replaceDiscoveredProjectPrimitives(discoveryOptions, {
+              // Preserve the one-shot runtime contract: callers receive every
+              // discovery error alongside the valid primitives and decide
+              // whether those errors are fatal. Publication is still atomic.
+              errorPolicy: "publish-valid",
+            });
           });
           return { ...discovery, sourceIntegrationPolicy };
         },

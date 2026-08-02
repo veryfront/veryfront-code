@@ -1578,7 +1578,6 @@ export class AgentRuntime {
                 activeSkillPolicy = removeFormInputAfterSubmission(
                   tc.toolName,
                   result,
-                  activeSkillId,
                   activeSkillPolicy,
                 );
                 if (isSubmittedFormInputExecutionResult(tc.toolName, result)) {
@@ -1976,7 +1975,6 @@ export class AgentRuntime {
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               matchingResult.output,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, matchingResult.output)) {
@@ -2009,7 +2007,6 @@ export class AgentRuntime {
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               persistedResult.result,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, persistedResult.result)) {
@@ -2204,7 +2201,6 @@ export class AgentRuntime {
             activeSkillPolicy = removeFormInputAfterSubmission(
               tc.name,
               result,
-              activeSkillId,
               activeSkillPolicy,
             );
             if (isSubmittedFormInputExecutionResult(tc.name, result)) {
