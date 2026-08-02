@@ -1,4 +1,5 @@
 import {
+  parseFinalSseChunk,
   parseSseChunk,
   ProviderRequestError,
   readRecord,
@@ -20,7 +21,7 @@ function parseGoogleSseBuffer(
   trailing = false,
 ): ReturnType<typeof parseSseChunk> {
   try {
-    return trailing ? parseSseChunk(`${buffer}\n\n`) : parseSseChunk(buffer);
+    return trailing ? parseFinalSseChunk(buffer) : parseSseChunk(buffer);
   } catch {
     throw invalidGoogleStream(
       trailing ? "trailing SSE event was malformed" : "SSE event framing was malformed",

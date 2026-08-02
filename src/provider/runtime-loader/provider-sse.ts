@@ -12,7 +12,7 @@ function parseBoundedSseChunk(chunk: string, maximumCodeUnits: number): {
   }
   if (chunk.length > maximumCodeUnits) {
     throw new RangeError(
-      `Provider SSE buffer exceeded ${MAX_PROVIDER_SSE_BUFFER_CODE_UNITS} code units`,
+      `Provider SSE buffer exceeded ${maximumCodeUnits} code units`,
     );
   }
   return parseSseBlocks(chunk);

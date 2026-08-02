@@ -1,5 +1,6 @@
 import {
   mergeUsage,
+  parseFinalSseChunk,
   parseSseChunk,
   ProviderRequestError,
   readGatewayBillingMode,
@@ -22,7 +23,7 @@ function parseAnthropicSseBuffer(
   trailing = false,
 ): ReturnType<typeof parseSseChunk> {
   try {
-    return trailing ? parseSseChunk(`${buffer}\n\n`) : parseSseChunk(buffer);
+    return trailing ? parseFinalSseChunk(buffer) : parseSseChunk(buffer);
   } catch {
     throw invalidAnthropicStream(
       trailing ? "trailing SSE event was malformed" : "SSE event framing was malformed",

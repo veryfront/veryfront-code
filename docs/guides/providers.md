@@ -82,6 +82,26 @@ export default agent({
 });
 ```
 
+## Enable OpenAI-hosted web search
+
+Declare `web_search` in the agent's provider tools. Veryfront routes the call
+through OpenAI's Responses API, including for models that otherwise use Chat
+Completions:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  model: "openai/gpt-4.1",
+  providerTools: ["web_search"],
+});
+```
+
+This tool requires an OpenAI endpoint that implements the Responses and hosted
+web-search contracts. See the
+[`ext-llm-openai` reference](../../extensions/ext-llm-openai/README.md#hosted-web-search)
+for supported identifiers, arguments, and replay limits.
+
 ## Explicit local AI
 
 Local inference is explicit. Use a `local/*` model when you want the server to
