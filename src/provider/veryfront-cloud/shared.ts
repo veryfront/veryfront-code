@@ -4,7 +4,12 @@ import {
   getCurrentVeryfrontCloudContext,
   markCurrentVeryfrontCloudBillingGroupUsed,
 } from "./context.ts";
-import { isSupportedMistralModelId, type VeryfrontCloudProviderId } from "./model-catalog.ts";
+import {
+  isSupportedMistralModelId,
+  normalizeVeryfrontCloudProviderAlias,
+  type VeryfrontCloudProviderId,
+} from "./model-catalog.ts";
+import { requireProviderCredential } from "../runtime-loader/provider-request-init.ts";
 
 export type { VeryfrontCloudProviderId } from "./model-catalog.ts";
 
@@ -13,25 +18,32 @@ interface ParsedVeryfrontCloudModelId {
   modelId: string;
 }
 
-const PROVIDER_ALIASES: Record<string, VeryfrontCloudProviderId> = {
-  anthropic: "anthropic",
-  openai: "openai",
-  google: "google",
-  "google-ai-studio": "google",
-  mistral: "mistral",
-  moonshotai: "moonshotai",
-};
-
-const GATEWAY_PATHS: Record<VeryfrontCloudProviderId, string> = {
-  anthropic: "ai/gateway/anthropic/v1",
-  openai: "ai/gateway/openai/v1",
-  google: "ai/gateway/google/v1beta",
-  mistral: "ai/gateway/mistral/v1",
-  moonshotai: "ai/gateway/moonshotai/v1",
-};
+const GATEWAY_PATHS = new Map<VeryfrontCloudProviderId, string>([
+  ["anthropic", "ai/gateway/anthropic/v1"],
+  ["openai", "ai/gateway/openai/v1"],
+  ["google", "ai/gateway/google/v1beta"],
+  ["mistral", "ai/gateway/mistral/v1"],
+  ["moonshotai", "ai/gateway/moonshotai/v1"],
+]);
 
 function joinUrl(base: string, path: string): string {
-  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new TypeError("Veryfront Cloud API base URL must be a valid HTTP(S) URL");
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new TypeError("Veryfront Cloud API base URL must use HTTP or HTTPS");
+  }
+  if (url.username || url.password) {
+    throw new TypeError(
+      "Veryfront Cloud API base URL must not contain embedded credentials",
+    );
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+  url.hash = "";
+  return url.toString();
 }
 
 function createInvalidModelIdError(modelId: string): Error {
@@ -54,10 +66,13 @@ export function parseVeryfrontCloudModelId(
   }
 
   const rawProvider = modelId.slice(0, slashIndex);
-  const normalizedProvider = PROVIDER_ALIASES[rawProvider];
+  const normalizedProvider = normalizeVeryfrontCloudProviderAlias(rawProvider);
   const upstreamModelId = modelId.slice(slashIndex + 1);
 
-  if (!normalizedProvider || !upstreamModelId) {
+  if (
+    !normalizedProvider || !upstreamModelId ||
+    upstreamModelId.trim() !== upstreamModelId
+  ) {
     throw createInvalidModelIdError(modelId);
   }
 
@@ -121,7 +136,11 @@ export function getVeryfrontCloudGatewayBaseUrl(
   apiBaseUrl: string,
   provider: VeryfrontCloudProviderId,
 ): string {
-  return joinUrl(apiBaseUrl, GATEWAY_PATHS[provider]);
+  const gatewayPath = GATEWAY_PATHS.get(provider);
+  if (!gatewayPath) {
+    throw new TypeError(`Unsupported Veryfront Cloud provider "${String(provider)}"`);
+  }
+  return joinUrl(apiBaseUrl, gatewayPath);
 }
 
 /**
@@ -137,13 +156,19 @@ export function createVeryfrontCloudFetch(
   apiToken: string,
   projectSlug?: string,
 ): typeof fetch {
+  const trustedApiToken = requireProviderCredential(
+    apiToken,
+    "Veryfront Cloud API token",
+  );
   return (input, init) => {
     const request = new Request(input, init);
     const headers = new Headers(request.headers);
 
     headers.delete("x-api-key");
     headers.delete("x-goog-api-key");
-    headers.set("Authorization", `Bearer ${apiToken}`);
+    headers.delete("x-veryfront-project-slug");
+    headers.delete("x-veryfront-billing-group-id");
+    headers.set("Authorization", `Bearer ${trustedApiToken}`);
 
     if (projectSlug) {
       headers.set("x-veryfront-project-slug", projectSlug);
