@@ -512,6 +512,26 @@ describe("VeryfrontAPIOperations", () => {
   });
 
   describe("bounded transport failures", () => {
+    it("reserves worst-case JSON escape bytes outside the non-value response budget", async () => {
+      const body = '{"content":"\\u0000\\u0000"}';
+      assertEquals(new TextEncoder().encode(body).byteLength, 26);
+      globalThis.fetch = (() => Promise.resolve(new Response(body))) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+      });
+
+      const result = await transport.request("/bounded", {
+        // The compact document has 14 non-value bytes and the two admitted
+        // NULs use the exact worst case of six wire bytes each.
+        maxResponseBytes: 14,
+        jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 2 },
+      });
+
+      assertEquals(result, new Uint8Array([0, 0]));
+    });
+
     it("retries a body read aborted by the per-attempt timeout", async () => {
       let fetchCalls = 0;
       let cancellations = 0;
@@ -619,6 +639,13 @@ describe("VeryfrontAPIOperations", () => {
         { maxResponseBytes: Number.MAX_SAFE_INTEGER + 1 },
         { jsonStringFieldWithinLimit: { fieldName: "", maximumBytes: 1 } },
         { jsonStringFieldWithinLimit: { fieldName: "content", maximumBytes: 1.5 } },
+        {
+          maxResponseBytes: 1,
+          jsonStringFieldWithinLimit: {
+            fieldName: "content",
+            maximumBytes: Number.MAX_SAFE_INTEGER,
+          },
+        },
       ] as TransportRequestInit[];
 
       for (const init of invalidOptions) {

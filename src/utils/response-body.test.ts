@@ -4,12 +4,30 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   InvalidResponseBodyUtf8Error,
   JsonStringValueTooLargeError,
+  maximumJsonStringDocumentBytes,
   readResponseJsonStringBytesWithinLimit,
   readResponseJsonStringWithinLimit,
   readResponseTextPrefix,
 } from "./response-body.ts";
 
 describe("utils/response-body", () => {
+  it("derives exact worst-case JSON string wire limits without unsafe arithmetic", async () => {
+    assertEquals(maximumJsonStringDocumentBytes(2, 14), 26);
+    assertEquals(maximumJsonStringDocumentBytes(0, 14), 14);
+
+    await assertRejects(
+      () =>
+        Promise.resolve().then(() =>
+          maximumJsonStringDocumentBytes(
+            Number.MAX_SAFE_INTEGER,
+            1,
+          )
+        ),
+      RangeError,
+      "safe integer range",
+    );
+  });
+
   it("streams one top-level JSON string field with exact escaped UTF-8 bytes", async () => {
     const value = "é\0😀";
     const response = new Response(JSON.stringify({
