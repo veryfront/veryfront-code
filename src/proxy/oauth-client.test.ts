@@ -99,5 +99,115 @@ describe("OAuth Client", () => {
         await server.shutdown();
       }
     });
+
+    it("rejects malformed successful responses", async () => {
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+      const { server, port } = createMockServer(
+        () =>
+          Response.json({
+            access_token: "test-token",
+            token_type: "Basic",
+            expires_in: 3600,
+          }),
+      );
+
+      try {
+        await assertRejects(
+          () =>
+            fetchOAuthToken({
+              apiBaseUrl: `http://127.0.0.1:${port}`,
+              apiClientId: "test",
+              apiClientSecret: "test",
+            }),
+          TypeError,
+          "invalid token response",
+        );
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("rejects an oversized successful response before JSON parsing", async () => {
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+      const { server, port } = createMockServer(
+        () =>
+          new Response("x", {
+            headers: {
+              "Content-Type": "application/json",
+              "Content-Length": String(128 * 1024 + 1),
+            },
+          }),
+      );
+
+      try {
+        await assertRejects(
+          () =>
+            fetchOAuthToken({
+              apiBaseUrl: `http://127.0.0.1:${port}`,
+              apiClientId: "test",
+              apiClientSecret: "test",
+            }),
+          Error,
+          "too-large",
+        );
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("bounds and sanitizes upstream error text", async () => {
+      const { fetchOAuthToken, OAuthTokenRequestError } = await import("./oauth-client.ts");
+      const { server, port } = createMockServer(
+        () =>
+          new Response(
+            `client_secret=do-not-log https://user:password@example.test/${"x".repeat(20_000)}`,
+            { status: 401 },
+          ),
+      );
+
+      try {
+        const error = await assertRejects(
+          () =>
+            fetchOAuthToken({
+              apiBaseUrl: `http://127.0.0.1:${port}`,
+              apiClientId: "test",
+              apiClientSecret: "test",
+            }),
+          OAuthTokenRequestError,
+        );
+        if (!(error instanceof OAuthTokenRequestError)) {
+          throw new Error("Expected OAuthTokenRequestError");
+        }
+        assertEquals(error.responseText, "OAuth error response exceeded the supported size");
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("rejects non-HTTP API bases and unsafe timeout policy", async () => {
+      const { fetchOAuthToken } = await import("./oauth-client.ts");
+
+      await assertRejects(
+        () =>
+          fetchOAuthToken({
+            apiBaseUrl: "file:///tmp",
+            apiClientId: "test",
+            apiClientSecret: "test",
+          }),
+        TypeError,
+        "HTTP(S)",
+      );
+      await assertRejects(
+        () =>
+          fetchOAuthToken({
+            apiBaseUrl: "https://api.example.test",
+            apiClientId: "test",
+            apiClientSecret: "test",
+            timeoutMs: Number.POSITIVE_INFINITY,
+          }),
+        RangeError,
+        "timeout",
+      );
+    });
   });
 });

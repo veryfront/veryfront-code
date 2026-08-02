@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ModuleHandler } from "./module.handler.ts";
+import { handleBatchModuleEndpoint } from "./batch-module-handler.ts";
 import type { HandlerContext } from "../../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
@@ -140,6 +141,72 @@ describe("server/handlers/request/module/module.handler", () => {
       const ctx = makeCtx();
       const result = await handler.handle(req, ctx);
       assertEquals(result.continue, true);
+    });
+
+    it("rejects unsupported methods for every owned namespace", async () => {
+      const handler = new ModuleHandler();
+      for (
+        const pathname of [
+          "/_vf_modules/page.js",
+          "/_veryfront/modules/runtime.js",
+          "/_veryfront/pages/page.js",
+          "/_veryfront/data/page.json",
+          "/_veryfront/page-data/page.json",
+        ]
+      ) {
+        const result = await handler.handle(
+          new Request(`http://localhost${pathname}`, { method: "POST" }),
+          makeCtx(),
+        );
+        assertEquals(result.continue, false);
+        assertEquals(result.response?.status, 405);
+        assertEquals(result.response?.headers.get("allow"), "GET, HEAD");
+      }
+    });
+  });
+
+  describe("removed batch endpoint", () => {
+    const respond = (response: Response) => ({
+      continue: false as const,
+      response,
+    });
+
+    it("returns an explicit non-cacheable 410 response", async () => {
+      const result = await handleBatchModuleEndpoint(
+        new Request("http://localhost/_vf_modules/_batch?paths=page.js"),
+        respond,
+      );
+
+      assertEquals(result.response?.status, 410);
+      assertEquals(result.response?.headers.get("cache-control"), "no-store");
+      assertEquals(
+        await result.response?.text(),
+        "Module batch endpoint has been removed",
+      );
+    });
+
+    it("does not include a response body for HEAD", async () => {
+      const result = await handleBatchModuleEndpoint(
+        new Request("http://localhost/_vf_modules/_batch", {
+          method: "HEAD",
+        }),
+        respond,
+      );
+
+      assertEquals(result.response?.status, 410);
+      assertEquals(await result.response?.text(), "");
+    });
+
+    it("rejects unsupported methods before returning the tombstone", async () => {
+      const result = await handleBatchModuleEndpoint(
+        new Request("http://localhost/_vf_modules/_batch", {
+          method: "POST",
+        }),
+        respond,
+      );
+
+      assertEquals(result.response?.status, 405);
+      assertEquals(result.response?.headers.get("allow"), "GET, HEAD");
     });
   });
 

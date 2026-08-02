@@ -17,20 +17,87 @@ import {
   isAllowedReleaseAssetContentType,
   isValidContentHash,
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
+  RELEASE_ASSET_MAX_SIZE_BYTES,
 } from "#veryfront/release-assets/constants.ts";
+import { awaitAbortable } from "#veryfront/utils/abort.ts";
+import { computeHashBytes } from "#veryfront/utils/hash-utils.ts";
+import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
+import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
+import { cancelProxyResponseBody, readProxyResponseBytes } from "./response-body.ts";
 
 const ASSET_PATH_PREFIX = "/_vf/assets/";
 const ASSET_PATH_RE = /^\/_vf\/assets\/([0-9a-f]{64})\.(js|css)$/;
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
+const MAX_UPSTREAM_TIMEOUT_MS = 30_000;
 
-/** Bound on cached asset bodies (~100 hot entries). */
+/** Count and byte bounds for completed immutable asset snapshots. */
 const MAX_CACHED_ASSETS = 100;
+const MAX_CACHED_ASSET_BYTES = 32 * 1024 * 1024;
+
+/** Aggregate process-local bounds for cache-miss work and attached callers. */
+const MAX_CONCURRENT_COLD_LOADS = 4;
+const MAX_QUEUED_COLD_LOADS = 16;
+const MAX_COLD_LOAD_WAITERS = 64;
 
 interface CachedAsset {
   bytes: Uint8Array<ArrayBuffer>;
   contentType: string;
 }
 
-const assetCache = new LRUCache<string, CachedAsset>({ maxEntries: MAX_CACHED_ASSETS });
+interface InflightAssetLoad {
+  readonly controller: AbortController;
+  consumers: number;
+  readonly hash: string;
+  readonly promise: Promise<CachedAsset>;
+  settled: boolean;
+  readonly timeoutId: ReturnType<typeof setTimeout>;
+}
+
+class ReleaseAssetNotFoundError extends Error {
+  constructor() {
+    super("Release asset was not found upstream");
+    this.name = "ReleaseAssetNotFoundError";
+  }
+}
+
+class ReleaseAssetTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Release asset cold load timed out after ${timeoutMs}ms`);
+    this.name = "ReleaseAssetTimeoutError";
+  }
+}
+
+class ReleaseAssetOverloadedError extends Error {
+  constructor() {
+    super("Release asset cold-load admission is saturated");
+    this.name = "ReleaseAssetOverloadedError";
+  }
+}
+
+class ReleaseAssetNoConsumersError extends Error {
+  constructor() {
+    super("Release asset cold load has no remaining consumers");
+    this.name = "ReleaseAssetNoConsumersError";
+  }
+}
+
+class ReleaseAssetUpstreamError extends Error {
+  constructor() {
+    super("Release asset upstream response failed validation");
+    this.name = "ReleaseAssetUpstreamError";
+  }
+}
+
+const assetCache = new LRUCache<string, CachedAsset>({
+  maxEntries: MAX_CACHED_ASSETS,
+  maxSizeBytes: MAX_CACHED_ASSET_BYTES,
+  estimateSizeOf: (asset) => asset.bytes.byteLength + asset.contentType.length * 2 + 64,
+});
+const coldLoadAdmission = new PermitSemaphore(MAX_CONCURRENT_COLD_LOADS, {
+  maxQueueSize: MAX_QUEUED_COLD_LOADS,
+});
+const inflightAssetLoads = new Map<string, InflightAssetLoad>();
+let coldLoadWaiters = 0;
 
 /** True when the path is owned by the release asset prefix. */
 export function isReleaseAssetPath(pathname: string): boolean {
@@ -41,6 +108,20 @@ const IMMUTABLE_HEADERS: Record<string, string> = {
   "Cache-Control": `public, max-age=${RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS}, immutable`,
   "X-Content-Type-Options": "nosniff",
 };
+
+function assetResponse(
+  asset: CachedAsset,
+  method: string,
+): Response {
+  return new Response(method === "HEAD" ? null : asset.bytes, {
+    status: 200,
+    headers: {
+      ...IMMUTABLE_HEADERS,
+      "Content-Length": String(asset.bytes.byteLength),
+      "Content-Type": asset.contentType,
+    },
+  });
+}
 
 function notFound(): Response {
   return new Response("Not found", {
@@ -56,10 +137,240 @@ function badRequest(message: string): Response {
   });
 }
 
+function badGateway(): Response {
+  return new Response("Bad gateway", {
+    status: 502,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+  });
+}
+
+function gatewayTimeout(): Response {
+  return new Response("Gateway timeout", {
+    status: 504,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+  });
+}
+
+function serviceUnavailable(): Response {
+  return new Response("Service unavailable", {
+    status: 503,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache",
+      "Retry-After": "1",
+    },
+  });
+}
+
+function clientClosedRequest(): Response {
+  return new Response("Client closed request", {
+    status: 499,
+    headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+  });
+}
+
+function methodNotAllowed(): Response {
+  return new Response("Method not allowed", {
+    status: 405,
+    headers: {
+      "Allow": "GET, HEAD",
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-cache",
+    },
+  });
+}
+
 export interface ReleaseAssetHandlerOptions {
   apiBaseUrl: string;
   /** Injectable fetch for tests. Defaults to global fetch. */
   fetchImpl?: typeof fetch;
+  /** Bound for this caller's cold-load wait. Shared work may serve longer-lived callers. */
+  timeoutMs?: number;
+}
+
+function resolveTimeoutMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_UPSTREAM_TIMEOUT_MS;
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_UPSTREAM_TIMEOUT_MS) {
+    throw new RangeError(
+      `Release asset timeout must be an integer between 1 and ${MAX_UPSTREAM_TIMEOUT_MS}ms`,
+    );
+  }
+  return value;
+}
+
+function buildUpstreamUrl(apiBaseUrl: string, hash: string): string {
+  const base = new URL(apiBaseUrl);
+  if (
+    (base.protocol !== "http:" && base.protocol !== "https:") ||
+    base.username ||
+    base.password
+  ) {
+    throw new TypeError("Release asset API base URL must be an HTTP(S) URL without credentials");
+  }
+  base.search = "";
+  base.hash = "";
+  if (!base.pathname.endsWith("/")) base.pathname += "/";
+  return new URL(`release-assets/${hash}`, base).toString();
+}
+
+async function loadReleaseAsset(
+  hash: string,
+  upstreamUrl: string,
+  doFetch: typeof fetch,
+  signal: AbortSignal,
+): Promise<CachedAsset> {
+  const admitted = await coldLoadAdmission.tryAcquire(Number.POSITIVE_INFINITY, { signal });
+  if (!admitted) throw new ReleaseAssetOverloadedError();
+
+  try {
+    const fetchPromise = doFetch(upstreamUrl, { signal });
+    let response: Response;
+    try {
+      response = await awaitAbortable(fetchPromise, signal);
+    } catch (error) {
+      if (signal.aborted) {
+        void fetchPromise.then(
+          (lateResponse) => {
+            void cancelProxyResponseBody(lateResponse);
+          },
+          () => {
+            // The original fetch failure is handled by the awaited path.
+          },
+        );
+      }
+      throw error;
+    }
+
+    if (response.status === 404) {
+      await cancelProxyResponseBody(response);
+      throw new ReleaseAssetNotFoundError();
+    }
+    if (!response.ok) {
+      await cancelProxyResponseBody(response);
+      throw new ReleaseAssetUpstreamError();
+    }
+
+    const upstreamContentType = response.headers.get("content-type")?.split(";")[0]?.trim();
+    if (!isAllowedReleaseAssetContentType(upstreamContentType)) {
+      await cancelProxyResponseBody(response);
+      throw new ReleaseAssetUpstreamError();
+    }
+
+    const bytes = await readProxyResponseBytes(
+      response,
+      RELEASE_ASSET_MAX_SIZE_BYTES,
+      signal,
+    );
+    if (
+      await awaitAbortable(computeHashBytes(bytes), signal) !== hash
+    ) {
+      throw new ReleaseAssetUpstreamError();
+    }
+
+    const asset = { bytes, contentType: upstreamContentType };
+    assetCache.set(hash, asset);
+    return asset;
+  } catch (error) {
+    if (signal.aborted) {
+      throw signal.reason ?? error;
+    }
+    throw error;
+  } finally {
+    coldLoadAdmission.release();
+  }
+}
+
+async function settleInflightAssetLoad(
+  task: InflightAssetLoad,
+  deferred: PromiseWithResolvers<CachedAsset>,
+  upstreamUrl: string,
+  doFetch: typeof fetch,
+): Promise<void> {
+  try {
+    const asset = await loadReleaseAsset(
+      task.hash,
+      upstreamUrl,
+      doFetch,
+      task.controller.signal,
+    );
+    finishInflightAssetLoad(task);
+    deferred.resolve(asset);
+  } catch (error) {
+    finishInflightAssetLoad(task);
+    deferred.reject(error);
+  }
+}
+
+function finishInflightAssetLoad(task: InflightAssetLoad): void {
+  task.settled = true;
+  clearTimeout(task.timeoutId);
+  if (inflightAssetLoads.get(task.hash) === task) {
+    inflightAssetLoads.delete(task.hash);
+  }
+}
+
+function createInflightAssetLoad(
+  hash: string,
+  upstreamUrl: string,
+  doFetch: typeof fetch,
+): InflightAssetLoad {
+  const controller = new AbortController();
+  const deferred = Promise.withResolvers<CachedAsset>();
+  // Last-resort producer ceiling; each attached caller has its own shorter deadline.
+  const timeoutId = setTimeout(
+    () => controller.abort(new ReleaseAssetTimeoutError(MAX_UPSTREAM_TIMEOUT_MS)),
+    MAX_UPSTREAM_TIMEOUT_MS,
+  );
+  const task: InflightAssetLoad = {
+    controller,
+    consumers: 0,
+    hash,
+    promise: deferred.promise,
+    settled: false,
+    timeoutId,
+  };
+  inflightAssetLoads.set(hash, task);
+  void settleInflightAssetLoad(task, deferred, upstreamUrl, doFetch);
+  return task;
+}
+
+function getOrCreateInflightAssetLoad(
+  hash: string,
+  upstreamUrl: string,
+  doFetch: typeof fetch,
+): InflightAssetLoad {
+  return inflightAssetLoads.get(hash) ??
+    createInflightAssetLoad(hash, upstreamUrl, doFetch);
+}
+
+async function waitForInflightAssetLoad(
+  task: InflightAssetLoad,
+  requestSignal: AbortSignal,
+  timeoutMs: number,
+): Promise<CachedAsset> {
+  const waiterController = new AbortController();
+  const abortFromRequest = (): void => waiterController.abort(requestSignal.reason);
+  if (requestSignal.aborted) abortFromRequest();
+  else requestSignal.addEventListener("abort", abortFromRequest, { once: true });
+  const timeoutId = setTimeout(
+    () => waiterController.abort(new ReleaseAssetTimeoutError(timeoutMs)),
+    timeoutMs,
+  );
+
+  task.consumers++;
+  try {
+    return await waitForSharedPromise(task.promise, waiterController.signal);
+  } finally {
+    clearTimeout(timeoutId);
+    requestSignal.removeEventListener("abort", abortFromRequest);
+    task.consumers--;
+    if (task.consumers === 0 && !task.settled) {
+      if (inflightAssetLoads.get(task.hash) === task) {
+        inflightAssetLoads.delete(task.hash);
+      }
+      task.controller.abort(new ReleaseAssetNoConsumersError());
+    }
+  }
 }
 
 /**
@@ -70,10 +381,12 @@ export interface ReleaseAssetHandlerOptions {
  * 400 is returned; for upstream 404s a no-cache 404 is returned.
  */
 export async function handleReleaseAssetRequest(
+  req: Request,
   url: URL,
   options: ReleaseAssetHandlerOptions,
 ): Promise<Response | null> {
   if (!isReleaseAssetPath(url.pathname)) return null;
+  if (req.method !== "GET" && req.method !== "HEAD") return methodNotAllowed();
 
   const match = url.pathname.match(ASSET_PATH_RE);
   if (!match) {
@@ -89,53 +402,46 @@ export async function handleReleaseAssetRequest(
     return badRequest("Invalid asset path");
   }
 
-  const cacheKey = `${hash}.${ext}`;
-  const cached = assetCache.get(cacheKey);
+  const expectedContentType = contentTypeForExtension(ext)!;
+  const cached = assetCache.get(hash);
   if (cached) {
-    return new Response(cached.bytes, {
-      status: 200,
-      headers: { ...IMMUTABLE_HEADERS, "Content-Type": cached.contentType },
-    });
+    return cached.contentType === expectedContentType
+      ? assetResponse(cached, req.method)
+      : badGateway();
   }
 
   const doFetch = options.fetchImpl ?? fetch;
-  const upstreamUrl = `${options.apiBaseUrl}/release-assets/${hash}`;
-
-  let response: Response;
+  let upstreamUrl: string;
+  let timeoutMs: number;
   try {
-    response = await doFetch(upstreamUrl);
+    upstreamUrl = buildUpstreamUrl(options.apiBaseUrl, hash);
+    timeoutMs = resolveTimeoutMs(options.timeoutMs);
   } catch {
-    return new Response("Bad gateway", {
-      status: 502,
-      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
-    });
+    return badGateway();
   }
 
-  if (response.status === 404) return notFound();
-  if (!response.ok) {
-    return new Response("Bad gateway", {
-      status: 502,
-      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
-    });
+  if (req.signal.aborted) return clientClosedRequest();
+  if (coldLoadWaiters >= MAX_COLD_LOAD_WAITERS) return serviceUnavailable();
+  coldLoadWaiters++;
+  try {
+    const task = getOrCreateInflightAssetLoad(
+      hash,
+      upstreamUrl,
+      doFetch,
+    );
+    const asset = await waitForInflightAssetLoad(task, req.signal, timeoutMs);
+    return asset.contentType === expectedContentType
+      ? assetResponse(asset, req.method)
+      : badGateway();
+  } catch (error) {
+    if (req.signal.aborted) return clientClosedRequest();
+    if (error instanceof ReleaseAssetNotFoundError) return notFound();
+    if (error instanceof ReleaseAssetTimeoutError) return gatewayTimeout();
+    if (error instanceof ReleaseAssetOverloadedError) return serviceUnavailable();
+    return badGateway();
+  } finally {
+    coldLoadWaiters--;
   }
-
-  const upstreamContentType = response.headers.get("content-type");
-  if (!isAllowedReleaseAssetContentType(upstreamContentType)) {
-    return new Response("Bad gateway", {
-      status: 502,
-      headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
-    });
-  }
-
-  // Serve the expected content type for the extension (allowlisted).
-  const contentType = contentTypeForExtension(ext)!;
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  assetCache.set(cacheKey, { bytes, contentType });
-
-  return new Response(bytes, {
-    status: 200,
-    headers: { ...IMMUTABLE_HEADERS, "Content-Type": contentType },
-  });
 }
 
 /** Clear the in-memory asset cache (tests / memory pressure). */

@@ -268,6 +268,7 @@ describe("Token Priority Cascade", () => {
                 name: "production",
                 domains: ["example.com"],
                 active_release_id: "rel-123",
+                protected: false,
               },
             ],
           });

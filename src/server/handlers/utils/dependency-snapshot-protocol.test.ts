@@ -166,6 +166,22 @@ describe("server/handlers/utils/dependency-snapshot-protocol", () => {
 
       assertEquals(response.headers.get(DEPENDENCY_PINS_HEADER), null);
     });
+
+    it("answers HEAD conflicts without a response body", () => {
+      const response = snapshotConflictResponse(
+        createResponseBuilder(),
+        new Request("http://localhost/page", { method: "HEAD" }),
+        null,
+      );
+
+      assertEquals(response.status, 409);
+      assertEquals(response.body, null);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(
+        response.headers.get("vary")?.toLowerCase().includes(DEPENDENCY_PINS_HEADER),
+        true,
+      );
+    });
   });
 
   describe("resolving a request against known snapshots", () => {

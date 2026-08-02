@@ -7,6 +7,8 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
+const MAX_SIGNATURE_JWS_CODE_UNITS = 16 * 1024;
+const MAX_SIGNATURE_PUBLIC_KEY_CODE_UNITS = 8 * 1024;
 
 /** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
@@ -241,6 +243,92 @@ function parseCompactJwsPart<T>(encodedPart: string): T {
   return JSON.parse(new TextDecoder().decode(base64urlDecodeToBytes(encodedPart))) as T;
 }
 
+function parseCompactJwsObject(
+  encodedPart: string,
+  label: string,
+): Record<string, unknown> {
+  const value = parseCompactJwsPart<unknown>(encodedPart);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`Compact JWS ${label} must be a JSON object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function readCompactJwsString(
+  value: Record<string, unknown>,
+  field: string,
+): string {
+  const candidate = value[field];
+  if (typeof candidate !== "string") {
+    throw new TypeError(`Compact JWS field "${field}" must be a string`);
+  }
+  return candidate;
+}
+
+function readCompactJwsInteger(
+  value: Record<string, unknown>,
+  field: string,
+): number {
+  const candidate = value[field];
+  if (typeof candidate !== "number" || !Number.isInteger(candidate)) {
+    throw new TypeError(`Compact JWS field "${field}" must be an integer`);
+  }
+  return candidate;
+}
+
+function parseSignatureProtectedHeader(encodedHeader: string): void {
+  const header = parseCompactJwsObject(encodedHeader, "protected header");
+  if (header.alg !== "EdDSA" || "crit" in header) {
+    throw new TypeError("Compact JWS protected header is not supported");
+  }
+  if (header.typ !== undefined && typeof header.typ !== "string") {
+    throw new TypeError('Compact JWS field "typ" must be a string');
+  }
+  if (header.kid !== undefined && typeof header.kid !== "string") {
+    throw new TypeError('Compact JWS field "kid" must be a string');
+  }
+}
+
+function parseSignatureBaseClaims(encodedPayload: string): {
+  claims: Record<string, unknown>;
+  base: SignedRequestClaims;
+} {
+  const claims = parseCompactJwsObject(encodedPayload, "payload");
+  return {
+    claims,
+    base: {
+      iss: readCompactJwsString(claims, "iss"),
+      aud: readCompactJwsString(claims, "aud"),
+      sub: readCompactJwsString(claims, "sub"),
+      project_id: readCompactJwsString(claims, "project_id"),
+      iat: readCompactJwsInteger(claims, "iat"),
+      exp: readCompactJwsInteger(claims, "exp"),
+    },
+  };
+}
+
+function parseDispatchSignatureClaims(encodedPayload: string): SignedRequestClaims {
+  const { claims, base } = parseSignatureBaseClaims(encodedPayload);
+  return {
+    ...base,
+    platform: readCompactJwsString(claims, "platform"),
+    body_sha256: readCompactJwsString(claims, "body_sha256"),
+  };
+}
+
+function parseControlPlaneSignatureClaims(encodedPayload: string): SignedRequestClaims {
+  const { claims, base } = parseSignatureBaseClaims(encodedPayload);
+  const surface = readCompactJwsString(claims, "surface");
+  if (!CONTROL_PLANE_SURFACES.includes(surface as ControlPlaneSurface)) {
+    throw new TypeError('Compact JWS field "surface" is not supported');
+  }
+  return {
+    ...base,
+    surface,
+    request_hash: readCompactJwsString(claims, "request_hash"),
+  };
+}
+
 function pemToDer(pem: string, label: string): ArrayBuffer {
   const body = pem
     .replace(`-----BEGIN ${label}-----`, "")
@@ -250,14 +338,29 @@ function pemToDer(pem: string, label: string): ArrayBuffer {
   return toArrayBuffer(Uint8Array.from(atob(body), (char) => char.charCodeAt(0)));
 }
 
-async function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
-  return crypto.subtle.importKey(
+let cachedEd25519PublicKey:
+  | { pem: string; promise: Promise<CryptoKey> }
+  | undefined;
+
+function importEd25519PublicKey(pem: string): Promise<CryptoKey> {
+  if (cachedEd25519PublicKey?.pem === pem) {
+    return cachedEd25519PublicKey.promise;
+  }
+
+  const promise = crypto.subtle.importKey(
     "spki",
     pemToDer(pem, "PUBLIC KEY"),
     "Ed25519",
     false,
     ["verify"],
   );
+  cachedEd25519PublicKey = { pem, promise };
+  void promise.catch(() => {
+    if (cachedEd25519PublicKey?.promise === promise) {
+      cachedEd25519PublicKey = undefined;
+    }
+  });
+  return promise;
 }
 
 async function sha256Base64url(body: string): Promise<string> {
@@ -496,14 +599,58 @@ export async function verifyDispatchJwsSignature(
     maxAgeSeconds: number;
   },
 ): Promise<boolean> {
+  return await verifySignedRequestJwsSignature(jws, parseDispatchSignatureClaims, options);
+}
+
+/**
+ * Verify the signature and freshness of a control-plane JWS without granting
+ * body, audience, project, subject, or surface authorization.
+ *
+ * This is an authenticity-only signal. Request handlers must still use
+ * {@link verifyControlPlaneJws} before authorizing an operation.
+ */
+export async function verifyControlPlaneJwsSignature(
+  jws: string,
+  options: {
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+  },
+): Promise<boolean> {
+  return await verifySignedRequestJwsSignature(
+    jws,
+    parseControlPlaneSignatureClaims,
+    options,
+  );
+}
+
+async function verifySignedRequestJwsSignature(
+  jws: string,
+  parseClaims: (encodedPayload: string) => SignedRequestClaims,
+  options: {
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+  },
+): Promise<boolean> {
   try {
+    if (
+      jws.length > MAX_SIGNATURE_JWS_CODE_UNITS ||
+      options.publicKeyPem.length > MAX_SIGNATURE_PUBLIC_KEY_CODE_UNITS ||
+      !Number.isSafeInteger(options.maxAgeSeconds) ||
+      options.maxAgeSeconds < 0
+    ) {
+      return false;
+    }
+
     const parts = jws.split(".");
     if (parts.length !== 3) return false;
     const [encodedHeader, encodedPayload, encodedSignature] = parts;
     if (!encodedHeader || !encodedPayload || !encodedSignature) return false;
 
-    compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
-    const claims = dispatchClaimsSchema.parse(parseCompactJwsPart(encodedPayload));
+    // Proxy authenticity checks must remain available before extension-backed
+    // schema registration. Authoritative request handlers still use the shared
+    // schemas below for full body/audience/project authorization.
+    parseSignatureProtectedHeader(encodedHeader);
+    const claims = parseClaims(encodedPayload);
 
     const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
     const signature = base64urlDecodeToBytes(encodedSignature);
@@ -512,6 +659,13 @@ export async function verifyDispatchJwsSignature(
     if (!verified) return false;
 
     if (claims.iss !== "veryfront-api") return false;
+    if (
+      !Number.isSafeInteger(claims.iat) ||
+      !Number.isSafeInteger(claims.exp) ||
+      claims.exp <= claims.iat
+    ) {
+      return false;
+    }
 
     const now = Math.floor(Date.now() / 1000);
     if (claims.exp <= now) return false;
