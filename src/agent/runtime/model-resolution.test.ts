@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { VERYFRONT_CLOUD_CHAT_MODELS } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import {
   AUTO_AGENT_MODEL,
   DEFAULT_AGENT_MODEL,
@@ -100,6 +101,30 @@ describe("agent/runtime/model-resolution", () => {
       resolveConfiguredAgentModel("mistral-large"),
       "mistral/mistral-large-2512",
     );
+  });
+
+  it("aliases every Veryfront Cloud catalog model id to its provider model", () => {
+    for (const model of VERYFRONT_CLOUD_CHAT_MODELS) {
+      assertEquals(resolveConfiguredAgentModel(model.id), model.modelId);
+    }
+  });
+
+  it("does not resolve Object.prototype members as model aliases", () => {
+    for (
+      const inherited of [
+        "constructor",
+        "toString",
+        "valueOf",
+        "hasOwnProperty",
+        "isPrototypeOf",
+        "propertyIsEnumerable",
+        "toLocaleString",
+        "__proto__",
+        "__defineGetter__",
+      ]
+    ) {
+      assertEquals(resolveConfiguredAgentModel(inherited), inherited);
+    }
   });
 
   it("uses the default model through Veryfront Cloud when cloud bootstrap is available", () => {
