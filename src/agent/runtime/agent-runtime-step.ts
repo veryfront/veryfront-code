@@ -21,6 +21,7 @@ import {
   hasRuntimeToolInventory,
   withRuntimeToolInventory,
 } from "./tool-inventory.ts";
+import { getProviderToolProfile } from "./provider-tool-compat.ts";
 
 export type AgentRuntimeStepMode = "generate" | "stream";
 
@@ -59,6 +60,8 @@ export interface PrepareAgentRuntimeStepInput {
   activeSkillToolAvailability: SkillToolAvailability | undefined;
   allowedRemoteToolNames: string[] | undefined;
   config: AgentConfig;
+  effectiveModel?: string;
+  excludedToolNames?: ReadonlySet<string>;
   forwardedRemoteToolDefinitions: ToolDefinition[] | undefined;
   getAvailableTools: RuntimeStepToolLoader;
   isLocalModel: boolean;
@@ -147,6 +150,10 @@ export async function prepareAgentRuntimeStep(
     );
   }
   tools = filterToolsAfterSubmittedFormInput(tools, input.messages, runtimeState.context);
+  const excludedToolNames = input.excludedToolNames;
+  if (excludedToolNames !== undefined) {
+    tools = tools.filter((tool) => !excludedToolNames.has(tool.name));
+  }
   const toolExposureState = input.toolExposureState ?? createToolExposureState();
   if (input.toolExposureCheckpoint) {
     const restoredState = restoreToolExposureState(input.toolExposureCheckpoint, tools);
@@ -159,6 +166,7 @@ export async function prepareAgentRuntimeStep(
     authorized: tools,
     mode: resolveRuntimeToolLoading(input.config).mode,
     state: toolExposureState,
+    maxVisibleTools: getProviderToolProfile(input.effectiveModel ?? input.config.model).maxTools,
   });
   const systemPrompt = hasRuntimeToolInventory(runtimeState.systemPrompt)
     ? flattenSystemInstructions(

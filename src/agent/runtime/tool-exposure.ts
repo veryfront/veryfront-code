@@ -18,11 +18,13 @@ export type ToolExposurePlan = {
   visible: ToolDefinition[];
   deferred: ToolDefinition[];
   loadedToolNames: Set<string>;
+  maxLoadedTools?: number;
 };
 
 /** Private versioned state persisted by the framework between resumed steps. */
 export type ToolExposureCheckpoint = {
-  version: 1;
+  /** v1 names were lexicographically sorted; v2 preserves oldest-to-newest recency. */
+  version: 1 | 2;
   loadedToolNames: string[];
 };
 
@@ -35,7 +37,11 @@ export type ToolExposureCheckpointEvent = ToolExposureCheckpoint & {
 };
 
 /** Schema-free model-visible search result. */
-export type ToolSearchMatch = { name: string; description: string; status: "loaded" };
+export type ToolSearchMatch = {
+  name: string;
+  description: string;
+  status: "available" | "loaded";
+};
 
 /** Search output plus bounded observability counters. */
 export type ToolSearchResult = {
@@ -43,6 +49,12 @@ export type ToolSearchResult = {
   resultCount: number;
   loadedCount: number;
   miss: boolean;
+};
+
+type RankedToolSearchMatch = {
+  rank: number;
+  matchCount: number;
+  match: ToolSearchMatch;
 };
 
 function normalizeSearchText(value: string): string {
@@ -57,6 +69,13 @@ function compareAscii(left: string, right: string): number {
 /** Return whether a persisted name matches the existing non-empty tool id contract. */
 export function isValidToolExposureCheckpointName(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+/** Return whether a checkpoint version can be restored by this runtime. */
+export function isSupportedToolExposureCheckpointVersion(
+  value: unknown,
+): value is ToolExposureCheckpoint["version"] {
+  return value === 1 || value === 2;
 }
 
 function collectSchemaDescriptions(value: unknown, output: string[]): void {
@@ -116,11 +135,73 @@ function getTermFallbackScore(input: {
   return ranks.length > 0 ? { rank: Math.min(...ranks), matchCount: ranks.length } : null;
 }
 
+function rankToolExposureMatches(
+  query: string,
+  candidates: readonly { tool: ToolDefinition; status: ToolSearchMatch["status"] }[],
+): RankedToolSearchMatch[] {
+  const ranked: RankedToolSearchMatch[] = [];
+
+  for (const { tool, status } of candidates) {
+    const rank = getMatchRank({
+      query,
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    });
+    if (rank === null) continue;
+    ranked.push({
+      rank,
+      matchCount: 1,
+      match: { name: tool.name, description: tool.description, status },
+    });
+  }
+
+  if (ranked.length === 0) {
+    for (const { tool, status } of candidates) {
+      const score = getTermFallbackScore({
+        query,
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      });
+      if (!score) continue;
+      ranked.push({
+        ...score,
+        match: { name: tool.name, description: tool.description, status },
+      });
+    }
+  }
+
+  return ranked.sort((left, right) =>
+    left.rank - right.rank || right.matchCount - left.matchCount ||
+    (left.match.status === right.match.status ? 0 : left.match.status === "available" ? -1 : 1) ||
+    compareAscii(left.match.name, right.match.name)
+  );
+}
+
 /** Create fresh run-local tool exposure state. */
 export function createToolExposureState(
   loadedToolNames: Iterable<string> = [],
 ): ToolExposureState {
   return { loadedToolNames: new Set(loadedToolNames) };
+}
+
+function retainNewestLoadedToolNames(state: ToolExposureState, limit: number | undefined): void {
+  if (limit === undefined) return;
+  while (state.loadedToolNames.size > limit) {
+    const oldest = state.loadedToolNames.values().next().value;
+    if (oldest === undefined) return;
+    state.loadedToolNames.delete(oldest);
+  }
+}
+
+function pruneLoadedToolNames(
+  state: ToolExposureState,
+  loadableToolNames: ReadonlySet<string>,
+): void {
+  for (const name of state.loadedToolNames) {
+    if (!loadableToolNames.has(name)) state.loadedToolNames.delete(name);
+  }
 }
 
 /** Create the framework fallback tool definition without exposing catalog schemas. */
@@ -150,6 +231,7 @@ export function createToolExposurePlan(input: {
   mode: RuntimeToolLoadingMode;
   state: ToolExposureState;
   bootstrapToolNames?: ReadonlySet<string>;
+  maxVisibleTools?: number;
 }): ToolExposurePlan {
   const authorized = [...input.authorized];
   if (input.mode === "eager") {
@@ -165,22 +247,34 @@ export function createToolExposurePlan(input: {
   }
 
   const bootstrap = input.bootstrapToolNames ?? DEFAULT_BOOTSTRAP_TOOL_NAMES;
+  const bootstrapCount = authorized.filter((tool) => bootstrap.has(tool.name)).length;
+  const loadable = authorized.filter((tool) => !bootstrap.has(tool.name));
+  const loadableNames = new Set(loadable.map((tool) => tool.name));
+  const loadedCapacity = input.maxVisibleTools === undefined
+    ? undefined
+    : Math.max(0, input.maxVisibleTools - bootstrapCount);
+  const maxLoadedTools = loadedCapacity === undefined
+    ? undefined
+    : Math.max(0, loadedCapacity - (loadable.length > loadedCapacity ? 1 : 0));
+  pruneLoadedToolNames(input.state, loadableNames);
+  retainNewestLoadedToolNames(input.state, maxLoadedTools);
   const visible = authorized
-    .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name))
-    .sort((left, right) => compareAscii(left.name, right.name));
+    .filter((tool) => bootstrap.has(tool.name) || input.state.loadedToolNames.has(tool.name));
   const visibleNames = new Set(visible.map((tool) => tool.name));
-  const deferred = authorized
+  const deferred = loadable
     .filter((tool) => !visibleNames.has(tool.name))
     .sort((left, right) => compareAscii(left.name, right.name));
   if (deferred.length > 0) {
     visible.push(createToolSearchDefinition());
   }
+  visible.sort((left, right) => compareAscii(left.name, right.name));
 
   return {
     authorized,
     visible,
     deferred,
     loadedToolNames: input.state.loadedToolNames,
+    ...(maxLoadedTools === undefined ? {} : { maxLoadedTools }),
   };
 }
 
@@ -188,56 +282,49 @@ export function createToolExposurePlan(input: {
 export function searchToolExposure(input: {
   query: string;
   authorized: readonly ToolDefinition[];
+  available?: readonly ToolDefinition[];
   state: ToolExposureState;
+  maxLoadedTools?: number;
 }): ToolSearchResult {
-  const ranked: Array<{ rank: number; matchCount: number; match: ToolSearchMatch }> = [];
-
-  for (const tool of input.authorized) {
-    const rank = getMatchRank({
-      query: input.query,
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    });
-    if (rank === null) continue;
-    ranked.push({
-      rank,
-      matchCount: 1,
-      match: { name: tool.name, description: tool.description, status: "loaded" },
-    });
-  }
-
-  if (ranked.length === 0) {
-    for (const tool of input.authorized) {
-      const score = getTermFallbackScore({
-        query: input.query,
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      });
-      if (!score) continue;
-      ranked.push({
-        ...score,
-        match: { name: tool.name, description: tool.description, status: "loaded" },
-      });
-    }
+  const ranked = rankToolExposureMatches(input.query, [
+    ...(input.available ?? []).map((tool) => ({ tool, status: "available" as const })),
+    ...input.authorized.map((tool) => ({ tool, status: "loaded" as const })),
+  ]);
+  if (ranked[0]?.match.status === "available") {
+    const matches = ranked
+      .filter(({ match }) => match.status === "available")
+      .slice(0, TOOL_SEARCH_RESULT_LIMIT)
+      .map(({ match }) => match);
+    return {
+      matches,
+      resultCount: matches.length,
+      loadedCount: 0,
+      miss: false,
+    };
   }
 
   const matches = ranked
-    .sort((left, right) =>
-      left.rank - right.rank || right.matchCount - left.matchCount ||
-      compareAscii(left.match.name, right.match.name)
+    .filter(({ match }) => match.status === "loaded")
+    .slice(
+      0,
+      input.maxLoadedTools === undefined
+        ? TOOL_SEARCH_RESULT_LIMIT
+        : Math.min(TOOL_SEARCH_RESULT_LIMIT, input.maxLoadedTools),
     )
-    .slice(0, TOOL_SEARCH_RESULT_LIMIT)
     .map(({ match }) => match);
 
-  for (const match of matches) input.state.loadedToolNames.add(match.name);
+  for (const match of matches) {
+    input.state.loadedToolNames.delete(match.name);
+    input.state.loadedToolNames.add(match.name);
+  }
+  retainNewestLoadedToolNames(input.state, input.maxLoadedTools);
+  const loadedMatches = matches.filter((match) => input.state.loadedToolNames.has(match.name));
 
   return {
-    matches,
-    resultCount: matches.length,
-    loadedCount: matches.length,
-    miss: matches.length === 0,
+    matches: loadedMatches,
+    resultCount: loadedMatches.length,
+    loadedCount: loadedMatches.length,
+    miss: loadedMatches.length === 0,
   };
 }
 
@@ -248,10 +335,9 @@ export function createToolExposureCheckpoint(
 ): ToolExposureCheckpoint {
   const authorizedNames = new Set(authorized.map((tool) => tool.name));
   return {
-    version: 1,
+    version: 2,
     loadedToolNames: [...state.loadedToolNames]
-      .filter((name) => authorizedNames.has(name))
-      .sort(),
+      .filter((name) => authorizedNames.has(name)),
   };
 }
 
@@ -277,7 +363,7 @@ export function restoreToolExposureState(
   authorized: readonly ToolDefinition[],
 ): ToolExposureState {
   if (
-    checkpoint?.version !== 1 ||
+    !isSupportedToolExposureCheckpointVersion(checkpoint?.version) ||
     !Array.isArray(checkpoint.loadedToolNames) ||
     !checkpoint.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {
@@ -285,7 +371,7 @@ export function restoreToolExposureState(
   }
 
   const authorizedNames = new Set(authorized.map((tool) => tool.name));
-  return createToolExposureState(
-    checkpoint.loadedToolNames.filter((name) => authorizedNames.has(name)),
-  );
+  const loadedToolNames = checkpoint.loadedToolNames.filter((name) => authorizedNames.has(name));
+  if (checkpoint.version === 1) loadedToolNames.sort(compareAscii);
+  return createToolExposureState(loadedToolNames);
 }
