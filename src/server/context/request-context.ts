@@ -28,7 +28,14 @@ export function createRequestContext(
   const trustProxy = options.proxyTrusted ?? isProxyTopologyTrusted();
   const effectiveHost = getEffectiveRequestHost(req, undefined, trustProxy);
   const parsed = parseProjectDomain(effectiveHost);
-  const headerProjectSlug = req.headers.get("x-project-slug")?.trim() || undefined;
+  const headerProjectSlug = trustProxy
+    ? req.headers.get("x-project-slug")?.trim() || undefined
+    : undefined;
+  const url = new URL(req.url);
+  const proxyEnvironment = trustProxy
+    ? req.headers.get("x-environment") ??
+      (url.pathname === "/_ws" ? url.searchParams.get("x-environment") : null)
+    : null;
 
   // Mode derives from server-trusted signals only. The `x-environment` header
   // is client-controlled and must NOT be able to flip a production request
@@ -37,14 +44,16 @@ export function createRequestContext(
   // are the same signal used for routing, so they're the correct source of
   // truth.
   const mode: "preview" | "production" =
-    parsed.environment === "preview" || effectiveHost.includes(".preview.")
+    proxyEnvironment === "preview" || parsed.environment === "preview" ||
+      effectiveHost.includes(".preview.")
       ? "preview"
       : "production";
 
   return {
     // Framework-owned token: bypass project env overlay so proxy mode works
     // when a remote project overlay is active.
-    token: req.headers.get("x-token") ?? getHostEnv("VERYFRONT_API_TOKEN") ?? "",
+    token: (trustProxy ? req.headers.get("x-token") : null) ??
+      getHostEnv("VERYFRONT_API_TOKEN") ?? "",
     slug: headerProjectSlug ?? parsed.slug ?? "",
     branch: parsed.branch,
     mode,

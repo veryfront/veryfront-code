@@ -79,11 +79,26 @@ behind a private, sanitizing proxy that replaces untrusted forwarding metadata.
 The value is matched exactly; alternative spellings and whitespace-padded
 values fail closed.
 
+In shared proxy mode, the runtime rejects every non-monitoring request when
+that topology setting is absent, including module assets and WebSocket
+requests. When it is present, all proxy-owned project, release, branch,
+environment, content-source, token, forwarded-host, and local-path metadata
+may be consumed as one edge-established routing context. The built-in proxy
+removes incoming `Forwarded`, `Via`, `x-forwarded-*`, `x-real-ip`, and
+`x-project-*` values before adding its authoritative context. For the HMR
+WebSocket bridge, it also replaces the `x-project-slug` and `x-environment`
+query parameters with proxy-resolved values; trusted third-party proxies must
+provide the same rewrite guarantee.
+
 A signed channel or control-plane request does not establish proxy topology.
 Those signatures authorize only the request surface and claims they bind; they
 do not authorize unrelated `x-forwarded-host`, `x-project-path`, project, or
 environment metadata. This separation prevents a valid signed request from
 being replayed to promote attacker-selected routing headers.
+
+Verified control-plane handlers likewise consume execution identity from the
+verified body/claims and the already-resolved handler context. They do not
+re-read unbound routing headers after signature verification.
 
 ## Runtime caches
 

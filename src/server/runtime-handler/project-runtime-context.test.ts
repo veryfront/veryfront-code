@@ -128,8 +128,8 @@ function makeRuntimeContextInput(
     },
   });
   const url = new URL(req.url);
-  const headers = extractRequestHeaders(req, url);
-  const requestContext = createRequestContext(req);
+  const headers = extractRequestHeaders(req, url, true);
+  const requestContext = createRequestContext(req, { proxyTrusted: true });
   const adapter = createMockAdapter();
   const config = {
     integrations: {
@@ -218,9 +218,12 @@ describe("prepareProjectRequest", () => {
     assertEquals(prepared.headers, extractRequestHeaders(req, url, false));
     assertEquals(prepared.requestContext, createRequestContext(req, { proxyTrusted: false }));
     assertEquals(prepared.headers.environment, undefined);
-    assertEquals(prepared.loggerFacts.projectSlug, "header-project");
-    assertEquals(prepared.trackingFacts.releaseId, "rel_123");
-    assertEquals(prepared.proxyGuard, undefined);
+    assertEquals(prepared.loggerFacts.projectSlug, undefined);
+    assertEquals(prepared.trackingFacts.releaseId, undefined);
+    assertEquals(
+      prepared.proxyGuard?.detail,
+      "shared runtime requests require a trusted upstream proxy",
+    );
   });
 
   it("returns the existing missing slug proxy guard response", async () => {
@@ -232,7 +235,7 @@ describe("prepareProjectRequest", () => {
       req,
       url: new URL(req.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      trustProxy: () => Promise.resolve(true),
     });
 
     assertEquals(prepared.proxyGuard?.detail, "x-project-slug header is required in proxy mode");
@@ -251,7 +254,7 @@ describe("prepareProjectRequest", () => {
       req,
       url: new URL(req.url),
       isProxyMode: true,
-      trustProxy: () => Promise.resolve(false),
+      trustProxy: () => Promise.resolve(true),
     });
 
     assertEquals(prepared.proxyGuard?.detail, "x-token header is required in proxy mode");
@@ -261,7 +264,7 @@ describe("prepareProjectRequest", () => {
     });
   });
 
-  it("guards only trust-sensitive x-project-path in untrusted proxy requests", async () => {
+  it("rejects every shared-runtime request from an untrusted topology", async () => {
     const forwardedOnly = new Request("http://localhost/page", {
       headers: {
         "x-project-slug": "my-project",
@@ -277,7 +280,10 @@ describe("prepareProjectRequest", () => {
       trustProxy: () => Promise.resolve(false),
     });
 
-    assertEquals(allowed.proxyGuard, undefined);
+    assertEquals(
+      allowed.proxyGuard?.detail,
+      "shared runtime requests require a trusted upstream proxy",
+    );
 
     const projectPath = new Request("http://localhost/page", {
       headers: {
@@ -296,15 +302,15 @@ describe("prepareProjectRequest", () => {
 
     assertEquals(
       rejected.proxyGuard?.detail,
-      "proxy context headers require a trusted upstream proxy",
+      "shared runtime requests require a trusted upstream proxy",
     );
     await assertJsonResponse(rejected.proxyGuard!.response, 502, {
-      error: "Untrusted proxy context",
-      detail: "proxy context headers require a trusted upstream proxy",
+      error: "Untrusted proxy topology",
+      detail: "shared runtime requests require a trusted upstream proxy",
     });
   });
 
-  it("preserves websocket environment query and skips the proxy guard", async () => {
+  it("rejects untrusted websocket routing metadata", async () => {
     const req = new Request(
       "http://localhost/_ws?x-environment=preview&x-project-slug=test-project",
     );
@@ -316,11 +322,14 @@ describe("prepareProjectRequest", () => {
       trustProxy: () => Promise.resolve(false),
     });
 
-    assertEquals(prepared.headers.environment, "preview");
-    assertEquals(prepared.proxyGuard, undefined);
+    assertEquals(prepared.headers.environment, undefined);
+    assertEquals(
+      prepared.proxyGuard?.detail,
+      "shared runtime requests require a trusted upstream proxy",
+    );
   });
 
-  it("skips the proxy guard for lightweight requests", async () => {
+  it("rejects untrusted lightweight requests before release routing", async () => {
     const req = new Request("http://localhost/_veryfront/hydration-runtime.js", {
       headers: { "x-release-id": "rel_123" },
     });
@@ -332,7 +341,11 @@ describe("prepareProjectRequest", () => {
       trustProxy: () => Promise.resolve(false),
     });
 
-    assertEquals(prepared.proxyGuard, undefined);
+    assertEquals(prepared.headers.releaseId, undefined);
+    assertEquals(
+      prepared.proxyGuard?.detail,
+      "shared runtime requests require a trusted upstream proxy",
+    );
   });
 });
 
@@ -413,19 +426,19 @@ describe("resolveProjectIdentity", () => {
         headers: { "x-project-slug": "request-slug", "x-branch-id": "branch-1" },
       });
       const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
+      const headers = extractRequestHeaders(req, url, true);
 
       const result = await resolveProjectIdentity({
         req,
         url,
         headers,
-        requestContext: createRequestContext(req),
+        requestContext: createRequestContext(req, { proxyTrusted: true }),
         config: undefined,
         defaultProjectSlug: "default-slug",
         defaultProjectId: "default-id",
         defaultReleaseId: undefined,
         wsSlugOverride: "ws-slug",
-        proxyTrust: { proxyTrusted: undefined },
+        proxyTrust: { proxyTrusted: true },
       });
 
       assertEquals(result.projectSlug, "request-slug");
@@ -471,14 +484,14 @@ describe("resolveProjectIdentity", () => {
       const result = await resolveProjectIdentity({
         req,
         url,
-        headers: extractRequestHeaders(req, url),
-        requestContext: createRequestContext(req),
+        headers: extractRequestHeaders(req, url, true),
+        requestContext: createRequestContext(req, { proxyTrusted: true }),
         config,
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         defaultReleaseId: "default-release",
         wsSlugOverride: undefined,
-        proxyTrust: { proxyTrusted: undefined },
+        proxyTrust: { proxyTrusted: true },
       });
 
       assertEquals(result.releaseId, "header-release");
@@ -513,14 +526,14 @@ describe("resolveProjectIdentity", () => {
       const result = await resolveProjectIdentity({
         req,
         url,
-        headers: extractRequestHeaders(req, url),
-        requestContext: createRequestContext(req),
+        headers: extractRequestHeaders(req, url, true),
+        requestContext: createRequestContext(req, { proxyTrusted: true }),
         config,
         defaultProjectSlug: undefined,
         defaultProjectId: undefined,
         defaultReleaseId: undefined,
         wsSlugOverride: undefined,
-        proxyTrust: { proxyTrusted: undefined },
+        proxyTrust: { proxyTrusted: true },
       });
 
       assertEquals(result.projectSlug, "looked-up-slug");
@@ -702,12 +715,18 @@ describe("resolveProjectRuntimeContext", () => {
       },
     }));
 
-    assertEquals(envLoadCount, 1);
+    assertEquals(envLoadCount, 0);
     assertEquals(result.adapter.isLocalProject, false);
     assertEquals(result.adapter.projectDir, "/base/project");
     assertEquals(defaultDiscoveryCache.projects.has("remote-project"), false);
-    assertEquals(result.handlerContext?.config?.title, "preview:tenant-value");
-    assertEquals(result.rawEnvVars, { TENANT: "tenant-value" });
+    assertEquals(result.handlerContext?.config, {
+      integrations: {
+        allow: {
+          github: { allowedTools: ["list_repos", "get_issue"] },
+        },
+      },
+    });
+    assertEquals(result.rawEnvVars, {});
   });
 
   it("returns production 404 responses and standalone synthetic fallback from environment resolution", async () => {
@@ -770,8 +789,8 @@ describe("resolveProjectRuntimeContext", () => {
       req,
       url,
       config,
-      headers: extractRequestHeaders(req, url),
-      requestContext: createRequestContext(req),
+      headers: extractRequestHeaders(req, url, true),
+      requestContext: createRequestContext(req, { proxyTrusted: true }),
       isProxyMode: true,
       projectIdentity: {
         projectSlug: "remote-project",
@@ -879,8 +898,8 @@ describe("resolveProjectRuntimeContext", () => {
       req,
       url,
       adapter,
-      headers: extractRequestHeaders(req, url),
-      requestContext: createRequestContext(req),
+      headers: extractRequestHeaders(req, url, true),
+      requestContext: createRequestContext(req, { proxyTrusted: true }),
       isProxyMode: true,
       projectIdentity: {
         projectSlug: "proxy-project",
@@ -918,8 +937,8 @@ describe("resolveProjectRuntimeContext", () => {
           req,
           url,
           adapter,
-          headers: extractRequestHeaders(req, url),
-          requestContext: createRequestContext(req),
+          headers: extractRequestHeaders(req, url, true),
+          requestContext: createRequestContext(req, { proxyTrusted: true }),
           isProxyMode: true,
           projectIdentity: {
             projectSlug: "proxy-project",

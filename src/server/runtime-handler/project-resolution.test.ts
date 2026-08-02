@@ -25,7 +25,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-slug": "my-project" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.projectSlug, "my-project");
     });
 
@@ -33,7 +33,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-id": "proj-123" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.projectId, "proj-123");
     });
 
@@ -41,7 +41,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-release-id": "rel-456" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.releaseId, "rel-456");
     });
 
@@ -49,7 +49,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-id": "branch-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.branchId, "branch-1");
     });
 
@@ -57,7 +57,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-name": "feature-x" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.branchName, "feature-x");
     });
 
@@ -74,15 +74,21 @@ describe("server/runtime-handler/project-resolution", () => {
       }
     });
 
-    it("extracts environment from query parameter when proxy headers are trusted", () => {
+    it("extracts websocket environment from proxy-rewritten query routing", () => {
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       try {
-        const req = new Request("http://localhost/?x-environment=staging");
+        const req = new Request("http://localhost/_ws?x-environment=staging");
         const headers = extractRequestHeaders(req, new URL(req.url));
         assertEquals(headers.environment, "staging");
       } finally {
         Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
       }
+    });
+
+    it("ignores environment query parameters outside websocket routing", () => {
+      const req = new Request("http://localhost/page?x-environment=preview");
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
+      assertEquals(headers.environment, undefined);
     });
 
     it("extracts forwarded metadata after request-scoped proxy verification", () => {
@@ -116,11 +122,40 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(result.proxyEnv, undefined);
     });
 
+    it("ignores every proxy-owned identity header when topology is untrusted", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-project-slug": "attacker-project",
+          "x-project-id": "attacker-id",
+          "x-release-id": "attacker-release",
+          "x-branch-id": "attacker-branch-id",
+          "x-branch-name": "attacker-branch",
+          "x-environment": "preview",
+          "x-environment-id": "attacker-env",
+          "x-content-source-id": "attacker-source",
+          "x-project-path": "/attacker/project",
+        },
+      });
+
+      assertEquals(extractRequestHeaders(req, new URL(req.url), false), {
+        projectSlug: undefined,
+        projectId: undefined,
+        releaseId: undefined,
+        branchId: undefined,
+        branchName: undefined,
+        environment: undefined,
+        environmentId: undefined,
+        token: undefined,
+        contentSourceId: undefined,
+        projectPath: undefined,
+      });
+    });
+
     it("extracts environment-id from header", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-environment-id": "env-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.environmentId, "env-1");
     });
 
@@ -202,7 +237,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-content-source-id": "cs-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.contentSourceId, "cs-1");
     });
 
@@ -210,7 +245,7 @@ describe("server/runtime-handler/project-resolution", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-project-path": "/projects/my-proj" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), true);
       assertEquals(headers.projectPath, "/projects/my-proj");
     });
 
@@ -328,7 +363,7 @@ describe("server/runtime-handler/project-resolution", () => {
         headers: { "x-release-id": "header-release" },
       });
       const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
+      const headers = extractRequestHeaders(req, url, true);
       const result = await resolveProject(req, url, headers, {
         config: undefined,
         reqCtx: { slug: undefined, mode: undefined, branch: null, token: undefined },
@@ -421,7 +456,7 @@ describe("server/runtime-handler/project-resolution", () => {
         headers: { "x-release-id": "rel-1" },
       });
       const url = new URL(req.url);
-      const headers = extractRequestHeaders(req, url);
+      const headers = extractRequestHeaders(req, url, true);
       const result = await resolveProject(req, url, headers, {
         config: undefined,
         reqCtx: { slug: "test", mode: undefined, branch: null, token: undefined },

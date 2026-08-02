@@ -497,7 +497,9 @@ export function createVeryfrontHandler(
               await configPromise;
             }));
 
-          const wsSlugOverride = url.searchParams.get("x-project-slug") || undefined;
+          const wsSlugOverride = proxyTrusted
+            ? url.searchParams.get("x-project-slug") || undefined
+            : undefined;
 
           // Resolve project from various sources
           const projectRes = await profilePhase(

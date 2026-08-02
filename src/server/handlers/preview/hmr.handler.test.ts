@@ -10,6 +10,7 @@ import {
   type WebSocketConnection,
 } from "#veryfront/platform/adapters/base.ts";
 import { HMRHandler } from "./hmr.handler.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 const encoder = new TextEncoder();
 
@@ -80,6 +81,18 @@ function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
     cspUserHeader: null,
     ...overrides,
   } as unknown as HandlerContext;
+}
+
+function createLocalRequest(url: string, init: RequestInit = {}): Request {
+  const headers = new Headers(init.headers);
+  if (!headers.has("host")) headers.set("host", new URL(url).host);
+  const request = new Request(url, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 function createMockSocket(): {
@@ -205,7 +218,7 @@ describe("server/handlers/preview/hmr.handler", () => {
   });
 
   describe("handle - mode check", () => {
-    it("continues when not preview, not local, and not localhost", async () => {
+    it("rejects when not preview and not a local control request", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://production.example.com/_ws");
       const ctx = makeCtx({
@@ -213,12 +226,12 @@ describe("server/handlers/preview/hmr.handler", () => {
         requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("proceeds when isLocalProject is true", async () => {
+    it("proceeds for a local control request", async () => {
       const handler = new HMRHandler();
-      const req = new Request("http://production.example.com/_ws");
+      const req = createLocalRequest("http://localhost/_ws");
       const ctx = makeCtx({
         isLocalProject: true,
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
@@ -228,7 +241,8 @@ describe("server/handlers/preview/hmr.handler", () => {
       assertEquals(result.continue, false);
     });
 
-    it("proceeds when mode is preview", async () => {
+    it("proceeds for preview behind the trusted proxy topology", async () => {
+      Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws");
       const ctx = makeCtx({
@@ -237,10 +251,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 200);
     });
 
-    it("proceeds when x-environment=preview query param is set", async () => {
+    it("rejects an unsigned preview query parameter", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws?x-environment=preview");
       const ctx = makeCtx({
@@ -248,10 +262,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("proceeds when host header is localhost", async () => {
+    it("rejects a localhost Host header without native peer provenance", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
         headers: { host: "localhost:3000" },
@@ -261,7 +275,7 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it("ignores a local preview forwarded host when only a signed dispatch JWS is present", async () => {
@@ -278,10 +292,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("continues when x-forwarded-host is external even if host header is localhost", async () => {
+    it("rejects production HMR when the trusted forwarded host is external", async () => {
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       const handler = new HMRHandler();
       const req = new Request("http://example.com/_ws", {
@@ -295,10 +309,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("IGNORES x-forwarded-host: localhost when request is NOT proxy-trusted (VULN-SRV-4)", async () => {
+    it("ignores a forwarded localhost host outside trusted proxy topology", async () => {
       // Without proxy trust, the forwarded host must not be allowed to unlock the
       // localhost short-circuit that enables HMR. Otherwise any remote client could
       // claim to be localhost and open a WebSocket against the dev runtime.
@@ -314,10 +328,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("IGNORES x-forwarded-host: 127.0.0.1 when request is NOT proxy-trusted", async () => {
+    it("ignores a forwarded loopback address outside trusted proxy topology", async () => {
       const handler = new HMRHandler();
       const req = new Request("http://evil.example.com/_ws", {
         headers: {
@@ -330,10 +344,10 @@ describe("server/handlers/preview/hmr.handler", () => {
         requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("HONOURS x-forwarded-host: localhost when request IS proxy-trusted", async () => {
+    it("does not treat a trusted forwarded localhost host as preview", async () => {
       Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
       const handler = new HMRHandler();
       const req = new Request("http://internal.proxy/_ws", {
@@ -347,18 +361,14 @@ describe("server/handlers/preview/hmr.handler", () => {
         adapter: createMockAdapter({ upgradeWebSocket: undefined }),
       });
       const result = await handler.handle(req, ctx);
-      // Handler path entered — not short-circuited.
-      assertEquals(result.continue, false);
+      assertEquals(result.response?.status, 403);
     });
 
     it(
-      "IGNORES x-forwarded-host: localhost when dispatch-JWS is present but unverifiable (Codex P1 regression)",
+      "does not treat an unverifiable dispatch JWS as proxy topology proof",
       async () => {
-        // A direct-access attacker can attach any value to x-veryfront-dispatch-jws
-        // because the proxy does not strip that header on ingress. Prior to the
-        // fix, mere presence unlocked forwarded-header trust and re-opened the
-        // localhost short-circuit. The handler must now cryptographically verify
-        // the JWS before promoting the request to proxy-trusted.
+        // Dispatch authorization and proxy topology are separate trust
+        // boundaries. No dispatch token may authorize forwarded routing data.
         const handler = new HMRHandler();
         const req = new Request("http://evil.example.com/_ws", {
           headers: {
@@ -372,14 +382,13 @@ describe("server/handlers/preview/hmr.handler", () => {
           requestContext: { mode: "production" } as any,
         });
         const result = await handler.handle(req, ctx);
-        // The bogus JWS must NOT unlock the localhost short-circuit.
-        assertEquals(result.continue, true);
+        assertEquals(result.response?.status, 403);
       },
     );
 
-    it("HONOURS raw Host: localhost even without proxy trust (bare-metal local dev)", async () => {
+    it("honours a loopback transport and matching localhost authority", async () => {
       const handler = new HMRHandler();
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = createLocalRequest("http://localhost:3000/_ws", {
         headers: { host: "localhost:3000" },
       });
       const ctx = makeCtx({
@@ -391,8 +400,8 @@ describe("server/handlers/preview/hmr.handler", () => {
     });
 
     it('treats "localhost.evil.com" as non-local (must not match by prefix)', async () => {
-      // Regression: any substring-match on "localhost" would be dangerous; isLocalDevHost
-      // uses precise matching, and this test locks that behaviour in.
+      // Local control requires exact authority matching as well as loopback
+      // transport provenance; a hostname prefix is never sufficient.
       const handler = new HMRHandler();
       const req = new Request("http://localhost.evil.com/_ws", {
         headers: { host: "localhost.evil.com" },
@@ -402,14 +411,14 @@ describe("server/handlers/preview/hmr.handler", () => {
         requestContext: { mode: "production" } as any,
       });
       const result = await handler.handle(req, ctx);
-      assertEquals(result.continue, true);
+      assertEquals(result.response?.status, 403);
     });
   });
 
   describe("handle - non-websocket request", () => {
     it("returns JSON status when not a websocket upgrade", async () => {
       const handler = new HMRHandler();
-      const req = new Request("http://localhost/_ws");
+      const req = createLocalRequest("http://localhost/_ws");
       const ctx = makeCtx({
         isLocalProject: true,
         adapter: createMockAdapter(),
@@ -428,7 +437,7 @@ describe("server/handlers/preview/hmr.handler", () => {
     it("returns an explicit WebSocket upgrade signal from adapter upgrades", async () => {
       const handler = new HMRHandler();
       const mock = createMockSocket();
-      const req = new Request("http://localhost/_ws", {
+      const req = createLocalRequest("http://localhost/_ws", {
         headers: { upgrade: "websocket" },
       });
       const upgradeResponse = createWebSocketUpgradeResponse();
@@ -454,7 +463,7 @@ describe("server/handlers/preview/hmr.handler", () => {
       const handler = new HMRHandler();
       const mock = createMockSocket();
       let upgradeOptions: unknown;
-      const req = new Request("http://localhost/_ws", {
+      const req = createLocalRequest("http://localhost/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = makeCtx({
@@ -478,7 +487,7 @@ describe("server/handlers/preview/hmr.handler", () => {
     it("preserves data from structurally compatible message events", async () => {
       const handler = new HMRHandler();
       const mock = createMockSocket();
-      const req = new Request("http://localhost/_ws", {
+      const req = createLocalRequest("http://localhost/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = makeCtx({
@@ -502,7 +511,7 @@ describe("server/handlers/preview/hmr.handler", () => {
 
     it("returns 501 when adapter.server is missing", async () => {
       const handler = new HMRHandler();
-      const req = new Request("http://localhost/_ws", {
+      const req = createLocalRequest("http://localhost/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = makeCtx({
@@ -518,7 +527,7 @@ describe("server/handlers/preview/hmr.handler", () => {
 
     it("returns 500 when upgradeWebSocket throws", async () => {
       const handler = new HMRHandler();
-      const req = new Request("http://localhost/_ws", {
+      const req = createLocalRequest("http://localhost/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = makeCtx({
@@ -535,7 +544,7 @@ describe("server/handlers/preview/hmr.handler", () => {
 
     it("returns 501 when upgradeWebSocket is unsupported by the runtime", async () => {
       const handler = new HMRHandler();
-      const req = new Request("http://localhost/_ws", {
+      const req = createLocalRequest("http://localhost/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = makeCtx({

@@ -487,45 +487,15 @@ interface RuntimeApiClient {
   delete<T>(path: string): Promise<T>;
 }
 
-function getRuntimeApiToken(req: Request, ctx: HandlerContext): string {
-  return req.headers.get("x-token") ?? ctx.proxyToken ?? ctx.requestContext?.token ?? "";
-}
-
-function getHeaderFirstValue(value: string | null): string | undefined {
-  return value?.split(",")[0]?.trim() || undefined;
-}
-
-function getForwardedProtocol(req: Request): "http:" | "https:" | undefined {
-  const value = getHeaderFirstValue(req.headers.get("x-forwarded-proto"))?.replace(/:$/, "");
-  return value === "http" || value === "https" ? `${value}:` : undefined;
-}
-
-function getRequestOriginCandidates(req: Request): Set<string> {
-  const url = new URL(req.url);
-  const protocols = new Set([url.protocol]);
-  const forwardedProtocol = getForwardedProtocol(req);
-  if (forwardedProtocol) protocols.add(forwardedProtocol);
-
-  const hosts = new Set([url.host]);
-  const hostHeader = getHeaderFirstValue(req.headers.get("host"));
-  const forwardedHost = getHeaderFirstValue(req.headers.get("x-forwarded-host"));
-  if (hostHeader) hosts.add(hostHeader);
-  if (forwardedHost) hosts.add(forwardedHost);
-
-  const origins = new Set<string>();
-  for (const protocol of protocols) {
-    for (const host of hosts) {
-      origins.add(`${protocol}//${host}`);
-    }
-  }
-  return origins;
+function getRuntimeApiToken(ctx: HandlerContext): string {
+  return ctx.proxyToken ?? ctx.requestContext?.token ?? "";
 }
 
 function isRequestSiblingAgUiEndpoint(endpoint: string, req: Request): boolean {
   try {
     const endpointUrl = new URL(endpoint);
     if (endpointUrl.pathname !== "/api/ag-ui") return false;
-    return getRequestOriginCandidates(req).has(endpointUrl.origin);
+    return endpointUrl.origin === new URL(req.url).origin;
   } catch {
     return false;
   }
@@ -636,9 +606,9 @@ function getEndpointProtocol(endpoint?: string): string | undefined {
   }
 }
 
-function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiClient {
+function createRuntimeApiClient(ctx: HandlerContext): RuntimeApiClient {
   const apiUrl = getEnvironmentConfig().apiBaseUrl;
-  const token = getRuntimeApiToken(req, ctx);
+  const token = getRuntimeApiToken(ctx);
   if (!token) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
@@ -697,7 +667,7 @@ function createRuntimeApiClient(req: Request, ctx: HandlerContext): RuntimeApiCl
 async function uploadEvalReportToProjectFiles(
   input: EvalReportUploadInput,
 ): Promise<string | null> {
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(input.ctx);
   const encodedProject = encodeURIComponent(input.projectReference);
   const encodedPath = encodeURIComponent(input.reportPath);
   const reportWithPath = { ...input.report, reportPath: input.reportPath };
@@ -781,7 +751,7 @@ async function executeKnowledgeIngestRun(input: {
 }): Promise<ProjectRunExecuteResponse> {
   const startedAt = Date.now();
   const config = input.request.config ?? {};
-  const client = createRuntimeApiClient(input.req, input.ctx);
+  const client = createRuntimeApiClient(input.ctx);
   const projectReference = input.ctx.projectSlug ?? input.request.projectId;
   const outputDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-run-" });
   const logLines: string[] = [];
@@ -964,7 +934,7 @@ function createEvalAdapterConfig(input: {
 }): AgentServiceEvalAdapterConfig {
   const config = input.request.config ?? {};
   const runInput = input.request.input ?? {};
-  const authToken = getRuntimeApiToken(input.req, input.ctx);
+  const authToken = getRuntimeApiToken(input.ctx);
   if (!authToken) {
     throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
   }
@@ -985,20 +955,19 @@ function createEvalAdapterConfig(input: {
     agentId,
     projectId: input.request.projectId,
     projectSlug: input.ctx.projectSlug,
-    releaseId: input.req.headers.get("x-release-id") ?? input.ctx.releaseId,
-    contentSourceId: input.req.headers.get("x-content-source-id"),
+    releaseId: input.ctx.releaseId,
+    contentSourceId: input.ctx.enriched?.contentSourceId,
     branchId: getStringConfig(config, ["branch_id", "branchId"]) ??
       getStringConfig(runInput, ["branch_id", "branchId"]) ??
-      input.req.headers.get("x-branch-id"),
-    branchName: input.req.headers.get("x-branch-name"),
-    environment: managedEndpointContext?.environment ?? input.req.headers.get("x-environment") ??
-      input.ctx.resolvedEnvironment,
-    environmentId: input.req.headers.get("x-environment-id") ?? input.ctx.environmentId,
+      input.request.runtimeTargetBranchId ?? undefined,
+    branchName: input.ctx.requestContext?.branch ?? undefined,
+    environment: managedEndpointContext?.environment ?? input.ctx.resolvedEnvironment,
+    environmentId: input.request.runtimeTargetEnvironmentId === undefined
+      ? input.ctx.environmentId
+      : input.request.runtimeTargetEnvironmentId ?? undefined,
     forwardedHost: managedEndpointContext?.forwardedHost ??
-      getHeaderFirstValue(input.req.headers.get("x-forwarded-host")) ??
       getEndpointHost(input.request.runtimeAgUiEndpoint),
     forwardedProto: managedEndpointContext?.forwardedProto ??
-      getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
     allowedTools: getStringArrayConfig(config, ["allowed_tools", "allowedTools"]),
@@ -1097,8 +1066,7 @@ async function executeReleaseAssetBuildRun(input: {
     );
 
     const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
-    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
-      input.ctx.requestContext?.token ?? "";
+    const token = getRuntimeApiToken(input.ctx);
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     const apiClient = new VeryfrontApiClient({
@@ -1199,7 +1167,7 @@ async function executeDependencyArtifactBuildRun(input: {
       runDependencyArtifactBuild,
     } = await import("#veryfront/release-assets/dependency-artifact-builder.ts");
     const taskInput = parseDependencyArtifactBuildTaskInput(input.request.config);
-    const token = getRuntimeApiToken(input.req, input.ctx);
+    const token = getRuntimeApiToken(input.ctx);
     if (!token) {
       throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
     }
@@ -1414,8 +1382,7 @@ async function executeStyleArtifactBuildRun(input: {
       "#veryfront/html/styles-builder/style-scope-profile.ts"
     );
 
-    const token = input.req.headers.get("x-token") ?? input.ctx.proxyToken ??
-      input.ctx.requestContext?.token ?? "";
+    const token = getRuntimeApiToken(input.ctx);
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     apiClient = new VeryfrontApiClient({

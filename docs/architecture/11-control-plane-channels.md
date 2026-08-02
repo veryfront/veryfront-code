@@ -43,6 +43,10 @@ Primary source areas:
 - A valid channel signature authorizes only its bound request. It never grants
   generic trust to forwarded host, path, project, or environment headers; that
   topology decision remains operator-controlled.
+- After verification, handlers derive execution identity from signed claims,
+  signed body fields, and the runtime's pre-resolved trusted context. Mutable
+  request headers are not a second source of release, branch, environment,
+  content-source, endpoint, or credential identity.
 - AG-UI event encoding belongs in [AG-UI transport](./06-ag-ui-transport.md).
 - MCP JSON-RPC dispatch belongs in [MCP runtime](./10-mcp-runtime.md).
 

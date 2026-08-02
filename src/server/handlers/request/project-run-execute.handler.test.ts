@@ -18,10 +18,28 @@ import {
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
 } from "./project-run-execute.handler.ts";
-import { createControlPlaneSignature, createCtx } from "./internal-agent-run.test-helpers.ts";
+import {
+  createControlPlaneSignature,
+  createCtx as createBaseCtx,
+} from "./internal-agent-run.test-helpers.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 const encoder = new TextEncoder();
+
+function createCtx(publicKeyPem?: string): HandlerContext {
+  return {
+    ...createBaseCtx(publicKeyPem),
+    proxyToken: "runtime-token",
+    environmentId: "env-1",
+    resolvedEnvironment: "preview",
+    requestContext: {
+      token: "runtime-token",
+      slug: "demo-project",
+      branch: "main",
+      mode: "preview",
+    },
+  };
+}
 
 function encodeDataStreamEvent(payload: Record<string, unknown>): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
@@ -806,6 +824,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     let receivedEnvironmentId: unknown;
     let receivedProjectIdHeader: unknown;
     let receivedBranchName: unknown;
+    let receivedBranchId: unknown;
+    let receivedReleaseId: unknown;
+    let receivedContentSourceId: unknown;
     const handler = new ProjectRunExecuteHandler(createDeps({
       runEval: async (_definition, options) => {
         receivedRunId = options.runId;
@@ -823,6 +844,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         receivedEnvironmentId = config.environmentId;
         receivedProjectIdHeader = config.projectId;
         receivedBranchName = config.branchName;
+        receivedBranchId = config.branchId;
+        receivedReleaseId = config.releaseId;
+        receivedContentSourceId = config.contentSourceId;
         return async () => ({ text: "Paris" });
       },
     }));
@@ -839,19 +863,25 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       "/api/control-plane/runs/run_eval_1/execute",
       body,
       {
-        "x-token": "runtime-token",
-        "x-forwarded-host": "demo-project.preview.veryfront.org",
-        "x-forwarded-proto": "https",
-        "x-environment": "preview",
-        "x-environment-id": "env-1",
-        "x-branch-name": "main",
+        "x-token": "attacker-token",
+        "x-forwarded-host": "attacker.example",
+        "x-forwarded-proto": "http",
+        "x-environment": "production",
+        "x-environment-id": "attacker-env",
+        "x-branch-name": "attacker-branch",
+        "x-branch-id": "attacker-branch-id",
+        "x-release-id": "attacker-release",
+        "x-content-source-id": "attacker-source",
       },
     );
 
+    const ctx = createCtx(publicKeyPem);
+    ctx.releaseId = "rel-trusted";
+    ctx.enriched = { contentSourceId: "preview-main" } as HandlerContext["enriched"];
     const result = await withEnvValue(
       "PORT",
       "4311",
-      () => handler.handle(request, createCtx(publicKeyPem)),
+      () => handler.handle(request, ctx),
     );
 
     assertExists(result.response);
@@ -874,6 +904,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(receivedEnvironmentId, "env-1");
     assertEquals(receivedProjectIdHeader, "proj-1");
     assertEquals(receivedBranchName, "main");
+    assertEquals(receivedBranchId, undefined);
+    assertEquals(receivedReleaseId, "rel-trusted");
+    assertEquals(receivedContentSourceId, "preview-main");
   });
 
   it("returns an eval report artifact path when report upload succeeds", async () => {

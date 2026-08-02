@@ -32,12 +32,18 @@ import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 import { withProxyStreamingBodyDuplex } from "./request-init.ts";
 
 export const INTERNAL_PROXY_HEADERS = [
+  "forwarded",
+  "via",
   "x-token",
   "x-project-slug",
   "x-environment",
   "x-environment-id",
   "x-content-source-id",
   "x-forwarded-host",
+  "x-forwarded-for",
+  "x-forwarded-port",
+  "x-forwarded-proto",
+  "x-real-ip",
   "x-project-path",
   "x-project-id",
   "x-release-id",

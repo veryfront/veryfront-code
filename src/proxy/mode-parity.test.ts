@@ -264,6 +264,18 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-release-id"], "rel-id");
       assertEquals(headers["x-branch-id"], "branch-id");
       assertEquals(headers["x-branch-name"], "feature-branch");
+      for (
+        const untrustedProvenanceHeader of [
+          "forwarded",
+          "via",
+          "x-forwarded-for",
+          "x-forwarded-port",
+          "x-forwarded-proto",
+          "x-real-ip",
+        ]
+      ) {
+        assertEquals(injected.headers.get(untrustedProvenanceHeader), null);
+      }
       assertEquals(injected.headers.get("accept"), "text/html");
     });
 

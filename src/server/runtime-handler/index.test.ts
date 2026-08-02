@@ -53,6 +53,17 @@ function createProxyModeHandler() {
   });
 }
 
+async function withTrustedProxyTopology<T>(operation: () => Promise<T>): Promise<T> {
+  const previous = Deno.env.get("VERYFRONT_TRUST_FORWARDED_HEADERS");
+  Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", "1");
+  try {
+    return await operation();
+  } finally {
+    if (previous === undefined) Deno.env.delete("VERYFRONT_TRUST_FORWARDED_HEADERS");
+    else Deno.env.set("VERYFRONT_TRUST_FORWARDED_HEADERS", previous);
+  }
+}
+
 function captureConsoleOutput(): { lines: string[]; restore: () => void } {
   const lines: string[] = [];
   const originalLog = console.log;
@@ -166,10 +177,12 @@ describe("server/runtime-handler/index", () => {
   it("returns 502 when x-project-slug is missing in proxy mode", async () => {
     const handler = createProxyModeHandler();
 
-    const response = await handler(
-      new Request("http://localhost/page", {
-        headers: { "x-token": "proxy-token" },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://localhost/page", {
+          headers: { "x-token": "proxy-token" },
+        }),
+      )
     );
 
     assertEquals(response.status, 502);
@@ -243,10 +256,12 @@ describe("server/runtime-handler/index", () => {
   it("returns 502 when x-token is missing in proxy mode", async () => {
     const handler = createProxyModeHandler();
 
-    const response = await handler(
-      new Request("http://localhost/page", {
-        headers: { "x-project-slug": "my-project" },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://localhost/page", {
+          headers: { "x-project-slug": "my-project" },
+        }),
+      )
     );
 
     assertEquals(response.status, 502);
@@ -257,18 +272,20 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
-  it("allows standard first-party proxy context headers without an extra trust proof", async () => {
+  it("allows proxy context headers only under the operator-trusted topology", async () => {
     const handler = createProxyModeHandler();
 
-    const response = await handler(
-      new Request("http://localhost/page", {
-        headers: {
-          "x-project-slug": "my-project",
-          "x-token": "proxy-token",
-          "x-forwarded-host": "my-project.production.veryfront.com",
-          "x-release-id": "rel_123",
-        },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://localhost/page", {
+          headers: {
+            "x-project-slug": "my-project",
+            "x-token": "proxy-token",
+            "x-forwarded-host": "my-project.production.veryfront.com",
+            "x-release-id": "rel_123",
+          },
+        }),
+      )
     );
 
     assertEquals(response.status === 502, false);
@@ -292,18 +309,20 @@ describe("server/runtime-handler/index", () => {
     assertEquals(response.status, 502);
     assertEquals(response.headers.get("Content-Type"), "application/json");
     assertEquals(await response.json(), {
-      error: "Untrusted proxy context",
-      detail: "proxy context headers require a trusted upstream proxy",
+      error: "Untrusted proxy topology",
+      detail: "shared runtime requests require a trusted upstream proxy",
     });
   });
 
-  it("skips the proxy header guard for websocket requests", async () => {
+  it("allows websocket routing only under the operator-trusted topology", async () => {
     const handler = createProxyModeHandler();
 
-    const response = await handler(
-      new Request(
-        "http://localhost/_ws?x-environment=preview&x-project-slug=test-project",
-      ),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request(
+          "http://localhost/_ws?x-environment=preview&x-project-slug=test-project",
+        ),
+      )
     );
 
     assertEquals(response.status, 200);
@@ -370,13 +389,15 @@ describe("server/runtime-handler/index", () => {
     }
   });
 
-  it("skips the proxy header guard for lightweight module requests", async () => {
+  it("allows lightweight module requests only under the operator-trusted topology", async () => {
     const handler = createProxyModeHandler();
 
-    const response = await handler(
-      new Request("http://localhost/_veryfront/hydration-runtime.js", {
-        headers: { "x-release-id": "rel_123" },
-      }),
+    const response = await withTrustedProxyTopology(() =>
+      handler(
+        new Request("http://localhost/_veryfront/hydration-runtime.js", {
+          headers: { "x-release-id": "rel_123" },
+        }),
+      )
     );
 
     assertEquals(response.status === 502, false);

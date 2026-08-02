@@ -61,6 +61,31 @@ describe("createRequestContext", () => {
       assertEquals(ctx.mode, "production");
     });
 
+    it("honors an environment header from trusted proxy topology", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "runtime.internal",
+        "x-environment": "preview",
+      });
+      const ctx = createRequestContext(req, { proxyTrusted: true });
+      assertEquals(ctx.mode, "preview");
+    });
+
+    it("ignores environment query routing outside the websocket bridge", () => {
+      const req = makeRequest("https://runtime.internal/page?x-environment=preview", {
+        host: "runtime.internal",
+      });
+      const ctx = createRequestContext(req, { proxyTrusted: true });
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("honors proxy-rewritten websocket environment routing", () => {
+      const req = makeRequest("https://runtime.internal/_ws?x-environment=preview", {
+        host: "runtime.internal",
+      });
+      const ctx = createRequestContext(req, { proxyTrusted: true });
+      assertEquals(ctx.mode, "preview");
+    });
+
     it("returns preview mode via .preview. in veryfront.org domain", () => {
       const req = makeRequest("https://127.0.0.1/page", {
         host: "my-app.preview.veryfront.org",
@@ -217,12 +242,23 @@ describe("createRequestContext", () => {
   });
 
   describe("token and slug", () => {
+    it("ignores untrusted proxy token and project slug headers", () => {
+      const req = makeRequest("https://example.com/page", {
+        host: "example.com",
+        "x-token": "attacker-token",
+        "x-project-slug": "attacker-project",
+      });
+      const ctx = createRequestContext(req, { proxyTrusted: false });
+      assertEquals(ctx.token === "attacker-token", false);
+      assertEquals(ctx.slug, "");
+    });
+
     it("reads x-token from headers", () => {
       const req = makeRequest("https://example.com/page", {
         host: "example.com",
         "x-token": "my-secret-token",
       });
-      const ctx = createRequestContext(req);
+      const ctx = createRequestContext(req, { proxyTrusted: true });
       assertEquals(ctx.token, "my-secret-token");
     });
 
@@ -231,7 +267,7 @@ describe("createRequestContext", () => {
         host: "example.com",
         "x-project-slug": "custom-slug",
       });
-      const ctx = createRequestContext(req);
+      const ctx = createRequestContext(req, { proxyTrusted: true });
       assertEquals(ctx.slug, "custom-slug");
     });
 
@@ -240,7 +276,7 @@ describe("createRequestContext", () => {
         host: "my-app.lvh.me",
         "x-project-slug": "override-slug",
       });
-      const ctx = createRequestContext(req);
+      const ctx = createRequestContext(req, { proxyTrusted: true });
       assertEquals(ctx.slug, "override-slug");
     });
 

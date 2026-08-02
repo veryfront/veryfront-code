@@ -93,30 +93,28 @@ export function extractRequestHeaders(
   url: URL,
   proxyTrusted?: boolean,
 ): RequestHeaders {
-  const host = getEffectiveHost(req, url, proxyTrusted);
+  const trustProxy = proxyTrusted ?? isProxyTopologyTrusted();
+  const host = getEffectiveHost(req, url, trustProxy);
   const parsedDomain = parseProjectDomain(host);
-  const projectSlugHeader = req.headers.get("x-project-slug")?.trim() || undefined;
-  // The WebSocket endpoint uses this query parameter for its existing HMR
-  // handshake. Other routes must not let client-controlled query/header values
-  // override the host-derived environment unless a trusted proxy supplied them.
-  const websocketEnvironment = url.pathname === "/_ws"
-    ? url.searchParams.get("x-environment") ?? undefined
+  const projectSlugHeader = trustProxy
+    ? req.headers.get("x-project-slug")?.trim() || undefined
     : undefined;
-  const environment = (proxyTrusted ?? isProxyTopologyTrusted())
-    ? req.headers.get("x-environment") ?? url.searchParams.get("x-environment") ?? undefined
-    : websocketEnvironment;
+  const environment = trustProxy
+    ? req.headers.get("x-environment") ??
+      (url.pathname === "/_ws" ? url.searchParams.get("x-environment") : null) ?? undefined
+    : undefined;
 
   return {
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
-    projectId: req.headers.get("x-project-id") ?? undefined,
-    releaseId: req.headers.get("x-release-id") ?? undefined,
-    branchId: req.headers.get("x-branch-id") ?? undefined,
-    branchName: req.headers.get("x-branch-name") ?? undefined,
+    projectId: trustProxy ? req.headers.get("x-project-id") ?? undefined : undefined,
+    releaseId: trustProxy ? req.headers.get("x-release-id") ?? undefined : undefined,
+    branchId: trustProxy ? req.headers.get("x-branch-id") ?? undefined : undefined,
+    branchName: trustProxy ? req.headers.get("x-branch-name") ?? undefined : undefined,
     environment,
-    environmentId: req.headers.get("x-environment-id") ?? undefined,
+    environmentId: trustProxy ? req.headers.get("x-environment-id") ?? undefined : undefined,
     token: undefined, // Extracted separately from request context
-    contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
-    projectPath: req.headers.get("x-project-path") ?? undefined,
+    contentSourceId: trustProxy ? req.headers.get("x-content-source-id") ?? undefined : undefined,
+    projectPath: trustProxy ? req.headers.get("x-project-path") ?? undefined : undefined,
   };
 }
 

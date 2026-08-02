@@ -359,9 +359,23 @@ function createProxyGuard(
   headers: ProjectRequestHeaders,
   proxyTrusted: boolean | undefined,
 ): ProxyGuardResult | undefined {
-  if (!isProxyMode || isLightweightPath(url.pathname) || isWebSocketPath(url.pathname)) {
-    return undefined;
+  if (!isProxyMode) return undefined;
+
+  if (!proxyTrusted) {
+    const body = {
+      error: "Untrusted proxy topology",
+      detail: "shared runtime requests require a trusted upstream proxy",
+    };
+    return {
+      detail: body.detail,
+      response: new Response(JSON.stringify(body), {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      }),
+    };
   }
+
+  if (isLightweightPath(url.pathname) || isWebSocketPath(url.pathname)) return undefined;
 
   const token = req.headers.get("x-token");
   const body = !headers.projectSlug
@@ -373,11 +387,6 @@ function createProxyGuard(
     ? {
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",
-    }
-    : req.headers.get("x-project-path") && !proxyTrusted
-    ? {
-      error: "Untrusted proxy context",
-      detail: "proxy context headers require a trusted upstream proxy",
     }
     : undefined;
 

@@ -14,66 +14,18 @@ import {
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
 } from "#veryfront/utils";
-import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import { recordRequestPeerFromTransport } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
-const encoder = new TextEncoder();
-
-let trustedSigningKeyPair: CryptoKeyPair;
-let trustedPublicKeyPem: string;
-
-function encodePem(label: string, der: ArrayBuffer): string {
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
-  const lines = base64.match(/.{1,64}/g) ?? [base64];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
-}
-
-async function ensureKeyMaterial(): Promise<void> {
-  if (trustedPublicKeyPem) return;
-  trustedSigningKeyPair = (await crypto.subtle.generateKey(
-    "Ed25519",
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const der = await crypto.subtle.exportKey("spki", trustedSigningKeyPair.publicKey);
-  trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
-}
-
-async function mintTrustedDispatchJws(): Promise<string> {
-  await ensureKeyMaterial();
-  const now = Math.floor(Date.now() / 1000);
-  const header = { alg: "EdDSA", typ: "JWT" };
-  const claims = {
-    iss: "veryfront-api",
-    aud: "demo-project",
-    sub: "dispatch-hmr-test",
-    project_id: "proj-1",
-    platform: "slack",
-    body_sha256: "n/a",
-    iat: now,
-    exp: now + 60,
-  };
-  const encodedHeader = base64urlEncode(JSON.stringify(header));
-  const encodedPayload = base64urlEncode(JSON.stringify(claims));
-  const signingInput = encoder.encode(`${encodedHeader}.${encodedPayload}`);
-  const signature = await crypto.subtle.sign(
-    "Ed25519",
-    trustedSigningKeyPair.privateKey,
-    signingInput,
-  );
-  return `${encodedHeader}.${encodedPayload}.${base64urlEncodeBytes(new Uint8Array(signature))}`;
-}
-
-function adapterEnv() {
-  return {
-    fs: {},
-    server: null,
-    env: {
-      get(key: string) {
-        if (key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") return trustedPublicKeyPem;
-        return undefined;
-      },
-    },
-  };
+function createLocalRequest(url: string, init: RequestInit = {}): Request {
+  const headers = new Headers(init.headers);
+  if (!headers.has("host")) headers.set("host", new URL(url).host);
+  const request = new Request(url, { ...init, headers });
+  recordRequestPeerFromTransport(request, {
+    runtime: "deno",
+    transport: "tcp",
+    hostname: "127.0.0.1",
+  });
+  return request;
 }
 
 function createMockSocket() {
@@ -164,7 +116,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(handler.metadata.enabled?.(noCtx), true);
     });
 
-    it("handle returns continue for non-preview/non-localdev requests", async () => {
+    it("rejects non-preview remote requests", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://production.example.com/_ws");
@@ -178,8 +130,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 403);
     });
 
     it("does not treat *.production.veryfront.me as localhost", async () => {
@@ -198,8 +149,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 403);
     });
 
     it("does not treat *.staging.veryfront.me as localhost", async () => {
@@ -218,8 +168,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 403);
     });
 
     it("does not treat unknown *.veryfront.me namespace as localhost", async () => {
@@ -238,14 +187,13 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("treats preview.veryfront.me as local preview host", async () => {
+    it("accepts preview.veryfront.me only over a loopback transport", async () => {
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = createLocalRequest("http://preview.veryfront.me:3000/_ws", {
         headers: { host: "preview.veryfront.me:3000" },
       });
       const ctx = {
@@ -262,7 +210,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response.status, 200);
     });
 
-    it("IGNORES x-forwarded-host when the request is NOT proxy-trusted (VULN-SRV-4)", async () => {
+    it("ignores forwarded preview hosts outside trusted proxy topology", async () => {
       // Without a trusted-proxy signal the handler MUST NOT honour x-forwarded-host
       // — otherwise any remote client could claim `x-forwarded-host: preview.veryfront.me`
       // and unlock HMR on a production deployment. The raw Host header ("internal.proxy")
@@ -285,46 +233,12 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("HONOURS x-forwarded-host when the request IS proxy-trusted (valid dispatch JWS)", async () => {
-      // With a cryptographically-verified dispatch-JWS signal, the request
-      // demonstrably came through the Veryfront fronting proxy, so the forwarded
-      // host is safe to consult. The preview.veryfront.me host is a recognised
-      // local preview surface and the handler must enter the HMR path.
-      const handler = new HMRHandler();
-      const jws = await mintTrustedDispatchJws();
-
-      const req = new Request("http://internal.proxy:3000/_ws", {
-        headers: {
-          host: "internal.proxy:3000",
-          "x-forwarded-host": "preview.veryfront.me:3000",
-          "x-veryfront-dispatch-jws": jws,
-        },
-      });
-      const ctx = {
-        requestContext: { mode: "production" },
-        projectDir: "/tmp/test",
-        securityConfig: null,
-        cspUserHeader: null,
-        adapter: adapterEnv(),
-      } as unknown as Parameters<typeof handler.handle>[1];
-
-      const result = await handler.handle(req, ctx);
-
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
-    });
-
-    it("IGNORES x-forwarded-host when dispatch JWS is present but unverifiable (Codex P1 regression)", async () => {
-      // Regression for Codex P1 on PR #1116: mere presence of `x-veryfront-dispatch-jws`
-      // must NOT be treated as proof of proxy trust. Since the proxy does not strip
-      // this header on ingress, an attacker reaching the runtime directly could
-      // attach any value and unlock x-forwarded-host handling. Only a crypto-verified
-      // JWS counts as a trust signal.
-      await ensureKeyMaterial();
+    it("does not treat an unverifiable dispatch JWS as proxy topology proof", async () => {
+      // Dispatch authorization and proxy topology are separate trust
+      // boundaries. No dispatch token may authorize forwarded routing data.
       const handler = new HMRHandler();
 
       const req = new Request("http://internal.proxy:3000/_ws", {
@@ -339,13 +253,12 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         projectDir: "/tmp/test",
         securityConfig: null,
         cspUserHeader: null,
-        adapter: adapterEnv(),
+        adapter: { fs: {}, server: null },
       } as unknown as Parameters<typeof handler.handle>[1];
 
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 403);
     });
 
     it("rejects x-forwarded-host spoof that tries to unlock localhost without proxy trust", async () => {
@@ -370,11 +283,10 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertEquals(result.continue, true);
-      assertEquals(result.response, undefined);
+      assertEquals(result.response?.status, 403);
     });
 
-    it("handle accepts preview via query param (for proxy WebSocket)", async () => {
+    it("rejects preview query routing without trusted proxy topology", async () => {
       const handler = new HMRHandler();
 
       const req = new Request("http://localhost:3000/_ws?x-environment=preview");
@@ -388,8 +300,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
-      assertExists(result.response);
-      assertEquals(result.response.status, 200);
+      assertEquals(result.response?.status, 403);
     });
   });
 
@@ -408,7 +319,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
     it("returns info response for non-WebSocket requests", async () => {
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = createLocalRequest("http://localhost:3000/_ws");
       const ctx = {
         requestContext: { mode: "preview" },
         mode: "development",
@@ -432,7 +343,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
     it("returns 501 for WebSocket upgrade without adapter server", async () => {
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = createLocalRequest("http://localhost:3000/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = {
@@ -456,7 +367,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const handler = new HMRHandler();
       const mock = createMockSocket();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = createLocalRequest("http://localhost:3000/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = {
@@ -490,7 +401,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const handler = new HMRHandler();
       const mock = createMockSocket();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = createLocalRequest("http://localhost:3000/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = {
@@ -525,7 +436,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       const handler = new HMRHandler();
       const mock = createMockSocket();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = createLocalRequest("http://localhost:3000/_ws", {
         headers: { upgrade: "websocket" },
       });
       const ctx = {
@@ -567,7 +478,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       });
 
       try {
-        const req = new Request("http://localhost:3000/_ws", {
+        const req = createLocalRequest("http://localhost:3000/_ws", {
           headers: { upgrade: "websocket" },
         });
         const ctx = {
@@ -644,7 +555,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         },
       };
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = createLocalRequest("http://localhost:3000/_ws");
       const ctx = {
         requestContext: { mode: "preview", branch: "main" },
         resolvedEnvironment: "preview",
@@ -729,7 +640,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         },
       };
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = createLocalRequest("http://localhost:3000/_ws");
       const ctx = {
         requestContext: { mode: "preview" },
         resolvedEnvironment: "preview",
@@ -771,7 +682,7 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
         },
       };
 
-      const req = new Request("http://localhost:3000/_ws");
+      const req = createLocalRequest("http://localhost:3000/_ws");
       const ctx = {
         requestContext: { mode: "preview", branch: "main" },
         resolvedEnvironment: "preview",

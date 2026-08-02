@@ -11,7 +11,6 @@ import {
 import { ReloadNotifier } from "../../reload-notifier.ts";
 import { invalidateProjectCaches } from "../../context/cache-invalidation.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { isLocalDevHost } from "../../utils/domain-parser.ts";
 import {
   addClient,
   clearAll,
@@ -23,8 +22,8 @@ import {
 import { handleHmrClientMessage } from "./hmr-client-message.ts";
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
-import { getEffectiveRequestHost } from "../../utils/request-host.ts";
 import { isProxyTrusted } from "../../utils/proxy-trust.ts";
+import { isTrustedLocalControlRequest } from "#veryfront/security/http/local-control-request.ts";
 
 const logger = serverLogger.component("hmr-handler");
 const HMR_WEBSOCKET_UPGRADE_OPTIONS = { idleTimeout: 0 } as const;
@@ -93,33 +92,21 @@ export class HMRHandler extends BaseHandler {
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     if (!this.shouldHandle(req, ctx)) return this.continue();
 
-    const url = new URL(req.url);
-    const queryEnv = url.searchParams.get("x-environment");
-    const isPreviewMode = ctx.requestContext?.mode === "preview" || queryEnv === "preview";
-    const isLocal = !!ctx.isLocalProject;
-    // SECURITY: x-forwarded-host is client-controlled unless we trust the upstream proxy.
-    // Honouring it unconditionally lets any remote client present `x-forwarded-host: localhost`
-    // and unlock the localhost short-circuit that opens HMR (VULN-SRV-4). Only consult
-    // forwarded headers when the request is proxy-trusted; otherwise use Host / url.host.
-    // A channel dispatch JWS does not bind this host and therefore cannot grant
-    // generic proxy trust. Only the operator's trusted-proxy topology setting
-    // can authorize forwarded routing metadata.
-    const host = (await isProxyTrusted(req))
-      ? getEffectiveRequestHost(req, url, true)
-      : (req.headers.get("host") ?? url.host);
-    const isLocalhost = isLocalDevHost(host);
+    const proxyTrusted = await isProxyTrusted(req);
+    const isTrustedPreview = proxyTrusted && ctx.requestContext?.mode === "preview";
+    const isLocalControl = isTrustedLocalControlRequest(req, {
+      proxyTopologyTrusted: proxyTrusted,
+    });
 
-    if (!isPreviewMode && !isLocal && !isLocalhost) {
-      logger.warn("Skipping /_ws - not preview, local dev, or localhost", {
+    if (!isTrustedPreview && !isLocalControl) {
+      logger.warn("Rejecting /_ws outside trusted preview or local control transport", {
         mode: ctx.requestContext?.mode,
-        queryEnv,
         isLocalProject: ctx.isLocalProject,
-        host,
-        isPreviewMode,
-        isLocal,
-        isLocalhost,
+        proxyTrusted,
+        isTrustedPreview,
+        isLocalControl,
       });
-      return this.continue();
+      return this.respond(new Response("Forbidden", { status: 403 }));
     }
 
     HMRHandler.initialize();
