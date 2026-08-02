@@ -119,6 +119,24 @@ describe("client/spa/page-data", () => {
     assertThrows(() => snapshotPageData(pageData), TypeError);
   });
 
+  it("rejects circular page-authored data", () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const pageData = validPageData();
+    pageData.props = { circular };
+
+    assertThrows(() => snapshotPageData(pageData), TypeError);
+  });
+
+  it("rejects page-authored data beyond the aggregate entry budget", () => {
+    const pageData = validPageData();
+    pageData.props = {
+      values: Array.from({ length: 65_537 }, (_, index) => index),
+    };
+
+    assertThrows(() => snapshotPageData(pageData), TypeError);
+  });
+
   it("rejects sparse or accessor-backed arrays at admission", () => {
     const sparse = validPageData();
     sparse.providers = new Array(1);
