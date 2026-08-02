@@ -24,6 +24,7 @@ factory explicitly:
 
 ```ts
 import extYaml from "@veryfront/ext-yaml";
+import { defineConfig } from "veryfront";
 
 export default defineConfig({
   extensions: [extYaml()],
