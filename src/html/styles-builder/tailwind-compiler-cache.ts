@@ -56,6 +56,7 @@ export interface CSSCompilationSession {
 
 const compilationCache = new Map<string, CompilationCacheEntry>();
 const inFlightCompilations = new Map<string, Promise<string>>();
+const inFlightCompilationOwners = new Map<string, object>();
 const cssCompilationSessions = new WeakSet<object>();
 const MAX_CACHED_COMPILATIONS = 10;
 const MAX_CACHED_COMPILATION_BYTES = 64 * 1024 * 1024;
@@ -168,12 +169,15 @@ async function buildForProcessor(
     }
     return css;
   })();
+  const owner = {};
   inFlightCompilations.set(key, compilation);
+  inFlightCompilationOwners.set(key, owner);
   try {
     return await compilation;
   } finally {
-    if (inFlightCompilations.get(key) === compilation) {
+    if (inFlightCompilationOwners.get(key) === owner) {
       inFlightCompilations.delete(key);
+      inFlightCompilationOwners.delete(key);
     }
   }
 }
@@ -221,6 +225,7 @@ export function invalidateCompiler(): void {
   compilationCacheEpoch++;
   compilationCache.clear();
   inFlightCompilations.clear();
+  inFlightCompilationOwners.clear();
   cachedCompilationBytes = 0;
   logger.debug("All CSS compilations invalidated");
 }

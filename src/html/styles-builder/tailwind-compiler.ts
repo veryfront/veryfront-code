@@ -74,7 +74,9 @@ const inFlightProjectCSS = new Map<
   string,
   Promise<{ css: string; hash: string; fromCache: boolean }>
 >();
+const inFlightProjectCSSOwners = new Map<string, object>();
 const inFlightRegeneration = new Map<string, Promise<string | undefined>>();
+const inFlightRegenerationOwners = new Map<string, object>();
 
 export interface CSSGenerationResult {
   readonly css: string;
@@ -264,12 +266,15 @@ export async function getProjectCSS(
     );
     return { css: result.css, hash, fromCache: false };
   })();
+  const owner = {};
   inFlightProjectCSS.set(context.cacheKey, generation);
+  inFlightProjectCSSOwners.set(context.cacheKey, owner);
   try {
     return await generation;
   } finally {
-    if (inFlightProjectCSS.get(context.cacheKey) === generation) {
+    if (inFlightProjectCSSOwners.get(context.cacheKey) === owner) {
       inFlightProjectCSS.delete(context.cacheKey);
+      inFlightProjectCSSOwners.delete(context.cacheKey);
     }
   }
 }
@@ -316,12 +321,15 @@ export async function regenerateCSSByHash(
     },
     { "css.hash": expectedHash },
   );
+  const owner = {};
   inFlightRegeneration.set(inFlightKey, regeneration);
+  inFlightRegenerationOwners.set(inFlightKey, owner);
   try {
     return await regeneration;
   } finally {
-    if (inFlightRegeneration.get(inFlightKey) === regeneration) {
+    if (inFlightRegenerationOwners.get(inFlightKey) === owner) {
       inFlightRegeneration.delete(inFlightKey);
+      inFlightRegenerationOwners.delete(inFlightKey);
     }
   }
 }
