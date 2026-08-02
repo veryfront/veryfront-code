@@ -487,6 +487,7 @@ export function addAnthropicUsage(
     ...(totalTokens === undefined ? {} : { totalTokens }),
     ...(cacheCreationInputTokens === undefined ? {} : { cacheCreationInputTokens }),
     ...(cacheReadInputTokens === undefined ? {} : { cacheReadInputTokens }),
+    ...(cacheReadInputTokens === undefined ? {} : { cachedInputTokens: cacheReadInputTokens }),
     ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
     ...(billableInputTokens === undefined ? {} : { billableInputTokens }),
     ...(billableOutputTokens === undefined ? {} : { billableOutputTokens }),
