@@ -40,8 +40,7 @@ import {
 } from "#veryfront/release-assets/module-consumption.ts";
 import type { ReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 import {
-  getReadyManifestForRenderAsync,
-  isReleaseAssetManifestEnabled,
+  getReadyManifestForBrowserModuleAdmission,
 } from "#veryfront/release-assets/manifest-cache.ts";
 import { resolveManifestModuleUrl } from "#veryfront/release-assets/html-consumption.ts";
 import {
@@ -703,12 +702,14 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         !isSSR &&
         options.mode === "production" &&
         options.releaseId &&
-        !isFrameworkBrowserModulePath(modulePath) &&
-        isReleaseAssetManifestEnabled()
+        !isFrameworkBrowserModulePath(modulePath)
       ) {
-        const admissionManifest = await getReadyManifestForRenderAsync(options.releaseId, {
-          refreshCachedNull: true,
-        });
+        const admissionManifest = await getReadyManifestForBrowserModuleAdmission(
+          options.releaseId,
+          {
+            refreshCachedNull: true,
+          },
+        );
         if (!admissionManifest) {
           logger.error("Production browser module manifest is unavailable", {
             modulePath,

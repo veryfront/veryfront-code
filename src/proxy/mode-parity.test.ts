@@ -22,6 +22,7 @@ function extractProxyHeaders(req: Request): Record<string, string | null> {
     "x-project-slug": req.headers.get("x-project-slug"),
     "x-environment": req.headers.get("x-environment"),
     "x-environment-id": req.headers.get("x-environment-id"),
+    "x-environment-name": req.headers.get("x-environment-name"),
     "x-content-source-id": req.headers.get("x-content-source-id"),
     "x-forwarded-host": req.headers.get("x-forwarded-host"),
     "x-project-path": req.headers.get("x-project-path"),
@@ -225,6 +226,7 @@ describe("Proxy-Renderer Mode Parity", () => {
         branchId: "branch-id",
         branchName: "feature-branch",
         environmentId: "env-id",
+        environmentName: "production",
         environment: "production",
         contentSourceId: "release-rel-id",
         host: "proj.production.veryfront.com",
@@ -257,6 +259,7 @@ describe("Proxy-Renderer Mode Parity", () => {
       assertEquals(headers["x-project-slug"], "proj");
       assertEquals(headers["x-environment"], "production");
       assertEquals(headers["x-environment-id"], "env-id");
+      assertEquals(headers["x-environment-name"], "production");
       assertEquals(headers["x-content-source-id"], "release-rel-id");
       assertEquals(headers["x-forwarded-host"], "proj.production.veryfront.com");
       assertEquals(headers["x-project-path"], null);

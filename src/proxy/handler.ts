@@ -36,6 +36,7 @@ export const INTERNAL_PROXY_HEADERS = [
   "x-project-slug",
   "x-environment",
   "x-environment-id",
+  "x-environment-name",
   "x-content-source-id",
   "x-forwarded-host",
   "x-project-path",
@@ -107,6 +108,7 @@ export interface ProxyContext {
   branchId?: string;
   branchName?: string;
   environmentId?: string;
+  environmentName?: string;
   environment: "preview" | "production";
   contentSourceId: string;
   localPath?: string;
@@ -127,6 +129,7 @@ type ResolvedProjectMetadata =
     projectSlug?: string;
     releaseId?: string;
     environmentId?: string;
+    environmentName?: string;
     signedInternalControlPlaneRequest?: boolean;
   }
   | {
@@ -619,6 +622,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectSlug: lookupResult.slug,
       releaseId: matchingEnv?.active_release_id ?? undefined,
       environmentId: matchingEnv?.id,
+      environmentName: matchingEnv?.name,
       signedInternalControlPlaneRequest,
     };
   }
@@ -693,7 +697,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const routingEnv = routingResult.environments.find(envMatcher);
         const accessEnv = accessResult.environments.find(envMatcher);
-        if (!routingEnv || !accessEnv || routingEnv.id !== accessEnv.id) {
+        if (
+          !routingEnv ||
+          !accessEnv ||
+          routingEnv.id !== accessEnv.id ||
+          routingEnv.name !== accessEnv.name
+        ) {
           routingLookupCache.delete(normalizeProjectLookupKey(lookupKey));
           return await resolveFullProjectLookupAndProtection(
             req,
@@ -738,6 +747,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug: routingResult.slug,
           releaseId: routingEnv?.active_release_id ?? undefined,
           environmentId: routingEnv?.id,
+          environmentName: routingEnv?.name,
           signedInternalControlPlaneRequest,
         };
       },
@@ -763,6 +773,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     let projectId: string | undefined;
     let releaseId: string | undefined;
     let environmentId: string | undefined;
+    let environmentName: string | undefined;
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
     // The first pass authenticates the candidate so its x-token can perform the
@@ -1083,6 +1094,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
         environmentId = resolved.environmentId;
+        environmentName = resolved.environmentName;
         signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         logger?.info("Resolved custom domain to project", {
@@ -1125,6 +1137,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
         environmentId = resolved.environmentId;
+        environmentName = resolved.environmentName;
         signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         logger?.info("Resolved veryfront domain to project", {
@@ -1161,6 +1174,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         projectId = resolved.projectId;
         environmentId = resolved.environmentId;
+        environmentName = resolved.environmentName;
         signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         if (projectId) {
@@ -1203,6 +1217,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectId,
       releaseId,
       environmentId,
+      environmentName,
       contentSourceId,
       environment: scope,
       localPath,
@@ -1265,6 +1280,11 @@ export function createProxyContextHeaders(
   sourceHeaders: Headers,
   ctx: ProxyContext,
 ): Headers {
+  if (Boolean(ctx.environmentId) !== Boolean(ctx.environmentName)) {
+    throw new TypeError(
+      "Proxy environment identity requires both environmentId and environmentName",
+    );
+  }
   const headers = createProxyEndToEndHeaders(sourceHeaders);
   for (const header of INTERNAL_PROXY_HEADERS) headers.delete(header);
 
@@ -1285,6 +1305,7 @@ export function createProxyContextHeaders(
   if (ctx.projectId) headers.set("x-project-id", ctx.projectId);
   if (ctx.releaseId) headers.set("x-release-id", ctx.releaseId);
   if (ctx.environmentId) headers.set("x-environment-id", ctx.environmentId);
+  if (ctx.environmentName) headers.set("x-environment-name", ctx.environmentName);
 
   if (ctx.branchId) headers.set("x-branch-id", ctx.branchId);
   if (ctx.branchName) headers.set("x-branch-name", ctx.branchName);

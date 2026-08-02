@@ -631,6 +631,8 @@ describe("Proxy Handler", () => {
         assertEquals(beforeActivation.error?.status, 404);
         assertEquals(afterActivation.error, undefined);
         assertEquals(afterActivation.releaseId, "rel-456");
+        assertEquals(afterActivation.environmentId, "env-1");
+        assertEquals(afterActivation.environmentName, "staging");
         assertEquals(routingLookups, 2);
 
         await handler.close();
@@ -2985,6 +2987,7 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
+        assertEquals(ctx.environmentName, "preview");
 
         await handler.close();
       } finally {
@@ -3042,6 +3045,7 @@ describe("Proxy Handler", () => {
         assertEquals(ctx.error, undefined);
         assertEquals(ctx.projectSlug, "protected-project");
         assertEquals(ctx.environmentId, "env-1");
+        assertEquals(ctx.environmentName, "preview");
         assertEquals(ctx.token, "project-agent-token");
         assertEquals(tokenEndpointHits, 0);
 
@@ -3678,14 +3682,20 @@ describe("Proxy Handler", () => {
   });
 
   describe("injectContextHeaders", () => {
-    it("includes x-environment-id when environmentId is present", () => {
-      const req = new Request("http://example.com/api/test");
+    it("replaces client environment identity with the canonical proxy pair", () => {
+      const req = new Request("http://example.com/api/test", {
+        headers: {
+          "x-environment-id": "attacker-environment",
+          "x-environment-name": "attacker-name",
+        },
+      });
       const ctx: ProxyContext = {
         token: "test-token",
         projectSlug: "my-project",
         projectId: "proj-123",
         releaseId: "rel-456",
         environmentId: "env-789",
+        environmentName: "staging",
         environment: "production",
         contentSourceId: "cs-123",
         host: "example.com",
@@ -3702,6 +3712,7 @@ describe("Proxy Handler", () => {
 
       const injected = injectContextHeaders(req, ctx);
       assertEquals(injected.headers.get("x-environment-id"), "env-789");
+      assertEquals(injected.headers.get("x-environment-name"), "staging");
       assertEquals(injected.headers.get("x-project-id"), "proj-123");
       assertEquals(injected.headers.get("x-release-id"), "rel-456");
     });
@@ -3727,6 +3738,33 @@ describe("Proxy Handler", () => {
 
       const injected = injectContextHeaders(req, ctx);
       assertEquals(injected.headers.get("x-environment-id"), null);
+      assertEquals(injected.headers.get("x-environment-name"), null);
+    });
+
+    it("refuses to forward a partial environment identity", () => {
+      const req = new Request("http://example.com/api/test");
+      const ctx: ProxyContext = {
+        projectSlug: "my-project",
+        environmentId: "env-789",
+        environment: "production",
+        contentSourceId: "cs-123",
+        host: "example.com",
+        parsedDomain: {
+          slug: "my-project",
+          branch: null,
+          environment: "production",
+          isVeryfrontDomain: false,
+          isDraft: false,
+          allowIframeEmbed: false,
+        },
+        isLocalProject: false,
+      };
+
+      assertThrows(
+        () => injectContextHeaders(req, ctx),
+        TypeError,
+        "requires both environmentId and environmentName",
+      );
     });
   });
 });

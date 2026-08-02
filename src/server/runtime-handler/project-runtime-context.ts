@@ -403,11 +403,23 @@ function createProxyGuard(
 
   const token = req.headers.get("x-token");
   const hasUntrustedIdentityHeaders = !identityHeadersTrusted &&
-    (req.headers.has("x-project-id") || req.headers.has("x-environment-id"));
+    (
+      req.headers.has("x-project-id") ||
+      req.headers.has("x-environment-id") ||
+      req.headers.has("x-environment-name")
+    );
+  const hasIncompleteEnvironmentIdentity = identityHeadersTrusted &&
+    Boolean(headers.environmentId) !== Boolean(headers.environmentName);
   const body = hasUntrustedIdentityHeaders
     ? {
       error: "Untrusted identity context",
-      detail: "x-project-id and x-environment-id require an operator-authenticated proxy boundary",
+      detail:
+        "x-project-id, x-environment-id, and x-environment-name require an operator-authenticated proxy boundary",
+    }
+    : hasIncompleteEnvironmentIdentity
+    ? {
+      error: "Incomplete environment identity",
+      detail: "x-environment-id and x-environment-name must be supplied together",
     }
     : !headers.projectSlug
     ? {

@@ -65,6 +65,8 @@ interface RequestHeaders {
   environment: string | undefined;
   /** Environment ID from x-environment-id header (for env var resolution) */
   environmentId: string | undefined;
+  /** Canonical environment name paired with x-environment-id by the trusted proxy */
+  environmentName: string | undefined;
   /** Token from authorization header */
   token: string | undefined;
   /** Content source ID from x-content-source-id header */
@@ -117,6 +119,9 @@ export function extractRequestHeaders(
     environment,
     environmentId: identityHeadersTrusted
       ? req.headers.get("x-environment-id") ?? undefined
+      : undefined,
+    environmentName: identityHeadersTrusted
+      ? req.headers.get("x-environment-name")?.trim() || undefined
       : undefined,
     token: undefined, // Extracted separately from request context
     contentSourceId: req.headers.get("x-content-source-id") ?? undefined,
@@ -195,7 +200,7 @@ export async function resolveProject(
   let projectId: string | undefined = headers.projectId ??
     (slugMatchesDefault ? opts.defaultProjectId : undefined);
   let releaseId: string | undefined = headers.releaseId ?? opts.defaultReleaseId;
-  let environmentName: string | undefined;
+  let environmentName: string | undefined = headers.environmentName;
   let proxyEnv = parseProxyEnvironment(headers.environment ?? null);
 
   const shouldSkipDomainLookup = isInternalHost(host);

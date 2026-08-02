@@ -439,7 +439,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("admits production browser modules only from a ready release manifest", async () => {
-    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    // The rollout flag may disable manifest-based rendering optimizations, but
+    // it must never disable the production browser-module security boundary.
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "0");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-manifest-" });
     const releaseId = `rel-browser-admission-${crypto.randomUUID()}`;
     const hash = "b".repeat(64);
@@ -514,7 +516,7 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
   });
 
   it("fails closed while a production browser manifest is unavailable", async () => {
-    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "1");
+    setEnv(RELEASE_ASSET_MANIFEST_ENV_FLAG, "0");
     const projectDir = await Deno.makeTempDir({ prefix: "vf-browser-module-manifest-wait-" });
     const releaseId = `rel-browser-wait-${crypto.randomUUID()}`;
 

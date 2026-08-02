@@ -140,6 +140,7 @@ function makeRuntimeContextInput(
       "x-project-id": "proj-remote",
       "x-token": "proxy-token",
       "x-environment-id": "env-remote",
+      "x-environment-name": "preview",
     },
   });
   const url = new URL(req.url);
@@ -338,6 +339,7 @@ describe("prepareProjectRequest", () => {
         "x-project-slug": "project-a",
         "x-project-id": "victim-project-id",
         "x-environment-id": "victim-environment-id",
+        "x-environment-name": "victim-environment-name",
         "x-token": "project-token",
       },
     });
@@ -353,11 +355,37 @@ describe("prepareProjectRequest", () => {
     assertEquals(prepared.headers.environmentId, undefined);
     await assertJsonResponse(prepared.proxyGuard!.response, 502, {
       error: "Untrusted identity context",
-      detail: "x-project-id and x-environment-id require an operator-authenticated proxy boundary",
+      detail:
+        "x-project-id, x-environment-id, and x-environment-name require an operator-authenticated proxy boundary",
     });
   });
 
   it("accepts canonical identity IDs from an operator-authenticated proxy", async () => {
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "project-a",
+        "x-project-id": "project-id-a",
+        "x-environment-id": "environment-id-a",
+        "x-environment-name": "staging",
+        "x-token": "project-token",
+      },
+    });
+
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: true,
+      trustProxy: () => Promise.resolve(true),
+    });
+
+    assertEquals(prepared.proxyTrust.identityHeadersTrusted, true);
+    assertEquals(prepared.headers.projectId, "project-id-a");
+    assertEquals(prepared.headers.environmentId, "environment-id-a");
+    assertEquals(prepared.headers.environmentName, "staging");
+    assertEquals(prepared.proxyGuard, undefined);
+  });
+
+  it("rejects an incomplete environment identity from a trusted proxy", async () => {
     const req = new Request("http://localhost/page", {
       headers: {
         "x-project-slug": "project-a",
@@ -374,10 +402,10 @@ describe("prepareProjectRequest", () => {
       trustProxy: () => Promise.resolve(true),
     });
 
-    assertEquals(prepared.proxyTrust.identityHeadersTrusted, true);
-    assertEquals(prepared.headers.projectId, "project-id-a");
-    assertEquals(prepared.headers.environmentId, "environment-id-a");
-    assertEquals(prepared.proxyGuard, undefined);
+    await assertJsonResponse(prepared.proxyGuard!.response, 502, {
+      error: "Incomplete environment identity",
+      detail: "x-environment-id and x-environment-name must be supplied together",
+    });
   });
 
   it("rejects untrusted websocket query identity", async () => {
@@ -476,6 +504,40 @@ describe("resolveProjectIdentity", () => {
     assertEquals(trusted.projectSlug, "forwarded-project");
     assertEquals(trusted.parsedDomain.slug, "forwarded-project");
     assertEquals(trusted.parsedDomain.environment, "preview");
+  });
+
+  it("preserves the trusted canonical environment name when release identity is complete", async () => {
+    for (const environmentName of ["staging", "production"]) {
+      const req = new Request(`http://project.${environmentName}.veryfront.com/`, {
+        headers: {
+          "x-project-slug": "project",
+          "x-project-id": "project-id",
+          "x-release-id": `release-${environmentName}`,
+          "x-environment": "production",
+          "x-environment-id": `environment-${environmentName}`,
+          "x-environment-name": environmentName,
+          "x-token": "project-token",
+        },
+      });
+      const url = new URL(req.url);
+      const headers = extractRequestHeaders(req, url, true, true);
+      const result = await resolveProjectIdentity({
+        req,
+        url,
+        headers,
+        requestContext: createRequestContext(req, { proxyTrusted: true }),
+        config: undefined,
+        defaultProjectSlug: undefined,
+        defaultProjectId: undefined,
+        defaultReleaseId: undefined,
+        wsSlugOverride: undefined,
+        proxyTrust: { proxyTrusted: true },
+      });
+
+      assertEquals(result.environmentName, environmentName);
+      assertEquals(result.releaseId, `release-${environmentName}`);
+      assertEquals(result.proxyEnv, "production");
+    }
   });
 
   it("preserves explicit slug and suppresses unrelated default project id", async () => {
@@ -612,6 +674,76 @@ describe("resolveProjectIdentity", () => {
 });
 
 describe("resolveProjectRuntimeContext", () => {
+  it("evaluates staging config and security with the matching trusted environment secrets", async () => {
+    const adapter = createHostedConfigAdapter(`
+      import { defineConfigWithEnv, getEnv } from "veryfront";
+      export default defineConfigWithEnv((environmentName) => ({
+        title: environmentName + ":" + getEnv("TENANT_MARKER"),
+        security: {
+          auth: { bearer: { token: getEnv("AUTH_TOKEN") } },
+          csrf: true,
+        },
+      }));
+    `);
+    const req = new Request("http://project.staging.veryfront.com/page", {
+      headers: {
+        "x-project-slug": "project",
+        "x-project-id": "project-id",
+        "x-release-id": "release-staging",
+        "x-environment": "production",
+        "x-environment-id": "environment-staging",
+        "x-environment-name": "staging",
+        "x-token": "project-token",
+      },
+    });
+    const url = new URL(req.url);
+    const headers = extractRequestHeaders(req, url, true, true);
+    const requestContext = createRequestContext(req, { proxyTrusted: true });
+    const projectIdentity = await resolveProjectIdentity({
+      req,
+      url,
+      headers,
+      requestContext,
+      config: undefined,
+      defaultProjectSlug: undefined,
+      defaultProjectId: undefined,
+      defaultReleaseId: undefined,
+      wsSlugOverride: undefined,
+      proxyTrust: { proxyTrusted: true },
+    });
+    let observedEnvironmentId: string | undefined;
+
+    const result = await resolveProjectRuntimeContext(makeRuntimeContextInput({
+      req,
+      url,
+      adapter,
+      headers,
+      requestContext,
+      projectIdentity,
+      isProxyMode: true,
+      proxyTrust: { proxyTrusted: true },
+      envVarCache: {
+        get: (scope: ProjectEnvironmentScope) => {
+          observedEnvironmentId = scope.environmentId;
+          return Promise.resolve({
+            TENANT_MARKER: "staging-environment",
+            AUTH_TOKEN: "staging-secret",
+          });
+        },
+      },
+    }));
+
+    assertEquals(observedEnvironmentId, "environment-staging");
+    assertEquals(result.handlerContext?.config?.title, "staging:staging-environment");
+    assertEquals(result.handlerContext?.securityConfig?.auth, {
+      bearer: { token: "staging-secret" },
+    });
+    assertEquals(result.rawEnvVars, {
+      TENANT_MARKER: "staging-environment",
+      AUTH_TOKEN: "staging-secret",
+    });
+  });
+
   it("returns handler context, raw env vars, and normalized source policy for remote requests", async () => {
     let envLoadCount = 0;
     const adapter = createMockAdapter();

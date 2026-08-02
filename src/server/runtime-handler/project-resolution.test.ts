@@ -126,18 +126,26 @@ describe("server/runtime-handler/project-resolution", () => {
 
     it("ignores environment-id from an untrusted request", () => {
       const req = new Request("http://localhost/", {
-        headers: { "x-environment-id": "env-1" },
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "production",
+        },
       });
       const headers = extractRequestHeaders(req, new URL(req.url));
       assertEquals(headers.environmentId, undefined);
+      assertEquals(headers.environmentName, undefined);
     });
 
-    it("extracts environment-id only at an operator-authenticated proxy boundary", () => {
+    it("extracts environment identity only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
-        headers: { "x-environment-id": "env-1" },
+        headers: {
+          "x-environment-id": "env-1",
+          "x-environment-name": "staging",
+        },
       });
       const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.environmentId, "env-1");
+      assertEquals(headers.environmentName, "staging");
     });
 
     // x-forwarded-host is client-controlled and only honoured behind a trusted
