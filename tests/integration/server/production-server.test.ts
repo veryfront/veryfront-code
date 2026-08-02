@@ -507,11 +507,16 @@ describe(
               headers: { "x-shared-middleware": "applied" },
             });
           }`;
+          const readMiddlewareSource = (path: string) => {
+            if (path === "/app/middleware.ts") return middlewareSource;
+            throw new Deno.errors.NotFound(path);
+          };
           const projectFs = {
             exists: (path: string) => Promise.resolve(path === "/app/middleware.ts"),
-            readFile: () => Promise.resolve(middlewareSource),
-            readTextFile: () => Promise.resolve(middlewareSource),
-            readOptionalTextFile: () => Promise.resolve(middlewareSource),
+            readFile: (path: string) => Promise.resolve(readMiddlewareSource(path)),
+            readTextFile: (path: string) => Promise.resolve(readMiddlewareSource(path)),
+            readOptionalTextFile: (path: string) =>
+              Promise.resolve(path === "/app/middleware.ts" ? middlewareSource : undefined),
           };
           const resolvedContexts: Array<{
             projectSlug: string;

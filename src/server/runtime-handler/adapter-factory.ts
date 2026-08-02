@@ -8,11 +8,15 @@
  */
 
 import { getBaseLogger } from "#veryfront/utils";
-import { getErrorMessage } from "#veryfront/errors";
+import { CACHE_INVARIANT_VIOLATION, getErrorMessage } from "#veryfront/errors";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getConfig } from "#veryfront/config/loader.ts";
+import {
+  getConfig,
+  getHostedConfig,
+  type PreparedHostedConfigContext,
+} from "#veryfront/config/loader.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { isConfigOptionalControlPlaneRunRequest } from "#veryfront/channels/control-plane.ts";
 import { timeAsync } from "./request-lifecycle.ts";
@@ -76,6 +80,13 @@ interface AdapterResolutionOptions {
   proxyTrusted?: boolean;
   /** Optional injectable cache (defaults to module-level singleton) */
   cache?: ProjectDiscoveryCache;
+  /**
+   * Authenticated source and environment snapshot for hosted config. Proxy
+   * config must never derive either value independently inside this factory.
+   */
+  prepareHostedConfigContext?: (
+    isLocalProject: boolean,
+  ) => Promise<PreparedHostedConfigContext>;
 }
 
 function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
@@ -83,6 +94,29 @@ function usesExactSourceConfig(opts: AdapterResolutionOptions): boolean {
     !!opts.projectSlug &&
     !!opts.proxyToken &&
     isConfigOptionalControlPlaneRunRequest(opts.req.method, opts.pathname);
+}
+
+function shouldDeferConfigLoad(opts: AdapterResolutionOptions): boolean {
+  if (usesExactSourceConfig(opts)) return true;
+  // There is no immutable production source to evaluate until resolution has
+  // selected a release. Let environment resolution return its canonical 404.
+  return opts.isProxyMode && !!opts.projectSlug && opts.proxyEnv === "production" &&
+    !opts.releaseId;
+}
+
+async function prepareProxyConfigLoad(
+  opts: AdapterResolutionOptions,
+  isLocalProject: boolean,
+): Promise<PreparedHostedConfigContext & { cacheKey: string }> {
+  if (!opts.projectSlug || !opts.prepareHostedConfigContext) {
+    throw CACHE_INVARIANT_VIOLATION.create({
+      detail: "Proxy project config requires an authenticated declarative evaluation context",
+    });
+  }
+  return {
+    cacheKey: opts.projectId ?? opts.projectSlug,
+    ...await opts.prepareHostedConfigContext(isLocalProject),
+  };
 }
 
 /**
@@ -146,8 +180,18 @@ export async function resolveAdapter(
 
     effectiveAdapter = cache.adapters.get(effectiveProjectDir)!;
 
-    if (usesExactSourceConfig(opts)) {
+    if (shouldDeferConfigLoad(opts)) {
       effectiveConfig = undefined;
+    } else if (opts.isProxyMode) {
+      const hosted = await prepareProxyConfigLoad(opts, true);
+      effectiveConfig = await timeAsync(
+        "config:load-project",
+        () =>
+          getHostedConfig(effectiveProjectDir, effectiveAdapter, {
+            ...hosted,
+            signal: opts.req.signal,
+          }),
+      );
     } else {
       effectiveConfig = await timeAsync(
         "config:load-project",
@@ -162,7 +206,7 @@ export async function resolveAdapter(
       });
     }
   } else if (opts.isProxyMode && opts.projectSlug && opts.proxyToken) {
-    if (usesExactSourceConfig(opts)) {
+    if (shouldDeferConfigLoad(opts)) {
       logger.debug("Skipping outer config load for exact-source control-plane request", {
         projectSlug: opts.projectSlug,
         projectId: opts.projectId,
@@ -181,13 +225,15 @@ export async function resolveAdapter(
     // Unlike local projects, proxy mode config loading failures are propagated
     // because proceeding without config causes silent 404s for valid projects.
     try {
-      effectiveConfig = await timeAsync("config:load-proxy-project", () => {
+      effectiveConfig = await timeAsync("config:load-proxy-project", async () => {
+        const hosted = await prepareProxyConfigLoad(opts, false);
         const loadCurrentConfig = async (): Promise<VeryfrontConfig> => {
           // Config controls route and primitive discovery, so it must be read
           // from the same current snapshot that those consumers will retain.
           await effectiveAdapter.fs.ensureSourceSnapshotFresh?.("config-load");
-          return await getConfig(effectiveProjectDir, effectiveAdapter, {
-            cacheKey: opts.projectId ?? opts.projectSlug,
+          return await getHostedConfig(effectiveProjectDir, effectiveAdapter, {
+            ...hosted,
+            signal: opts.req.signal,
           });
         };
 
@@ -198,10 +244,10 @@ export async function resolveAdapter(
             loadCurrentConfig,
             opts.projectId,
             {
-              productionMode: opts.proxyEnv === "production",
-              releaseId: opts.releaseId,
-              branch: opts.branch ?? opts.parsedDomain.branch ?? null,
-              environmentName: opts.environmentName,
+              productionMode: hosted.sourceContext.productionMode,
+              releaseId: hosted.sourceContext.releaseId,
+              branch: hosted.sourceContext.branch,
+              environmentName: hosted.sourceContext.environmentName,
             },
           );
         }

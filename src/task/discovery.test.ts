@@ -116,6 +116,7 @@ function makeTaskSource(name: string): string {
   ].join("\n");
 }
 
+/** Present the adapter as the trusted single-project virtual filesystem used by discovery. */
 function markAdapterAsSingleProjectVirtual(adapter: RuntimeAdapter): void {
   Object.assign(adapter.fs, {
     getUnderlyingAdapter: () => adapter.fs,
@@ -440,6 +441,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     const firstAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-a" } },',
         '  ai: { tasks: { discovery: { paths: ["first-tasks"] } } },',
         "};",
         "",
@@ -459,6 +461,7 @@ describe("task/discovery", { sanitizeOps: false, sanitizeResources: false }, () 
     const secondAdapter = createRuntimeAdapter({
       "/veryfront.config.ts": [
         "export default {",
+        '  fs: { type: "veryfront-api", veryfront: { projectSlug: "project-b" } },',
         '  ai: { tasks: { discovery: { paths: ["second-tasks"] } } },',
         "};",
         "",

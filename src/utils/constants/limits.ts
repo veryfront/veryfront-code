@@ -21,6 +21,8 @@ export const CACHE_MAX_ENTRIES_LARGE = 500;
 export const CACHE_MAX_ENTRIES_XLARGE = 1000;
 export const API_ROUTE_CACHE_MAX_ENTRIES = 500;
 export const HANDLER_CACHE_MAX_ENTRIES = 256;
+/** Maximum key length accepted by the shared in-memory cache adapter. */
+export const MAX_CACHE_KEY_CHARACTERS = 16_384;
 
 export const MAX_PATH_LENGTH_CHARS = 4096;
 export const MAX_PORT_NUMBER = 65535;

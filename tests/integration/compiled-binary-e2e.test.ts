@@ -59,6 +59,10 @@ const COMPILED_BINARY_E2E_OPTIONS = {
   timeout: 600_000,
 };
 
+// Proxy startup requires an explicit API origin. Requests in these tests are
+// rejected by the proxy guard before this deterministic loopback URL is used.
+const UNREACHABLE_LOCAL_PROXY_API_BASE_URL = "http://127.0.0.1:1";
+
 describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
   beforeAll(async () => {
     await ensureBinaryCompiled();
@@ -3062,10 +3066,9 @@ export default function Blog() {
     );
   });
 
-  // Test: Layout rendering with PROXY_MODE=1 (simulates split mode production server)
-  // Regression test: In split:binary mode, the production server runs with PROXY_MODE=1.
-  // Without proxy headers, it should fall back to local config and still render layouts.
-  it("should render layout when PROXY_MODE=1 without proxy headers", async () => {
+  // Regression test: split-mode production must not fall back to local layout
+  // files when the proxy omits its project identity and authentication context.
+  it("should fail closed before loading a local layout when PROXY_MODE=1", async () => {
     const projectDir = await createTestProject(
       "proxy-mode-layout-test",
       `
@@ -3087,51 +3090,30 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 `,
       },
     );
+    await Deno.writeTextFile(join(projectDir, "veryfront.config.ts"), "export default {};");
 
     await withServer(
       projectDir,
       async (server) => {
         const response = await fetch(`http://127.0.0.1:${server.port}/`);
-        const html = await response.text();
-
-        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-        assertStringIncludes(
-          html,
-          "proxy-layout-wrapper",
-          "Should have layout wrapper in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy Mode Layout Header",
-          "Should render layout header in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy Mode Layout Footer",
-          "Should render layout footer in proxy mode",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy mode page content",
-          "Should render page content in proxy mode",
-        );
+        assertEquals(response.status, 502);
+        assertEquals(await response.json(), {
+          error: "Missing project context",
+          detail: "x-project-slug header is required in proxy mode",
+        });
       },
       "production",
-      // Clear API env vars to test pure local filesystem fallback
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
-        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
         VERYFRONT_API_TOKEN: "",
       },
     );
   });
 
-  // Test: Config layout with PROXY_MODE=1 and components/layouts/ path
-  // Regression test: In split:binary mode, the production server gets PROXY_MODE=1 and must resolve
-  // config-based layout paths through the API adapter. Without proxy headers, it should
-  // fall back to local filesystem and still render the config layout.
-  it("should render config layout in PROXY_MODE=1 with components/layouts/ path", async () => {
+  // Configured component layouts obey the same fail-closed proxy boundary.
+  it("should fail closed before loading a configured layout when PROXY_MODE=1", async () => {
     const projectDir = await Deno.makeTempDir({ prefix: "vf-e2e-proxy-config-layout-test-" });
 
     await Deno.writeTextFile(
@@ -3150,7 +3132,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     await Deno.writeTextFile(
       join(projectDir, "veryfront.config.ts"),
       `export default {
-  fs: { type: "local" },
   layout: "components/layouts/DefaultLayout.tsx"
 };`,
     );
@@ -3185,32 +3166,17 @@ export default function Home() {
       projectDir,
       async (server) => {
         const response = await fetch(`http://127.0.0.1:${server.port}/`);
-        const html = await response.text();
-
-        assertEquals(response.status, 200, `Should return 200, got ${response.status}`);
-        assertStringIncludes(
-          html,
-          "proxy-config-layout",
-          "Should have config layout in PROXY_MODE=1",
-        );
-        assertStringIncludes(html, "Proxy Config Nav", "Should render nav from config layout");
-        assertStringIncludes(
-          html,
-          "Proxy Config Footer",
-          "Should render footer from config layout",
-        );
-        assertStringIncludes(
-          html,
-          "Proxy config layout page",
-          "Should render page content",
-        );
+        assertEquals(response.status, 502);
+        assertEquals(await response.json(), {
+          error: "Missing project context",
+          detail: "x-project-slug header is required in proxy mode",
+        });
       },
       "production",
-      // Clear API env vars to test pure local filesystem fallback
       {
         PROXY_MODE: "1",
         PRODUCTION_MODE: "1",
-        VERYFRONT_API_BASE_URL: "",
+        VERYFRONT_API_BASE_URL: UNREACHABLE_LOCAL_PROXY_API_BASE_URL,
         VERYFRONT_API_TOKEN: "",
       },
     );

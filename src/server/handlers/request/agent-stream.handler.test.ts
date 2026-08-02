@@ -1910,10 +1910,12 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertEquals(capturedAllowedRemoteTools, ["list_projects", "search_knowledge"]);
     assertEquals(capturedRemoteToolNames, ["search_knowledge", "list_projects"]);
+    // The environment is resolved before the source config is evaluated, so
+    // both the config and the MCP tool headers see the same variables.
     assertEquals(fetchUrls, [
-      "https://api.veryfront.org/mcp",
       "https://api.veryfront.org/projects/support-agent-fork/environments",
       "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100",
+      "https://api.veryfront.org/mcp",
     ]);
   });
 
@@ -2071,9 +2073,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
     assertStringIncludes(capturedSystem ?? "", `api=${apiBaseUrl}`);
     assertEquals(fetchUrls, [
-      `${new URL(apiBaseUrl).origin}/mcp`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environments`,
       `${apiBaseUrl}/projects/base-url-agent-fork/environment-variables?environment_id=env-production-base-url&limit=100`,
+      `${new URL(apiBaseUrl).origin}/mcp`,
     ]);
   });
 

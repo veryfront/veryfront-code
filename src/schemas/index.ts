@@ -1,11 +1,13 @@
 /**
  * Reusable validation schemas and the `defineSchema` helper.
  *
+ * Schema materialization requires a registered `SchemaValidator`. Veryfront
+ * runtime bootstrap registers the built-in validator before handlers run.
+ * `lazySchema` keeps module-scope schema constants import-safe before bootstrap.
+ *
  * @example
  * ```ts
- * import { CommonSchemas, defineSchema } from "veryfront/schemas";
- *
- * const email = CommonSchemas.email.parse("user@example.com");
+ * import { CommonSchemas, defineSchema, lazySchema } from "veryfront/schemas";
  *
  * const getUserSchema = defineSchema((v) =>
  *   v.object({
@@ -13,6 +15,11 @@
  *     name: v.string().min(1),
  *   })
  * );
+ * export const UserSchema = lazySchema(getUserSchema);
+ *
+ * export function parseEmail(input: unknown) {
+ *   return CommonSchemas.email.parse(input);
+ * }
  * ```
  *
  * @module schemas

@@ -69,7 +69,8 @@ import {
   filterRuntimeProjectEnv,
   runWithProjectEnv,
 } from "../../project-env/index.ts";
-import { getConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
+import { getHostedConfig, type VeryfrontConfig } from "#veryfront/config/loader.ts";
+import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 
@@ -352,18 +353,71 @@ function createStaticRemoteToolSource(
   };
 }
 
+/**
+ * Environment label bound to one agent source.
+ *
+ * A bare release carries no authoritative environment identity, so it is
+ * evaluated under the `release` label against an empty environment and never
+ * inherits production secrets by convention.
+ */
+function buildAgentSourceEnvironmentName(sourceContext: RuntimeAgentSourceContext): string {
+  switch (sourceContext.type) {
+    case "branch":
+      return "preview";
+    case "environment":
+      return sourceContext.environmentName;
+    case "release":
+      return "release";
+  }
+}
+
+/**
+ * Load the project environment this agent source may read.
+ *
+ * Control-plane requests don't go through the proxy and therefore don't carry
+ * x-environment-id, so the production environment ID is discovered from the API
+ * (one fetch per project per server lifetime, then cached).
+ */
+async function resolveAgentSourceEnvironment(
+  ctx: HandlerContext,
+  sourceContext: RuntimeAgentSourceContext,
+  apiAuthToken: string,
+): Promise<Record<string, string>> {
+  if (sourceContext.type === "release") return {};
+  if (!ctx.projectSlug || !apiAuthToken) return {};
+
+  const environmentId = ctx.environmentId ??
+    await _resolveProductionEnvironmentId(ctx.projectSlug, apiAuthToken);
+  if (!environmentId) return {};
+
+  return await _agentEnvVarCache.get(environmentId, apiAuthToken, ctx.projectSlug);
+}
+
+/**
+ * Load config for an exact agent source.
+ *
+ * This runs only on a shared multi-project runtime (see
+ * {@link AgentStreamHandler.withAgentSourceContext}), so the source is
+ * untrusted and is evaluated declaratively, bound to the same source and
+ * environment the run itself will use.
+ */
 async function resolveAgentSourceConfig(
   ctx: HandlerContext,
   sourceContext: RuntimeAgentSourceContext,
+  environment: Record<string, string>,
 ): Promise<VeryfrontConfig> {
   const cacheKey = ctx.projectId ?? ctx.projectSlug;
   if (!cacheKey) {
     throw new Error("Explicit agent source requires a project identity");
   }
   await ctx.adapter.fs.ensureSourceSnapshotFresh?.("agent-source-config");
-  return await getConfig(ctx.projectDir, ctx.adapter, {
+  return await getHostedConfig(ctx.projectDir, ctx.adapter, {
     cacheKey,
     sourceContext: buildAgentSourceRunOptions(sourceContext),
+    preparedContext: await prepareDeclarativeConfigContext({
+      environmentName: buildAgentSourceEnvironmentName(sourceContext),
+      environment,
+    }),
   });
 }
 
@@ -690,9 +744,17 @@ export class AgentStreamHandler extends BaseHandler {
           requestScopedContext,
           payload.agentSource,
           async () => {
+            // Resolved before the config load because hosted evaluation binds
+            // config to the same environment the run will execute with.
+            const envVarsForAgent = await resolveAgentSourceEnvironment(
+              requestScopedContext,
+              payload.agentSource,
+              apiAuthToken,
+            );
             const sourceConfig = await resolveAgentSourceConfig(
               requestScopedContext,
               payload.agentSource,
+              envVarsForAgent,
             );
             const sourceScopedContext: HandlerContext = {
               ...requestScopedContext,
@@ -742,31 +804,14 @@ export class AgentStreamHandler extends BaseHandler {
                   conversationId: runtimeInput.threadId,
                 });
 
-                // Load project env vars so source-defined MCP tool headers resolve
-                // via _getProjectEnv(). Control-plane requests don't go through the proxy and
-                // therefore don't carry x-environment-id, so we discover the production env ID
-                // from the API (one fetch per project per server lifetime, then cached).
-                let envVarsForAgent: Record<string, string> = {};
-                if (sourceScopedContext.projectSlug && apiAuthToken) {
-                  const environmentId = sourceScopedContext.environmentId ??
-                    await _resolveProductionEnvironmentId(
-                      sourceScopedContext.projectSlug,
-                      apiAuthToken,
-                    );
-                  if (environmentId) {
-                    envVarsForAgent = await _agentEnvVarCache.get(
-                      environmentId,
-                      apiAuthToken,
-                      sourceScopedContext.projectSlug,
-                    );
-                    logger.debug("Agent stream env vars loaded", {
-                      runId: payload.runId,
-                      projectSlug: sourceScopedContext.projectSlug,
-                      environmentId,
-                      count: Object.keys(envVarsForAgent).length,
-                    });
-                  }
-                }
+                // Source-defined MCP tool headers resolve these via
+                // _getProjectEnv(); they are the same variables the source
+                // config was evaluated against.
+                logger.debug("Agent stream env vars loaded", {
+                  runId: payload.runId,
+                  projectSlug: sourceScopedContext.projectSlug,
+                  count: Object.keys(envVarsForAgent).length,
+                });
 
                 const runAgentStream = () =>
                   createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {

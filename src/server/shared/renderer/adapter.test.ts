@@ -8,6 +8,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { Renderer, RendererOptions } from "#veryfront/rendering/renderer.ts";
+import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import {
   destroyRendererAdapter,
   getRendererForProject,
@@ -20,8 +22,16 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Minimal mock Renderer that records calls. */
-function createMockRenderer(): Renderer & { calls: Record<string, number> } {
-  const calls: Record<string, number> = {
+type RendererCallCounts = {
+  renderPage: number;
+  resolvePageData: number;
+  getAllPages: number;
+  clearCache: number;
+  destroy: number;
+};
+
+function createMockRenderer(): Renderer & { calls: RendererCallCounts } {
+  const calls: RendererCallCounts = {
     renderPage: 0,
     resolvePageData: 0,
     getAllPages: 0,
@@ -55,7 +65,7 @@ function createMockRenderer(): Renderer & { calls: Record<string, number> } {
     },
     // deno-lint-ignore no-explicit-any
     async initialize(_opts?: any) {},
-  } as unknown as Renderer & { calls: Record<string, number> };
+  } as unknown as Renderer & { calls: RendererCallCounts };
 }
 
 /**
@@ -450,6 +460,70 @@ describe("RendererAdapter with RendererInitializer", () => {
       assertEquals(ctx.enriched !== undefined, true);
       const pages = await adapter.getAllPages();
       assertEquals(pages, ["/"]);
+    });
+
+    it("evaluates shared multi-project config through the request's hosted context", async () => {
+      const ctx = stubHandlerContext();
+      ctx.enriched = undefined;
+      ctx.config = undefined;
+      ctx.isLocalProject = false;
+      ctx.projectDir = "/tmp/hosted-project";
+      ctx.resolvedEnvironment = "preview";
+      ctx.requestContext = { branch: "feature/hosted-render", mode: "preview" };
+
+      const sourceContext = {
+        productionMode: false,
+        branch: "feature/hosted-render",
+      } as const;
+      ctx.prepareHostedConfigContext = async () => ({
+        sourceContext,
+        preparedContext: await prepareDeclarativeConfigContext({
+          environmentName: "preview",
+          environment: { TENANT: "tenant-value" },
+        }),
+      });
+
+      const fs = {
+        isVeryfrontAdapter: () => true,
+        getUnderlyingAdapter: () => ({}),
+        isMultiProjectMode: () => true,
+        runWithContext: (
+          projectSlug: string,
+          token: string,
+          fn: () => Promise<unknown>,
+          projectId?: string,
+          opts?: Record<string, unknown>,
+        ) =>
+          runWithRequestContext(
+            { projectSlug, token, projectId, ...opts },
+            fn as () => Promise<never>,
+          ),
+        exists: () => Promise.reject(new Error("hosted config must not probe exists")),
+        readFile: (path: string) => {
+          if (path !== "/veryfront.config.ts") {
+            return Promise.reject(
+              Object.assign(new Error(`File not found: ${path}`), { code: "ENOENT" }),
+            );
+          }
+          return Promise.resolve(`
+            import { defineConfigWithEnv, getEnv } from "veryfront";
+            export default defineConfigWithEnv((environmentName) => ({
+              title: \`\${environmentName}:\${getEnv("TENANT") ?? "missing"}\`,
+            }));
+          `);
+        },
+        readDir: async function* () {},
+        stat: () => Promise.resolve({ isFile: false, isDirectory: false }),
+      };
+      ctx.adapter = {
+        fs,
+        env: { get: () => undefined, set: () => {}, delete: () => {}, toObject: () => ({}) },
+      } as unknown as any;
+
+      await getRendererForProject(ctx);
+
+      assertEquals(ctx.enriched !== undefined, true);
+      assertEquals(ctx.enriched.config.title, "preview:tenant-value");
     });
 
     it("derives projectId from projectDir when no explicit id", async () => {

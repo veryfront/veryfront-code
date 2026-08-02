@@ -7,8 +7,6 @@ import {
   DEFAULT_METRICS_COLLECT_INTERVAL_MS,
   DEFAULT_PORT,
   DEFAULT_PREFETCH_DELAY_MS,
-  DEFAULT_REDIS_BATCH_DELETE_SIZE,
-  DEFAULT_REDIS_SCAN_COUNT,
   DEFAULT_TIMEOUT_MS,
   defaultConfig,
   DURATION_HISTOGRAM_BOUNDARIES_MS,
@@ -67,14 +65,6 @@ describe("config/defaults", () => {
       assertEquals(DEFAULT_METRICS_COLLECT_INTERVAL_MS, 60000);
     });
 
-    it("should have correct DEFAULT_REDIS_SCAN_COUNT", () => {
-      assertEquals(DEFAULT_REDIS_SCAN_COUNT, 100);
-    });
-
-    it("should have correct DEFAULT_REDIS_BATCH_DELETE_SIZE", () => {
-      assertEquals(DEFAULT_REDIS_BATCH_DELETE_SIZE, 1000);
-    });
-
     it("should have correct PAGE_TRANSITION_DELAY_MS", () => {
       assertEquals(PAGE_TRANSITION_DELAY_MS, 150);
     });
@@ -119,6 +109,17 @@ describe("config/defaults", () => {
   });
 
   describe("defaultConfig", () => {
+    it("keeps exported defaults immutable at runtime", () => {
+      assertEquals(Object.isFrozen(DURATION_HISTOGRAM_BOUNDARIES_MS), true);
+      assertEquals(Object.isFrozen(SIZE_HISTOGRAM_BOUNDARIES_KB), true);
+      assertEquals(Object.isFrozen(defaultConfig), true);
+      assertEquals(Object.isFrozen(defaultConfig.server), true);
+      assertEquals(Object.isFrozen(defaultConfig.timeouts), true);
+      assertEquals(Object.isFrozen(defaultConfig.cache), true);
+      assertEquals(Object.isFrozen(defaultConfig.cache.jit), true);
+      assertEquals(Object.isFrozen(defaultConfig.metrics), true);
+    });
+
     it("should have server config with correct port and hostname", () => {
       assertEquals(defaultConfig.server.port, DEFAULT_PORT);
       assertEquals(defaultConfig.server.hostname, "0.0.0.0");
