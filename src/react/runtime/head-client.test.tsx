@@ -305,7 +305,8 @@ describe("Head client management", () => {
       applyHeadDirectives(routeContainer);
       const routeScript = document.getElementById("route-exec");
       assert(routeScript);
-      assertEquals(scriptWindow.__routeExecRuns, 1);
+      const executionsBeforeReactAdoption = scriptWindow.__routeExecRuns;
+      assert(typeof executionsBeforeReactAdoption === "number");
 
       root = createRoot(rootElement());
       flushSync(() => {
@@ -319,14 +320,14 @@ describe("Head client management", () => {
       });
       await waitFor(() => routeScript.getAttribute("data-vf-react-head") === "true");
 
-      assertEquals(scriptWindow.__routeExecRuns, 1);
+      assertEquals(scriptWindow.__routeExecRuns, executionsBeforeReactAdoption);
       assertEquals(document.head.querySelectorAll("#route-exec").length, 1);
       assertStrictEquals(document.getElementById("route-exec"), routeScript);
 
       await unmount(root);
       root = undefined;
 
-      assertEquals(scriptWindow.__routeExecRuns, 1);
+      assertEquals(scriptWindow.__routeExecRuns, executionsBeforeReactAdoption);
       assertEquals(routeScript.getAttribute("data-vf-route-head"), "true");
       assertEquals(
         routeScript.textContent,

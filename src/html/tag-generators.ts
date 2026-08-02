@@ -6,10 +6,11 @@ import {
   escapeInlineStyleContent,
 } from "./html-escape.ts";
 import {
+  assertManagedHeadDescriptorBudget,
+  descriptorFromManagedHeadRecord,
   HEAD_SHELL_PROVENANCE_ATTRIBUTE,
-  headLinkSingletonKeyFromRecord,
-  headMetaSingletonKeyFromRecord,
   isHeadFrameworkAttribute,
+  type ManagedHeadDescriptor,
 } from "./managed-head-protocol.ts";
 
 const MAX_TAG_ATTRIBUTES = 32;
@@ -170,24 +171,17 @@ function boundedTagEntries(value: unknown): unknown[] {
   return entries;
 }
 
-function addNonceIfPresent(
-  attrs: Record<string, string>,
-  nonce?: string,
-): Record<string, string> {
-  if (!nonce) return attrs;
-  return { ...attrs, nonce };
+type StructuredHeadTagName = "title" | "meta" | "link" | "script" | "style";
+
+interface StructuredHeadTag {
+  readonly tagName: StructuredHeadTagName;
+  readonly attributes: Record<string, string>;
+  readonly content?: string;
+  readonly managed: boolean;
+  readonly nonceEligible?: boolean;
 }
 
-function markShellSingleton(
-  tagName: "meta" | "link",
-  attributes: Record<string, string>,
-): Record<string, string> {
-  const singletonKey = tagName === "meta"
-    ? headMetaSingletonKeyFromRecord(attributes)
-    : headLinkSingletonKeyFromRecord(attributes);
-  if (!singletonKey || singletonKey === "meta:charset") return attributes;
-  return { ...attributes, [HEAD_SHELL_PROVENANCE_ATTRIBUTE]: "true" };
-}
+const STRUCTURED_HEAD_CONTENT_PROPERTY = "__veryfront_structured_head_content";
 
 function declaresDocumentEncoding(attributes: Readonly<Record<string, string>>): boolean {
   for (const [name, value] of Object.entries(attributes)) {
@@ -205,16 +199,26 @@ function declaresDocumentEncoding(attributes: Readonly<Record<string, string>>):
 
 export function generateMetaTags(metadata: HTMLMetadata): string {
   const record = metadataRecord(metadata);
-  const tags: string[] = ['<meta charset="UTF-8">'];
+  return serializeStructuredHeadTags(buildMetaTagSpecs(record));
+}
+
+function buildMetaTagSpecs(record: Record<string, unknown>): StructuredHeadTag[] {
+  const tags: StructuredHeadTag[] = [{
+    tagName: "meta",
+    attributes: { charset: "UTF-8" },
+    managed: false,
+  }];
 
   const rawViewport = readDataProperty(record, "viewport", "HTML metadata cannot be inspected");
   const viewport = typeof rawViewport === "string"
     ? rawViewport
     : "width=device-width, initial-scale=1.0";
   tags.push(
-    `<meta ${
-      buildAttributes(markShellSingleton("meta", { name: "viewport", content: viewport }))
-    }>`,
+    {
+      tagName: "meta",
+      attributes: { name: "viewport", content: viewport },
+      managed: true,
+    },
   );
 
   const description = readDataProperty(
@@ -224,11 +228,11 @@ export function generateMetaTags(metadata: HTMLMetadata): string {
   );
   if (typeof description === "string" && description) {
     tags.push(
-      `<meta ${
-        buildAttributes(
-          markShellSingleton("meta", { name: "description", content: description }),
-        )
-      }>`,
+      {
+        tagName: "meta",
+        attributes: { name: "description", content: description },
+        managed: true,
+      },
     );
   }
 
@@ -239,10 +243,8 @@ export function generateMetaTags(metadata: HTMLMetadata): string {
   ) {
     if (!isPlainRecord(meta, "HTML tag attributes cannot be inspected")) continue;
     const attributes = filterAttrs(meta, []);
-    if (declaresDocumentEncoding(attributes)) continue;
-    tags.push(
-      `<meta ${buildAttributes(markShellSingleton("meta", attributes))}>`,
-    );
+    if (declaresDocumentEncoding(attributes) || Object.keys(attributes).length === 0) continue;
+    tags.push({ tagName: "meta", attributes, managed: true });
   }
 
   const themeColor = readDataProperty(
@@ -252,20 +254,24 @@ export function generateMetaTags(metadata: HTMLMetadata): string {
   );
   if (typeof themeColor === "string" && themeColor) {
     tags.push(
-      `<meta ${
-        buildAttributes(
-          markShellSingleton("meta", { name: "theme-color", content: themeColor }),
-        )
-      }>`,
+      {
+        tagName: "meta",
+        attributes: { name: "theme-color", content: themeColor },
+        managed: true,
+      },
     );
   }
 
-  return tags.join("\n  ");
+  return tags;
 }
 
 export function generateLinkTags(metadata: HTMLMetadata): string {
   const record = metadataRecord(metadata);
-  const tags: string[] = [];
+  return serializeStructuredHeadTags(buildLinkTagSpecs(record));
+}
+
+function buildLinkTagSpecs(record: Record<string, unknown>): StructuredHeadTag[] {
+  const tags: StructuredHeadTag[] = [];
 
   for (
     const link of boundedTagEntries(
@@ -283,7 +289,9 @@ export function generateLinkTags(metadata: HTMLMetadata): string {
       linkAttrs.crossorigin = "anonymous";
     }
 
-    tags.push(`<link ${buildAttributes(markShellSingleton("link", linkAttrs))}>`);
+    if (Object.keys(linkAttrs).length > 0) {
+      tags.push({ tagName: "link", attributes: linkAttrs, managed: true });
+    }
   }
 
   for (
@@ -296,11 +304,11 @@ export function generateLinkTags(metadata: HTMLMetadata): string {
     const rel = iconAttrs.rel || "icon";
     delete iconAttrs.rel;
     tags.push(
-      `<link ${buildAttributes({ rel, ...iconAttrs })}>`,
+      { tagName: "link", attributes: { rel, ...iconAttrs }, managed: true },
     );
   }
 
-  return tags.join("\n  ");
+  return tags;
 }
 
 export function generateScriptTags(
@@ -308,7 +316,11 @@ export function generateScriptTags(
   nonce?: string,
 ): string {
   const record = metadataRecord(metadata);
-  const tags: string[] = [];
+  return serializeStructuredHeadTags(buildScriptTagSpecs(record), nonce);
+}
+
+function buildScriptTagSpecs(record: Record<string, unknown>): StructuredHeadTag[] {
+  const tags: StructuredHeadTag[] = [];
 
   for (
     const script of boundedTagEntries(
@@ -321,8 +333,12 @@ export function generateScriptTags(
     const content = scriptAttrs.content;
     if (src) {
       delete scriptAttrs.content;
-      const attrs = addNonceIfPresent(scriptAttrs, nonce);
-      tags.push(`<script ${buildAttributes(attrs)}></script>`);
+      tags.push({
+        tagName: "script",
+        attributes: scriptAttrs,
+        managed: true,
+        nonceEligible: true,
+      });
       continue;
     }
 
@@ -330,18 +346,27 @@ export function generateScriptTags(
 
     delete scriptAttrs.content;
     delete scriptAttrs.src;
-    const attrs = addNonceIfPresent(scriptAttrs, nonce);
     tags.push(
-      `<script ${buildAttributes(attrs)}>${escapeInlineScriptContent(content)}</script>`,
+      {
+        tagName: "script",
+        attributes: scriptAttrs,
+        content,
+        managed: true,
+        nonceEligible: true,
+      },
     );
   }
 
-  return tags.join("\n  ");
+  return tags;
 }
 
 export function generateStyleTags(metadata: HTMLMetadata, nonce?: string): string {
   const record = metadataRecord(metadata);
-  const tags: string[] = [];
+  return serializeStructuredHeadTags(buildStyleTagSpecs(record), nonce);
+}
+
+function buildStyleTagSpecs(record: Record<string, unknown>): StructuredHeadTag[] {
+  const tags: StructuredHeadTag[] = [];
 
   for (
     const style of boundedTagEntries(
@@ -355,8 +380,12 @@ export function generateStyleTags(metadata: HTMLMetadata, nonce?: string): strin
     if (href) {
       delete styleAttrs.content;
       delete styleAttrs.rel;
-      const attrs = addNonceIfPresent(styleAttrs, nonce);
-      tags.push(`<link rel="stylesheet" ${buildAttributes(attrs)}>`);
+      tags.push({
+        tagName: "link",
+        attributes: { rel: "stylesheet", ...styleAttrs },
+        managed: true,
+        nonceEligible: true,
+      });
       continue;
     }
 
@@ -364,11 +393,83 @@ export function generateStyleTags(metadata: HTMLMetadata, nonce?: string): strin
 
     delete styleAttrs.content;
     delete styleAttrs.href;
-    const attrs = addNonceIfPresent(styleAttrs, nonce);
     tags.push(
-      `<style ${buildAttributes(attrs)}>${escapeInlineStyleContent(content)}</style>`,
+      {
+        tagName: "style",
+        attributes: styleAttrs,
+        content,
+        managed: true,
+        nonceEligible: true,
+      },
     );
   }
 
-  return tags.join("\n  ");
+  return tags;
+}
+
+function descriptorFromStructuredHeadTag(tag: StructuredHeadTag): ManagedHeadDescriptor | null {
+  if (!tag.managed) return null;
+  const record = Object.assign(Object.create(null), tag.attributes) as Record<string, unknown>;
+  if (tag.content !== undefined) record[STRUCTURED_HEAD_CONTENT_PROPERTY] = tag.content;
+  const supportsText = tag.tagName === "title" || tag.tagName === "script" ||
+    tag.tagName === "style";
+  return descriptorFromManagedHeadRecord(tag.tagName, record, {
+    ...(supportsText && { contentProperty: STRUCTURED_HEAD_CONTENT_PROPERTY }),
+  });
+}
+
+function descriptorsFromStructuredHeadTags(
+  tags: readonly StructuredHeadTag[],
+): ManagedHeadDescriptor[] {
+  const descriptors = tags.flatMap((tag) => {
+    const descriptor = descriptorFromStructuredHeadTag(tag);
+    if (!tag.managed) return [];
+    if (!descriptor) {
+      throw INPUT_VALIDATION_FAILED.create({
+        detail: "HTML metadata failed managed-head validation",
+      });
+    }
+    return [descriptor];
+  });
+  assertManagedHeadDescriptorBudget(descriptors);
+  return descriptors;
+}
+
+function serializeStructuredHeadTags(
+  tags: readonly StructuredHeadTag[],
+  nonce?: string,
+): string {
+  descriptorsFromStructuredHeadTags(tags);
+  return tags.map((tag) => {
+    const attributes = {
+      ...tag.attributes,
+      ...(tag.managed ? { [HEAD_SHELL_PROVENANCE_ATTRIBUTE]: "true" } : {}),
+      ...(tag.nonceEligible && nonce ? { nonce } : {}),
+    };
+    const serializedAttributes = buildAttributes(attributes);
+    if (tag.tagName === "meta" || tag.tagName === "link") {
+      return `<${tag.tagName} ${serializedAttributes}>`;
+    }
+    const content = tag.tagName === "script"
+      ? escapeInlineScriptContent(tag.content ?? "")
+      : tag.tagName === "style"
+      ? escapeInlineStyleContent(tag.content ?? "")
+      : tag.content ?? "";
+    return `<${tag.tagName} ${serializedAttributes}>${content}</${tag.tagName}>`;
+  }).join("\n  ");
+}
+
+export function buildStructuredManagedHeadDescriptors(
+  metadata: HTMLMetadata,
+  effectiveTitle: string,
+): ManagedHeadDescriptor[] {
+  const record = metadataRecord(metadata);
+  const tags: StructuredHeadTag[] = [
+    { tagName: "title", attributes: {}, content: effectiveTitle, managed: true },
+    ...buildMetaTagSpecs(record),
+    ...buildLinkTagSpecs(record),
+    ...buildStyleTagSpecs(record),
+    ...buildScriptTagSpecs(record),
+  ];
+  return descriptorsFromStructuredHeadTags(tags);
 }

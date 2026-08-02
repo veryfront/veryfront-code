@@ -37,7 +37,7 @@ describe("tag-generators", () => {
     assertEquals(output.includes("spoofed"), false);
   });
 
-  it("marks only framework shell singletons as adoptable", () => {
+  it("marks every structured route head entry except charset as shell-owned", () => {
     const metas = generateMetaTags({
       description: "Description",
       meta: [
@@ -68,7 +68,7 @@ describe("tag-generators", () => {
     );
     assertEquals(
       /<meta name="author"[^>]*data-vf-shell-head/.test(metas),
-      false,
+      true,
     );
     assertEquals(
       /<meta property="og:title"[^>]*data-vf-shell-head="true"/.test(metas),
@@ -76,7 +76,7 @@ describe("tag-generators", () => {
     );
     assertEquals(
       /<meta property="og:image"[^>]*data-vf-shell-head/.test(metas),
-      false,
+      true,
     );
     assertEquals(
       /<link rel="canonical"[^>]*data-vf-shell-head="true"/.test(links),
@@ -84,11 +84,11 @@ describe("tag-generators", () => {
     );
     assertEquals(
       /<link rel="stylesheet"[^>]*data-vf-shell-head/.test(links),
-      false,
+      true,
     );
     assertEquals(
       /<link rel="icon"[^>]*data-vf-shell-head/.test(links),
-      false,
+      true,
     );
   });
 

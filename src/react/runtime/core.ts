@@ -2,7 +2,9 @@ import React, { useEffect } from "react";
 import {
   descriptorFromHeadProps,
   HEAD_REACT_OWNER_ATTRIBUTE,
+  HEAD_SSR_PAYLOAD_ATTRIBUTE,
   type ManagedHeadDescriptor,
+  serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { getClientHeadManager, getManagedHeadNonce } from "#veryfront/html/client-head-manager.ts";
 
@@ -136,7 +138,6 @@ const defaultPageContext: PageContextValue = {
 
 const ROUTER_CONTEXT_SYMBOL = Symbol.for("veryfront.react.router-context");
 const PAGE_CONTEXT_SYMBOL = Symbol.for("veryfront.react.page-context");
-const HEAD_COLLECTOR_SYMBOL = Symbol.for("veryfront.react.collect-head");
 
 const globalRouterContext = globalThis as typeof globalThis & {
   [ROUTER_CONTEXT_SYMBOL]?: React.Context<RouterValue>;
@@ -146,28 +147,11 @@ const globalPageContext = globalThis as typeof globalThis & {
   [PAGE_CONTEXT_SYMBOL]?: React.Context<PageContextValue>;
 };
 
-type CollectHeadFn = (data: {
-  title?: string;
-  description?: string;
-  metas?: Array<
-    { name?: string; property?: string; content?: string; [key: string]: string | undefined }
-  >;
-  links?: Array<Record<string, string>>;
-  styles?: Array<string | { content: string; [key: string]: string | undefined }>;
-  scripts?: Array<Record<string, string | undefined>>;
-}) => void;
-
 const RouterContext = globalRouterContext[ROUTER_CONTEXT_SYMBOL] ??
   (globalRouterContext[ROUTER_CONTEXT_SYMBOL] = React.createContext<RouterValue>(defaultRouter));
 
 const PageContextContext = globalPageContext[PAGE_CONTEXT_SYMBOL] ??
   (globalPageContext[PAGE_CONTEXT_SYMBOL] = React.createContext(defaultPageContext));
-
-function isServerEnvironment(): boolean {
-  const ssrFlag = (globalThis as Record<string, unknown>).__VERYFRONT_SSR__;
-  if (ssrFlag === true) return true;
-  return typeof window === "undefined";
-}
 
 type ClientHeadDescriptor = ManagedHeadDescriptor;
 
@@ -181,14 +165,6 @@ function createClientHeadDescriptor(
     child.props as Record<string, unknown>,
     nonce,
   );
-}
-
-function collectHead(data: Parameters<CollectHeadFn>[0]): void {
-  const collector = (globalThis as typeof globalThis & {
-    [HEAD_COLLECTOR_SYMBOL]?: CollectHeadFn;
-  })[HEAD_COLLECTOR_SYMBOL];
-
-  collector?.(data);
 }
 
 /** How a navigation should affect the history stack. */
@@ -481,51 +457,17 @@ function flattenHeadChildren(children: React.ReactNode): React.ReactElement[] {
 
 /** Applies document head elements during SSR and client rendering. */
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
-  const isSSR = isServerEnvironment();
   const ownerRef = React.useRef<object | null>(null);
   const anchorRef = React.useRef<HTMLDivElement | null>(null);
   const managerRef = React.useRef<ReturnType<typeof getClientHeadManager> | null>(
     null,
   );
   if (!ownerRef.current) ownerRef.current = {};
-
-  if (isSSR && children) {
-    flattenHeadChildren(children).forEach((child) => {
-      const descriptor = createClientHeadDescriptor(child, undefined);
-      if (!descriptor) return;
-      const attributes = Object.fromEntries(descriptor.attributes);
-
-      switch (descriptor.tagName) {
-        case "title":
-          collectHead({ title: descriptor.content ?? "" });
-          return;
-        case "meta":
-          collectHead({
-            metas: [attributes],
-          });
-          return;
-        case "link":
-          collectHead({ links: [attributes] });
-          return;
-        case "style":
-          collectHead({
-            styles: descriptor.attributes.length === 0
-              ? [descriptor.content ?? ""]
-              : [{ ...attributes, content: descriptor.content ?? "" }],
-          });
-          return;
-        case "script":
-          collectHead({
-            scripts: [{
-              ...attributes,
-              ...(descriptor.content !== undefined && {
-                content: descriptor.content,
-              }),
-            }],
-          });
-      }
-    });
-  }
+  const payload = serializeManagedHeadPayload(
+    flattenHeadChildren(children)
+      .map((child) => createClientHeadDescriptor(child, undefined))
+      .filter((descriptor): descriptor is ClientHeadDescriptor => descriptor !== null),
+  );
 
   useEffect(() => {
     const owner = ownerRef.current;
@@ -558,6 +500,7 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
     ref: anchorRef,
     "data-veryfront-head": "1",
     [HEAD_REACT_OWNER_ATTRIBUTE]: "1",
+    [HEAD_SSR_PAYLOAD_ATTRIBUTE]: payload,
     style: { display: "none" },
   });
 }

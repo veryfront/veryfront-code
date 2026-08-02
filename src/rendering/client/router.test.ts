@@ -119,6 +119,43 @@ describe("rendering/client/VeryfrontRouter — soft same-route navigation", () =
     }
   });
 
+  it("hands scripted cached routes to the document loader without soft completion", async () => {
+    const restore = installDom("https://example.com/current");
+    const originalLocation = Object.getOwnPropertyDescriptor(globalThis, "location");
+    try {
+      const navigated: string[] = [];
+      const router = new VeryfrontRouter({
+        baseUrl: "https://example.com",
+        onNavigate: (url) => navigated.push(url),
+      });
+      // deno-lint-ignore no-explicit-any
+      (router as any).pageLoader.setCache("/scripted", {
+        html: "<main>Scripted</main>",
+        requiresFullDocumentNavigation: true,
+      });
+      const assigned: string[] = [];
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: {
+          origin: "https://example.com",
+          pathname: "/current",
+          search: "",
+          hash: "",
+          assign: (url: string) => assigned.push(url),
+        },
+      });
+
+      await router.navigate("/scripted");
+
+      assertEquals(assigned, ["/scripted"]);
+      assertEquals(navigated, []);
+    } finally {
+      if (originalLocation) Object.defineProperty(globalThis, "location", originalLocation);
+      else delete (globalThis as Record<string, unknown>).location;
+      restore();
+    }
+  });
+
   it("a popstate (history: none) soft query change updates without a load", async () => {
     const restore = installDom("https://example.com/dashboard?tab=a");
     try {

@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStrictEquals,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import { JSDOM } from "npm:jsdom@28.0.0";
@@ -409,7 +414,7 @@ describe("PageTransition", () => {
       }),
     );
 
-    it("lets destination head directives win and executes each route script once", async () => {
+    it("rejects scripted destinations before mutating the current document", () => {
       const dom = new JSDOM(
         `<!doctype html><html><head>
           <title data-vf-head="true">Previous</title>
@@ -456,27 +461,29 @@ describe("PageTransition", () => {
 
       try {
         const pageTransition = new PageTransition(() => {});
-        pageTransition.updatePage(
-          {
-            html: `<vf-head>
+        assertThrows(
+          () =>
+            pageTransition.updatePage(
+              {
+                html: `<vf-head>
               <title>Directive title</title>
               <meta name="description" content="Directive description">
               <script>window.__routeHeadRuns=(window.__routeHeadRuns||0)+1;</script>
             </vf-head>
             <main>Destination</main>
             <script>window.__routeBodyRuns=(window.__routeBodyRuns||0)+1;</script>`,
-            frontmatter: {
-              title: "Frontmatter title",
-              description: "Frontmatter description",
-            },
-          },
-          false,
-          0,
+                frontmatter: {
+                  title: "Frontmatter title",
+                  description: "Frontmatter description",
+                },
+              },
+              false,
+              0,
+            ),
+          TypeError,
+          "Scripted routes require a full document navigation",
         );
-
-        await delay(200);
-
-        assertEquals(window.document.title, "Directive title");
+        assertEquals(window.document.title, "Previous");
         assertEquals(
           window.document.head.querySelectorAll('meta[name="description"]').length,
           1,
@@ -485,10 +492,10 @@ describe("PageTransition", () => {
           window.document.head.querySelector('meta[name="description"]')?.getAttribute(
             "content",
           ),
-          "Directive description",
+          "Previous",
         );
-        assertEquals(window.__routeHeadRuns, 1);
-        assertEquals(window.__routeBodyRuns, 1);
+        assertEquals(window.__routeHeadRuns, undefined);
+        assertEquals(window.__routeBodyRuns, undefined);
       } finally {
         for (const key of keys) {
           const descriptor = previous.get(key);
@@ -542,12 +549,12 @@ describe("PageTransition", () => {
             ?.getAttribute("content"),
           "Page B description",
         );
-        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 2);
+        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 1);
         assertEquals(targetDocument.querySelector('link[rel="canonical"]'), null);
         assertEquals(targetDocument.querySelector("style"), null);
         assertStrictEquals(targetDocument.querySelector('meta[name="viewport"]'), viewport);
         assertStrictEquals(targetDocument.querySelector('link[rel="manifest"]'), manifest);
-        assertStrictEquals(targetDocument.getElementById("third-party"), thirdParty);
+        assertEquals(targetDocument.getElementById("third-party"), null);
 
         pageTransition.updatePage(
           {
@@ -591,8 +598,7 @@ describe("PageTransition", () => {
         await delay(200);
 
         assertEquals(targetDocument.querySelectorAll('[data-vf-route-head="true"]').length, 0);
-        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 1);
-        assertStrictEquals(targetDocument.querySelector('meta[name="description"]'), thirdParty);
+        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 0);
         assertStrictEquals(targetDocument.querySelector('meta[name="viewport"]'), viewport);
         assertStrictEquals(targetDocument.querySelector('link[rel="manifest"]'), manifest);
         assertEquals(viewport.getAttribute("data-vf-shell-head"), "true");
@@ -668,24 +674,73 @@ describe("PageTransition", () => {
     );
 
     it(
-      "should allow framework-managed inline scripts in transition HTML",
+      "cancels a pending commit when a newer destination supersedes it",
       withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});
+        pageTransition.updatePage(
+          { html: "<main>Stale</main>", frontmatter: {} },
+          false,
+          0,
+        );
+        pageTransition.updatePage(
+          { html: "<main>Current</main>", frontmatter: {} },
+          false,
+          0,
+        );
+
+        await delay(200);
+
+        assertEquals(mocks.mockRoot.innerHTML, "<main>Current</main>");
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
+      }),
+    );
+
+    it(
+      "rejects malformed managed head before mutating route or opacity",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        mocks.mockRoot.innerHTML = "Current route";
+
+        assertThrows(
+          () =>
+            pageTransition.updatePage(
+              {
+                html: "<main>Destination</main>",
+                frontmatter: {},
+                managedHead: [{
+                  tagName: "meta",
+                  attributes: [["Name", "description"]],
+                }],
+              },
+              false,
+              0,
+            ),
+          TypeError,
+          "not canonical",
+        );
+        assertEquals(mocks.mockRoot.innerHTML, "Current route");
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
+      }),
+    );
+
+    it(
+      "rejects inline scripts before fading or replacing the current route",
+      withMocks((mocks) => {
+        const pageTransition = new PageTransition(() => {});
+        const originalHtml = mocks.mockRoot.innerHTML;
         const data: RouteData = {
           html:
             '<main>Theme page</main><script nonce="">document.documentElement.dataset.theme="dark"</script>',
           frontmatter: {},
         };
 
-        pageTransition.updatePage(data, false, 0);
-
-        await delay(200);
-
-        assertEquals(
-          mocks.mockRoot.innerHTML,
-          data.html,
-          "Root element should accept trusted transition HTML that contains scripts",
+        assertThrows(
+          () => pageTransition.updatePage(data, false, 0),
+          TypeError,
+          "Scripted routes require a full document navigation",
         );
+        assertEquals(mocks.mockRoot.innerHTML, originalHtml);
+        assertEquals(mocks.mockRoot.style?.opacity, "1");
       }),
     );
 
@@ -732,18 +787,19 @@ describe("PageTransition", () => {
     );
 
     it(
-      "should not perform transition when html is empty string",
-      withMocks((mocks) => {
+      "should clear the route when html is an empty string",
+      withMocks(async (mocks) => {
         const pageTransition = new PageTransition(() => {});
-        const originalHtml = mocks.mockRoot.innerHTML;
+        mocks.mockRoot.innerHTML = "Previous content";
         const data: RouteData = { html: "", frontmatter: {} };
 
         pageTransition.updatePage(data, false, 0);
+        await delay(200);
 
         assertEquals(
           mocks.mockRoot.innerHTML,
-          originalHtml,
-          "Root element should not change when html is empty",
+          "",
+          "An intentionally empty destination should clear the route",
         );
       }),
     );

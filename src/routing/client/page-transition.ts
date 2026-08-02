@@ -1,38 +1,60 @@
 import { PAGE_TRANSITION_DELAY_MS } from "#veryfront/config";
 import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
 import {
-  applyClientRouteHeadEntries,
+  applyPreparedClientRouteHeadDescriptors,
+  prepareClientRouteHeadEntries,
   updateRouteMetaTags,
   updateRouteTitle,
 } from "#veryfront/html/client-route-head.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { rendererLogger } from "#veryfront/utils";
-import { applyHeadDirectives, executeScripts, manageFocus } from "./dom-utils.ts";
+import { applyHeadDirectives, manageFocus } from "./dom-utils.ts";
 import type { RouteData } from "./page-loader.ts";
 
 const logger = rendererLogger.component("veryfront");
 
 export class PageTransition {
   private pendingTransitionTimeout?: number;
+  private pendingRoot?: HTMLElement;
 
   constructor(private setupViewportPrefetch: (root: Document | HTMLElement) => void) {}
 
   destroy(): void {
-    if (this.pendingTransitionTimeout === undefined) return;
-    clearTimeout(this.pendingTransitionTimeout);
-    this.pendingTransitionTimeout = undefined;
+    this.cancelPendingTransition();
+  }
+
+  cancelPendingTransition(): void {
+    if (this.pendingTransitionTimeout !== undefined) {
+      clearTimeout(this.pendingTransitionTimeout);
+      this.pendingTransitionTimeout = undefined;
+    }
+    if (this.pendingRoot) {
+      this.pendingRoot.style.opacity = "1";
+      this.pendingRoot = undefined;
+    }
   }
 
   updatePage(data: RouteData, isPopState: boolean, scrollY: number): void {
+    this.cancelPendingTransition();
+    if (
+      data.requiresFullDocumentNavigation ||
+      data.managedHead?.some((entry) => entry.tagName === "script") ||
+      (typeof data.html === "string" && /<script\b/i.test(data.html))
+    ) {
+      throw new TypeError("Scripted routes require a full document navigation");
+    }
+
     const rootElement = document.getElementById("root");
-    if (!rootElement || !data.html) {
+    const preparedHead = prepareClientRouteHeadEntries(data.managedHead, document);
+    if (!rootElement || data.html === undefined) {
       retireClientHeadOwnership(document);
-      applyClientRouteHeadEntries(data.managedHead, document);
+      applyPreparedClientRouteHeadDescriptors(preparedHead, document);
       this.updateDocumentMetadata(document, data);
       return;
     }
 
-    this.performTransition(rootElement, data, isPopState, scrollY);
+    const trustedHtml = validateTrustedHtml(String(data.html));
+    this.performTransition(rootElement, data, trustedHtml, preparedHead, isPopState, scrollY);
   }
 
   private updateDocumentMetadata(targetDocument: Document, data: RouteData): void {
@@ -43,41 +65,34 @@ export class PageTransition {
   private performTransition(
     rootElement: HTMLElement,
     data: RouteData,
+    trustedHtml: string,
+    preparedHead: ReturnType<typeof prepareClientRouteHeadEntries>,
     isPopState: boolean,
     scrollY: number,
   ): void {
-    if (this.pendingTransitionTimeout !== undefined) {
-      clearTimeout(this.pendingTransitionTimeout);
-      this.pendingTransitionTimeout = undefined;
-    }
-
     rootElement.style.opacity = "0";
+    this.pendingRoot = rootElement;
 
     this.pendingTransitionTimeout = setTimeout(() => {
       this.pendingTransitionTimeout = undefined;
-
-      // Server-rendered navigation HTML may include framework-managed scripts.
-      const trustedHtml = validateTrustedHtml(String(data.html), {
-        allowInlineScripts: true,
-      });
-      // Replacing the React root disconnects every <Head> registration. Retire
-      // its document-level ownership first even when the destination has no
-      // legacy head directive, otherwise stale canonical/style/script nodes
-      // survive indefinitely.
-      retireClientHeadOwnership(rootElement.ownerDocument);
-      rootElement.innerHTML = trustedHtml;
-      rootElement.style.opacity = "1";
-
-      // Route head directives retain precedence over frontmatter metadata.
-      // Commit the marked frontmatter baseline afterwards; it fills missing
-      // singleton slots but never mutates or overrides a directive-owned node.
-      applyHeadDirectives(rootElement);
-      applyClientRouteHeadEntries(data.managedHead, rootElement.ownerDocument);
-      this.updateDocumentMetadata(rootElement.ownerDocument, data);
-      executeScripts(rootElement);
-      this.setupViewportPrefetch(rootElement);
-      manageFocus(rootElement);
-      this.handleScroll(isPopState, scrollY);
+      this.pendingRoot = undefined;
+      try {
+        // Every fallible payload check completed before the old route is
+        // mutated. Scripted routes never enter this soft-transition path.
+        retireClientHeadOwnership(rootElement.ownerDocument);
+        rootElement.innerHTML = trustedHtml;
+        applyHeadDirectives(rootElement);
+        applyPreparedClientRouteHeadDescriptors(preparedHead, rootElement.ownerDocument);
+        this.updateDocumentMetadata(rootElement.ownerDocument, data);
+        this.setupViewportPrefetch(rootElement);
+        manageFocus(rootElement);
+        this.handleScroll(isPopState, scrollY);
+      } catch (error) {
+        logger.error("Route transition commit failed; reloading the document", error);
+        globalThis.location?.reload();
+      } finally {
+        rootElement.style.opacity = "1";
+      }
     }, PAGE_TRANSITION_DELAY_MS);
   }
 

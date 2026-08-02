@@ -5,20 +5,28 @@ export {
   updateRouteTitle,
 } from "#veryfront/html/client-route-head.ts";
 import {
+  aggregateManagedHeadDescriptors,
+  assertManagedHeadDescriptorBudget,
   descriptorFromManagedHeadRecord,
+  deserializeManagedHeadPayload,
   HEAD_LEGACY_MANAGED_ATTRIBUTE,
   HEAD_PROVENANCE_ATTRIBUTE,
   HEAD_REACT_OWNER_ATTRIBUTE,
   HEAD_ROUTE_MANAGED_ATTRIBUTE,
   HEAD_SHELL_PROVENANCE_ATTRIBUTE,
+  HEAD_SSR_PAYLOAD_ATTRIBUTE,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
   isHeadFrameworkAttribute,
+  type ManagedHeadDescriptor,
+  managedHeadDescriptorToTransportEntry,
 } from "#veryfront/html/managed-head-protocol.ts";
-import { retireClientHeadOwnership } from "#veryfront/html/client-head-manager.ts";
+import {
+  getManagedHeadNonce,
+  retireClientHeadOwnership,
+} from "#veryfront/html/client-head-manager.ts";
 
 const logger = rendererLogger.component("veryfront");
-const MAX_PARSED_ROUTE_HEAD_ENTRIES = 100;
 const PARSED_ROUTE_HEAD_CONTENT_PROPERTY = "__veryfront_parsed_route_head_content";
 
 export function isInternalLink(target: HTMLAnchorElement): boolean {
@@ -45,6 +53,7 @@ export function findAnchorElement(element: HTMLElement | null): HTMLAnchorElemen
 
 export function executeScripts(container: HTMLElement): void {
   const targetDocument = container.ownerDocument ?? document;
+  const activeNonce = targetDocument ? getManagedHeadNonce(targetDocument) : undefined;
   for (const oldScript of container.querySelectorAll("script")) {
     // Head-directive scripts are activated when their clone is appended to the
     // document head. Activating them here as body scripts as well would execute
@@ -54,8 +63,9 @@ export function executeScripts(container: HTMLElement): void {
     const newScript = targetDocument.createElement("script");
 
     for (const { name, value } of oldScript.attributes) {
-      newScript.setAttribute(name, value);
+      if (name.toLowerCase() !== "nonce") newScript.setAttribute(name, value);
     }
+    if (activeNonce) newScript.setAttribute("nonce", activeNonce);
 
     newScript.textContent = oldScript.textContent;
     oldScript.parentNode?.replaceChild(newScript, oldScript);
@@ -116,22 +126,29 @@ function processHeadWrapper(
 ): void {
   const ElementConstructor = targetDocument.defaultView?.Element ??
     globalThis.Element;
+  const activeNonce = getManagedHeadNonce(targetDocument);
   for (const node of wrapper.childNodes) {
     if (!ElementConstructor || !(node instanceof ElementConstructor)) continue;
 
     const tagName = node.tagName.toLowerCase();
+    if (headSingletonKey(node) === "meta:charset") continue;
 
     const clone = targetDocument.createElement(tagName);
 
     for (const { name, value } of node.attributes) {
-      clone.setAttribute(name, value);
+      if (name.toLowerCase() !== "nonce") clone.setAttribute(name, value);
+    }
+    if (
+      activeNonce &&
+      (tagName === "script" || tagName === "style" || tagName === "link")
+    ) {
+      clone.setAttribute("nonce", activeNonce);
     }
 
     if (node.textContent && !clone.hasAttribute("src")) {
       clone.textContent = node.textContent;
     }
 
-    if (headSingletonKey(clone) === "meta:charset") continue;
     replaceExistingHeadSingleton(targetDocument, clone);
     clone.setAttribute(HEAD_LEGACY_MANAGED_ATTRIBUTE, "1");
     clone.setAttribute(HEAD_ROUTE_MANAGED_ATTRIBUTE, "true");
@@ -201,6 +218,66 @@ export function extractPageDataFromScript(): PageData | null {
   }
 }
 
+function descriptorFromDocumentHeadElement(element: Element): ManagedHeadDescriptor | null {
+  const tagName = element.tagName.toLowerCase();
+  const record = Object.create(null) as Record<string, unknown>;
+  for (const { name, value } of element.attributes) {
+    if (!isHeadFrameworkAttribute(name) && name.toLowerCase() !== "nonce") {
+      record[name.toLowerCase()] = value;
+    }
+  }
+  const supportsText = tagName === "title" || tagName === "script" || tagName === "style";
+  if (supportsText) record[PARSED_ROUTE_HEAD_CONTENT_PROPERTY] = element.textContent ?? "";
+  return descriptorFromManagedHeadRecord(tagName, record, {
+    ...(supportsText && { contentProperty: PARSED_ROUTE_HEAD_CONTENT_PROPERTY }),
+  });
+}
+
+function payloadDescriptors(root: ParentNode | null): ManagedHeadDescriptor[] {
+  if (!root || typeof root.querySelectorAll !== "function") return [];
+  const descriptors: ManagedHeadDescriptor[] = [];
+  for (const element of root.querySelectorAll(`[${HEAD_SSR_PAYLOAD_ATTRIBUTE}]`)) {
+    if (element.getAttribute(HEAD_REACT_OWNER_ATTRIBUTE) !== "1") continue;
+    const payload = element.getAttribute(HEAD_SSR_PAYLOAD_ATTRIBUTE);
+    if (payload) descriptors.push(...deserializeManagedHeadPayload(payload));
+  }
+  return descriptors;
+}
+
+export function snapshotClientRouteHead(
+  targetDocument: Document = document,
+): ClientRouteHeadEntry[] {
+  const descriptors: ManagedHeadDescriptor[] = [];
+  let hasStructuredPayload = false;
+  const hydrationDataScript = targetDocument.getElementById("veryfront-hydration-data");
+  if (hydrationDataScript?.textContent) {
+    const hydrationData = JSON.parse(hydrationDataScript.textContent) as {
+      managedHeadPayload?: unknown;
+    };
+    if (typeof hydrationData.managedHeadPayload === "string") {
+      descriptors.push(...deserializeManagedHeadPayload(hydrationData.managedHeadPayload));
+      hasStructuredPayload = true;
+    }
+  }
+
+  const committedDescriptors = payloadDescriptors(targetDocument.getElementById("root"));
+  descriptors.push(...committedDescriptors);
+  const fallbackSelector = [
+    ...(committedDescriptors.length === 0 ? [`[${HEAD_PROVENANCE_ATTRIBUTE}="true"]`] : []),
+    ...(!hasStructuredPayload ? [`[${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true"]`] : []),
+  ].join(", ");
+  if (fallbackSelector && targetDocument.head?.querySelectorAll) {
+    for (const element of targetDocument.head.querySelectorAll(fallbackSelector)) {
+      const descriptor = descriptorFromDocumentHeadElement(element);
+      if (descriptor) descriptors.push(descriptor);
+    }
+  }
+
+  const aggregated = aggregateManagedHeadDescriptors(descriptors);
+  assertManagedHeadDescriptorBudget(aggregated);
+  return aggregated.map(managedHeadDescriptorToTransportEntry);
+}
+
 export function parsePageDataFromHTML(html: string): {
   content: string;
   pageData: PageData;
@@ -213,37 +290,6 @@ export function parsePageDataFromHTML(html: string): {
   if (!root) logger.warn("[Veryfront] No root element found in HTML");
 
   const content = root?.innerHTML ?? "";
-
-  const managedElements = [
-    ...doc.querySelectorAll(
-      `[${HEAD_PROVENANCE_ATTRIBUTE}="true"], [${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true"]`,
-    ),
-  ];
-  if (managedElements.length > MAX_PARSED_ROUTE_HEAD_ENTRIES) {
-    throw new TypeError("Fetched document exceeds the managed-head entry limit");
-  }
-  const managedHead = managedElements.flatMap((element): ClientRouteHeadEntry[] => {
-    const tagName = element.tagName.toLowerCase();
-    const record = Object.create(null) as Record<string, unknown>;
-    for (const { name, value } of element.attributes) {
-      if (!isHeadFrameworkAttribute(name)) record[name] = value;
-    }
-    const supportsText = tagName === "title" || tagName === "script" || tagName === "style";
-    if (supportsText) {
-      record[PARSED_ROUTE_HEAD_CONTENT_PROPERTY] = element.textContent ?? "";
-    }
-    const descriptor = descriptorFromManagedHeadRecord(
-      tagName,
-      record,
-      supportsText ? { contentProperty: PARSED_ROUTE_HEAD_CONTENT_PROPERTY } : undefined,
-    );
-    if (!descriptor) return [];
-    return [{
-      tagName: descriptor.tagName,
-      attributes: descriptor.attributes.map(([name, value]) => [name, value]),
-      ...(descriptor.content !== undefined && { content: descriptor.content }),
-    }];
-  });
 
   const pageDataScript = doc.querySelector("script[data-veryfront-page]");
   let pageData: PageData = {};
@@ -275,6 +321,14 @@ export function parsePageDataFromHTML(html: string): {
     } catch (error) {
       logger.error("Failed to parse hydration data from HTML:", error);
     }
+  }
+
+  const managedHead = snapshotClientRouteHead(doc);
+  if (
+    managedHead.some((entry) => entry.tagName === "script") ||
+    (typeof root?.querySelector === "function" && root.querySelector("script"))
+  ) {
+    pageData = { ...pageData, requiresFullDocumentNavigation: true };
   }
 
   return { content, pageData, managedHead, dependencyPinningCacheKey };

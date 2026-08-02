@@ -1,7 +1,50 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { CollectedHead } from "#veryfront/react/head-collector.ts";
-import { buildHeadElements, mergeCollectedHeadWithShell } from "./html-head.ts";
+import {
+  descriptorFromHeadProps,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
+import {
+  buildHeadElements,
+  extractCommittedHeadFromHTML,
+  mergeCollectedHeadWithShell,
+} from "./html-head.ts";
+
+describe("committed React Head extraction", () => {
+  it("reads only explicit owner payloads and aggregates committed order", () => {
+    const layout = serializeManagedHeadPayload([
+      descriptorFromHeadProps("title", { children: "Layout" })!,
+      descriptorFromHeadProps("meta", { name: "author", content: "Layout author" })!,
+    ]);
+    const page = serializeManagedHeadPayload([
+      descriptorFromHeadProps("title", { children: "Page" })!,
+      descriptorFromHeadProps("style", { children: ".page{}" })!,
+    ]);
+    const html = `<div data-vf-ssr-head="${layout}"></div>
+      <div data-veryfront-head="1" data-vf-react-head-owner="1" data-vf-ssr-head="${layout}"></div>
+      <div data-veryfront-head="1" data-vf-react-head-owner="1" data-vf-ssr-head="${page}"></div>`;
+
+    assertEquals(extractCommittedHeadFromHTML(html), {
+      title: "Page",
+      metas: [{ content: "Layout author", name: "author" }],
+      links: [],
+      styles: [".page{}"],
+      scripts: [],
+    });
+  });
+
+  it("fails closed when a committed owner payload is malformed", () => {
+    assertThrows(
+      () =>
+        extractCommittedHeadFromHTML(
+          '<div data-veryfront-head="1" data-vf-react-head-owner="1" data-vf-ssr-head="Zh"></div>',
+        ),
+      TypeError,
+      "non-canonical trailing bits",
+    );
+  });
+});
 
 describe("collected Head serialization", () => {
   it("marks every emitted node and preserves empty content and style attributes", () => {

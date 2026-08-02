@@ -1,11 +1,13 @@
 import type { RenderMetadata } from "#veryfront/types";
 import { extractHTMLMetadata } from "./metadata-extraction.ts";
 import {
+  buildStructuredManagedHeadDescriptors,
   generateLinkTags,
   generateMetaTags,
   generateScriptTags,
   generateStyleTags,
 } from "./tag-generators.ts";
+import { serializeManagedHeadPayload } from "./managed-head-protocol.ts";
 import type { HTMLMetadata } from "./types.ts";
 
 export interface ProcessedMetadata {
@@ -17,6 +19,7 @@ export interface ProcessedMetadata {
   styleTags: string;
   lang: string;
   bodyClass: string;
+  managedHeadPayload: string;
 }
 
 export function processMetadata(meta: RenderMetadata): ProcessedMetadata {
@@ -42,5 +45,8 @@ export function processMetadata(meta: RenderMetadata): ProcessedMetadata {
     styleTags: generateStyleTags(metadata),
     lang,
     bodyClass,
+    managedHeadPayload: serializeManagedHeadPayload(
+      buildStructuredManagedHeadDescriptors(metadata, effectiveTitle),
+    ),
   };
 }
