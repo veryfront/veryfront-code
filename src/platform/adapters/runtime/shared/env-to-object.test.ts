@@ -41,7 +41,11 @@ describe("platform/adapters/runtime/shared/env-to-object", () => {
 
   it("preserves __proto__ as data without changing the result prototype", () => {
     const env = Object.create(null) as Record<string, string>;
-    env["__proto__"] = "literal";
+    Object.defineProperty(env, "__proto__", {
+      value: "literal",
+      enumerable: true,
+      configurable: true,
+    });
 
     const result = envToObject(env);
 

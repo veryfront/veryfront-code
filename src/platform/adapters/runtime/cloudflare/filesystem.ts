@@ -247,7 +247,7 @@ async function inspectDirectory(
       // therefore cannot appear after a child key.
       if (!hasMarker) return { hasMarker: false, hasChildren: true };
     }
-    if (hasMarker && hasChildren) break;
+    if (hasChildren) break;
   }
   return { hasMarker, hasChildren };
 }

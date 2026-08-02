@@ -7,8 +7,6 @@ import {
   captureExclusiveCreateCapability,
   captureSnapshotReadCapability,
 } from "../adapters/file-system-capabilities.ts";
-import { DenoFileSystemAdapter } from "../adapters/runtime/deno/filesystem-adapter.ts";
-import { NodeCompatibleFileSystemAdapter } from "../adapters/runtime/shared/node-filesystem-adapter.ts";
 import { isProxyWithoutHooks } from "./error-introspection.ts";
 import { isNotFoundError } from "./not-found-error.ts";
 
@@ -439,33 +437,46 @@ class DenoFileSystem implements FileSystem {
 /** Create the runtime-native filesystem implementation. */
 export function createFileSystem(): FileSystem {
   const fileSystem = isDeno ? new DenoFileSystem() : new NodeFileSystem();
-  const semanticAdapter = isDeno
-    ? new DenoFileSystemAdapter()
-    : new NodeCompatibleFileSystemAdapter();
-  const snapshotReader = captureSnapshotReadCapability(
-    semanticAdapter,
-    "Native filesystem adapter",
-  );
-  if (snapshotReader !== undefined) {
-    Object.defineProperty(fileSystem, "readFileSnapshotWithinLimit", {
-      value: (
-        path: string,
-        containmentRoot: string,
-        byteLimit: number,
-      ) => snapshotReader.read(path, containmentRoot, byteLimit),
-      enumerable: true,
-    });
-  }
-  const exclusiveCreator = captureExclusiveCreateCapability(
-    semanticAdapter,
-    "Native filesystem adapter",
-  );
-  if (exclusiveCreator !== undefined) {
-    Object.defineProperty(fileSystem, "createFileBytesExclusive", {
-      value: (path: string, content: Uint8Array) => exclusiveCreator.create(path, content),
-      enumerable: true,
-    });
-  }
+  let semanticAdapter:
+    | Promise<import("../adapters/base.ts").FileSystemAdapter>
+    | undefined;
+  const loadSemanticAdapter = () =>
+    semanticAdapter ??= isDeno
+      ? import("../adapters/runtime/deno/filesystem-adapter.ts")
+        .then(({ DenoFileSystemAdapter }) => new DenoFileSystemAdapter())
+      : import("../adapters/runtime/shared/node-filesystem-adapter.ts")
+        .then(({ NodeCompatibleFileSystemAdapter }) => new NodeCompatibleFileSystemAdapter());
+
+  Object.defineProperty(fileSystem, "readFileSnapshotWithinLimit", {
+    value: async (
+      path: string,
+      containmentRoot: string,
+      byteLimit: number,
+    ) => {
+      const snapshotReader = captureSnapshotReadCapability(
+        await loadSemanticAdapter(),
+        "Native filesystem adapter",
+      );
+      if (snapshotReader === undefined) {
+        throw new Error("Native filesystem adapter does not support snapshot reads");
+      }
+      return await snapshotReader.read(path, containmentRoot, byteLimit);
+    },
+    enumerable: true,
+  });
+  Object.defineProperty(fileSystem, "createFileBytesExclusive", {
+    value: async (path: string, content: Uint8Array) => {
+      const exclusiveCreator = captureExclusiveCreateCapability(
+        await loadSemanticAdapter(),
+        "Native filesystem adapter",
+      );
+      if (exclusiveCreator === undefined) {
+        throw new Error("Native filesystem adapter does not support exclusive creates");
+      }
+      await exclusiveCreator.create(path, content);
+    },
+    enumerable: true,
+  });
   return fileSystem;
 }
 
@@ -609,6 +620,8 @@ export function isAlreadyExistsError(error: unknown): boolean {
   }
 
   try {
+    const AlreadyExists = isDeno ? denoGlobal().errors.AlreadyExists : undefined;
+    if (AlreadyExists && error instanceof AlreadyExists) return true;
     return hasOwnDataValue(error, "code", "EEXIST");
   } catch {
     return false;
