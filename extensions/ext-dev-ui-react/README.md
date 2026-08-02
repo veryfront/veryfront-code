@@ -6,9 +6,15 @@ extension and registers one immutable `DevUiAssetProvider` bundle. The bundle
 contains both the React implementation and its generated stylesheet, so the
 two assets cannot be built or deployed at different versions.
 
-Core serves that checked-in bundle from local, same-origin endpoints. It never
-loads React, transforms TSX, imports a CDN module, or falls back to source at
-request time. The extension requests no Deno runtime capabilities.
+The bundle carries React and its stylesheet inline, so serving it needs no CDN
+module, no request-time TSX transform, and no source fallback. The extension
+requests no Deno runtime capabilities.
+
+This package supplies the asset and the shared protocol only. The dashboard and
+projects handlers in `src/server/handlers/dev/` still serve the legacy
+`src/server/dev-ui` path; switching them to `DevUiAssetProvider` also requires
+the dashboard session endpoint and CSRF token defined in
+`src/extensions/dev-ui/protocol.ts`, which core does not implement yet.
 
 After changing the UI or shell source, regenerate and verify both generated
 files with:
