@@ -1,7 +1,7 @@
 ---
 title: "veryfront/ui"
 description: "`veryfront/ui` - the public UI primitive library. Dependency-light forks of Veryfront Studio's design system (cva/Slot inlined; colours remapped to veryfront's `[var(--token)]` vocabulary; zero external packages). These are the base layer the `veryfront/chat` components are built on: `chat` depends on `ui`, never the reverse."
-order: 38
+order: 39
 ---
 
 ## Import
@@ -61,7 +61,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `AlertAction` | Trailing action slot for `<Alert>` (button or link). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L89) |
 | `AlertContent` | Message body for `<Alert>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L70) |
 | `AlertIcon` | Leading icon slot for `<Alert>` (size-4 recommended). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L51) |
-| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L529) |
+| `AppShell` | Compound AppShell. Compose: | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L628) |
 | `Avatar` | Render a user / agent / entity avatar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/avatar.tsx#L37) |
 | `Badge` | Render a badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L38) |
 | `Button` | Render an action button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L126) |
@@ -75,9 +75,9 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `Collapsible` | Collapsible root - owns open state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L29) |
 | `CollapsibleContent` | Collapsible content - rendered only while open. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L80) |
 | `CollapsibleTrigger` | Toggles the collapsible. `asChild` merges onto the child element. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L54) |
-| `ColorModeProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L47) |
-| `ColorModeScript` | Inline script to prevent flash of wrong color mode on SSR. Render this in &lt;head&gt; before any content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L127) |
-| `ColorModeToggle` | Simple toggle button for color mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L149) |
+| `ColorModeProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L60) |
+| `ColorModeScript` | Inline script to prevent flash of wrong color mode on SSR. Render this in &lt;head&gt; before any content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L152) |
+| `ColorModeToggle` | Simple toggle button for color mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L176) |
 | `Command` | Command root - owns the filter query and the item registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L35) |
 | `CommandDialog` | A Command palette inside a modal Dialog overlay. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L94) |
 | `CommandEmpty` | Shown when the query matches no items. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L173) |
@@ -176,19 +176,19 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `generateTokenCSS` | Generates the scoped CSS for the design tokens. Every rule matches BOTH the canonical `[data-vf-ui]` scope and the `[data-vf-chat]` compat alias, so tokens don't leak to the page and existing consumers keep working. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/design-tokens.ts#L184) |
 | `getDocumentNonce` | Reuse the server-issued CSP nonce for client-created style/script elements during hydration and SPA updates. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/csp-nonce.ts#L5) |
 | `getFileTypeLabel` | Human label for a file extension, falling back to the media type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/file-type.tsx#L233) |
-| `useColorModeOptional` | Non-throwing variant - returns `null` when there is no `ColorModeProvider`. Use for components that should render standalone (e.g. a `CodeBlock` dropped into markdown) and fall back to light mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L117) |
+| `useColorModeOptional` | Non-throwing variant - returns `null` when there is no `ColorModeProvider`. Use for components that should render standalone (e.g. a `CodeBlock` dropped into markdown) and fall back to light mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L142) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `AlertProps` | Props accepted by `<Alert>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/alert.tsx#L23) |
-| `AppShellHeaderProps` | Props accepted by `AppShellHeader`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L434) |
-| `AppShellOpenState` | Per-side visibility map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L94) |
-| `AppShellProps` | Props accepted by `AppShell`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L100) |
+| `AppShellHeaderProps` | Props accepted by `AppShellHeader`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L533) |
+| `AppShellOpenState` | Per-side visibility map. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L155) |
+| `AppShellProps` | Props accepted by `AppShell`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L161) |
 | `AppShellSide` | Which edge a sidebar docks to. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L29) |
-| `AppShellSidebarProps` | Props accepted by `AppShellSidebar`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L230) |
-| `AppShellTriggerProps` | Props accepted by `AppShellTrigger`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L466) |
+| `AppShellSidebarProps` | Props accepted by `AppShellSidebar`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L319) |
+| `AppShellTriggerProps` | Props accepted by `AppShellTrigger`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L565) |
 | `AvatarProps` | Props accepted by `<Avatar>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/avatar.tsx#L25) |
 | `BadgeProps` | Props accepted by `<Badge>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/badge.tsx#L32) |
 | `ButtonProps` | Props accepted by `<Button>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/button.tsx#L116) |
@@ -197,7 +197,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `CheckboxProps` | Props accepted by `<Checkbox>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/checkbox.tsx#L16) |
 | `CodeBlockProps` | Props accepted by `<CodeBlock>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/code-block.tsx#L237) |
 | `CollapsibleProps` | Props accepted by `<Collapsible>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/collapsible.tsx#L21) |
-| `ColorModeProviderProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L40) |
+| `ColorModeProviderProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L53) |
 | `CommandDialogProps` | Props accepted by `<CommandDialog>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L86) |
 | `CommandInputProps` | Props accepted by `<CommandInput>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L111) |
 | `CommandItemProps` | Props accepted by `<CommandItem>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/command.tsx#L223) |
@@ -251,7 +251,7 @@ export default function App({ children }: { children: React.ReactNode }) {
 | `selectTriggerVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/select.tsx#L21) |
 | `switchTrackVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/switch.tsx#L15) |
 | `textareaVariants` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/textarea.tsx#L11) |
-| `useAppShell` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L47) |
+| `useAppShell` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/app-shell.tsx#L108) |
 | `useColorMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/ui/color-mode.tsx#L23) |
 
 ## Deep imports

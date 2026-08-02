@@ -38,7 +38,7 @@ order: 1
 | [`veryfront/router`](./veryfront/router.md) | Client navigation and route context. |
 | [`veryfront/runs`](./veryfront/runs.md) | Canonical durable task and workflow runs. |
 | [`veryfront/sandbox`](./veryfront/sandbox.md) | Isolated execution. |
-| [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined schedules for Veryfront projects. |
+| [`veryfront/schedule`](./veryfront/schedule.md) | Source-defined recurring schedules for Veryfront projects. |
 | [`veryfront/schemas`](./veryfront/schemas.md) | Validation schemas. |
 | [`veryfront/security`](./veryfront/security.md) | Security layer - input validation with size limits, CORS configuration, CSP and security headers, path traversal prevention, and secure filesystem access. |
 | [`veryfront/server`](./veryfront/server.md) | Server runtime helpers. |

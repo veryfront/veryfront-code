@@ -121,7 +121,7 @@ applySecurityHeaders(response.headers, false, generateNonce(), null);
 | `RequestLimits` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/types.ts#L8) |
 | `ResponseBuilderConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/response/types.ts#L27) |
 | `SecureFsConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L56) |
-| `SecurityConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/server.ts#L8) |
+| `SecurityConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/server.ts#L9) |
 | `SecurityContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L39) |
 | `SecurityEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/secure-fs.ts#L65) |
 | `SyncCORSConfig` | CORS policy accepted by synchronous response-building APIs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/http/cors/types.ts#L17) |
