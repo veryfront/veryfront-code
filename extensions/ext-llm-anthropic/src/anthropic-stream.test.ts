@@ -1,5 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ProviderRequestError } from "veryfront/provider/shared";
 import { streamAnthropicCompatibleParts } from "./anthropic-stream.ts";
 
 type AnthropicStreamOptions = Parameters<typeof streamAnthropicCompatibleParts>[1];
@@ -550,5 +551,21 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
         },
       },
     ]);
+  });
+
+  it("reports malformed SSE JSON as a typed provider error", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText('data: {"type":\n\n')),
+      ProviderRequestError,
+      "SSE event framing was malformed",
+    );
+  });
+
+  it("reports a malformed trailing SSE buffer as a typed provider error", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText('data: {"type":')),
+      ProviderRequestError,
+      "trailing SSE event was malformed",
+    );
   });
 });

@@ -226,7 +226,10 @@ export function normalizeOpenAIResponsesFinishReason(
     case "in_progress":
       return null;
     default:
-      return null;
+      // The streaming path pre-validates status against its event type, so
+      // unknown values only reach here from non-streaming responses, where
+      // they pass through for forward compatibility.
+      return raw;
   }
 }
 

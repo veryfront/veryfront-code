@@ -1,5 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ProviderRequestError } from "veryfront/provider/shared";
 import { streamGoogleCompatibleParts } from "./google-stream.ts";
 
 function streamFromText(text: string): ReadableStream<Uint8Array> {
@@ -122,5 +123,21 @@ describe("ext-llm-google/google-stream", () => {
         totalTokens: 3,
       },
     }]);
+  });
+
+  it("reports malformed SSE JSON as a typed provider error", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText('data: {"candidates":\r\n\r\n')),
+      ProviderRequestError,
+      "SSE event framing was malformed",
+    );
+  });
+
+  it("reports a malformed trailing SSE buffer as a typed provider error", async () => {
+    await assertRejects(
+      () => collectParts(streamFromText('data: {"candidates":')),
+      ProviderRequestError,
+      "trailing SSE event was malformed",
+    );
   });
 });

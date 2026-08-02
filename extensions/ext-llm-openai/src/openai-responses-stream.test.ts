@@ -5,6 +5,7 @@ import {
   MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS,
   MAX_OPENAI_RESPONSES_STREAM_OUTPUT_ITEMS,
   MAX_OPENAI_STREAM_MESSAGE_SNAPSHOT_BYTES,
+  normalizeOpenAIResponsesFinishReason,
   streamOpenAIResponsesParts,
 } from "./openai-responses-stream.ts";
 import {
@@ -1426,5 +1427,15 @@ describe("ext-llm-openai/openai-responses-stream", () => {
       ProviderRequestError,
       "stream ended before a terminal response event",
     );
+  });
+
+  it("passes unknown non-streaming finish statuses through unchanged", () => {
+    assertEquals(normalizeOpenAIResponsesFinishReason("cancelled"), "cancelled");
+    assertEquals(normalizeOpenAIResponsesFinishReason("completed"), {
+      unified: "stop",
+      raw: "completed",
+    });
+    assertEquals(normalizeOpenAIResponsesFinishReason("in_progress"), null);
+    assertEquals(normalizeOpenAIResponsesFinishReason(undefined), null);
   });
 });
