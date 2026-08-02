@@ -189,11 +189,24 @@ export function mapToDenoPermissions(capabilities: Capability[]): string[] {
     if (!mapping) continue;
 
     let flag = mapping.flag;
-    const scopes = mapping.resolveScopes
-      ? mapping.resolveScopes(cap)
-      : mapping.scopeKey
-      ? (cap[mapping.scopeKey] as string[] | undefined) ?? []
-      : [];
+    let scopes: string[];
+    if (mapping.resolveScopes) {
+      scopes = mapping.resolveScopes(cap);
+    } else if (mapping.scopeKey) {
+      const configuredScopes = cap[mapping.scopeKey];
+      if (configuredScopes === undefined) {
+        scopes = [];
+      } else if (
+        !Array.isArray(configuredScopes) ||
+        configuredScopes.some((scope) => typeof scope !== "string")
+      ) {
+        throw new TypeError(`${cap.type} scoped permissions must be a string array`);
+      } else {
+        scopes = configuredScopes;
+      }
+    } else {
+      scopes = [];
+    }
     if (mapping.requireScopes && scopes.length === 0) {
       throw new TypeError(`${cap.type} must resolve at least one scoped permission`);
     }

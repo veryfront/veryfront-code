@@ -35,6 +35,7 @@ import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { CSSOptimizerService } from "./optimizer-service.ts";
 import { extractCriticalCSS as extractCriticalCSSImpl } from "./critical-css.ts";
+import { nativeBuildPublicationLock } from "../../production-build/build/build-publication.ts";
 
 export class CSSOptimizer {
   private service: CSSOptimizerService | null = null;
@@ -83,6 +84,7 @@ export class CSSOptimizer {
         this.adapter,
         this.baseDir,
         this.options,
+        { publicationLock: nativeBuildPublicationLock },
       );
       this.service = service;
       return service;

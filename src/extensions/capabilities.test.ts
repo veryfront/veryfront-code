@@ -43,6 +43,18 @@ describe("capabilities", () => {
       assertEquals(perms, ["--allow-read=./src,./public"]);
     });
 
+    it("rejects malformed scalar filesystem scopes", () => {
+      assertThrows(
+        () =>
+          mapToDenoPermissions([{
+            type: "fs:read",
+            paths: "./src",
+          } as unknown as Capability]),
+        TypeError,
+        "string array",
+      );
+    });
+
     it("should map net:outbound to --allow-net with hosts", () => {
       const caps: Capability[] = [{ type: "net:outbound", hosts: ["api.example.com"] }];
       const perms = mapToDenoPermissions(caps);

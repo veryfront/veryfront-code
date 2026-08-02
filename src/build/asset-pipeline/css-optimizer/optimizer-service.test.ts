@@ -5,6 +5,7 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { CSSOptimizerService } from "./optimizer-service.ts";
 import { LightningCSSStrategy } from "./strategies/lightning-strategy.ts";
+import { nativeBuildPublicationLock } from "../../production-build/build/build-publication.ts";
 
 async function withProject(
   callback: (projectDir: string) => Promise<void>,
@@ -31,7 +32,7 @@ async function createService(
       outputDir: ".veryfront/css",
       ...options,
     },
-    dependencies,
+    { publicationLock: nativeBuildPublicationLock, ...dependencies },
   );
 }
 

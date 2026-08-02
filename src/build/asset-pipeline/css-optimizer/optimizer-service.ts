@@ -13,7 +13,10 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createSecureFs, type SecureFs } from "#veryfront/security/secure-fs.ts";
 import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
-import { createBuildPublication } from "../../production-build/build/build-publication.ts";
+import {
+  type BuildPublicationLock,
+  createBuildPublication,
+} from "../../production-build/build/build-publication.ts";
 import { isContainedAssetPath } from "../../utils/asset-utils.ts";
 import { hasControlCharacters } from "../../utils/string-validation.ts";
 import {
@@ -54,6 +57,7 @@ interface PlannedCSSFile {
 export interface CSSOptimizerServiceDependencies {
   lightningStrategy?: LightningCSSStrategy;
   purgeStrategy?: PurgeStrategy;
+  publicationLock?: BuildPublicationLock;
 }
 
 function portablePath(path: string): string {
@@ -112,6 +116,7 @@ export class CSSOptimizerService {
   private cacheManager = new CacheManager();
   private readonly lightningStrategy: LightningCSSStrategy;
   private readonly purgeStrategy: PurgeStrategy;
+  private readonly publicationLock?: BuildPublicationLock;
   private readonly adapter: RuntimeAdapter;
   private readonly secureFs: SecureFs;
   private readonly baseDir: string;
@@ -154,6 +159,14 @@ export class CSSOptimizerService {
         typeof dependencies.purgeStrategy.clearCache !== "function")
     ) {
       throw new TypeError("CSS purge strategy dependency is invalid");
+    }
+    if (
+      dependencies.publicationLock !== undefined &&
+      (typeof dependencies.publicationLock !== "object" ||
+        dependencies.publicationLock === null ||
+        typeof dependencies.publicationLock.acquire !== "function")
+    ) {
+      throw new TypeError("CSS publication lock dependency is invalid");
     }
     requireSafeConfiguredPath(baseDir, "CSS project directory");
     if (!isAbsolute(baseDir)) {
@@ -252,6 +265,7 @@ export class CSSOptimizerService {
         baseDir: this.baseDir,
         collectContent: (patterns) => this.collectPurgeContent(patterns),
       });
+    this.publicationLock = dependencies.publicationLock;
   }
 
   private validateConfiguration(): void {
@@ -387,7 +401,7 @@ export class CSSOptimizerService {
         const publication = await createBuildPublication(
           this.options.outputDir,
           false,
-          { fs: this.adapter.fs },
+          { fs: this.adapter.fs, lock: this.publicationLock },
         );
         const stagedCache = new CacheManager();
         let totalInputBytes = 0;
