@@ -95,18 +95,18 @@ describe("client/spa/path-utils", () => {
 
   describe("pathToModuleUrl", () => {
     const cases: Array<[string, string, string]> = [
-      ["pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.tsx"],
-      ["components/Button.tsx", "/_vf_modules", "/_vf_modules/components/Button.tsx"],
-      ["app/layout.tsx", "/_vf_modules", "/_vf_modules/app/layout.tsx"],
-      ["lib/utils.ts", "/_vf_modules", "/_vf_modules/lib/utils.ts"],
-      ["layouts/main.tsx", "/_vf_modules", "/_vf_modules/layouts/main.tsx"],
-      ["components/Card.jsx", "/_vf_modules", "/_vf_modules/components/Card.jsx"],
-      ["pages/about.mdx", "/_vf_modules", "/_vf_modules/pages/about.mdx"],
-      ["utils/helper.ts", "/_vf_modules", "/_vf_modules/utils/helper.ts"],
+      ["pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.js"],
+      ["components/Button.tsx", "/_vf_modules", "/_vf_modules/components/Button.js"],
+      ["app/layout.tsx", "/_vf_modules", "/_vf_modules/app/layout.js"],
+      ["lib/utils.ts", "/_vf_modules", "/_vf_modules/lib/utils.js"],
+      ["layouts/main.tsx", "/_vf_modules", "/_vf_modules/layouts/main.js"],
+      ["components/Card.jsx", "/_vf_modules", "/_vf_modules/components/Card.js"],
+      ["pages/about.mdx", "/_vf_modules", "/_vf_modules/pages/about.js"],
+      ["utils/helper.ts", "/_vf_modules", "/_vf_modules/utils/helper.js"],
       [
         "providers/BreakpointsProvider.tsx",
         "/_vf_modules",
-        "/_vf_modules/providers/BreakpointsProvider.tsx",
+        "/_vf_modules/providers/BreakpointsProvider.js",
       ],
       ["some/module", "/_vf_modules", "/_vf_modules/some/module.js"],
       [
@@ -115,7 +115,7 @@ describe("client/spa/path-utils", () => {
         "/_vf_modules/some/module.js?version=1",
       ],
       ["some/module#named", "/_vf_modules", "/_vf_modules/some/module.js#named"],
-      ["utils/helper.js", "/_vf_modules", "/_vf_modules/utils/helper.js.js"],
+      ["utils/helper.js", "/_vf_modules", "/_vf_modules/utils/helper.js"],
       [
         "/_vf_modules/providers/BreakpointsProvider.js",
         "/_vf_modules",
@@ -126,13 +126,13 @@ describe("client/spa/path-utils", () => {
         "/_vf_modules",
         "/_vf_modules/custom-client/BreakpointsProvider.js?studio_embed=true",
       ],
-      ["/project/pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.tsx"],
-      ["pages/home.tsx", "/custom", "/custom/pages/home.tsx"],
-      ["pages/home.tsx", "/custom/", "/custom/pages/home.tsx"],
+      ["/project/pages/index.tsx", "/_vf_modules", "/_vf_modules/pages/index.js"],
+      ["pages/home.tsx", "/custom", "/custom/pages/home.js"],
+      ["pages/home.tsx", "/custom/", "/custom/pages/home.js"],
       [
         "pages/home.tsx",
         "https://cdn.example.com/modules/",
-        "https://cdn.example.com/modules/pages/home.tsx",
+        "https://cdn.example.com/modules/pages/home.js",
       ],
     ];
 
@@ -154,14 +154,14 @@ describe("client/spa/path-utils", () => {
       );
     });
 
-    it("never aliases an explicitly requested extension to a sibling source file", () => {
+    it("does not fall back to a sibling release asset for an explicit source path", () => {
       const siblingAssetUrl = "/_vf/assets/" + "b".repeat(64) + ".js";
 
       withReleaseAssetModules({ "app/page.ts": siblingAssetUrl }, () => {
-        assertEquals(pathToModuleUrl("app/page.tsx"), "/_vf_modules/app/page.tsx");
+        assertEquals(pathToModuleUrl("app/page.tsx"), "/_vf_modules/app/page.js");
         assertEquals(
           runGeneratedPathToModuleUrl("app/page.tsx"),
-          "/_vf_modules/app/page.tsx",
+          "/_vf_modules/app/page.js",
         );
       });
     });
@@ -175,19 +175,19 @@ describe("client/spa/path-utils", () => {
       });
     });
 
-    it("keeps authored JavaScript distinct from the legacy extensionless endpoint", () => {
+    it("uses one endpoint for authored JavaScript and extensionless module paths", () => {
       for (const resolve of [pathToModuleUrl, runGeneratedPathToModuleUrl]) {
-        assertEquals(resolve("app/page.js"), "/_vf_modules/app/page.js.js");
-        assertEquals(resolve("app/page.mjs"), "/_vf_modules/app/page.mjs.js");
+        assertEquals(resolve("app/page.js"), "/_vf_modules/app/page.js");
+        assertEquals(resolve("app/page.mjs"), "/_vf_modules/app/page.mjs");
         assertEquals(resolve("app/page"), "/_vf_modules/app/page.js");
       }
     });
 
-    it("preserves exact authored extensions and their query or hash suffix", () => {
+    it("normalizes authored sources while preserving query or hash suffixes", () => {
       const cases = [
-        ["content/page.md", "/_vf_modules/content/page.md"],
-        ["app/page.tsx?cache=1", "/_vf_modules/app/page.tsx?cache=1"],
-        ["lib/runtime.mjs#named", "/_vf_modules/lib/runtime.mjs.js#named"],
+        ["content/page.md", "/_vf_modules/content/page.js"],
+        ["app/page.tsx?cache=1", "/_vf_modules/app/page.js?cache=1"],
+        ["lib/runtime.mjs#named", "/_vf_modules/lib/runtime.mjs#named"],
       ] as const;
 
       for (const [path, expected] of cases) {
@@ -202,10 +202,10 @@ describe("client/spa/path-utils", () => {
       }) as Record<string, string>;
 
       withReleaseAssetModules(inherited, () => {
-        assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.tsx");
+        assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.js");
         assertEquals(
           runGeneratedPathToModuleUrl("pages/index.tsx"),
-          "/_vf_modules/pages/index.tsx",
+          "/_vf_modules/pages/index.js",
         );
       });
     });
@@ -219,10 +219,10 @@ describe("client/spa/path-utils", () => {
         ]
       ) {
         withReleaseAssetModules({ "pages/index.tsx": value }, () => {
-          assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.tsx");
+          assertEquals(pathToModuleUrl("pages/index.tsx"), "/_vf_modules/pages/index.js");
           assertEquals(
             runGeneratedPathToModuleUrl("pages/index.tsx"),
-            "/_vf_modules/pages/index.tsx",
+            "/_vf_modules/pages/index.js",
           );
         });
       }

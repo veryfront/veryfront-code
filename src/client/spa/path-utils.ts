@@ -164,18 +164,19 @@ function stripModuleServerPrefix(path: string): string {
     .replace(/^\/+/, "");
 }
 
+function normalizeModuleIdentity(key: string): string {
+  if (JAVASCRIPT_SOURCE_EXT_PATTERN.test(key)) return key;
+  if (AUTHORED_SOURCE_EXT_PATTERN.test(key)) {
+    return key.replace(AUTHORED_SOURCE_EXT_PATTERN, ".js");
+  }
+  return `${key}.js`;
+}
+
 function normalizeExistingModuleRequestPath(path: string): string {
   const parts = splitModulePathSuffix(path);
   const key = stripModuleServerPrefix(parts.path);
 
-  // Preserve an explicitly authored source extension. The module server
-  // accepts source-extension URLs and serves compiled JavaScript for that
-  // exact source; rewriting to `.js` would lose the identity when sibling
-  // files such as `page.ts` and `page.tsx` coexist. Extensionless legacy
-  // requests still use the canonical `.js` endpoint.
-  return AUTHORED_SOURCE_EXT_PATTERN.test(key)
-    ? `${key}${parts.suffix}`
-    : `${key}.js${parts.suffix}`;
+  return `${normalizeModuleIdentity(key)}${parts.suffix}`;
 }
 
 function normalizeLogicalModulePath(path: string): string {
@@ -191,13 +192,7 @@ function normalizeLogicalModuleRequestPath(path: string): string {
   const parts = splitModulePathSuffix(normalizeLogicalModulePath(path));
   const key = stripModuleServerPrefix(parts.path);
 
-  if (JAVASCRIPT_SOURCE_EXT_PATTERN.test(key)) {
-    return `${key}.js${parts.suffix}`;
-  }
-  if (AUTHORED_SOURCE_EXT_PATTERN.test(key)) {
-    return `${key}${parts.suffix}`;
-  }
-  return `${key}.js${parts.suffix}`;
+  return `${normalizeModuleIdentity(key)}${parts.suffix}`;
 }
 
 export function getModuleServerUrl(): string {
@@ -359,12 +354,18 @@ export function getPathToModuleUrlScript(): string {
       return path.replace(moduleServerPathPattern, '').replace(/^\\/+/, '');
     }
 
+    function normalizeModuleIdentity(key) {
+      if (javascriptSourceExtensionPattern.test(key)) return key;
+      if (authoredSourceExtensionPattern.test(key)) {
+        return key.replace(authoredSourceExtensionPattern, '.js');
+      }
+      return key + '.js';
+    }
+
     function normalizeExistingModuleRequestPath(path) {
       const parts = splitModulePathSuffix(path);
       const key = stripModuleServerPrefix(parts.path);
-      return authoredSourceExtensionPattern.test(key)
-        ? key + parts.suffix
-        : key + '.js' + parts.suffix;
+      return normalizeModuleIdentity(key) + parts.suffix;
     }
 
     function normalizeLogicalModulePath(path) {
@@ -383,13 +384,7 @@ export function getPathToModuleUrlScript(): string {
     function normalizeLogicalModuleRequestPath(path) {
       const parts = splitModulePathSuffix(normalizeLogicalModulePath(path));
       const key = stripModuleServerPrefix(parts.path);
-      if (javascriptSourceExtensionPattern.test(key)) {
-        return key + '.js' + parts.suffix;
-      }
-      if (authoredSourceExtensionPattern.test(key)) {
-        return key + parts.suffix;
-      }
-      return key + '.js' + parts.suffix;
+      return normalizeModuleIdentity(key) + parts.suffix;
     }
 
     function pathToModuleUrl(path, baseUrl) {

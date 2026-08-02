@@ -59,7 +59,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/home.tsx",
+        "pages/home.js",
         'export default function Page() { return "home"; }',
       );
 
@@ -67,6 +67,7 @@ describe("client/spa/component-loader", () => {
         const first = await loadComponent("pages/home.tsx");
         const second = await loadComponent("pages/home.tsx");
 
+        assertEquals(first !== null, true);
         assertStrictEquals(first, second);
         assertStrictEquals(getCachedComponent("pages/home.tsx"), first);
       });
@@ -77,7 +78,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "components/Card.jsx",
+        "components/Card.js",
         'export default function Card() { return "card"; }',
       );
 
@@ -106,7 +107,7 @@ describe("client/spa/component-loader", () => {
 
           await writeModule(
             tempDir,
-            "layouts/missing.tsx",
+            "layouts/missing.js",
             'export default function Layout() { return "layout"; }',
           );
           const recovered = await loadComponent("layouts/missing.tsx");
@@ -128,7 +129,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/slow.tsx",
+        "pages/slow.js",
         `await new Promise((resolve) => setTimeout(resolve, 30));
          export default function Page() { return "slow"; }`,
       );
@@ -160,7 +161,7 @@ describe("client/spa/component-loader", () => {
 
           await writeModule(
             tempDir,
-            "pages/created-later.tsx",
+            "pages/created-later.js",
             'export default function Page() { return "created"; }',
           );
 
@@ -176,7 +177,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/home.tsx",
+        "pages/home.js",
         'export default function Page() { return "home"; }',
       );
 
@@ -267,7 +268,7 @@ describe("client/spa/component-loader", () => {
 
   it("rejects modules that do not export a React component", async () => {
     await withTempDir(async (tempDir) => {
-      await writeModule(tempDir, "pages/data.tsx", "export const answer = 42;");
+      await writeModule(tempDir, "pages/data.js", "export const answer = 42;");
 
       const errors: string[] = [];
       const originalError = console.error;
@@ -292,7 +293,7 @@ describe("client/spa/component-loader", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "components/Memo.tsx",
+        "components/Memo.js",
         `import React from "react";
          function Component() { return React.createElement("span", null, "memo"); }
          export default React.memo(Component);`,
