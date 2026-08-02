@@ -128,6 +128,62 @@ describe("build/utils/path-glob", () => {
     }
   });
 
+  it("sinks negative extglobs that carry an empty alternative", () => {
+    // An empty alternative matches at every position, so the negative
+    // lookahead it compiles to can never succeed. `globToRegExp` builds
+    // `^(?!|foo)[^/]*\.ts\/*$` for `!(|foo).ts`, which matches nothing; the
+    // positive forms below confirm the empty alternative is still parsed
+    // rather than silently dropped.
+    const emptyAlternativeCases: ReadonlyArray<{
+      pattern: string;
+      matches: string[];
+      rejects: string[];
+    }> = [
+      {
+        pattern: "!(|foo).ts",
+        matches: [],
+        rejects: ["bar.ts", "foo.ts", ".ts", "foobar.ts"],
+      },
+      {
+        pattern: "!(foo|).ts",
+        matches: [],
+        rejects: ["bar.ts", "foo.ts", ".ts", "foobar.ts"],
+      },
+      {
+        pattern: "!(|).ts",
+        matches: [],
+        rejects: ["bar.ts", ".ts"],
+      },
+      {
+        pattern: "a!(|b)c",
+        matches: [],
+        rejects: ["abc", "ac", "axc"],
+      },
+      // Control: the same negation without an empty alternative still
+      // excludes only the forbidden stem.
+      {
+        pattern: "!(foo).ts",
+        matches: ["bar.ts", ".ts"],
+        rejects: ["foo.ts", "foobar.ts"],
+      },
+      // Positive extglobs honor the empty alternative as a zero-length branch.
+      {
+        pattern: "@(|foo).ts",
+        matches: ["foo.ts", ".ts"],
+        rejects: ["bar.ts"],
+      },
+      {
+        pattern: "?(|foo).ts",
+        matches: ["foo.ts", ".ts"],
+        rejects: ["bar.ts"],
+      },
+    ];
+
+    for (const testCase of emptyAlternativeCases) {
+      assertMatches(testCase.pattern, testCase.matches, testCase.rejects);
+    }
+  });
+
   it("supports character ranges, negation, POSIX classes, and escapes", () => {
     assertMatches("file[0-2].ts", ["file0.ts", "file2.ts"], ["file3.ts", "file10.ts"]);
     assertMatches("file[!0-2].ts", ["file3.ts", "filex.ts"], ["file0.ts"]);

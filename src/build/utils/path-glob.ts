@@ -454,6 +454,9 @@ function compileSegment(segment: string, pattern: string): CompiledSegment {
             // segment-local wildcard. Any forbidden alternative that matches
             // at this position rejects the whole node; it is not merely one
             // disallowed end position among otherwise valid prefixes.
+            // An empty alternative therefore sinks the node outright, because
+            // it matches at every position: `!(|foo)` matches nothing at all,
+            // exactly as the `(?!|foo)` lookahead it mirrors.
             if (excluded.size === 0) {
               budget.consume(value.length - start + 1);
               for (let end = start; end <= value.length; end++) ends.add(end);
