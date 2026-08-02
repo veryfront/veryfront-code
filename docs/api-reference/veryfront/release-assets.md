@@ -49,7 +49,7 @@ const url = releaseAssetUrl("a".repeat(64), "js");
 | `clearReleaseAssetManifestCache` | Clear the cache and fetcher registry (tests / adapter teardown). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L369) |
 | `configureReleaseAssetManifestFetcher` | Register a single global fetcher (for tests / simple single-project setups). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L121) |
 | `contentTypeForExtension` | Resolve the content type for an extension, or null if not allowed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L59) |
-| `createCompileProjectCss` | Build a `compileProjectCss` function bound to a specific release build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L59) |
+| `createCompileProjectCss` | Build a `compileProjectCss` function bound to a specific release build. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L64) |
 | `getReadyManifestForRender` | Return a ready manifest for `releaseId` if one is cached, else null. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L184) |
 | `isAllowedReleaseAssetContentType` | True when the value is a valid allowlisted release asset content type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/constants.ts#L68) |
 | `isReleaseAssetManifestEnabled` | True when production manifest consumption is enabled via env flag. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/manifest-cache.ts#L139) |
@@ -68,8 +68,8 @@ const url = releaseAssetUrl("a".repeat(64), "js");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CompileProjectCssOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L39) |
-| `CompileProjectCssResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L34) |
+| `CompileProjectCssOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L44) |
+| `CompileProjectCssResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/css-compile.ts#L39) |
 | `ReleaseAssetBuildClient` | Subset of the API client used by the builder (eases testing). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/build-executor.ts#L183) |
 | `ReleaseAssetBuildInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/build-executor.ts#L103) |
 | `ReleaseAssetBuildResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/release-assets/build-executor.ts#L220) |

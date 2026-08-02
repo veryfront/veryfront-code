@@ -5,28 +5,36 @@
  */
 
 export type {
-  BrowserTargets,
   CriticalCSSResult,
   CSSBundle,
   CSSOptimizationOptions,
   CSSOptimizationStrategy,
+  CSSOptimizerDependencies,
   CSSOptimizerStats,
 } from "./css-optimizer/index.ts";
 export { CSSOptimizerService } from "./css-optimizer/index.ts";
 export { CacheManager, loadCSSManifest } from "./css-optimizer/index.ts";
 export { extractCriticalCSS } from "./css-optimizer/index.ts";
-export {
-  LightningCSSStrategy,
-  MinificationStrategy,
-  PurgeStrategy,
-} from "./css-optimizer/index.ts";
+export { MinificationStrategy, PurgeStrategy } from "./css-optimizer/index.ts";
 export { CSSUtils } from "./css-optimizer/index.ts";
 export { CSSOptimizer, optimizeCSS } from "./css-optimizer/index.ts";
 
-import { type CSSOptimizationOptions, CSSOptimizer } from "./css-optimizer/index.ts";
-import { type ImageOptimizationOptions, ImageOptimizer } from "./image-optimizer/index.ts";
+import { getErrorMessage } from "#veryfront/errors";
+import {
+  captureCSSOptimizationEngine,
+  CSSOptimizationEngineName,
+} from "#veryfront/extensions/css/index.ts";
+import {
+  captureImageOptimizationEngine,
+  ImageOptimizationEngineName,
+} from "#veryfront/extensions/image/index.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
+import { logger } from "#veryfront/utils";
 import { DEFAULT_CSS_OPTIONS } from "./css-optimizer/constants.ts";
+import { type CSSOptimizationOptions, CSSOptimizer } from "./css-optimizer/index.ts";
 import { DEFAULT_OPTIONS as DEFAULT_IMAGE_OPTIONS } from "./image-optimizer/constants.ts";
+import { type ImageOptimizationOptions, ImageOptimizer } from "./image-optimizer/index.ts";
 import {
   assertIndependentAssetStageOutputs,
   type AssetStageOutputPlan,
@@ -35,9 +43,6 @@ import {
   processTailwindCSSInDirectory,
   type TailwindProcessResult,
 } from "./tailwind-processor/index.ts";
-import { getErrorMessage } from "#veryfront/errors";
-import { cwd } from "#veryfront/platform/compat/process.ts";
-import { logger } from "#veryfront/utils";
 
 const DEFAULT_TAILWIND_OUTPUT_DIR = ".veryfront/css";
 
@@ -76,15 +81,23 @@ export interface AssetPipelineResult {
   duration: number;
 }
 
+/** Registered provider capabilities available to the asset pipeline. */
+export interface AssetPipelineDependencyStatus {
+  /** Whether a valid `ImageOptimizationEngine` is registered. */
+  imageOptimization: boolean;
+  /** Whether a valid `CSSOptimizationEngine` is registered. */
+  cssOptimization: boolean;
+}
+
 function configuredStageOutputs(
   options: AssetPipelineOptions,
 ): AssetStageOutputPlan[] {
   const outputs: AssetStageOutputPlan[] = [];
-  if (options.images?.enabled !== false) {
+  if (options.images !== undefined && options.images.enabled !== false) {
     outputs.push({
       stage: "images",
-      projectDir: options.images?.projectDir ?? cwd(),
-      outputDir: options.images?.outputDir ?? DEFAULT_IMAGE_OPTIONS.outputDir,
+      projectDir: options.images.projectDir ?? cwd(),
+      outputDir: options.images.outputDir ?? DEFAULT_IMAGE_OPTIONS.outputDir,
     });
   }
   if (
@@ -98,11 +111,11 @@ function configuredStageOutputs(
       outputDir: options.tailwind.outputDir ?? DEFAULT_TAILWIND_OUTPUT_DIR,
     });
   }
-  if (options.css?.enabled !== false) {
+  if (options.css !== undefined && options.css.enabled !== false) {
     outputs.push({
       stage: "css",
-      projectDir: options.css?.projectDir ?? cwd(),
-      outputDir: options.css?.outputDir ?? DEFAULT_CSS_OPTIONS.outputDir,
+      projectDir: options.css.projectDir ?? cwd(),
+      outputDir: options.css.outputDir ?? DEFAULT_CSS_OPTIONS.outputDir,
     });
   }
   return outputs;
@@ -123,7 +136,7 @@ export async function runAssetPipeline(
     duration: 0,
   };
 
-  if (options.images?.enabled !== false) {
+  if (options.images !== undefined && options.images.enabled !== false) {
     try {
       const imageOptimizer = new ImageOptimizer(options.images);
       await imageOptimizer.optimize();
@@ -143,6 +156,7 @@ export async function runAssetPipeline(
       });
     } catch (error) {
       logger.error("Image optimization failed", { error: getErrorMessage(error) });
+      throw error;
     }
   }
 
@@ -189,11 +203,12 @@ export async function runAssetPipeline(
         }
       } catch (error) {
         logger.error("Tailwind CSS processing failed", { error: getErrorMessage(error) });
+        throw error;
       }
     }
   }
 
-  if (options.css?.enabled !== false) {
+  if (options.css !== undefined && options.css.enabled !== false) {
     try {
       const cssOptimizer = new CSSOptimizer(options.css);
       await cssOptimizer.optimize();
@@ -215,6 +230,7 @@ export async function runAssetPipeline(
       });
     } catch (error) {
       logger.error("CSS optimization failed", { error: getErrorMessage(error) });
+      throw error;
     }
   }
 
@@ -230,24 +246,38 @@ export async function runAssetPipeline(
   return result;
 }
 
-export async function checkAssetPipelineDependencies(): Promise<{
-  sharp: boolean;
-  lightningCSS: boolean;
-}> {
-  const dependencies = { sharp: false, lightningCSS: false };
+/**
+ * Inspect registered asset-provider contracts without probing packages or the
+ * network. The provider-neutral fields replace the removed `sharp` and
+ * `lightningCSS` fields.
+ */
+export async function checkAssetPipelineDependencies(): Promise<
+  AssetPipelineDependencyStatus
+> {
+  const dependencies = { imageOptimization: false, cssOptimization: false };
 
-  try {
-    await import("https://esm.sh/sharp@0.33.0");
-    dependencies.sharp = true;
-  } catch (error) {
-    logger.debug("Sharp image processing library not available:", error);
+  const configuredImageOptimizer = tryResolve<unknown>(
+    ImageOptimizationEngineName,
+  );
+  if (configuredImageOptimizer !== undefined) {
+    try {
+      captureImageOptimizationEngine(configuredImageOptimizer);
+      dependencies.imageOptimization = true;
+    } catch (error) {
+      logger.debug("Configured image optimization engine is invalid:", error);
+    }
   }
 
-  try {
-    await import("https://esm.sh/lightningcss@1.29.2");
-    dependencies.lightningCSS = true;
-  } catch (error) {
-    logger.debug("Lightning CSS not available:", error);
+  const configuredCSSOptimizer = tryResolve<unknown>(
+    CSSOptimizationEngineName,
+  );
+  if (configuredCSSOptimizer !== undefined) {
+    try {
+      captureCSSOptimizationEngine(configuredCSSOptimizer);
+      dependencies.cssOptimization = true;
+    } catch (error) {
+      logger.debug("Configured CSS optimization engine is invalid:", error);
+    }
   }
 
   return dependencies;
@@ -264,19 +294,21 @@ export async function getAssetPipelineStatus(): Promise<{
   const missing: string[] = [];
   const recommendations: string[] = [];
 
-  if (deps.sharp) {
-    available.push("Sharp image optimizer");
+  if (deps.imageOptimization) {
+    available.push("Image optimization provider");
   } else {
-    missing.push("Sharp");
-    recommendations.push("Install Sharp for automatic image optimization: npm install sharp");
+    missing.push("Image optimization provider");
+    recommendations.push(
+      "Install and explicitly compose @veryfront/ext-image-sharp for image optimization",
+    );
   }
 
-  if (deps.lightningCSS) {
-    available.push("Lightning CSS optimizer");
+  if (deps.cssOptimization) {
+    available.push("CSS optimization provider");
   } else {
-    missing.push("Lightning CSS");
+    missing.push("CSS optimization provider");
     recommendations.push(
-      "Install Lightning CSS for advanced CSS optimization: npm install lightningcss",
+      "Install and explicitly compose @veryfront/ext-css-lightning for CSS optimization",
     );
   }
 

@@ -1,4 +1,5 @@
 import type { VeryfrontConfig } from "#veryfront/config";
+import { createHash } from "node:crypto";
 
 const DEFAULT_IGNORED_ROOTS = [
   "knowledge",
@@ -59,12 +60,7 @@ function getParentDirectory(path: string): string | null {
 }
 
 function stableHash(input: string): string {
-  let hash = 0;
-  for (let index = 0; index < input.length; index++) {
-    hash = ((hash << 5) - hash) + input.charCodeAt(index);
-    hash |= 0;
-  }
-  return hash.toString(36);
+  return createHash("sha256").update(input, "utf8").digest("hex");
 }
 
 function addNormalizedPath(target: Set<string>, value: string | null | undefined): void {

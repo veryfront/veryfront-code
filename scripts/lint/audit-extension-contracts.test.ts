@@ -112,6 +112,7 @@ describe("extractExtensionSourceMetadata contracts", () => {
   it("resolves known exported contract name constants in contract arrays", () => {
     const metadata = extractExtensionSourceMetadata(`
       import {
+        CSSProcessorName,
         LLMProviderRegistryName,
         SandboxShellToolsProviderName,
       } from "veryfront/extensions/sandbox";
@@ -121,6 +122,7 @@ describe("extractExtensionSourceMetadata contracts", () => {
       const ext = () => ({
         contracts: {
           provides: [
+            CSSProcessorName,
             NodeWebSocketServerProviderName,
             SandboxShellToolsProviderName,
           ],
@@ -131,6 +133,7 @@ describe("extractExtensionSourceMetadata contracts", () => {
     `);
 
     assertEquals(metadata.contracts?.provides, [
+      "CSSProcessor",
       "NodeWebSocketServerProvider",
       "SandboxShellToolsProvider",
     ]);

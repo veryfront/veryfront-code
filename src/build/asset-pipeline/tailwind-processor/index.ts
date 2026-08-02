@@ -5,7 +5,7 @@
  */
 
 export type {
-  LightningCSSOptions,
+  CSSOptimizationProcessOptions,
   TailwindProcessorOptions,
   TailwindProcessResult,
 } from "./types.ts";
@@ -13,5 +13,5 @@ export type {
 export { TailwindProcessor } from "./processor.ts";
 export { processTailwindCSS, processTailwindCSSInDirectory } from "./batch-processor.ts";
 export { autoDetectContentPaths, isTailwindV4File } from "./detector.ts";
-export { countUtilities, minifyCSS } from "./css-utils.ts";
-export { processWithLightningCSS } from "./lightning-processor.ts";
+export { countUtilities } from "./css-utils.ts";
+export { processWithCSSOptimization } from "./optimization-processor.ts";

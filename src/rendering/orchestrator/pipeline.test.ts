@@ -30,9 +30,10 @@ function cachePageCss(cacheKey: string, css: string): void {
 describe("RenderPipeline helpers", () => {
   describe("pipeline-helpers", () => {
     it("extractRenderedCssHash returns the page css hash when present", () => {
+      const hash = "a".repeat(64);
       assertEquals(
-        extractRenderedCssHash('<link rel="stylesheet" href="/_vf/css/abc123.css">'),
-        "abc123",
+        extractRenderedCssHash(`<link rel="stylesheet" href="/_vf/css/${hash}.css">`),
+        hash,
       );
     });
 

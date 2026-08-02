@@ -10,10 +10,10 @@ order: 39
 import {
   __registerLogRecordEmitter,
   __registerTraceContextGetter,
+  assertCSSPipelineIdentity,
+  assertStyleProfileHash,
   base64urlEncode,
   base64urlEncodeBytes,
-  computeCodeHash,
-  computeHash,
 } from "veryfront/utils";
 ```
 
@@ -75,6 +75,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `HTTP_UNAVAILABLE` | Shared HTTP unavailable value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/http.ts#L54) |
 | `IMAGE_OPTIMIZATION` | Shared image optimization value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/build.ts#L5) |
 | `MAX_BATCH_SIZE` | ****** Batch limits ******* | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/limits.ts#L31) |
+| `MAX_CSS_PIPELINE_IDENTITY_CODE_UNITS` | Maximum UTF-16 code units accepted for one complete CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L13) |
+| `MAX_CSS_PIPELINE_IDENTITY_UTF8_BYTES` | Maximum encoded UTF-8 bytes accepted for one complete CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L16) |
 | `MAX_PATH_LENGTH` | Maximum value for path length. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/security.ts#L16) |
 | `MAX_PATH_TRAVERSAL_DEPTH` | Maximum value for path traversal depth. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/security.ts#L2) |
 | `MS_PER_SECOND` | Shared ms per second value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/cache.ts#L5) |
@@ -97,6 +99,8 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 |------|-------------|--------|
 | `__registerLogRecordEmitter` | Register a process-level structured log emitter, for example an OTel bridge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L217) |
 | `__registerTraceContextGetter` | Register the trace context getter. Called by trace-bridge.ts after OTLP initialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L649) |
+| `assertCSSPipelineIdentity` | Validate and return an immutable string snapshot for cache or wire use. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L71) |
+| `assertStyleProfileHash` | Validate and return the canonical style-scope profile SHA-256 identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L90) |
 | `base64urlEncode` | Encode a string as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L52) |
 | `base64urlEncodeBytes` | Encode raw bytes as unpadded base64url. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/base64url.ts#L57) |
 | `computeCodeHash` | Compute code hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L29) |
@@ -118,8 +122,10 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `hasDenoRuntime` | Check whether Deno runtime is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L31) |
 | `hasNodeProcess` | Check whether node process is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/runtime-guards.ts#L38) |
 | `isCompiledBinary` | Detect if the code is running in a compiled Deno binary | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/platform.ts#L11) |
+| `isCSSPipelineIdentity` | Whether a value is safe to compare, encode, and persist as a CSS pipeline identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L50) |
 | `isEnabled` | Check whether request performance timing is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L143) |
 | `isRSCEnabled` | Check whether RSC is enabled. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/feature-flags.ts#L4) |
+| `isStyleProfileHash` | Whether a value is the canonical style-scope profile SHA-256 identity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/css-artifact-identity.ts#L84) |
 | `isTruthyEnvValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/constants/env.ts#L11) |
 | `isWithinDirectory` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/path-utils.ts#L22) |
 | `memoize` | Memoize. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/memoize.ts#L79) |

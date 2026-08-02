@@ -27,6 +27,7 @@ import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { invalidateProjectMiddlewareCache } from "../../../src/server/runtime-handler/project-middleware.ts";
+import { registerTailwindExtension } from "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -68,6 +69,7 @@ describe(
               "# Static Assets Fixture",
             );
 
+            await registerTailwindExtension();
             await buildProduction({
               projectDir: context.projectDir,
               outputDir: join(context.projectDir, "dist"),
@@ -172,6 +174,7 @@ describe(
         }`,
             );
 
+            await registerTailwindExtension();
             await buildProduction({
               projectDir: context.projectDir,
               outputDir: join(context.projectDir, "dist"),
@@ -204,6 +207,7 @@ describe(
               }`,
             );
 
+            await registerTailwindExtension();
             await buildProduction({
               projectDir: context.projectDir,
               outputDir: join(context.projectDir, "dist"),

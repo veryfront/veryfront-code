@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_CSS_SELECTOR_TOKEN_CHARACTERS } from "#veryfront/utils/constants/css.ts";
 import {
   clearCSSCache,
   extractCandidates,
@@ -11,7 +12,6 @@ import {
   getCSSByHash,
   getProjectCSS,
   hashCSS,
-  loadModuleFromEsmSh,
 } from "./tailwind-compiler.ts";
 
 describe("styles-builder/tailwind-compiler", () => {
@@ -96,6 +96,18 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should extract CSS variable utilities", () => {
       const candidates = extractCandidates('class="bg-[var(--color)]"');
       assertEquals(candidates.includes("bg-[var(--color)]"), true);
+    });
+
+    it("rejects an overlong candidate as one token instead of extracting fragments", () => {
+      const admitted = "a".repeat(MAX_CSS_SELECTOR_TOKEN_CHARACTERS);
+      const overlong = `${admitted}a`;
+
+      assertEquals(extractCandidates(`class="${admitted}"`).includes(admitted), true);
+      assertThrows(
+        () => extractCandidates(`class="${overlong}"`),
+        TypeError,
+        `cannot exceed ${MAX_CSS_SELECTOR_TOKEN_CHARACTERS} characters`,
+      );
     });
   });
 
@@ -219,9 +231,10 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(hash1 !== hash2, true);
     });
 
-    it("should return max 8 characters", () => {
+    it("returns a full lowercase SHA-256 content identity", () => {
       const hash = hashCSS("some long css content with many rules .a .b .c {}");
-      assertEquals(hash.length <= 8, true);
+      assertEquals(hash.length, 64);
+      assertEquals(/^[a-f0-9]{64}$/.test(hash), true);
     });
 
     it("should handle empty string", () => {
@@ -244,32 +257,32 @@ describe("styles-builder/tailwind-compiler", () => {
       const result = formatCSSError(
         'Could not resolve plugin "tailwindcss-animate"',
       );
-      assertEquals(result.title, "Plugin Not Found");
+      assertEquals(result.title, "Plugin Not Available");
       assertEquals(result.message.includes("tailwindcss-animate"), true);
-      assertEquals(result.suggestion.includes("esm.sh"), true);
+      assertEquals(result.suggestion.includes("explicitly registered provider"), true);
     });
 
     it("should format failed to load plugin error", () => {
       const result = formatCSSError('Failed to load plugin "my-plugin"');
-      assertEquals(result.title, "Plugin Not Found");
+      assertEquals(result.title, "Plugin Not Available");
       assertEquals(result.message.includes("my-plugin"), true);
     });
 
     it("should format invalid @theme error", () => {
       const result = formatCSSError("Invalid theme value for --color-primary");
-      assertEquals(result.title, "Invalid @theme");
-      assertEquals(result.suggestion.includes("@theme"), true);
+      assertEquals(result.title, "Invalid CSS Theme");
+      assertEquals(result.suggestion.includes("processor"), true);
     });
 
     it("should format @theme keyword error", () => {
       const result = formatCSSError("@theme block has syntax error");
-      assertEquals(result.title, "Invalid @theme");
+      assertEquals(result.title, "Invalid CSS Theme");
     });
 
     it("should format unexpected token error", () => {
       const result = formatCSSError("Unexpected token at line 5");
       assertEquals(result.title, "CSS Syntax Error");
-      assertEquals(result.suggestion.includes("semicolons"), true);
+      assertEquals(result.suggestion.includes("configured CSS processor"), true);
     });
 
     it("should format expected token error", () => {
@@ -279,7 +292,7 @@ describe("styles-builder/tailwind-compiler", () => {
 
     it("should format generic error", () => {
       const result = formatCSSError("Something went wrong");
-      assertEquals(result.title, "Tailwind CSS Error");
+      assertEquals(result.title, "CSS Compilation Error");
       assertEquals(result.message, "Something went wrong");
       assertEquals(result.suggestion.includes("stylesheet"), true);
     });
@@ -302,7 +315,6 @@ describe("styles-builder/tailwind-compiler", () => {
       await assertRejects(
         () => getProjectCSS("test-project", badCss, new Set(), { minify: false }),
         Error,
-        "Suggestion:",
       );
     });
   });
@@ -335,69 +347,6 @@ describe("styles-builder/tailwind-compiler", () => {
     it("should report size >= 0", () => {
       const stats = getCompilerCacheStats();
       assertEquals(stats.size >= 0, true);
-    });
-  });
-
-  describe("loadModuleFromEsmSh", () => {
-    it("should dynamically load tailwindcss-animate plugin from esm.sh", async () => {
-      const originalFetch = globalThis.fetch;
-      let fetchCallCount = 0;
-      globalThis.fetch = ((input: URL | Request | string) => {
-        const url = typeof input === "string"
-          ? input
-          : input instanceof URL
-          ? input.toString()
-          : input.url;
-
-        fetchCallCount++;
-        if (fetchCallCount === 1) {
-          assertEquals(url.includes("tailwindcss-animate@1.0.7?bundle"), true);
-          return Promise.resolve(
-            new Response(`export * from "/v1/tailwindcss-animate.bundle.mjs";`, { status: 200 }),
-          );
-        }
-
-        assertEquals(url.includes("/v1/tailwindcss-animate.bundle.mjs"), true);
-        return Promise.resolve(
-          new Response(`export default { handler() {} };`, { status: 200 }),
-        );
-      }) as typeof fetch;
-
-      try {
-        const mod = await loadModuleFromEsmSh("tailwindcss-animate@1.0.7");
-
-        assertEquals(typeof mod, "object");
-        assertEquals(mod !== null, true);
-        const modObj = mod as { default?: unknown };
-        assertEquals("default" in modObj, true);
-
-        const plugin = modObj.default;
-        assertEquals(typeof plugin, "object");
-        assertEquals(plugin !== null, true);
-        assertEquals("handler" in (plugin as object), true);
-        assertEquals(fetchCallCount, 2);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
-    });
-
-    it("should reject a non-allowlisted package before any network call (VULN-FS-1)", async () => {
-      const originalFetch = globalThis.fetch;
-      let fetchCallCount = 0;
-      globalThis.fetch = (() => {
-        fetchCallCount++;
-        return Promise.reject(new Error("fetch must not be called"));
-      }) as typeof fetch;
-
-      try {
-        await assertRejects(
-          () => loadModuleFromEsmSh("is-odd@3.0.1"),
-          Error,
-        );
-        assertEquals(fetchCallCount, 0);
-      } finally {
-        globalThis.fetch = originalFetch;
-      }
     });
   });
 });

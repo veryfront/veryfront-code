@@ -1107,8 +1107,8 @@ async function executeReleaseAssetBuildRun(input: {
 
     // Production CSS compiler: compiles the project's Tailwind CSS in-runtime
     // via the pure `generateTailwindCSS` primitive (no distributed-cache /
-    // candidate-contract machinery). Defensive — returns null on any failure,
-    // letting the executor keep its CSS gap.
+    // candidate-contract machinery). Missing providers and compile errors
+    // propagate to the executor, which records an explicit CSS gap.
     const compileProjectCss = createCompileProjectCss({
       projectScope: projectReference,
       config: input.ctx.config,

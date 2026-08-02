@@ -3,9 +3,32 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createTestCSSPurgingEngine } from "../../../../tests/_helpers/css-purging-engine.ts";
 import { CSSOptimizerService } from "./optimizer-service.ts";
-import { LightningCSSStrategy } from "./strategies/lightning-strategy.ts";
 import { nativeBuildPublicationLock } from "../../production-build/build/build-publication.ts";
+import {
+  createTestCSSOptimizationEngine,
+  createTestCSSSourceMap,
+} from "../../../../tests/_helpers/css-optimization-engine.ts";
+
+const optimizationEngine = createTestCSSOptimizationEngine((request) => {
+  if (request.css.includes("@media (")) {
+    throw new TypeError("invalid CSS");
+  }
+  const css = request.minify
+    ? request.css
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\s+/g, " ")
+      .replace(/\s*([{}:;,])\s*/g, "$1")
+      .replace(/;}/g, "}")
+      .trim()
+    : request.css;
+  return {
+    css,
+    ...(request.sourceMap ? { sourceMap: createTestCSSSourceMap(request.sourcePath) } : {}),
+  };
+});
+import { PurgeStrategy } from "./strategies/purge-strategy.ts";
 
 async function withProject(
   callback: (projectDir: string) => Promise<void>,
@@ -32,7 +55,11 @@ async function createService(
       outputDir: ".veryfront/css",
       ...options,
     },
-    { publicationLock: nativeBuildPublicationLock, ...dependencies },
+    {
+      optimizationEngine,
+      publicationLock: nativeBuildPublicationLock,
+      ...dependencies,
+    },
   );
 }
 
@@ -136,24 +163,25 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
         join(projectDir, "styles/main.css"),
         ".main { color: red; }",
       );
-      const missingDependency = new LightningCSSStrategy(() =>
-        Promise.reject(new Error("compiler unavailable"))
-      );
+      const missingDependency = createTestCSSOptimizationEngine(() => {
+        throw new Error("compiler unavailable");
+      });
       const dependencyService = await createService(
         projectDir,
         {},
-        { lightningStrategy: missingDependency },
+        { optimizationEngine: missingDependency },
       );
       await assertRejects(
         () => dependencyService.optimize(),
         Error,
-        "requires npm:lightningcss",
+        "compiler unavailable",
       );
     });
   });
 
-  it("runs parser-backed purge before minification", async () => {
+  it("captures one explicit purge provider before minification", async () => {
     await withProject(async (projectDir) => {
+      let providerCalls = 0;
       await Deno.mkdir(join(projectDir, "app"));
       await Deno.writeTextFile(
         join(projectDir, "app/page.tsx"),
@@ -166,11 +194,67 @@ describe("build/asset-pipeline/css-optimizer/optimizer-service", () => {
       const service = await createService(projectDir, {
         purge: true,
         purgeContent: ["app/**/*.tsx"],
+      }, {
+        purgeStrategy: new PurgeStrategy({
+          baseDir: projectDir,
+          purgingEngine: createTestCSSPurgingEngine((request) => {
+            providerCalls++;
+            assertEquals(request.content, [{
+              raw: '<div className="used">content</div>',
+              extension: "tsx",
+            }]);
+            return Promise.resolve({ css: ".used { color: green; }" });
+          }),
+        }),
       });
 
       const content = (await service.optimize()).get("main.css")!.content;
       assertEquals(content.includes(".used"), true);
       assertEquals(content.includes(".unused"), false);
+      assertEquals(providerCalls, 1);
+    });
+  });
+
+  it("keeps one captured purge method across a concurrent publication", async () => {
+    await withProject(async (projectDir) => {
+      await Deno.mkdir(join(projectDir, "app"));
+      await Deno.writeTextFile(
+        join(projectDir, "app/page.tsx"),
+        '<div className="used">content</div>',
+      );
+      await Deno.writeTextFile(
+        join(projectDir, "styles/first.css"),
+        ".first { color: red; }",
+      );
+      await Deno.writeTextFile(
+        join(projectDir, "styles/second.css"),
+        ".second { color: blue; }",
+      );
+
+      let capturedCalls = 0;
+      let replacementCalls = 0;
+      const engine = createTestCSSPurgingEngine((request) => {
+        capturedCalls++;
+        engine.purge = (replacementRequest) => {
+          replacementCalls++;
+          return Promise.resolve({ css: replacementRequest.css });
+        };
+        return Promise.resolve({ css: request.css });
+      });
+      const service = await createService(projectDir, {
+        purge: true,
+        purgeContent: ["app/**/*.tsx"],
+      }, {
+        purgeStrategy: new PurgeStrategy({
+          baseDir: projectDir,
+          purgingEngine: engine,
+        }),
+      });
+
+      const bundles = await service.optimize();
+      assertEquals(bundles.size, 2);
+      assertEquals(capturedCalls, 2);
+      assertEquals(replacementCalls, 0);
     });
   });
 
