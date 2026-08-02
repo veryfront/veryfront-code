@@ -51,7 +51,7 @@ describe("provider/runtime-inspection", () => {
     assertEquals(providerReads, 1);
   });
 
-  it("classifies only runtimes that explicitly declare server-local execution", () => {
+  it("honors explicit placement before legacy local metadata", () => {
     let executionModeReads = 0;
     const model = runtimeWith({
       executionMode: {
@@ -69,7 +69,31 @@ describe("provider/runtime-inspection", () => {
         provider: { value: "local" },
         modelId: { value: "local/demo" },
       })),
+      true,
+    );
+    assertEquals(
+      isLocalModelRuntime(runtimeWith({
+        executionMode: { value: "remote" },
+        provider: { value: "local" },
+        modelId: { value: "local/demo" },
+        _isVfLocalModel: { value: true },
+      })),
       false,
+    );
+  });
+
+  it("preserves each legacy local runtime marker", () => {
+    assertEquals(
+      isLocalModelRuntime(runtimeWith({ provider: { value: "local" } })),
+      true,
+    );
+    assertEquals(
+      isLocalModelRuntime(runtimeWith({ modelId: { value: "local/demo" } })),
+      true,
+    );
+    assertEquals(
+      isLocalModelRuntime(runtimeWith({ _isVfLocalModel: { value: true } })),
+      true,
     );
   });
 
@@ -89,6 +113,19 @@ describe("provider/runtime-inspection", () => {
       false,
     );
     assertEquals(supportsModelRuntimeToolCalling(runtimeWith({})), true);
+    assertEquals(
+      supportsModelRuntimeToolCalling(runtimeWith({
+        provider: { value: "local" },
+      })),
+      false,
+    );
+    assertEquals(
+      supportsModelRuntimeToolCalling(runtimeWith({
+        modelId: { value: "local/demo" },
+        runtimeCapabilities: { value: { toolCalling: true } },
+      })),
+      true,
+    );
   });
 
   it("rejects malformed tool capability metadata", () => {
@@ -99,6 +136,17 @@ describe("provider/runtime-inspection", () => {
         })),
       TypeError,
       "must be a boolean",
+    );
+  });
+
+  it("rejects malformed execution placement metadata", () => {
+    assertThrows(
+      () =>
+        isLocalModelRuntime(runtimeWith({
+          executionMode: { value: "browser" },
+        })),
+      TypeError,
+      "executionMode",
     );
   });
 });
