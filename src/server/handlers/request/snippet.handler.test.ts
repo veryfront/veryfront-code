@@ -2,6 +2,8 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { validateLexicalPath } from "#veryfront/security";
+import { SnippetHandler } from "./snippet.handler.ts";
+import type { HandlerContext } from "../types.ts";
 
 /**
  * Tests that lexical containment correctly blocks path traversal for paths
@@ -57,4 +59,54 @@ describe("snippet handler path validation", () => {
       assertEquals(result.valid, true);
     });
   });
+});
+
+Deno.test("SnippetHandler validates and reads inside the same proxy context", async () => {
+  let inContext = false;
+  let readPath: string | undefined;
+  const fs = {
+    symlinkSemantics: "none" as const,
+    isMultiProjectMode: () => true,
+    isContextualMode: () => true,
+    runWithContext: async (
+      _slug: string,
+      _token: string,
+      fn: () => Promise<unknown>,
+    ) => {
+      inContext = true;
+      try {
+        return await fn();
+      } finally {
+        inContext = false;
+      }
+    },
+    exists: () => Promise.resolve(true),
+    stat: () =>
+      Promise.resolve({
+        isFile: true,
+        isDirectory: false,
+        isSymlink: false,
+        size: 0,
+        mtime: new Date(),
+      }),
+    readFile: (path: string) => {
+      assertEquals(inContext, true);
+      readPath = path;
+      return Promise.resolve("");
+    },
+  };
+  const ctx = {
+    projectDir: "/project",
+    projectSlug: "project",
+    proxyToken: "token",
+    isLocalProject: true,
+    adapter: { fs },
+  } as unknown as HandlerContext;
+
+  const result = await new SnippetHandler().handle(
+    new Request("http://localhost/@components/button"),
+    ctx,
+  );
+  assertEquals(result.response?.status, 404);
+  assertEquals(readPath, "/project/components/button.snippet.mdx");
 });

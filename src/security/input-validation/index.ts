@@ -20,6 +20,7 @@ export {
   validateRequestLimits,
 } from "./limits.ts";
 export { parseFormData, parseJsonBody, parseQueryParams } from "./parsers.ts";
+export { sanitizeData } from "./sanitizers.ts";
 export { CommonSchemas } from "#veryfront/schemas/index.ts";
 export {
   createValidatedHandler,

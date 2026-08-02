@@ -1,8 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import type { HandlerContext } from "../types.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MarkdownPreviewHandler } from "./markdown-preview.handler.ts";
-import type { HandlerContext } from "../types.ts";
 
 function makeCtx(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
@@ -44,4 +44,26 @@ describe("MarkdownPreviewHandler.metadata.enabled", () => {
     const ctx = makeCtx({ isLocalProject: false });
     assertEquals(handler.metadata.enabled?.(ctx), false);
   });
+});
+
+Deno.test("MarkdownPreviewHandler admits the resolver result before reading", async () => {
+  let reads = 0;
+  const handler = new MarkdownPreviewHandler();
+  const ctx = {
+    projectDir: "/project",
+    isLocalProject: true,
+    adapter: {
+      fs: {
+        resolveFile: () => Promise.resolve("../outside/secret.md"),
+        readFile: () => {
+          reads += 1;
+          return Promise.resolve("secret");
+        },
+      },
+    },
+  } as unknown as HandlerContext;
+
+  const result = await handler.handle(new Request("http://localhost/README.md"), ctx);
+  assertEquals(result.continue, true);
+  assertEquals(reads, 0);
 });

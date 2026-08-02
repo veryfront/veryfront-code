@@ -323,7 +323,7 @@ describe("BaseHandler.withProxyContext", () => {
     await assertRejects(
       () => handler.testWithProxyContext(ctx, () => Promise.resolve("unused")),
       TypeError,
-      "requires a setRequestBranch adapter method",
+      "requires atomic runWithContext scope",
     );
   });
 

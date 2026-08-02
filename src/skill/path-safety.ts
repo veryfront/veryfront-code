@@ -62,6 +62,16 @@ export interface SkillPathOperationOptions {
   budget?: SkillOperationBudget;
 }
 
+function assertStrictSymlinkCapabilities(fsAdapter: FileSystemAdapter | undefined): void {
+  if (!fsAdapter) return;
+  const semantics = getOwnPropertyDescriptor(fsAdapter, "symlinkSemantics");
+  if (semantics && hasOwn(semantics, "value") && semantics.value === "none") return;
+  if (typeof fsAdapter.lstat === "function" && typeof fsAdapter.realPath === "function") return;
+  throw new TypeError(
+    "Strict skill filesystem requires own symlinkSemantics:'none' authority or lstat and realPath capabilities",
+  );
+}
+
 function isInsideDir(baseDir: string, targetPath: string): boolean {
   const rel = relative(baseDir, targetPath);
   return rel === "" ||
@@ -498,6 +508,7 @@ export async function validateStrictSkillPath(
   fsAdapter?: FileSystemAdapter,
   options: SkillPathOperationOptions = {},
 ): Promise<string> {
+  assertStrictSymlinkCapabilities(fsAdapter);
   if (options.budget) {
     return await options.budget.run(() =>
       validateStrictSkillPath(
@@ -646,6 +657,7 @@ export async function listStrictSkillSubdir(
   fsAdapter?: FileSystemAdapter,
   options: SkillPathOperationOptions = {},
 ): Promise<string[]> {
+  assertStrictSymlinkCapabilities(fsAdapter);
   if (options.budget) {
     return await options.budget.run(() => listStrictSkillSubdir(skillRoot, subdir, fsAdapter));
   }

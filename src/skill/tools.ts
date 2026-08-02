@@ -24,8 +24,17 @@ import { parseSkillFrontmatter } from "./parser.ts";
 import { listStrictSkillSubdir, validateStrictSkillPath } from "./path-safety.ts";
 import { createSkillOperationBudget, type SkillOperationBudget } from "./operation-budget.ts";
 import {
+  isValidSkillScriptEnvironmentKey,
   SKILL_DOCUMENT_MAX_CHARACTERS,
   SKILL_FILE_OPERATION_TIMEOUT_MS,
+  SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
+  SKILL_SCRIPT_MAX_ARG_LENGTH,
+  SKILL_SCRIPT_MAX_ARGS,
+  SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL,
+  SKILL_SCRIPT_MAX_ENV_ENTRIES,
+  SKILL_SCRIPT_MAX_ENV_KEY_LENGTH,
+  SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH,
+  SKILL_SCRIPT_MAX_OUTPUT_BYTES,
   SKILL_SCRIPT_MAX_TIMEOUT_MS,
   SKILL_TEXT_FILE_MAX_BYTES,
 } from "./limits.ts";
@@ -44,6 +53,7 @@ import {
 /** Maximum allowed script execution timeout in milliseconds (5 minutes) */
 const MAX_SCRIPT_TIMEOUT_MS = SKILL_SCRIPT_MAX_TIMEOUT_MS;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Encoder = new TextEncoder();
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
@@ -130,6 +140,63 @@ function assertDocumentCharacterLimit(content: string): void {
   if (content.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
     throw new RangeError(
       `Skill document may contain at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
+    );
+  }
+}
+
+function assertScriptInputs(
+  args: readonly string[] | undefined,
+  env: Readonly<Record<string, string>> | undefined,
+): void {
+  if ((args?.length ?? 0) > SKILL_SCRIPT_MAX_ARGS) {
+    throw new RangeError(`Skill scripts accept at most ${SKILL_SCRIPT_MAX_ARGS} arguments`);
+  }
+  let argumentBytes = 0;
+  for (const argument of args ?? []) {
+    if (argument.length > SKILL_SCRIPT_MAX_ARG_LENGTH) {
+      throw new RangeError(
+        `Skill script arguments may contain at most ${SKILL_SCRIPT_MAX_ARG_LENGTH} characters`,
+      );
+    }
+    argumentBytes += utf8Encoder.encode(argument).byteLength;
+    if (argumentBytes > SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL) {
+      throw new RangeError(
+        `Skill script arguments may contain at most ${SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL} bytes`,
+      );
+    }
+  }
+
+  const entries = Object.entries(env ?? {});
+  if (entries.length > SKILL_SCRIPT_MAX_ENV_ENTRIES) {
+    throw new RangeError(
+      `Skill script environments may contain at most ${SKILL_SCRIPT_MAX_ENV_ENTRIES} entries`,
+    );
+  }
+  let environmentBytes = 0;
+  for (const [key, value] of entries) {
+    if (!isValidSkillScriptEnvironmentKey(key) || key.length > SKILL_SCRIPT_MAX_ENV_KEY_LENGTH) {
+      throw new TypeError(`Invalid skill script environment key: ${key}`);
+    }
+    if (value.length > SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH) {
+      throw new RangeError(
+        `Skill script environment values may contain at most ${SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH} characters`,
+      );
+    }
+    environmentBytes += utf8Encoder.encode(key).byteLength + utf8Encoder.encode(value).byteLength;
+    if (environmentBytes > SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL) {
+      throw new RangeError(
+        `Skill script environments may contain at most ${SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL} bytes`,
+      );
+    }
+  }
+}
+
+function assertScriptOutput(result: { stdout: string; stderr: string }): void {
+  const bytes = utf8Encoder.encode(result.stdout).byteLength +
+    utf8Encoder.encode(result.stderr).byteLength;
+  if (bytes > SKILL_SCRIPT_MAX_OUTPUT_BYTES) {
+    throw new RangeError(
+      `Skill script output may contain at most ${SKILL_SCRIPT_MAX_OUTPUT_BYTES} bytes`,
     );
   }
 }
@@ -410,6 +477,7 @@ export function createExecuteSkillScriptTool(
     inputSchema: getExecuteSkillScriptInputSchema(),
     execute: async (input, context) => {
       const budget = createFileBudget(context, input.timeoutMs);
+      assertScriptInputs(input.args, input.env);
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       assertActiveSkillFileAvailable(
         {
@@ -438,7 +506,7 @@ export function createExecuteSkillScriptTool(
         budget,
       );
       const executor = options.executor ?? getSkillScriptExecutor();
-      return await budget.run(async (abortSignal) =>
+      const result = await budget.run(async (abortSignal) =>
         await executor.execute({
           scriptPath: validatedPath,
           scriptContent,
@@ -449,6 +517,8 @@ export function createExecuteSkillScriptTool(
           abortSignal,
         })
       );
+      assertScriptOutput(result);
+      return result;
     },
   });
 }

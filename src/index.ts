@@ -71,5 +71,6 @@ export {
   parseFormData,
   parseJsonBody,
   parseQueryParams,
+  sanitizeData,
 } from "#veryfront/security";
 export type { ValidatedHandlerConfig, ValidatedHandlerFunction } from "#veryfront/security";

@@ -27,6 +27,7 @@ export {
   parseJsonBody,
   parseQueryParams,
   readBodyWithLimit,
+  sanitizeData,
   validateRequestLimits,
 } from "./input-validation/index.ts";
 export type {

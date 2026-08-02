@@ -220,21 +220,11 @@ export abstract class BaseHandler implements Handler {
     }
 
     if (isContextualMode) {
-      if (typeof fsWrapper.setRequestBranch !== "function") {
-        return Promise.reject(
-          new TypeError("Contextual filesystem mode requires a setRequestBranch adapter method"),
-        );
-      }
-      fsWrapper.setRequestBranch(ctx.parsedDomain?.branch ?? null);
-
-      if (effectiveToken) {
-        if (typeof fsWrapper.setRequestToken !== "function") {
-          return Promise.reject(
-            new TypeError("Contextual filesystem mode requires a setRequestToken adapter method"),
-          );
-        }
-        fsWrapper.setRequestToken(effectiveToken);
-      }
+      return Promise.reject(
+        new TypeError(
+          "Contextual filesystem access requires atomic runWithContext scope; global request-context mutators are not safe",
+        ),
+      );
     }
 
     return runWithCacheBatching(fn);

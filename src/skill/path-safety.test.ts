@@ -358,6 +358,25 @@ describe("src/skill/path-safety", () => {
       );
     });
 
+    it("fails closed when an adapter cannot prove symlink semantics", async () => {
+      const safeAdapter = createSkillTestAdapter({
+        "/project/skills/test/references/guide.md": "Guide",
+      });
+      const { symlinkSemantics: _authority, ...unprovenAdapter } = safeAdapter;
+
+      await assertRejects(
+        () =>
+          validateStrictSkillPath(
+            "/project/skills/test",
+            "references/guide.md",
+            ["references"],
+            unprovenAdapter,
+          ),
+        TypeError,
+        "requires own symlinkSemantics:'none' authority or lstat and realPath",
+      );
+    });
+
     it("caps fallback adapter enumeration used for symlink detection", async () => {
       const root = "/project/skills/test";
       const file = `${root}/references/guide.md`;
