@@ -1111,11 +1111,12 @@ describe("integration endpoint specs", () => {
       "https://www.googleapis.com/auth/drive.readonly",
     ]);
     assertEquals(googleDocs.setupGuide?.title, "Google Docs Integration Setup");
-    const googleDocsSetup =
-      googleDocs.setupGuide?.steps.map((step) => step.description).join("\n") ?? "";
+    const googleDocsConsentStep = googleDocs.setupGuide?.steps.find(
+      (step) => step.title === "Configure the OAuth consent screen",
+    );
     assertEquals(
-      googleDocsSetup.includes("https://www.googleapis.com/auth/docs"),
-      false,
+      googleDocsConsentStep?.description,
+      "Authorize exactly https://www.googleapis.com/auth/documents.readonly, https://www.googleapis.com/auth/documents, and https://www.googleapis.com/auth/drive.readonly.",
     );
     assertEquals(
       docsCreateDocument.endpoint?.url,

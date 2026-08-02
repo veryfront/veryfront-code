@@ -35,7 +35,7 @@ export class VeryfrontTokenAdapter implements TokenStorageAdapter {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    if (this.initialization) return this.initialization;
+    if (this.initialization) return await this.initialization;
 
     logger.debug("Initializing...");
 
