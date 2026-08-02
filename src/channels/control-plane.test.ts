@@ -207,7 +207,7 @@ describe("channels/control-plane", () => {
       );
     });
 
-    it("binds a signature to its uppercase method and exact prefixed pathname", async () => {
+    it("binds a signature to its uppercase method and exact pathname without stripping leading segments", async () => {
       const body = JSON.stringify({ runId: "run_1" });
       const requestPath = "/tenant/api/control-plane/runs/run_1/resume";
       const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
