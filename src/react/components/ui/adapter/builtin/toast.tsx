@@ -13,6 +13,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import { cx as cn } from "../../cva.ts";
+import { useIsomorphicLayoutEffect } from "../../use-isomorphic-layout-effect.ts";
 import {
   assertToastDuration,
   Toast,
@@ -58,7 +59,7 @@ function BuiltinToastProvider(
   const [portalHost, setPortalHost] = React.useState<HTMLDivElement | null>(null);
   const idRef = React.useRef(0);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     setToasts((list) => list.length > maxToasts ? list.slice(-maxToasts) : list);
   }, [maxToasts]);
 

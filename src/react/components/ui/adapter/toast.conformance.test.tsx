@@ -655,6 +655,60 @@ const altToast: ToastParts = {
   useToast: useAltToast,
 };
 
+function useAltToastWithAdditionalState(): ToastState {
+  React.useState<null>(null);
+  return useAltToast();
+}
+
+const altToastWithAdditionalState: ToastParts = {
+  Provider: AltProvider,
+  Viewport: AltViewport,
+  useToast: useAltToastWithAdditionalState,
+};
+
+describe("Toast adapter switching", () => {
+  it("remounts the adapter hook bridge when hook implementations differ", () => {
+    const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>');
+    const restore = installDomGlobals(dom);
+    const root = createRoot(document.getElementById("root")!);
+    let api: ToastState | null = null;
+
+    function Probe(): null {
+      api = useToast();
+      return null;
+    }
+
+    function App(): React.ReactElement {
+      const [additionalState, setAdditionalState] = React.useState(false);
+      return (
+        <UIAdapterProvider
+          adapter={{
+            name: "switching-alt",
+            toast: additionalState ? altToastWithAdditionalState : altToast,
+          }}
+        >
+          <ToastProvider viewport="inline">
+            <Probe />
+            <button type="button" onClick={() => setAdditionalState(true)}>Switch</button>
+          </ToastProvider>
+        </UIAdapterProvider>
+      );
+    }
+
+    try {
+      flushSync(() => root.render(<App />));
+      assert(api, "initial adapter state is available");
+      const button = document.querySelector("button");
+      assert(button, "adapter switch is rendered");
+      flushSync(() => button.click());
+      assert(api, "replacement adapter state is available");
+    } finally {
+      flushSync(() => root.unmount());
+      restore();
+    }
+  });
+});
+
 function AltWrap({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
     <UIAdapterProvider adapter={{ name: "independent-alt", toast: altToast }}>

@@ -40,8 +40,14 @@
  * ```
  */
 import * as React from "react";
+import { createStrictContext } from "../create-strict-context.ts";
 import { useAdapter } from "./adapter/context.tsx";
-import type { ToastProviderProps, ToastState, ToastViewportProps } from "./adapter/contract.ts";
+import type {
+  ToastParts,
+  ToastProviderProps,
+  ToastState,
+  ToastViewportProps,
+} from "./adapter/contract.ts";
 import { assertToastDuration, type ToastFn, type ToastOptions } from "./toast-parts.tsx";
 
 // Presentational parts + option types (pure visual, no queue): re-exported so
@@ -61,6 +67,27 @@ export {
 export type { ToastProviderProps, ToastViewportProps } from "./adapter/contract.ts";
 
 const MAX_TOASTS = 50;
+const [ToastStateContext, useToastState] = createStrictContext<ToastState>(
+  "useToast",
+  "a <ToastProvider>",
+);
+
+function createToastStateBridge(
+  useAdapterToast: ToastParts["useToast"],
+): React.FC<{ children: React.ReactNode }> {
+  function AdapterToastStateBridge(
+    { children }: { children: React.ReactNode },
+  ): React.ReactElement {
+    const state = useAdapterToast();
+    const value = React.useMemo<ToastState>(
+      () => ({ toast: state.toast, dismiss: state.dismiss }),
+      [state.dismiss, state.toast],
+    );
+    return <ToastStateContext.Provider value={value}>{children}</ToastStateContext.Provider>;
+  }
+  AdapterToastStateBridge.displayName = "AdapterToastStateBridge";
+  return AdapterToastStateBridge;
+}
 
 /**
  * Holds the toast queue (via the active adapter: builtin by default) and mounts
@@ -79,9 +106,16 @@ export function ToastProvider(
     );
   }
   const { toast } = useAdapter();
+  // Keep adapter-owned hooks behind a component boundary. If a provider swaps
+  // adapters at runtime, a new bridge type remounts instead of changing the
+  // hook sequence inside the public `useToast` hook.
+  const ToastStateBridge = React.useMemo(
+    () => createToastStateBridge(toast.useToast),
+    [toast.useToast],
+  );
   return (
     <toast.Provider duration={duration} maxToasts={maxToasts} viewport={viewport}>
-      {children}
+      <ToastStateBridge>{children}</ToastStateBridge>
     </toast.Provider>
   );
 }
@@ -100,8 +134,7 @@ ToastViewport.displayName = "ToastViewport";
  * remove one early. Must be used within a `ToastProvider`.
  */
 export function useToast(): ToastState {
-  const { toast } = useAdapter();
-  const state = toast.useToast();
+  const state = useToastState();
   const enqueue = state.toast;
   const guardedToast = React.useMemo<ToastFn>(() => {
     const fn = ((options: ToastOptions) => {

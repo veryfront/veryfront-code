@@ -243,7 +243,7 @@ export interface AccordionContentProps extends React.HTMLAttributes<HTMLDivEleme
   ref?: React.Ref<HTMLDivElement>;
 }
 
-/** The section body: rendered only while its section is open (via the slot). */
+/** The section body: retained in the DOM and hidden while its section is closed. */
 export function AccordionContent(
   { className, children, id, ...props }: AccordionContentProps,
 ): React.ReactElement | null {

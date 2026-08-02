@@ -9,6 +9,7 @@
  */
 import * as React from "react";
 import { composeRefs, Slot } from "../../slot.tsx";
+import { useIsomorphicLayoutEffect } from "../../use-isomorphic-layout-effect.ts";
 import type { ToolbarParts } from "../contract.ts";
 
 function enabledItems(root: HTMLElement): HTMLElement[] {
@@ -42,7 +43,7 @@ const ToolbarRoot: ToolbarParts["Root"] = (
 
   // Keep the current roving stop across rerenders. Fall back to the first enabled
   // item only when the active/tabbable item disappeared or became disabled.
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     const root = innerRef.current;
     if (!root) return;
     const items = enabledItems(root);

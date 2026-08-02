@@ -183,8 +183,9 @@ export interface ToastParts {
 }
 
 /**
- * The adapter surface. New primitives slot in as keys: the merge machinery in
- * `context.tsx` is agnostic to which keys exist.
+ * The adapter surface. Each new primitive must also be added to the explicit
+ * composition in `context.tsx`, which prevents `undefined` overrides from
+ * erasing inherited or builtin slots.
  */
 export interface UIAdapter {
   /** Adapter identity (e.g. `"builtin"`, `"base-ui"`). */
