@@ -12,12 +12,31 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
-import { readTextFile } from "#veryfront/platform/compat/fs.ts";
-import { join } from "#veryfront/compat/path";
+import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import {
+  captureByteReadCapabilities,
+  captureSnapshotReadCapability,
+} from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { createError, toError } from "#veryfront/errors";
 import { skillRegistry } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
-import { listSkillSubdir, validateSkillPath } from "./path-safety.ts";
+import { listStrictSkillSubdir, validateStrictSkillPath } from "./path-safety.ts";
+import { createSkillOperationBudget, type SkillOperationBudget } from "./operation-budget.ts";
+import {
+  isValidSkillScriptEnvironmentKey,
+  SKILL_DOCUMENT_MAX_CHARACTERS,
+  SKILL_FILE_OPERATION_TIMEOUT_MS,
+  SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
+  SKILL_SCRIPT_MAX_ARG_LENGTH,
+  SKILL_SCRIPT_MAX_ARGS,
+  SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL,
+  SKILL_SCRIPT_MAX_ENV_ENTRIES,
+  SKILL_SCRIPT_MAX_ENV_KEY_LENGTH,
+  SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH,
+  SKILL_SCRIPT_MAX_OUTPUT_BYTES,
+  SKILL_SCRIPT_MAX_TIMEOUT_MS,
+  SKILL_TEXT_FILE_MAX_BYTES,
+} from "./limits.ts";
 import { getSkillScriptExecutor } from "./executor.ts";
 import type { Skill, SkillContent, SkillScriptExecutor } from "./types.ts";
 import {
@@ -31,7 +50,9 @@ import {
 } from "./types.ts";
 
 /** Maximum allowed script execution timeout in milliseconds (5 minutes) */
-const MAX_SCRIPT_TIMEOUT_MS = 300_000;
+const MAX_SCRIPT_TIMEOUT_MS = SKILL_SCRIPT_MAX_TIMEOUT_MS;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+const utf8Encoder = new TextEncoder();
 
 type SkillFileKind = "reference" | "script";
 type SkillSelectorToolOptions = {
@@ -75,11 +96,108 @@ const getExecuteSkillScriptInputSchema = defineSchema((v) =>
  * Read a file from a skill directory.
  * Uses skill.fsAdapter if available (VFS/cloud), otherwise falls back to compat readTextFile.
  */
-async function readSkillFile(skill: Skill, path: string): Promise<string> {
-  if (skill.fsAdapter) {
-    return await skill.fsAdapter.readFile(path);
+async function readSkillFile(
+  skill: Skill,
+  path: string,
+  byteLimit: number,
+  budget: SkillOperationBudget,
+): Promise<string> {
+  return await budget.run(async () => {
+    const fileSystem = skill.fsAdapter ?? createFileSystem();
+    const snapshot = captureSnapshotReadCapability(
+      fileSystem,
+      "Skill filesystem",
+      true,
+    );
+    const bytes = snapshot
+      ? await snapshot.read(path, skill.rootPath, byteLimit)
+      : await requireExactSkillReader(fileSystem)(path, byteLimit);
+    return utf8Decoder.decode(bytes);
+  });
+}
+
+function requireExactSkillReader(
+  fileSystem: object,
+): (path: string, byteLimit: number) => Promise<Uint8Array> {
+  const reader = captureByteReadCapabilities(fileSystem, "Skill filesystem").exact;
+  if (!reader) {
+    throw new TypeError(
+      "Skill filesystem must provide an exact bounded read capability",
+    );
   }
-  return await readTextFile(path);
+  return reader;
+}
+
+function createFileBudget(context: ToolExecutionContext | undefined, timeoutMs?: number) {
+  return createSkillOperationBudget({
+    abortSignal: context?.abortSignal,
+    timeoutMs: timeoutMs ?? SKILL_FILE_OPERATION_TIMEOUT_MS,
+  });
+}
+
+function assertDocumentCharacterLimit(content: string): void {
+  if (content.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
+    throw new RangeError(
+      `Skill document may contain at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
+    );
+  }
+}
+
+function assertScriptInputs(
+  args: readonly string[] | undefined,
+  env: Readonly<Record<string, string>> | undefined,
+): void {
+  if ((args?.length ?? 0) > SKILL_SCRIPT_MAX_ARGS) {
+    throw new RangeError(`Skill scripts accept at most ${SKILL_SCRIPT_MAX_ARGS} arguments`);
+  }
+  let argumentBytes = 0;
+  for (const argument of args ?? []) {
+    if (argument.length > SKILL_SCRIPT_MAX_ARG_LENGTH) {
+      throw new RangeError(
+        `Skill script arguments may contain at most ${SKILL_SCRIPT_MAX_ARG_LENGTH} characters`,
+      );
+    }
+    argumentBytes += utf8Encoder.encode(argument).byteLength;
+    if (argumentBytes > SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL) {
+      throw new RangeError(
+        `Skill script arguments may contain at most ${SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL} bytes`,
+      );
+    }
+  }
+
+  const entries = Object.entries(env ?? {});
+  if (entries.length > SKILL_SCRIPT_MAX_ENV_ENTRIES) {
+    throw new RangeError(
+      `Skill script environments may contain at most ${SKILL_SCRIPT_MAX_ENV_ENTRIES} entries`,
+    );
+  }
+  let environmentBytes = 0;
+  for (const [key, value] of entries) {
+    if (!isValidSkillScriptEnvironmentKey(key) || key.length > SKILL_SCRIPT_MAX_ENV_KEY_LENGTH) {
+      throw new TypeError(`Invalid skill script environment key: ${key}`);
+    }
+    if (value.length > SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH) {
+      throw new RangeError(
+        `Skill script environment values may contain at most ${SKILL_SCRIPT_MAX_ENV_VALUE_LENGTH} characters`,
+      );
+    }
+    environmentBytes += utf8Encoder.encode(key).byteLength + utf8Encoder.encode(value).byteLength;
+    if (environmentBytes > SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL) {
+      throw new RangeError(
+        `Skill script environments may contain at most ${SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL} bytes`,
+      );
+    }
+  }
+}
+
+function assertScriptOutput(result: { stdout: string; stderr: string }): void {
+  const bytes = utf8Encoder.encode(result.stdout).byteLength +
+    utf8Encoder.encode(result.stderr).byteLength;
+  if (bytes > SKILL_SCRIPT_MAX_OUTPUT_BYTES) {
+    throw new RangeError(
+      `Skill script output may contain at most ${SKILL_SCRIPT_MAX_OUTPUT_BYTES} bytes`,
+    );
+  }
 }
 
 /**
@@ -239,38 +357,53 @@ export function createLoadSkillTool(options: SkillSelectorToolOptions = {}): Too
       "allowed tools policy, and lists of available reference files and scripts.",
     inputSchema: getLoadSkillInputSchema(),
     execute: async (input, context): Promise<SkillContent> => {
+      const budget = createFileBudget(context);
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
 
       // Read SKILL.md
-      const skillMdPath = join(skill.rootPath, SKILL_MD_FILENAME);
-      const content = await readSkillFile(skill, skillMdPath);
+      const validatedSkillMdPath = await validateStrictSkillPath(
+        skill.rootPath,
+        SKILL_MD_FILENAME,
+        [],
+        skill.fsAdapter,
+        { budget },
+      );
+      const content = await readSkillFile(
+        skill,
+        validatedSkillMdPath,
+        SKILL_TEXT_FILE_MAX_BYTES,
+        budget,
+      );
+      assertDocumentCharacterLimit(content);
 
       // Parse frontmatter to get instructions
       const parsed = await parseSkillFrontmatter(content);
 
       // List available files the agent can load through load_skill_reference.
-      const [references, resources, assets, scripts] = await Promise.all([
-        listSkillSubdir(
-          skill.rootPath,
-          SKILL_REFERENCES_DIR,
-          skill.fsAdapter,
-        ),
-        listSkillSubdir(
-          skill.rootPath,
-          SKILL_RESOURCES_DIR,
-          skill.fsAdapter,
-        ),
-        listSkillSubdir(
-          skill.rootPath,
-          SKILL_ASSETS_DIR,
-          skill.fsAdapter,
-        ),
-        listSkillSubdir(
-          skill.rootPath,
-          SKILL_SCRIPTS_DIR,
-          skill.fsAdapter,
-        ),
-      ]);
+      const references = await listStrictSkillSubdir(
+        skill.rootPath,
+        SKILL_REFERENCES_DIR,
+        skill.fsAdapter,
+        { budget },
+      );
+      const resources = await listStrictSkillSubdir(
+        skill.rootPath,
+        SKILL_RESOURCES_DIR,
+        skill.fsAdapter,
+        { budget },
+      );
+      const assets = await listStrictSkillSubdir(
+        skill.rootPath,
+        SKILL_ASSETS_DIR,
+        skill.fsAdapter,
+        { budget },
+      );
+      const scripts = await listStrictSkillSubdir(
+        skill.rootPath,
+        SKILL_SCRIPTS_DIR,
+        skill.fsAdapter,
+        { budget },
+      );
       const loadableReferences = [...references, ...resources, ...assets];
 
       return {
@@ -295,6 +428,7 @@ export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions =
       "references/, resources/, and assets/ directories are accessible.",
     inputSchema: getLoadSkillReferenceInputSchema(),
     execute: async (input, context): Promise<{ content: string; path: string }> => {
+      const budget = createFileBudget(context);
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       assertActiveSkillFileAvailable(
         {
@@ -308,14 +442,20 @@ export function createLoadSkillReferenceTool(options: SkillSelectorToolOptions =
       );
 
       // Validate path safety before reading skill-provided context.
-      const validatedPath = await validateSkillPath(
+      const validatedPath = await validateStrictSkillPath(
         skill.rootPath,
         input.reference,
         [SKILL_REFERENCES_DIR, SKILL_RESOURCES_DIR, SKILL_ASSETS_DIR],
         skill.fsAdapter,
+        { budget },
       );
 
-      const content = await readSkillFile(skill, validatedPath);
+      const content = await readSkillFile(
+        skill,
+        validatedPath,
+        SKILL_TEXT_FILE_MAX_BYTES,
+        budget,
+      );
       return { content, path: input.reference };
     },
   });
@@ -334,6 +474,8 @@ export function createExecuteSkillScriptTool(
       "Execute a script from a skill's scripts/ directory. Returns stdout, stderr, and exit code.",
     inputSchema: getExecuteSkillScriptInputSchema(),
     execute: async (input, context) => {
+      const budget = createFileBudget(context, input.timeoutMs);
+      assertScriptInputs(input.args, input.env);
       const skill = resolveVisibleSkillOrThrow(input.skillId, context, options);
       assertActiveSkillFileAvailable(
         {
@@ -347,23 +489,34 @@ export function createExecuteSkillScriptTool(
       );
 
       // Validate path safety (only scripts/ allowed)
-      const validatedPath = await validateSkillPath(
+      const validatedPath = await validateStrictSkillPath(
         skill.rootPath,
         input.script,
         [SKILL_SCRIPTS_DIR],
         skill.fsAdapter,
+        { budget },
       );
 
-      const scriptContent = await readSkillFile(skill, validatedPath);
+      const scriptContent = await readSkillFile(
+        skill,
+        validatedPath,
+        SKILL_TEXT_FILE_MAX_BYTES,
+        budget,
+      );
       const executor = options.executor ?? getSkillScriptExecutor();
-      return await executor.execute({
-        scriptPath: validatedPath,
-        scriptContent,
-        args: input.args,
-        env: input.env,
-        cwd: skill.rootPath,
-        timeoutMs: input.timeoutMs,
-      });
+      const result = await budget.run(async (abortSignal) =>
+        await executor.execute({
+          scriptPath: validatedPath,
+          scriptContent,
+          args: input.args,
+          env: input.env,
+          cwd: skill.rootPath,
+          timeoutMs: budget.remainingMs(),
+          abortSignal,
+        })
+      );
+      assertScriptOutput(result);
+      return result;
     },
   });
 }

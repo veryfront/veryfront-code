@@ -44,8 +44,8 @@ export function assertCanonicalExtensionImport(
   capabilities: ImportResolutionCapabilities = nativeImportResolution,
 ): void {
   // Node does not expose an import-map facility that can redirect an absolute
-  // file URL. DNT also injects an import.meta.resolve ponyfill on Node 18 that
-  // delegates to require.resolve(), which cannot resolve file URLs at all.
+  // file URL. DNT can also inject an import.meta.resolve ponyfill that delegates
+  // to require.resolve(), which cannot resolve file URLs at all.
   // Runtime identity is therefore the stable capability boundary here.
   if (capabilities.runtime === "node") return;
 

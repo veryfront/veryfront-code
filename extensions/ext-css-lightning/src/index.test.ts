@@ -22,7 +22,7 @@ const noopLogger = {
 };
 
 describe("ext-css-lightning", () => {
-  it("does not require String.prototype.isWellFormed on Node 18", async () => {
+  it("does not require mutable String.prototype.isWellFormed", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(
       String.prototype,
       "isWellFormed",
@@ -34,8 +34,8 @@ describe("ext-css-lightning", () => {
     });
 
     try {
-      const node18Module = await import("./index.ts?node18-compat");
-      const result = new node18Module.LightningCSSOptimizationEngine({
+      const isolatedModule = await import("./index.ts?without-host-is-well-formed");
+      const result = new isolatedModule.LightningCSSOptimizationEngine({
         browserQueries: ["ie 11"],
       }).optimize({
         css: ".field { user-select: none; }",

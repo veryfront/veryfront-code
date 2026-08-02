@@ -5,7 +5,7 @@
 
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
-import { basename, dirname, join } from "#veryfront/compat/path/index.ts";
+import { basename, dirname, join, relative } from "#veryfront/compat/path/index.ts";
 
 import { isWithinDirectory, normalizeSeparators, resolvePathSegments } from "./normalization.ts";
 import { PathValidationError, type ValidationResult } from "./types.ts";
@@ -66,13 +66,12 @@ async function resolveThroughExistingAncestor(
 
 export async function getCanonicalPath(
   path: string,
-  adapter?: RuntimeAdapter,
-  _followSymlinks = false,
+  adapter: RuntimeAdapter,
 ): Promise<{ path: string; isSymlink: boolean }> {
   const resolvedPath = resolvePathSegments(path);
 
-  if (!adapter) {
-    return { path: resolvedPath, isSymlink: false };
+  if (typeof adapter !== "object" || adapter === null) {
+    throw new TypeError("Physical canonicalization requires a runtime adapter");
   }
 
   const fs = adapter.fs;
@@ -96,12 +95,10 @@ export async function getCanonicalPath(
   // the unresolved suffix. Calling realPath() only on the full target would fail
   // with ENOENT and let a symlinked parent escape via the lexical fallback.
   //
-  // Residual gap: adapters that expose neither realPath nor lstat (virtual/remote
-  // filesystems — Veryfront API, GitHub — which have no OS-level symlinks) fall
-  // back to the lexical path. Those filesystems cannot express an OS symlink
-  // escape, so the lexical containment check remains sufficient there. A
-  // hypothetical local-disk adapter lacking realPath would retain the pre-fix
-  // lexical-only behavior for intermediate-symlink escapes.
+  // validatePath() admits this lexical fallback only for adapters that
+  // explicitly declare symlink-free storage, or when lstat is sufficient for
+  // a no-follow policy. Direct callers use this helper only for resolution and
+  // must apply their own capability policy.
   if (typeof fs.realPath === "function") {
     const real = await resolveThroughExistingAncestor(
       normalizeSeparators(path),
@@ -116,6 +113,41 @@ export async function getCanonicalPath(
 }
 
 /**
+ * Detect a terminal or intermediate symlink below a trusted lexical root.
+ * The root itself is excluded: callers separately canonicalize it so a
+ * deployment path such as macOS `/var` may legitimately resolve elsewhere.
+ */
+export async function pathTraversesSymlink(
+  path: string,
+  baseDir: string,
+  adapter: RuntimeAdapter,
+): Promise<boolean> {
+  const fs = adapter.fs;
+  const lstat = fs.lstat;
+  if (!lstat) return false;
+
+  const normalizedBase = resolvePathSegments(normalizeSeparators(baseDir));
+  const normalizedPath = resolvePathSegments(normalizeSeparators(path));
+  if (!isWithinDirectory(normalizedBase, normalizedPath)) return false;
+
+  const relativePath = normalizeSeparators(relative(normalizedBase, normalizedPath));
+  if (!relativePath || relativePath === ".") return false;
+
+  let candidate = normalizedBase;
+  for (const segment of relativePath.split("/")) {
+    if (!segment || segment === ".") continue;
+    candidate = join(candidate, segment);
+    try {
+      if ((await lstat.call(fs, candidate)).isSymlink) return true;
+    } catch (error) {
+      if (isNotFoundError(error)) return false;
+      throw error;
+    }
+  }
+  return false;
+}
+
+/**
  * Resolve the base directory to its physical form so that a physically-resolved
  * candidate path is compared against a physically-resolved base. Without this,
  * a base whose own path contains symlinked segments (e.g. macOS /var → /private/var
@@ -125,10 +157,10 @@ export async function getCanonicalPath(
  */
 export async function getCanonicalBaseDir(
   baseDir: string,
-  adapter?: RuntimeAdapter,
+  adapter: RuntimeAdapter,
 ): Promise<string> {
-  const fs = adapter?.fs;
-  if (fs && typeof fs.realPath === "function") {
+  const fs = adapter.fs;
+  if (typeof fs.realPath === "function") {
     try {
       return normalizeSeparators(await fs.realPath(baseDir));
     } catch (error) {
@@ -142,7 +174,7 @@ export async function getCanonicalBaseDir(
 export function validateAllowedDirs(
   canonicalPath: string,
   baseDir: string,
-  allowedDirs: string[],
+  allowedDirs: string[] | undefined,
 ): ValidationResult {
   const normalizedBase = resolvePathSegments(normalizeSeparators(baseDir)).replace(/\/$/, "");
   const normalizedPath = resolvePathSegments(normalizeSeparators(canonicalPath)).replace(/\/$/, "");
@@ -150,12 +182,12 @@ export function validateAllowedDirs(
   if (!isWithinDirectory(normalizedBase, normalizedPath)) {
     return {
       valid: false,
-      error: `Path is outside base directory: ${baseDir}`,
+      error: "Path is outside base directory",
       code: PathValidationError.OUTSIDE_BASE,
     };
   }
 
-  if (!allowedDirs?.length || normalizedPath === normalizedBase) {
+  if (allowedDirs === undefined || normalizedPath === normalizedBase) {
     return { valid: true, canonicalPath };
   }
 
@@ -165,7 +197,9 @@ export function validateAllowedDirs(
   if (!topLevelDir || !allowedDirs.includes(topLevelDir)) {
     return {
       valid: false,
-      error: `Access to directory '${topLevelDir}' not allowed. Allowed: ${allowedDirs.join(", ")}`,
+      error: allowedDirs.length === 0
+        ? `Access to directory '${topLevelDir}' not allowed: directory allowlist is empty`
+        : `Access to directory '${topLevelDir}' not allowed. Allowed: ${allowedDirs.join(", ")}`,
       code: PathValidationError.NOT_IN_ALLOWLIST,
     };
   }

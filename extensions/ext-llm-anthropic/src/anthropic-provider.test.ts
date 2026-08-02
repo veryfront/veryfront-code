@@ -1,6 +1,9 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
+import { ProviderRequestError } from "veryfront/provider/shared";
+
+import { MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES } from "./anthropic-native-content.ts";
 import { createAnthropicModelRuntime } from "./anthropic-provider.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
@@ -9,6 +12,23 @@ async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
     values.push(value);
   }
   return values;
+}
+
+async function waitWithin<T>(promise: Promise<T>, timeoutMs = 500): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Timed out after ${timeoutMs}ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 function readRequestBody(init: RequestInit | undefined): string | null {
@@ -23,6 +43,45 @@ function readRequestHeader(init: RequestInit | undefined, name: string): string 
     return null;
   }
   return new Headers(init.headers).get(name);
+}
+
+function createSettledLegacyMcpPrompt(toolCallId: string) {
+  return [{
+    role: "user",
+    content: [{ type: "text", text: "Echo" }],
+  }, {
+    role: "assistant",
+    content: [],
+    providerToolCalls: [{
+      toolCallId,
+      toolName: "echo",
+      input: { value: "hello" },
+    }],
+    providerMetadata: {
+      anthropic: {
+        rawAssistantMessages: [[{
+          type: "mcp_tool_use",
+          id: toolCallId,
+          name: "echo",
+          server_name: "example-mcp",
+          input: { value: "hello" },
+        }]],
+      },
+    },
+  }, {
+    role: "assistant",
+    content: [{ type: "text", text: "Completed." }],
+    providerMetadata: {
+      anthropic: {
+        rawAssistantMessages: [[{
+          type: "mcp_tool_result",
+          tool_use_id: toolCallId,
+          is_error: false,
+          content: "hello",
+        }]],
+      },
+    },
+  }] as const;
 }
 
 describe("anthropic-provider", () => {
@@ -129,6 +188,1674 @@ describe("anthropic-provider", () => {
     });
   });
 
+  it("fails closed on an empty successful response without leaking its payload", async () => {
+    const privatePayload = "<PRIVATE_PROVIDER_PAYLOAD>";
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [],
+              stop_reason: "end_turn",
+              diagnostic: privatePayload,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const error = await assertRejects(
+      async () =>
+        await runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        }),
+      ProviderRequestError,
+      "invalid successful response",
+    );
+
+    assertEquals(error.provider, "anthropic");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
+    assertEquals(error.message.includes(privatePayload), false);
+  });
+
+  it("maps raw assistant metadata budget failures to the typed response error", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [
+                {
+                  type: "text",
+                  text: "x".repeat(MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES),
+                },
+                {
+                  type: "server_tool_use",
+                  id: "srvtool_oversized_metadata",
+                  name: "web_search",
+                  input: { query: "bounded" },
+                },
+              ],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const error = await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Search" }] }],
+        }),
+      ProviderRequestError,
+      "raw assistant metadata could not be retained safely",
+    );
+
+    assertEquals(error.provider, "anthropic");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
+  });
+
+  it("does not attach raw-assistant metadata to an empty assistant stream", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+
+    assertEquals(await collectAsync(result.stream), [{
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      usage: { inputTokens: 1, totalTokens: 1 },
+    }]);
+  });
+
+  it("fails closed on an unknown block mixed into an otherwise valid direct response", async () => {
+    const privateBlockType = "future_block_<PRIVATE_PROVIDER_PAYLOAD>";
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [
+                { type: "text", text: "visible" },
+                { type: privateBlockType, private: "must not be ignored" },
+              ],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const error = await assertRejects(
+      async () =>
+        await runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        }),
+      ProviderRequestError,
+      "unsupported content block type",
+    );
+    assertEquals(error.message.includes(privateBlockType), false);
+  });
+
+  it("fails closed on an unknown block mixed into an otherwise valid stream", async () => {
+    const privateBlockType = "future_block_<PRIVATE_PROVIDER_PAYLOAD>";
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{}}\n\n',
+              'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"visible"}}\n\n',
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 1,
+                  content_block: { type: privateBlockType, private: "must not be ignored" },
+                })
+              }\n\n`,
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+
+    const error = await assertRejects(
+      () => collectAsync(result.stream),
+      ProviderRequestError,
+      "unsupported content block type",
+    );
+    assertEquals(error.message.includes(privateBlockType), false);
+  });
+
+  it("rejects malformed tool inputs and thinking fields in successful responses", async () => {
+    const malformedBlocks = [
+      { type: "tool_use", id: "tool_1", name: "lookup", input: [] },
+      { type: "tool_use", id: "tool_1", name: "lookup", input: "private" },
+      { type: "thinking", thinking: "valid", signature: 42 },
+      { type: "thinking", thinking: 42, signature: "valid" },
+    ];
+
+    for (const block of malformedBlocks) {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [block],
+                stop_reason: "end_turn",
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-6");
+
+      await assertRejects(
+        async () =>
+          await runtime.doGenerate({
+            prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+          }),
+        ProviderRequestError,
+        "malformed",
+      );
+    }
+  });
+
+  it("keeps Anthropic-schema bash, text-editor, computer, and memory calls client-executed", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [
+                { type: "tool_use", id: "tool_bash", name: "bash", input: { command: "pwd" } },
+                {
+                  type: "tool_use",
+                  id: "tool_editor",
+                  name: "str_replace_editor",
+                  input: { command: "view", path: "/tmp/a" },
+                },
+                {
+                  type: "tool_use",
+                  id: "tool_computer",
+                  name: "computer",
+                  input: { action: "screenshot" },
+                },
+                {
+                  type: "tool_use",
+                  id: "tool_memory",
+                  name: "memory",
+                  input: { command: "view", path: "/memories" },
+                },
+              ],
+              stop_reason: "tool_use",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Use local tools" }] }],
+    });
+    assertEquals(
+      result.content?.map((part) =>
+        typeof part === "object" && part !== null && "providerExecuted" in part
+          ? part.providerExecuted
+          : undefined
+      ),
+      [undefined, undefined, undefined, undefined],
+    );
+  });
+
+  it("normalizes direct code-execution calls and results as provider-executed", async () => {
+    const rawContent = [{
+      type: "server_tool_use",
+      id: "srvtool_code_direct",
+      name: "code_execution",
+      input: { code: "print(2)" },
+    }, {
+      type: "code_execution_tool_result",
+      tool_use_id: "srvtool_code_direct",
+      content: {
+        type: "code_execution_result",
+        stdout: "2\n",
+        stderr: "",
+        return_code: 0,
+        content: [{ type: "code_execution_output", file_id: "file_result" }],
+      },
+    }];
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: rawContent,
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Run code" }] }],
+    });
+    assertEquals(result.content, [{
+      type: "tool-call",
+      toolCallId: "srvtool_code_direct",
+      toolName: "code_execution",
+      input: '{"code":"print(2)"}',
+      providerExecuted: true,
+    }, {
+      type: "tool-result",
+      toolCallId: "srvtool_code_direct",
+      toolName: "code_execution",
+      result: {
+        type: "code_execution_result",
+        stdout: "2\n",
+        stderr: "",
+        returnCode: 0,
+        content: [{ type: "code_execution_output", fileId: "file_result" }],
+      },
+      providerExecuted: true,
+    }]);
+    assertEquals(result.providerMetadata, {
+      anthropic: { rawAssistantMessages: [rawContent] },
+    });
+  });
+
+  it("omits malformed Anthropic usage counters", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: "ok" }],
+              stop_reason: "end_turn",
+              usage: {
+                input_tokens: -1,
+                output_tokens: 1.5,
+                cache_creation_input_tokens: -2,
+                cache_read_input_tokens: 0.5,
+                veryfront: {
+                  provider_cost_usd: -1,
+                  cost_credits: -1,
+                },
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+
+    assertEquals(result.usage, undefined);
+  });
+
+  it("retains raw mixed server/client assistant blocks for direct local-tool continuation", async () => {
+    const rawContent = [{
+      type: "server_tool_use",
+      id: "server_search_mixed",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "tool_use",
+      id: "local_lookup_mixed",
+      name: "local_lookup",
+      input: { query: "runtime" },
+    }];
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: rawContent,
+              stop_reason: "tool_use",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Search and inspect" }] }],
+      tools: [{
+        type: "provider",
+        name: "web_search",
+        id: "anthropic.web_search_20250305",
+        args: {},
+      }, {
+        type: "function",
+        name: "local_lookup",
+        inputSchema: { type: "object" },
+      }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(result.providerMetadata, {
+      anthropic: { rawAssistantMessages: [rawContent] },
+    });
+  });
+
+  it("retains raw mixed server/client assistant blocks for streamed local-tool continuation", async () => {
+    const rawContent = [{
+      type: "server_tool_use",
+      id: "server_search_mixed_stream",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "tool_use",
+      id: "local_lookup_mixed_stream",
+      name: "local_lookup",
+      input: { query: "runtime" },
+    }];
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: rawContent[0],
+                })
+              }\n\n`,
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 1,
+                  content_block: rawContent[1],
+                })
+              }\n\n`,
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Search and inspect" }] }],
+      tools: [{
+        type: "provider",
+        name: "web_search",
+        id: "anthropic.web_search_20250305",
+        args: {},
+      }, {
+        type: "function",
+        name: "local_lookup",
+        inputSchema: { type: "object" },
+      }],
+      maxOutputTokens: 64,
+    });
+    const parts = await collectAsync(result.stream);
+    const finish = parts.find((part) =>
+      part && typeof part === "object" && "type" in part && part.type === "finish"
+    );
+
+    assertEquals(
+      finish && typeof finish === "object" && "providerMetadata" in finish
+        ? finish.providerMetadata
+        : undefined,
+      {
+        anthropic: { rawAssistantMessages: [rawContent] },
+      },
+    );
+  });
+
+  it("continues direct pause_turn responses with the raw assistant content and unchanged tools", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestBodies.push(JSON.parse(readRequestBody(init) ?? "{}"));
+        requestCount++;
+        const payload = requestCount === 1
+          ? {
+            content: [{
+              type: "server_tool_use",
+              id: "srvtool_pause_direct",
+              name: "web_search",
+              input: { query: "Veryfront" },
+            }],
+            stop_reason: "pause_turn",
+            usage: { input_tokens: 8, output_tokens: 2 },
+          }
+          : {
+            content: [{
+              type: "web_search_tool_result",
+              tool_use_id: "srvtool_pause_direct",
+              content: [{
+                type: "web_search_result",
+                url: "https://veryfront.com",
+                title: "Veryfront",
+                page_age: null,
+                encrypted_content: "opaque",
+              }],
+            }, { type: "text", text: "Search completed." }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 9, output_tokens: 4 },
+          };
+        return Promise.resolve(
+          new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Search" }],
+      }],
+      tools: [{
+        type: "provider",
+        name: "web_search",
+        id: "anthropic.web_search_20250305",
+        args: { maxUses: 5 },
+      }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(requestCount, 2);
+    assertEquals(requestBodies[1]?.tools, requestBodies[0]?.tools);
+    assertEquals(requestBodies[1]?.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "server_tool_use",
+        id: "srvtool_pause_direct",
+        name: "web_search",
+        input: { query: "Veryfront" },
+      }],
+    }]);
+    assertEquals(result, {
+      content: [{
+        type: "tool-call",
+        toolCallId: "srvtool_pause_direct",
+        toolName: "web_search",
+        input: '{"query":"Veryfront"}',
+        providerExecuted: true,
+      }, {
+        type: "tool-result",
+        toolCallId: "srvtool_pause_direct",
+        toolName: "web_search",
+        result: [{
+          type: "web_search_result",
+          url: "https://veryfront.com",
+          title: "Veryfront",
+          pageAge: null,
+          encryptedContent: "opaque",
+        }],
+        providerExecuted: true,
+      }, { type: "text", text: "Search completed." }],
+      finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_pause_direct",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }], [{
+            type: "web_search_tool_result",
+            tool_use_id: "srvtool_pause_direct",
+            content: [{
+              type: "web_search_result",
+              url: "https://veryfront.com",
+              title: "Veryfront",
+              page_age: null,
+              encrypted_content: "opaque",
+            }],
+          }, { type: "text", text: "Search completed." }]],
+        },
+      },
+      usage: { inputTokens: 17, outputTokens: 6, totalTokens: 23 },
+    });
+  });
+
+  it("correlates a direct MCP result with its tool name across pause_turn continuation", async () => {
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        const payload = requestCount === 1
+          ? {
+            content: [{
+              type: "mcp_tool_use",
+              id: "mcptool_echo_direct",
+              name: "echo",
+              server_name: "example-mcp",
+              input: { value: "hello" },
+            }],
+            stop_reason: "pause_turn",
+          }
+          : {
+            content: [{
+              type: "mcp_tool_result",
+              tool_use_id: "mcptool_echo_direct",
+              is_error: false,
+              content: [{ type: "text", text: "hello", citations: null }],
+            }, { type: "text", text: "MCP completed." }],
+            stop_reason: "end_turn",
+          };
+        return Promise.resolve(
+          new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Echo" }] }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(requestCount, 2);
+    assertEquals(result.content, [{
+      type: "tool-call",
+      toolCallId: "mcptool_echo_direct",
+      toolName: "echo",
+      input: '{"value":"hello"}',
+      providerExecuted: true,
+    }, {
+      type: "tool-result",
+      toolCallId: "mcptool_echo_direct",
+      toolName: "echo",
+      result: [{ type: "text", text: "hello", citations: null }],
+      providerExecuted: true,
+    }, { type: "text", text: "MCP completed." }]);
+  });
+
+  it("correlates a direct provider result with a canonical call from a prior invocation", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_cross_invocation_direct",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "hello" },
+    }];
+    const rawProviderResult = [{
+      type: "mcp_tool_result",
+      tool_use_id: "mcptool_cross_invocation_direct",
+      is_error: false,
+      content: [{ type: "text", text: "hello", citations: null }],
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: rawProviderResult,
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Echo" }],
+      }, {
+        role: "assistant",
+        content: [],
+        providerToolCalls: [{
+          toolCallId: "mcptool_cross_invocation_direct",
+          toolName: "echo",
+          input: { value: "hello" },
+          supportsDeferredResults: true,
+        }],
+        providerMetadata: {
+          anthropic: { rawAssistantMessages: [rawProviderCall] },
+        },
+      }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(requestCount, 1);
+    assertEquals(result, {
+      content: [{
+        type: "tool-result",
+        toolCallId: "mcptool_cross_invocation_direct",
+        toolName: "echo",
+        result: [{ type: "text", text: "hello", citations: null }],
+        providerExecuted: true,
+      }],
+      finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: { rawAssistantMessages: [rawProviderResult] },
+      },
+    });
+  });
+
+  it("does not seed response correlation from raw-only provider history", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_raw_only",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "hello" },
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "mcp_tool_result",
+                tool_use_id: "mcptool_raw_only",
+                is_error: false,
+                content: "hello",
+              }],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Echo" }],
+          }, {
+            role: "assistant",
+            content: [],
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [rawProviderCall] },
+            },
+          }],
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("does not seed direct correlation after a validated raw-only result settled the call", async () => {
+    const toolCallId = "mcptool_settled_direct";
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "mcp_tool_result",
+                tool_use_id: toolCallId,
+                is_error: false,
+                content: "duplicate",
+              }],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: createSettledLegacyMcpPrompt(toolCallId),
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("does not seed streamed correlation after a validated raw-only result settled the call", async () => {
+    const toolCallId = "mcptool_settled_stream";
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{}}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: {
+                    type: "mcp_tool_result",
+                    tool_use_id: toolCallId,
+                    is_error: false,
+                    content: "duplicate",
+                  },
+                })
+              }\n\n`,
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: createSettledLegacyMcpPrompt(toolCallId),
+      maxOutputTokens: 64,
+    });
+    await assertRejects(
+      () => collectAsync(result.stream),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("does not reuse a provider call across a later user boundary", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_stale_reused",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "old" },
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "mcp_tool_result",
+                tool_use_id: "mcptool_stale_reused",
+                is_error: false,
+                content: "stale",
+              }],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "First turn" }],
+          }, {
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "mcptool_stale_reused",
+              toolName: "echo",
+              input: { value: "old" },
+              providerExecuted: true,
+            }],
+            providerToolCalls: [{
+              toolCallId: "mcptool_stale_reused",
+              toolName: "echo",
+              input: { value: "old" },
+            }],
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [rawProviderCall] },
+            },
+          }, {
+            role: "user",
+            content: [{ type: "text", text: "Start a new turn" }],
+          }, {
+            role: "assistant",
+            content: [],
+            providerToolCalls: [{
+              toolCallId: "mcptool_stale_reused",
+              toolName: "echo",
+              input: { value: "new" },
+            }],
+          }],
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "provider tool-result content block was malformed",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("bounds canonical provider-call correlation state before transport", async () => {
+    const createRawProviderCalls = (offset: number, length: number) =>
+      Array.from({ length }, (_, index) => ({
+        type: "mcp_tool_use",
+        id: `mcptool_${offset + index}`,
+        name: "echo",
+        server_name: "example-mcp",
+        input: { value: offset + index },
+      }));
+    const firstRawProviderCalls = createRawProviderCalls(0, 2_049);
+    const secondRawProviderCalls = createRawProviderCalls(2_049, 2_048);
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        throw new Error("fetch must not be called");
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Echo" }],
+          }, {
+            role: "assistant",
+            content: [],
+            providerToolCalls: firstRawProviderCalls.map((call) => ({
+              toolCallId: call.id,
+              toolName: call.name,
+              input: call.input,
+            })),
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [firstRawProviderCalls] },
+            },
+          }, {
+            role: "assistant",
+            content: [],
+            providerToolCalls: secondRawProviderCalls.map((call) => ({
+              toolCallId: call.id,
+              toolName: call.name,
+              input: call.input,
+            })),
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [secondRawProviderCalls] },
+            },
+          }],
+          maxOutputTokens: 64,
+        }),
+      TypeError,
+      "exceeded 4096 outstanding calls",
+    );
+    assertEquals(requestCount, 0);
+  });
+
+  it("continues streamed pause_turn responses and emits one cumulative finish", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestBodies.push(JSON.parse(readRequestBody(init) ?? "{}"));
+        requestCount++;
+        const body = requestCount === 1
+          ? [
+            'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":8}}}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtool_pause_stream","name":"web_search","input":{}}}\n\n',
+            'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"Veryfront\\"}"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"pause_turn"},"usage":{"output_tokens":2}}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+          ].join("")
+          : [
+            'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":9}}}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtool_pause_stream","content":[{"type":"web_search_result","url":"https://veryfront.com","title":"Veryfront","page_age":null,"encrypted_content":"opaque"}]}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":"Search completed."}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+          ].join("");
+        return Promise.resolve(
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Search" }],
+      }],
+      tools: [{
+        type: "provider",
+        name: "web_search",
+        id: "anthropic.web_search_20250305",
+        args: { maxUses: 5 },
+      }],
+      maxOutputTokens: 64,
+    });
+    const parts = await collectAsync(result.stream);
+    const finishes = parts.filter((part) =>
+      typeof part === "object" && part !== null && "type" in part && part.type === "finish"
+    );
+    const toolResult = parts.find((part) =>
+      typeof part === "object" && part !== null && "type" in part && part.type === "tool-result"
+    );
+
+    assertEquals(requestCount, 2);
+    assertEquals(requestBodies[1]?.tools, requestBodies[0]?.tools);
+    assertEquals(requestBodies[1]?.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "server_tool_use",
+        id: "srvtool_pause_stream",
+        name: "web_search",
+        input: { query: "Veryfront" },
+      }],
+    }]);
+    assertEquals(toolResult, {
+      type: "tool-result",
+      toolCallId: "srvtool_pause_stream",
+      toolName: "web_search",
+      result: [{
+        type: "web_search_result",
+        url: "https://veryfront.com",
+        title: "Veryfront",
+        pageAge: null,
+        encryptedContent: "opaque",
+      }],
+      providerExecuted: true,
+    });
+    assertEquals(finishes, [{
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_pause_stream",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }], [{
+            type: "web_search_tool_result",
+            tool_use_id: "srvtool_pause_stream",
+            content: [{
+              type: "web_search_result",
+              url: "https://veryfront.com",
+              title: "Veryfront",
+              page_age: null,
+              encrypted_content: "opaque",
+            }],
+          }, { type: "text", text: "Search completed." }]],
+        },
+      },
+      usage: { inputTokens: 17, outputTokens: 6, totalTokens: 23 },
+    }]);
+  });
+
+  it("correlates a streamed MCP result with its tool name across pause_turn continuation", async () => {
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        const body = requestCount === 1
+          ? [
+            'event: message_start\ndata: {"type":"message_start","message":{}}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_use","id":"mcptool_echo_stream","name":"echo","server_name":"example-mcp","input":{}}}\n\n',
+            'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"value\\":\\"hello\\"}"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"pause_turn"}}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+          ].join("")
+          : [
+            'event: message_start\ndata: {"type":"message_start","message":{}}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptool_echo_stream","is_error":false,"content":"hello"}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+            'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":"MCP completed."}}\n\n',
+            'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+            'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+          ].join("");
+        return Promise.resolve(
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Echo" }] }],
+      maxOutputTokens: 64,
+    });
+    const parts = await collectAsync(result.stream);
+    const toolResult = parts.find((part) =>
+      typeof part === "object" && part !== null && "type" in part &&
+      part.type === "tool-result"
+    );
+
+    assertEquals(requestCount, 2);
+    assertEquals(toolResult, {
+      type: "tool-result",
+      toolCallId: "mcptool_echo_stream",
+      toolName: "echo",
+      result: "hello",
+      providerExecuted: true,
+    });
+  });
+
+  it("correlates a streamed provider result with a canonical call from a prior invocation", async () => {
+    const rawProviderCall = [{
+      type: "mcp_tool_use",
+      id: "mcptool_cross_invocation_stream",
+      name: "echo",
+      server_name: "example-mcp",
+      input: { value: "hello" },
+    }];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{}}\n\n',
+              'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"mcp_tool_result","tool_use_id":"mcptool_cross_invocation_stream","is_error":false,"content":"hello"}}\n\n',
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{
+        role: "user",
+        content: [{ type: "text", text: "Echo" }],
+      }, {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "mcptool_cross_invocation_stream",
+          toolName: "echo",
+          input: { value: "hello" },
+          providerExecuted: true,
+          supportsDeferredResults: true,
+        }],
+        providerMetadata: {
+          anthropic: { rawAssistantMessages: [rawProviderCall] },
+        },
+      }],
+      maxOutputTokens: 64,
+    });
+    const parts = await collectAsync(result.stream);
+
+    assertEquals(requestCount, 1);
+    assertEquals(parts, [{
+      type: "tool-result",
+      toolCallId: "mcptool_cross_invocation_stream",
+      toolName: "echo",
+      result: "hello",
+      providerExecuted: true,
+    }, {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "mcp_tool_result",
+            tool_use_id: "mcptool_cross_invocation_stream",
+            is_error: false,
+            content: "hello",
+          }]],
+        },
+      },
+    }]);
+  });
+
+  it("aborts an in-flight pause_turn continuation without blocking on delayed cleanup", async () => {
+    let requestCount = 0;
+    let continuationSignal: AbortSignal | null | undefined;
+    let continuationCleanupSettled = false;
+    let resolveContinuationCleanup!: () => void;
+    const continuationCleanup = new Promise<void>((resolve) => {
+      resolveContinuationCleanup = resolve;
+    });
+    let notifyContinuationStarted: (() => void) | undefined;
+    const continuationStarted = new Promise<void>((resolve) => {
+      notifyContinuationStarted = resolve;
+    });
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestCount++;
+        if (requestCount === 1) {
+          return Promise.resolve(
+            new Response(
+              [
+                'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+                'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Still working."}}\n\n',
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"pause_turn"}}\n\n',
+                'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+              ].join(""),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          );
+        }
+
+        continuationSignal = init && "signal" in init && init.signal instanceof AbortSignal
+          ? init.signal
+          : undefined;
+        notifyContinuationStarted?.();
+        return new Promise<Response>((_resolve, reject) => {
+          const rejectAfterCleanup = () => {
+            setTimeout(() => {
+              continuationCleanupSettled = true;
+              resolveContinuationCleanup();
+              reject(
+                continuationSignal?.reason ??
+                  new DOMException("Continuation canceled", "AbortError"),
+              );
+            }, 10);
+          };
+          if (continuationSignal?.aborted) {
+            rejectAfterCleanup();
+          } else {
+            continuationSignal?.addEventListener("abort", rejectAfterCleanup, { once: true });
+          }
+        });
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Continue" }] }],
+      maxOutputTokens: 64,
+    });
+    const reader = result.stream.getReader();
+    assertEquals(await reader.read(), {
+      done: false,
+      value: { type: "text-delta", delta: "Still working." },
+    });
+    const pendingRead = reader.read();
+    await waitWithin(continuationStarted);
+
+    await waitWithin(reader.cancel("consumer stopped"));
+    assertEquals(continuationSignal?.aborted, true);
+    assertEquals((await waitWithin(pendingRead)).done, true);
+    assertEquals(requestCount, 2);
+    await waitWithin(continuationCleanup);
+    assertEquals(continuationCleanupSettled, true);
+  });
+
+  it("closes the upstream response body when canceled immediately after the first part", async () => {
+    let upstreamCancelReason: unknown;
+    let upstreamCancelSettled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"First."}}\n\n',
+            ].join(""),
+          ),
+        );
+      },
+      async cancel(reason) {
+        await Promise.resolve();
+        upstreamCancelReason = reason;
+        upstreamCancelSettled = true;
+      },
+    });
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(body, {
+            status: 200,
+            headers: { "content-type": "text/event-stream" },
+          }),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Continue" }] }],
+      maxOutputTokens: 64,
+    });
+    const reader = result.stream.getReader();
+
+    assertEquals(await waitWithin(reader.read()), {
+      done: false,
+      value: { type: "text-delta", delta: "First." },
+    });
+    await waitWithin(reader.cancel("consumer stopped after first part"));
+
+    assertEquals(upstreamCancelSettled, true);
+    assertEquals(
+      upstreamCancelReason,
+      "consumer stopped after first part",
+    );
+  });
+
+  it("accumulates every direct pause_turn assistant response across repeated pauses", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestBodies.push(JSON.parse(readRequestBody(init) ?? "{}"));
+        requestCount++;
+        const payload = requestCount === 1
+          ? { content: [{ type: "text", text: "First pause." }], stop_reason: "pause_turn" }
+          : requestCount === 2
+          ? { content: [{ type: "text", text: "Second pause." }], stop_reason: "pause_turn" }
+          : { content: [{ type: "text", text: "Complete." }], stop_reason: "end_turn" };
+        return Promise.resolve(
+          new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Continue" }] }],
+      maxOutputTokens: 64,
+    });
+
+    assertEquals(requestCount, 3);
+    assertEquals(requestBodies[2]?.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "First pause." }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Second pause." }],
+    }]);
+    assertEquals(result.finishReason, { unified: "stop", raw: "end_turn" });
+  });
+
+  it("accumulates every streamed pause_turn assistant response across repeated pauses", async () => {
+    const requestBodies: Array<Record<string, unknown>> = [];
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestBodies.push(JSON.parse(readRequestBody(init) ?? "{}"));
+        requestCount++;
+        const text = requestCount === 1
+          ? "First pause."
+          : requestCount === 2
+          ? "Second pause."
+          : "Complete.";
+        const stopReason = requestCount < 3 ? "pause_turn" : "end_turn";
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: { type: "text", text },
+                })
+              }\n\n`,
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              `event: message_delta\ndata: ${
+                JSON.stringify({
+                  type: "message_delta",
+                  delta: { stop_reason: stopReason },
+                })
+              }\n\n`,
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            {
+              status: 200,
+              headers: { "content-type": "text/event-stream" },
+            },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Continue" }] }],
+      maxOutputTokens: 64,
+    });
+    const parts = await collectAsync(result.stream);
+
+    assertEquals(requestCount, 3);
+    assertEquals(requestBodies[2]?.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Continue" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "First pause." }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Second pause." }],
+    }]);
+    assertEquals(
+      parts.filter((part) =>
+        part && typeof part === "object" && "type" in part && part.type === "finish"
+      ).length,
+      1,
+    );
+  });
+
+  it("fails closed when direct pause_turn continuation exceeds its cap", async () => {
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: `Waiting ${requestCount}.` }],
+              stop_reason: "pause_turn",
+              usage: { input_tokens: 1, output_tokens: 1 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const error = await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Wait" }] }],
+          maxOutputTokens: 64,
+        }),
+      ProviderRequestError,
+      "pause_turn continuation limit exceeded",
+    );
+
+    assertEquals(requestCount, 6);
+    assertEquals(error.provider, "anthropic");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
+  });
+
+  it("fails closed when streamed pause_turn continuation exceeds its cap", async () => {
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        return Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              `event: content_block_start\ndata: ${
+                JSON.stringify({
+                  type: "content_block_start",
+                  index: 0,
+                  content_block: { type: "text", text: `Waiting ${requestCount}.` },
+                })
+              }\n\n`,
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"pause_turn"},"usage":{"output_tokens":1}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Wait" }] }],
+      maxOutputTokens: 64,
+    });
+    const error = await assertRejects(
+      () => collectAsync(result.stream),
+      ProviderRequestError,
+      "pause_turn continuation limit exceeded",
+    );
+
+    assertEquals(requestCount, 6);
+    assertEquals(error.provider, "anthropic");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
+  });
+
+  it("stops pause_turn continuation before a follow-up request when aborted", async () => {
+    const abortController = new AbortController();
+    let requestCount = 0;
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () => {
+        requestCount++;
+        abortController.abort(new DOMException("Stopped", "AbortError"));
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "server_tool_use",
+                id: "srvtool_pause_direct",
+                name: "web_search",
+                input: { query: "Veryfront" },
+              }],
+              stop_reason: "pause_turn",
+              usage: { input_tokens: 8, output_tokens: 2 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-6");
+
+    await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{
+            role: "user",
+            content: [{ type: "text", text: "Search" }],
+          }],
+          maxOutputTokens: 64,
+          abortSignal: abortController.signal,
+        }),
+      DOMException,
+      "Stopped",
+    );
+    assertEquals(requestCount, 1);
+  });
+
+  it("preserves official web_search error codes in direct tool results", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{
+                type: "server_tool_use",
+                id: "srvtool_search_error",
+                name: "web_search",
+                input: { query: "Veryfront" },
+              }, {
+                type: "web_search_tool_result",
+                tool_use_id: "srvtool_search_error",
+                content: {
+                  type: "web_search_tool_result_error",
+                  error_code: "too_many_requests",
+                },
+              }],
+              stop_reason: "end_turn",
+              usage: { input_tokens: 4, output_tokens: 2 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Search" }] }],
+      maxOutputTokens: 64,
+    });
+    const errorPart = result.content?.find((part) =>
+      typeof part === "object" && part !== null && "type" in part && part.type === "tool-result"
+    ) as
+      | { isError?: boolean; result?: unknown }
+      | undefined;
+    const error = errorPart?.result as
+      | { name?: unknown; code?: unknown; toolCallId?: unknown; toolName?: unknown }
+      | undefined;
+
+    assertEquals(errorPart?.isError, true);
+    assertEquals(error?.name, "AnthropicServerToolResultError");
+    assertEquals(error?.code, "too_many_requests");
+    assertEquals(error?.toolCallId, "srvtool_search_error");
+    assertEquals(error?.toolName, "web_search");
+  });
+
+  it("preserves official web_fetch error codes in streamed tool errors", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            [
+              'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+              'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtool_fetch_error","name":"web_fetch","input":{"url":"https://example.com"}}}\n\n',
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+              'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtool_fetch_error","content":{"type":"web_fetch_tool_result_error","error_code":"url_not_allowed"}}}\n\n',
+              'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+              'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":4,"output_tokens":2}}\n\n',
+              'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ].join(""),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Fetch" }] }],
+      maxOutputTokens: 64,
+    });
+    const parts = await collectAsync(result.stream);
+    const errorPart = parts.find((part) =>
+      typeof part === "object" && part !== null && "type" in part && part.type === "tool-error"
+    ) as { error?: unknown } | undefined;
+    const error = errorPart?.error as
+      | { name?: unknown; code?: unknown; toolCallId?: unknown; toolName?: unknown }
+      | undefined;
+
+    assertEquals(error?.name, "AnthropicServerToolResultError");
+    assertEquals(error?.code, "url_not_allowed");
+    assertEquals(error?.toolCallId, "srvtool_fetch_error");
+    assertEquals(error?.toolName, "web_fetch");
+  });
+
   it("preserves Veryfront gateway billing metadata for generate usage", async () => {
     const runtime = createAnthropicModelRuntime({
       apiKey: "test-anthropic-key",
@@ -208,6 +1935,11 @@ describe("anthropic-provider", () => {
               start(controller) {
                 controller.enqueue(
                   encoder.encode(
+                    'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+                  ),
+                );
+                controller.enqueue(
+                  encoder.encode(
                     'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"bash"}}\n\n',
                   ),
                 );
@@ -260,8 +1992,9 @@ describe("anthropic-provider", () => {
       type: "finish",
       finishReason: { unified: "tool-calls", raw: "tool_use" },
       usage: {
+        inputTokens: 1,
         outputTokens: 4,
-        totalTokens: 4,
+        totalTokens: 5,
       },
     });
   });
@@ -326,7 +2059,7 @@ describe("anthropic-provider", () => {
         return Promise.resolve(
           new Response(
             JSON.stringify({
-              content: [],
+              content: [{ type: "text", text: "ok" }],
               stop_reason: "end_turn",
               usage: {
                 input_tokens: 8,
@@ -518,7 +2251,10 @@ describe("anthropic-provider", () => {
                 'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
               ),
               encoder.encode(
-                'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtool_web_1","content":[{"type":"web_search_result","url":"https://veryfront.com","title":"Veryfront","pageAge":null,"encryptedContent":"opaque"}]}}\n\n',
+                'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtool_web_1","content":[{"type":"web_search_result","url":"https://veryfront.com","title":"Veryfront","page_age":null,"encrypted_content":"opaque"}]}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
               ),
               encoder.encode(
                 'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}\n\n',
@@ -612,6 +2348,26 @@ describe("anthropic-provider", () => {
       {
         type: "finish",
         finishReason: { unified: "stop", raw: "end_turn" },
+        providerMetadata: {
+          anthropic: {
+            rawAssistantMessages: [[{
+              type: "server_tool_use",
+              id: "srvtool_web_1",
+              name: "web_search",
+              input: { query: "Veryfront" },
+            }, {
+              type: "web_search_tool_result",
+              tool_use_id: "srvtool_web_1",
+              content: [{
+                type: "web_search_result",
+                url: "https://veryfront.com",
+                title: "Veryfront",
+                page_age: null,
+                encrypted_content: "opaque",
+              }],
+            }]],
+          },
+        },
         usage: {
           inputTokens: 8,
           outputTokens: 5,
@@ -649,12 +2405,12 @@ describe("anthropic-provider", () => {
                     type: "document",
                     source: {
                       type: "text",
-                      mediaType: "text/plain",
+                      media_type: "text/plain",
                       data: "Veryfront docs",
                     },
                     title: "Docs",
                   },
-                  retrievedAt: "2026-04-11T10:00:00Z",
+                  retrieved_at: null,
                 },
               }],
               stop_reason: "end_turn",
@@ -705,6 +2461,7 @@ describe("anthropic-provider", () => {
         toolCallId: "srvtool_fetch_1",
         toolName: "web_fetch",
         input: '{"url":"https://veryfront.com/docs"}',
+        providerExecuted: true,
       }, {
         type: "tool-result",
         toolCallId: "srvtool_fetch_1",
@@ -721,10 +2478,38 @@ describe("anthropic-provider", () => {
             },
             title: "Docs",
           },
-          retrievedAt: "2026-04-11T10:00:00Z",
+          retrievedAt: null,
         },
+        providerExecuted: true,
       }],
       finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_fetch_1",
+            name: "web_fetch",
+            input: { url: "https://veryfront.com/docs" },
+          }, {
+            type: "web_fetch_tool_result",
+            tool_use_id: "srvtool_fetch_1",
+            content: {
+              type: "web_fetch_result",
+              url: "https://veryfront.com/docs",
+              content: {
+                type: "document",
+                source: {
+                  type: "text",
+                  media_type: "text/plain",
+                  data: "Veryfront docs",
+                },
+                title: "Docs",
+              },
+              retrieved_at: null,
+            },
+          }]],
+        },
+      },
       usage: {
         inputTokens: 12,
         outputTokens: 7,
@@ -760,7 +2545,10 @@ describe("anthropic-provider", () => {
                 'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
               ),
               encoder.encode(
-                'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtool_fetch_2","content":{"type":"web_fetch_result","url":"https://veryfront.com/docs","content":{"type":"document","source":{"type":"text","mediaType":"text/plain","data":"Veryfront docs"}},"retrievedAt":"2026-04-11T10:05:00Z"}}}\n\n',
+                'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"srvtool_fetch_2","content":{"type":"web_fetch_result","url":"https://veryfront.com/docs","content":{"type":"document","source":{"type":"text","media_type":"text/plain","data":"Veryfront docs"}},"retrieved_at":null}}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
               ),
               encoder.encode(
                 'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}\n\n',
@@ -841,13 +2629,39 @@ describe("anthropic-provider", () => {
           type: "document",
           source: { type: "text", mediaType: "text/plain", data: "Veryfront docs" },
         },
-        retrievedAt: "2026-04-11T10:05:00Z",
+        retrievedAt: null,
       },
       providerExecuted: true,
     });
     assertEquals(parts[4], {
       type: "finish",
       finishReason: { unified: "stop", raw: "end_turn" },
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "srvtool_fetch_2",
+            name: "web_fetch",
+            input: { url: "https://veryfront.com/docs" },
+          }, {
+            type: "web_fetch_tool_result",
+            tool_use_id: "srvtool_fetch_2",
+            content: {
+              type: "web_fetch_result",
+              url: "https://veryfront.com/docs",
+              content: {
+                type: "document",
+                source: {
+                  type: "text",
+                  media_type: "text/plain",
+                  data: "Veryfront docs",
+                },
+              },
+              retrieved_at: null,
+            },
+          }]],
+        },
+      },
       usage: { inputTokens: 10, outputTokens: 4, totalTokens: 14 },
     });
   });
@@ -865,7 +2679,13 @@ describe("anthropic-provider", () => {
                 'event: message_start\r\ndata: {"type":"message_start","message":{"usage":{"input_tokens":8}}}\r\n\r\n',
               ),
               encoder.encode(
+                'event: content_block_start\r\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\r\n\r\n',
+              ),
+              encoder.encode(
                 'event: content_block_delta\r\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\r\n\r\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\r\ndata: {"type":"content_block_stop","index":0}\r\n\r\n',
               ),
               encoder.encode(
                 'event: message_delta\r\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}\r\n\r\n',
@@ -993,6 +2813,9 @@ describe("anthropic-provider", () => {
           new Response(
             ReadableStream.from([
               encoder.encode(
+                'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":8}}}\n\n',
+              ),
+              encoder.encode(
                 'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}\n\n',
               ),
               encoder.encode(
@@ -1012,6 +2835,9 @@ describe("anthropic-provider", () => {
               ),
               encoder.encode(
                 'event: content_block_start\ndata: {"type":"content_block_start","index":2,"content_block":{"type":"text","text":"Done."}}\n\n',
+              ),
+              encoder.encode(
+                'event: content_block_stop\ndata: {"type":"content_block_stop","index":2}\n\n',
               ),
               encoder.encode(
                 'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":8,"output_tokens":2}}\n\n',
@@ -1160,9 +2986,21 @@ describe("anthropic-provider", () => {
       return getBody();
     }
 
-    it("defaults Opus 4.6 to 128k when caller omits maxOutputTokens", async () => {
-      const body = await generateWith("claude-opus-4-6");
-      assertEquals((body as { max_tokens: number }).max_tokens, 128_000);
+    it("defaults Opus 4.8, 4.7, and 4.6 to 128k when caller omits maxOutputTokens", async () => {
+      for (
+        const modelId of [
+          "claude-opus-4-8",
+          "claude-opus-4-7",
+          "claude-opus-4-6",
+        ]
+      ) {
+        const body = await generateWith(modelId);
+        assertEquals(
+          (body as { max_tokens: number }).max_tokens,
+          128_000,
+          `expected 128k for ${modelId}`,
+        );
+      }
     });
 
     it("defaults Sonnet 4.6 to 64k when caller omits maxOutputTokens", async () => {
@@ -1182,8 +3020,19 @@ describe("anthropic-provider", () => {
     });
 
     it("clamps caller-provided maxOutputTokens at the model ceiling for known models", async () => {
-      const body = await generateWith("claude-sonnet-4-6", 999_999);
-      assertEquals((body as { max_tokens: number }).max_tokens, 64_000);
+      for (
+        const [modelId, expected] of [
+          ["claude-opus-4-8", 128_000],
+          ["claude-sonnet-4-6", 64_000],
+        ] as const
+      ) {
+        const body = await generateWith(modelId, 999_999);
+        assertEquals(
+          (body as { max_tokens: number }).max_tokens,
+          expected,
+          `expected ${expected} for ${modelId}`,
+        );
+      }
     });
 
     it("passes through maxOutputTokens unchanged for unknown models", async () => {
@@ -1478,10 +3327,12 @@ describe("anthropic-provider", () => {
 
     function captureRuntime() {
       let captured: Record<string, unknown> | null = null;
+      let capturedInit: RequestInit | undefined;
       const runtime = createAnthropicModelRuntime({
         apiKey: "k",
         baseURL: "https://example.anthropic.test/v1",
         fetch: (_input, init) => {
+          capturedInit = init;
           const raw = readRequestBody(init);
           captured = raw ? JSON.parse(raw) : null;
           return Promise.resolve(
@@ -1496,13 +3347,20 @@ describe("anthropic-provider", () => {
           );
         },
       }, "claude-opus-4-6");
-      return { runtime, getBody: () => captured };
+      return {
+        runtime,
+        getBody: () => captured,
+        getHeader: (name: string) => readRequestHeader(capturedInit, name),
+      };
     }
 
-    it("emits mcp_servers on the body when set, with deep snake_case conversion", async () => {
-      const { runtime, getBody } = captureRuntime();
+    it("emits the current MCP server/toolset contract and required beta", async () => {
+      const { runtime, getBody, getHeader } = captureRuntime();
       await runtime.doGenerate({
         prompt: [userPrompt],
+        headers: {
+          "anthropic-beta": "context-management-2025-06-27, mcp-client-2025-04-04",
+        },
         mcpServers: [{
           type: "url",
           url: "https://example.com/mcp",
@@ -1514,27 +3372,140 @@ describe("anthropic-provider", () => {
           },
         }],
       });
-      const body = getBody() as { mcp_servers: Array<Record<string, unknown>> } | null;
+      const body = getBody() as {
+        mcp_servers: Array<Record<string, unknown>>;
+        tools: Array<Record<string, unknown>>;
+      } | null;
       assertEquals(body?.mcp_servers, [{
         type: "url",
         url: "https://example.com/mcp",
         name: "example",
         authorization_token: "Bearer abc",
-        tool_configuration: {
-          enabled: true,
-          allowed_tools: ["search", "fetch"],
+      }]);
+      assertEquals(body?.tools, [{
+        type: "mcp_toolset",
+        mcp_server_name: "example",
+        default_config: { enabled: false },
+        configs: {
+          search: { enabled: true },
+          fetch: { enabled: true },
         },
       }]);
+      assertEquals(
+        getHeader("anthropic-beta"),
+        "context-management-2025-06-27,mcp-client-2025-11-20",
+      );
     });
 
     it("omits mcp_servers when the option is empty or unset", async () => {
-      const { runtime, getBody } = captureRuntime();
+      const { runtime, getBody, getHeader } = captureRuntime();
       await runtime.doGenerate({ prompt: [userPrompt], mcpServers: [] });
       assertEquals("mcp_servers" in (getBody() ?? {}), false);
+      assertEquals(getHeader("anthropic-beta"), null);
 
       const second = captureRuntime();
       await second.runtime.doGenerate({ prompt: [userPrompt] });
       assertEquals("mcp_servers" in (second.getBody() ?? {}), false);
+      assertEquals(second.getHeader("anthropic-beta"), null);
+    });
+
+    it("adds the MCP beta to streaming requests without dropping other betas", async () => {
+      let capturedInit: RequestInit | undefined;
+      const encoder = new TextEncoder();
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          capturedInit = init;
+          return Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                encoder.encode(
+                  'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":1}}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+                ),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+
+      const result = await runtime.doStream({
+        prompt: [userPrompt],
+        headers: {
+          "anthropic-beta": "context-management-2025-06-27",
+        },
+        mcpServers: [{
+          type: "url",
+          url: "https://example.com/mcp",
+          name: "example",
+        }],
+      });
+      await collectAsync(result.stream);
+
+      assertEquals(
+        readRequestHeader(capturedInit, "anthropic-beta"),
+        "context-management-2025-06-27,mcp-client-2025-11-20,fine-grained-tool-streaming-2025-05-14",
+      );
+    });
+
+    it("keeps the required MCP beta on pause_turn continuation requests", async () => {
+      const betaHeaders: Array<string | null> = [];
+      let requestCount = 0;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          requestCount++;
+          betaHeaders.push(readRequestHeader(init, "anthropic-beta"));
+          return Promise.resolve(
+            new Response(
+              JSON.stringify(
+                requestCount === 1
+                  ? {
+                    content: [{ type: "text", text: "Working." }],
+                    stop_reason: "pause_turn",
+                  }
+                  : {
+                    content: [{ type: "text", text: "Done." }],
+                    stop_reason: "end_turn",
+                  },
+              ),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-opus-4-6");
+
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        mcpServers: [{
+          type: "url",
+          url: "https://example.com/mcp",
+          name: "example",
+        }],
+      });
+
+      assertEquals(requestCount, 2);
+      assertEquals(betaHeaders, [
+        "mcp-client-2025-11-20",
+        "mcp-client-2025-11-20",
+      ]);
     });
 
     it("emits container field verbatim when anthropicContainer is set", async () => {
@@ -1768,6 +3739,7 @@ describe("anthropic-provider", () => {
         totalTokens: 110,
         cacheCreationInputTokens: 50,
         cacheReadInputTokens: 30,
+        cachedInputTokens: 30,
       });
     });
 
@@ -1994,6 +3966,9 @@ describe("anthropic-provider", () => {
             new Response(
               ReadableStream.from([
                 encoder.encode(
+                  'event: message_start\ndata: {"type":"message_start","message":{"usage":{"input_tokens":5}}}\n\n',
+                ),
+                encoder.encode(
                   'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"encrypted"}}\n\n',
                 ),
                 encoder.encode(
@@ -2003,7 +3978,13 @@ describe("anthropic-provider", () => {
                   'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":"Answer."}}\n\n',
                 ),
                 encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":1}\n\n',
+                ),
+                encoder.encode(
                   'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":5,"output_tokens":2}}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_stop\ndata: {"type":"message_stop"}\n\n',
                 ),
               ]),
               { status: 200, headers: { "content-type": "text/event-stream" } },
@@ -2046,8 +4027,7 @@ describe("anthropic-provider", () => {
                     cited_text: "Veryfront is a full-stack framework",
                     url: "https://veryfront.com",
                     title: "Veryfront",
-                    start_char_index: 25,
-                    end_char_index: 60,
+                    encrypted_index: "encrypted-citation-index",
                   }],
                 }],
                 stop_reason: "end_turn",
@@ -2069,10 +4049,62 @@ describe("anthropic-provider", () => {
           citedText: "Veryfront is a full-stack framework",
           url: "https://veryfront.com",
           title: "Veryfront",
-          startCharIndex: 25,
-          endCharIndex: 60,
+          encryptedIndex: "encrypted-citation-index",
         }],
       }]);
+    });
+
+    it("fails closed on malformed or unknown citation records", async () => {
+      for (
+        const citation of [
+          {
+            type: "web_search_result_location",
+            cited_text: "Private source",
+            url: "https://example.test",
+          },
+          {
+            type: "char_location",
+            cited_text: "Private source",
+            document_index: 0,
+            start_char_index: 0,
+            end_char_index: Number.NaN,
+          },
+          {
+            type: "future_location",
+            cited_text: "Private source",
+          },
+        ]
+      ) {
+        const runtime = createAnthropicModelRuntime({
+          apiKey: "k",
+          baseURL: "https://example.anthropic.test/v1",
+          fetch: () =>
+            Promise.resolve(
+              new Response(
+                JSON.stringify({
+                  content: [{
+                    type: "text",
+                    text: "Answer",
+                    citations: [citation],
+                  }],
+                  stop_reason: "end_turn",
+                  usage: { input_tokens: 1, output_tokens: 1 },
+                }),
+                { status: 200, headers: { "content-type": "application/json" } },
+              ),
+            ),
+        }, "claude-sonnet-4-20250514");
+
+        const error = await assertRejects(
+          () =>
+            runtime.doGenerate({
+              prompt: [{ role: "user", content: [{ type: "text", text: "Question" }] }],
+            }),
+          ProviderRequestError,
+          "text citation was malformed",
+        );
+        assertEquals(error.message.includes("Private source"), false);
+      }
     });
   });
 

@@ -6,9 +6,12 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import {
+  createRuntimeProjectFileListingBudget,
+  createRuntimeProjectFilesClient,
   getRuntimeProjectFile,
   getRuntimeProjectFiles,
   RuntimeProjectFilesApiAuthError,
+  type RuntimeProjectFilesClientOptions,
   type RuntimeProjectFilesFetch,
 } from "./project-files-client.ts";
 
@@ -32,6 +35,25 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function textResponse(body: string, status: number): Response {
   return new Response(body, { status });
+}
+
+function chunkedJsonResponse(body: unknown, chunkBytes: number): Response {
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  let offset = 0;
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.byteLength) {
+          controller.close();
+          return;
+        }
+        const end = Math.min(offset + chunkBytes, bytes.byteLength);
+        controller.enqueue(bytes.slice(offset, end));
+        offset = end;
+      },
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
 }
 
 function mockFetchResponses(
@@ -82,6 +104,43 @@ Deno.test("getRuntimeProjectFile returns a project file from the API file route"
   });
 
   assertEquals(result, fileData);
+});
+
+Deno.test("createRuntimeProjectFilesClient keeps its configured transport immutable", async () => {
+  const trustedFetch = mockFetchResponses(
+    jsonResponse({ data: [], page_info: { next: null } }),
+  );
+  let untrustedFetchCalls = 0;
+  const untrustedFetch: RuntimeProjectFilesFetch = () => {
+    untrustedFetchCalls += 1;
+    return Promise.resolve(jsonResponse({ data: [], page_info: { next: null } }));
+  };
+  const configuredUrl = new URL("https://api.test");
+  const clientOptions: RuntimeProjectFilesClientOptions = {
+    apiUrl: configuredUrl,
+    fetch: trustedFetch,
+    pageLimit: 25,
+  };
+  const client = createRuntimeProjectFilesClient(clientOptions);
+
+  configuredUrl.hostname = "mutated.test";
+  clientOptions.fetch = untrustedFetch;
+  clientOptions.pageLimit = 1;
+
+  await client.getProjectFiles({
+    projectId: "project-1",
+    authToken: "token-1",
+    ...({
+      apiUrl: "https://untrusted.test",
+      fetch: untrustedFetch,
+      pageLimit: 1,
+    } as object),
+  });
+
+  const url = getRequestedUrl(trustedFetch);
+  assertEquals(url.origin, "https://api.test");
+  assertEquals(url.searchParams.get("limit"), "25");
+  assertEquals(untrustedFetchCalls, 0);
 });
 
 Deno.test("getRuntimeProjectFile returns null when the API file route returns 404", async () => {
@@ -144,6 +203,84 @@ Deno.test("getRuntimeProjectFile reports upstream and network errors", async () 
   assertStringIncludes(getErrorMessage(networkError), "ECONNREFUSED");
 });
 
+Deno.test("getRuntimeProjectFile bounds the response before parsing skill content", async () => {
+  const oversized = "x".repeat(70_000);
+  const fetchSpy = mockFetchResponses(
+    jsonResponse({ path: "skills/large/SKILL.md", content: oversized }),
+  );
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectFile({
+        ...baseOptions,
+        fetch: fetchSpy,
+        path: "skills/large/SKILL.md",
+        maximumContentCharacters: 1,
+      }),
+    RangeError,
+    "response may contain at most",
+  );
+});
+
+Deno.test("getRuntimeProjectFile parses heavily fragmented bounded responses", async () => {
+  const fileData = { path: "skills/example/SKILL.md", content: "x".repeat(1_024) };
+  const fetchSpy = mockFetchResponses(chunkedJsonResponse(fileData, 1));
+
+  assertEquals(
+    await getRuntimeProjectFile({
+      ...baseOptions,
+      fetch: fetchSpy,
+      path: fileData.path,
+      maximumContentCharacters: 2_048,
+    }),
+    fileData,
+  );
+});
+
+Deno.test("getRuntimeProjectFiles rejects and cancels a response stream that makes no progress", async () => {
+  let cancelled = false;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array());
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }),
+  );
+
+  await assertRejects(
+    () => getRuntimeProjectFiles({ ...baseOptions, fetch: mockFetchResponses(response) }),
+    RangeError,
+    "made no byte progress",
+  );
+  assertEquals(cancelled, true);
+});
+
+Deno.test("getRuntimeProjectFiles cancels a stalled response body when its timeout expires", async () => {
+  let cancelled = false;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    }),
+  );
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectFiles({
+        ...baseOptions,
+        fetch: mockFetchResponses(response),
+        timeoutMs: 5,
+      }),
+    DOMException,
+    "timed out",
+  );
+  assertEquals(cancelled, true);
+});
+
 Deno.test("getRuntimeProjectFile passes project, path, branch, fields, and auth through REST", async () => {
   const fetchSpy = mockFetchResponses(jsonResponse({ path: "src/index.ts", content: "hello" }));
 
@@ -185,6 +322,21 @@ Deno.test("getRuntimeProjectFiles returns project file paths from the API list r
   assertEquals(result, files);
 });
 
+Deno.test("getRuntimeProjectFiles rejects unsafe list prefixes before network access", async () => {
+  let calls = 0;
+  const fetchSpy: RuntimeProjectFilesFetch = () => {
+    calls += 1;
+    return Promise.resolve(jsonResponse({ data: [], page_info: { next: null } }));
+  };
+  for (const pathPrefix of ["../skills", "/skills", "skills/", "skills\\nested"]) {
+    await assertRejects(
+      () => getRuntimeProjectFiles({ ...baseOptions, fetch: fetchSpy, pathPrefix }),
+      RangeError,
+    );
+  }
+  assertEquals(calls, 0);
+});
+
 Deno.test("getRuntimeProjectFiles follows API pagination until no next cursor remains", async () => {
   const fetchSpy = mockFetchResponses(
     jsonResponse({
@@ -201,6 +353,114 @@ Deno.test("getRuntimeProjectFiles follows API pagination until no next cursor re
 
   assertEquals(result, [{ path: "a.ts" }, { path: "b.ts" }]);
   assertEquals(getRequestedUrl(fetchSpy, 1).searchParams.get("cursor"), "cursor-2");
+});
+
+Deno.test("getRuntimeProjectFiles rejects repeated cursors before another request", async () => {
+  const fetchSpy = mockFetchResponses(
+    jsonResponse({ data: [], page_info: { next: "same" } }),
+    jsonResponse({ data: [], page_info: { next: "same" } }),
+  );
+
+  await assertRejects(
+    () => getRuntimeProjectFiles({ ...baseOptions, fetch: fetchSpy }),
+    RangeError,
+    "repeated pagination cursor",
+  );
+  assertEquals(fetchSpy.calls.length, 2);
+});
+
+Deno.test("getRuntimeProjectFiles makes no post-timeout request when fetch ignores abort", async () => {
+  let calls = 0;
+  const fetchIgnoringAbort: RuntimeProjectFilesFetch = async () => {
+    calls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return jsonResponse({ data: [], page_info: { next: "another-page" } });
+  };
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectFiles({
+        ...baseOptions,
+        fetch: fetchIgnoringAbort,
+        timeoutMs: 5,
+      }),
+    DOMException,
+    "timed out",
+  );
+  assertEquals(calls, 1);
+});
+
+Deno.test("getRuntimeProjectFiles enforces response bytes cumulatively across related prefixes", async () => {
+  const listingBudget = createRuntimeProjectFileListingBudget();
+  const padding = "x".repeat(2_400_000);
+  for (let index = 0; index < 6; index += 1) {
+    const fetchSpy = mockFetchResponses(
+      jsonResponse({ data: [], page_info: { next: null }, padding }),
+    );
+    assertEquals(
+      await getRuntimeProjectFiles({ ...baseOptions, fetch: fetchSpy, listingBudget }),
+      [],
+    );
+  }
+  const overBudgetFetch = mockFetchResponses(
+    jsonResponse({ data: [], page_info: { next: null }, padding }),
+  );
+  await assertRejects(
+    () =>
+      getRuntimeProjectFiles({
+        ...baseOptions,
+        fetch: overBudgetFetch,
+        listingBudget,
+      }),
+    RangeError,
+    "responses may contain at most",
+  );
+});
+
+Deno.test("getRuntimeProjectFiles stops pagination before retaining an oversized listing", async () => {
+  const fetchSpy = mockFetchResponses(
+    jsonResponse({
+      data: [{ path: "a.ts" }],
+      page_info: { next: "cursor-2" },
+    }),
+    jsonResponse({
+      data: [{ path: "b.ts" }],
+      page_info: { next: "cursor-3" },
+    }),
+  );
+
+  await assertRejects(
+    () => getRuntimeProjectFiles({ ...baseOptions, fetch: fetchSpy, maximumEntries: 1 }),
+    RangeError,
+    "may contain at most 1 entries",
+  );
+  assertEquals(fetchSpy.calls.length, 2);
+});
+
+Deno.test("getRuntimeProjectFiles bounds each page before parsing and rejects oversized paths", async () => {
+  const oversizedPageFetch = mockFetchResponses(
+    jsonResponse({
+      data: [{ path: "x".repeat(2_600_000) }],
+      page_info: { next: null },
+    }),
+  );
+  await assertRejects(
+    () => getRuntimeProjectFiles({ ...baseOptions, fetch: oversizedPageFetch }),
+    RangeError,
+    "response may contain at most",
+  );
+
+  const oversizedPathFetch = mockFetchResponses(
+    jsonResponse({
+      data: [{ path: "x".repeat(4_097) }],
+      page_info: { next: null },
+    }),
+  );
+  await assertRejects(
+    () => getRuntimeProjectFiles({ ...baseOptions, fetch: oversizedPathFetch }),
+    RangeError,
+    "paths may contain at most 4096 characters",
+  );
 });
 
 Deno.test("getRuntimeProjectFiles throws auth errors for API HTTP 401 and 403", async () => {
@@ -239,15 +499,21 @@ Deno.test("getRuntimeProjectFiles reports upstream and network errors", async ()
   assertStringIncludes(getErrorMessage(networkError), "ECONNREFUSED");
 });
 
-Deno.test("getRuntimeProjectFiles passes project, branch, fields, pagination limit, and auth through REST", async () => {
+Deno.test("getRuntimeProjectFiles passes project, branch, path, fields, pagination limit, and auth through REST", async () => {
   const fetchSpy = mockFetchResponses(jsonResponse({ data: [], page_info: { next: null } }));
 
-  await getRuntimeProjectFiles({ ...baseOptions, fetch: fetchSpy, branchId: "branch-1" });
+  await getRuntimeProjectFiles({
+    ...baseOptions,
+    fetch: fetchSpy,
+    branchId: "branch-1",
+    pathPrefix: "skills",
+  });
 
   const url = getRequestedUrl(fetchSpy);
   assertEquals(url.origin, "https://api.test");
   assertEquals(url.pathname, "/projects/project-1/files");
   assertEquals(url.searchParams.get("branch"), "branch-1");
+  assertEquals(url.searchParams.get("path"), "skills");
   assertEquals(url.searchParams.get("fields"), "(path)");
   assertEquals(url.searchParams.get("limit"), "100");
   assertEquals(

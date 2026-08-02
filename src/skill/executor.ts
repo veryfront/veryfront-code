@@ -14,6 +14,7 @@ import { readTextFile } from "#veryfront/platform/compat/fs.ts";
 import { createError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
+import { SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
 
 const DEFAULT_SCRIPT_TIMEOUT_MS = 60_000;
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
@@ -133,6 +134,9 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
       env: input.env,
       capture: true,
       timeoutMs,
+      signal: input.abortSignal,
+      maxOutputBytes: SKILL_SCRIPT_MAX_OUTPUT_BYTES,
+      terminateProcessTreeOnExit: true,
     });
 
     return {

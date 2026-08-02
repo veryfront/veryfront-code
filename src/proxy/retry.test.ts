@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import {
@@ -112,6 +112,32 @@ describe("isRetryableConnectionError", () => {
     assertEquals(isRetryableConnectionError(error), false);
     assertEquals(isConnectionRefusedError(error), false);
   });
+
+  it("fails closed on hostile error and cause accessors", () => {
+    const accessorError = new Error("fetch failed");
+    Object.defineProperty(accessorError, "cause", {
+      get() {
+        throw new Error("cause getter must not run");
+      },
+    });
+    const hostileCause = new Proxy(new Error("connection refused"), {
+      ownKeys() {
+        throw new Error("cause is unreadable");
+      },
+    });
+    const wrappedHostileCause = new Error("fetch failed", {
+      cause: hostileCause,
+    });
+    const hostileError = new Proxy(new Error("connection refused"), {
+      getPrototypeOf() {
+        throw new Error("prototype is unreadable");
+      },
+    });
+
+    assertEquals(isRetryableConnectionError(accessorError), false);
+    assertEquals(isRetryableConnectionError(wrappedHostileCause), false);
+    assertEquals(isRetryableConnectionError(hostileError), false);
+  });
 });
 
 describe("getUpstreamRetryCount", () => {
@@ -175,6 +201,21 @@ describe("getUpstreamRetryCount", () => {
 
     for (const request of requests) {
       assertEquals(getUpstreamRetryCount(request, RUN_STREAM_PATH, 1), 0);
+    }
+  });
+
+  it("rejects malformed retry counts instead of deriving unsafe attempt counts", () => {
+    for (const retryCount of [-1, 0.5, 6, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () =>
+          getUpstreamRetryCount(
+            new Request("http://proxy.test/"),
+            "/",
+            retryCount,
+          ),
+        RangeError,
+        "retry count",
+      );
     }
   });
 });
@@ -271,6 +312,31 @@ describe("getReplayableRequestBodies", () => {
       const bodies = getReplayableRequestBodies(request, 1);
       assertEquals(bodies.length, 1);
       assertEquals(bodies[0], request.body);
+    }
+  });
+
+  it("does not discard a body that contradicts a zero content length", () => {
+    const request = new Request(RUN_STREAM_URL, {
+      method: "POST",
+      headers: { "content-length": "0" },
+      body: "{}",
+    });
+
+    assertEquals(getUpstreamRetryCount(request, RUN_STREAM_PATH, 1), 0);
+    assertEquals(getReplayableRequestBodies(request, 1), [request.body]);
+  });
+
+  it("rejects malformed retry counts before allocating replay bodies", () => {
+    for (const retryCount of [-1, 0.5, 6, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () =>
+          getReplayableRequestBodies(
+            new Request("http://proxy.test/"),
+            retryCount,
+          ),
+        RangeError,
+        "retry count",
+      );
     }
   });
 });

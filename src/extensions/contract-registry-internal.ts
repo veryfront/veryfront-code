@@ -26,6 +26,8 @@ interface ContractEntry<T = unknown> {
 
 interface ContractLeaseRecord {
   released: boolean;
+  quarantined: boolean;
+  quarantineFailure: Error | undefined;
   retirementNotified: boolean;
   retirementHandler: ((reason: unknown) => void) | undefined;
 }
@@ -56,6 +58,8 @@ export interface ContractGeneration {
   hasRetirementReason: boolean;
   retirementNotificationStarted: boolean;
   settleLeaseDrain: (() => void) | undefined;
+  rejectLeaseDrain: ((reason: unknown) => void) | undefined;
+  retirementDrainQuarantined: boolean;
   retirementPromise: Promise<void> | undefined;
 }
 
@@ -72,6 +76,11 @@ export interface ContractLease {
    * retirement already started, registration invokes it immediately.
    */
   setRetirementHandler(handler: (reason: unknown) => void): void;
+  /**
+   * Close generation admission after this use outlives its cancellation grace.
+   * The lease remains active until the provider reports terminal settlement.
+   */
+  quarantine(): void;
   /** Release this generation use. Safe to call more than once. */
   release(): void;
 }
@@ -372,7 +381,32 @@ function finishLeaseDrain(generation: ContractGeneration): void {
   }
   const settle = generation.settleLeaseDrain;
   generation.settleLeaseDrain = undefined;
+  generation.rejectLeaseDrain = undefined;
   if (settle !== undefined) apply(settle, undefined, []);
+}
+
+function getQuarantinedLeaseFailure(
+  generation: ContractGeneration,
+): Error | undefined {
+  let failure: Error | undefined;
+  forEachSetValue(generation.leases, (record) => {
+    if (failure === undefined && record.quarantined) {
+      failure = record.quarantineFailure;
+    }
+  });
+  return failure;
+}
+
+function rejectLeaseDrainForQuarantine(generation: ContractGeneration): boolean {
+  const failure = getQuarantinedLeaseFailure(generation);
+  if (failure === undefined) return false;
+  const reject = generation.rejectLeaseDrain;
+  if (reject === undefined) return true;
+  generation.settleLeaseDrain = undefined;
+  generation.rejectLeaseDrain = undefined;
+  generation.retirementDrainQuarantined = true;
+  apply(reject, undefined, [failure]);
+  return true;
 }
 
 function throwRetirementHandlerFailures(generation: ContractGeneration): void {
@@ -560,6 +594,8 @@ export function beginContractGeneration(): ContractGeneration {
     hasRetirementReason: false,
     retirementNotificationStarted: false,
     settleLeaseDrain: undefined,
+    rejectLeaseDrain: undefined,
+    retirementDrainQuarantined: false,
     retirementPromise: undefined,
   });
   stagingGeneration = generation;
@@ -687,6 +723,7 @@ export function acquireContractLease<T>(
   if (generation === undefined) {
     return freeze({
       setRetirementHandler() {},
+      quarantine() {},
       release() {},
     });
   }
@@ -700,6 +737,8 @@ export function acquireContractLease<T>(
 
   const record = createNullPrototypeRecord<ContractLeaseRecord>({
     released: false,
+    quarantined: false,
+    quarantineFailure: undefined,
     retirementNotified: false,
     retirementHandler: undefined,
   });
@@ -720,12 +759,32 @@ export function acquireContractLease<T>(
       record.retirementHandler = handler;
       notifyRetirement(generation, record);
     },
+    quarantine(): void {
+      if (record.released || record.quarantined) return;
+      const failure = new NativeError(
+        `Extension contract generation is quarantined because "${reference.name}" has an unsettled use`,
+      );
+      record.quarantined = true;
+      record.quarantineFailure = failure;
+      if (generation.status === "active") {
+        sealContractGeneration(generation, failure);
+      }
+      rejectLeaseDrainForQuarantine(generation);
+    },
     release(): void {
       if (record.released) return;
       if (!deleteSetValue(generation.leases, record)) {
         throw new NativeError("Contract generation lease record is missing");
       }
       record.released = true;
+      if (
+        record.quarantined &&
+        generation.retirementDrainQuarantined &&
+        getQuarantinedLeaseFailure(generation) === undefined
+      ) {
+        generation.retirementPromise = undefined;
+        generation.retirementDrainQuarantined = false;
+      }
       finishLeaseDrain(generation);
     },
   });
@@ -752,7 +811,10 @@ export function sealContractGeneration(
   generation.hasRetirementReason = true;
 }
 
-/** Notify active uses synchronously, then await complete lease release. */
+/**
+ * Notify active uses synchronously, then await release or reject if an active
+ * lease has quarantined the generation. A drain may be retried after release.
+ */
 export function drainContractGeneration(
   generation: ContractGeneration,
 ): Promise<void> {
@@ -775,13 +837,16 @@ export function drainContractGeneration(
         reject(error);
       }
     };
+    generation.rejectLeaseDrain = reject;
   });
   generation.retirementPromise = retirement;
   generation.retirementNotificationStarted = true;
   forEachSetValue(generation.leases, (record) => {
     notifyRetirement(generation, record);
   });
-  finishLeaseDrain(generation);
+  if (!rejectLeaseDrainForQuarantine(generation)) {
+    finishLeaseDrain(generation);
+  }
   return retirement;
 }
 

@@ -28,7 +28,7 @@ export const SERVER_PERMISSIONS = [
  *
  * `--allow-env` is intentionally left unscoped here rather than pinned to a
  * static allowlist: the set of env vars a run legitimately needs (tenant
- * context, MODE/run IDs, operator-supplied vars such as REDIS_URL) is assembled
+ * context, MODE/run IDs, and operator-supplied extension variables) is assembled
  * dynamically per execution and cannot be enumerated statically. The child uses
  * `clearEnv: true`, so it does not ordinarily inherit arbitrary host variables.
  * This profile still grants broad read, write, and network access and is only

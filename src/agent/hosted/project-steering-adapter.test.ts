@@ -92,12 +92,18 @@ Use project instructions.`,
       "project",
     ]);
     assertEquals(fileCalls.length, 2);
-    assertEquals(fileCalls[0], {
+    const instructionCall = { ...fileCalls[0] };
+    delete instructionCall.abortSignal;
+    delete instructionCall.timeoutMs;
+    delete instructionCall.listingBudget;
+    assertEquals(instructionCall, {
       projectId: "project-1",
       authToken: "token-1",
       branchId: "branch-1",
       path: "AGENTS.md",
+      maximumContentCharacters: 1_048_576,
     });
+    assert(typeof fileCalls[0]?.timeoutMs === "number");
   });
 });
 
@@ -159,12 +165,12 @@ Deno.test("hosted project steering adapter accepts a custom builtin skill store"
         },
       ],
       builtinStore: {
-        readSkill: (storeSkillsDir, skillId) => {
+        readSkill: async (storeSkillsDir, skillId) => {
           readSkillCalls.push({ skillsDir: storeSkillsDir, skillId });
           return skillId === "custom" ? "Use custom builtin instructions." : null;
         },
-        readReferenceFile: () => null,
-        listReferences: (storeSkillsDir, skillId) => {
+        readReferenceFile: async () => null,
+        listReferences: async (storeSkillsDir, skillId) => {
           referenceCalls.push({ skillsDir: storeSkillsDir, skillId });
           return ["references/custom.md"];
         },

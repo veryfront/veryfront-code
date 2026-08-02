@@ -397,7 +397,11 @@ interface CapturedEvaluationOptions {
   readonly preparedContext: CapturedOption;
 }
 
-let trustedParserPromise: Promise<TrustedCodeParser> | undefined;
+interface TrustedParserLoad {
+  readonly promise: Promise<TrustedCodeParser>;
+}
+
+let trustedParserLoad: TrustedParserLoad | undefined;
 let fingerprintKeyPromise: Promise<CryptoKey> | undefined;
 const preparedContextStates = new IntrinsicWeakMap<object, PreparedContextState>();
 
@@ -637,11 +641,11 @@ function throwParserShapeError(): never {
 }
 
 async function getTrustedParser(): Promise<TrustedCodeParser> {
-  const pending = trustedParserPromise ??= loadTrustedParser();
+  const load = trustedParserLoad ??= { promise: loadTrustedParser() };
   try {
-    return await pending;
+    return await load.promise;
   } catch (error) {
-    if (trustedParserPromise === pending) trustedParserPromise = undefined;
+    if (trustedParserLoad === load) trustedParserLoad = undefined;
     throw error;
   }
 }

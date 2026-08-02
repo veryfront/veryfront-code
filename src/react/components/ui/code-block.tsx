@@ -1,231 +1,97 @@
 /**
- * CodeBlock — the "ace" syntax-highlighted code primitive, forked
- * dependency-light from Veryfront Studio's `ChatCodeBlock`. Structurally 1:1
- * (shiki highlight + copy + language label + collapsible + mermaid), but:
- *
- * - **Themes:** shiki built-in `github-light` / `github-dark`, switched on our
- *   `useColorMode` — NOT Studio's `veryfrontDarkTheme`.
- * - **Dependency-light:** shiki and mermaid are lazy-loaded from esm.sh on first
- *   render (same pattern as `markdown.tsx`), never bundled. A `Skeleton` shows
- *   while the highlighter loads; a plain `<pre>` is the graceful fallback.
- * - **Stripped (Studio-panel only):** `openTab`/`openPanel`/`openFilePath`/
- *   `executeCommand`, file previews, the actions dropdown, radix
- *   `useControllableState`, and `printReadiness`.
- *
- * Private to the chat module.
+ * Dependency-free code presentation with copy/collapse behavior and explicit
+ * extension-owned syntax/diagram renderer capabilities. Core always has an
+ * honest escaped `<pre><code>` representation and never imports, retries, or
+ * silently substitutes a third-party highlighter.
  *
  * @module react/components/ui/code-block
  */
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
-import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
-import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
+import { useClipboardFeedback } from "../clipboard.ts";
 import { CheckIcon, ChevronDownIcon, CopyIcon } from "./icons/index.ts";
 import { useColorModeOptional } from "./color-mode.tsx";
-
-/** Light/dark, for switching the shiki + mermaid theme. */
-type CodeBlockMode = "light" | "dark";
-import { Skeleton } from "./skeleton.tsx";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./collapsible.tsx";
 import { IconButton } from "./icon-button.tsx";
 
-// ---------------------------------------------------------------------------
-// Lazy esm.sh loaders (dependency-light — mirrors markdown.tsx)
-// ---------------------------------------------------------------------------
+/** Light/dark presentation mode forwarded to extension-owned renderers. */
+export type CodeBlockMode = "light" | "dark";
 
-const ESM_SHIKI = "https://esm.sh/shiki@1.24.0?target=es2022&pin=v135";
-const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
-
-/** Shiki built-in themes we switch between on color mode. */
-type ShikiTheme = "github-light" | "github-dark";
-
-interface ShikiHighlighter {
-  codeToHtml(
-    code: string,
-    options: { lang: string; theme: ShikiTheme },
-  ): string;
-  loadLanguage(lang: string): Promise<void>;
+/** Framework-neutral input for an extension-owned syntax renderer. */
+export interface CodeSyntaxRendererProps {
+  code: string;
+  language: string;
+  mode: CodeBlockMode;
 }
 
-interface ShikiModule {
-  createHighlighter(options: {
-    themes: ShikiTheme[];
-    langs: string[];
-  }): Promise<ShikiHighlighter>;
+/** Framework-neutral input for an extension-owned diagram renderer. */
+export interface CodeDiagramRendererProps {
+  code: string;
+  language: string;
+  mode: CodeBlockMode;
+  className?: string;
 }
 
-interface MermaidModule {
-  default: {
-    initialize(config: {
-      startOnLoad: boolean;
-      theme: string;
-      securityLevel: string;
-      fontFamily?: string;
-    }): void;
-    render(id: string, code: string): Promise<{ svg: string }>;
-  };
+/** Optional rich rendering capabilities supplied outside core. */
+export interface CodeBlockRenderers {
+  syntax?: React.ComponentType<CodeSyntaxRendererProps> | null;
+  diagram?: React.ComponentType<CodeDiagramRendererProps> | null;
 }
 
-async function importFromUrl<T>(url: string): Promise<T> {
-  return await import(/* @vite-ignore */ url) as T;
+/** Props accepted by {@link CodeBlockRendererProvider}. */
+export interface CodeBlockRendererProviderProps {
+  renderers: CodeBlockRenderers;
+  children: React.ReactNode;
 }
 
-// The shiki highlighter is expensive to spin up and its grammars are loaded on
-// demand, so cache a single instance (and per-language load promises) module-wide.
-let shikiModule: ShikiModule | null = null;
-let highlighterPromise: Promise<ShikiHighlighter> | null = null;
-let highlighter: ShikiHighlighter | null = null;
-const loadedLangs = new Set<string>(["text"]);
-const langLoadPromises = new Map<string, Promise<void>>();
-
-async function loadHighlighter(): Promise<ShikiHighlighter | null> {
-  if (!isBrowserEnvironment()) return null;
-  if (highlighter) return highlighter;
-
-  if (!highlighterPromise) {
-    highlighterPromise = (async () => {
-      shikiModule ??= await importFromUrl<ShikiModule>(ESM_SHIKI);
-      return await shikiModule.createHighlighter({
-        themes: ["github-light", "github-dark"],
-        langs: ["text"],
-      });
-    })();
-    // Reset the cached promise on failure so the next call can retry. Without
-    // this, a transient network error (e.g. CSP, CDN blip) permanently locks
-    // every subsequent highlight attempt against the same rejected promise —
-    // the only recovery would be a full page reload.
-    highlighterPromise.catch(() => {
-      highlighterPromise = null;
-    });
-  }
-
-  highlighter = await highlighterPromise;
-  return highlighter;
+interface ResolvedCodeBlockRenderers {
+  syntax: React.ComponentType<CodeSyntaxRendererProps> | null;
+  diagram: React.ComponentType<CodeDiagramRendererProps> | null;
 }
 
-async function ensureLanguage(lang: string): Promise<void> {
-  if (!highlighter || loadedLangs.has(lang)) return;
+const EMPTY_CODE_BLOCK_RENDERERS: ResolvedCodeBlockRenderers = Object.freeze({
+  syntax: null,
+  diagram: null,
+});
+const CODE_BLOCK_RENDERER_CONTEXT_SYMBOL = Symbol.for(
+  "veryfront.react.code-block-renderer-context",
+);
+const globalCodeBlockRendererContext = globalThis as typeof globalThis & {
+  [CODE_BLOCK_RENDERER_CONTEXT_SYMBOL]?: React.Context<ResolvedCodeBlockRenderers>;
+};
+const CodeBlockRendererContext =
+  globalCodeBlockRendererContext[CODE_BLOCK_RENDERER_CONTEXT_SYMBOL] ??
+    (globalCodeBlockRendererContext[CODE_BLOCK_RENDERER_CONTEXT_SYMBOL] = React.createContext(
+      EMPTY_CODE_BLOCK_RENDERERS,
+    ));
 
-  const existing = langLoadPromises.get(lang);
-  if (existing) {
-    await existing;
-    return;
-  }
-
-  const load = highlighter
-    .loadLanguage(lang)
-    .then(() => {
-      loadedLangs.add(lang);
-    })
-    .catch(() => {
-      // Remove from the pending map so the next call can retry. Do NOT add
-      // to loadedLangs — that would permanently mark a transiently-failed
-      // load as succeeded and suppress all future retries for this language.
-      langLoadPromises.delete(lang);
-    });
-  langLoadPromises.set(lang, load);
-  await load;
+function mergeCodeBlockRenderers(
+  inherited: ResolvedCodeBlockRenderers,
+  renderers: CodeBlockRenderers | undefined,
+): ResolvedCodeBlockRenderers {
+  if (!renderers) return inherited;
+  return Object.freeze({
+    syntax: renderers.syntax === undefined ? inherited.syntax : renderers.syntax,
+    diagram: renderers.diagram === undefined ? inherited.diagram : renderers.diagram,
+  });
 }
 
-let mermaidPromise: Promise<MermaidModule> | null = null;
-let mermaidModule: MermaidModule | null = null;
-let mermaidTheme: "dark" | "default" | null = null;
-
-async function loadMermaid(
-  theme: "dark" | "default",
-): Promise<MermaidModule | null> {
-  if (!isBrowserEnvironment()) return null;
-
-  mermaidPromise ??= importFromUrl<MermaidModule>(ESM_MERMAID);
-  mermaidModule = await mermaidPromise;
-
-  // Re-initialize when the theme flips so the SVG re-renders in the new palette.
-  if (mermaidTheme !== theme) {
-    mermaidModule.default.initialize({
-      startOnLoad: false,
-      theme,
-      securityLevel: "strict",
-      fontFamily: "inherit",
-    });
-    mermaidTheme = theme;
-  }
-
-  return mermaidModule;
-}
-
-// ---------------------------------------------------------------------------
-// MermaidDiagram — ported from Studio's MermaidDiagram, next-themes swapped for
-// useColorMode, Skeleton kept, printReadiness dropped.
-// ---------------------------------------------------------------------------
-
-function MermaidDiagram(
-  { code, className, resolvedMode }: {
-    code: string;
-    className?: string;
-    resolvedMode: CodeBlockMode;
-  },
-): React.ReactElement {
-  const [svg, setSvg] = React.useState<string>("");
-  const [error, setError] = React.useState<string>("");
-
-  React.useEffect(() => {
-    if (!isBrowserEnvironment() || !code.trim()) return;
-
-    let cancelled = false;
-    const theme = resolvedMode === "dark" ? "dark" : "default";
-
-    async function render(): Promise<void> {
-      try {
-        const mermaid = await loadMermaid(theme);
-        if (!mermaid || cancelled) return;
-
-        const id = `mermaid-${Math.random().toString(36).slice(2, 9)}`;
-        const { svg: rendered } = await mermaid.default.render(id, code.trim());
-        if (cancelled) return;
-        setSvg(validateTrustedHtml(rendered, { strict: true }));
-        setError("");
-      } catch (err) {
-        if (cancelled) return;
-        setError(
-          err instanceof Error ? err.message : "Failed to render diagram",
-        );
-        setSvg("");
-      }
-    }
-
-    render();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [code, resolvedMode]);
-
-  if (error) {
-    return (
-      <div
-        className={cn(
-          "rounded-[var(--radius-md)] border border-[var(--outline-border)] p-3 text-sm",
-          className,
-        )}
-      >
-        <p className="font-medium">Diagram error</p>
-        <pre className="mt-1 whitespace-pre-wrap text-xs">{error}</pre>
-      </div>
-    );
-  }
-
-  if (!svg) {
-    return <Skeleton className={cn("h-32 rounded-[var(--radius-md)]", className)} />;
-  }
-
+/** Provide extension-owned syntax and diagram renderers to a React subtree. */
+export function CodeBlockRendererProvider({
+  renderers,
+  children,
+}: CodeBlockRendererProviderProps): React.ReactElement {
+  const inherited = React.useContext(CodeBlockRendererContext);
+  const syntax = renderers.syntax;
+  const diagram = renderers.diagram;
+  const value = React.useMemo(
+    () => mergeCodeBlockRenderers(inherited, { syntax, diagram }),
+    [diagram, inherited, syntax],
+  );
   return (
-    <div
-      className={cn(
-        "overflow-x-auto rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)] p-3 [&_svg]:max-w-full",
-        className,
-      )}
-      dangerouslySetInnerHTML={{ __html: svg }}
-    />
+    <CodeBlockRendererContext.Provider value={value}>
+      {children}
+    </CodeBlockRendererContext.Provider>
   );
 }
 
@@ -237,7 +103,7 @@ function MermaidDiagram(
 export interface CodeBlockProps {
   /** The source code to render. */
   code: string;
-  /** Language id for syntax highlighting (e.g. `tsx`, `json`, `mermaid`). */
+  /** Language id exposed to the plain surface or injected renderer. */
   language?: string;
   /** Additional class names for the outer container. */
   className?: string;
@@ -246,11 +112,12 @@ export interface CodeBlockProps {
   /** When `collapsible`, start collapsed. @default false */
   defaultCollapsed?: boolean;
   /**
-   * Force the highlight theme. Defaults to the `ColorModeProvider` when present,
-   * else `light` — so `CodeBlock` renders standalone (e.g. inside markdown)
-   * without requiring a provider.
+   * Force the renderer mode. Defaults to `ColorModeProvider` when present,
+   * otherwise `light`.
    */
   mode?: CodeBlockMode;
+  /** Per-instance renderer overrides; `null` explicitly selects plain source. */
+  renderers?: CodeBlockRenderers;
   /** Override the idle copy icon in the header copy button. */
   copyIcon?: React.ReactNode;
   /** Override the collapse chevron icon (only used when `collapsible`). */
@@ -267,50 +134,40 @@ export interface CodeBlockProps {
    */
   renderHeader?: (opts: {
     language?: string;
-    copy: () => void;
+    /**
+     * Copy the code. Pass the click event (for example, with
+     * `onClick={copy}`) when an `onCopy` interceptor is configured. Eventless
+     * calls fail closed in that case because React events cannot be fabricated.
+     */
+    copy: (event?: React.MouseEvent) => void;
     collapsed: boolean;
     toggle: () => void;
   }) => React.ReactNode;
 }
 
-/** Result of {@link useClipboard}: the copied flag + a `copy` trigger. */
+/** Result of {@link useClipboard}: transient copy feedback and a `copy` trigger. */
 export interface UseClipboardResult {
-  /** `true` for ~2s after a successful (or fallback) copy. */
+  /** `true` for ~2s after a successful copy. */
   copied: boolean;
-  /** Copy `text` to the clipboard (with a `execCommand` fallback). */
-  copy: () => void;
+  /** `true` for ~2s after both available copy mechanisms fail. */
+  failed: boolean;
+  /** Copy `text` to the clipboard (with an `execCommand` fallback). */
+  copy: (ownerDocument?: Document) => void;
 }
 
-/** Clipboard copy hook: copies `text`, flips `copied` for ~2s. */
+/** Copy `text` and expose transient success or failure feedback. */
 export function useClipboard(text: string): UseClipboardResult {
-  const [copied, setCopied] = React.useState(false);
-  const timerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const { outcome, copy: copyWithFeedback } = useClipboardFeedback();
 
-  React.useEffect(() => {
-    return () => {
-      clearTimeout(timerRef.current);
-    };
-  }, []);
-
-  const copy = React.useCallback(() => {
-    void (async () => {
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch (_) {
-        /* expected: clipboard API unavailable, using fallback */
-        const textarea = document.createElement("textarea");
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
-      setCopied(true);
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => setCopied(false), 2000);
-    })();
-  }, [text]);
-  return { copied, copy };
+  const copy = React.useCallback((ownerDocument?: Document): void => {
+    void copyWithFeedback(text, ownerDocument);
+  }, [copyWithFeedback, text]);
+  const isCurrentText = outcome?.text === text;
+  return {
+    copied: isCurrentText && outcome?.status === "copied",
+    failed: isCurrentText && outcome?.status === "failed",
+    copy,
+  };
 }
 
 /** Props accepted by {@link CopyButton}. */
@@ -334,107 +191,82 @@ export interface CopyButtonProps {
 export function CopyButton(
   { code, copyIcon, onCopy }: CopyButtonProps,
 ): React.ReactElement {
-  const { copied, copy } = useClipboard(code);
+  const { copied, failed, copy } = useClipboard(code);
+  const label = copied ? "Copied" : failed ? "Unable to copy code" : "Copy code";
   const handleClick = (e: React.MouseEvent): void => {
-    if (onCopy) onCopy(e, copy);
-    else copy();
+    const ownerDocument = e.currentTarget.ownerDocument;
+    const next = (): void => copy(ownerDocument);
+    if (onCopy) onCopy(e, next);
+    else next();
   };
   return (
-    <IconButton
-      variant="icon-ghost"
-      size="icon-sm"
-      onClick={handleClick}
-      tooltip={copied ? "Copied" : "Copy code"}
-      aria-label="Copy code"
-      className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
-    >
-      {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
-      {copied
-        ? <CheckIcon className="size-3.5" />
-        : (copyIcon ?? <CopyIcon className="size-3.5" />)}
-    </IconButton>
+    <>
+      <IconButton
+        variant="icon-ghost"
+        size="icon-sm"
+        onClick={handleClick}
+        tooltip={label}
+        aria-label={label}
+        className="-mr-1 text-[var(--faint)] hover:text-[var(--foreground)]"
+      >
+        {/* icons render a half-step smaller than Studio: size-4 -> size-3.5 */}
+        <span aria-hidden="true">
+          {copied
+            ? <CheckIcon className="size-3.5" />
+            : (copyIcon ?? <CopyIcon className="size-3.5" />)}
+        </span>
+      </IconButton>
+      <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {copied ? "Code copied" : failed ? "Unable to copy code" : ""}
+      </span>
+    </>
   );
 }
 
 /** Props accepted by {@link CodeSurface}. */
 export interface CodeSurfaceProps {
-  /** The source code to highlight. */
+  /** The source code to present. */
   code: string;
-  /** Language id for syntax highlighting (defaults handled by the caller). */
+  /** Language id exposed to the plain surface or renderer. */
   language: string;
-  /** Resolved light/dark mode for the shiki theme. */
+  /** Resolved light/dark mode. */
   resolvedMode: CodeBlockMode;
+  /** Explicit extension-owned renderer; omitted or `null` renders plain source. */
+  renderer?: React.ComponentType<CodeSyntaxRendererProps> | null;
 }
 
-/**
- * The code surface. Plain highlighted code is ALWAYS visible immediately —
- * shiki is progressive enhancement layered on top once it lazy-loads from
- * esm.sh (so a stalled/blocked network never leaves an empty "no code block").
- */
+/** Render through an explicit extension capability or escaped plain source. */
 export function CodeSurface({
   code,
   language,
   resolvedMode,
+  renderer,
 }: CodeSurfaceProps): React.ReactElement {
-  const [html, setHtml] = React.useState<string>("");
-
-  React.useEffect(() => {
-    if (!isBrowserEnvironment()) return;
-
-    let cancelled = false;
-    const theme: ShikiTheme = resolvedMode === "dark" ? "github-dark" : "github-light";
-
-    async function highlight(): Promise<void> {
-      try {
-        const hl = await loadHighlighter();
-        if (!hl || cancelled) return;
-
-        await ensureLanguage(language);
-        if (cancelled) return;
-
-        const lang = loadedLangs.has(language) ? language : "text";
-        const rendered = hl.codeToHtml(code.trim(), { lang, theme });
-        if (cancelled) return;
-        setHtml(validateTrustedHtml(rendered, { strict: true }));
-      } catch (_err) {
-        // Graceful fallback — the plain <pre> below stays.
-        if (!cancelled) setHtml("");
-      }
-    }
-
-    setHtml("");
-    highlight();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [code, language, resolvedMode]);
-
-  // Highlighted surface, once shiki has produced HTML.
-  if (html && isBrowserEnvironment()) {
+  if (renderer) {
+    const Renderer = renderer;
     return (
       <div
-        className={cn(
-          "overflow-x-auto text-sm",
-          // Strip shiki's own <pre> chrome so it inherits our container.
-          "[&_pre]:!m-0 [&_pre]:!bg-transparent [&_pre]:!p-3 [&_.shiki]:!bg-transparent",
-        )}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+        className="overflow-x-auto text-sm"
+        data-vf-code-renderer="extension"
+      >
+        <Renderer code={code} language={language} mode={resolvedMode} />
+      </div>
     );
   }
 
-  // Always-visible base: plain code (SSR, pre-highlight, or fallback).
   return (
-    <pre className="overflow-x-auto p-3 text-sm text-[var(--foreground)]">
+    <pre
+      className="overflow-x-auto p-3 text-sm text-[var(--foreground)]"
+      data-vf-code-renderer="plain"
+    >
       <code className={language ? `language-${language}` : undefined}>
-        {code.trim()}
+        {code}
       </code>
     </pre>
   );
 }
 
-/** Render a syntax-highlighted code block (or a mermaid diagram). */
+/** Render escaped source or delegate to explicit syntax/diagram capabilities. */
 export function CodeBlock({
   code,
   language,
@@ -442,6 +274,7 @@ export function CodeBlock({
   collapsible = false,
   defaultCollapsed = false,
   mode,
+  renderers,
   copyIcon,
   collapseIcon,
   onCopy,
@@ -451,29 +284,49 @@ export function CodeBlock({
   // Hook called unconditionally; prop wins, else provider, else light. Never throws.
   const contextMode = useColorModeOptional()?.resolvedMode;
   const resolvedMode: CodeBlockMode = mode ?? contextMode ?? "light";
+  const inheritedRenderers = React.useContext(CodeBlockRendererContext);
+  const syntaxRenderer = renderers?.syntax === undefined
+    ? inheritedRenderers.syntax
+    : renderers.syntax;
+  const diagramRenderer = renderers?.diagram === undefined
+    ? inheritedRenderers.diagram
+    : renderers.diagram;
 
   // Control the collapsible open state locally so `renderHeader` can expose a
   // working `collapsed`/`toggle` (DOM output is identical to the uncontrolled
   // default). Hook is called unconditionally.
   const [open, setOpen] = React.useState(!defaultCollapsed);
   const toggle = React.useCallback(() => setOpen((v) => !v), []);
-  // A `copy` trigger for `renderHeader` that honours `onCopy`.
-  const clipboard = useClipboard(code);
-  const copy = React.useCallback(() => {
+  // `renderHeader` can pass a real click event to the interceptor. Imperative
+  // calls without an event copy directly only when no interceptor is present;
+  // an interceptor fails closed rather than receiving a fabricated event.
+  const { copy: copyCode } = useClipboard(code);
+  const hostDocumentRef = React.useRef<Document | undefined>(undefined);
+  const captureHostDocument = React.useCallback((node: HTMLDivElement | null): void => {
+    hostDocumentRef.current = node?.ownerDocument;
+  }, []);
+  const copy = React.useCallback((event?: React.MouseEvent): void => {
+    const ownerDocument = event?.currentTarget.ownerDocument ?? hostDocumentRef.current;
+    if (!ownerDocument) return;
     if (onCopy) {
-      onCopy({} as React.MouseEvent, clipboard.copy);
-    } else {
-      clipboard.copy();
+      if (!event) return;
+      const next = (): void => copyCode(ownerDocument);
+      onCopy(event, next);
+      return;
     }
-  }, [onCopy, clipboard]);
+    copyCode(ownerDocument);
+  }, [copyCode, onCopy]);
 
-  // Mermaid fences render as an SVG diagram, no chrome.
-  if (language === "mermaid" && code.trim()) {
+  // Diagram rendering is extension-owned. Without that explicit capability a
+  // mermaid fence follows the ordinary escaped source path below.
+  if (language === "mermaid" && code.trim() && diagramRenderer) {
+    const DiagramRenderer = diagramRenderer;
     return (
-      <MermaidDiagram
+      <DiagramRenderer
         code={code}
+        language={language}
         className={className}
-        resolvedMode={resolvedMode}
+        mode={resolvedMode}
       />
     );
   }
@@ -485,11 +338,19 @@ export function CodeBlock({
     </div>
   );
 
-  const surface = <CodeSurface code={code} language={lang} resolvedMode={resolvedMode} />;
+  const surface = (
+    <CodeSurface
+      code={code}
+      language={lang}
+      resolvedMode={resolvedMode}
+      renderer={syntaxRenderer}
+    />
+  );
 
   if (collapsible) {
     return (
       <Collapsible
+        ref={captureHostDocument}
         open={open}
         onOpenChange={setOpen}
         className={cn(
@@ -522,6 +383,7 @@ export function CodeBlock({
 
   return (
     <div
+      ref={captureHostDocument}
       className={cn(
         "not-prose my-4 overflow-hidden rounded-[var(--radius-md)] border border-[var(--outline-border)] bg-[var(--secondary)]",
         className,

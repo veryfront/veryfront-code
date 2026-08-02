@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import { resolve } from "node:path";
 import {
   listRuntimeBuiltinSkillReferenceFiles,
@@ -11,6 +11,7 @@ import {
   resolveRuntimeBuiltinSkillReferenceFilePath,
   resolveRuntimeBuiltinSkillsDir,
 } from "./builtin-skill-files.ts";
+import { SKILL_SUBDIR_MAX_ENTRIES, SKILL_TEXT_FILE_MAX_BYTES } from "#veryfront/skill/limits.ts";
 
 function withTempDir(fn: (dir: string) => void): void {
   const dir = Deno.makeTempDirSync();
@@ -108,5 +109,30 @@ Deno.test("runtime builtin skill reference helpers reject traversal and read val
       "references/guide.md",
       "references/notes.md",
     ]);
+  });
+});
+
+Deno.test("runtime builtin compatibility readers fail before unbounded materialization", () => {
+  withTempDir((rootDir) => {
+    Deno.writeTextFileSync(
+      resolve(rootDir, "oversized.md"),
+      "x".repeat(SKILL_TEXT_FILE_MAX_BYTES + 1),
+    );
+    assertThrows(
+      () => readRuntimeBuiltinFlatSkill(rootDir, "oversized"),
+      RangeError,
+      "may contain at most",
+    );
+
+    const refsDir = resolve(rootDir, "many", "references");
+    Deno.mkdirSync(refsDir, { recursive: true });
+    for (let index = 0; index <= SKILL_SUBDIR_MAX_ENTRIES; index += 1) {
+      Deno.writeTextFileSync(resolve(refsDir, `${index}.md`), "");
+    }
+    assertThrows(
+      () => listRuntimeBuiltinSkillReferenceFiles(rootDir, "many"),
+      RangeError,
+      "may contain at most",
+    );
   });
 });

@@ -10,6 +10,7 @@ function createMockCtx(): HandlerContext {
     projectDir: "/project",
     adapter: {
       fs: {
+        symlinkSemantics: "none",
         readDir: async function* () {},
         readFile: async () => new Uint8Array(),
       },
@@ -25,6 +26,7 @@ function createMockCtxWithFs(fsOverrides: Record<string, unknown> = {}): Handler
     ...createMockCtx(),
     adapter: {
       fs: {
+        symlinkSemantics: "none",
         readDir: async function* () {},
         readFile: async () => "file content",
         ...fsOverrides,

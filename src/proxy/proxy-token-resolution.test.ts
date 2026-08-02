@@ -1,12 +1,28 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  isMissingCustomDomainProjectError,
+  extractUserToken,
+  isMissingProxyProjectError,
   resolveProxyRequestToken,
 } from "./proxy-token-resolution.ts";
+import { OAuthTokenRequestError } from "./oauth-client.ts";
 
 describe("proxy/proxy-token-resolution", () => {
+  it("extracts one bounded visible auth cookie and rejects ambiguous or malformed values", () => {
+    assertEquals(extractUserToken("other=x; authToken=user%2Dtoken"), "user-token");
+    assertEquals(
+      extractUserToken("authToken=first; authToken=second"),
+      undefined,
+    );
+    assertEquals(extractUserToken("authToken=%E0%A4%A"), undefined);
+    assertEquals(extractUserToken("authToken=token%0Avalue"), undefined);
+    assertEquals(
+      extractUserToken(`authToken=${"x".repeat(64 * 1024 + 1)}`),
+      undefined,
+    );
+  });
+
   it("prefers signed internal control-plane tokens over preview user cookies", async () => {
     const tokenManagerCalls: unknown[] = [];
     const result = await resolveProxyRequestToken({
@@ -72,8 +88,9 @@ describe("proxy/proxy-token-resolution", () => {
 
   it("returns custom-domain token fetch errors without logging expected misses as errors", async () => {
     const loggedErrors: string[] = [];
-    const notFoundError = new Error(
-      "OAuth token request failed: 400 - Project not found for domain",
+    const notFoundError = new OAuthTokenRequestError(
+      400,
+      '{"error":"legacy custom-domain miss"}',
     );
 
     const result = await resolveProxyRequestToken({
@@ -103,7 +120,44 @@ describe("proxy/proxy-token-resolution", () => {
 
     assertEquals(result.token, undefined);
     assertEquals(result.tokenFetchError, notFoundError);
-    assertEquals(isMissingCustomDomainProjectError(result.tokenFetchError), true);
+    assertEquals(isMissingProxyProjectError(result.tokenFetchError), true);
     assertEquals(loggedErrors, []);
+  });
+
+  it("passes the request signal to service-token waiters and propagates cancellation", async () => {
+    const controller = new AbortController();
+    const disconnected = new Error("client disconnected");
+    const req = new Request("https://my-project.veryfront.com/page", {
+      signal: controller.signal,
+    });
+    let waiterSignal: AbortSignal | undefined;
+
+    const resolution = resolveProxyRequestToken({
+      req,
+      url: new URL(req.url),
+      scope: "production",
+      host: "my-project.veryfront.com",
+      projectSlug: "my-project",
+      config: {
+        apiClientId: "client",
+        apiClientSecret: "secret",
+        apiToken: "must-not-mask-cancellation",
+      },
+      tokenManager: {
+        getToken(_scope, _projectSlug, _customDomain, options) {
+          waiterSignal = options?.signal;
+          return new Promise((_resolve, reject) => {
+            const onAbort = (): void => reject(waiterSignal?.reason);
+            waiterSignal?.addEventListener("abort", onAbort, { once: true });
+          });
+        },
+      },
+      tokenFetchErrorMessage: "Token fetch failed",
+    });
+
+    controller.abort(disconnected);
+    const error = await assertRejects(() => resolution, Error, disconnected.message);
+    assertEquals(error, disconnected);
+    assertEquals(waiterSignal, req.signal);
   });
 });

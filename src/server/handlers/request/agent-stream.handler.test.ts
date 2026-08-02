@@ -2610,7 +2610,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       toolCallId: "tool-1",
       result: { focused: true },
     });
-    const resumeSignature = await createControlPlaneSignature(resumeBody, { requestId: "run_1" });
+    const resumeSignature = await createControlPlaneSignature(resumeBody, {
+      requestId: "run_1",
+      requestMethod: "POST",
+      requestPath: "/api/control-plane/runs/run_1/resume",
+    });
 
     const resumeResult = await resumeHandler.handle(
       new Request("https://example.com/api/control-plane/runs/run_1/resume", {
@@ -2746,7 +2750,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
       toolCallId: "tool-1",
       result: { focused: true },
     });
-    const resumeSignature = await createControlPlaneSignature(resumeBody, { requestId: "run_1" });
+    const resumeSignature = await createControlPlaneSignature(resumeBody, {
+      requestId: "run_1",
+      requestMethod: "POST",
+      requestPath: "/api/control-plane/runs/run_1/resume",
+    });
 
     const resumeResult = await resumeHandler.handle(
       new Request("https://example.com/api/control-plane/runs/run_1/resume", {

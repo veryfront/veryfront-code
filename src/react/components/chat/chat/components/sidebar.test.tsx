@@ -110,6 +110,14 @@ describe("ChatSidebar — conversation-native", () => {
         document.getElementById("root")!.innerHTML.includes("Controlled chat"),
         "lists the controlled conversation",
       );
+      const currentConversation = document.querySelector<HTMLButtonElement>(
+        'button[aria-current="page"]',
+      );
+      assert(currentConversation, "the current conversation is a native primary action");
+      assert(
+        currentConversation.textContent?.includes("Controlled chat"),
+        "the primary action carries the conversation label",
+      );
 
       flushSync(() => root.unmount());
       await settle();

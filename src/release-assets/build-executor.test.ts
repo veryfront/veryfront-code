@@ -960,6 +960,45 @@ describe("release asset build executor", () => {
     ]);
   });
 
+  it("keeps final import validation when reusing the dependency materializer", async () => {
+    enableDependencyImportMap();
+    const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };
+    const files = [{
+      path: "pages/index.tsx",
+      content: 'import legacy from "legacy-package"; export default legacy;',
+    }];
+    const client = makeClient(files, rec);
+    const transform = () =>
+      Promise.resolve(
+        'import legacy from "https://esm.sh/legacy-package@1"; export default legacy;',
+      );
+    const legacyCode = [
+      "export const load = (path) => import(path);",
+      'export const asset = new URL("./worker.wasm", import.meta.url);',
+      "//# sourceMappingURL=legacy-package.js.map",
+    ].join("\n");
+    const input = {
+      ...baseInput(client, transform),
+      vendorHttpImports: withFakeReactVendor((code: string) =>
+        Promise.resolve({
+          code: code.replace(
+            "https://esm.sh/legacy-package@1",
+            "file:///virtual/veryfront-http-bundle/http-legacy.mjs",
+          ),
+          dependencies: [{
+            specifier: "file:///virtual/veryfront-http-bundle/http-legacy.mjs",
+            manifestKey: "https://esm.sh/legacy-package@1",
+            code: legacyCode,
+          }],
+        })
+      ),
+    };
+
+    const result = await runReleaseAssetBuild(input, await tmp());
+
+    assertCoverageFailure(result, rec, "dependency-finalize-failed");
+  });
+
   it("rewrites nested vendored HTTP dependency imports to immutable assets", async () => {
     enableDependencyImportMap();
     const rec: Recorded = { began: false, uploads: [], manifest: null, states: [] };

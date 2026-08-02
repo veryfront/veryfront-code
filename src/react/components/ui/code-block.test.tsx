@@ -1,0 +1,398 @@
+import * as React from "react";
+import { flushSync } from "react-dom";
+import { createRoot, type Root } from "react-dom/client";
+import { renderToString } from "react-dom/server";
+import { JSDOM } from "npm:jsdom@28.0.0";
+import {
+  assert,
+  assertEquals,
+  assertStrictEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  CodeBlock,
+  CodeBlockRendererProvider,
+  type CodeDiagramRendererProps,
+  CodeSurface,
+  type CodeSyntaxRendererProps,
+  useClipboard,
+} from "./code-block.tsx";
+
+function installDom(
+  dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>'),
+): { restore: () => void; window: JSDOM["window"] } {
+  const window = dom.window;
+  const previous = {
+    window: globalThis.window,
+    document: globalThis.document,
+    navigator: globalThis.navigator,
+    self: globalThis.self,
+    Node: globalThis.Node,
+    Element: globalThis.Element,
+    HTMLElement: globalThis.HTMLElement,
+    Event: globalThis.Event,
+    MouseEvent: globalThis.MouseEvent,
+  };
+
+  Object.assign(globalThis, {
+    window,
+    document: window.document,
+    navigator: window.navigator,
+    self: window,
+    Node: window.Node,
+    Element: window.Element,
+    HTMLElement: window.HTMLElement,
+    Event: window.Event,
+    MouseEvent: window.MouseEvent,
+  });
+
+  return {
+    window,
+    restore: () => {
+      Object.assign(globalThis, previous);
+      dom.window.close();
+    },
+  };
+}
+
+async function settle(): Promise<void> {
+  await Promise.resolve();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  flushSync(() => {});
+}
+
+/**
+ * Unmount and drain the one-shot tasks the runtime leaves behind.
+ *
+ * The `execCommand` copy fallback selects a textarea, and jsdom queues that
+ * `select` event on a bare `setTimeout` it never registers with the window, so
+ * `window.close()` cannot clear it. React's scheduler likewise holds a
+ * `setImmediate` until it next runs. Both complete on their own, but the test
+ * has to yield once more or Deno's leak sanitizer sees them still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+describe("CodeBlock renderer boundary", () => {
+  it("keeps the standalone CodeSurface renderer optional", () => {
+    const html = renderToString(
+      <CodeSurface code="const answer = 42;" language="ts" resolvedMode="light" />,
+    );
+
+    assertStringIncludes(html, 'data-vf-code-renderer="plain"');
+    assertStringIncludes(html, "const answer = 42;");
+  });
+
+  it("renders escaped plain source without extension capabilities", () => {
+    const html = renderToString(
+      <CodeBlock code='<script>alert("x")</script>' language="mermaid" />,
+    );
+
+    assertStringIncludes(html, 'data-vf-code-renderer="plain"');
+    assertStringIncludes(html, 'class="language-mermaid"');
+    assertStringIncludes(html, "&lt;script&gt;");
+    assertEquals(html.includes("<script>"), false);
+    assertEquals(html.includes('data-vf-code-renderer="extension"'), false);
+  });
+
+  it("selects injected syntax and diagram renderers explicitly", () => {
+    function SyntaxRenderer({ code, language, mode }: CodeSyntaxRendererProps) {
+      return <pre data-syntax={`${language}:${mode}`}>{code}</pre>;
+    }
+    function DiagramRenderer({ code, language, mode }: CodeDiagramRendererProps) {
+      return <figure data-diagram={`${language}:${mode}`}>{code}</figure>;
+    }
+
+    const syntaxHtml = renderToString(
+      <CodeBlock
+        code="const value = 1"
+        language="ts"
+        mode="dark"
+        renderers={{ syntax: SyntaxRenderer }}
+      />,
+    );
+    const diagramHtml = renderToString(
+      <CodeBlockRendererProvider renderers={{ diagram: DiagramRenderer }}>
+        <CodeBlock code="graph TD" language="mermaid" mode="light" />
+      </CodeBlockRendererProvider>,
+    );
+
+    assertStringIncludes(syntaxHtml, 'data-vf-code-renderer="extension"');
+    assertStringIncludes(syntaxHtml, 'data-syntax="ts:dark"');
+    assertStringIncludes(diagramHtml, 'data-diagram="mermaid:light"');
+  });
+
+  it("allows a component to select plain source over an inherited renderer", () => {
+    function SyntaxRenderer(): React.ReactElement {
+      return <strong>rich</strong>;
+    }
+    const html = renderToString(
+      <CodeBlockRendererProvider renderers={{ syntax: SyntaxRenderer }}>
+        <CodeBlock code="plain" renderers={{ syntax: null }} />
+      </CodeBlockRendererProvider>,
+    );
+
+    assertStringIncludes(html, 'data-vf-code-renderer="plain"');
+    assertEquals(html.includes("<strong>rich</strong>"), false);
+  });
+
+  it("does not replace an extension renderer failure with plain source", () => {
+    function BrokenRenderer(): React.ReactElement {
+      throw new Error("syntax extension failed");
+    }
+    assertThrows(
+      () =>
+        renderToString(
+          <CodeBlock code="source" renderers={{ syntax: BrokenRenderer }} />,
+        ),
+      Error,
+      "syntax extension failed",
+    );
+  });
+});
+
+describe("CodeBlock clipboard integration", () => {
+  it("passes a real click event to a custom-header onCopy interceptor", async () => {
+    const dom = installDom();
+    const writes: string[] = [];
+    Object.defineProperty(dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          writes.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+    let interceptedEvent: React.MouseEvent | undefined;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root fixture exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <CodeBlock
+            code="const value = 1;"
+            language="ts"
+            renderHeader={({ copy }) => (
+              <button type="button" onClick={copy}>Copy custom header</button>
+            )}
+            onCopy={(event, next) => {
+              interceptedEvent = event;
+              event.preventDefault();
+              queueMicrotask(next);
+            }}
+          />,
+        );
+      });
+
+      const button = rootElement.querySelector("button");
+      assert(button, "custom copy control renders");
+      const nativeEvent = new dom.window.MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+      });
+      button.dispatchEvent(nativeEvent);
+      await settle();
+
+      assert(interceptedEvent, "onCopy receives an event");
+      assertStrictEquals(interceptedEvent.nativeEvent, nativeEvent);
+      assert(interceptedEvent.isDefaultPrevented(), "the React event remains usable");
+      assertEquals(writes, ["const value = 1;"]);
+
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("fails closed when a custom header drops the event required by onCopy", async () => {
+    const dom = installDom();
+    let writes = 0;
+    let interceptions = 0;
+    Object.defineProperty(dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: () => {
+          writes += 1;
+          return Promise.resolve();
+        },
+      },
+    });
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root fixture exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <CodeBlock
+            code="sensitive"
+            renderHeader={({ copy }) => (
+              <button type="button" onClick={() => copy()}>Copy without event</button>
+            )}
+            onCopy={(_event, next) => {
+              interceptions += 1;
+              next();
+            }}
+          />,
+        );
+      });
+
+      const button = rootElement.querySelector("button");
+      assert(button, "custom copy control renders");
+      button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await settle();
+
+      assertEquals(interceptions, 0);
+      assertEquals(writes, 0);
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("keeps flat and collapsible eventless copies in the rendered document", async () => {
+    const globalDom = new JSDOM("<!doctype html><html><body></body></html>");
+    const targetDom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+    );
+    const { restore } = installDom(globalDom);
+    const globalWrites: string[] = [];
+    const targetWrites: string[] = [];
+    Object.defineProperty(globalDom.window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          globalWrites.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+    Object.defineProperty(targetDom.window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: (text: string) => {
+          targetWrites.push(text);
+          return Promise.resolve();
+        },
+      },
+    });
+
+    try {
+      const rootElement = targetDom.window.document.getElementById("root");
+      assert(rootElement, "target root fixture exists");
+      const root = createRoot(rootElement);
+      for (const collapsible of [false, true]) {
+        const code = collapsible ? "collapsible target" : "flat target";
+        flushSync(() => {
+          root.render(
+            <CodeBlock
+              code={code}
+              collapsible={collapsible}
+              renderHeader={({ copy }) => (
+                <button type="button" onClick={() => copy()}>Copy without event</button>
+              )}
+            />,
+          );
+        });
+
+        const button = rootElement.querySelector("button");
+        assert(button, "custom copy control renders");
+        button.dispatchEvent(new targetDom.window.MouseEvent("click", { bubbles: true }));
+        await settle();
+      }
+
+      assertEquals(targetWrites, ["flat target", "collapsible target"]);
+      assertEquals(globalWrites, []);
+      await unmount(root);
+    } finally {
+      restore();
+      targetDom.window.close();
+    }
+  });
+
+  it("reports failure only when both clipboard mechanisms fail", async () => {
+    const dom = installDom();
+    Object.defineProperty(dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("denied")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: () => false,
+    });
+
+    function Harness(): React.ReactElement {
+      const clipboard = useClipboard("not copied");
+      return (
+        <button
+          type="button"
+          data-copied={String(clipboard.copied)}
+          data-failed={String(clipboard.failed)}
+          onClick={(event) => clipboard.copy(event.currentTarget.ownerDocument)}
+        >
+          Copy
+        </button>
+      );
+    }
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root fixture exists");
+      const root = createRoot(rootElement);
+      flushSync(() => root.render(<Harness />));
+      const button = rootElement.querySelector("button");
+      assert(button, "copy control renders");
+
+      button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await settle();
+
+      assertEquals(button.dataset.copied, "false");
+      assertEquals(button.dataset.failed, "true");
+      assertEquals(document.querySelectorAll("textarea").length, 0);
+
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("exposes failed copy feedback to assistive technology", async () => {
+    const dom = installDom();
+    Object.defineProperty(dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("denied")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: () => false,
+    });
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root fixture exists");
+      const root = createRoot(rootElement);
+      flushSync(() => root.render(<CodeBlock code="not copied" />));
+      const button = rootElement.querySelector<HTMLButtonElement>("button");
+      assert(button, "copy control renders");
+
+      button.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await settle();
+
+      assertEquals(button.getAttribute("aria-label"), "Unable to copy code");
+      assertEquals(
+        rootElement.querySelector('[role="status"]')?.textContent,
+        "Unable to copy code",
+      );
+      await unmount(root);
+    } finally {
+      dom.restore();
+    }
+  });
+});

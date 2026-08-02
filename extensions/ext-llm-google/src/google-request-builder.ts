@@ -1,68 +1,37 @@
-import { readProviderOptions, readRecord, unwrapToolInputSchema } from "veryfront/provider/shared";
-import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import {
+  jsonValuesEqual,
+  readProviderOptions,
+  readRecord,
+  unwrapToolInputSchema,
+} from "veryfront/provider/shared";
+import type {
+  ModelRuntimeCallOptions,
+  ModelRuntimePromptMessage,
+  ModelRuntimeToolDefinition,
+  RuntimeReasoningOption,
+} from "veryfront/provider/shared";
+import {
+  createGoogleToolCallCorrelationRegistry,
+  GOOGLE_CODE_EXECUTION_TOOL_NAME,
+  googleCodeExecutionInput,
+  googleCodeExecutionOutput,
+  readGoogleCodeExecutionResult,
+  readGoogleExecutableCode,
+  readGooglePartDataField,
+} from "./google-content-parts.ts";
+import { readGoogleRawAssistantParts } from "./google-thought-signatures.ts";
 
-export type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-
-type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
-
-type ProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: ProviderReasoningEffort;
-  budgetTokens?: number;
-};
-
-export type OpenAICompatibleLanguageOptions = {
-  prompt: RuntimePromptMessage[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  tools?: RuntimeToolDefinition[];
-  toolChoice?: unknown;
-  seed?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-  includeRawChunks?: boolean;
-  abortSignal?: AbortSignal;
-  cacheControl?: unknown;
-  reasoning?: ProviderReasoningOption;
-  userId?: string;
+export interface OpenAICompatibleLanguageOptions extends ModelRuntimeCallOptions {
   requestLabels?: Record<string, string>;
-  serviceTier?: "auto" | "default" | "flex" | "scale";
-  parallelToolCalls?: boolean;
-  responseFormat?:
-    | { type: "text" }
-    | { type: "json" }
-    | {
-      type: "json_schema";
-      name: string;
-      schema: unknown;
-      description?: string;
-      strict?: boolean;
-    };
-  anthropicContainer?: unknown;
   googleCachedContent?: string;
-  googleSafetySettings?: Array<{
+  googleSafetySettings?: ReadonlyArray<{
     category: string;
     threshold: string;
   }>;
-  mcpServers?: Array<Record<string, unknown>>;
-};
+}
+
+/** @deprecated Import `ModelRuntimeToolDefinition` from `veryfront/provider/shared` instead. */
+export type RuntimeToolDefinition = ModelRuntimeToolDefinition;
 
 type WarningCollector = {
   push(warning: {
@@ -81,7 +50,7 @@ type WarningCollector = {
 
 type GoogleCompatibleContent = {
   role: "user" | "model";
-  parts: Array<Record<string, unknown>>;
+  parts: readonly Record<string, unknown>[];
 };
 
 type GoogleCompatibleRequest = {
@@ -97,8 +66,349 @@ type GoogleCompatibleRequest = {
   [key: string]: unknown;
 };
 
+type CanonicalProviderCall = {
+  id: string;
+  name: string;
+  input: unknown;
+};
+
+type CanonicalProviderResult = {
+  id: string;
+  name: string;
+  result: unknown;
+  isError: boolean;
+};
+
+type GoogleToolEventKind =
+  | "ordinary-call"
+  | "provider-call"
+  | "provider-result";
+
+type GoogleToolEvent = {
+  kind: GoogleToolEventKind;
+  id: string;
+};
+
+type GoogleRawToolHistory = {
+  ordinaryCalls: CanonicalProviderCall[];
+  legacyOrdinaryCalls: CanonicalProviderCall[];
+  providerCalls: CanonicalProviderCall[];
+  providerResults: CanonicalProviderResult[];
+  toolEvents: GoogleToolEvent[];
+  legacyToolEvents: GoogleToolEvent[];
+};
+
+function invalidGoogleProviderHistory(): TypeError {
+  return new TypeError(
+    "Google raw assistant metadata did not match canonical provider tool history",
+  );
+}
+
+function readGoogleRawToolHistory(
+  rawAssistantParts: readonly Record<string, unknown>[],
+): GoogleRawToolHistory {
+  const registry = createGoogleToolCallCorrelationRegistry();
+  const ordinaryCalls: CanonicalProviderCall[] = [];
+  const legacyOrdinaryCalls: CanonicalProviderCall[] = [];
+  const providerCalls: CanonicalProviderCall[] = [];
+  const providerResults: CanonicalProviderResult[] = [];
+  const toolEvents: GoogleToolEvent[] = [];
+  const legacyToolEvents: GoogleToolEvent[] = [];
+  let anonymousFunctionCallIndex = 0;
+
+  for (let partIndex = 0; partIndex < rawAssistantParts.length; partIndex += 1) {
+    const part = rawAssistantParts[partIndex];
+    if (part === undefined) {
+      throw invalidGoogleProviderHistory();
+    }
+    const dataField = readGooglePartDataField(part);
+    if (dataField === "functionCall") {
+      const functionCall = readRecord(part.functionCall);
+      const functionCallArgs = functionCall?.args === undefined
+        ? {}
+        : readRecord(functionCall.args);
+      if (
+        !functionCall ||
+        typeof functionCall.name !== "string" ||
+        !functionCallArgs
+      ) {
+        throw invalidGoogleProviderHistory();
+      }
+      const providerId = typeof functionCall.id === "string" ? functionCall.id : undefined;
+      const id = registry.registerFunctionCall(partIndex, providerId);
+      // Histories persisted before raw-position ids used the anonymous-call
+      // occurrence instead. Build both complete projections so validation
+      // cannot accept a mixture that no implementation ever emitted.
+      const legacyId = providerId === undefined ? `tool-${anonymousFunctionCallIndex++}` : id;
+      const call = {
+        name: functionCall.name,
+        input: functionCallArgs,
+      };
+      ordinaryCalls.push({ id, ...call });
+      legacyOrdinaryCalls.push({ id: legacyId, ...call });
+      toolEvents.push({ kind: "ordinary-call", id });
+      legacyToolEvents.push({ kind: "ordinary-call", id: legacyId });
+      continue;
+    }
+    if (dataField === "executableCode") {
+      const executableCode = readGoogleExecutableCode(part.executableCode);
+      const id = registry.registerCodeExecution(executableCode.providerId);
+      providerCalls.push({
+        id,
+        name: GOOGLE_CODE_EXECUTION_TOOL_NAME,
+        input: googleCodeExecutionInput(executableCode),
+      });
+      toolEvents.push({ kind: "provider-call", id });
+      legacyToolEvents.push({ kind: "provider-call", id });
+      continue;
+    }
+    if (dataField !== "codeExecutionResult") {
+      continue;
+    }
+
+    const result = readGoogleCodeExecutionResult(part.codeExecutionResult);
+    const id = registry.resolveCodeExecutionResult(result.providerId);
+    providerResults.push({
+      id,
+      name: GOOGLE_CODE_EXECUTION_TOOL_NAME,
+      result: googleCodeExecutionOutput(result),
+      isError: result.isError,
+    });
+    toolEvents.push({ kind: "provider-result", id });
+    legacyToolEvents.push({ kind: "provider-result", id });
+  }
+  registry.assertSettled();
+  return {
+    ordinaryCalls,
+    legacyOrdinaryCalls,
+    providerCalls,
+    providerResults,
+    toolEvents,
+    legacyToolEvents,
+  };
+}
+
+function callsMatch(
+  left: CanonicalProviderCall,
+  right: CanonicalProviderCall,
+): boolean {
+  return left.id === right.id &&
+    left.name === right.name &&
+    jsonValuesEqual(left.input, right.input, true);
+}
+
+function resultsMatch(
+  left: CanonicalProviderResult,
+  right: CanonicalProviderResult,
+): boolean {
+  return left.id === right.id &&
+    left.name === right.name &&
+    left.isError === right.isError &&
+    jsonValuesEqual(left.result, right.result);
+}
+
+function orderedProjectionMatches<T extends object>(
+  left: readonly T[],
+  right: readonly T[],
+  entryMatches: (left: T, right: T) => boolean,
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+  for (let index = 0; index < left.length; index += 1) {
+    const entry = left[index];
+    const matchingEntry = right[index];
+    if (
+      entry === undefined ||
+      matchingEntry === undefined ||
+      !entryMatches(entry, matchingEntry)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function rejectDuplicateIds(
+  entries: readonly { id: string }[],
+): void {
+  const ids = new Set<string>();
+  for (const entry of entries) {
+    if (ids.has(entry.id)) {
+      throw invalidGoogleProviderHistory();
+    }
+    ids.add(entry.id);
+  }
+}
+
+function survivingToolEvents(
+  events: readonly GoogleToolEvent[],
+  activeKinds: ReadonlySet<GoogleToolEventKind>,
+): GoogleToolEvent[] {
+  const surviving: GoogleToolEvent[] = [];
+  for (const event of events) {
+    if (activeKinds.has(event.kind)) {
+      surviving.push(event);
+    }
+  }
+  return surviving;
+}
+
+function validateGoogleToolReplay(
+  message: Extract<ModelRuntimePromptMessage, { readonly role: "assistant" }>,
+  rawAssistantParts: readonly Record<string, unknown>[],
+): void {
+  const providerToolCalls = (message.providerToolCalls ?? []).map((call) => ({
+    id: call.toolCallId,
+    name: call.toolName,
+    input: call.input,
+  }));
+  rejectDuplicateIds(providerToolCalls);
+
+  const contentProviderCalls: CanonicalProviderCall[] = [];
+  const ordinaryCalls: CanonicalProviderCall[] = [];
+  const providerResults: CanonicalProviderResult[] = [];
+  const contentToolEvents: GoogleToolEvent[] = [];
+  const contentCallIds = new Set<string>();
+  for (const part of message.content) {
+    if (part.type === "tool-call") {
+      if (contentCallIds.has(part.toolCallId)) {
+        throw invalidGoogleProviderHistory();
+      }
+      contentCallIds.add(part.toolCallId);
+      const call = {
+        id: part.toolCallId,
+        name: part.toolName,
+        input: part.input,
+      };
+      const callKind = part.providerExecuted === true ? "provider" : "ordinary";
+      (callKind === "provider" ? contentProviderCalls : ordinaryCalls).push(call);
+      contentToolEvents.push({
+        kind: callKind === "provider" ? "provider-call" : "ordinary-call",
+        id: call.id,
+      });
+      continue;
+    }
+    if (part.type !== "tool-result" || part.providerExecuted !== true) {
+      continue;
+    }
+    providerResults.push({
+      id: part.toolCallId,
+      name: part.toolName,
+      result: part.result,
+      isError: part.isError === true,
+    });
+    contentToolEvents.push({
+      kind: "provider-result",
+      id: part.toolCallId,
+    });
+  }
+  rejectDuplicateIds(providerResults);
+
+  let canonicalProviderCalls: CanonicalProviderCall[];
+  if (providerToolCalls.length > 0 && contentProviderCalls.length > 0) {
+    if (
+      !orderedProjectionMatches(
+        providerToolCalls,
+        contentProviderCalls,
+        callsMatch,
+      )
+    ) {
+      throw invalidGoogleProviderHistory();
+    }
+    // `providerToolCalls` is the historical message-level projection of the
+    // same provider-executed content. Validate both sources above, but compare
+    // the replay only once.
+    canonicalProviderCalls = providerToolCalls;
+  } else {
+    canonicalProviderCalls = providerToolCalls.length > 0
+      ? providerToolCalls
+      : contentProviderCalls;
+  }
+  rejectDuplicateIds([...ordinaryCalls, ...canonicalProviderCalls]);
+
+  let rawHistory: GoogleRawToolHistory;
+  try {
+    rawHistory = readGoogleRawToolHistory(rawAssistantParts);
+  } catch {
+    throw invalidGoogleProviderHistory();
+  }
+
+  // Exact wire history may outlive an absent canonical projection, for example
+  // after compaction. Once any projection survives, however, it must correlate
+  // one-for-one and in occurrence order; maps or sets would silently accept
+  // reordered or duplicated calls/results.
+  if (
+    canonicalProviderCalls.length > 0 &&
+    !orderedProjectionMatches(
+      rawHistory.providerCalls,
+      canonicalProviderCalls,
+      callsMatch,
+    )
+  ) {
+    throw invalidGoogleProviderHistory();
+  }
+  if (
+    providerResults.length > 0 &&
+    !orderedProjectionMatches(
+      rawHistory.providerResults,
+      providerResults,
+      resultsMatch,
+    )
+  ) {
+    throw invalidGoogleProviderHistory();
+  }
+  const activeContentEventKinds = new Set<GoogleToolEventKind>();
+  if (ordinaryCalls.length > 0) {
+    activeContentEventKinds.add("ordinary-call");
+  }
+  if (contentProviderCalls.length > 0) {
+    activeContentEventKinds.add("provider-call");
+  }
+  if (providerResults.length > 0) {
+    activeContentEventKinds.add("provider-result");
+  }
+  const currentRawSurvivingEvents = survivingToolEvents(
+    rawHistory.toolEvents,
+    activeContentEventKinds,
+  );
+  const legacyRawSurvivingEvents = survivingToolEvents(
+    rawHistory.legacyToolEvents,
+    activeContentEventKinds,
+  );
+  const canonicalSurvivingEvents = survivingToolEvents(
+    contentToolEvents,
+    activeContentEventKinds,
+  );
+  const currentIdsMatch = (
+    ordinaryCalls.length === 0 ||
+    orderedProjectionMatches(rawHistory.ordinaryCalls, ordinaryCalls, callsMatch)
+  ) &&
+    orderedProjectionMatches(
+      currentRawSurvivingEvents,
+      canonicalSurvivingEvents,
+      (left, right) => left.kind === right.kind && left.id === right.id,
+    );
+  const legacyIdsMatch = (
+    ordinaryCalls.length === 0 ||
+    orderedProjectionMatches(
+      rawHistory.legacyOrdinaryCalls,
+      ordinaryCalls,
+      callsMatch,
+    )
+  ) &&
+    orderedProjectionMatches(
+      legacyRawSurvivingEvents,
+      canonicalSurvivingEvents,
+      (left, right) => left.kind === right.kind && left.id === right.id,
+    );
+  if (!currentIdsMatch && !legacyIdsMatch) {
+    throw invalidGoogleProviderHistory();
+  }
+}
+
 function toGoogleContents(
-  prompt: RuntimePromptMessage[],
+  prompt: readonly ModelRuntimePromptMessage[],
 ): {
   systemInstruction?: { parts: Array<{ text: string }> };
   contents: GoogleCompatibleContent[];
@@ -120,6 +430,13 @@ function toGoogleContents(
         });
         break;
       case "assistant": {
+        const rawAssistantParts = readGoogleRawAssistantParts(message.providerMetadata);
+        if (rawAssistantParts) {
+          validateGoogleToolReplay(message, rawAssistantParts);
+          contents.push({ role: "model", parts: rawAssistantParts });
+          break;
+        }
+
         const parts: Array<Record<string, unknown>> = [];
         for (const part of message.content) {
           if (part.type === "text") {
@@ -128,6 +445,16 @@ function toGoogleContents(
           }
           if (part.type === "reasoning") {
             continue;
+          }
+          if (part.type === "tool-result") {
+            throw new TypeError(
+              "Google provider-executed assistant tool results require exact raw replay metadata",
+            );
+          }
+          if (part.providerExecuted === true) {
+            throw new TypeError(
+              "Google provider-executed assistant tool calls require exact raw replay metadata",
+            );
           }
           parts.push({
             functionCall: {
@@ -166,7 +493,7 @@ function toGoogleContents(
 }
 
 function toGoogleUserParts(
-  parts: Extract<RuntimePromptMessage, { role: "user" }>["content"],
+  parts: Extract<ModelRuntimePromptMessage, { readonly role: "user" }>["content"],
 ): Array<Record<string, unknown>> {
   const content: Array<Record<string, unknown>> = [];
 
@@ -191,8 +518,212 @@ function toGoogleUserParts(
   return content;
 }
 
+const GOOGLE_CODE_EXECUTION_TOOL_ID = "google.code_execution";
+const GOOGLE_SEARCH_TOOL_ID = "google.google_search";
+const GOOGLE_SEARCH_TOOL_NAME = "google_search";
+const GOOGLE_SEARCH_ARGUMENT_KEYS = new Set(["searchTypes", "timeRangeFilter"]);
+const GOOGLE_SEARCH_TYPE_KEYS = new Set(["webSearch", "imageSearch"]);
+const GOOGLE_TIME_RANGE_KEYS = new Set(["startTime", "endTime"]);
+const RFC_3339_TIMESTAMP =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+function rejectUnknownKeys(
+  record: Record<string, unknown>,
+  allowedKeys: ReadonlySet<string>,
+  subject: string,
+): void {
+  if (Object.keys(record).some((key) => !allowedKeys.has(key))) {
+    throw new TypeError(`${subject} contained an unsupported field`);
+  }
+}
+
+function readEmptyGoogleToolObject(value: unknown, subject: string): Record<string, never> {
+  const record = readRecord(value);
+  if (!record || Object.keys(record).length > 0) {
+    throw new TypeError(`${subject} must be an empty object`);
+  }
+  return {};
+}
+
+function readGoogleTimestamp(value: unknown, subject: string): string {
+  const timestamp = typeof value === "string" ? value : undefined;
+  const match = timestamp === undefined ? null : RFC_3339_TIMESTAMP.exec(timestamp);
+  if (!match || timestamp === undefined) {
+    throw new TypeError(`${subject} must be an RFC 3339 timestamp`);
+  }
+  const [
+    ,
+    yearText,
+    monthText,
+    dayText,
+    hourText,
+    minuteText,
+    secondText,
+    offsetHourText,
+    offsetMinuteText,
+  ] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ][month - 1];
+  if (
+    year < 1 ||
+    daysInMonth === undefined ||
+    day < 1 ||
+    day > daysInMonth ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59 ||
+    !Number.isFinite(Date.parse(timestamp))
+  ) {
+    throw new TypeError(`${subject} must be an RFC 3339 timestamp`);
+  }
+  return timestamp;
+}
+
+function readGoogleSearchArguments(value: unknown): Record<string, unknown> {
+  const args = readRecord(value);
+  if (!args) {
+    throw new TypeError("google.google_search args must be an object");
+  }
+  rejectUnknownKeys(args, GOOGLE_SEARCH_ARGUMENT_KEYS, "google.google_search args");
+
+  const normalized: Record<string, unknown> = {};
+  if (args.searchTypes !== undefined) {
+    const searchTypes = readRecord(args.searchTypes);
+    if (!searchTypes) {
+      throw new TypeError("google.google_search searchTypes must be an object");
+    }
+    rejectUnknownKeys(
+      searchTypes,
+      GOOGLE_SEARCH_TYPE_KEYS,
+      "google.google_search searchTypes",
+    );
+    normalized.searchTypes = {
+      ...(searchTypes.webSearch !== undefined
+        ? {
+          webSearch: readEmptyGoogleToolObject(
+            searchTypes.webSearch,
+            "google.google_search webSearch",
+          ),
+        }
+        : {}),
+      ...(searchTypes.imageSearch !== undefined
+        ? {
+          imageSearch: readEmptyGoogleToolObject(
+            searchTypes.imageSearch,
+            "google.google_search imageSearch",
+          ),
+        }
+        : {}),
+    };
+  }
+
+  if (args.timeRangeFilter !== undefined) {
+    const timeRangeFilter = readRecord(args.timeRangeFilter);
+    if (!timeRangeFilter) {
+      throw new TypeError("google.google_search timeRangeFilter must be an object");
+    }
+    rejectUnknownKeys(
+      timeRangeFilter,
+      GOOGLE_TIME_RANGE_KEYS,
+      "google.google_search timeRangeFilter",
+    );
+    const hasStart = timeRangeFilter.startTime !== undefined;
+    const hasEnd = timeRangeFilter.endTime !== undefined;
+    if (hasStart !== hasEnd) {
+      throw new TypeError(
+        "google.google_search timeRangeFilter requires both startTime and endTime",
+      );
+    }
+    if (hasStart && hasEnd) {
+      const startTime = readGoogleTimestamp(
+        timeRangeFilter.startTime,
+        "google.google_search startTime",
+      );
+      const endTime = readGoogleTimestamp(
+        timeRangeFilter.endTime,
+        "google.google_search endTime",
+      );
+      if (Date.parse(startTime) > Date.parse(endTime)) {
+        throw new TypeError(
+          "google.google_search timeRangeFilter startTime must not be after endTime",
+        );
+      }
+      normalized.timeRangeFilter = { startTime, endTime };
+    } else {
+      normalized.timeRangeFilter = {};
+    }
+  }
+
+  return normalized;
+}
+
+function toGoogleProviderTool(
+  tool: Extract<ModelRuntimeToolDefinition, { type: "provider" }>,
+): { id: string; wireTool: Record<string, unknown> } {
+  if (typeof tool.id !== "string") {
+    throw new TypeError("Google provider tool id must be a string");
+  }
+
+  switch (tool.id) {
+    case GOOGLE_CODE_EXECUTION_TOOL_ID:
+      if (tool.name !== GOOGLE_CODE_EXECUTION_TOOL_NAME) {
+        throw new TypeError(
+          "google.code_execution provider tool name must be code_execution",
+        );
+      }
+      return {
+        id: tool.id,
+        wireTool: {
+          codeExecution: readEmptyGoogleToolObject(
+            tool.args,
+            "google.code_execution args",
+          ),
+        },
+      };
+    case GOOGLE_SEARCH_TOOL_ID:
+      if (tool.name !== GOOGLE_SEARCH_TOOL_NAME) {
+        throw new TypeError(
+          "google.google_search provider tool name must be google_search",
+        );
+      }
+      return {
+        id: tool.id,
+        wireTool: { googleSearch: readGoogleSearchArguments(tool.args) },
+      };
+    default:
+      throw new TypeError(
+        tool.id.startsWith("google.")
+          ? "Unsupported Google provider tool id"
+          : "Google requests cannot contain a provider tool for another provider",
+      );
+  }
+}
+
 function toGoogleTools(
-  tools: RuntimeToolDefinition[] | undefined,
+  tools: readonly ModelRuntimeToolDefinition[] | undefined,
 ): Array<Record<string, unknown>> | undefined {
   if (!tools) {
     return undefined;
@@ -200,6 +731,7 @@ function toGoogleTools(
 
   const functionDeclarations: Array<Record<string, unknown>> = [];
   const providerEntries: Array<Record<string, unknown>> = [];
+  const providerToolIds = new Set<string>();
 
   for (const tool of tools) {
     if (tool.type === "function") {
@@ -210,16 +742,16 @@ function toGoogleTools(
       });
       continue;
     }
+    if (tool.type !== "provider") {
+      throw new TypeError("Google tool type must be function or provider");
+    }
 
-    if (!tool.id.startsWith("google.")) {
-      continue;
+    const providerTool = toGoogleProviderTool(tool);
+    if (providerToolIds.has(providerTool.id)) {
+      throw new TypeError("Google provider tool id was duplicated");
     }
-    const providerType = tool.id.slice("google.".length);
-    if (providerType.length === 0) {
-      continue;
-    }
-    const camelKey = providerType.replace(/_([a-z])/g, (_, ch) => ch.toUpperCase());
-    providerEntries.push({ [camelKey]: tool.args ?? {} });
+    providerToolIds.add(providerTool.id);
+    providerEntries.push(providerTool.wireTool);
   }
 
   const result: Array<Record<string, unknown>> = [];
@@ -287,13 +819,21 @@ function normalizeGoogleToolChoice(toolChoice: unknown):
 }
 
 function resolveGoogleThinkingConfig(
-  option: ProviderReasoningOption | undefined,
+  option: RuntimeReasoningOption | undefined,
 ): Record<string, unknown> | undefined {
+  if (
+    option?.budgetTokens !== undefined &&
+    (!Number.isSafeInteger(option.budgetTokens) || option.budgetTokens < 0)
+  ) {
+    throw new TypeError(
+      "Google reasoning budgetTokens must be a non-negative safe integer",
+    );
+  }
   if (!option || option.enabled !== true) {
     return undefined;
   }
   const config: Record<string, unknown> = { includeThoughts: true };
-  if (typeof option.budgetTokens === "number") {
+  if (option.budgetTokens !== undefined) {
     config.thinkingBudget = option.budgetTokens;
     return config;
   }
@@ -367,6 +907,8 @@ export function buildGoogleGenerateContentRequest(
 
   const { systemInstruction, contents } = toGoogleContents(options.prompt);
   const generationConfig = buildGoogleGenerationConfig(options);
+  const tools = toGoogleTools(options.tools);
+  const toolConfig = normalizeGoogleToolChoice(options.toolChoice);
   const labels = options.requestLabels && Object.keys(options.requestLabels).length > 0
     ? options.requestLabels
     : typeof options.userId === "string" && options.userId.length > 0
@@ -375,10 +917,8 @@ export function buildGoogleGenerateContentRequest(
   const body: GoogleCompatibleRequest = {
     contents,
     ...(systemInstruction ? { systemInstruction } : {}),
-    ...(toGoogleTools(options.tools) ? { tools: toGoogleTools(options.tools) } : {}),
-    ...(normalizeGoogleToolChoice(options.toolChoice)
-      ? { toolConfig: normalizeGoogleToolChoice(options.toolChoice) }
-      : {}),
+    ...(tools ? { tools } : {}),
+    ...(toolConfig ? { toolConfig } : {}),
     ...(generationConfig ? { generationConfig } : {}),
     ...(labels ? { labels } : {}),
     ...(typeof options.googleCachedContent === "string" && options.googleCachedContent.length > 0

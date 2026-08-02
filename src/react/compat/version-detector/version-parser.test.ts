@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isReact17, isReact18, isReact19, parseVersion } from "./version-parser.ts";
+import {
+  isReact17,
+  isReact18,
+  isReact19,
+  parseVersion,
+  resolveReactDependencyVersion,
+} from "./version-parser.ts";
 
 describe("version-parser", () => {
   describe("parseVersion", () => {
@@ -23,6 +29,48 @@ describe("version-parser", () => {
 
     it("throws on empty string", () => {
       assertThrows(() => parseVersion(""), Error);
+    });
+
+    it("rejects trailing data instead of accepting a valid prefix", () => {
+      assertThrows(() => parseVersion("19.0.0-not-semver!"), Error);
+      assertThrows(() => parseVersion("19.0.0 || 20.0.0"), Error);
+    });
+
+    it("rejects non-canonical and unsafe numeric components", () => {
+      assertThrows(() => parseVersion("019.0.0"), Error);
+      assertThrows(
+        () => parseVersion("999999999999999999999999999999.0.0"),
+        Error,
+      );
+    });
+  });
+
+  describe("resolveReactDependencyVersion", () => {
+    it("resolves exact and inclusive lower-bounded dependency specs", () => {
+      assertEquals(resolveReactDependencyVersion("19.1.0"), "19.1.0");
+      assertEquals(resolveReactDependencyVersion("^18.2.0"), "18.2.0");
+      assertEquals(resolveReactDependencyVersion("~18.3.1"), "18.3.1");
+      assertEquals(
+        resolveReactDependencyVersion(">=18.2.0 <20.0.0"),
+        "18.2.0",
+      );
+    });
+
+    it("rejects specs without one safe capability baseline", () => {
+      for (
+        const specifier of [
+          "latest",
+          "<20.0.0",
+          ">18.2.0",
+          "^18.2.0 || ^19.0.0",
+          "npm:react@19.1.0",
+        ]
+      ) {
+        assertThrows(
+          () => resolveReactDependencyVersion(specifier),
+          Error,
+        );
+      }
     });
   });
 
@@ -51,8 +99,8 @@ describe("version-parser", () => {
       assertEquals(isReact19(19, "19.0.0"), true);
     });
 
-    it("returns true for React 18 RC (pre-release of 19)", () => {
-      assertEquals(isReact19(18, "18.3.0-rc.1"), true);
+    it("does not classify a React 18 release candidate as React 19", () => {
+      assertEquals(isReact19(18, "18.3.0-rc.1"), false);
     });
 
     it("returns false for stable React 18", () => {

@@ -88,6 +88,35 @@ describe("AgentPicker — preset (back-compat)", () => {
     assertStringIncludes(html, "Lawyer Agent");
     assertStringIncludes(html, "border-[var(--input-border)]");
   });
+
+  it("represents loading rows as one disabled listbox option", async () => {
+    const dom = installDom();
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(<AgentPicker agents={[]} isLoading />);
+      });
+
+      const trigger = rootElement.querySelector("button");
+      assert(trigger, "trigger renders");
+      flushSync(() => trigger.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+      await settle();
+
+      const loading = document.querySelector<HTMLElement>('[aria-label="Loading agents"]');
+      assert(loading, "loading option renders");
+      assertEquals(loading.getAttribute("role"), "option");
+      assertEquals(loading.getAttribute("aria-disabled"), "true");
+      assertEquals(loading.getAttribute("aria-selected"), "false");
+      assertEquals(loading.querySelectorAll('[aria-hidden="true"]').length, 3);
+
+      flushSync(() => root.unmount());
+      await settle();
+    } finally {
+      dom.restore();
+    }
+  });
 });
 
 describe("AgentPicker — composability contract", () => {

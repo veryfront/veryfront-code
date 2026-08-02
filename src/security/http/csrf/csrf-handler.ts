@@ -1,8 +1,9 @@
 /**
  * CSRF Handler — validates CSRF tokens on state-changing requests.
  *
- * Reads config from `ctx.securityConfig?.csrf`. When enabled, POST/PUT/PATCH/DELETE
- * requests must include a valid CSRF token (cookie + header match).
+ * Reads config from `ctx.securityConfig?.csrf`. When enabled, every method
+ * except GET, HEAD, and OPTIONS must include a valid CSRF token (cookie +
+ * header match).
  *
  * ## Server Actions integration
  *
@@ -49,27 +50,7 @@ import type {
   HandlerResult,
 } from "#veryfront/types";
 
-const STATE_CHANGING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
-
-/** Internal /_veryfront/ directory prefixes that only ever serve static assets. */
-const CSRF_EXEMPT_PREFIXES = [
-  "/_veryfront/modules/",
-  "/_veryfront/lib/",
-  "/_veryfront/chunks/",
-];
-
-/**
- * Exact internal asset paths safe to exempt from CSRF. These are GET-only
- * static JS handlers (`exact: true` patterns). They were previously exempted by
- * the bare `/_veryfront/preview-hmr` / `/_veryfront/studio-bridge` prefixes,
- * which also matched any sibling path (e.g. `.../studio-bridge/submit`) and
- * would have left a future state-changing endpoint under that prefix
- * CSRF-unprotected. Matching the exact `.js` paths keeps the exemption tight.
- */
-const CSRF_EXEMPT_EXACT_PATHS = new Set([
-  "/_veryfront/preview-hmr.js",
-  "/_veryfront/studio-bridge.js",
-]);
+const CSRF_SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export class CsrfHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -86,19 +67,11 @@ export class CsrfHandler extends BaseHandler {
 
     const method = req.method.toUpperCase();
 
-    // Safe methods never need CSRF
-    if (!STATE_CHANGING_METHODS.has(method)) return this.continue();
+    // Unknown and extension methods fail closed. Only the explicitly safe HTTP
+    // methods bypass token validation.
+    if (CSRF_SAFE_METHODS.has(method)) return this.continue();
 
     const { pathname } = new URL(req.url);
-
-    // Only exempt internal asset/dev paths, NOT action endpoints
-    if (CSRF_EXEMPT_EXACT_PATHS.has(pathname)) return this.continue();
-    if (CSRF_EXEMPT_PREFIXES.some((p) => pathname.startsWith(p))) {
-      return this.continue();
-    }
-
-    // Internal log endpoint is safe to exempt (fire-and-forget client telemetry)
-    if (pathname === "/_veryfront/log") return this.continue();
 
     // Check exclude paths
     if (typeof csrfConfig === "object" && csrfConfig.excludePaths?.length) {
@@ -115,7 +88,11 @@ export class CsrfHandler extends BaseHandler {
 
     if (!validateCsrf(req, options)) {
       return this.respond(
-        new Response("Forbidden – invalid or missing CSRF token", { status: 403 }),
+        this.createResponseBuilder(ctx)
+          .withCORS(req, ctx.securityConfig?.cors)
+          .withSecurity(ctx.securityConfig ?? undefined, req)
+          .withCache("no-store")
+          .text("Forbidden – invalid or missing CSRF token", 403),
       );
     }
 

@@ -97,7 +97,16 @@ export {
 export { Input, type InputProps, inputVariants } from "./input.tsx";
 export { Avatar, type AvatarProps } from "./avatar.tsx";
 export { Alert, AlertAction, AlertContent, AlertIcon, type AlertProps } from "./alert.tsx";
-export { CodeBlock, type CodeBlockProps } from "./code-block.tsx";
+export {
+  CodeBlock,
+  type CodeBlockMode,
+  type CodeBlockProps,
+  CodeBlockRendererProvider,
+  type CodeBlockRendererProviderProps,
+  type CodeBlockRenderers,
+  type CodeDiagramRendererProps,
+  type CodeSyntaxRendererProps,
+} from "./code-block.tsx";
 export {
   DropdownMenu,
   DropdownMenuContent,

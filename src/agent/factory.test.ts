@@ -213,9 +213,9 @@ description: Excluded skill
       ...createSkill("selected", "Selected skill"),
       fsAdapter: {
         ...selectedAdapter,
-        async readFile(path) {
+        async readFileBytesWithinLimit(path, byteLimit) {
           selectedReads++;
-          return await selectedAdapter.readFile(path);
+          return await selectedAdapter.readFileBytesWithinLimit!(path, byteLimit);
         },
       },
     });
@@ -223,9 +223,9 @@ description: Excluded skill
       ...createSkill("excluded", "Excluded skill"),
       fsAdapter: {
         ...excludedAdapter,
-        async readFile(path) {
+        async readFileBytesWithinLimit(path, byteLimit) {
           excludedReads++;
-          return await excludedAdapter.readFile(path);
+          return await excludedAdapter.readFileBytesWithinLimit!(path, byteLimit);
         },
       },
     });
@@ -276,9 +276,9 @@ description: Excluded skill
       ...createSkill("excluded", "Excluded skill"),
       fsAdapter: {
         ...excludedAdapter,
-        async readFile(path) {
+        async readFileBytesWithinLimit(path, byteLimit) {
           excludedReads++;
-          return await excludedAdapter.readFile(path);
+          return await excludedAdapter.readFileBytesWithinLimit!(path, byteLimit);
         },
       },
     });

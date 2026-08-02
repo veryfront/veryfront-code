@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./helpers.ts";
 
 describe("security/csrf/helpers", () => {
@@ -33,6 +33,14 @@ describe("security/csrf/helpers", () => {
       assertEquals(result.setCookie.includes("Secure"), false);
     });
 
+    it("keeps Secure for __Secure- prefixed cookies", () => {
+      const result = generateCsrfToken({
+        cookieName: "__Secure-my_csrf",
+        secure: false,
+      });
+      assertEquals(result.setCookie.includes("Secure"), true);
+    });
+
     it("should use custom cookie name", () => {
       const result = generateCsrfToken({ cookieName: "my_csrf" });
       assertEquals(result.setCookie.startsWith("my_csrf="), true);
@@ -47,6 +55,21 @@ describe("security/csrf/helpers", () => {
       const a = generateCsrfToken();
       const b = generateCsrfToken();
       assertNotEquals(a.token, b.token);
+    });
+
+    it("rejects invalid cookie serialization options", () => {
+      for (
+        const options of [
+          { cookieName: "bad\r\nname" },
+          { cookieName: "" },
+          { ttlSec: 0 },
+          { ttlSec: Number.POSITIVE_INFINITY },
+          { httpOnly: "yes" as unknown as boolean },
+          { secure: "no" as unknown as boolean },
+        ]
+      ) {
+        assertThrows(() => generateCsrfToken(options));
+      }
     });
   });
 
@@ -123,6 +146,25 @@ describe("security/csrf/helpers", () => {
         },
       });
       assertEquals(validateCsrf(req), false);
+    });
+
+    it("fails closed for invalid runtime names", () => {
+      const req = new Request("http://localhost/submit", {
+        method: "POST",
+        headers: {
+          cookie: "__Host-vf_csrf=token",
+          "x-csrf-token": "token",
+        },
+      });
+
+      assertEquals(
+        validateCsrf(req, { cookieName: "bad\r\nname" }),
+        false,
+      );
+      assertEquals(
+        validateCsrf(req, { headerName: "" }),
+        false,
+      );
     });
   });
 

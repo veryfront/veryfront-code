@@ -7,6 +7,7 @@ export type { DirectoryEntry };
 
 export interface FSAdapter {
   readonly symlinkSemantics?: "none";
+  readonly projectContextSemantics?: "fixed";
   readFile(path: string): Promise<Uint8Array | string>;
   readFileBytes?(path: string): Promise<Uint8Array>;
   readonly maxWholeFileReadBytes?: number;

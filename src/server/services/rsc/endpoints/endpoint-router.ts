@@ -201,7 +201,11 @@ export async function handleRSCEndpoint(
 
     if (sub === "action") {
       if (req.method !== "POST") {
-        return new Response("Method Not Allowed", { status: 405 });
+        return withDependencyPinningVary(
+          new Response("Method Not Allowed", {
+            status: HttpStatus.METHOD_NOT_ALLOWED,
+          }),
+        );
       }
 
       metrics.recordRSC("action");
@@ -731,6 +735,7 @@ function handleStreamEndpoint(searchParams: URLSearchParams, request: Request): 
 
 function withDependencyPinningVary(response: Response): Response {
   appendVaryHeader(response.headers, RSC_DEPENDENCY_PINNING_HEADER);
+  response.headers.set("cache-control", "no-store");
   return response;
 }
 

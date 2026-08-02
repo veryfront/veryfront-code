@@ -121,7 +121,14 @@ function findAgent(
 
 function AgentPickerLoadingRows(): React.ReactElement {
   return (
-    <output aria-label="Loading agents" className="block px-1 py-1">
+    <div
+      role="option"
+      aria-disabled="true"
+      aria-selected="false"
+      aria-live="polite"
+      aria-label="Loading agents"
+      className="block px-1 py-1"
+    >
       <span className="sr-only">Loading agents</span>
       {LOADING_ROW_WIDTHS.map((widthClass, index) => (
         <div
@@ -138,26 +145,11 @@ function AgentPickerLoadingRows(): React.ReactElement {
           />
         </div>
       ))}
-    </output>
+    </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// AgentPicker — compound, render-or-compose (mirrors `ToolCall`).
-//
-// `<AgentPicker agents={...} value={...} onValueChange={...} />` renders the
-// default data-driven combobox (pill/input trigger + searchable agent list).
-// Pass children to recompose the menu from `AgentPicker.Trigger`,
-// `AgentPicker.Content`, `AgentPicker.List`, `AgentPicker.Item` — each reads
-// `useAgentPicker()` for the shared selection + open state. Every sub-part
-// takes `className` merged LAST via `cn`. The preset keeps working unchanged
-// when no children are passed.
-//
-// The private `Popover` / `Command` primitives are composed, not modified: the
-// composed tree renders a real `<Popover>` (from Root) whose context flows to
-// `Trigger` (a `PopoverTrigger`) and `Content` (a `PopoverContent` + `Command`),
-// and `Command` context flows from `Content` down to `List` / `Item`.
-// ---------------------------------------------------------------------------
+// Compound render-or-compose implementation shared by the preset and addressable parts.
 
 /** Props for `AgentPicker.Trigger` — the pill/input combobox button. */
 export interface AgentPickerTriggerProps {

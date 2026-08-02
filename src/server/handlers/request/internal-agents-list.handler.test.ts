@@ -7,9 +7,20 @@ import { InternalAgentsListHandler } from "./internal-agents-list.handler.ts";
 import { runWithProjectEnv } from "../../project-env/storage.ts";
 import {
   createAgentWithConfig,
-  createControlPlaneSignature,
+  createControlPlaneSignature as createTestControlPlaneSignature,
   createCtx,
 } from "./internal-agent-run.test-helpers.ts";
+
+function createControlPlaneSignature(
+  body: string,
+  overrides: Parameters<typeof createTestControlPlaneSignature>[1] = {},
+): ReturnType<typeof createTestControlPlaneSignature> {
+  return createTestControlPlaneSignature(body, {
+    requestMethod: "POST",
+    requestPath: "/api/control-plane/agents/list",
+    ...overrides,
+  });
+}
 
 describe("server/handlers/request/internal-agents-list.handler", () => {
   it("returns discovered agents for a valid signed request", async () => {

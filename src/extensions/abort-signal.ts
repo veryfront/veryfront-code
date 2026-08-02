@@ -1,8 +1,8 @@
 /**
- * Compose cancellation sources without depending on `AbortSignal.any`, which
- * is absent from early Node 18 releases still covered by the npm engine range.
- * The first source to abort owns the exact propagated reason, and listeners on
- * every remaining source are detached immediately.
+ * Compose cancellation sources without depending on a mutable host
+ * `AbortSignal.any` implementation. The first source to abort owns the exact
+ * propagated reason, and listeners on every remaining source are detached
+ * immediately.
  */
 export function composeAbortSignals(
   signals: readonly AbortSignal[],

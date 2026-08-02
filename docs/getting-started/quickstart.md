@@ -6,7 +6,7 @@ order: -1
 
 ## Prerequisites
 
-- Node.js 18.18 or later.
+- Node.js 22.3 or later.
 
 The examples use `veryfront` commands. If you have not installed the CLI
 globally, run them with `npx veryfront ...`.

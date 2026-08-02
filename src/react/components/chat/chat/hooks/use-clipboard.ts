@@ -9,43 +9,35 @@
  */
 
 import * as React from "react";
+import { useClipboardFeedback } from "../../../clipboard.ts";
 
 /** Result of {@link useClipboard}. */
 export interface UseClipboardResult {
   /** True for `timeout` ms after a successful copy. */
   copied: boolean;
+  /** True for `timeout` ms after every available copy mechanism fails. */
+  failed: boolean;
+  /** Text associated with the settled feedback state. */
+  text: string | undefined;
   /** Copy `text` to the clipboard (with a `document.execCommand` fallback). */
-  copy: (text: string) => Promise<void>;
+  copy: (text: string, ownerDocument?: Document) => Promise<void>;
 }
 
 /** Copy-to-clipboard with a transient `copied` flag. */
 export function useClipboard(timeout = 2000): UseClipboardResult {
-  const [copied, setCopied] = React.useState(false);
-  const timerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const { outcome, copy: copyWithFeedback } = useClipboardFeedback(timeout);
 
-  React.useEffect(() => {
-    return () => {
-      clearTimeout(timerRef.current);
-    };
-  }, []);
+  const copy = React.useCallback(async (
+    text: string,
+    ownerDocument?: Document,
+  ): Promise<void> => {
+    await copyWithFeedback(text, ownerDocument);
+  }, [copyWithFeedback]);
 
-  const copy = React.useCallback(async (text: string): Promise<void> => {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (_) {
-      /* expected: clipboard API unavailable in older/insecure contexts */
-      const textarea = document.createElement("textarea");
-      textarea.value = text;
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    } finally {
-      setCopied(true);
-      clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(() => setCopied(false), timeout);
-    }
-  }, [timeout]);
-
-  return { copied, copy };
+  return {
+    copied: outcome?.status === "copied",
+    failed: outcome?.status === "failed",
+    text: outcome?.text,
+    copy,
+  };
 }

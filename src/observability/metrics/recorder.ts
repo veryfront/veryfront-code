@@ -172,6 +172,59 @@ export class MetricsRecorder {
     safelyRecord(() => this.instruments.bundleCounter?.add(1, attributes));
   }
 
+  recordDependencyArtifactBuild(
+    input: {
+      event: "claim" | "success" | "failure";
+      durationMs?: number;
+      totalBytes?: number;
+      assetCount?: number;
+      remainingExternalImportCount?: number;
+      failureCode?: string;
+    },
+  ): void {
+    const attributes = sanitizeTelemetryAttributes({
+      event: input.event,
+      ...(input.failureCode ? { failure_code: input.failureCode } : {}),
+    });
+    safelyRecord(() => this.instruments.dependencyArtifactBuildCounter?.add(1, attributes));
+    const durationMs = input.durationMs;
+    if (durationMs !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildDuration?.record(
+          nonNegativeFiniteMeasure(durationMs),
+          attributes,
+        )
+      );
+    }
+    const totalBytes = input.totalBytes;
+    if (totalBytes !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildBytes?.record(
+          nonNegativeSafeInteger(totalBytes),
+          attributes,
+        )
+      );
+    }
+    const assetCount = input.assetCount;
+    if (assetCount !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildAssetCount?.record(
+          nonNegativeSafeInteger(assetCount),
+          attributes,
+        )
+      );
+    }
+    const remainingExternalImportCount = input.remainingExternalImportCount;
+    if (remainingExternalImportCount !== undefined) {
+      safelyRecord(() =>
+        this.instruments.dependencyArtifactBuildExternalImportCount?.record(
+          nonNegativeSafeInteger(remainingExternalImportCount),
+          attributes,
+        )
+      );
+    }
+  }
+
   recordDataFetch(
     durationMs: number,
     attributes?: Record<string, string>,

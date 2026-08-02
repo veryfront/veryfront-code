@@ -23,7 +23,6 @@ export function isTailwindV4File(
         baseDir: projectDir,
         adapter,
         context: "build",
-        throwOnError: false,
       });
 
       try {

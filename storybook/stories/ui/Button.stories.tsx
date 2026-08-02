@@ -11,7 +11,6 @@ import {
 import { Button, LoadingButton } from "../../../src/react/components/ui/index.ts";
 import {
   ArrowUpIcon,
-  PlusIcon,
   ArrowRightIcon,
 } from "../../../src/react/components/ui/icons/index.ts";
 

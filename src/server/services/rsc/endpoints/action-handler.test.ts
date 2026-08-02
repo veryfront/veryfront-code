@@ -3,10 +3,9 @@ import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/te
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { delay } from "#std/async.ts";
 import {
-  type ActionGuardLoader,
   type ActionModuleLoader,
   handleActionRequest,
-  handleActionRequestWithGuardLoader,
+  handleActionRequestWithAuthorizationProvider,
 } from "./action-handler.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
@@ -17,6 +16,7 @@ import {
 import { DEPENDENCY_PINNING_ENV_FLAG } from "#veryfront/release-assets/constants.ts";
 import { deleteEnv, getHostEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { RSC_DEPENDENCY_PINNING_HEADER } from "#veryfront/rendering/rsc/constants.ts";
+import type { RscActionAuthorizationProvider } from "#veryfront/extensions/auth/index.ts";
 
 function createMockAdapter(
   overrides: {
@@ -65,6 +65,8 @@ function createActionRequest(id = "my-action"): Request {
   });
 }
 
+const allowActionAuthorization = Object.freeze({ authorize: () => true });
+
 describe(
   "server/services/rsc/endpoints/action-handler",
   () => {
@@ -74,39 +76,9 @@ describe(
       await delay(50);
     });
     describe("handleActionRequest", () => {
-      it("allows a missing optional action guard module", async () => {
-        const missingGuardError = Object.assign(
-          new TypeError('Module not found "file:///project/server-action-guard.ts".'),
-          { code: "ERR_MODULE_NOT_FOUND" },
-        );
-        const response = await handleActionRequestWithGuardLoader(
-          {
-            req: createActionRequest(),
-            projectDir: "/tmp/test",
-            adapter: createMockAdapter(),
-          },
-          () => Promise.reject(missingGuardError),
-        );
-
-        assertEquals(response.status, 404);
-      });
-
-      it("allows an action guard module with no guard export", async () => {
-        const response = await handleActionRequestWithGuardLoader(
-          {
-            req: createActionRequest(),
-            projectDir: "/tmp/test",
-            adapter: createMockAdapter(),
-          },
-          () => Promise.resolve({}),
-        );
-
-        assertEquals(response.status, 404);
-      });
-
-      it("returns 403 without resolving the action when the guard rejects it", async () => {
+      it("fails closed when the action authorization provider is missing", async () => {
         let actionStatCalls = 0;
-        const response = await handleActionRequestWithGuardLoader(
+        const response = await handleActionRequestWithAuthorizationProvider(
           {
             req: createActionRequest(),
             projectDir: "/tmp/test",
@@ -117,10 +89,53 @@ describe(
               },
             }),
           },
-          () =>
-            Promise.resolve({
-              rscActionGuard: () => false,
+          undefined,
+        );
+
+        assertEquals(response.status, 503);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(await response.json(), {
+          ok: false,
+          error: "action authorization unavailable",
+        });
+        assertEquals(actionStatCalls, 0);
+      });
+
+      it("fails closed when the action authorization provider is malformed", async () => {
+        let actionStatCalls = 0;
+        const response = await handleActionRequestWithAuthorizationProvider(
+          {
+            req: createActionRequest(),
+            projectDir: "/tmp/test",
+            adapter: createMockAdapter({
+              stat: () => {
+                actionStatCalls++;
+                return Promise.reject(new Error("not found"));
+              },
             }),
+          },
+          {},
+        );
+
+        assertEquals(response.status, 503);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(actionStatCalls, 0);
+      });
+
+      it("returns 403 without resolving the action when authorization rejects it", async () => {
+        let actionStatCalls = 0;
+        const response = await handleActionRequestWithAuthorizationProvider(
+          {
+            req: createActionRequest(),
+            projectDir: "/tmp/test",
+            adapter: createMockAdapter({
+              stat: () => {
+                actionStatCalls++;
+                return Promise.reject(new Error("not found"));
+              },
+            }),
+          },
+          { authorize: () => false },
         );
 
         assertEquals(response.status, 403);
@@ -128,7 +143,7 @@ describe(
         assertEquals(actionStatCalls, 0);
       });
 
-      it("leaves application pins unchanged for the action guard when pinning is off", async () => {
+      it("leaves application pins unchanged for authorization when pinning is off", async () => {
         let observedPins: string[] = [];
         const req = new Request(
           "http://localhost/_veryfront/rsc/action?pins=user-a&pins=user-b",
@@ -138,19 +153,18 @@ describe(
             body: JSON.stringify({ id: "my-action", args: [] }),
           },
         );
-        const response = await handleActionRequestWithGuardLoader(
+        const response = await handleActionRequestWithAuthorizationProvider(
           {
             req,
             projectDir: "/tmp/test",
             adapter: createMockAdapter(),
           },
-          () =>
-            Promise.resolve({
-              rscActionGuard: (guardRequest) => {
-                observedPins = new URL(guardRequest.url).searchParams.getAll("pins");
-                return false;
-              },
-            }),
+          {
+            authorize: (authorizationRequest) => {
+              observedPins = new URL(authorizationRequest.url).searchParams.getAll("pins");
+              return false;
+            },
+          } satisfies RscActionAuthorizationProvider,
         );
 
         assertEquals(response.status, 403);
@@ -158,12 +172,9 @@ describe(
         assertEquals(response.headers.get("vary"), RSC_DEPENDENCY_PINNING_HEADER);
       });
 
-      it("returns 500 without resolving the action when the guard module fails to load", async () => {
+      it("returns 503 without resolving the action when authorization rejects", async () => {
         let actionStatCalls = 0;
-        const actionGuardLoader: ActionGuardLoader = () =>
-          Promise.reject(new Error("guard initialization failed"));
-
-        const response = await handleActionRequestWithGuardLoader(
+        const response = await handleActionRequestWithAuthorizationProvider(
           {
             req: createActionRequest(),
             projectDir: "/tmp/test",
@@ -174,24 +185,28 @@ describe(
               },
             }),
           },
-          actionGuardLoader,
+          { authorize: () => Promise.reject(new Error("authorization unavailable")) },
         );
 
-        assertEquals(response.status, 500);
-        assertEquals(await response.json(), { ok: false, error: "action guard failed" });
+        assertEquals(response.status, 503);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(await response.json(), {
+          ok: false,
+          error: "action authorization unavailable",
+        });
         assertEquals(actionStatCalls, 0);
       });
 
-      it("returns 500 when the guard module has a missing dependency", async () => {
+      it("returns 503 when authorization reports an unavailable dependency", async () => {
         let actionStatCalls = 0;
         const dependencyError = Object.assign(
           new TypeError(
-            'Cannot find module "/project/missing-dependency.ts" imported from "/project/server-action-guard.ts"',
+            'Cannot find module "/project/missing-dependency.ts" imported from "/extension/rsc-action-authorization-provider.ts"',
           ),
           { code: "ERR_MODULE_NOT_FOUND" },
         );
 
-        const response = await handleActionRequestWithGuardLoader(
+        const response = await handleActionRequestWithAuthorizationProvider(
           {
             req: createActionRequest(),
             projectDir: "/tmp/test",
@@ -202,17 +217,21 @@ describe(
               },
             }),
           },
-          () => Promise.reject(dependencyError),
+          { authorize: () => Promise.reject(dependencyError) },
         );
 
-        assertEquals(response.status, 500);
-        assertEquals(await response.json(), { ok: false, error: "action guard failed" });
+        assertEquals(response.status, 503);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(await response.json(), {
+          ok: false,
+          error: "action authorization unavailable",
+        });
         assertEquals(actionStatCalls, 0);
       });
 
-      it("returns 500 without resolving the action when the guard throws", async () => {
+      it("returns 503 without resolving the action when authorization throws", async () => {
         let actionStatCalls = 0;
-        const response = await handleActionRequestWithGuardLoader(
+        const response = await handleActionRequestWithAuthorizationProvider(
           {
             req: createActionRequest(),
             projectDir: "/tmp/test",
@@ -223,16 +242,19 @@ describe(
               },
             }),
           },
-          () =>
-            Promise.resolve({
-              rscActionGuard: () => {
-                throw new Error("guard runtime failed");
-              },
-            }),
+          {
+            authorize: () => {
+              throw new Error("authorization runtime failed");
+            },
+          },
         );
 
-        assertEquals(response.status, 500);
-        assertEquals(await response.json(), { ok: false, error: "action guard failed" });
+        assertEquals(response.status, 503);
+        assertEquals(response.headers.get("cache-control"), "no-store");
+        assertEquals(await response.json(), {
+          ok: false,
+          error: "action authorization unavailable",
+        });
         assertEquals(actionStatCalls, 0);
       });
 
@@ -254,7 +276,7 @@ describe(
         assertStringIncludes(JSON.stringify(body), "missing id");
       });
 
-      it("returns 400 when body is invalid JSON (falls back to empty object)", async () => {
+      it("returns 400 when the body is invalid JSON", async () => {
         const req = new Request("http://localhost/_veryfront/rsc/action", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -332,11 +354,14 @@ describe(
           body: JSON.stringify({ id: "my-action", args: [] }),
         });
 
-        const response = await handleActionRequest({
-          req,
-          projectDir: "/tmp/test",
-          adapter,
-        });
+        const response = await handleActionRequestWithAuthorizationProvider(
+          {
+            req,
+            projectDir: "/tmp/test",
+            adapter,
+          },
+          allowActionAuthorization,
+        );
 
         assertEquals(response.status, 404);
       });
@@ -348,11 +373,14 @@ describe(
 
         await assertRejects(
           () =>
-            handleActionRequest({
-              req: createActionRequest(),
-              projectDir: "/tmp/test",
-              adapter,
-            }),
+            handleActionRequestWithAuthorizationProvider(
+              {
+                req: createActionRequest(),
+                projectDir: "/tmp/test",
+                adapter,
+              },
+              allowActionAuthorization,
+            ),
           Error,
           "action storage unavailable",
         );
@@ -369,11 +397,14 @@ describe(
           body: JSON.stringify({ id: "my-action", args: [] }),
         });
 
-        const response = await handleActionRequest({
-          req,
-          projectDir: "/tmp/test",
-          adapter,
-        });
+        const response = await handleActionRequestWithAuthorizationProvider(
+          {
+            req,
+            projectDir: "/tmp/test",
+            adapter,
+          },
+          allowActionAuthorization,
+        );
 
         assertEquals(response.status, 404);
       });
@@ -390,7 +421,7 @@ describe(
               ? Promise.resolve(
                 "export default async function add(a: number, b: number) { return a + b; }",
               )
-              : Promise.reject(new Error("not found")),
+              : Promise.reject(new Deno.errors.NotFound(`File not found: ${path}`)),
         });
         const req = new Request("http://localhost/_veryfront/rsc/action", {
           method: "POST",
@@ -398,15 +429,18 @@ describe(
           body: JSON.stringify({ id: "add", args: [2, 3] }),
         });
 
-        const response = await handleActionRequest({
-          req,
-          projectDir: "/virtual/project",
-          projectId: "virtual-project",
-          contentSourceId: "preview-main",
-          adapter,
-          config: { directories: { app: "src/app" } },
-          mode: "development",
-        });
+        const response = await handleActionRequestWithAuthorizationProvider(
+          {
+            req,
+            projectDir: "/virtual/project",
+            projectId: "virtual-project",
+            contentSourceId: "preview-main",
+            adapter,
+            config: { directories: { app: "src/app" } },
+            mode: "development",
+          },
+          allowActionAuthorization,
+        );
 
         assertEquals(response.status, 200);
         assertEquals(await response.json(), { ok: true, result: 5 });
@@ -441,7 +475,10 @@ describe(
                 mtime: null,
               })
               : Promise.reject(new Deno.errors.NotFound("not found")),
-          readFile: () => Promise.resolve("export default async function action() {}"),
+          readFile: (path) =>
+            path === actionPath
+              ? Promise.resolve("export default async function action() {}")
+              : Promise.reject(new Deno.errors.NotFound(`File not found: ${path}`)),
         });
 
         try {
@@ -473,7 +510,7 @@ describe(
           const snapshotB = await getDependencyPinningSnapshot(projectDir);
           assertEquals(snapshotA.cacheKey === snapshotB.cacheKey, false);
 
-          const historical = await handleActionRequestWithGuardLoader(
+          const historical = await handleActionRequestWithAuthorizationProvider(
             {
               req: new Request(
                 "https://preview-a.example/_veryfront/rsc/action?pins=application-value",
@@ -489,10 +526,10 @@ describe(
               projectDir,
               adapter,
             },
-            () => Promise.resolve({}),
+            allowActionAuthorization,
             moduleLoader,
           );
-          const current = await handleActionRequestWithGuardLoader(
+          const current = await handleActionRequestWithAuthorizationProvider(
             {
               req: new Request("https://preview-b.example/_veryfront/rsc/action", {
                 method: "POST",
@@ -505,10 +542,10 @@ describe(
               projectDir,
               adapter,
             },
-            () => Promise.resolve({}),
+            allowActionAuthorization,
             moduleLoader,
           );
-          const configured = await handleActionRequestWithGuardLoader(
+          const configured = await handleActionRequestWithAuthorizationProvider(
             {
               req: new Request(
                 "https://preview-a.example/_veryfront/rsc/action?pins=application-value",
@@ -525,7 +562,7 @@ describe(
               adapter,
               config: { react: { version: "^19.1.1" } },
             },
-            () => Promise.resolve({}),
+            allowActionAuthorization,
             moduleLoader,
           );
 
@@ -570,7 +607,7 @@ describe(
 
       it("rejects malformed and unavailable action snapshot tokens without caching", async () => {
         for (const token of ["", "off", "on:unknown", "on:first, on:second"]) {
-          const response = await handleActionRequestWithGuardLoader(
+          const response = await handleActionRequestWithAuthorizationProvider(
             {
               req: new Request(
                 "http://localhost/_veryfront/rsc/action?pins=application-value",
@@ -586,7 +623,7 @@ describe(
               projectDir: "/tmp/test",
               adapter: createMockAdapter(),
             },
-            () => Promise.resolve({}),
+            allowActionAuthorization,
           );
 
           assertEquals(response.status, 409);
@@ -609,7 +646,7 @@ describe(
             JSON.stringify({ dependencies: { react: "18.3.1" } }),
           );
 
-          const response = await handleActionRequestWithGuardLoader(
+          const response = await handleActionRequestWithAuthorizationProvider(
             {
               req: new Request(
                 "http://localhost/_veryfront/rsc/action?pins=application-value",
@@ -623,7 +660,7 @@ describe(
               isLocalProject: true,
               adapter: createMockAdapter(),
             },
-            () => Promise.resolve({}),
+            allowActionAuthorization,
           );
 
           assertEquals(response.status, 409);

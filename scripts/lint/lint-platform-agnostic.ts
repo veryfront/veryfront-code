@@ -140,7 +140,7 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/transforms/mdx/esm-module-loader/module-fetcher/render-sessions.ts": ["node: import"],
 
   // --- node:buffer (File / Buffer) ---
-  // File is global only on Node 20+; import from node:buffer for Node 18 compat
+  // Keep server-only parsing independent of mutable global constructors.
   "src/embedding/upload-handler.ts": ["node: import"],
   "src/security/input-validation/parsers.ts": ["node: import"],
   // Buffer used for constant-time comparison in auth handler

@@ -5,7 +5,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * Tests the allowed modules whitelist and module path resolution logic.
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertStrictEquals,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { LIB_MODULE_PATHS, LibModulesHandler } from "./lib-modules.handler.ts";
 import {
@@ -25,6 +30,7 @@ const MODULE_PATH = `${PROJECT_DIR}/node_modules/veryfront/esm/src/chat/index.js
 const INSTALLED_PACKAGE_PATH = `${PROJECT_DIR}/node_modules/veryfront/package.json`;
 const PROJECT_PACKAGE_PATH = `${PROJECT_DIR}/package.json`;
 const MODULE_SOURCE = "export const chat = true;";
+const WORKFLOW_MODULE_SOURCE = "export const useWorkflow = true;";
 const originalPinningFlag = getHostEnv(DEPENDENCY_PINNING_ENV_FLAG);
 
 afterEach(() => {
@@ -90,26 +96,68 @@ function sourceFor(
   });
 }
 
-async function requestChat(
+async function requestModule(
+  module: string,
   ctx: HandlerContext,
   query = "",
   method = "GET",
+  headers?: HeadersInit,
 ): Promise<Response> {
   const result = await createHandler().handle(
-    new Request(`http://localhost/_veryfront/lib/chat.js${query}`, { method }),
+    new Request(`http://localhost/_veryfront/lib/${module}${query}`, { method, headers }),
     ctx,
   );
   assertExists(result.response);
   return result.response;
 }
 
-function getPattern(handler: LibModulesHandler, method: string): RegExp {
+function requestChat(
+  ctx: HandlerContext,
+  query = "",
+  method = "GET",
+  headers?: HeadersInit,
+): Promise<Response> {
+  return requestModule("chat.js", ctx, query, method, headers);
+}
+
+async function createPinnedFixture(adapter = createAdapter()): Promise<{
+  adapter: MockRuntimeAdapter;
+  ctx: HandlerContext;
+  query: string;
+}> {
+  setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+  const snapshot = await getDependencyPinningSnapshot(sourceFor(adapter));
+  return {
+    adapter,
+    ctx: createContext(adapter, {
+      isLocalProject: false,
+      projectId: "project-id",
+      releaseId: "release-a",
+    }),
+    query: `?pins=${encodeURIComponent(snapshot.cacheKey)}`,
+  };
+}
+
+function configThatThrowsDuringSnapshotResolution(failure: unknown): VeryfrontConfig {
+  const config = {
+    client: { moduleResolution: "self-hosted" },
+  } as VeryfrontConfig;
+  Object.defineProperty(config, "react", {
+    enumerable: true,
+    get() {
+      throw failure;
+    },
+  });
+  return config;
+}
+
+function getPattern(handler: LibModulesHandler): RegExp {
   const patterns = handler.metadata.patterns;
   if (!patterns?.length) throw new Error("No patterns defined");
 
-  const pattern = patterns.find((p) => p.method === method)?.pattern;
+  const pattern = patterns[0]?.pattern;
   if (!(pattern instanceof RegExp)) {
-    throw new Error(`Pattern for method ${method} not found or not a RegExp`);
+    throw new Error("Handler pattern not found or not a RegExp");
   }
 
   return pattern;
@@ -128,14 +176,15 @@ describe("LibModulesHandler", () => {
       assertEquals(typeof handler.metadata.priority, "number");
     });
 
-    it("should have two patterns (GET and HEAD)", () => {
+    it("owns the namespace for every method", () => {
       const handler = createHandler();
       assertExists(handler.metadata.patterns);
-      assertEquals(handler.metadata.patterns?.length, 2);
+      assertEquals(handler.metadata.patterns?.length, 1);
+      assertEquals(handler.metadata.patterns?.[0]?.method, undefined);
     });
 
     it("should match GET requests to /_veryfront/lib/", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
       assertEquals(pattern.test("/_veryfront/lib/components/chat.js"), true);
@@ -143,12 +192,12 @@ describe("LibModulesHandler", () => {
     });
 
     it("should match HEAD requests to /_veryfront/lib/", () => {
-      const pattern = getPattern(createHandler(), "HEAD");
+      const pattern = getPattern(createHandler());
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
     });
 
     it("should not match other paths", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/api/users"), false);
       assertEquals(pattern.test("/veryfront/lib/chat/react.js"), false);
@@ -163,18 +212,35 @@ describe("LibModulesHandler", () => {
       assertEquals(LIB_MODULE_PATHS["mdx.js"], "esm/src/mdx/index.js");
       assertEquals(LIB_MODULE_PATHS["workflow.js"], "esm/src/workflow/react/index.js");
     });
+
+    // The package builds and exports the React workflow entry from
+    // src/workflow/react/index.ts, so the published file is
+    // esm/src/workflow/react/index.js. Serving it from any other path 404s the
+    // `veryfront/workflow` import that src/html/utils.ts maps to this route.
+    it("should serve workflow.js from the published workflow/react build output", async () => {
+      const adapter = createAdapter();
+      adapter.fs.files.set(
+        `${PROJECT_DIR}/node_modules/veryfront/esm/src/workflow/react/index.js`,
+        WORKFLOW_MODULE_SOURCE,
+      );
+
+      const response = await requestModule("workflow.js", createContext(adapter));
+
+      assertEquals(response.status, 200);
+      assertEquals(await response.text(), WORKFLOW_MODULE_SOURCE);
+    });
   });
 
   describe("URL pattern matching", () => {
     it("should match lib module path prefix", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/_veryfront/lib/"), true);
       assertEquals(pattern.test("/_veryfront/lib/anything"), true);
     });
 
     it("should not match paths without /_veryfront/lib/ prefix", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/veryfront/lib/agent/react.js"), false);
       assertEquals(pattern.test("/_veryfront/agent/react.js"), false);
@@ -182,7 +248,7 @@ describe("LibModulesHandler", () => {
     });
 
     it("should be case sensitive", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
       assertEquals(pattern.test("/_VERYFRONT/lib/agent/react.js"), false);
@@ -205,6 +271,20 @@ describe("LibModulesHandler", () => {
       const handler = createHandler();
       assertExists(handler.metadata);
       assertExists(handler.handle);
+    });
+
+    it("rejects unsupported methods without falling through", async () => {
+      const result = await createHandler().handle(
+        new Request("http://localhost/_veryfront/lib/chat.js", { method: "POST" }),
+        createContext(createAdapter()),
+      );
+
+      assertEquals(result.continue, false);
+      assertExists(result.response);
+      assertEquals(result.response.status, 405);
+      assertEquals(result.response.headers.get("allow"), "GET, HEAD");
+      assertEquals(result.response.headers.get("cache-control"), "no-store");
+      assertEquals(await result.response.text(), "Method not allowed");
     });
   });
 
@@ -350,7 +430,186 @@ describe("LibModulesHandler", () => {
 
       const head = await requestChat(ctx, "", "HEAD");
       assertEquals(head.status, 409);
-      assertEquals(await head.text(), "");
+      assertEquals(head.body, null);
+    });
+
+    it("uses the canonical conflict response for malformed pin requests", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const origin = "https://studio.example.com";
+      const ctx = createContext(createAdapter(), {
+        isLocalProject: false,
+        projectId: "project-id",
+        releaseId: "release-a",
+        securityConfig: { cors: { origin } },
+      });
+
+      const response = await requestChat(ctx, "?pins=malformed", "GET", { origin });
+
+      assertEquals(response.status, 409);
+      assertEquals(await response.text(), "Unknown dependency snapshot");
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(
+        response.headers.get("vary")?.toLowerCase().includes("x-veryfront-dependency-pins"),
+        true,
+      );
+      assertEquals(response.headers.get("access-control-allow-origin"), origin);
+      assertEquals(response.headers.get("x-content-type-options"), "nosniff");
+    });
+
+    it("uses the canonical bodyless conflict response for HEAD", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const response = await requestChat(
+        createContext(createAdapter(), {
+          isLocalProject: false,
+          projectId: "project-id",
+          releaseId: "release-a",
+        }),
+        "",
+        "HEAD",
+      );
+
+      assertEquals(response.status, 409);
+      assertEquals(response.body, null);
+      assertEquals(response.headers.get("cache-control"), "no-store");
+      assertEquals(
+        response.headers.get("vary")?.toLowerCase().includes("x-veryfront-dependency-pins"),
+        true,
+      );
+    });
+
+    for (
+      const [label, installedMetadata] of [
+        ["missing", undefined],
+        ["malformed", "{"],
+      ] as const
+    ) {
+      it(`returns a conflict when installed package metadata is ${label}`, async () => {
+        const adapter = createAdapter();
+        if (installedMetadata === undefined) {
+          adapter.fs.files.delete(INSTALLED_PACKAGE_PATH);
+        } else {
+          adapter.fs.files.set(INSTALLED_PACKAGE_PATH, installedMetadata);
+        }
+        const { ctx, query } = await createPinnedFixture(adapter);
+
+        const response = await requestChat(ctx, query);
+
+        assertEquals(response.status, 409);
+        assertEquals(await response.text(), "Unknown dependency snapshot");
+        assertEquals(response.headers.get("cache-control"), "no-store");
+      });
+    }
+
+    for (
+      const [label, failure] of [
+        [
+          "an EACCES failure",
+          Object.assign(new Error("snapshot access denied"), { code: "EACCES" }),
+        ],
+        ["an EIO failure", Object.assign(new Error("snapshot I/O failure"), { code: "EIO" })],
+        ["an arbitrary failure", new Error("snapshot resolution failed")],
+        ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+      ] as const
+    ) {
+      it(`propagates ${label} from snapshot resolution unchanged`, async () => {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+        const adapter = createAdapter();
+        const ctx = createContext(adapter, {
+          isLocalProject: false,
+          projectId: "project-id",
+          releaseId: "release-a",
+          config: configThatThrowsDuringSnapshotResolution(failure),
+        });
+
+        const actual = await assertRejects(() =>
+          createHandler().handle(
+            new Request("http://localhost/_veryfront/lib/chat.js"),
+            ctx,
+          )
+        );
+
+        assertStrictEquals(actual, failure);
+      });
+    }
+
+    it("propagates a hostile snapshot-resolution failure unchanged", async () => {
+      const failure = new Proxy({}, {
+        get() {
+          throw new Error("snapshot failure must not be inspected");
+        },
+      });
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "1");
+      const adapter = createAdapter();
+      const ctx = createContext(adapter, {
+        isLocalProject: false,
+        projectId: "project-id",
+        releaseId: "release-a",
+        config: configThatThrowsDuringSnapshotResolution(failure),
+      });
+
+      let actual: unknown;
+      try {
+        await createHandler().handle(
+          new Request("http://localhost/_veryfront/lib/chat.js"),
+          ctx,
+        );
+      } catch (error) {
+        actual = error;
+      }
+
+      assertEquals(Object.is(actual, failure), true);
+    });
+
+    for (
+      const [label, failure] of [
+        [
+          "an EACCES failure",
+          Object.assign(new Error("metadata access denied"), { code: "EACCES" }),
+        ],
+        ["an EIO failure", Object.assign(new Error("metadata I/O failure"), { code: "EIO" })],
+        ["an arbitrary failure", new Error("metadata read failed")],
+        ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+      ] as const
+    ) {
+      it(`propagates ${label} from installed metadata access unchanged`, async () => {
+        const { adapter, ctx, query } = await createPinnedFixture();
+        const readFile = adapter.fs.readFile.bind(adapter.fs);
+        adapter.fs.readFile = (path) =>
+          path === INSTALLED_PACKAGE_PATH ? Promise.reject(failure) : readFile(path);
+
+        const actual = await assertRejects(() =>
+          createHandler().handle(
+            new Request(`http://localhost/_veryfront/lib/chat.js${query}`),
+            ctx,
+          )
+        );
+
+        assertStrictEquals(actual, failure);
+      });
+    }
+
+    it("propagates a hostile installed-metadata failure unchanged", async () => {
+      const failure = new Proxy({}, {
+        get() {
+          throw new Error("installed metadata failure must not be inspected");
+        },
+      });
+      const { adapter, ctx, query } = await createPinnedFixture();
+      const readFile = adapter.fs.readFile.bind(adapter.fs);
+      adapter.fs.readFile = (path) =>
+        path === INSTALLED_PACKAGE_PATH ? Promise.reject(failure) : readFile(path);
+
+      let actual: unknown;
+      try {
+        await createHandler().handle(
+          new Request(`http://localhost/_veryfront/lib/chat.js${query}`),
+          ctx,
+        );
+      } catch (error) {
+        actual = error;
+      }
+
+      assertEquals(Object.is(actual, failure), true);
     });
 
     it("rejects ranges, tags, missing declarations, and installed mismatches", async () => {
@@ -441,5 +700,85 @@ describe("LibModulesHandler", () => {
       assertEquals(range.status, 409);
       assertEquals(range.headers.get("cache-control"), "no-store");
     });
+  });
+
+  describe("module source responses", () => {
+    it("preserves successful GET, HEAD, and conditional request semantics", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      const ctx = createContext(createAdapter(), { isLocalProject: false });
+
+      const get = await requestChat(ctx);
+      const etag = get.headers.get("etag");
+      assertExists(etag);
+      assertEquals(get.status, 200);
+      assertEquals(get.headers.get("cache-control")?.includes("immutable"), true);
+      assertEquals(get.headers.get("content-type"), "application/javascript; charset=utf-8");
+      assertEquals(await get.text(), MODULE_SOURCE);
+
+      const head = await requestChat(ctx, "", "HEAD");
+      assertEquals(head.status, 200);
+      assertEquals(head.body, null);
+      assertEquals(head.headers.get("etag"), etag);
+      assertEquals(head.headers.get("cache-control")?.includes("immutable"), true);
+
+      const notModified = await requestChat(ctx, "", "GET", { "if-none-match": etag });
+      assertEquals(notModified.status, 304);
+      assertEquals(notModified.body, null);
+      assertEquals(notModified.headers.get("etag"), etag);
+    });
+
+    it("preserves the whitelist rejection response", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      const result = await createHandler().handle(
+        new Request("http://localhost/_veryfront/lib/%2e%2e%2fprivate.js"),
+        createContext(createAdapter(), { isLocalProject: false }),
+      );
+      assertExists(result.response);
+
+      assertEquals(result.response.status, 404);
+      assertEquals(result.response.headers.get("cache-control")?.includes("no-cache"), true);
+      assertEquals(await result.response.text(), "Module not found");
+    });
+
+    it("maps only canonical module absence to the current no-cache 404", async () => {
+      setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+      const adapter = createAdapter();
+      adapter.fs.files.delete(MODULE_PATH);
+
+      const response = await requestChat(
+        createContext(adapter, { isLocalProject: false }),
+      );
+
+      assertEquals(response.status, 404);
+      assertEquals(response.headers.get("cache-control")?.includes("no-cache"), true);
+      assertEquals(await response.text(), "Module not found");
+    });
+
+    for (
+      const [label, failure] of [
+        ["an EACCES failure", Object.assign(new Error("module access denied"), { code: "EACCES" })],
+        ["an EIO failure", Object.assign(new Error("module I/O failure"), { code: "EIO" })],
+        ["an arbitrary failure", new Error("module read failed")],
+        ["a plain ENOENT-shaped rejection", Object.freeze({ code: "ENOENT" })],
+      ] as const
+    ) {
+      it(`propagates ${label} from the module source read unchanged`, async () => {
+        setEnv(DEPENDENCY_PINNING_ENV_FLAG, "");
+        const adapter = createAdapter();
+        const readFile = adapter.fs.readFile.bind(adapter.fs);
+        adapter.fs.readFile = (path) =>
+          path === MODULE_PATH ? Promise.reject(failure) : readFile(path);
+        const ctx = createContext(adapter, { isLocalProject: false });
+
+        const actual = await assertRejects(() =>
+          createHandler().handle(
+            new Request("http://localhost/_veryfront/lib/chat.js"),
+            ctx,
+          )
+        );
+
+        assertStrictEquals(actual, failure);
+      });
+    }
   });
 });

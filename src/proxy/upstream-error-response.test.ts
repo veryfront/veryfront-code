@@ -10,7 +10,8 @@ describe("proxy upstream error responses", () => {
     const response = createUpstreamTimeoutResponse(12_345);
 
     assertEquals(response.status, 504);
-    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(response.headers.get("Content-Type"), "application/json; charset=utf-8");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
     assertEquals(await response.json(), {
       error: "Gateway Timeout",
       message: "Server request timed out after 12345ms",
@@ -23,7 +24,7 @@ describe("proxy upstream error responses", () => {
     );
 
     assertEquals(response.status, 502);
-    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(response.headers.get("Content-Type"), "application/json; charset=utf-8");
     // The real error is logged server-side; the client body must stay generic.
     assertEquals(await response.json(), {
       error: "Bad Gateway",

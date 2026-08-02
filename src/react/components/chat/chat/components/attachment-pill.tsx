@@ -408,7 +408,7 @@ function AttachmentPillRemove(
       onClick={() => onRemove?.(attachment.id)}
       aria-label={`Remove ${attachment.name}`}
       className={cn(
-        "shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100",
+        "shrink-0 opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100",
         className,
       )}
     >

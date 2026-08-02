@@ -98,7 +98,11 @@ describe("server/handlers/response/cors", () => {
           "access-control-request-headers": "Authorization,Content-Type",
         },
       });
-      const ctx = makeCtx();
+      // Preflight is policy-driven: allow-* headers are only emitted for an
+      // origin the CORS policy admits.
+      const ctx = makeCtx({
+        securityConfig: { cors: { origin: ["http://localhost:3000"] } } as never,
+      });
       const result = await handler.handle(req, ctx);
       assertEquals(result.response instanceof Response, true);
       // Should have allow-methods header

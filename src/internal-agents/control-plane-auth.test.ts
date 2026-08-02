@@ -74,7 +74,8 @@ describe("internal-agents/control-plane-auth", () => {
       requestId: "run-1",
       surface: "studio",
     });
-    const request = new Request("https://veryfront.test/api/control-plane/runs/run_1/stream", {
+    const request = new Request("https://veryfront.test/api/control-plane/runs/run-1/stream", {
+      method: "POST",
       headers: { "x-veryfront-control-plane-jws": jws },
     });
     Deno.env.set(envKey, publicKeyPem);
@@ -124,7 +125,8 @@ describe("internal-agents/control-plane-auth", () => {
 
     try {
       const claims = await verifyControlPlaneRequest(
-        new Request("https://veryfront.test/api/control-plane/runs/run_1/stream", {
+        new Request("https://veryfront.test/api/control-plane/runs/run-1/stream", {
+          method: "POST",
           headers: { "x-veryfront-control-plane-jws": jws },
         }),
         createVerificationCtx(publicKeyPem),
@@ -139,6 +141,32 @@ describe("internal-agents/control-plane-auth", () => {
       if (originalSigningKey === undefined) Deno.env.delete(envKey);
       else Deno.env.set(envKey, originalSigningKey);
     }
+  });
+
+  it("binds the canonical pathname while ignoring origin and query", async () => {
+    const rawBody = JSON.stringify({ runId: "run-1" });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody, {
+      requestId: "run-1",
+      requestMethod: "POST",
+      requestPath: "/api/control-plane/runs/run-1/stream",
+    });
+    const request = new Request(
+      "https://proxy.internal/api/control-plane/./runs/run-1/stream?trace=ignored",
+      {
+        method: "POST",
+        headers: { "x-veryfront-control-plane-jws": jws },
+      },
+    );
+
+    const claims = await verifyControlPlaneRequest(
+      request,
+      createVerificationCtx(publicKeyPem),
+      rawBody,
+      { expectedSubject: "run-1", expectedSurface: "studio" },
+    );
+
+    assertEquals(claims.request_method, "POST");
+    assertEquals(claims.request_path, "/api/control-plane/runs/run-1/stream");
   });
 
   it("rejects requests when verification is not configured", async () => {
@@ -208,7 +236,8 @@ describe("internal-agents/control-plane-auth", () => {
       requestId: "run-1",
       surface: "studio",
     });
-    const request = new Request("https://veryfront.test/api/control-plane/runs/run_1/stream", {
+    const request = new Request("https://veryfront.test/api/control-plane/runs/run-1/stream", {
+      method: "POST",
       headers: { "x-veryfront-control-plane-jws": jws },
     });
 

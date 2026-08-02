@@ -57,6 +57,7 @@ export interface ExtendedFileSystemAdapter extends FileSystemAdapter {
   isVeryfrontAdapter(): boolean;
   isMultiProjectMode(): boolean;
   isContextualMode(): boolean;
+  isFixedProjectMode(): boolean;
   setRequestToken(token: string): void;
   clearRequestToken(): void;
   setRequestBranch(branch: string | null): void;
@@ -134,6 +135,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
   private readonly _fsAdapter: FSAdapter;
   private readonly _unboundedFileReader?: (path: string) => Promise<Uint8Array>;
   private readonly _wholeFileReader?: CapturedWholeFileReader;
+  private readonly _fixedProjectMode: boolean;
   readonly symlinkSemantics: "none" | undefined;
   readonly maxWholeFileReadBytes?: number;
   readonly readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
@@ -154,6 +156,11 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
     this.symlinkSemantics = semantics && "value" in semantics && semantics.value === "none"
       ? "none"
       : undefined;
+    const projectContext = Object.getOwnPropertyDescriptor(fsAdapter, "projectContextSemantics");
+    this._fixedProjectMode = projectContext && "value" in projectContext &&
+        projectContext.value === "fixed"
+      ? true
+      : false;
 
     const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter", true);
     let byteReaders: CapturedByteReaders;
@@ -306,8 +313,12 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       typeof this._fsAdapter.runWithContext === "function";
   }
 
+  isFixedProjectMode(): boolean {
+    return this._fixedProjectMode;
+  }
+
   isContextualMode(): boolean {
-    return isContextualAdapter(this._fsAdapter);
+    return isContextualAdapter(this._fsAdapter) && !this.isFixedProjectMode();
   }
 
   async readFile(path: string): Promise<string> {

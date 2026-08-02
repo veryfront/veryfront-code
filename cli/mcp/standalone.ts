@@ -13,6 +13,8 @@ import { startStdioJsonRpc } from "./stdio.ts";
 import {
   buildInitializeResult,
   errorResponse,
+  internalError,
+  invalidRequestError,
   JsonRpcError,
   type JSONRPCRequest,
   JSONRPCRequestSchema,
@@ -57,7 +59,9 @@ export class StandaloneMCPServer {
       isRunning: () => this.running,
       parseRequest: (payload) => JSONRPCRequestSchema.parse(payload),
       handleRequest: (request) => this.handleRequest(request),
-      toErrorResponse: (error) => parseError(error),
+      toParseErrorResponse: (error) => parseError(error),
+      toInvalidRequestResponse: (error) => invalidRequestError(error),
+      toErrorResponse: (_error, request) => internalError(request.id),
     });
   }
 

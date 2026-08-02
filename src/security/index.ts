@@ -3,6 +3,14 @@
  * CSP and security headers, path traversal prevention, and secure filesystem access.
  *
  * @module security
+ *
+ * @example Apply response security headers
+ * ```ts
+ * import { applySecurityHeaders, generateNonce } from "veryfront/security";
+ *
+ * const response = new Response("Ready");
+ * applySecurityHeaders(response.headers, false, generateNonce(), null);
+ * ```
  */
 
 export { BaseHandler } from "./http/base-handler.ts";
@@ -25,6 +33,7 @@ export {
 export type {
   ParseFormOptions,
   ParseJsonOptions,
+  ParseQueryOptions,
   RequestLimits,
   ValidatedData,
   ValidatedHandlerConfig,
@@ -32,15 +41,13 @@ export type {
 } from "./input-validation/index.ts";
 
 export { AuthHandler } from "./http/auth.ts";
-export { SecurityConfigLoader } from "./http/config.ts";
-export { loadSecurityConfig, setCors } from "./http/middleware/index.ts";
+export { isValidSecurityConfig, loadSecurityConfig, SecurityConfigLoader } from "./http/config.ts";
+export { setCors } from "./http/middleware/index.ts";
 export type { CORSConfig, CSPDirectives, SecurityConfig } from "./http/middleware/index.ts";
 
 export { CsrfHandler } from "./http/csrf/index.ts";
 export { applyCsrfCookie, generateCsrfToken, validateCsrf } from "./csrf/index.ts";
 export type { CsrfConfig, CsrfTokenOptions } from "./csrf/index.ts";
-
-export { isValidSecurityConfig } from "./http/middleware/index.ts";
 
 export {
   applyCORSHeaders,
@@ -63,6 +70,9 @@ export type {
   CORSPreflightOptions,
   CORSValidationResult,
   OriginValidator,
+  SyncCORSConfig,
+  SyncCORSHeaderOptions,
+  SyncOriginValidator,
 } from "./http/cors/index.ts";
 
 export {
@@ -80,11 +90,18 @@ export {
   createValidator,
   PathValidationError,
   sanitizePathForDisplay,
+  validateLexicalPath,
   validatePath,
   validatePathSync,
   ValidationPresets,
 } from "./path-validation.ts";
-export type { ValidationLevel, ValidationOptions, ValidationResult } from "./path-validation.ts";
+export type {
+  LexicalPathValidationOptions,
+  PathValidationPolicyOptions,
+  ValidationLevel,
+  ValidationOptions,
+  ValidationResult,
+} from "./path-validation.ts";
 
 export {
   createSecureFs,

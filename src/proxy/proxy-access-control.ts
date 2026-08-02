@@ -2,12 +2,13 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
+import { normalizeProxyOriginFormPath } from "./request-path.ts";
 
 export interface ProxyAccessControlLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
   info: (msg: string, extra?: Record<string, unknown>) => void;
   warn: (msg: string, extra?: Record<string, unknown>) => void;
-  error: (msg: string, error?: Error, extra?: Record<string, unknown>) => void;
+  error: (msg: string, error?: unknown, extra?: Record<string, unknown>) => void;
 }
 
 export interface ProtectedProxyEnvironment {
@@ -25,39 +26,53 @@ export interface ProxyAccessError {
   redirectUrl?: string;
 }
 
-/**
- * Cache the resolved AuthProvider at module scope so the proxy does not pay
- * the registry lookup on every request. The cache is cleared implicitly when
- * `ExtensionLoader.teardownAll()` clears the registry. The next call re-resolves
- * or surfaces the install hint if the extension was removed.
- */
-let cachedAuthProvider: AuthProvider | undefined;
-
 function getAuthProvider(): AuthProvider {
-  if (cachedAuthProvider) return cachedAuthProvider;
-
   try {
-    cachedAuthProvider = resolveContract<AuthProvider>("AuthProvider");
-    return cachedAuthProvider;
-  } catch (err) {
-    const base = err instanceof Error ? err.message : String(err);
+    return resolveContract<AuthProvider>("AuthProvider");
+  } catch (cause) {
     throw INITIALIZATION_ERROR.create({
-      detail: `${base}\nTo enable JWT verification in the proxy, install ext-auth-jwt ` +
+      detail: `The AuthProvider extension contract is unavailable. ` +
+        `To enable JWT verification in the proxy, install ext-auth-jwt ` +
         `(scaffold with \`deno task cli extension init ext-auth-jwt\` or add the ` +
         `npm package @veryfront/ext-auth-jwt).`,
-      cause: err,
+      cause,
     });
   }
 }
 
-/**
- * Reset the cached AuthProvider. Intended for tests that `register()` a mock
- * after the handler module has been imported.
- *
- * @internal
- */
-export function __resetCachedAuthProviderForTests(): void {
-  cachedAuthProvider = undefined;
+function safeErrorMessage(error: unknown): string {
+  try {
+    if (!(error instanceof Error)) return "Unknown authentication error";
+    const descriptor = Object.getOwnPropertyDescriptor(error, "message");
+    return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+      ? descriptor.value
+      : "Unknown authentication error";
+  } catch {
+    return "Unknown authentication error";
+  }
+}
+
+function readOwnString(
+  value: unknown,
+  key: string,
+  maximumCodeUnits: number,
+): string | undefined {
+  try {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || !("value" in descriptor)) return undefined;
+    const text = descriptor.value;
+    if (typeof text !== "string" || text.length === 0 || text.length > maximumCodeUnits) {
+      return undefined;
+    }
+    for (let index = 0; index < text.length; index++) {
+      const codeUnit = text.charCodeAt(index);
+      if (codeUnit <= 0x1f || codeUnit === 0x7f) return undefined;
+    }
+    return text;
+  } catch {
+    return undefined;
+  }
 }
 
 function resolveApiJwksUrl(
@@ -65,10 +80,21 @@ function resolveApiJwksUrl(
   logger?: ProxyAccessControlLogger,
 ): string | undefined {
   try {
-    const normalizedBaseUrl = apiBaseUrl.endsWith("/") ? apiBaseUrl : `${apiBaseUrl}/`;
-    return new URL(".well-known/jwks.json", normalizedBaseUrl).toString();
+    const base = new URL(apiBaseUrl);
+    if (
+      (base.protocol !== "http:" && base.protocol !== "https:") ||
+      !base.hostname ||
+      base.username !== "" ||
+      base.password !== ""
+    ) {
+      throw new TypeError("Proxy API base URL must be a credential-free HTTP(S) URL");
+    }
+    base.search = "";
+    base.hash = "";
+    if (!base.pathname.endsWith("/")) base.pathname += "/";
+    return new URL(".well-known/jwks.json", base).toString();
   } catch (error) {
-    logger?.error("Invalid API base URL for JWKS lookup", error as Error, {
+    logger?.error("Invalid API base URL for JWKS lookup", error, {
       apiBaseUrl,
     });
     return undefined;
@@ -82,13 +108,21 @@ export async function extractUserIdFromToken(
 ): Promise<string | undefined> {
   const auth = getAuthProvider();
 
-  const header = auth.decode(token);
+  let header: unknown;
+  try {
+    header = auth.decode(token);
+  } catch (error) {
+    log?.debug("Failed to decode JWT header", {
+      error: safeErrorMessage(error),
+    });
+    return undefined;
+  }
   if (!header) {
     log?.debug("Failed to decode JWT header");
     return undefined;
   }
 
-  const algorithm = header.alg;
+  const algorithm = readOwnString(header, "alg", 32);
 
   if (algorithm === "RS256") {
     const jwksUrl = resolveApiJwksUrl(apiBaseUrl, log);
@@ -98,10 +132,10 @@ export async function extractUserIdFromToken(
       const payload = await auth.verifyWithJwks(token, jwksUrl, {
         algorithms: ["RS256"],
       });
-      return (payload as { userId?: string }).userId;
+      return readOwnString(payload, "userId", 512);
     } catch (error) {
       log?.debug("RS256 JWT verification failed", {
-        error: error instanceof Error ? error.message : String(error),
+        error: safeErrorMessage(error),
       });
       return undefined;
     }
@@ -124,22 +158,18 @@ export async function extractUserIdFromToken(
     // passed to the extension factory; the explicit env check above is kept
     // so callers can warn once before attempting verification.
     const payload = await auth.verify(token, { algorithms: ["HS256"] });
-    return (payload as { userId?: string }).userId;
+    return readOwnString(payload, "userId", 512);
   } catch (error) {
     log?.debug("JWT verification failed", {
-      error: error instanceof Error ? error.message : String(error),
+      error: safeErrorMessage(error),
     });
     return undefined;
   }
 }
 
 export function buildProxyAuthRedirectUrl(url: URL): string {
-  const safePath = url.pathname.replace(/^\/\/+/, "/");
-  let returnPath = safePath + url.search;
-
-  if (!returnPath.startsWith("/") || returnPath.includes("://")) {
-    returnPath = "/";
-  }
+  const safePath = normalizeProxyOriginFormPath(url.pathname);
+  const returnPath = safePath + url.search;
 
   const isHostedProductionDeployment = url.hostname.endsWith(".production.veryfront.org") ||
     url.hostname.endsWith(".production.veryfront.com");
@@ -164,7 +194,6 @@ export function isProjectMember(
 }
 
 export async function checkProtectedProxyAccess(input: {
-  req: Request;
   url: URL;
   matchingEnv: ProtectedProxyEnvironment | undefined;
   userToken: string | undefined;

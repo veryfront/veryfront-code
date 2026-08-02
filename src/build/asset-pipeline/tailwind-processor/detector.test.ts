@@ -1,9 +1,59 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { autoDetectContentPaths } from "./detector.ts";
+import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { autoDetectContentPaths, isTailwindV4File } from "./detector.ts";
+
+function createFileAdapter(): RuntimeAdapter {
+  return {
+    name: "test",
+    fs: {
+      readFile: (path: string) => Deno.readTextFile(path),
+      readTextFile: (path: string) => Deno.readTextFile(path),
+      writeFile: (path: string, content: string) => Deno.writeTextFile(path, content),
+      writeTextFile: (path: string, content: string) => Deno.writeTextFile(path, content),
+      exists: async (path: string) => {
+        try {
+          await Deno.stat(path);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      mkdir: (path: string, options?: { recursive?: boolean }) => Deno.mkdir(path, options),
+      readDir: (path: string) => Deno.readDir(path),
+      stat: (path: string) => Deno.stat(path),
+      lstat: (path: string) => Deno.lstat(path),
+      realPath: (path: string) => Deno.realPath(path),
+      remove: (path: string, options?: { recursive?: boolean }) => Deno.remove(path, options),
+      makeTempDir: (prefix: string) => Deno.makeTempDir({ prefix }),
+      watch: (paths: string | string[], options?: { recursive?: boolean }) =>
+        options?.recursive === undefined
+          ? Deno.watchFs(paths)
+          : Deno.watchFs(paths, { recursive: options.recursive }),
+    },
+  } as unknown as RuntimeAdapter;
+}
 
 describe("build/asset-pipeline/tailwind-processor/detector", () => {
+  it("retains the detector's intentional false result for rejected paths", async () => {
+    const projectDir = await Deno.makeTempDir();
+    try {
+      const outsideFile = `${projectDir}-outside.css`;
+      await Deno.writeTextFile(outsideFile, '@import "tailwindcss";');
+      try {
+        assertEquals(
+          await isTailwindV4File(outsideFile, projectDir, createFileAdapter()),
+          false,
+        );
+      } finally {
+        await Deno.remove(outsideFile);
+      }
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   describe("autoDetectContentPaths", () => {
     it("should return four content path patterns", () => {
       assertEquals(autoDetectContentPaths("/project").length, 4);

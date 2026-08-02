@@ -39,7 +39,6 @@ export class TailwindProcessor {
           baseDir: projectDir,
           adapter,
           context: "build",
-          throwOnError: true,
         });
 
         logger.info("Processing Tailwind CSS v4...", { inputFile, outputFile });

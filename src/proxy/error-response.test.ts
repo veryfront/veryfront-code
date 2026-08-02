@@ -13,6 +13,8 @@ describe("createProxyErrorResponse", () => {
 
     assertEquals(response.status, 404);
     assertEquals(response.headers.get("Content-Type"), "text/html; charset=utf-8");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+    assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
 
     const body = await response.text();
     assertStringIncludes(body, "<title>404 Not Found");
@@ -29,6 +31,8 @@ describe("createProxyErrorResponse", () => {
 
     assertEquals(response.status, 302);
     assertEquals(response.headers.get("Location"), "https://veryfront.com/sign-in?from=%2F");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+    assertEquals(response.headers.get("Referrer-Policy"), "no-referrer");
   });
 
   it("keeps generic errors as JSON", async () => {
@@ -38,7 +42,9 @@ describe("createProxyErrorResponse", () => {
     });
 
     assertEquals(response.status, 502);
-    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(response.headers.get("Content-Type"), "application/json; charset=utf-8");
+    assertEquals(response.headers.get("Cache-Control"), "no-store");
+    assertEquals(response.headers.get("X-Content-Type-Options"), "nosniff");
     assertEquals(
       await response.text(),
       JSON.stringify({

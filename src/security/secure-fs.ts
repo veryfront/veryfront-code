@@ -1,48 +1,64 @@
 import type {
   DirEntry,
+  FileChangeEvent,
   FileInfo,
   FileWatcher,
   RuntimeAdapter,
 } from "#veryfront/platform/adapters/base.ts";
-import { logger as baseLogger } from "#veryfront/utils";
 import {
+  type PathValidationPolicyOptions,
   sanitizePathForDisplay,
   validatePath,
-  validatePathSync,
   type ValidationOptions,
   ValidationPresets,
   type ValidationResult,
 } from "./path-validation.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { SECURITY_VIOLATION } from "#veryfront/errors";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { INVALID_ARGUMENT, NOT_SUPPORTED, SECURITY_VIOLATION } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
-  captureByteReadCapabilities,
-  type CapturedByteReaders,
-  type CapturedWholeFileReader,
-  captureExclusiveCreateCapability,
+  type CapturedFileSystemCapabilities,
+  captureFileSystemCapabilities,
+  captureLegacyFileSystemCapabilitiesForSnapshot,
+  captureSnapshotReadCapability,
   captureStaticReadCapabilities,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
+import { copyFixedUint8ArrayWithinLimit } from "#veryfront/platform/adapters/bounded-text-reader.ts";
 import { FileSnapshotChangedError } from "#veryfront/platform/adapters/file-snapshot-error.ts";
-import { resolve } from "#veryfront/platform/compat/path/index.ts";
+import { isAbsolute, relative, resolve, sep } from "#veryfront/platform/compat/path/index.ts";
 
-const logger = baseLogger.component("secure-fs");
+export const SECURITY_CONTEXTS = [
+  "user-input",
+  "static-serving",
+  "build",
+  "internal",
+  "route-discovery",
+  "module-loading",
+] as const;
 
-export type SecurityContext =
-  | "user-input"
-  | "static-serving"
-  | "build"
-  | "internal"
-  | "route-discovery"
-  | "module-loading";
+export type SecurityContext = (typeof SECURITY_CONTEXTS)[number];
+
+const SECURITY_CONTEXT_SET = new Set<string>(SECURITY_CONTEXTS);
+
+export function isSecurityContext(value: unknown): value is SecurityContext {
+  return typeof value === "string" && SECURITY_CONTEXT_SET.has(value);
+}
+
+function requireSecurityContext(value: unknown): SecurityContext {
+  if (!isSecurityContext(value)) {
+    throw INVALID_ARGUMENT.create({
+      detail: "SecureFs requires a valid security context",
+    });
+  }
+  return value;
+}
 
 export interface SecureFsConfig {
   baseDir: string;
   adapter: RuntimeAdapter;
   context?: SecurityContext;
   contextOptions?: ContextOptions;
-  validationOptions?: Partial<ValidationOptions>;
-  throwOnError?: boolean;
+  validationOptions?: Partial<Omit<PathValidationPolicyOptions, "baseDir">>;
   onSecurityEvent?: (event: SecurityEvent) => void;
 }
 
@@ -56,136 +72,548 @@ export interface SecurityEvent {
 }
 
 interface ContextOptions {
-  allowedImportDirs?: string[];
+  readonly allowedImportDirs?: string[];
 }
 
-function snapshotContextOptions(options?: ContextOptions): ContextOptions {
-  return {
-    allowedImportDirs: options?.allowedImportDirs === undefined
-      ? undefined
-      : [...options.allowedImportDirs],
-  };
+const VALIDATION_LEVELS = new Set<NonNullable<ValidationOptions["level"]>>([
+  "strict",
+  "normal",
+]);
+
+const SECURE_FS_CONFIG_KEYS = new Set([
+  "baseDir",
+  "adapter",
+  "context",
+  "contextOptions",
+  "validationOptions",
+  "onSecurityEvent",
+]);
+const SECURE_FS_WRAPPER_OPTION_KEYS = new Set([
+  "baseDir",
+  "context",
+  "contextOptions",
+  "validationOptions",
+  "onSecurityEvent",
+]);
+const VALIDATION_OPTION_KEYS = new Set([
+  "level",
+  "allowedDirs",
+  "followSymlinks",
+  "checkExists",
+  "allowAbsolute",
+]);
+const CONTEXT_OPTION_KEYS = new Set(["allowedImportDirs"]);
+const RECURSIVE_OPERATION_OPTION_KEYS = new Set(["recursive"]);
+const WATCH_OPTION_KEYS = new Set(["recursive", "signal"]);
+const MAX_POLICY_DIRECTORY_ENTRIES = 1_024;
+const MAX_POLICY_DIRECTORY_LENGTH = 4_096;
+const universalObjectPrototype = Object.prototype;
+const objectDefineProperty = Object.defineProperty;
+const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+const SECURE_FS_IMMUTABLE_AUTHORITY_KEYS = [
+  "config",
+  "fileSystem",
+  "validationOptions",
+  "readFileBytesBounded",
+  "readFileBytesWithinLimit",
+  "maxWholeFileReadBytes",
+] as const;
+
+function hardenSecureFsAuthority(target: object): void {
+  for (const key of SECURE_FS_IMMUTABLE_AUTHORITY_KEYS) {
+    const descriptor = objectGetOwnPropertyDescriptor(target, key);
+    if (descriptor === undefined || !("value" in descriptor)) {
+      invalidSecureFsOption(`SecureFs ${key} publication is invalid`);
+    }
+    objectDefineProperty(target, key, {
+      configurable: false,
+      enumerable: descriptor.enumerable === true,
+      value: descriptor.value,
+      writable: false,
+    });
+  }
 }
 
-function snapshotValidationOptions(
-  options?: Partial<ValidationOptions>,
-): Partial<ValidationOptions> {
-  if (options === undefined) return {};
-  return {
-    ...options,
-    allowedDirs: options.allowedDirs === undefined ? undefined : [...options.allowedDirs],
-  };
+type OwnOptionSnapshot = Readonly<Record<string, unknown>>;
+
+interface NormalizedSecureFsConfig {
+  readonly baseDir: string;
+  readonly context: SecurityContext;
+  readonly contextOptions: ContextOptions;
+  readonly validationOptions: Partial<Omit<PathValidationPolicyOptions, "baseDir">>;
+  readonly onSecurityEvent: (event: SecurityEvent) => void;
 }
 
-type FileSystemMethod = (...args: never[]) => unknown;
+function invalidSecureFsOption(detail: string): never {
+  throw INVALID_ARGUMENT.create({ detail });
+}
 
-function captureFileSystemMethod(
-  fileSystem: object,
-  key: string,
-  required = false,
-): FileSystemMethod | undefined {
+function hasInheritedOption(value: object, key: string): boolean {
+  let prototype: object | null;
+  try {
+    prototype = Object.getPrototypeOf(value);
+  } catch {
+    invalidSecureFsOption("SecureFs options could not be inspected safely");
+  }
+
   const seen = new Set<object>();
+  for (let depth = 0; prototype !== null && depth < 64; depth++) {
+    if (seen.has(prototype)) {
+      invalidSecureFsOption("SecureFs options contain an invalid prototype chain");
+    }
+    seen.add(prototype);
+    try {
+      if (Object.getOwnPropertyDescriptor(prototype, key) !== undefined) return true;
+      prototype = Object.getPrototypeOf(prototype);
+    } catch {
+      invalidSecureFsOption("SecureFs options could not be inspected safely");
+    }
+  }
+
+  if (prototype !== null) {
+    invalidSecureFsOption("SecureFs options prototype chain is too deep");
+  }
+  return false;
+}
+
+function snapshotOwnOptions(
+  value: unknown,
+  label: string,
+  allowedKeys: ReadonlySet<string>,
+): OwnOptionSnapshot {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    invalidSecureFsOption(`${label} must be an object`);
+  }
+
+  let ownKeys: Array<string | symbol>;
+  try {
+    ownKeys = Reflect.ownKeys(value);
+  } catch {
+    invalidSecureFsOption(`${label} could not be inspected safely`);
+  }
+
+  const snapshot = Object.create(null) as Record<string, unknown>;
+  for (const key of ownKeys) {
+    if (typeof key !== "string" || !allowedKeys.has(key)) {
+      invalidSecureFsOption(
+        `${label} contains an unsupported ${typeof key === "string" ? `option: ${key}` : "symbol"}`,
+      );
+    }
+
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      invalidSecureFsOption(`${label}.${key} could not be inspected safely`);
+    }
+    if (descriptor === undefined || !("value" in descriptor)) {
+      invalidSecureFsOption(`${label}.${key} must be an own data property`);
+    }
+    snapshot[key] = descriptor.value;
+  }
+
+  for (const key of allowedKeys) {
+    if (
+      Object.getOwnPropertyDescriptor(snapshot, key) === undefined &&
+      hasInheritedOption(value, key)
+    ) {
+      invalidSecureFsOption(`${label}.${key} must be an own data property`);
+    }
+  }
+
+  Object.freeze(snapshot);
+  return snapshot;
+}
+
+function snapshotDirectoryList(
+  value: unknown,
+  label: string,
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    invalidSecureFsOption(`${label} must contain non-empty strings`);
+  }
+
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  let ownKeys: Array<string | symbol>;
+  try {
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    ownKeys = Reflect.ownKeys(value);
+  } catch {
+    invalidSecureFsOption(`${label} could not be inspected safely`);
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > MAX_POLICY_DIRECTORY_ENTRIES
+  ) {
+    invalidSecureFsOption(
+      `${label} must contain at most ${MAX_POLICY_DIRECTORY_ENTRIES} entries`,
+    );
+  }
+
+  for (const key of ownKeys) {
+    if (key === "length") continue;
+    if (typeof key !== "string") {
+      invalidSecureFsOption(`${label} must not contain symbol properties`);
+    }
+    const index = Number(key);
+    if (!Number.isSafeInteger(index) || index < 0 || index >= length || String(index) !== key) {
+      invalidSecureFsOption(`${label} must be a dense array without custom properties`);
+    }
+  }
+
+  const snapshot = new Array<string>(length);
+  for (let index = 0; index < length; index++) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    } catch {
+      invalidSecureFsOption(`${label}[${index}] could not be inspected safely`);
+    }
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      typeof descriptor.value !== "string" ||
+      descriptor.value.length === 0 ||
+      descriptor.value.length > MAX_POLICY_DIRECTORY_LENGTH
+    ) {
+      invalidSecureFsOption(
+        `${label} must contain dense, non-empty strings no longer than ${MAX_POLICY_DIRECTORY_LENGTH} characters`,
+      );
+    }
+    snapshot[index] = descriptor.value;
+  }
+  Object.freeze(snapshot);
+  return snapshot;
+}
+
+type FilesystemMethod = (...args: unknown[]) => unknown;
+type FilesystemMethodKey =
+  | "readFile"
+  | "readFileBytes"
+  | "readFileBytesBounded"
+  | "readFileBytesWithinLimit"
+  | "writeFile"
+  | "stat"
+  | "lstat"
+  | "realPath"
+  | "mkdir"
+  | "remove"
+  | "exists"
+  | "readDir"
+  | "makeTempDir"
+  | "watch";
+
+function snapshotFilesystemMethod(
+  fileSystem: object,
+  key: FilesystemMethodKey,
+): FilesystemMethod | undefined {
   let owner: object | null = fileSystem;
+  const seen = new Set<object>();
   for (let depth = 0; owner !== null && depth < 64; depth++) {
-    if (owner === Object.prototype) break;
-    if (seen.has(owner)) throw new TypeError(`SecureFs ${key} has an invalid prototype chain`);
+    if (owner === universalObjectPrototype) return undefined;
+    if (isProxyWithoutHooks(owner)) {
+      invalidSecureFsOption(`SecureFs filesystem ${key} capability cannot be a Proxy`);
+    }
+    if (seen.has(owner)) {
+      invalidSecureFsOption("SecureFs filesystem contains an invalid prototype chain");
+    }
     seen.add(owner);
-    const descriptor = Object.getOwnPropertyDescriptor(owner, key);
+
+    let parent: object | null;
+    try {
+      parent = Object.getPrototypeOf(owner);
+    } catch {
+      invalidSecureFsOption(`SecureFs filesystem ${key} capability could not be inspected safely`);
+    }
+    if (owner !== fileSystem && parent === null) return undefined;
+
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(owner, key);
+    } catch {
+      invalidSecureFsOption(`SecureFs filesystem ${key} capability could not be inspected safely`);
+    }
     if (descriptor !== undefined) {
       if (!("value" in descriptor)) {
-        if (!required) return undefined;
-        throw new TypeError(`SecureFs filesystem ${key} must be a data-property method`);
+        invalidSecureFsOption(`SecureFs filesystem ${key} must be a data-property method`);
       }
-      if (descriptor.value === undefined && !required) return undefined;
-      if (typeof descriptor.value !== "function") {
-        if (!required) return undefined;
-        throw new TypeError(`SecureFs filesystem ${key} must be a function`);
+      if (descriptor.value === undefined) return undefined;
+      if (
+        typeof descriptor.value !== "function" ||
+        isProxyWithoutHooks(descriptor.value)
+      ) {
+        invalidSecureFsOption(`SecureFs filesystem ${key} must be a non-Proxy function`);
       }
-      return descriptor.value as FileSystemMethod;
+      return descriptor.value as FilesystemMethod;
     }
-    owner = Object.getPrototypeOf(owner);
+
+    owner = parent;
   }
-  if (owner !== null && owner !== Object.prototype) {
-    throw new TypeError("SecureFs filesystem prototype chain is too deep");
+
+  if (owner !== null) {
+    invalidSecureFsOption("SecureFs filesystem prototype chain is too deep");
   }
-  if (required) throw new TypeError(`SecureFs filesystem must provide ${key}`);
   return undefined;
 }
 
-function snapshotFileSystemAuthority(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter["fs"] {
-  const required = (key: string) => captureFileSystemMethod(fileSystem, key, true)!;
-  const optional = (key: string) => captureFileSystemMethod(fileSystem, key);
-  const readFile = required("readFile");
-  const writeFile = required("writeFile");
-  const exists = required("exists");
-  const readDir = required("readDir");
-  const stat = required("stat");
-  const mkdir = required("mkdir");
-  const remove = required("remove");
-  const makeTempDir = required("makeTempDir");
-  const watch = required("watch");
-
-  const snapshot: RuntimeAdapter["fs"] = {
-    readFile: (path) => Reflect.apply(readFile, fileSystem, [path]) as Promise<string>,
-    writeFile: (path, content) =>
-      Reflect.apply(writeFile, fileSystem, [path, content]) as Promise<void>,
-    exists: (path) => Reflect.apply(exists, fileSystem, [path]) as Promise<boolean>,
-    readDir: (path) => Reflect.apply(readDir, fileSystem, [path]) as AsyncIterable<DirEntry>,
-    stat: (path) => Reflect.apply(stat, fileSystem, [path]) as Promise<FileInfo>,
-    mkdir: (path, options) => Reflect.apply(mkdir, fileSystem, [path, options]) as Promise<void>,
-    remove: (path, options) => Reflect.apply(remove, fileSystem, [path, options]) as Promise<void>,
-    makeTempDir: (prefix) => Reflect.apply(makeTempDir, fileSystem, [prefix]) as Promise<string>,
-    watch: (paths, options) => Reflect.apply(watch, fileSystem, [paths, options]) as FileWatcher,
-  };
-
-  const semantics = Object.getOwnPropertyDescriptor(fileSystem, "symlinkSemantics");
-  if (semantics && "value" in semantics && semantics.value === "none") {
-    Object.defineProperty(snapshot, "symlinkSemantics", { enumerable: true, value: "none" });
+function requireFilesystemMethod(
+  fileSystem: RuntimeAdapter["fs"],
+  key: Exclude<
+    FilesystemMethodKey,
+    | "readFileBytes"
+    | "readFileBytesBounded"
+    | "readFileBytesWithinLimit"
+    | "lstat"
+    | "realPath"
+  >,
+): FilesystemMethod {
+  const method = snapshotFilesystemMethod(fileSystem, key);
+  if (method === undefined) {
+    invalidSecureFsOption(`SecureFs filesystem must provide ${key}`);
   }
-  for (
-    const key of [
-      "readFileBytes",
-      "readFileBytesBounded",
-      "readFileBytesWithinLimit",
-      "readFileSnapshotWithinLimit",
-      "writeFileBytes",
-      "createFileBytesExclusive",
-      "rename",
-      "lstat",
-      "realPath",
-      "resolveFile",
-      "refreshSourceSnapshot",
-      "ensureSourceSnapshotFresh",
-      "getSourceSnapshotVersion",
-    ] as const
-  ) {
-    const method = optional(key);
-    if (method !== undefined) {
-      Object.defineProperty(snapshot, key, {
-        enumerable: true,
-        value: (...args: unknown[]) => Reflect.apply(method, fileSystem, args),
-      });
-    }
+  return method;
+}
+
+function snapshotFilesystem(
+  fileSystem: RuntimeAdapter["fs"],
+  hasSnapshotAuthority: boolean,
+): RuntimeAdapter["fs"] {
+  if (isProxyWithoutHooks(fileSystem)) {
+    invalidSecureFsOption("SecureFs filesystem cannot be a Proxy");
   }
-  const ceiling = Object.getOwnPropertyDescriptor(fileSystem, "maxWholeFileReadBytes");
-  if (
-    ceiling && "value" in ceiling &&
-    Number.isSafeInteger(ceiling.value) && ceiling.value > 0 &&
-    snapshot.readFileBytes !== undefined
-  ) {
-    Object.defineProperty(snapshot, "maxWholeFileReadBytes", {
+  let fileCapabilities: CapturedFileSystemCapabilities;
+  try {
+    fileCapabilities = hasSnapshotAuthority
+      ? captureLegacyFileSystemCapabilitiesForSnapshot(fileSystem, "SecureFs filesystem")
+      : captureFileSystemCapabilities(fileSystem, "SecureFs filesystem");
+  } catch (_) {
+    invalidSecureFsOption("SecureFs filesystem binary capabilities are invalid");
+  }
+  const readFile = requireFilesystemMethod(fileSystem, "readFile");
+  const writeFile = requireFilesystemMethod(fileSystem, "writeFile");
+  const stat = requireFilesystemMethod(fileSystem, "stat");
+  const lstat = snapshotFilesystemMethod(fileSystem, "lstat");
+  const realPath = snapshotFilesystemMethod(fileSystem, "realPath");
+  const mkdir = requireFilesystemMethod(fileSystem, "mkdir");
+  const remove = requireFilesystemMethod(fileSystem, "remove");
+  const exists = requireFilesystemMethod(fileSystem, "exists");
+  const readDir = requireFilesystemMethod(fileSystem, "readDir");
+  const makeTempDir = requireFilesystemMethod(fileSystem, "makeTempDir");
+  const watch = requireFilesystemMethod(fileSystem, "watch");
+
+  let semantics: PropertyDescriptor | undefined;
+  try {
+    semantics = Object.getOwnPropertyDescriptor(fileSystem, "symlinkSemantics");
+  } catch {
+    invalidSecureFsOption("SecureFs filesystem symlink semantics could not be inspected safely");
+  }
+
+  const snapshot = Object.create(null) as RuntimeAdapter["fs"];
+  if (semantics !== undefined && "value" in semantics && semantics.value === "none") {
+    Object.defineProperty(snapshot, "symlinkSemantics", {
+      value: "none",
       enumerable: true,
-      value: ceiling.value,
     });
   }
+  snapshot.readFile = (path) => Reflect.apply(readFile, fileSystem, [path]) as Promise<string>;
+  snapshot.writeFile = (path, content) =>
+    Reflect.apply(writeFile, fileSystem, [path, content]) as Promise<void>;
+  snapshot.stat = (path) => Reflect.apply(stat, fileSystem, [path]) as Promise<FileInfo>;
+  snapshot.mkdir = (path, options) =>
+    Reflect.apply(mkdir, fileSystem, [path, options]) as Promise<void>;
+  snapshot.remove = (path, options) =>
+    Reflect.apply(remove, fileSystem, [path, options]) as Promise<void>;
+  snapshot.exists = (path) => Reflect.apply(exists, fileSystem, [path]) as Promise<boolean>;
+  snapshot.readDir = (path) =>
+    Reflect.apply(readDir, fileSystem, [path]) as AsyncIterable<DirEntry>;
+  snapshot.makeTempDir = (prefix) =>
+    Reflect.apply(makeTempDir, fileSystem, [prefix]) as Promise<string>;
+  snapshot.watch = (paths, options) =>
+    Reflect.apply(watch, fileSystem, [paths, options]) as FileWatcher;
+  const wholeFileReader = fileCapabilities.wholeFileReader;
+  if (wholeFileReader !== undefined) {
+    Object.defineProperty(snapshot, "maxWholeFileReadBytes", {
+      value: wholeFileReader.maximumBytes,
+      enumerable: true,
+      configurable: false,
+      writable: false,
+    });
+  }
+  const readFileBytes = fileCapabilities.readFileBytes;
+  if (readFileBytes !== undefined) {
+    snapshot.readFileBytes = readFileBytes;
+  }
+  const readFileBytesBounded = fileCapabilities.readFileBytesBounded;
+  if (readFileBytesBounded !== undefined) {
+    snapshot.readFileBytesBounded = readFileBytesBounded;
+  }
+  const readFileBytesWithinLimit = fileCapabilities.readFileBytesWithinLimit;
+  if (readFileBytesWithinLimit !== undefined) {
+    snapshot.readFileBytesWithinLimit = readFileBytesWithinLimit;
+  }
+  const writeFileBytes = fileCapabilities.writeFileBytes;
+  if (writeFileBytes !== undefined) {
+    snapshot.writeFileBytes = writeFileBytes;
+  }
+  if (lstat !== undefined) {
+    snapshot.lstat = (path) => Reflect.apply(lstat, fileSystem, [path]) as Promise<FileInfo>;
+  }
+  if (realPath !== undefined) {
+    snapshot.realPath = (path) => Reflect.apply(realPath, fileSystem, [path]) as Promise<string>;
+  }
+
   return Object.freeze(snapshot);
+}
+
+function snapshotValidationAdapter(fileSystem: RuntimeAdapter["fs"]): RuntimeAdapter {
+  const validationFs: {
+    symlinkSemantics?: "none";
+    stat?: RuntimeAdapter["fs"]["stat"];
+    lstat?: RuntimeAdapter["fs"]["lstat"];
+    realPath?: RuntimeAdapter["fs"]["realPath"];
+  } = {};
+
+  let semantics: PropertyDescriptor | undefined;
+  try {
+    semantics = Object.getOwnPropertyDescriptor(fileSystem, "symlinkSemantics");
+  } catch {
+    invalidSecureFsOption("SecureFs filesystem symlink semantics could not be inspected safely");
+  }
+  if (semantics !== undefined && "value" in semantics && semantics.value === "none") {
+    validationFs.symlinkSemantics = "none";
+  }
+
+  const stat = snapshotFilesystemMethod(fileSystem, "stat");
+  if (stat !== undefined) {
+    validationFs.stat = (path: string) =>
+      Reflect.apply(stat, fileSystem, [path]) as Promise<FileInfo>;
+  }
+  const lstat = snapshotFilesystemMethod(fileSystem, "lstat");
+  if (lstat !== undefined) {
+    validationFs.lstat = (path: string) =>
+      Reflect.apply(lstat, fileSystem, [path]) as Promise<FileInfo>;
+  }
+  const realPath = snapshotFilesystemMethod(fileSystem, "realPath");
+  if (realPath !== undefined) {
+    validationFs.realPath = (path: string) =>
+      Reflect.apply(realPath, fileSystem, [path]) as Promise<string>;
+  }
+
+  Object.freeze(validationFs);
+  return Object.freeze({ fs: validationFs }) as RuntimeAdapter;
+}
+
+function cloneAndFreezeAllowedDirs(
+  allowedDirs: string[] | undefined,
+): string[] | undefined {
+  if (allowedDirs === undefined) return undefined;
+  return snapshotDirectoryList(allowedDirs, "SecureFs allowedDirs");
+}
+
+function normalizeValidationOptions(
+  options: Partial<Omit<PathValidationPolicyOptions, "baseDir">> | undefined,
+): Partial<Omit<PathValidationPolicyOptions, "baseDir">> {
+  if (options === undefined) return Object.freeze({});
+  const snapshot = snapshotOwnOptions(
+    options,
+    "SecureFs validationOptions",
+    VALIDATION_OPTION_KEYS,
+  );
+  const normalized: Partial<Omit<PathValidationPolicyOptions, "baseDir">> = {};
+  const level = snapshot.level;
+  if (
+    level !== undefined &&
+    !VALIDATION_LEVELS.has(level as NonNullable<ValidationOptions["level"]>)
+  ) {
+    invalidSecureFsOption(
+      "SecureFs validation level must be strict or normal",
+    );
+  }
+  if (level !== undefined) normalized.level = level as ValidationOptions["level"];
+  const allowedDirs = snapshotDirectoryList(snapshot.allowedDirs, "SecureFs allowedDirs");
+  if (allowedDirs !== undefined) normalized.allowedDirs = allowedDirs;
+  for (
+    const key of [
+      "followSymlinks",
+      "checkExists",
+      "allowAbsolute",
+    ] as const
+  ) {
+    const value = snapshot[key];
+    if (
+      value !== undefined &&
+      typeof value !== "boolean"
+    ) {
+      invalidSecureFsOption(`SecureFs ${key} must be a boolean`);
+    }
+    if (value !== undefined) normalized[key] = value;
+  }
+  return Object.freeze(normalized);
+}
+
+function normalizeContextOptions(
+  options: ContextOptions | undefined,
+): ContextOptions {
+  if (options === undefined) return Object.freeze({});
+  const snapshot = snapshotOwnOptions(
+    options,
+    "SecureFs contextOptions",
+    CONTEXT_OPTION_KEYS,
+  );
+  return Object.freeze({
+    allowedImportDirs: snapshotDirectoryList(
+      snapshot.allowedImportDirs,
+      "SecureFs allowedImportDirs",
+    ),
+  });
+}
+
+function normalizeRecursiveOperationOptions(
+  options: { recursive?: boolean } | undefined,
+  label: string,
+): Readonly<{ recursive?: boolean }> | undefined {
+  if (options === undefined) return undefined;
+  const snapshot = snapshotOwnOptions(
+    options,
+    label,
+    RECURSIVE_OPERATION_OPTION_KEYS,
+  );
+  if (snapshot.recursive !== undefined && typeof snapshot.recursive !== "boolean") {
+    invalidSecureFsOption(`${label}.recursive must be a boolean`);
+  }
+  return Object.freeze(
+    snapshot.recursive === undefined ? {} : { recursive: snapshot.recursive },
+  );
+}
+
+function normalizeWatchOptions(
+  options: { recursive?: boolean; signal?: AbortSignal } | undefined,
+): Readonly<{ recursive?: boolean; signal?: AbortSignal }> | undefined {
+  if (options === undefined) return undefined;
+  const snapshot = snapshotOwnOptions(options, "SecureFs watch options", WATCH_OPTION_KEYS);
+  if (snapshot.recursive !== undefined && typeof snapshot.recursive !== "boolean") {
+    invalidSecureFsOption("SecureFs watch options.recursive must be a boolean");
+  }
+  if (snapshot.signal !== undefined && !(snapshot.signal instanceof AbortSignal)) {
+    invalidSecureFsOption("SecureFs watch options.signal must be an AbortSignal");
+  }
+  const normalized: { recursive?: boolean; signal?: AbortSignal } = {};
+  if (snapshot.recursive !== undefined) normalized.recursive = snapshot.recursive;
+  if (snapshot.signal !== undefined) normalized.signal = snapshot.signal;
+  return Object.freeze(normalized);
 }
 
 function getContextValidationOptions(
   context: SecurityContext,
   baseDir: string,
   options?: ContextOptions,
-): ValidationOptions {
+): PathValidationPolicyOptions {
   switch (context) {
     case "user-input":
       return ValidationPresets.userInput(baseDir);
@@ -205,168 +633,269 @@ function getContextValidationOptions(
       return {
         baseDir,
         level: "normal",
-        allowedDirs: options?.allowedImportDirs ?? [],
+        allowedDirs: options?.allowedImportDirs,
         followSymlinks: false,
         allowAbsolute: true,
       };
     case "internal":
-    default:
       return ValidationPresets.internal(baseDir);
   }
 }
 
 export class SecureFs {
-  private config: Required<SecureFsConfig>;
-  private validationOptions: ValidationOptions;
+  private readonly config: NormalizedSecureFsConfig;
   private readonly fileSystem: RuntimeAdapter["fs"];
-  private readonly validationAdapter: RuntimeAdapter;
-  private readonly unboundedFileReader?: (path: string) => Promise<Uint8Array>;
-  private readonly wholeFileReader?: CapturedWholeFileReader;
-  readonly maxWholeFileReadBytes?: number;
-  readonly readFileBytesBounded?: (path: string, byteLimit: number) => Promise<Uint8Array>;
-  readonly readFileBytesWithinLimit?: (path: string, byteLimit: number) => Promise<Uint8Array>;
-  readonly readFileSnapshotWithinLimit?: (
+  private readonly validationOptions: ValidationOptions;
+  readonly readFileBytesBounded?: (
     path: string,
     byteLimit: number,
   ) => Promise<Uint8Array>;
-  readonly createFileBytesExclusive?: (path: string, content: Uint8Array) => Promise<void>;
+  readonly readFileBytesWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  declare readonly readFileSnapshotWithinLimit?: (
+    path: string,
+    byteLimit: number,
+  ) => Promise<Uint8Array>;
+  readonly maxWholeFileReadBytes?: number;
 
   constructor(config: SecureFsConfig) {
-    this.config = {
-      context: "internal",
-      throwOnError: true,
-      onSecurityEvent: () => {},
-      ...config,
-      contextOptions: snapshotContextOptions(config.contextOptions),
-      validationOptions: snapshotValidationOptions(config.validationOptions),
-    };
-    this.fileSystem = snapshotFileSystemAuthority(this.config.adapter.fs);
-    this.validationAdapter = Object.freeze({ ...this.config.adapter, fs: this.fileSystem });
+    const snapshot = snapshotOwnOptions(
+      config,
+      "SecureFs config",
+      SECURE_FS_CONFIG_KEYS,
+    );
+    const configuredBaseDir = snapshot.baseDir;
+    if (typeof configuredBaseDir !== "string" || configuredBaseDir.length === 0) {
+      invalidSecureFsOption("SecureFs baseDir must be a non-empty string");
+    }
+    const baseDir = resolve(configuredBaseDir);
+
+    const adapter = snapshot.adapter;
+    if (
+      typeof adapter !== "object" ||
+      adapter === null
+    ) {
+      invalidSecureFsOption("SecureFs requires a runtime adapter with a filesystem");
+    }
+    if (isProxyWithoutHooks(adapter)) {
+      invalidSecureFsOption("SecureFs runtime adapter cannot be a Proxy");
+    }
+    let fsDescriptor: PropertyDescriptor | undefined;
+    try {
+      fsDescriptor = Object.getOwnPropertyDescriptor(adapter, "fs");
+    } catch {
+      invalidSecureFsOption("SecureFs adapter filesystem could not be inspected safely");
+    }
+    if (
+      fsDescriptor === undefined ||
+      !("value" in fsDescriptor) ||
+      typeof fsDescriptor.value !== "object" ||
+      fsDescriptor.value === null
+    ) {
+      invalidSecureFsOption(
+        "SecureFs requires an own, data-property runtime adapter filesystem",
+      );
+    }
+    const suppliedFileSystem = fsDescriptor.value as RuntimeAdapter["fs"];
+    if (isProxyWithoutHooks(suppliedFileSystem)) {
+      invalidSecureFsOption("SecureFs filesystem cannot be a Proxy");
+    }
+    let snapshotReader: ReturnType<typeof captureSnapshotReadCapability>;
+    try {
+      snapshotReader = captureSnapshotReadCapability(
+        suppliedFileSystem,
+        "SecureFs filesystem",
+      );
+    } catch (_) {
+      invalidSecureFsOption("SecureFs filesystem snapshot capability is invalid");
+    }
+    let virtualSnapshotReader: ReturnType<typeof captureStaticReadCapabilities>["virtual"];
+    if (snapshotReader === undefined) {
+      try {
+        virtualSnapshotReader = captureStaticReadCapabilities(
+          suppliedFileSystem,
+          "SecureFs filesystem",
+        ).virtual;
+      } catch {
+        // A malformed optional virtual publisher must not weaken otherwise
+        // valid filesystem operations or be treated as snapshot authority.
+        virtualSnapshotReader = undefined;
+      }
+    }
+    this.fileSystem = snapshotFilesystem(
+      suppliedFileSystem,
+      snapshotReader !== undefined,
+    );
+    if (this.fileSystem.maxWholeFileReadBytes !== undefined) {
+      this.maxWholeFileReadBytes = this.fileSystem.maxWholeFileReadBytes;
+    }
+
+    const context = requireSecurityContext(
+      snapshot.context === undefined ? "internal" : snapshot.context,
+    );
+    if (
+      snapshot.onSecurityEvent !== undefined &&
+      typeof snapshot.onSecurityEvent !== "function"
+    ) {
+      invalidSecureFsOption("SecureFs onSecurityEvent must be a function");
+    }
+
+    this.config = Object.freeze({
+      baseDir,
+      context,
+      contextOptions: normalizeContextOptions(
+        snapshot.contextOptions as ContextOptions | undefined,
+      ),
+      onSecurityEvent: (snapshot.onSecurityEvent as ((event: SecurityEvent) => void) | undefined) ??
+        (() => {}),
+      validationOptions: normalizeValidationOptions(
+        snapshot.validationOptions as
+          | Partial<Omit<PathValidationPolicyOptions, "baseDir">>
+          | undefined,
+      ),
+    });
+
+    const validationAdapter = snapshotValidationAdapter(this.fileSystem);
 
     this.validationOptions = this.buildValidationOptions(
       this.config.context,
       this.config.contextOptions,
-      this.validationAdapter,
+      validationAdapter,
     );
 
-    const staticReaders = captureStaticReadCapabilities(this.fileSystem, "SecureFs filesystem");
-    let byteReaders: CapturedByteReaders;
-    try {
-      byteReaders = captureByteReadCapabilities(this.fileSystem, "SecureFs filesystem");
-    } catch (error) {
-      if (staticReaders.snapshot === undefined) throw error;
-      byteReaders = Object.freeze({}) as CapturedByteReaders;
-    }
-    this.unboundedFileReader = byteReaders.unbounded;
-    if (byteReaders.whole !== undefined) {
-      this.wholeFileReader = byteReaders.whole;
-      this.maxWholeFileReadBytes = byteReaders.whole.maximumBytes;
-    }
-    if (byteReaders.prefix !== undefined) {
-      this.readFileBytesBounded = async (path, byteLimit) => {
-        const canonicalPath = await this.validateReadPath(path, "readFileBytesBounded");
-        return byteReaders.prefix!(canonicalPath, byteLimit);
+    const boundedReader = this.fileSystem.readFileBytesBounded;
+    if (boundedReader) {
+      this.readFileBytesBounded = async (path: string, byteLimit: number) => {
+        if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+          throw new RangeError("SecureFs bounded read limit must be a positive safe integer");
+        }
+        const validation = await this.validatePathForOperation(
+          path,
+          "readFileBytesBounded",
+        );
+        const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+        return copyFixedUint8ArrayWithinLimit(
+          await boundedReader.call(this.fileSystem, canonicalPath, byteLimit),
+          byteLimit,
+          "SecureFs bounded read",
+        );
       };
     }
-    if (byteReaders.exact !== undefined) {
-      this.readFileBytesWithinLimit = async (path, byteLimit) => {
-        const canonicalPath = await this.validateReadPath(path, "readFileBytesWithinLimit");
-        return byteReaders.exact!(canonicalPath, byteLimit);
-      };
-    }
-    if (staticReaders.snapshot !== undefined) {
-      const reader = staticReaders.snapshot;
-      const containmentRoot = this.config.baseDir;
-      this.readFileSnapshotWithinLimit = async (path, byteLimit) => {
-        const canonicalPath = await this.validateReadPath(path, "readFileSnapshotWithinLimit");
-        return reader.read(canonicalPath, containmentRoot, byteLimit);
-      };
-    } else if (staticReaders.virtual !== undefined) {
-      const reader = staticReaders.virtual;
-      this.readFileSnapshotWithinLimit = async (path, byteLimit) => {
-        const canonicalPath = await this.validateReadPath(path, "readFileSnapshotWithinLimit");
-        const before = await reader.generation();
-        const bytes = reader.exact !== undefined
-          ? await reader.exact(canonicalPath, byteLimit)
-          : reader.whole !== undefined && reader.whole.maximumBytes <= byteLimit
-          ? await reader.whole.read(canonicalPath)
-          : (() => {
-            throw new TypeError("Virtual snapshot requires an admissible bounded reader");
-          })();
-        const after = await reader.generation();
-        if (before !== after) {
-          throw new FileSnapshotChangedError(
-            "Virtual file generation changed during snapshot read",
+
+    const exactReader = this.fileSystem.readFileBytesWithinLimit;
+    if (exactReader) {
+      this.readFileBytesWithinLimit = async (path: string, byteLimit: number) => {
+        if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+          throw new RangeError(
+            "SecureFs exact bounded read limit must be a positive safe integer",
           );
         }
-        return bytes;
+        const validation = await this.validatePathForOperation(
+          path,
+          "readFileBytesWithinLimit",
+        );
+        const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+        return copyFixedUint8ArrayWithinLimit(
+          await exactReader.call(this.fileSystem, canonicalPath, byteLimit),
+          byteLimit,
+          "SecureFs exact bounded read",
+        );
       };
     }
-
-    let exclusiveCreator;
-    try {
-      exclusiveCreator = captureExclusiveCreateCapability(
-        this.fileSystem,
-        "SecureFs filesystem",
-      );
-    } catch {
-      // Exclusive-create authority is independent from read authority. A bad
-      // optional publisher is quarantined rather than weakening valid reads.
-      exclusiveCreator = undefined;
-    }
-    if (exclusiveCreator !== undefined) {
-      this.createFileBytesExclusive = async (path, content) => {
-        const validation = await this.validatePathForOperation(path, "createFileBytesExclusive");
-        return exclusiveCreator!.create(this.getCanonicalPathOrThrow(validation, path), content);
-      };
-    }
-
-    for (
-      const key of [
-        "maxWholeFileReadBytes",
-        "readFileBytesBounded",
-        "readFileBytesWithinLimit",
-        "readFileSnapshotWithinLimit",
-        "createFileBytesExclusive",
-      ] as const
-    ) {
-      Object.defineProperty(this, key, {
+    if (snapshotReader !== undefined) {
+      const containmentRoot = this.config.baseDir;
+      objectDefineProperty(this, "readFileSnapshotWithinLimit", {
         configurable: false,
         enumerable: true,
-        value: this[key],
+        value: async (path: string, byteLimit: number) => {
+          if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+            throw new RangeError(
+              "SecureFs snapshot read limit must be a positive safe integer",
+            );
+          }
+          const validation = await this.validatePathForOperation(
+            path,
+            "readFileSnapshotWithinLimit",
+          );
+          const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+          return copyFixedUint8ArrayWithinLimit(
+            await snapshotReader.read(canonicalPath, containmentRoot, byteLimit),
+            byteLimit,
+            "SecureFs snapshot read",
+          );
+        },
+        writable: false,
+      });
+    } else if (
+      virtualSnapshotReader !== undefined &&
+      (virtualSnapshotReader.exact !== undefined || virtualSnapshotReader.whole !== undefined)
+    ) {
+      const reader = virtualSnapshotReader;
+      objectDefineProperty(this, "readFileSnapshotWithinLimit", {
+        configurable: false,
+        enumerable: true,
+        value: async (path: string, byteLimit: number) => {
+          if (!Number.isSafeInteger(byteLimit) || byteLimit <= 0) {
+            throw new RangeError(
+              "SecureFs snapshot read limit must be a positive safe integer",
+            );
+          }
+          const validation = await this.validatePathForOperation(
+            path,
+            "readFileSnapshotWithinLimit",
+          );
+          const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+          const before = await reader.generation();
+          const bytes = reader.exact !== undefined
+            ? await reader.exact(canonicalPath, byteLimit)
+            : reader.whole !== undefined && reader.whole.maximumBytes <= byteLimit
+            ? await reader.whole.read(canonicalPath)
+            : (() => {
+              throw new TypeError("Virtual snapshot requires an admissible bounded reader");
+            })();
+          const after = await reader.generation();
+          if (before !== after) {
+            throw new FileSnapshotChangedError(
+              "Virtual file generation changed during snapshot read",
+            );
+          }
+          return copyFixedUint8ArrayWithinLimit(
+            bytes,
+            byteLimit,
+            "SecureFs virtual snapshot read",
+          );
+        },
         writable: false,
       });
     }
-  }
-
-  private async validateReadPath(path: string, operation: string): Promise<string> {
-    const validation = await this.validatePathForOperation(path, operation);
-    return this.getCanonicalPathOrThrow(validation, path);
+    hardenSecureFsAuthority(this);
   }
 
   private buildValidationOptions(
     context: SecurityContext,
-    contextOptions?: ContextOptions,
-    adapter: RuntimeAdapter = this.validationAdapter,
+    contextOptions: ContextOptions | undefined,
+    adapter: RuntimeAdapter,
   ): ValidationOptions {
     const contextValidationOptions = getContextValidationOptions(
       context,
       this.config.baseDir,
       contextOptions,
     );
-
-    const validationOptions = {
-      ...contextValidationOptions,
-      ...this.config.validationOptions,
+    const overrides = this.config.validationOptions;
+    const validationOptions: ValidationOptions = {
       baseDir: this.config.baseDir,
+      level: overrides.level ?? contextValidationOptions.level,
+      allowedDirs: cloneAndFreezeAllowedDirs(
+        overrides.allowedDirs ?? contextValidationOptions.allowedDirs,
+      ),
+      followSymlinks: overrides.followSymlinks ?? contextValidationOptions.followSymlinks,
+      checkExists: overrides.checkExists ?? contextValidationOptions.checkExists,
+      allowAbsolute: overrides.allowAbsolute ?? contextValidationOptions.allowAbsolute,
       adapter,
     };
-    return {
-      ...validationOptions,
-      allowedDirs: validationOptions.allowedDirs === undefined
-        ? undefined
-        : [...validationOptions.allowedDirs],
-    };
+    return Object.freeze(validationOptions);
   }
 
   private emitValidationEvent(
@@ -374,14 +903,18 @@ export class SecureFs {
     operation: string,
     path: string,
   ): void {
-    this.config.onSecurityEvent({
-      type: result.valid ? "validation-passed" : "validation-failed",
-      operation,
-      path: sanitizePathForDisplay(path, this.config.baseDir),
-      error: result.error,
-      code: result.code,
-      timestamp: new Date(),
-    });
+    try {
+      this.config.onSecurityEvent({
+        type: result.valid ? "validation-passed" : "validation-failed",
+        operation,
+        path: sanitizePathForDisplay(path, this.config.baseDir),
+        error: result.error,
+        code: result.code,
+        timestamp: new Date(),
+      });
+    } catch {
+      // Observability callbacks must not replace the filesystem policy result.
+    }
   }
 
   private throwIfInvalid(
@@ -389,29 +922,23 @@ export class SecureFs {
     operation: string,
     path: string,
   ): void {
-    if (result.valid || !this.config.throwOnError) return;
+    if (result.valid) return;
 
     throw SECURITY_VIOLATION.create({
       detail: `Path validation failed for ${operation}: ${result.error}`,
-      context: { code: result.code, path },
+      context: {
+        code: result.code,
+        path: sanitizePathForDisplay(path, this.config.baseDir),
+      },
     });
   }
 
   private async validatePathForOperation(
     path: string,
     operation: string,
+    options: ValidationOptions = this.validationOptions,
   ): Promise<ValidationResult> {
-    const result = await validatePath(path, this.validationOptions);
-    this.emitValidationEvent(result, operation, path);
-    this.throwIfInvalid(result, operation, path);
-    return result;
-  }
-
-  private validatePathForOperationSync(
-    path: string,
-    operation: string,
-  ): ValidationResult {
-    const result = validatePathSync(path, this.validationOptions);
+    const result = await validatePath(path, options);
     this.emitValidationEvent(result, operation, path);
     this.throwIfInvalid(result, operation, path);
     return result;
@@ -424,7 +951,10 @@ export class SecureFs {
     if (validation.valid && validation.canonicalPath) return validation.canonicalPath;
     throw SECURITY_VIOLATION.create({
       detail: "Invalid path",
-      context: { code: validation.code, path },
+      context: {
+        code: validation.code,
+        path: sanitizePathForDisplay(path, this.config.baseDir),
+      },
     });
   }
 
@@ -444,9 +974,12 @@ export class SecureFs {
     const validation = await this.validatePathForOperation(path, "readFileBytes");
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
 
-    if (this.wholeFileReader) return await this.wholeFileReader.read(canonicalPath);
-    if (this.unboundedFileReader) return await this.unboundedFileReader(canonicalPath);
-    throw new TypeError("SecureFs filesystem does not provide binary-safe file reads");
+    const reader = this.fileSystem.readFileBytes;
+    if (reader) return await reader.call(this.fileSystem, canonicalPath);
+
+    throw NOT_SUPPORTED.create({
+      detail: "SecureFs binary reads require a binary-safe filesystem adapter",
+    });
   }
 
   async writeFile(path: string, content: string): Promise<void> {
@@ -468,96 +1001,126 @@ export class SecureFs {
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
+    const normalizedOptions = normalizeRecursiveOperationOptions(
+      options,
+      "SecureFs mkdir options",
+    );
     const validation = await this.validatePathForOperation(path, "mkdir");
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
-    await this.fileSystem.mkdir(canonicalPath, options);
+    await this.fileSystem.mkdir(canonicalPath, normalizedOptions);
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
+    const normalizedOptions = normalizeRecursiveOperationOptions(
+      options,
+      "SecureFs remove options",
+    );
     const validation = await this.validatePathForOperation(path, "remove");
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
-    await this.fileSystem.remove(canonicalPath, options);
+    await this.fileSystem.remove(canonicalPath, normalizedOptions);
   }
 
   async exists(path: string): Promise<boolean> {
-    const validation = await this.validatePathForOperation(path, "exists");
-    if (!validation.valid || !validation.canonicalPath) return false;
-    return await this.fileSystem.exists(validation.canonicalPath);
+    const validation = await this.validatePathForOperation(
+      path,
+      "exists",
+      Object.freeze({ ...this.validationOptions, checkExists: false }),
+    );
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
+    return await this.fileSystem.exists(canonicalPath);
   }
 
-  readDir(path: string): AsyncIterable<DirEntry> {
-    const validation = this.validatePathForOperationSync(path, "readDir");
+  async *readDir(path: string): AsyncIterable<DirEntry> {
+    const validation = await this.validatePathForOperation(path, "readDir");
     const canonicalPath = this.getCanonicalPathOrThrow(validation, path);
-    return this.fileSystem.readDir(canonicalPath);
+    for await (const entry of this.fileSystem.readDir(canonicalPath)) {
+      yield entry;
+    }
   }
 
   async makeTempDir(prefix: string): Promise<string> {
-    return await this.fileSystem.makeTempDir(prefix);
+    if (
+      typeof prefix !== "string" ||
+      prefix.length === 0 ||
+      prefix.length > 128 ||
+      !/^[A-Za-z0-9._-]+$/.test(prefix)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "SecureFs temporary-directory prefix must be 1-128 safe filename characters",
+      });
+    }
+
+    const relativePath = `${prefix}${crypto.randomUUID()}`;
+    const validation = await this.validatePathForOperation(relativePath, "makeTempDir");
+    const canonicalPath = this.getCanonicalPathOrThrow(validation, relativePath);
+    await this.fileSystem.mkdir(canonicalPath);
+    return canonicalPath;
   }
 
   watch(
     paths: string | string[],
     options?: { recursive?: boolean; signal?: AbortSignal },
   ): FileWatcher {
-    const pathArray = Array.isArray(paths) ? paths : [paths];
-    const validatedPaths: string[] = [];
-
-    for (const path of pathArray) {
-      const validation = this.validatePathForOperationSync(path, "watch");
-      if (validation.valid && validation.canonicalPath) {
-        validatedPaths.push(validation.canonicalPath);
-      }
-    }
-
-    if (validatedPaths.length === 0) {
-      if (this.config.throwOnError) {
-        throw SECURITY_VIOLATION.create({
-          detail: "No valid paths to watch",
-          context: { code: "NO_VALID_PATHS", path: paths.toString() },
-        });
-      }
-
-      return this.fileSystem.watch([], options);
-    }
-
-    const pathArg: string | string[] = validatedPaths.length === 1
-      ? validatedPaths[0] ?? ""
-      : validatedPaths;
-
-    return this.fileSystem.watch(pathArg, options);
-  }
-
-  getUnsafeAdapter(): RuntimeAdapter {
-    // Fail closed: an unset NODE_ENV must be treated as production so a missing
-    // env var can never silently open this path-validation-bypassing escape
-    // hatch. Only an explicit non-production NODE_ENV unlocks it.
-    const nodeEnv = getHostEnv("NODE_ENV");
-    if (!nodeEnv || nodeEnv === "production") {
-      throw SECURITY_VIOLATION.create({
-        detail: "getUnsafeAdapter() is not allowed in production",
+    const pathArray = Array.isArray(paths)
+      ? snapshotDirectoryList(paths, "SecureFs watch paths")!
+      : [paths];
+    if (
+      pathArray.length === 0 ||
+      !pathArray.every((path) => typeof path === "string" && path.length > 0)
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "SecureFs watch requires at least one non-empty path",
       });
     }
-    logger.warn("Using unsafe adapter - security checks bypassed!");
-    return this.config.adapter;
-  }
 
-  updateValidationOptions(options: Partial<ValidationOptions>): void {
-    const update = snapshotValidationOptions(options);
-    this.validationOptions = {
-      ...this.validationOptions,
-      ...update,
-      baseDir: this.config.baseDir,
-      adapter: this.validationAdapter,
+    const watchOptions = normalizeWatchOptions(options);
+    let watcher: FileWatcher | undefined;
+    let closed = false;
+
+    const ready = (async (): Promise<void> => {
+      const validatedPaths: string[] = [];
+      for (const path of pathArray) {
+        const validation = await this.validatePathForOperation(path, "watch");
+        validatedPaths.push(this.getCanonicalPathOrThrow(validation, path));
+      }
+
+      if (closed || watchOptions?.signal?.aborted) return;
+
+      const pathArg: string | string[] = validatedPaths.length === 1
+        ? validatedPaths[0]!
+        : validatedPaths;
+      watcher = this.fileSystem.watch(pathArg, watchOptions);
+      try {
+        await watcher.ready;
+      } catch (error) {
+        watcher.close();
+        throw error;
+      }
+      if (closed || watchOptions?.signal?.aborted) watcher.close();
+    })();
+
+    const iterate = async function* (): AsyncIterableIterator<FileChangeEvent> {
+      await ready;
+      if (!watcher || closed) return;
+      for await (const event of watcher) yield event;
     };
-  }
 
-  setContext(context: SecurityContext): void {
-    this.validationOptions = this.buildValidationOptions(
-      context,
-      this.config.contextOptions,
-      this.validationAdapter,
-    );
-    this.config.context = context;
+    return {
+      ready,
+      get done(): Promise<void> {
+        return ready.then(async () => {
+          await watcher?.done;
+        });
+      },
+      close(): void {
+        if (closed) return;
+        closed = true;
+        watcher?.close();
+      },
+      [Symbol.asyncIterator]() {
+        return iterate();
+      },
+    };
   }
 }
 
@@ -585,8 +1148,8 @@ function createSecuredAdapterFileSystem(
   };
   if (secureFs.maxWholeFileReadBytes !== undefined) {
     Object.defineProperty(fileSystem, "maxWholeFileReadBytes", {
-      enumerable: true,
       value: secureFs.maxWholeFileReadBytes,
+      enumerable: true,
     });
   }
   if (secureFs.readFileBytesBounded !== undefined) {
@@ -598,16 +1161,26 @@ function createSecuredAdapterFileSystem(
       secureFs.readFileBytesWithinLimit!(path, byteLimit);
   }
   if (secureFs.readFileSnapshotWithinLimit !== undefined) {
-    fileSystem.readFileSnapshotWithinLimit = (path, containmentRoot, byteLimit) => {
-      if (resolve(containmentRoot) !== constructionRoot) {
+    fileSystem.readFileSnapshotWithinLimit = async (
+      path,
+      containmentRoot,
+      byteLimit,
+    ) => {
+      if (containmentRoot !== constructionRoot) {
         throw new TypeError("Secured snapshot reads require the construction-time root");
       }
-      return secureFs.readFileSnapshotWithinLimit!(path, byteLimit);
+      const rootedPath = relative(constructionRoot, path);
+      if (
+        rootedPath === ".." ||
+        rootedPath.startsWith(`..${sep}`) ||
+        isAbsolute(rootedPath)
+      ) {
+        throw new TypeError(
+          "Secured snapshot path must be contained by the construction-time root",
+        );
+      }
+      return await secureFs.readFileSnapshotWithinLimit!(rootedPath, byteLimit);
     };
-  }
-  if (secureFs.createFileBytesExclusive !== undefined) {
-    fileSystem.createFileBytesExclusive = (path, content) =>
-      secureFs.createFileBytesExclusive!(path, content);
   }
   return Object.freeze(fileSystem);
 }
@@ -616,12 +1189,42 @@ export function wrapAdapterWithSecurity(
   adapter: RuntimeAdapter,
   options: Omit<SecureFsConfig, "adapter">,
 ): RuntimeAdapter & { secureFs: SecureFs } {
-  const secureFs = createSecureFs({ ...options, adapter });
-  const constructionRoot = resolve(options.baseDir);
+  const snapshot = snapshotOwnOptions(
+    options,
+    "SecureFs wrapper options",
+    SECURE_FS_WRAPPER_OPTION_KEYS,
+  );
+  const secureFs = createSecureFs({
+    baseDir: snapshot.baseDir as string,
+    adapter,
+    context: snapshot.context as SecurityContext | undefined,
+    contextOptions: snapshot.contextOptions as ContextOptions | undefined,
+    validationOptions: snapshot.validationOptions as
+      | Partial<Omit<PathValidationPolicyOptions, "baseDir">>
+      | undefined,
+    onSecurityEvent: snapshot.onSecurityEvent as ((event: SecurityEvent) => void) | undefined,
+  });
 
-  return {
-    ...adapter,
-    fs: createSecuredAdapterFileSystem(secureFs, constructionRoot),
+  const wrapped: RuntimeAdapter & { secureFs: SecureFs } = {
+    id: adapter.id,
+    name: adapter.name,
+    capabilities: adapter.capabilities,
+    fs: createSecuredAdapterFileSystem(secureFs, resolve(snapshot.baseDir as string)),
+    env: adapter.env,
+    server: adapter.server,
+    serve: (handler, serveOptions) => adapter.serve(handler, serveOptions),
     secureFs,
   };
+
+  if (adapter.shell !== undefined) wrapped.shell = adapter.shell;
+  if (adapter.kv !== undefined) wrapped.kv = adapter.kv;
+  if (adapter.watcher !== undefined) wrapped.watcher = adapter.watcher;
+  if (adapter.initialize !== undefined) {
+    wrapped.initialize = () => adapter.initialize!.call(adapter);
+  }
+  if (adapter.shutdown !== undefined) {
+    wrapped.shutdown = () => adapter.shutdown!.call(adapter);
+  }
+
+  return wrapped;
 }

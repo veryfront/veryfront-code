@@ -34,6 +34,9 @@ export const RSC_ACTION_AUTHORIZATION_TIMEOUT_MS = SERVER_FUNCTION_DEFAULT_TIMEO
 /** Cooperative-cancellation grace: 1,000 ms before a non-settling generation is quarantined. */
 export const RSC_ACTION_AUTHORIZATION_TERMINATION_GRACE_MS = 1_000;
 
+/** Maximum top-level arguments in one Server Action request: 50. */
+export const RSC_ACTION_MAX_TOP_LEVEL_ARGUMENTS = 50;
+
 /** Maximum nested container depth in the detached authorization argument graph: 64. */
 export const RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_DEPTH = 64;
 

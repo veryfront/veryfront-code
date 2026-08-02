@@ -232,6 +232,8 @@ export interface FileSystemAdapter {
    * adapters must omit this marker and provide lstat and realPath instead.
    */
   readonly symlinkSemantics?: "none";
+  /** Adapter is immutably bound to one project and needs no request scope. */
+  readonly projectContextSemantics?: "fixed";
   readFile(path: string): Promise<string>;
   /** Read raw bytes when binary-safe access is required */
   readFileBytes?(path: string): Promise<Uint8Array>;

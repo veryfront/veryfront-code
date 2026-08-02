@@ -63,6 +63,44 @@ const COMPILED_BINARY_E2E_OPTIONS = {
 // rejected by the proxy guard before this deterministic loopback URL is used.
 const UNREACHABLE_LOCAL_PROXY_API_BASE_URL = "http://127.0.0.1:1";
 
+const BROWSER_ESM_CSP = {
+  "default-src": ["'self'"],
+  "script-src": ["'self'", "'nonce-{NONCE}'", "https://esm.sh"],
+  "style-src": ["'self'", "'unsafe-inline'"],
+  "style-src-elem": ["'self'", "'unsafe-inline'"],
+  "style-src-attr": ["'unsafe-inline'"],
+  "img-src": ["'self'", "data:"],
+  "font-src": ["'self'", "data:"],
+  "connect-src": ["'self'"],
+  "media-src": ["'self'", "blob:"],
+  "worker-src": ["'self'", "blob:"],
+  "object-src": ["'none'"],
+  "frame-src": ["'self'"],
+  "frame-ancestors": ["'none'"],
+  "base-uri": ["'self'"],
+  "form-action": ["'self'"],
+} as const;
+
+async function configureBrowserEsmProject(
+  projectDir: string,
+  additionalConfig: Record<string, unknown> = {},
+): Promise<void> {
+  await Deno.writeTextFile(
+    join(projectDir, "veryfront.config.ts"),
+    `export default ${
+      JSON.stringify(
+        {
+          fs: { type: "local" },
+          ...additionalConfig,
+          security: { csp: BROWSER_ESM_CSP },
+        },
+        null,
+        2,
+      )
+    };`,
+  );
+}
+
 describe("Compiled Binary E2E", COMPILED_BINARY_E2E_OPTIONS, () => {
   beforeAll(async () => {
     await ensureBinaryCompiled();
@@ -1714,13 +1752,9 @@ export default function ClientPage() {
       ),
     );
 
-    await Deno.writeTextFile(
-      join(projectDir, "veryfront.config.ts"),
-      `export default {
-  fs: { type: "local" },
-  experimental: { rsc: true }
-};`,
-    );
+    await configureBrowserEsmProject(projectDir, {
+      experimental: { rsc: true },
+    });
 
     await Deno.mkdir(join(projectDir, "app"), { recursive: true });
     await Deno.writeTextFile(
@@ -1888,7 +1922,7 @@ export default function HomePage() {
     });
   });
 
-  it("should hydrate pages-router client pages under strict CSP in the compiled binary", async () => {
+  it("should hydrate pages-router client pages under an explicit dependency CSP", async () => {
     const projectDir = await createTestProject(
       "pages-browser-csp-hydration",
       `
@@ -1923,6 +1957,7 @@ export default function HomePage() {
 }
 `,
     );
+    await configureBrowserEsmProject(projectDir);
 
     await withServer(projectDir, async (server) => {
       await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {
@@ -1981,7 +2016,7 @@ export default function HomePage() {
     });
   });
 
-  it("should allow hydrated client inline styles under the default CSP in the compiled binary", async () => {
+  it("should allow hydrated client inline styles under an explicit dependency CSP", async () => {
     const projectDir = await createTestProject(
       "pages-browser-csp-inline-style",
       `
@@ -2008,6 +2043,7 @@ export default function HomePage() {
 }
 `,
     );
+    await configureBrowserEsmProject(projectDir);
 
     await withServer(projectDir, async (server) => {
       await withBrowserPageAgainstServer(server, async ({ page, response, diagnostics }) => {

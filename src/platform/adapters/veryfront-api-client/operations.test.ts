@@ -988,4 +988,106 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(res.state, "ready");
     });
   });
+
+  describe("dependency artifact build operations", () => {
+    it("uploads an attempt asset with raw hash-verified bytes", async () => {
+      let requestedUrl = "";
+      let method = "";
+      let contentType = "";
+      let body: BodyInit | null | undefined;
+      globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        requestedUrl = String(input);
+        method = init?.method ?? "GET";
+        contentType = new Headers(init?.headers).get("content-type") ?? "";
+        body = init?.body;
+        return Promise.resolve(
+          new Response(JSON.stringify({ stored: true, existed: false }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }) as typeof fetch;
+      const bytes = new TextEncoder().encode("export const value = 42;");
+      const contentHash = await crypto.subtle.digest("SHA-256", bytes).then((digest) =>
+        [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("")
+      );
+
+      const result = await createOps().uploadDependencyArtifactAsset(
+        "11111111-1111-4111-8111-111111111111",
+        2,
+        contentHash,
+        "text/javascript",
+        bytes,
+      );
+
+      assertEquals(method, "PUT");
+      assertStringIncludes(
+        requestedUrl,
+        `/dependency-artifacts/11111111-1111-4111-8111-111111111111/attempts/2/assets/${contentHash}`,
+      );
+      assertEquals(contentType, "text/javascript");
+      assertEquals(body, bytes);
+      assertEquals(result, { stored: true, existed: false });
+    });
+
+    it("rejects a local content hash mismatch before transport", async () => {
+      let fetchCalls = 0;
+      globalThis.fetch = ((_input: RequestInfo | URL, _init?: RequestInit) => {
+        fetchCalls++;
+        return Promise.resolve(new Response("{}"));
+      }) as typeof fetch;
+
+      await assertRejects(
+        () =>
+          createOps().uploadDependencyArtifactAsset(
+            "11111111-1111-4111-8111-111111111111",
+            2,
+            "a".repeat(64),
+            "text/javascript",
+            new TextEncoder().encode("different"),
+          ),
+        Error,
+        "content hash",
+      );
+      assertEquals(fetchCalls, 0);
+    });
+
+    it("reports the complete ready graph to the lease-bound result endpoint", async () => {
+      let requestedUrl = "";
+      let method = "";
+      let body: unknown;
+      stubJsonFetch((url, init) => {
+        requestedUrl = url;
+        method = init?.method ?? "GET";
+        body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        return { accepted: true, state: "ready" };
+      });
+      const hash = "b".repeat(64);
+
+      const result = await createOps().reportDependencyArtifactBuildResult(
+        "11111111-1111-4111-8111-111111111111",
+        2,
+        {
+          outcome: "ready",
+          graph: {
+            graph_schema_version: 1,
+            root_content_hash: hash,
+            assets: [{
+              content_hash: hash,
+              content_type: "text/javascript",
+              size: 42,
+            }],
+          },
+        },
+      );
+
+      assertEquals(method, "POST");
+      assertStringIncludes(
+        requestedUrl,
+        "/dependency-artifacts/11111111-1111-4111-8111-111111111111/attempts/2/result",
+      );
+      assertEquals((body as { outcome: string }).outcome, "ready");
+      assertEquals(result, { accepted: true, state: "ready" });
+    });
+  });
 });

@@ -276,7 +276,6 @@ export function handleModuleBatch(req: Request, options: BatchHandlerOptions): P
         adapter,
         context: "module-loading",
         contextOptions: { allowedImportDirs },
-        throwOnError: false,
       });
 
       logger.debug("Processing batch request", {

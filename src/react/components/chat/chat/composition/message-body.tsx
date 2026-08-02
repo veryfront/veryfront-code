@@ -21,9 +21,9 @@ import type { Source } from "../components/sources.tsx";
 /** Options shared by the default part renderer and `Message.Part`. */
 interface RenderPartOptions {
   stepCount: number;
-  /** Forwarded to the answer `Markdown` — swap the code block. */
+  /** Fenced-code override forwarded to the installed Markdown renderer. */
   codeBlock?: (props: CodeBlockProps) => React.ReactNode;
-  /** Forwarded to the answer `Markdown` — override element renderers. */
+  /** Element overrides forwarded to the installed Markdown renderer. */
   markdownComponents?: Components;
 }
 

@@ -71,6 +71,11 @@ export interface MetricsInstruments {
   buildDuration: Histogram | null;
   bundleSizeHistogram: Histogram | null;
   bundleCounter: Counter | null;
+  dependencyArtifactBuildCounter: Counter | null;
+  dependencyArtifactBuildDuration: Histogram | null;
+  dependencyArtifactBuildBytes: Histogram | null;
+  dependencyArtifactBuildAssetCount: Histogram | null;
+  dependencyArtifactBuildExternalImportCount: Histogram | null;
 
   dataFetchDuration: Histogram | null;
   dataFetchCounter: Counter | null;

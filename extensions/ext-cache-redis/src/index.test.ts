@@ -7,7 +7,12 @@
  * @module extensions/ext-cache-redis/test
  */
 
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
 import type { TokenCacheEntry, TokenCacheStore } from "veryfront/extensions/cache";
@@ -94,6 +99,16 @@ describe("ext-cache-redis extension", () => {
         },
       ]);
     });
+
+    it("matches its explicit package manifest exactly", async () => {
+      const ext = factory();
+      const manifest = JSON.parse(
+        await Deno.readTextFile(new URL("../deno.json", import.meta.url)),
+      );
+      assertEquals(manifest.veryfront.activation, "explicit");
+      assertEquals(manifest.veryfront.contracts, ext.contracts);
+      assertEquals(manifest.veryfront.capabilities, ext.capabilities);
+    });
   });
 
   describe("RedisTokenCacheStore round-trip", () => {
@@ -116,7 +131,7 @@ describe("ext-cache-redis extension", () => {
 
       // stats — one hit recorded
       const stats = await store.stats();
-      assertEquals(stats.type, "redis");
+      assertEquals(stats.type, "extension");
       assertEquals(stats.hits, 1);
       assertEquals(stats.misses, 0);
 
@@ -168,6 +183,46 @@ describe("ext-cache-redis extension", () => {
 
       await store.clear();
       assertEquals(client._dump().size, 0);
+      await store.close();
+    });
+
+    it("rejects prefixes that could widen the Redis clear pattern", async () => {
+      for (
+        const prefix of [
+          "",
+          " ",
+          "vf:\u001f",
+          "vf:\u007f",
+          "vf:é",
+          "a".repeat(257),
+          "vf:*",
+          "vf:?",
+          "vf:[",
+          "vf:]",
+          "vf:\\",
+        ]
+      ) {
+        assertThrows(
+          () => new RedisTokenCacheStore({ url: "redis://localhost:6379", prefix }),
+          TypeError,
+          "1 to 256 visible ASCII characters without glob metacharacters",
+        );
+      }
+
+      assertThrows(
+        () =>
+          new RedisTokenCacheStore({
+            url: "redis://localhost:6379",
+            prefix: 42 as unknown as string,
+          }),
+        TypeError,
+        "1 to 256 visible ASCII characters without glob metacharacters",
+      );
+
+      const store = new RedisTokenCacheStore({
+        url: "redis://localhost:6379",
+        prefix: "a".repeat(256),
+      });
       await store.close();
     });
 
@@ -246,27 +301,49 @@ describe("ext-cache-redis extension", () => {
       await ext.teardown!();
     });
 
-    it("keeps missing optional Redis configuration at debug level", async () => {
+    it("fails closed when explicit activation has no Redis configuration", async () => {
       const previousRedisUrl = Deno.env.get("REDIS_URL");
       Deno.env.delete("REDIS_URL");
 
       try {
         const ext = factory();
         const provides = new Map<string, unknown>();
-        const { logger, debug, info } = capturingLogger();
+        const { logger, info } = capturingLogger();
 
-        await ext.setup!(buildCtx({}, provides, logger));
+        await assertRejects(
+          async () => await ext.setup!(buildCtx({}, provides, logger)),
+          TypeError,
+          "requires proxy.cache.redis.url or REDIS_URL",
+        );
 
         assertEquals(provides.has("TokenCacheStore"), false);
         assertEquals(info, []);
-        assertEquals(
-          debug.some((entry) => entry.message.includes("REDIS_URL not configured")),
-          true,
-        );
       } finally {
         if (previousRedisUrl === undefined) Deno.env.delete("REDIS_URL");
         else Deno.env.set("REDIS_URL", previousRedisUrl);
       }
+    });
+
+    it("rejects an unsafe prefix before registering the cache contract", async () => {
+      const ext = factory();
+      const provides = new Map<string, unknown>();
+      const ctx = buildCtx(
+        {
+          proxy: {
+            cache: {
+              redis: { url: "redis://localhost:6379", prefix: "vf:*" },
+            },
+          },
+        },
+        provides,
+      );
+
+      await assertRejects(
+        async () => await ext.setup!(ctx),
+        TypeError,
+        "1 to 256 visible ASCII characters without glob metacharacters",
+      );
+      assertEquals(provides.has("TokenCacheStore"), false);
     });
 
     it("redacts credentials from the url before logging", async () => {

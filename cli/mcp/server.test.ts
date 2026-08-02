@@ -522,8 +522,60 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
 
       assertEquals(response.status, 400);
       const data = await response.json();
-      assertExists(data.error);
-      assertEquals(data.error.code, -32700);
+      assertEquals(data, {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32700,
+          message: "Parse error",
+        },
+      });
+    });
+
+    it("should distinguish invalid JSON-RPC requests", async () => {
+      const portNum = 19903;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await postMcp(portNum, {
+        jsonrpc: "2.0",
+        id: 1,
+      });
+
+      assertEquals(response.status, 400);
+      assertEquals(await response.json(), {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32600,
+          message: "Invalid Request",
+        },
+      });
+    });
+
+    it("should treat an empty HTTP body as malformed JSON", async () => {
+      const portNum = 19904;
+      server = new MCPDevServer({ httpPort: portNum });
+      server.start();
+
+      await waitForServerBind();
+
+      const response = await fetch(`http://localhost:${portNum}/mcp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      assertEquals(response.status, 400);
+      assertEquals(await response.json(), {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32700,
+          message: "Parse error",
+        },
+      });
     });
 
     it("should negotiate protocol version 2025-11-25", async () => {
