@@ -25,6 +25,7 @@ import { buildExtensionPackages } from "./build-npm-extension-packages.ts";
 import { patchDntArgvPolyfill } from "./dnt-polyfill.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
+import { NPM_NODE_ENGINE } from "./runtime-support.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -95,11 +96,11 @@ await build({
 	// pipeline then tries to fetch `undici` from esm.sh, which returns 404
 	// (esm.sh refuses to build Node-only packages with `external=react`).
 	//
-	// Node 18+ (our minimum engine) provides fetch/Headers/Response/Request/
+	// The supported Node runtime provides fetch/Headers/Response/Request/
 	// FormData/File/Blob as globals natively, so no shim is needed.
 	shims: {
 		deno: true,
-		// Node 18+ provides native timers. Keeping the dnt timer shim here turns
+		// Supported Node releases provide native timers. Keeping the dnt timer shim here turns
 		// Timeout objects into numbers, which prevents unrefTimer() from releasing
 		// framework background intervals in short-lived Node processes.
 		timers: false,
@@ -167,7 +168,7 @@ await build({
 		},
 		homepage: "https://veryfront.com",
 		engines: {
-			node: ">=18.0.0",
+			node: NPM_NODE_ENGINE,
 		},
 		// dnt can't detect dynamic imports, so we add them explicitly
 		dependencies: {

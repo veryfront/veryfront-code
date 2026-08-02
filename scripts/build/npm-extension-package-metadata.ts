@@ -1,5 +1,6 @@
 import { dirname, join, normalize, relative, toFileUrl } from "#std/path";
 import { parseNpmImport } from "./npm-dependency-sources.ts";
+import { MINIMUM_NODE_VERSION, NPM_NODE_ENGINE } from "./runtime-support.ts";
 
 export type ExtensionManifest = {
   name: string;
@@ -77,14 +78,29 @@ const TEST_ONLY_IMPORTS = new Set([
   "@std/testing/bdd",
 ]);
 
-const DEFAULT_NODE_ENGINE = ">=18.0.0";
 const NODE_ENGINE_PATTERN = /^>=(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 
+function compareVersions(left: string, right: string): number {
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 3; index++) {
+    const difference = leftParts[index]! - rightParts[index]!;
+    if (difference !== 0) return difference;
+  }
+  return 0;
+}
+
 function extensionNodeEngine(manifest: ExtensionManifest): string {
-  const nodeEngine = manifest.veryfront?.npm?.nodeEngine ?? DEFAULT_NODE_ENGINE;
+  const nodeEngine = manifest.veryfront?.npm?.nodeEngine ?? NPM_NODE_ENGINE;
   if (typeof nodeEngine !== "string" || !NODE_ENGINE_PATTERN.test(nodeEngine)) {
     throw new Error(
       `${manifest.name} veryfront.npm.nodeEngine must use the exact minimum-version form >=MAJOR.MINOR.PATCH`,
+    );
+  }
+  const minimumVersion = nodeEngine.slice(2);
+  if (compareVersions(minimumVersion, MINIMUM_NODE_VERSION) < 0) {
+    throw new Error(
+      `${manifest.name} veryfront.npm.nodeEngine cannot be lower than the Veryfront minimum ${NPM_NODE_ENGINE}`,
     );
   }
   return nodeEngine;

@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MINIMUM_DENO_VERSION, MINIMUM_NODE_VERSION } from "../../scripts/build/runtime-support.ts";
 
 describe("guide content contracts", () => {
   it("documents the current knowledge ingest JSON result shape", async () => {
@@ -253,5 +254,30 @@ describe("guide content contracts", () => {
       assertEquals(text.includes("Node.js 18"), false);
       assertEquals(text.includes("Node.js 18+"), false);
     }
+  });
+
+  it("states the supported runtime floors in the getting-started docs", async () => {
+    for (
+      const path of [
+        "docs/getting-started/installation.md",
+        "docs/getting-started/quickstart.md",
+      ]
+    ) {
+      const text = await Deno.readTextFile(path);
+      assertStringIncludes(
+        text,
+        `Node.js ${MINIMUM_NODE_VERSION.replace(/\.0$/, "")} or later`,
+      );
+      assertEquals(text.includes("Node.js 18"), false);
+    }
+
+    const installation = await Deno.readTextFile(
+      "docs/getting-started/installation.md",
+    );
+    assertStringIncludes(
+      installation,
+      `Deno ${MINIMUM_DENO_VERSION.replace(/\.0$/, "")} or later`,
+    );
+    assertEquals(installation.includes("Deno 1.45"), false);
   });
 });

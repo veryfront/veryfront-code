@@ -28,10 +28,9 @@ export function toNodeHandler(
       if (response.status === 101) return;
       const outHeaders: Record<string, string | string[]> = {};
       const setCookies: string[] = [];
-      // Headers.prototype.getSetCookie landed in Node ~18.14, but our published
-      // engines.node is ">=18.0.0". On early 18.x it is undefined, so calling it
-      // unconditionally throws for every response and turns valid requests into
-      // 500s. Feature-detect it and fall back to the header iterator.
+      // Node provides getSetCookie, while compatible Web Headers adapters may
+      // omit it. Feature-detect the method so an adapter mismatch cannot turn
+      // every otherwise valid response into a 500.
       const getSetCookie = response.headers.getSetCookie;
       if (typeof getSetCookie === "function") {
         // Modern path: getSetCookie returns each Set-Cookie as a distinct value.
@@ -41,7 +40,7 @@ export function toNodeHandler(
           outHeaders[key] = value;
         }
       } else {
-        // Fallback for runtimes without getSetCookie. The undici-based Headers
+        // Compatibility path for adapters without getSetCookie. The undici-based Headers
         // iterator yields each Set-Cookie as its own entry (it is the one header
         // that is NOT comma-joined during iteration), so iterating preserves
         // multiples where the platform allows it. If a runtime does collapse

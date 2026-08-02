@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
-describe("CSS optimizer Node 18 compatibility", () => {
+describe("CSS optimizer host-method independence", () => {
   it("does not require String.prototype.isWellFormed", async () => {
     const descriptor = Object.getOwnPropertyDescriptor(
       String.prototype,
@@ -14,9 +14,9 @@ describe("CSS optimizer Node 18 compatibility", () => {
     });
 
     try {
-      const pathValidation = await import("./path-validation.ts?node18-compat");
-      const optimization = await import("./optimization-engine.ts?node18-compat");
-      const purging = await import("./purging-engine.ts?node18-compat");
+      const pathValidation = await import("./path-validation.ts?without-host-is-well-formed");
+      const optimization = await import("./optimization-engine.ts?without-host-is-well-formed");
+      const purging = await import("./purging-engine.ts?without-host-is-well-formed");
 
       assertEquals(pathValidation.isSafeCSSRelativePath("styles/app.css"), true);
       optimization.validateCSSSourceMap(
@@ -29,7 +29,7 @@ describe("CSS optimizer Node 18 compatibility", () => {
         "styles/app.css",
       );
       const session = purging.createCSSPurgingSession({
-        cacheIdentity: "node18-purge@1",
+        cacheIdentity: "host-independent-purge@1",
         async purge(request) {
           return { css: request.css };
         },
