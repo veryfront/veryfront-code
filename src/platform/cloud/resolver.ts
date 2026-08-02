@@ -111,7 +111,7 @@ function getResolvedVeryfrontCloudContext(): Omit<VeryfrontCloudBootstrap, "apiB
 }
 
 export function getVeryfrontCloudAuthToken(): string | undefined {
-  return getResolvedVeryfrontCloudContext().apiToken;
+  return getVeryfrontCloudBootstrap().apiToken;
 }
 
 export function getVeryfrontCloudProjectSlug(): string | undefined {
@@ -120,10 +120,23 @@ export function getVeryfrontCloudProjectSlug(): string | undefined {
 
 export function getVeryfrontCloudBootstrap(): VeryfrontCloudBootstrap {
   const scopedContext = getCurrentVeryfrontCloudContext();
+  const scopedApiBaseUrl = scopedContext?.apiBaseUrl?.trim();
+  const resolvedContext = getResolvedVeryfrontCloudContext();
+
+  // A scoped endpoint is a different credential domain. Never attach a
+  // request- or host-owned platform token to it: callers that select an
+  // endpoint must supply the credential for that endpoint in the same scope.
+  if (scopedApiBaseUrl) {
+    return {
+      apiBaseUrl: scopedApiBaseUrl,
+      ...resolvedContext,
+      apiToken: scopedContext?.apiToken,
+    };
+  }
 
   return {
-    apiBaseUrl: scopedContext?.apiBaseUrl?.trim() || resolveVeryfrontApiBaseUrlFromHostEnv(),
-    ...getResolvedVeryfrontCloudContext(),
+    apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
+    ...resolvedContext,
   };
 }
 

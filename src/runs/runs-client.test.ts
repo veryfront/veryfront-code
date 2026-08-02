@@ -610,7 +610,7 @@ describe("VeryfrontRunsClient", () => {
     await assertRejects(
       () => client.list(),
       Error,
-      "Runs auth not configured",
+      "apiUrl requires an explicit authToken",
     );
   });
 

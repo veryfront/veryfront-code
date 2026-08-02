@@ -22,6 +22,7 @@ import {
 } from "#veryfront/config/env.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createLocalModel } from "./local/model-runtime-adapter.ts";
 import { verifyLocalRuntime } from "./local/local-engine.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
@@ -101,6 +102,7 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
+          fetch: guardedOutboundFetch,
           providerName: getOpenAIEnvProviderName(config.baseURL),
         });
       }
@@ -130,6 +132,7 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
+          fetch: guardedOutboundFetch,
         });
       }
       throw toError(createError({
@@ -187,6 +190,7 @@ function autoInitializeFromEnv(): void {
         return provider.createModel(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
+          fetch: guardedOutboundFetch,
         });
       }
       throw toError(createError({

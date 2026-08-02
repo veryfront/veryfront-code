@@ -1109,13 +1109,23 @@ export async function guardedEgressFetch(
         }
       }
 
-      try {
-        response = await doFetch(url, {
+      const pendingResponse = Promise.resolve().then(() =>
+        doFetch(url, {
           ...requestInit,
           ...(client ? { client } : {}),
-        });
+        })
+      );
+      try {
+        response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);
       } catch (error) {
         tunnel?.abort();
+        // A non-cooperative fetch can resolve after the request has already
+        // timed out. Its body is no longer observable, so release it without
+        // keeping the listener/client alive for the late result.
+        void pendingResponse.then(
+          (lateResponse) => lateResponse.body?.cancel().catch(() => undefined),
+          () => undefined,
+        );
         throw error;
       } finally {
         client?.close();
