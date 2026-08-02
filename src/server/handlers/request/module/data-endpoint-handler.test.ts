@@ -445,4 +445,55 @@ describe("server/handlers/request/module/data-endpoint-handler", () => {
       assertEquals(await statusForRejection(new Error("render blew up")), 500);
     });
   });
+
+  describe("slug derivation", () => {
+    async function slugFor(
+      pathname: string,
+      ctx: HandlerContext,
+    ): Promise<{ slug: string | undefined; status: number }> {
+      let slug: string | undefined;
+      setRendererInitializer(
+        createInitializer(((observed: string) => {
+          slug = observed;
+          return Promise.resolve({ frontmatter: {}, headings: [], html: "" });
+        }) as unknown as Renderer["renderPage"]),
+      );
+
+      const response = await callDataEndpoint(
+        new Request(`http://localhost${pathname}`),
+        ctx,
+      );
+      return { slug, status: response.status };
+    }
+
+    it("maps index.json to the root slug and a nested path to its slug", async () => {
+      const ctx = makeCtx("/project");
+      assertEquals((await slugFor("/_veryfront/data/index.json", ctx)).slug, "");
+      assertEquals((await slugFor("/_veryfront/data/docs/intro.json", ctx)).slug, "docs/intro");
+    });
+
+    it("strips only the leading namespace, not a later repeat of it", async () => {
+      const ctx = makeCtx("/project");
+      assertEquals(
+        (await slugFor("/_veryfront/data/a/_veryfront/data/b.json", ctx)).slug,
+        "a/_veryfront/data/b",
+      );
+    });
+
+    it("refuses a dot-segment slug in production instead of rendering it", async () => {
+      const ctx = { ...makeCtx("/project"), resolvedEnvironment: "production" } as HandlerContext;
+      const result = await slugFor("/_veryfront/data/.veryfront/secrets.json", ctx);
+
+      assertEquals(result.slug, undefined);
+      assertEquals(result.status, 404);
+    });
+
+    it("still renders a dot-segment slug outside production", async () => {
+      const ctx = { ...makeCtx("/project"), resolvedEnvironment: "development" } as HandlerContext;
+      assertEquals(
+        (await slugFor("/_veryfront/data/.veryfront/secrets.json", ctx)).slug,
+        ".veryfront/secrets",
+      );
+    });
+  });
 });

@@ -13,6 +13,13 @@ import {
   stripSnapshotHeader,
 } from "#veryfront/server/handlers/utils/dependency-snapshot-protocol.ts";
 import { resolveSSRControlOutcome } from "#veryfront/rendering/ssr-outcome.ts";
+import { isProductionMode } from "../ssr/ssr.handler.ts";
+
+const DATA_ENDPOINT_PREFIX = "/_veryfront/data/";
+
+function hasDotSegment(slug: string): boolean {
+  return slug.split("/").some((segment) => segment.startsWith("."));
+}
 
 export function handleDataEndpoint(
   req: Request,
@@ -26,8 +33,21 @@ export function handleDataEndpoint(
     "module.data.handle",
     async () => {
       try {
-        const rawSlug = pathname.replace("/_veryfront/data/", "").replace(/\.json$/, "");
+        // Anchored at the prefix rather than replacing its first occurrence,
+        // so a slug that repeats the namespace keeps its own path.
+        const rawSlug = pathname.slice(DATA_ENDPOINT_PREFIX.length).replace(/\.json$/, "");
         const encSlug = rawSlug === "index" ? "" : rawSlug;
+
+        // Mirrors the dot-segment rejection the SSR handler applies before
+        // rendering the same slug; this endpoint reaches renderPage too.
+        if (hasDotSegment(encSlug) && isProductionMode(ctx)) {
+          serverLogger.warn("[data-endpoint] Dot path blocked in production", { pathname });
+          const builder = createResponseBuilder(ctx)
+            .withCORS(req, ctx.securityConfig?.cors)
+            .withSecurity(ctx.securityConfig ?? undefined, req);
+          applySnapshotResponseHeaders(builder.headers);
+          return respond(builder.json({ error: "Page not found", status: 404 }, 404));
+        }
         const requestUrl = new URL(req.url);
         const dependencySource = createHandlerDependencyPinningSource(ctx);
         const resolution = await resolveSnapshotForRequest(
