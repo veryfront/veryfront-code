@@ -715,6 +715,29 @@ function createDurableChildLifecycleAdapter<
   });
 }
 
+/**
+ * Reports a bootstrap failure through the observability-only callback. The callback must
+ * never abort child finalization or the setup-failure result, so its own failure is
+ * routed to the lifecycle-error sink instead of propagating.
+ */
+async function notifyBootstrapError(
+  callbacks: {
+    onBootstrapError?: HostedDurableChildBootstrapCallbacks["onBootstrapError"];
+    onCallbackError?: (error: unknown) => Promise<void> | void;
+  },
+  payload: { error: unknown; parentConversationId: string; toolCallId: string },
+): Promise<void> {
+  try {
+    await callbacks.onBootstrapError?.(payload);
+  } catch (callbackError) {
+    try {
+      await callbacks.onCallbackError?.(callbackError);
+    } catch {
+      // The reporting sink itself failed; there is no further channel to report to.
+    }
+  }
+}
+
 /** Execute hosted durable child fork. */
 export async function executeHostedDurableChildFork<
   TResult,
@@ -743,11 +766,17 @@ export async function executeHostedDurableChildFork<
       bootstrapContext,
     });
   } catch (error) {
-    await input.bootstrap?.onBootstrapError?.({
-      error,
-      parentConversationId: bootstrapContext.parentConversationId,
-      toolCallId: input.executionOptions.toolCallId,
-    });
+    await notifyBootstrapError(
+      {
+        onBootstrapError: input.bootstrap?.onBootstrapError,
+        onCallbackError: input.onLifecycleError,
+      },
+      {
+        error,
+        parentConversationId: bootstrapContext.parentConversationId,
+        toolCallId: input.executionOptions.toolCallId,
+      },
+    );
 
     return input.buildSetupFailureResult({
       targets,
@@ -775,11 +804,17 @@ export async function executeHostedDurableChildFork<
     });
   } catch {
     const setupError = new HostedChildRunEventWriterTokenExchangeError();
-    await input.bootstrap?.onBootstrapError?.({
-      error: setupError,
-      parentConversationId: bootstrapContext.parentConversationId,
-      toolCallId: input.executionOptions.toolCallId,
-    });
+    await notifyBootstrapError(
+      {
+        onBootstrapError: input.bootstrap?.onBootstrapError,
+        onCallbackError: input.onLifecycleError,
+      },
+      {
+        error: setupError,
+        parentConversationId: bootstrapContext.parentConversationId,
+        toolCallId: input.executionOptions.toolCallId,
+      },
+    );
 
     const terminalState = {
       status: "failed" as const,

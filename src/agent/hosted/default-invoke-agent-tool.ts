@@ -437,7 +437,7 @@ async function executeForkTask<TContext extends DefaultHostedInvokeAgentContext>
   const invocationContext = forkInput.context?.veryfront_invocation_context as
     | HostedChildInvocationContext
     | undefined;
-  const scopedOptions = invocationContext || runtimeOptions.durableChildRun
+  const scopedOptions = (invocationContext || runtimeOptions.durableChildRun)
     ? {
       ...options,
       context: {
