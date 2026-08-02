@@ -1,7 +1,33 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import type {
+  ModelRuntimePromptMessage,
+  RuntimeAssistantContentPart,
+  RuntimePromptMessage,
+} from "veryfront/provider/shared";
+import { AnthropicServerToolResultError } from "./anthropic-native-content.ts";
 import { buildAnthropicMessagesRequest } from "./anthropic-request-builder.ts";
+
+function captureThrownError(
+  fn: () => unknown,
+  expectedType?: typeof Error,
+  messageIncludes?: string,
+): Error {
+  try {
+    fn();
+  } catch (error) {
+    if (!(error instanceof Error)) throw error;
+    const actualName = error.name;
+    if (expectedType && !(error instanceof expectedType)) {
+      throw new Error(`Expected ${expectedType.name}, received ${actualName}`);
+    }
+    if (messageIncludes && !error.message.includes(messageIncludes)) {
+      throw new Error(`Expected error message to include ${messageIncludes}`);
+    }
+    return error;
+  }
+  throw new Error("Expected function to throw");
+}
 
 function createWarningCollector() {
   const warnings: Array<{
@@ -103,6 +129,7 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         mcpServers: [{
           type: "url",
           url: "https://example.test/mcp",
+          name: "example-mcp",
           authorizationToken: "token_123",
           toolConfiguration: {
             allowedTools: ["read_file"],
@@ -184,6 +211,14 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
           type: "web_search_20250305",
           name: "web",
           max_uses: 2,
+        },
+        {
+          type: "mcp_toolset",
+          mcp_server_name: "example-mcp",
+          default_config: { enabled: false },
+          configs: {
+            read_file: { enabled: true },
+          },
           cache_control: { type: "ephemeral", ttl: "1h" },
         },
       ],
@@ -193,10 +228,8 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       mcp_servers: [{
         type: "url",
         url: "https://example.test/mcp",
+        name: "example-mcp",
         authorization_token: "token_123",
-        tool_configuration: {
-          allowed_tools: ["read_file"],
-        },
       }],
       container: { id: "ctr_1" },
       custom_anthropic: true,
@@ -213,6 +246,1479 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "topP",
       "responseFormat",
     ]);
+  });
+
+  it("maps an explicit generic provider MCP toolset to the matching server identity", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Use docs." }] }],
+        mcpServers: [{
+          type: "url",
+          url: "https://mcp.example.test",
+          name: "docs",
+        }],
+        tools: [{
+          type: "provider",
+          name: "docs",
+          id: "anthropic.mcp_toolset",
+          args: {
+            defaultConfig: { enabled: false, deferLoading: true },
+            configs: {
+              searchEvents: { enabled: true, deferLoading: false },
+            },
+            cacheControl: { type: "ephemeral", ttl: "1h" },
+          },
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.mcp_servers, [{
+      type: "url",
+      url: "https://mcp.example.test",
+      name: "docs",
+    }]);
+    assertEquals(body.tools, [{
+      type: "mcp_toolset",
+      mcp_server_name: "docs",
+      default_config: { enabled: false, defer_loading: true },
+      configs: {
+        searchEvents: { enabled: true, defer_loading: false },
+      },
+      cache_control: { type: "ephemeral", ttl: "1h" },
+    }]);
+  });
+
+  it("validates an official raw MCP contract supplied through providerOptions", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Use docs." }] }],
+        providerOptions: {
+          anthropic: {
+            mcp_servers: [{
+              type: "url",
+              url: "https://mcp.example.test",
+              name: "docs",
+            }],
+            tools: [{
+              type: "mcp_toolset",
+              mcp_server_name: "docs",
+            }],
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.mcp_servers, [{
+      type: "url",
+      url: "https://mcp.example.test",
+      name: "docs",
+    }]);
+    assertEquals(body.tools, [{
+      type: "mcp_toolset",
+      mcp_server_name: "docs",
+    }]);
+  });
+
+  it("rejects ambiguous MCP configuration sources", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Use docs." }] },
+    ];
+    const server = {
+      type: "url",
+      url: "https://mcp.example.test",
+      name: "docs",
+    };
+    const explicitToolset = {
+      type: "provider" as const,
+      name: "docs",
+      id: "anthropic.mcp_toolset" as const,
+      args: {},
+    };
+
+    const ambiguousOptions = [{
+      prompt,
+      mcpServers: [server],
+      providerOptions: {
+        anthropic: { mcp_servers: [server] },
+      },
+    }, {
+      prompt,
+      mcpServers: [server],
+      providerOptions: {
+        anthropic: {
+          tools: [{ type: "mcp_toolset", mcp_server_name: "docs" }],
+        },
+      },
+    }, {
+      prompt,
+      mcpServers: [{
+        ...server,
+        toolConfiguration: { enabled: true },
+      }],
+      tools: [explicitToolset],
+    }];
+
+    for (const options of ambiguousOptions) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            options,
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+      );
+    }
+  });
+
+  it("replays raw mixed server/client assistant blocks before the local tool result", () => {
+    const rawAssistantMessages = [[{
+      type: "server_tool_use",
+      id: "server_search_1",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "tool_use",
+      id: "local_lookup_1",
+      name: "local_lookup",
+      input: { query: "runtime" },
+    }]];
+    const [rawAssistantContent] = rawAssistantMessages;
+    assertExists(rawAssistantContent);
+    const prompt = [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        input: { query: "runtime" },
+      }],
+      providerMetadata: { anthropic: { rawAssistantMessages } },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        output: { type: "json", value: { matches: 1 } },
+      }],
+    }] as unknown as RuntimePromptMessage[];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt, maxOutputTokens: 64 },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: rawAssistantContent,
+    }, {
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "local_lookup_1",
+        content: '{"matches":1}',
+      }],
+    }]);
+  });
+
+  it("rejects raw client tool tampering when canonical content survives", () => {
+    const canonicalCall = {
+      type: "tool-call" as const,
+      toolCallId: "safe_lookup_1",
+      toolName: "safe_lookup",
+      input: '{"accountId":"public-account","operation":"read"}',
+    };
+    const build = (rawToolUse: Record<string, unknown>) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [canonicalCall],
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [[rawToolUse]] },
+            },
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+    const safeRawToolUse = {
+      type: "tool_use",
+      id: "safe_lookup_1",
+      name: "safe_lookup",
+      input: { accountId: "public-account", operation: "read" },
+    };
+
+    assertEquals(build(safeRawToolUse).messages, [{
+      role: "assistant",
+      content: [safeRawToolUse],
+    }]);
+
+    for (
+      const tamperedRawToolUse of [
+        { ...safeRawToolUse, id: "attacker_selected_id" },
+        { ...safeRawToolUse, name: "delete_account" },
+        {
+          ...safeRawToolUse,
+          input: { accountId: "victim-account", operation: "delete" },
+        },
+      ]
+    ) {
+      assertThrows(
+        () => build(tamperedRawToolUse),
+        TypeError,
+        "Anthropic raw client tool call does not match canonical client-executed content",
+      );
+    }
+  });
+
+  it("correlates raw client tool calls one-for-one in occurrence order", () => {
+    const firstCall = {
+      type: "tool-call" as const,
+      toolCallId: "lookup_1",
+      toolName: "lookup",
+      input: { id: 1 },
+    };
+    const secondCall = {
+      type: "tool-call" as const,
+      toolCallId: "lookup_2",
+      toolName: "lookup",
+      input: { id: 2 },
+    };
+    const firstRawCall = {
+      type: "tool_use",
+      id: "lookup_1",
+      name: "lookup",
+      input: { id: 1 },
+    };
+    const secondRawCall = {
+      type: "tool_use",
+      id: "lookup_2",
+      name: "lookup",
+      input: { id: 2 },
+    };
+    const build = (
+      rawCalls: Record<string, unknown>[],
+      content = [firstCall, secondCall],
+    ) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{
+            role: "assistant",
+            content,
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [rawCalls] },
+            },
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    assertEquals(build([firstRawCall, secondRawCall]).messages, [{
+      role: "assistant",
+      content: [firstRawCall, secondRawCall],
+    }]);
+    for (
+      const rawCalls of [
+        [secondRawCall, firstRawCall],
+        [firstRawCall],
+        [firstRawCall, firstRawCall],
+        [firstRawCall, secondRawCall, secondRawCall],
+      ]
+    ) {
+      assertThrows(
+        () => build(rawCalls),
+        TypeError,
+        "Anthropic raw client tool call does not match canonical client-executed content",
+      );
+    }
+    assertThrows(
+      () => build([firstRawCall, firstRawCall], [firstCall, firstCall]),
+      TypeError,
+      "Anthropic raw client tool call does not match canonical client-executed content",
+    );
+  });
+
+  it("allows raw-only client tool replay when its canonical projection was compacted", () => {
+    const rawToolUse = {
+      type: "tool_use",
+      id: "historical_lookup_1",
+      name: "historical_lookup",
+      input: { retained: true },
+    };
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{
+            type: "text",
+            text: "The normalized client call was compacted.",
+          }],
+          providerMetadata: {
+            anthropic: { rawAssistantMessages: [[rawToolUse]] },
+          },
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "assistant",
+      content: [rawToolUse],
+    }]);
+  });
+
+  it("preserves the surviving client/provider call and result interleaving", () => {
+    const rawOrdinaryCall = {
+      type: "tool_use",
+      id: "lookup_1",
+      name: "lookup",
+      input: { id: 1 },
+    };
+    const rawProviderCall = {
+      type: "server_tool_use",
+      id: "code_1",
+      name: "code_execution",
+      input: { code: "print(1)" },
+    };
+    const rawProviderResult = {
+      type: "code_execution_tool_result",
+      tool_use_id: "code_1",
+      content: {
+        type: "code_execution_result",
+        stdout: "1\n",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      },
+    };
+    const ordinaryCall = {
+      type: "tool-call" as const,
+      toolCallId: "lookup_1",
+      toolName: "lookup",
+      input: { id: 1 },
+    };
+    const providerCall = {
+      type: "tool-call" as const,
+      toolCallId: "code_1",
+      toolName: "code_execution",
+      input: { code: "print(1)" },
+      providerExecuted: true as const,
+    };
+    const providerResult = {
+      type: "tool-result" as const,
+      toolCallId: "code_1",
+      toolName: "code_execution",
+      result: {
+        type: "code_execution_result",
+        stdout: "1\n",
+        stderr: "",
+        returnCode: 0,
+        content: [],
+      },
+      providerExecuted: true as const,
+    };
+    const rawAssistantContent = [
+      rawOrdinaryCall,
+      rawProviderCall,
+      rawProviderResult,
+    ];
+    const rawAssistantMessages = [rawAssistantContent];
+    const build = (content: RuntimeAssistantContentPart[]) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{
+            role: "assistant",
+            content,
+            providerToolCalls: [{
+              toolCallId: "code_1",
+              toolName: "code_execution",
+              input: { code: "print(1)" },
+            }],
+            providerMetadata: {
+              anthropic: { rawAssistantMessages },
+            },
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    assertEquals(
+      build([ordinaryCall, providerCall, providerResult]).messages,
+      [{
+        role: "assistant",
+        content: rawAssistantContent,
+      }],
+    );
+    for (
+      const content of [
+        [providerCall, ordinaryCall, providerResult],
+        [ordinaryCall, providerResult, providerCall],
+      ]
+    ) {
+      assertThrows(
+        () => build(content),
+        TypeError,
+        "Anthropic raw tool event order does not match canonical assistant content",
+      );
+    }
+  });
+
+  it("replays the latest pure provider-tool round before a later user message", () => {
+    const rawAssistantContent = [{
+      type: "server_tool_use",
+      id: "srvtool_code_1",
+      name: "code_execution",
+      input: { code: "print(2)" },
+    }, {
+      type: "code_execution_tool_result",
+      tool_use_id: "srvtool_code_1",
+      content: {
+        type: "code_execution_result",
+        stdout: "2\n",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      },
+    }, {
+      type: "text",
+      text: "The result is 2.",
+    }];
+    const prompt: ModelRuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Run the calculation." }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "srvtool_code_1",
+        toolName: "code_execution",
+        input: { code: "print(2)" },
+        providerExecuted: true,
+      }, {
+        type: "tool-result",
+        toolCallId: "srvtool_code_1",
+        toolName: "code_execution",
+        result: {
+          type: "code_execution_result",
+          stdout: "2\n",
+          stderr: "",
+          returnCode: 0,
+          content: [],
+        },
+        providerExecuted: true,
+      }, {
+        type: "text",
+        text: "The result is 2.",
+      }],
+      providerMetadata: {
+        anthropic: { rawAssistantMessages: [rawAssistantContent] },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Explain it." }],
+    }];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Run the calculation." }],
+    }, {
+      role: "assistant",
+      content: rawAssistantContent,
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Explain it." }],
+    }]);
+  });
+
+  it("rejects replayed provider-tool calls that conflict with canonical content", () => {
+    const rawAssistantMessages = [[{
+      type: "server_tool_use",
+      id: "srvtool_code_1",
+      name: "code_execution",
+      input: { code: "print(2)" },
+    }]];
+    const canonicalVariants = [{
+      toolCallId: "different_id",
+      toolName: "code_execution",
+      input: { code: "print(2)" },
+    }, {
+      toolCallId: "srvtool_code_1",
+      toolName: "web_search",
+      input: { code: "print(2)" },
+    }, {
+      toolCallId: "srvtool_code_1",
+      toolName: "code_execution",
+      input: { code: "print(3)" },
+    }];
+
+    for (const canonical of canonicalVariants) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt: [{
+                role: "assistant",
+                content: [{
+                  type: "tool-call",
+                  ...canonical,
+                  providerExecuted: true,
+                }],
+                providerMetadata: { anthropic: { rawAssistantMessages } },
+              }],
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic raw provider tool call does not match canonical provider-executed content",
+      );
+    }
+  });
+
+  it("rejects replayed provider-tool results that conflict with canonical content", () => {
+    const rawAssistantMessages = [[{
+      type: "server_tool_use",
+      id: "srvtool_code_1",
+      name: "code_execution",
+      input: { code: "print(2)" },
+    }, {
+      type: "code_execution_tool_result",
+      tool_use_id: "srvtool_code_1",
+      content: {
+        type: "code_execution_result",
+        stdout: "2\n",
+        stderr: "",
+        return_code: 0,
+        content: [],
+      },
+    }]];
+    const canonicalCall = {
+      type: "tool-call" as const,
+      toolCallId: "srvtool_code_1",
+      toolName: "code_execution",
+      input: { code: "print(2)" },
+      providerExecuted: true as const,
+    };
+    const matchingResult = {
+      type: "code_execution_result",
+      stdout: "2\n",
+      stderr: "",
+      returnCode: 0,
+      content: [],
+    };
+    const canonicalVariants = [{
+      toolCallId: "different_id",
+      toolName: "code_execution",
+      result: matchingResult,
+    }, {
+      toolCallId: "srvtool_code_1",
+      toolName: "web_search",
+      result: matchingResult,
+    }, {
+      toolCallId: "srvtool_code_1",
+      toolName: "code_execution",
+      result: { ...matchingResult, stdout: "different\n" },
+    }, {
+      toolCallId: "srvtool_code_1",
+      toolName: "code_execution",
+      result: matchingResult,
+      isError: true,
+    }];
+
+    for (const canonical of canonicalVariants) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt: [{
+                role: "assistant",
+                content: [
+                  canonicalCall,
+                  {
+                    type: "tool-result",
+                    ...canonical,
+                    providerExecuted: true,
+                  },
+                ],
+                providerMetadata: { anthropic: { rawAssistantMessages } },
+              }],
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic raw provider tool result does not match canonical provider-executed content",
+      );
+    }
+  });
+
+  it("rejects reordered or duplicated canonical provider-tool occurrences", () => {
+    const rawCalls = [{
+      type: "server_tool_use",
+      id: "server_search_1",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "server_tool_use",
+      id: "server_search_2",
+      name: "web_search",
+      input: { query: "runtime" },
+    }];
+    const firstCall = {
+      toolCallId: "server_search_1",
+      toolName: "web_search",
+      input: { query: "Veryfront" },
+      supportsDeferredResults: true,
+    };
+    const secondCall = {
+      toolCallId: "server_search_2",
+      toolName: "web_search",
+      input: { query: "runtime" },
+      supportsDeferredResults: true,
+    };
+    const build = (
+      providerToolCalls: typeof firstCall[],
+      content: unknown[] = [],
+    ) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{
+            role: "assistant",
+            content,
+            providerToolCalls,
+            providerMetadata: {
+              anthropic: { rawAssistantMessages: [rawCalls] },
+            },
+          }] as unknown as ModelRuntimePromptMessage[],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    assertThrows(
+      () => build([secondCall, firstCall]),
+      TypeError,
+      "Anthropic raw provider tool call does not match canonical provider-executed content",
+    );
+    assertThrows(
+      () => build([firstCall, firstCall]),
+      TypeError,
+      "Anthropic raw provider tool call does not match canonical provider-executed content",
+    );
+    assertThrows(
+      () =>
+        build([firstCall, secondCall], [{
+          type: "tool-call",
+          toolCallId: "server_search_2",
+          toolName: "web_search",
+          input: { query: "runtime" },
+          providerExecuted: true,
+        }, {
+          type: "tool-call",
+          toolCallId: "server_search_1",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        }]),
+      TypeError,
+      "Anthropic raw provider tool call does not match canonical provider-executed content",
+    );
+  });
+
+  it("rejects reordered or duplicated canonical provider-tool results", () => {
+    const rawAssistantMessages = [[{
+      type: "server_tool_use",
+      id: "server_search_1",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "web_search_tool_result",
+      tool_use_id: "server_search_1",
+      content: [],
+    }, {
+      type: "server_tool_use",
+      id: "server_search_2",
+      name: "web_search",
+      input: { query: "runtime" },
+    }, {
+      type: "web_search_tool_result",
+      tool_use_id: "server_search_2",
+      content: [],
+    }]];
+    const firstCall = {
+      type: "tool-call" as const,
+      toolCallId: "server_search_1",
+      toolName: "web_search",
+      input: { query: "Veryfront" },
+      providerExecuted: true as const,
+    };
+    const secondCall = {
+      type: "tool-call" as const,
+      toolCallId: "server_search_2",
+      toolName: "web_search",
+      input: { query: "runtime" },
+      providerExecuted: true as const,
+    };
+    const firstResult = {
+      type: "tool-result" as const,
+      toolCallId: "server_search_1",
+      toolName: "web_search",
+      result: [],
+      providerExecuted: true as const,
+    };
+    const secondResult = {
+      type: "tool-result" as const,
+      toolCallId: "server_search_2",
+      toolName: "web_search",
+      result: [],
+      providerExecuted: true as const,
+    };
+    const build = (results: typeof firstResult[]) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [firstCall, secondCall, ...results],
+            providerMetadata: {
+              anthropic: { rawAssistantMessages },
+            },
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    assertThrows(
+      () => build([secondResult, firstResult]),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+    assertThrows(
+      () => build([firstResult, firstResult]),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+  });
+
+  it("correlates the exact provider error payload and rejects a different error", () => {
+    const rawAssistantContent = [{
+      type: "server_tool_use",
+      id: "server_search_1",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "web_search_tool_result",
+      tool_use_id: "server_search_1",
+      content: {
+        type: "web_search_tool_result_error",
+        error_code: "unavailable",
+      },
+    }];
+    const rawAssistantMessages = [rawAssistantContent];
+    const build = (code: string) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{
+              type: "tool-call",
+              toolCallId: "server_search_1",
+              toolName: "web_search",
+              input: { query: "Veryfront" },
+              providerExecuted: true,
+            }, {
+              type: "tool-result",
+              toolCallId: "server_search_1",
+              toolName: "web_search",
+              result: new AnthropicServerToolResultError({
+                code,
+                toolCallId: "server_search_1",
+                toolName: "web_search",
+              }),
+              isError: true,
+              providerExecuted: true,
+            }],
+            providerMetadata: { anthropic: { rawAssistantMessages } },
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    assertEquals(build("unavailable").messages, [{
+      role: "assistant",
+      content: rawAssistantContent,
+    }]);
+    assertThrows(
+      () => build("max_uses_exceeded"),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+  });
+
+  it("correlates a JSON-round-tripped provider error payload", () => {
+    const rawAssistantContent = [{
+      type: "server_tool_use",
+      id: "server_search_round_trip",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }, {
+      type: "web_search_tool_result",
+      tool_use_id: "server_search_round_trip",
+      content: {
+        type: "web_search_tool_result_error",
+        error_code: "unavailable",
+      },
+    }];
+    const result = JSON.parse(JSON.stringify(
+      new AnthropicServerToolResultError({
+        code: "unavailable",
+        toolCallId: "server_search_round_trip",
+        toolName: "web_search",
+      }),
+    ));
+
+    const request = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "server_search_round_trip",
+            toolName: "web_search",
+            input: { query: "Veryfront" },
+            providerExecuted: true,
+          }, {
+            type: "tool-result",
+            toolCallId: "server_search_round_trip",
+            toolName: "web_search",
+            result,
+            isError: true,
+            providerExecuted: true,
+          }],
+          providerMetadata: {
+            anthropic: { rawAssistantMessages: [rawAssistantContent] },
+          },
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(request.messages, [{
+      role: "assistant",
+      content: rawAssistantContent,
+    }]);
+  });
+
+  it("rejects extra fields on a serialized provider error", () => {
+    const toolCallId = "server_search_extra_field";
+    const result = {
+      ...JSON.parse(JSON.stringify(
+        new AnthropicServerToolResultError({
+          code: "unavailable",
+          toolCallId,
+          toolName: "web_search",
+        }),
+      )),
+      extra: "must not be ignored",
+    };
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId,
+                toolName: "web_search",
+                input: { query: "Veryfront" },
+                providerExecuted: true,
+              }, {
+                type: "tool-result",
+                toolCallId,
+                toolName: "web_search",
+                result,
+                isError: true,
+                providerExecuted: true,
+              }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{
+                    type: "server_tool_use",
+                    id: toolCallId,
+                    name: "web_search",
+                    input: { query: "Veryfront" },
+                  }, {
+                    type: "web_search_tool_result",
+                    tool_use_id: toolCallId,
+                    content: {
+                      type: "web_search_tool_result_error",
+                      error_code: "unavailable",
+                    },
+                  }]],
+                },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+  });
+
+  it("rejects provider error accessors without invoking them", () => {
+    let codeReads = 0;
+    const result = Object.defineProperty(
+      {
+        name: "AnthropicServerToolResultError",
+        provider: "anthropic",
+        toolCallId: "server_search_accessor",
+        toolName: "web_search",
+      },
+      "code",
+      {
+        enumerable: true,
+        get() {
+          codeReads++;
+          return "unavailable";
+        },
+      },
+    );
+
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId: "server_search_accessor",
+                toolName: "web_search",
+                input: { query: "Veryfront" },
+                providerExecuted: true,
+              }, {
+                type: "tool-result",
+                toolCallId: "server_search_accessor",
+                toolName: "web_search",
+                result,
+                isError: true,
+                providerExecuted: true,
+              }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{
+                    type: "server_tool_use",
+                    id: "server_search_accessor",
+                    name: "web_search",
+                    input: { query: "Veryfront" },
+                  }, {
+                    type: "web_search_tool_result",
+                    tool_use_id: "server_search_accessor",
+                    content: {
+                      type: "web_search_tool_result_error",
+                      error_code: "unavailable",
+                    },
+                  }]],
+                },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+    assertEquals(codeReads, 0);
+  });
+
+  it("keeps a cross-assistant provider call and result in one replay transaction", () => {
+    const rawProviderCall = {
+      type: "server_tool_use",
+      id: "server_search_1",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    };
+    const rawLocalCall = {
+      type: "tool_use",
+      id: "local_lookup_1",
+      name: "local_lookup",
+      input: { query: "runtime" },
+    };
+    const rawProviderResult = {
+      type: "web_search_tool_result",
+      tool_use_id: "server_search_1",
+      content: [{
+        type: "web_search_result",
+        url: "https://veryfront.com",
+        title: "Veryfront",
+        encrypted_content: "encrypted-result",
+        page_age: null,
+      }],
+    };
+    const prompt: ModelRuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        input: { query: "runtime" },
+      }],
+      providerToolCalls: [{
+        toolCallId: "server_search_1",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        supportsDeferredResults: true,
+      }],
+      providerMetadata: {
+        anthropic: { rawAssistantMessages: [[rawProviderCall, rawLocalCall]] },
+      },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        output: { type: "json", value: { matches: 1 } },
+      }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "tool-result",
+        toolCallId: "server_search_1",
+        toolName: "web_search",
+        result: [{
+          type: "web_search_result",
+          url: "https://veryfront.com",
+          title: "Veryfront",
+          pageAge: null,
+          encryptedContent: "encrypted-result",
+        }],
+        providerExecuted: true,
+      }, {
+        type: "text",
+        text: "Combined both results.",
+      }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[rawProviderResult, {
+            type: "text",
+            text: "Combined both results.",
+          }]],
+        },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Summarize that" }],
+    }];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [rawProviderCall, rawLocalCall],
+    }, {
+      role: "user",
+      content: [{
+        type: "tool_result",
+        tool_use_id: "local_lookup_1",
+        content: '{"matches":1}',
+      }],
+    }, {
+      role: "assistant",
+      content: [rawProviderResult, {
+        type: "text",
+        text: "Combined both results.",
+      }],
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Summarize that" }],
+    }]);
+  });
+
+  it("rejects a canonical provider result backed only by a raw legacy call", () => {
+    const toolCallId = "mcptool_raw_only";
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "user",
+              content: [{ type: "text", text: "Echo" }],
+            }, {
+              role: "assistant",
+              content: [{ type: "text", text: "Calling a legacy provider tool." }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{
+                    type: "mcp_tool_use",
+                    id: toolCallId,
+                    name: "echo",
+                    server_name: "example-mcp",
+                    input: { value: "hello" },
+                  }]],
+                },
+              },
+            }, {
+              role: "assistant",
+              content: [{
+                type: "tool-result",
+                toolCallId,
+                toolName: "echo",
+                result: "hello",
+                providerExecuted: true,
+              }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{
+                    type: "mcp_tool_result",
+                    tool_use_id: toolCallId,
+                    is_error: false,
+                    content: "hello",
+                  }]],
+                },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw provider tool result does not match canonical provider-executed content",
+    );
+  });
+
+  it("rejects malformed present Anthropic replay metadata", () => {
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{ type: "text", text: "Do not silently fall back." }],
+              providerMetadata: {
+                anthropic: { rawAssistantMessages: "invalid" },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw assistant messages must be a non-empty array",
+    );
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{ type: "text", text: "Do not replay unknown blocks." }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{ type: "future_unsupported_block" }]],
+                },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw assistant content block type is unsupported",
+    );
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-result",
+                toolCallId: "orphan",
+                toolName: "web_search",
+                result: [],
+                providerExecuted: true,
+              }],
+              providerMetadata: {
+                anthropic: {
+                  rawAssistantMessages: [[{
+                    type: "web_search_tool_result",
+                    tool_use_id: "orphan",
+                    content: [],
+                  }]],
+                },
+              },
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic raw assistant provider tool result is malformed or unpaired",
+    );
+  });
+
+  it("rejects replay metadata accessors without invoking them", () => {
+    let namespaceReads = 0;
+    const hostileNamespace = Object.defineProperty({}, "anthropic", {
+      enumerable: true,
+      get() {
+        namespaceReads += 1;
+        throw new Error("private namespace diagnostic");
+      },
+    }) as Record<string, unknown>;
+    const build = (providerMetadata: Record<string, unknown>) =>
+      buildAnthropicMessagesRequest(
+        "claude-sonnet-4-6",
+        "anthropic",
+        {
+          prompt: [{
+            role: "assistant",
+            content: [{ type: "text", text: "Do not invoke metadata accessors." }],
+            providerMetadata,
+          }],
+        },
+        false,
+        createWarningCollector(),
+      );
+
+    const namespaceError = captureThrownError(
+      () => build(hostileNamespace),
+      TypeError,
+      "Anthropic provider metadata namespace must be an enumerable data property",
+    );
+    assertEquals(namespaceReads, 0);
+    assertEquals(namespaceError.message.includes("private namespace diagnostic"), false);
+
+    let rawHistoryReads = 0;
+    const hostileRawHistory = Object.defineProperty({}, "rawAssistantMessages", {
+      enumerable: true,
+      get() {
+        rawHistoryReads += 1;
+        throw new Error("private history diagnostic");
+      },
+    });
+    const historyError = captureThrownError(
+      () => build({ anthropic: hostileRawHistory }),
+      TypeError,
+      "Anthropic raw assistant messages must be an enumerable data property",
+    );
+    assertEquals(rawHistoryReads, 0);
+    assertEquals(historyError.message.includes("private history diagnostic"), false);
+
+    let proxyPropertyReads = 0;
+    const rawAssistantMessages = new Proxy([[{
+      type: "server_tool_use",
+      id: "server_search_proxy",
+      name: "web_search",
+      input: { query: "Veryfront" },
+    }]], {
+      get() {
+        proxyPropertyReads += 1;
+        throw new Error("proxy property read");
+      },
+    });
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "server_search_proxy",
+            toolName: "web_search",
+            input: { query: "Veryfront" },
+            providerExecuted: true,
+          }],
+          providerMetadata: {
+            anthropic: { rawAssistantMessages },
+          },
+        }],
+      },
+      false,
+      createWarningCollector(),
+    );
+    assertEquals(body.messages, [{
+      role: "assistant",
+      content: [{
+        type: "server_tool_use",
+        id: "server_search_proxy",
+        name: "web_search",
+        input: { query: "Veryfront" },
+      }],
+    }]);
+    assertEquals(proxyPropertyReads, 0);
+  });
+
+  it("compacts raw provider tool history after the turn has completed", () => {
+    const prompt: RuntimePromptMessage[] = [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        input: { query: "runtime" },
+      }],
+      providerToolCalls: [{
+        toolCallId: "server_search_1",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        supportsDeferredResults: true,
+      }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "server_tool_use",
+            id: "server_search_1",
+            name: "web_search",
+            input: { query: "Veryfront" },
+          }, {
+            type: "tool_use",
+            id: "local_lookup_1",
+            name: "local_lookup",
+            input: { query: "runtime" },
+          }]],
+        },
+      },
+    }, {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "local_lookup_1",
+        toolName: "local_lookup",
+        output: { type: "json", value: { matches: 1 } },
+      }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Combined both results." }],
+      providerMetadata: {
+        anthropic: {
+          rawAssistantMessages: [[{
+            type: "web_search_tool_result",
+            tool_use_id: "server_search_1",
+            content: [{
+              type: "web_search_result",
+              url: "https://veryfront.com",
+              title: "Veryfront",
+              encrypted_content: "encrypted-result",
+              page_age: null,
+            }],
+          }, {
+            type: "text",
+            text: "Combined both results.",
+          }]],
+        },
+      },
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Summarize that" }],
+    }];
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.messages, [{
+      role: "user",
+      content: [{ type: "text", text: "Search and inspect" }],
+    }, {
+      role: "assistant",
+      content: [{ type: "text", text: "Combined both results." }],
+    }, {
+      role: "user",
+      content: [{ type: "text", text: "Summarize that" }],
+    }]);
   });
 
   it("treats provider-option thinking as enabled while shaping sampling settings", () => {
@@ -247,6 +1753,103 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "temperature",
       "topP",
     ]);
+  });
+
+  it("rejects unsafe or non-integral explicit thinking budgets", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Think carefully." }] },
+    ];
+    const invalidBudgets = [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1023,
+      1024.5,
+      Number.MAX_SAFE_INTEGER + 1,
+    ];
+
+    for (const budgetTokens of invalidBudgets) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt,
+              reasoning: { enabled: true, budgetTokens },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "budgetTokens must be a safe integer of at least 1024",
+      );
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt,
+              providerOptions: {
+                anthropic: {
+                  thinking: { type: "enabled", budget_tokens: budgetTokens },
+                },
+              },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "thinking.budget_tokens must be a safe integer of at least 1024",
+      );
+    }
+
+    for (
+      const thinking of [
+        null,
+        [],
+        "enabled",
+        {},
+        { type: "" },
+        { type: "enabled" },
+      ]
+    ) {
+      assertThrows(
+        () =>
+          buildAnthropicMessagesRequest(
+            "claude-sonnet-4-6",
+            "anthropic",
+            {
+              prompt,
+              providerOptions: { anthropic: { thinking } },
+            },
+            false,
+            createWarningCollector(),
+          ),
+        TypeError,
+        "Anthropic provider thinking",
+      );
+    }
+  });
+
+  it("keeps provider-neutral reasoning authoritative over raw thinking options", () => {
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt: [{ role: "user", content: [{ type: "text", text: "Think." }] }],
+        reasoning: { enabled: true, budgetTokens: 4096 },
+        providerOptions: {
+          anthropic: {
+            thinking: { type: "enabled", budget_tokens: 2048 },
+          },
+        },
+      },
+      false,
+      createWarningCollector(),
+    );
+
+    assertEquals(body.thinking, { type: "enabled", budget_tokens: 4096 });
   });
 
   it("compacts completed historical tool rounds before replaying later user turns", () => {
@@ -596,5 +2199,54 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
         }],
       },
     ]);
+  });
+
+  it("requires raw metadata to replay provider-executed assistant results", () => {
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-call",
+                toolCallId: "srvtoolu_search_1",
+                toolName: "web_search",
+                input: { query: "Veryfront" },
+                providerExecuted: true,
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic provider-executed assistant tool calls require exact raw replay metadata",
+    );
+    assertThrows(
+      () =>
+        buildAnthropicMessagesRequest(
+          "claude-sonnet-4-6",
+          "anthropic",
+          {
+            prompt: [{
+              role: "assistant",
+              content: [{
+                type: "tool-result",
+                toolCallId: "srvtoolu_search_1",
+                toolName: "web_search",
+                result: { results: [] },
+                providerExecuted: true,
+              }],
+            }],
+          },
+          false,
+          createWarningCollector(),
+        ),
+      TypeError,
+      "Anthropic provider-executed assistant tool results require exact raw replay metadata",
+    );
   });
 });
