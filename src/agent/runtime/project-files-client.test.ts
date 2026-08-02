@@ -37,6 +37,25 @@ function textResponse(body: string, status: number): Response {
   return new Response(body, { status });
 }
 
+function chunkedJsonResponse(body: unknown, chunkBytes: number): Response {
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  let offset = 0;
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.byteLength) {
+          controller.close();
+          return;
+        }
+        const end = Math.min(offset + chunkBytes, bytes.byteLength);
+        controller.enqueue(bytes.slice(offset, end));
+        offset = end;
+      },
+    }),
+    { headers: { "Content-Type": "application/json" } },
+  );
+}
+
 function mockFetchResponses(
   ...responses: Response[]
 ): RuntimeProjectFilesFetch & { calls: FetchCall[] } {
@@ -201,6 +220,65 @@ Deno.test("getRuntimeProjectFile bounds the response before parsing skill conten
     RangeError,
     "response may contain at most",
   );
+});
+
+Deno.test("getRuntimeProjectFile parses heavily fragmented bounded responses", async () => {
+  const fileData = { path: "skills/example/SKILL.md", content: "x".repeat(1_024) };
+  const fetchSpy = mockFetchResponses(chunkedJsonResponse(fileData, 1));
+
+  assertEquals(
+    await getRuntimeProjectFile({
+      ...baseOptions,
+      fetch: fetchSpy,
+      path: fileData.path,
+      maximumContentCharacters: 2_048,
+    }),
+    fileData,
+  );
+});
+
+Deno.test("getRuntimeProjectFiles rejects and cancels a response stream that makes no progress", async () => {
+  let cancelled = false;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array());
+      },
+      cancel() {
+        cancelled = true;
+      },
+    }),
+  );
+
+  await assertRejects(
+    () => getRuntimeProjectFiles({ ...baseOptions, fetch: mockFetchResponses(response) }),
+    RangeError,
+    "made no byte progress",
+  );
+  assertEquals(cancelled, true);
+});
+
+Deno.test("getRuntimeProjectFiles cancels a stalled response body when its timeout expires", async () => {
+  let cancelled = false;
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    }),
+  );
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectFiles({
+        ...baseOptions,
+        fetch: mockFetchResponses(response),
+        timeoutMs: 5,
+      }),
+    DOMException,
+    "timed out",
+  );
+  assertEquals(cancelled, true);
 });
 
 Deno.test("getRuntimeProjectFile passes project, path, branch, fields, and auth through REST", async () => {

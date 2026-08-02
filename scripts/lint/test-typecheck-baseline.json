@@ -58,8 +58,6 @@
   "src/routing/api/module-loader/security-config.test.ts",
   "src/routing/api/openapi/mcp-resource.test.ts",
   "src/runs/schemas.test.ts",
-  "src/security/path-validation/canonical.test.ts",
-  "src/security/path-validation/index.test.ts",
   "src/server/build-service-worker.test.ts",
   "src/server/handlers/response/cors.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",

@@ -12,6 +12,9 @@ const PROJECT_FILE_LIST_TOTAL_MAX_BYTES = 16 * 1_048_576;
 const PROJECT_FILE_LIST_PAGE_MAX_BYTES =
   DEFAULT_PROJECT_FILES_PAGE_LIMIT * PROJECT_FILE_PATH_MAX_CHARACTERS * 6 +
   PROJECT_FILE_JSON_OVERHEAD_BYTES;
+const PROJECT_FILE_RESPONSE_BLOCK_BYTES = 65_536;
+const PROJECT_FILE_RESPONSE_YIELD_CHUNKS = 256;
+const PROJECT_FILE_RESPONSE_MAX_CONSECUTIVE_EMPTY_CHUNKS = 4_096;
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 const utf8Encoder = new TextEncoder();
 
@@ -296,30 +299,83 @@ async function readJsonResponseWithinLimit(
   }
 
   const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  const blocks: Uint8Array[] = [];
   let total = 0;
+  let currentBlock: Uint8Array | undefined;
+  let currentBlockLength = 0;
+  let chunksSinceYield = 0;
+  let consecutiveEmptyChunks = 0;
+  const abortBodyRead = () => {
+    void reader.cancel(abortSignal?.reason).catch(() => undefined);
+  };
+  abortSignal?.addEventListener("abort", abortBodyRead, { once: true });
   try {
     while (true) {
       const result = await reader.read();
       throwIfAborted(abortSignal);
       if (result.done) break;
-      total += result.value.byteLength;
-      listingBudget?.consumeBytes(result.value.byteLength);
+
+      const chunk = result.value;
+      if (chunk.byteLength === 0) {
+        consecutiveEmptyChunks += 1;
+        if (consecutiveEmptyChunks > PROJECT_FILE_RESPONSE_MAX_CONSECUTIVE_EMPTY_CHUNKS) {
+          throw new RangeError("Project file response stream made no byte progress");
+        }
+      } else {
+        consecutiveEmptyChunks = 0;
+      }
+
+      total += chunk.byteLength;
+      listingBudget?.consumeBytes(chunk.byteLength);
       if (total > byteLimit) {
-        await reader.cancel(new RangeError("Project file response exceeded its byte limit"));
         throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
       }
-      chunks.push(result.value);
+
+      let chunkOffset = 0;
+      while (chunkOffset < chunk.byteLength) {
+        if (!currentBlock) {
+          currentBlock = new Uint8Array(
+            Math.min(PROJECT_FILE_RESPONSE_BLOCK_BYTES, byteLimit),
+          );
+          currentBlockLength = 0;
+        }
+        const copied = Math.min(
+          currentBlock.byteLength - currentBlockLength,
+          chunk.byteLength - chunkOffset,
+        );
+        currentBlock.set(chunk.subarray(chunkOffset, chunkOffset + copied), currentBlockLength);
+        currentBlockLength += copied;
+        chunkOffset += copied;
+        if (currentBlockLength === currentBlock.byteLength) {
+          blocks.push(currentBlock);
+          currentBlock = undefined;
+          currentBlockLength = 0;
+        }
+      }
+
+      chunksSinceYield += 1;
+      if (chunksSinceYield >= PROJECT_FILE_RESPONSE_YIELD_CHUNKS) {
+        chunksSinceYield = 0;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        throwIfAborted(abortSignal);
+      }
     }
+  } catch (error) {
+    void reader.cancel(error).catch(() => undefined);
+    throw error;
   } finally {
+    abortSignal?.removeEventListener("abort", abortBodyRead);
     reader.releaseLock();
   }
 
   const bytes = new Uint8Array(total);
   let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
+  for (const block of blocks) {
+    bytes.set(block, offset);
+    offset += block.byteLength;
+  }
+  if (currentBlock && currentBlockLength > 0) {
+    bytes.set(currentBlock.subarray(0, currentBlockLength), offset);
   }
   return JSON.parse(utf8Decoder.decode(bytes));
 }
