@@ -247,6 +247,7 @@ export interface ConversationRunEventQueueController {
       disabled: true;
       disableReason?:
         | "cursor_resyncs_exhausted"
+        | "cursor_mismatch_ambiguous"
         | "non_appendable"
         | "ignorable_append_rejection"
         | "payload_too_large"

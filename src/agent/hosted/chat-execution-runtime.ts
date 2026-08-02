@@ -5,6 +5,7 @@ import {
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../../chat/types.ts";
 import type { HostedConversationRootRunContext } from "../conversation/root-run-lifecycle.ts";
+import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import {
   createHostedAgentRunSpanController,
   createHostedRootRunLifecycleRuntimeAdapter,
@@ -55,6 +56,13 @@ import { unrefTimer } from "../../platform/compat/process.ts";
 import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
 import { finalizeHostedChatRun } from "./hosted-chat-finalization.ts";
+import type { ModelCallRecorder } from "../../runtime/model-call-context.ts";
+import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import {
+  createModelCallContextRunEventRecorder,
+  ModelCallContextPersistenceError,
+  scopeAsyncIterableWithModelCallRecorder,
+} from "./model-call-context-run-event-recorder.ts";
 export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
@@ -95,6 +103,7 @@ export interface HostedChatExecutionRuntimeBootstrap {
   capturedMessageId: string | null;
   capturedConversationId?: string;
   mirroredToolChunkState: MirroredToolChunkState;
+  modelCallRecorder?: ModelCallRecorder;
 }
 
 /** Input payload for create hosted chat execution runtime bootstrap. */
@@ -109,6 +118,7 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   createRootStreamWatchdog?: () => HostedChatExecutionRootStreamWatchdog;
   streamBootstrapKeepaliveIntervalMs?: number;
   streamBootstrapTimeoutMs?: number;
+  modelCallContextMirror?: ConversationRunChunkMirror;
 }
 
 /** Input payload for create hosted chat execution runtime. */
@@ -316,16 +326,26 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     rootStreamWatchdog.signal,
     bootstrapKeepalive.signal,
   ]);
+  const modelCallRecorder = input.modelCallContextMirror
+    ? createModelCallContextRunEventRecorder({
+      mirror: input.modelCallContextMirror,
+      abortSignal: streamAbortSignal,
+    })
+    : undefined;
 
   let streamResult: HostedChatRuntimeStreamResult;
   try {
+    const startStream = () =>
+      input.agent.stream({
+        messages: input.finalMessages,
+        abortSignal: streamAbortSignal,
+      });
     streamResult = await traceHostedChatRuntimeStream(
       input.traceStream,
       () =>
-        input.agent.stream({
-          messages: input.finalMessages,
-          abortSignal: streamAbortSignal,
-        }),
+        modelCallRecorder
+          ? runWithModelCallRecorder(modelCallRecorder, startStream)
+          : startStream(),
     );
   } catch (error) {
     rootStreamWatchdog.dispose();
@@ -343,6 +363,7 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     capturedMessageId: streamingMessageId,
     ...(input.conversationId ? { capturedConversationId: input.conversationId } : {}),
     mirroredToolChunkState: createMirroredToolChunkState(),
+    ...(modelCallRecorder ? { modelCallRecorder } : {}),
   };
 }
 
@@ -362,12 +383,20 @@ async function createBootstrappedHostedChatRuntime(
   });
   let bootstrap: HostedChatExecutionRuntimeBootstrap;
   try {
+    if (input.rootRunContext.durableRootRun && !input.rootRunContext.privateDurableRunMirror) {
+      throw new ModelCallContextPersistenceError(
+        "Durable hosted root run requires an authorized private event mirror",
+      );
+    }
     bootstrap = await createHostedChatExecutionRuntimeBootstrap({
       agent: input.agent,
       cleanup: input.cleanup,
       lifecycleAdapter,
       finalMessages: input.finalMessages,
       conversationId: input.conversationId,
+      ...(input.rootRunContext.privateDurableRunMirror
+        ? { modelCallContextMirror: input.rootRunContext.privateDurableRunMirror }
+        : {}),
       abortSignal: input.abortSignal,
       traceStream: input.traceStream,
       ...(input.createRootStreamWatchdog
@@ -787,7 +816,16 @@ export function createHostedChatExecutionRuntime(
     const responseMessageId = input.responseMessageId;
     streamOptions.generateMessageId = () => responseMessageId;
   }
-  const agentUIStream = input.bootstrap.streamResult.toUIMessageStream(streamOptions);
+  const createAgentUiStream = () => input.bootstrap.streamResult.toUIMessageStream(streamOptions);
+  const unscopedAgentUIStream = input.bootstrap.modelCallRecorder
+    ? runWithModelCallRecorder(input.bootstrap.modelCallRecorder, createAgentUiStream)
+    : createAgentUiStream();
+  const agentUIStream = input.bootstrap.modelCallRecorder
+    ? scopeAsyncIterableWithModelCallRecorder(
+      input.bootstrap.modelCallRecorder,
+      unscopedAgentUIStream,
+    )
+    : unscopedAgentUIStream;
 
   return {
     agentUIStream: createHostedMirroredUiStream({

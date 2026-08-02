@@ -24,6 +24,7 @@ import {
   type HostedChatExecutionRootStreamWatchdog,
   toHostedChatExecutionFinalState,
 } from "./chat-execution-runtime.ts";
+import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 
 function createRootStreamWatchdog(input?: {
   disposed?: () => void;
@@ -435,15 +436,25 @@ describe("agent/hosted-chat-execution-runtime", () => {
     let traceStreamCount = 0;
     let capturedMessages: HostedChatRuntimeStreamInput["messages"] | undefined;
     let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    let activeDuringStream = false;
+    let activeDuringToUi = false;
+    let activeDuringIteration = false;
+    const durableRunMirror = createDurableRunMirror({ chunks: [], flushes: [] });
     const agent: HostedChatRuntimeAgent = {
       stream: async (input) => {
+        activeDuringStream = getActiveModelCallRecorder() !== undefined;
         capturedMessages = input.messages;
-        return createStreamResult({
-          finalStep: {},
-          captureOptions: (options) => {
+        return {
+          steps: Promise.resolve([{}]),
+          toUIMessageStream: (options) => {
+            activeDuringToUi = getActiveModelCallRecorder() !== undefined;
             streamOptions = options;
+            return (async function* () {
+              activeDuringIteration = getActiveModelCallRecorder() !== undefined;
+              yield { type: "start" } as ChatUiMessageChunk<MessageMetadata>;
+            })();
           },
-        });
+        };
       },
     };
 
@@ -467,8 +478,8 @@ describe("agent/hosted-chat-execution-runtime", () => {
           latestEventId: 0,
           latestExternalEventSequence: 0,
         },
-        durableRunMirror: null,
-        privateDurableRunMirror: null,
+        durableRunMirror,
+        privateDurableRunMirror: durableRunMirror,
       },
       abortSignal: new AbortController().signal,
       responseMessageId: "response-message-1",
@@ -485,6 +496,12 @@ describe("agent/hosted-chat-execution-runtime", () => {
     assertEquals(tracer.contextCount, 1);
     assertEquals(capturedMessages, finalMessages);
     assertEquals(bootstrapped.execution.agentUIStream !== undefined, true);
+    const iterator = bootstrapped.execution.agentUIStream[Symbol.asyncIterator]();
+    await iterator.next();
+    await iterator.return?.();
+    assertEquals(activeDuringStream, true);
+    assertEquals(activeDuringToUi, true);
+    assertEquals(activeDuringIteration, true);
     assertEquals(streamOptions?.generateMessageId?.(), "response-message-1");
     assertEquals(tracer.attributes[0], {
       "conversation.id": "conversation-1",
@@ -553,6 +570,7 @@ describe("agent/hosted-chat-execution-runtime", () => {
         throw new Error("stream startup failed");
       },
     };
+    const durableRunMirror = createDurableRunMirror({ chunks: [], flushes: [] });
 
     await assertRejects(
       async () => {
@@ -576,8 +594,8 @@ describe("agent/hosted-chat-execution-runtime", () => {
               latestEventId: 0,
               latestExternalEventSequence: 0,
             },
-            durableRunMirror: null,
-            privateDurableRunMirror: null,
+            durableRunMirror,
+            privateDurableRunMirror: durableRunMirror,
           },
           abortSignal: new AbortController().signal,
           tracer: tracer.tracer,

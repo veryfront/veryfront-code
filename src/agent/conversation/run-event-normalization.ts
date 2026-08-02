@@ -1,3 +1,8 @@
+import {
+  assertValidModelCallContextRunEvent,
+  isModelCallContextRunEvent,
+} from "../hosted/model-call-context-run-event-recorder.ts";
+
 export const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
 const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
 const MAX_SUMMARY_DEPTH = 4;
@@ -29,6 +34,10 @@ export function getConversationRunEventJsonByteLength(value: unknown): number {
 export function normalizeConversationRunEvent(
   event: ConversationRunEventRecord,
 ): ConversationRunEventRecord[] {
+  if (isModelCallContextRunEvent(event)) {
+    assertValidModelCallContextRunEvent(event);
+    return [event];
+  }
   if (getConversationRunEventJsonByteLength(event) <= MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES) {
     return [event];
   }

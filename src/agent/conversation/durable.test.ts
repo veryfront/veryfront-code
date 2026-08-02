@@ -25,6 +25,7 @@ import {
   resolveConversationRunTargets,
   resyncConversationRunAppendCursor,
 } from "./durable.ts";
+import { createModelCallContextRunEvents } from "../hosted/model-call-context-run-event-recorder.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";
@@ -562,6 +563,144 @@ describe("agent/durable", () => {
         latestExternalEventSequence: 9,
       },
     });
+  });
+
+  it("forces durable event-id cursor mode for model-call context and mixed batches", async () => {
+    const [modelCallContextEvent] = await createModelCallContextRunEvents({
+      prompt: [{ role: "system", content: "exact" }],
+    });
+    if (!modelCallContextEvent) throw new Error("expected model-call context event");
+    const fetchCalls = stubFetchSequence(jsonResponse({
+      latest_event_id: 8,
+      latest_external_event_sequence: 4,
+      appended_count: 2,
+      run: {
+        run_id: "run_mcc_cursor",
+        conversation_id: CONVERSATION_ID,
+        latest_event_id: 8,
+        latest_external_event_sequence: 4,
+      },
+    }, 200));
+
+    await appendConversationRunEvents({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_cursor",
+      expectedPreviousEventId: 6,
+      expectedPreviousExternalEventSequence: 99,
+      events: [{ type: "STATE_DELTA" }, modelCallContextEvent],
+    });
+
+    const body = JSON.parse(String(fetchCalls[0]?.[1]?.body));
+    assertEquals(body.expected_previous_event_id, 6);
+    assertEquals("expected_previous_external_event_sequence" in body, false);
+  });
+
+  it("fails closed without projection resync on ambiguous durable-ID replay", async () => {
+    const [event] = await createModelCallContextRunEvents({
+      prompt: [{ role: "system", content: "A then B" }],
+    });
+    if (!event) throw new Error("expected model-call context event");
+    let requestCount = 0;
+    globalThis.fetch = (async () => {
+      requestCount += 1;
+      return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+    }) as typeof fetch;
+
+    const result = await flushConversationRunEventBatches({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_ambiguous",
+      latestEventId: 6,
+      latestExternalEventSequence: 4,
+      events: [event],
+      maxEventsPerBatch: 2,
+      maxCursorResyncsPerFlush: 3,
+    });
+
+    assertEquals(result, {
+      outcome: "stopped",
+      latestEventId: 6,
+      latestExternalEventSequence: 4,
+      disableReason: "cursor_mismatch_ambiguous",
+    });
+    assertEquals(requestCount, 1);
+  });
+
+  it("accepts API-proven exact replay as an ordinary successful durable-ID append", async () => {
+    const [event] = await createModelCallContextRunEvents({
+      prompt: [{ role: "system", content: "already committed" }],
+    });
+    if (!event) throw new Error("expected model-call context event");
+    stubFetchSequence(jsonResponse({
+      latest_event_id: 7,
+      appended_count: 0,
+      run: {
+        run_id: "run_mcc_replay",
+        conversation_id: CONVERSATION_ID,
+        latest_event_id: 7,
+      },
+    }, 200));
+
+    assertEquals(
+      await flushConversationRunEventBatches({
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_mcc_replay",
+        latestEventId: 6,
+        latestExternalEventSequence: 4,
+        events: [event],
+        maxEventsPerBatch: 2,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "flushed",
+        latestEventId: 7,
+        latestExternalEventSequence: 4,
+      },
+    );
+  });
+
+  it("persists a near-limit context in no more than sixteen append requests", async () => {
+    const events = await createModelCallContextRunEvents({
+      prompt: [{ role: "system", content: "x".repeat(4 * 1024 * 1024 - 128) }],
+    });
+    let requestCount = 0;
+    let latestEventId = 0;
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      requestCount += 1;
+      const body = JSON.parse(String(init?.body)) as { events: unknown[] };
+      latestEventId += body.events.length;
+      return jsonResponse({
+        latest_event_id: latestEventId,
+        latest_external_event_sequence: 0,
+        appended_count: body.events.length,
+        run: {
+          run_id: "run_mcc_bounded",
+          conversation_id: CONVERSATION_ID,
+          latest_event_id: latestEventId,
+          latest_external_event_sequence: 0,
+        },
+      }, 200);
+    }) as typeof fetch;
+
+    const result = await flushConversationRunEventBatches({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_mcc_bounded",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      events,
+      maxEventsPerBatch: 32,
+      maxCursorResyncsPerFlush: 3,
+    });
+    assertEquals(result.outcome, "flushed");
+    assertEquals(requestCount <= 16, true);
+    assertEquals(events.length <= 32, true);
   });
 
   it("flushes conversation run event batches and returns the final cursors", async () => {

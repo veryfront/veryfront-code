@@ -11,6 +11,7 @@ import {
 } from "./child-fork-execution-runner.ts";
 import { createHostedDurableChildForkRunContext } from "./child-fork-run-context.ts";
 import type { AgentResponse } from "../schemas/index.ts";
+import { getActiveModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
 
 function createRuntimeEventStream(
   events: readonly Record<string, unknown>[],
@@ -213,6 +214,8 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime 
 
 Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run context factory", async () => {
   let createRunContextCalls = 0;
+  let activeDuringStart = false;
+  let activeDuringIteration = false;
   const result = await executeHostedChildForkWithPreparedTools({
     authToken: "token",
     apiUrl: "https://api.example.com",
@@ -227,14 +230,20 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
       forkTools: {},
       availableToolNames: [],
     },
+    durableChildRun: {
+      childConversationId: "11111111-1111-4111-a111-111111111111",
+      childRunId: "child-run-scoped",
+      childMessageId: "22222222-2222-4222-a222-222222222222",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+    },
     createRunContext: (input) => {
       createRunContextCalls += 1;
       assertEquals(input.authToken, "token");
       assertEquals(input.apiUrl, "https://api.example.com");
-      return createHostedDurableChildForkRunContext({
+      const context = createHostedDurableChildForkRunContext({
         authToken: input.authToken,
         apiUrl: input.apiUrl,
-        durableChildRun: input.durableChildRun,
         instrumentation: input.instrumentation,
         pendingToolLogContext: {
           conversationId: input.conversationId,
@@ -243,31 +252,57 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
         },
         pendingToolLogWriter: input.pendingToolLogWriter,
       });
+      const quiescentSnapshot = {
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+        pendingEventCount: 0,
+        consecutiveFailures: 0,
+        disabled: false,
+        hasFlushTimer: false,
+        hasRetryTimer: false,
+        inFlight: false,
+      };
+      return {
+        ...context,
+        durableRunMirror: {
+          handleChunk: async () => {},
+          appendEvents: async () => {},
+          flush: async () => quiescentSnapshot,
+          getSnapshot: () => quiescentSnapshot,
+          dispose: () => {},
+        },
+      };
     },
-    startRuntime: () => ({
-      forkStreamAbortController: new AbortController(),
-      childRunMonitorAbortController: null,
-      childRunMonitorPromise: Promise.resolve(),
-      forkToolNames: [],
-      streamResult: {
-        fullStream: (async function* () {
-          yield { type: "text-delta", text: "Injected context." } as const;
-        })(),
-        steps: Promise.resolve([
-          {
-            text: "Injected context.",
-            finishReason: "stop",
-            messages: [],
-            toolCalls: [],
-            toolResults: [],
-          },
-        ]),
-        totalUsage: Promise.resolve(undefined),
-      },
-    }),
+    startRuntime: () => {
+      activeDuringStart = getActiveModelCallRecorder() !== undefined;
+      return {
+        forkStreamAbortController: new AbortController(),
+        childRunMonitorAbortController: null,
+        childRunMonitorPromise: Promise.resolve(),
+        forkToolNames: [],
+        streamResult: {
+          fullStream: (async function* () {
+            activeDuringIteration = getActiveModelCallRecorder() !== undefined;
+            yield { type: "text-delta", text: "Injected context." } as const;
+          })(),
+          steps: Promise.resolve([
+            {
+              text: "Injected context.",
+              finishReason: "stop",
+              messages: [],
+              toolCalls: [],
+              toolResults: [],
+            },
+          ]),
+          totalUsage: Promise.resolve(undefined),
+        },
+      };
+    },
   });
 
   assertEquals(createRunContextCalls, 1);
+  assertEquals(activeDuringStart, true);
+  assertEquals(activeDuringIteration, true);
   assertEquals(result.success, true);
   if (result.success) {
     assertEquals(result.summary.text, "Injected context.");

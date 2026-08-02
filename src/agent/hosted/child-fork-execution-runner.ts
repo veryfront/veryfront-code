@@ -59,6 +59,11 @@ import {
   type HostedProjectReferenceResolver,
   resolveHostedProjectReference,
 } from "./project-reference-resolver.ts";
+import { runWithModelCallRecorder } from "../../runtime/model-call-recorder-context.ts";
+import {
+  createModelCallContextRunEventRecorder,
+  ModelCallContextPersistenceError,
+} from "./model-call-context-run-event-recorder.ts";
 
 /** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
@@ -353,8 +358,10 @@ export async function executeHostedChildForkWithPreparedTools<
       );
     }
 
-    closeTooling = input.toolAssembly.closeTooling;
-    closeRuntime = input.toolAssembly.closeRuntime;
+    const toolAssembly = input.toolAssembly;
+
+    closeTooling = toolAssembly.closeTooling;
+    closeRuntime = toolAssembly.closeRuntime;
     const buildInstructions = input.buildInstructions ??
       (() => buildHostedChildForkInstructions(input.forkContext));
     const sourceInstrumentation = input.instrumentation;
@@ -368,70 +375,98 @@ export async function executeHostedChildForkWithPreparedTools<
       }
       : undefined;
     const startRuntime = input.startRuntime ?? startHostedChildForkRuntimeWithHostTools;
-    const started = await startRuntime({
-      apiUrl: input.apiUrl,
-      authToken: input.authToken,
-      projectId: input.projectId ?? null,
-      provider: input.provider,
-      forkModel: input.forkModel,
-      temperature: input.temperature,
-      maxSteps: input.maxSteps,
-      prompt: input.effectivePrompt,
-      maxContinuationSteps: input.maxContinuationSteps ?? 0,
-      abortSignal: input.abortSignal,
-      forkTools: input.toolAssembly.forkTools,
-      forkToolNames: input.toolAssembly.availableToolNames,
-      sourceIntegrationPolicy: input.sourceIntegrationPolicy,
-      providerOptions: input.providerOptions,
-      reasoning: input.reasoning,
-      buildInstructions,
-      onBeforeStop: input.onBeforeStop ?? (() => null),
-      durableChildRun: input.durableChildRun,
-      childRunMonitorPollIntervalMs: input.childRunMonitorPollIntervalMs ??
-        DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
-      logger: input.logger?.warn ? { warn: input.logger.warn } : undefined,
-      prepareStep: ({ messages, buildInstructions: prepareBuildInstructions, forkToolNames }) =>
-        prepareHostedChildForkRuntimeStepMessages({
-          messages,
-          buildInstructions: prepareBuildInstructions,
-          forkToolNames,
-          resolveSystem: input.resolveSystem ?? defaultResolveSystem,
-        }),
-      runStep: input.runStep ?? runAgentRuntimeForkStep,
-      traceTools,
-    });
+    if (input.durableChildRun && !runContext.durableRunMirror) {
+      throw new ModelCallContextPersistenceError(
+        "Durable hosted child run requires an event mirror",
+      );
+    }
+    const startupModelCallRecorder = runContext.durableRunMirror
+      ? createModelCallContextRunEventRecorder({
+        mirror: runContext.durableRunMirror,
+        abortSignal: input.abortSignal,
+      })
+      : undefined;
+    const start = () =>
+      startRuntime({
+        apiUrl: input.apiUrl,
+        authToken: input.authToken,
+        projectId: input.projectId ?? null,
+        provider: input.provider,
+        forkModel: input.forkModel,
+        temperature: input.temperature,
+        maxSteps: input.maxSteps,
+        prompt: input.effectivePrompt,
+        maxContinuationSteps: input.maxContinuationSteps ?? 0,
+        abortSignal: input.abortSignal,
+        forkTools: toolAssembly.forkTools,
+        forkToolNames: toolAssembly.availableToolNames,
+        sourceIntegrationPolicy: input.sourceIntegrationPolicy,
+        providerOptions: input.providerOptions,
+        reasoning: input.reasoning,
+        buildInstructions,
+        onBeforeStop: input.onBeforeStop ?? (() => null),
+        durableChildRun: input.durableChildRun,
+        childRunMonitorPollIntervalMs: input.childRunMonitorPollIntervalMs ??
+          DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
+        logger: input.logger?.warn ? { warn: input.logger.warn } : undefined,
+        prepareStep: ({ messages, buildInstructions: prepareBuildInstructions, forkToolNames }) =>
+          prepareHostedChildForkRuntimeStepMessages({
+            messages,
+            buildInstructions: prepareBuildInstructions,
+            forkToolNames,
+            resolveSystem: input.resolveSystem ?? defaultResolveSystem,
+          }),
+        runStep: input.runStep ?? runAgentRuntimeForkStep,
+        traceTools,
+      });
+    const started = await (startupModelCallRecorder
+      ? runWithModelCallRecorder(startupModelCallRecorder, start)
+      : start());
     childRunMonitorAbortController = started.childRunMonitorAbortController;
     childRunMonitorPromise = started.childRunMonitorPromise;
+    const streamAbortSignal = input.abortSignal
+      ? AbortSignal.any([input.abortSignal, started.forkStreamAbortController.signal])
+      : started.forkStreamAbortController.signal;
+    const modelCallRecorder = runContext.durableRunMirror
+      ? createModelCallContextRunEventRecorder({
+        mirror: runContext.durableRunMirror,
+        abortSignal: streamAbortSignal,
+      })
+      : undefined;
 
-    return await executeHostedChildForkRunContextStream({
-      runContext,
-      streamResult: started.streamResult,
-      abortSignal: input.abortSignal,
-      abortForkStream: (error) => {
-        if (!started.forkStreamAbortController.signal.aborted) {
-          started.forkStreamAbortController.abort(error);
-        }
-      },
-      conversationId: input.conversationId,
-      parentRunId: input.parentRunId,
-      description: input.description,
-      kind: input.kind,
-      usage: undefined,
-      maxSteps: input.maxSteps,
-      resultMode: input.resultMode,
-      startTime,
-      finalizationTimeoutMs: input.finalizationTimeoutMs ??
-        DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS,
-      onSettled: input.onSettled,
-      idleTimeoutMs: input.idleTimeoutMs ?? DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
-      activeToolTimeoutMs: input.activeToolTimeoutMs ??
-        DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS,
-      postToolIdleTimeoutMs: input.postToolIdleTimeoutMs ??
-        DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS,
-      logger: input.logger,
-      writeLog: input.writeLog,
-      tracePart: input.instrumentation?.tracePart,
-    });
+    const consume = () =>
+      executeHostedChildForkRunContextStream({
+        runContext,
+        streamResult: started.streamResult,
+        abortSignal: input.abortSignal,
+        abortForkStream: (error) => {
+          if (!started.forkStreamAbortController.signal.aborted) {
+            started.forkStreamAbortController.abort(error);
+          }
+        },
+        conversationId: input.conversationId,
+        parentRunId: input.parentRunId,
+        description: input.description,
+        kind: input.kind,
+        usage: undefined,
+        maxSteps: input.maxSteps,
+        resultMode: input.resultMode,
+        startTime,
+        finalizationTimeoutMs: input.finalizationTimeoutMs ??
+          DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS,
+        onSettled: input.onSettled,
+        idleTimeoutMs: input.idleTimeoutMs ?? DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
+        activeToolTimeoutMs: input.activeToolTimeoutMs ??
+          DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS,
+        postToolIdleTimeoutMs: input.postToolIdleTimeoutMs ??
+          DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS,
+        logger: input.logger,
+        writeLog: input.writeLog,
+        tracePart: input.instrumentation?.tracePart,
+      });
+    return await (modelCallRecorder
+      ? runWithModelCallRecorder(modelCallRecorder, consume)
+      : consume());
   } catch (error) {
     return handleHostedChildForkRunContextError({
       error,
