@@ -19,7 +19,19 @@ import {
 import { VeryfrontError } from "./types.ts";
 
 describe("logging", () => {
-  const environmentKeys = ["VERYFRONT_ENV", "NODE_ENV", "DENO_ENV"] as const;
+  // LOG_FORMAT and LOG_LEVEL are part of the environment this file controls,
+  // not incidental: getDefaultFormat() returns LOG_FORMAT verbatim and only
+  // falls back to NODE_ENV when it is unset. The full-suite task runs with
+  // LOG_FORMAT=text and other test files set both keys for their own cases, so
+  // without pinning them here the production assertions below would read text
+  // output no matter what NODE_ENV says.
+  const environmentKeys = [
+    "VERYFRONT_ENV",
+    "NODE_ENV",
+    "DENO_ENV",
+    "LOG_FORMAT",
+    "LOG_LEVEL",
+  ] as const;
   const originalEnvironment = new Map(
     environmentKeys.map((key) => [key, Deno.env.get(key)] as const),
   );
@@ -31,6 +43,16 @@ describe("logging", () => {
       if (value === undefined) Deno.env.delete(key);
       else Deno.env.set(key, value);
     }
+  }
+
+  /**
+   * Pin the environment and the logger's resolved config for one mode, so the
+   * assertions below hold regardless of what ran before this file.
+   */
+  function useEnvironment(mode: "development" | "production"): void {
+    Deno.env.set("NODE_ENV", mode);
+    Deno.env.set("LOG_FORMAT", mode === "production" ? "json" : "text");
+    __resetLoggerConfigForTests();
   }
 
   function getOnlyConsoleError(): string {
@@ -64,8 +86,7 @@ describe("logging", () => {
   describe("logError", () => {
     describe("development mode", () => {
       beforeEach(() => {
-        Deno.env.set("NODE_ENV", "development");
-        __resetLoggerConfigForTests();
+        useEnvironment("development");
       });
 
       it("should log human-readable format in development", () => {
@@ -161,8 +182,7 @@ describe("logging", () => {
 
     describe("production mode", () => {
       beforeEach(() => {
-        Deno.env.set("NODE_ENV", "production");
-        __resetLoggerConfigForTests();
+        useEnvironment("production");
       });
 
       it("should log the JSON logger envelope in production", () => {
@@ -379,8 +399,7 @@ describe("logging", () => {
 
   describe("logErrorWithMessage", () => {
     beforeEach(() => {
-      Deno.env.set("NODE_ENV", "production");
-      __resetLoggerConfigForTests();
+      useEnvironment("production");
     });
 
     it("should add operation message to context", () => {
