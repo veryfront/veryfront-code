@@ -3,6 +3,7 @@ import { lookup as lookupMediaType } from "#veryfront/platform/compat/media-type
 
 const GET_FILE_TOOL_NAME = "get_file";
 const KNOWLEDGE_PATH_PREFIX = "knowledge/";
+const MAX_KNOWLEDGE_PATH_LENGTH = 4_096;
 
 type SourceDocumentChunk = Extract<
   ChatUiMessageChunk<ChatMessageMetadata>,
@@ -29,6 +30,52 @@ function resolveStructuredOutput(output: unknown): Record<string, unknown> | nul
   return output;
 }
 
+function containsControlCharacter(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit <= 0x1f || codeUnit === 0x7f) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isCanonicalKnowledgePath(path: string): boolean {
+  if (
+    path.length <= KNOWLEDGE_PATH_PREFIX.length ||
+    path.length > MAX_KNOWLEDGE_PATH_LENGTH ||
+    path.trim() !== path ||
+    !path.startsWith(KNOWLEDGE_PATH_PREFIX) ||
+    path.includes("\\") ||
+    containsControlCharacter(path)
+  ) {
+    return false;
+  }
+
+  for (const segment of path.split("/")) {
+    if (segment.length === 0 || segment === "." || segment === "..") {
+      return false;
+    }
+
+    try {
+      const decoded = decodeURIComponent(segment);
+      if (
+        decoded === "." ||
+        decoded === ".." ||
+        decoded.includes("/") ||
+        decoded.includes("\\") ||
+        containsControlCharacter(decoded)
+      ) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 /** Derive an exact structured citation from a successful project knowledge file read. */
 export function deriveKnowledgeSourceDocumentChunk(input: {
   toolName: string | undefined;
@@ -43,8 +90,7 @@ export function deriveKnowledgeSourceDocumentChunk(input: {
   const content = output?.content;
   if (
     typeof path !== "string" ||
-    path.length === 0 ||
-    !path.startsWith(KNOWLEDGE_PATH_PREFIX) ||
+    !isCanonicalKnowledgePath(path) ||
     typeof content !== "string"
   ) {
     return null;

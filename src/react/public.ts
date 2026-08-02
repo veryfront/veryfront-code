@@ -43,8 +43,20 @@ export type { Font, GoogleFontsProps } from "./fonts/index.ts";
 // ---------------------------------------------------------------------------
 // Markdown (veryfront/markdown)
 // ---------------------------------------------------------------------------
-export { Markdown } from "./components/chat/markdown.tsx";
-export type { CodeBlockProps, MarkdownProps } from "./components/chat/markdown.tsx";
+export {
+  Markdown,
+  MarkdownRendererCapabilityError,
+  MarkdownRendererProvider,
+} from "./components/chat/markdown.tsx";
+export type {
+  CodeBlockProps,
+  MarkdownComponents,
+  MarkdownElementRendererProps,
+  MarkdownProps,
+  MarkdownRenderer,
+  MarkdownRendererProps,
+  MarkdownRendererProviderProps,
+} from "./components/chat/markdown.tsx";
 
 // ---------------------------------------------------------------------------
 // MDX (veryfront/mdx)

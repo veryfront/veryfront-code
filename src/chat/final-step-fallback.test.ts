@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertRejects } from "#std/assert";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { MAX_TIMER_DELAY_MS } from "#veryfront/utils/timer.ts";
 import {
   appendMissingFallbackTextPart,
   buildFallbackUiMessageChunks,
@@ -13,6 +14,8 @@ import {
   extractFinalStepText,
   extractFinalStepToolCalls,
   extractFinalStepToolResults,
+  getLastStreamStep,
+  getStreamSteps,
 } from "./final-step-fallback.ts";
 
 const formToolCall = {
@@ -27,6 +30,28 @@ const formToolResult = {
 };
 
 describe("chat/final-step-fallback", () => {
+  it("rejects stream promise timeouts outside the portable timer range", async () => {
+    for (
+      const timeoutMs of [
+        -1,
+        Number.NaN,
+        Number.POSITIVE_INFINITY,
+        MAX_TIMER_DELAY_MS + 1,
+      ]
+    ) {
+      await assertRejects(
+        () => getLastStreamStep({ steps: Promise.resolve([]) }, timeoutMs),
+        RangeError,
+        "timeoutMs",
+      );
+      await assertRejects(
+        () => getStreamSteps({ steps: Promise.resolve([]) }, timeoutMs),
+        RangeError,
+        "timeoutMs",
+      );
+    }
+  });
+
   it("extracts finish reason, text, tool calls, and tool results", () => {
     const step = {
       finishReason: "stop",
@@ -240,6 +265,38 @@ describe("chat/final-step-fallback", () => {
         { type: "text-start", id: "assistant-1" },
         { type: "text-delta", id: "assistant-1", delta: "OK" },
         { type: "text-end", id: "assistant-1" },
+      ],
+    );
+  });
+
+  it("derives a named tool from its canonical tool-prefixed part type", () => {
+    assertEquals(
+      buildMissingFallbackToolChunksFromParts([
+        {
+          type: "tool-weather",
+          toolCallId: "tool-weather-1",
+          input: { city: "Stockholm" },
+          state: "output-available",
+          output: { temperatureC: 21 },
+        },
+      ]),
+      [
+        {
+          type: "tool-input-start",
+          toolCallId: "tool-weather-1",
+          toolName: "weather",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tool-weather-1",
+          toolName: "weather",
+          input: { city: "Stockholm" },
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tool-weather-1",
+          output: { temperatureC: 21 },
+        },
       ],
     );
   });

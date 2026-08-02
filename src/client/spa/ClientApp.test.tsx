@@ -55,12 +55,12 @@ describe("client/spa/ClientApp", () => {
     await withTempDir(async (tempDir) => {
       await writeModule(
         tempDir,
-        "pages/docs.js",
+        "pages/docs.tsx",
         "export default function Page(props) { return JSON.stringify({ title: props.title, params: props.params }); }",
       );
       await writeModule(
         tempDir,
-        "layouts/main.js",
+        "layouts/main.tsx",
         "export default function Layout(props) { return [String(props.theme), props.children]; }",
       );
 

@@ -40,22 +40,85 @@ const AI_PROVIDER_BILLING_ERROR = {
   status: 502,
 } as const;
 
+const MAX_PROVIDER_ERROR_DEPTH = 64;
+const MAX_PROVIDER_ERROR_TEXT_CHARS = 256 * 1024;
+const MAX_EMBEDDED_JSON_CANDIDATES = 32;
+
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseErrorJson(value: string): unknown | null {
+  if (value.length > MAX_PROVIDER_ERROR_TEXT_CHARS) {
+    return null;
+  }
   const parsed = safeJsonParse(value);
   return parsed.ok ? parsed.value : null;
 }
 
-function parseEmbeddedErrorJson(value: string): unknown | null {
-  const jsonStart = value.indexOf("{");
-  if (jsonStart < 0) {
-    return null;
+function findJsonObjectEnd(value: string, startIndex: number): number | null {
+  const closingTokens: string[] = ["}"];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = startIndex + 1; index < value.length; index++) {
+    const character = value[index]!;
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (character === "\\") {
+        escaped = true;
+      } else if (character === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (character === '"') {
+      inString = true;
+    } else if (character === "{") {
+      closingTokens.push("}");
+    } else if (character === "[") {
+      closingTokens.push("]");
+    } else if (character === "}" || character === "]") {
+      if (closingTokens.at(-1) !== character) {
+        return null;
+      }
+      closingTokens.pop();
+      if (closingTokens.length === 0) {
+        return index + 1;
+      }
+    }
   }
 
-  return parseErrorJson(value.slice(jsonStart));
+  return null;
+}
+
+function parseEmbeddedErrorJson(value: string): unknown | null {
+  const boundedValue = value.slice(0, MAX_PROVIDER_ERROR_TEXT_CHARS);
+  let candidateCount = 0;
+
+  for (let startIndex = 0; startIndex < boundedValue.length; startIndex++) {
+    if (boundedValue[startIndex] !== "{") {
+      continue;
+    }
+    candidateCount += 1;
+    if (candidateCount > MAX_EMBEDDED_JSON_CANDIDATES) {
+      return null;
+    }
+
+    const endIndex = findJsonObjectEnd(boundedValue, startIndex);
+    if (endIndex === null) {
+      continue;
+    }
+
+    const parsed = parseErrorJson(boundedValue.slice(startIndex, endIndex));
+    if (parsed !== null) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 /** Parses known problem body. */
@@ -150,7 +213,12 @@ function isProviderBillingMessage(normalizedMessage: string): boolean {
 function parseKnownProviderBody(
   body: unknown,
   seen: WeakSet<object> = new WeakSet(),
+  depth = 0,
 ): ParsedProviderError | null {
+  if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
+    return null;
+  }
+
   const problemMatch = parseKnownProblemBody(body);
   if (problemMatch) {
     return problemMatch;
@@ -166,7 +234,7 @@ function parseKnownProviderBody(
   seen.add(body);
 
   if (isErrorRecord(body.error)) {
-    const nestedError = parseKnownProviderBody(body.error, seen);
+    const nestedError = parseKnownProviderBody(body.error, seen, depth + 1);
     if (nestedError) {
       return nestedError;
     }
@@ -248,10 +316,18 @@ function extractResponseBody(error: unknown): string | undefined {
 
 /** Error shape for parse provider. */
 export function parseProviderError(error: unknown): ParsedProviderError {
-  return parseProviderErrorInner(error, new WeakSet());
+  return parseProviderErrorInner(error, new WeakSet(), 0);
 }
 
-function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedProviderError {
+function parseProviderErrorInner(
+  error: unknown,
+  seen: WeakSet<object>,
+  depth: number,
+): ParsedProviderError {
+  if (depth >= MAX_PROVIDER_ERROR_DEPTH) {
+    return DEFAULT_EXTERNAL_SERVICE_ERROR;
+  }
+
   if (isErrorRecord(error)) {
     if (seen.has(error)) {
       return DEFAULT_EXTERNAL_SERVICE_ERROR;
@@ -274,7 +350,7 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
   }
 
   if (isErrorRecord(error) && "lastError" in error) {
-    const nested = parseProviderErrorInner(error.lastError, seen);
+    const nested = parseProviderErrorInner(error.lastError, seen, depth + 1);
     if (
       nested.code !== DEFAULT_EXTERNAL_SERVICE_ERROR.code ||
       nested.message !== DEFAULT_EXTERNAL_SERVICE_ERROR.message

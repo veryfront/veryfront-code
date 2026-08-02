@@ -4,6 +4,37 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { mapHostedStreamPartToChatUiChunks } from "./hosted-ui-chunk-mapping.ts";
 
 describe("chat/hosted-ui-chunk-mapping", () => {
+  it("suppresses the complete reasoning lifecycle when reasoning is disabled", () => {
+    const options = { sendReasoning: false };
+
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        { type: "reasoning-start", id: "reasoning-1" },
+        options,
+      ),
+      [],
+    );
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        { type: "reasoning-delta", id: "reasoning-1", text: "private" },
+        options,
+      ),
+      [],
+    );
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks(
+        {
+          type: "reasoning-end",
+          id: "reasoning-1",
+          signature: "sig_123",
+          redactedData: "encrypted",
+        },
+        options,
+      ),
+      [],
+    );
+  });
+
   it("maps hosted stream parts into chat UI chunks", () => {
     assertEquals(mapHostedStreamPartToChatUiChunks({ type: "start" }, { messageId: "msg-1" }), [
       { type: "start", messageId: "msg-1" },
