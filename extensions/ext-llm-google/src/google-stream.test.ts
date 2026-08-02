@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { ProviderRequestError } from "veryfront/provider/shared";
 import {
   extractGoogleUsage,
+  MAX_GOOGLE_RETAINED_STATE_BYTES,
   MAX_GOOGLE_RETAINED_STATE_ITEMS,
   MAX_GOOGLE_SSE_BUFFER_CODE_UNITS,
   MAX_GOOGLE_SSE_CHUNK_BYTES,
@@ -41,6 +42,10 @@ async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown
 
 function data(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\r\n\r\n`;
+}
+
+function utf8StringWithByteLength(byteLength: number): string {
+  return `${"é".repeat(Math.floor(byteLength / 2))}${byteLength % 2 === 0 ? "" : "x"}`;
 }
 
 function createWarningCollector() {
@@ -1066,6 +1071,49 @@ describe("ext-llm-google/google-stream", () => {
       () => collectParts(streamFromText(events.join(""))),
       ProviderRequestError,
       `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_ITEMS} items`,
+    );
+  });
+
+  it("accepts the exact aggregate UTF-8 byte limit and rejects limit plus one", async () => {
+    const emptyPartBytes = new TextEncoder().encode(JSON.stringify({ text: "" })).byteLength;
+    const quarter = Math.floor(MAX_GOOGLE_RETAINED_STATE_BYTES / 4);
+    const serializedPartBytes = [
+      quarter,
+      quarter,
+      quarter,
+      MAX_GOOGLE_RETAINED_STATE_BYTES - quarter * 3,
+    ];
+    const encoder = new TextEncoder();
+    const events = (lastPartExtraBytes: number) =>
+      [
+        ...serializedPartBytes.map((byteLength, index) =>
+          data({
+            candidates: [{
+              content: {
+                parts: [{
+                  text: utf8StringWithByteLength(
+                    byteLength - emptyPartBytes +
+                      (index === serializedPartBytes.length - 1 ? lastPartExtraBytes : 0),
+                  ),
+                }],
+              },
+            }],
+          })
+        ),
+        data({ candidates: [{ finishReason: "STOP" }] }),
+        "data: [DONE]\r\n\r\n",
+      ].map((event) => encoder.encode(event));
+
+    const exactParts = await collectParts(streamFromBytes(...events(0)));
+    assertEquals(exactParts.at(-1), {
+      type: "finish",
+      finishReason: { unified: "stop", raw: "STOP" },
+    });
+
+    await assertRejects(
+      () => collectParts(streamFromBytes(...events(1))),
+      ProviderRequestError,
+      `retained state exceeded ${MAX_GOOGLE_RETAINED_STATE_BYTES} UTF-8 bytes`,
     );
   });
 
