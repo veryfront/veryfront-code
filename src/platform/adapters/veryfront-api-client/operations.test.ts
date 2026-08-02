@@ -513,6 +513,38 @@ describe("VeryfrontAPIOperations", () => {
   });
 
   describe("bounded transport failures", () => {
+    it("propagates caller cancellation to the active fetch without retrying", async () => {
+      let fetchCalls = 0;
+      let requestStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        requestStarted = resolve;
+      });
+      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+        fetchCalls++;
+        const signal = init?.signal;
+        requestStarted();
+        return new Promise<Response>((_resolve, reject) => {
+          if (!signal) return;
+          const rejectAbort = () => reject(signal.reason);
+          if (signal.aborted) rejectAbort();
+          else signal.addEventListener("abort", rejectAbort, { once: true });
+        });
+      }) as typeof fetch;
+      const transport = createVeryfrontApiTransport<unknown>({
+        baseUrl: "https://api.example.com",
+        getToken: () => "token",
+        retry: { maxRetries: 2, initialDelay: 0, maxDelay: 0 },
+      });
+      const controller = new AbortController();
+      const request = transport.request("/cancelled", { signal: controller.signal });
+      await started;
+
+      controller.abort(new Error("caller cancelled"));
+
+      await assertRejects(() => request, Error, "caller cancelled");
+      assertEquals(fetchCalls, 1);
+    });
+
     it("reserves worst-case JSON escape bytes outside the non-value response budget", async () => {
       const body = '{"content":"\\u0000\\u0000"}';
       assertEquals(new TextEncoder().encode(body).byteLength, 26);

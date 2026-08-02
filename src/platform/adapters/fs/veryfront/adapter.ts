@@ -106,33 +106,8 @@ interface BranchSnapshotRecoveryOptions<T> {
 function buildManifestFetcher(
   client: VeryfrontApiClient,
 ): ReleaseAssetManifestFetcher {
-  return (releaseId: string, context) => {
-    const request = client.getReleaseAssetManifest(releaseId);
-    if (context.signal.aborted) {
-      return Promise.reject(manifestFetchAbortReason(context.signal));
-    }
-
-    return new Promise((resolve, reject) => {
-      const onAbort = () => reject(manifestFetchAbortReason(context.signal));
-      context.signal.addEventListener("abort", onAbort, { once: true });
-      request.then(
-        (result) => {
-          context.signal.removeEventListener("abort", onAbort);
-          resolve(result);
-        },
-        (error) => {
-          context.signal.removeEventListener("abort", onAbort);
-          reject(error);
-        },
-      );
-    });
-  };
-}
-
-function manifestFetchAbortReason(signal: AbortSignal): Error {
-  return signal.reason instanceof Error
-    ? signal.reason
-    : new Error("Release manifest fetch aborted");
+  return (releaseId: string, context) =>
+    client.getReleaseAssetManifest(releaseId, undefined, context.signal);
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {

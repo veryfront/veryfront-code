@@ -51,6 +51,8 @@ export interface TransportRequestInit {
   };
   expected404?: boolean;
   timeoutMs?: number;
+  /** Caller-owned cancellation propagated to the underlying fetch. */
+  signal?: AbortSignal;
 }
 
 export interface VeryfrontApiTransportConfig<T> {
@@ -128,6 +130,7 @@ function snapshotRequestInit(init: TransportRequestInit): TransportRequestInit {
     jsonStringFieldWithinLimit,
     expected404: init.expected404,
     timeoutMs: init.timeoutMs,
+    signal: init.signal,
   };
 }
 
@@ -169,7 +172,7 @@ export function createVeryfrontApiTransport<T>(
       // matching the pre-transport requestWithRetry semantics.
       const token = getToken();
       return await retryWithBackoff(
-        (signal, attempt) => {
+        (attemptSignal, attempt) => {
           const doFetch = async (): Promise<T> => {
             const headers = new Headers(requestInit.headers);
             for (const [k, v] of Object.entries(defaultHeaders)) {
@@ -178,6 +181,7 @@ export function createVeryfrontApiTransport<T>(
             headers.set("Authorization", `Bearer ${token}`);
             injectContext(headers);
             const start = performance.now();
+            const signal = combineRequestSignals(attemptSignal, requestInit.signal);
             const res = await fetch(url, { method, headers, body: requestInit.body, signal });
             afterFetch?.(res.status, performance.now() - start);
             return onResponse(res, requestInit, url, signal);
@@ -189,7 +193,8 @@ export function createVeryfrontApiTransport<T>(
           initialDelay,
           maxDelay,
           timeoutMs,
-          shouldRetry,
+          shouldRetry: (error, attempt) =>
+            requestInit.signal?.aborted !== true && shouldRetry(error, attempt),
           onRetry: config.onRetry
             ? ({ error, attempt, delay, isTimeout }) =>
               config.onRetry!({ error, attempt, delay, isTimeout, url, timeoutMs })
@@ -204,6 +209,10 @@ export function createVeryfrontApiTransport<T>(
               });
             },
           wrapFinalError(lastError, lastAttempt) {
+            if (requestInit.signal?.aborted) {
+              const reason = requestInit.signal.reason;
+              return reason instanceof Error ? reason : new Error("API request aborted");
+            }
             if (lastError.name === "AbortError") logTimeout(url, timeoutMs, lastAttempt);
             return wrapFinalError(lastError, lastAttempt);
           },
@@ -211,6 +220,15 @@ export function createVeryfrontApiTransport<T>(
       );
     },
   };
+}
+
+function combineRequestSignals(
+  attemptSignal: AbortSignal | undefined,
+  callerSignal: AbortSignal | undefined,
+): AbortSignal | undefined {
+  if (!attemptSignal) return callerSignal;
+  if (!callerSignal) return attemptSignal;
+  return AbortSignal.any([attemptSignal, callerSignal]);
 }
 
 /** Canonical transport: span tracing, request metrics, API_CLIENT_ERROR mapping. */

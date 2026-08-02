@@ -468,8 +468,12 @@ export class VeryfrontApiClient {
     return this.operations.reportReleaseAssetManifestState(projectRef, version, state, error);
   }
 
-  getReleaseAssetManifest(version: string, projectRef = this.requireProjectSlug()) {
-    return this.operations.getReleaseAssetManifest(projectRef, version);
+  getReleaseAssetManifest(
+    version: string,
+    projectRef = this.requireProjectSlug(),
+    signal?: AbortSignal,
+  ) {
+    return this.operations.getReleaseAssetManifest(projectRef, version, signal);
   }
 
   // =============================================================================

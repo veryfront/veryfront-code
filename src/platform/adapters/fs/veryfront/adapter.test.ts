@@ -380,11 +380,17 @@ describe("VeryfrontFSAdapter", () => {
         requestStarted = resolve;
       });
       const neverSettles = new Promise<never>(() => {});
+      let requestSignal: AbortSignal | undefined;
 
       (adapter.getClient() as unknown as {
-        getReleaseAssetManifest: (releaseId: string) => Promise<never>;
-      }).getReleaseAssetManifest = (requestedReleaseId: string) => {
+        getReleaseAssetManifest: (
+          releaseId: string,
+          projectRef?: string,
+          signal?: AbortSignal,
+        ) => Promise<never>;
+      }).getReleaseAssetManifest = (requestedReleaseId, _projectRef, signal) => {
         assertEquals(requestedReleaseId, releaseId);
+        requestSignal = signal;
         requestStarted();
         return neverSettles;
       };
@@ -403,6 +409,7 @@ describe("VeryfrontFSAdapter", () => {
         releaseId: "release-env-next",
       });
 
+      assertEquals(requestSignal?.aborted, true);
       assertEquals(await manifest, null);
     });
 
