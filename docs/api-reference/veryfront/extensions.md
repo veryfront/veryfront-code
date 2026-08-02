@@ -116,17 +116,44 @@ These import paths group focused functionality under this module. Each is a sepa
 
 ### `veryfront/extensions/auth`
 
-Auth category barrel - AuthProvider contract and token shapes.
+Auth contracts, including the required generation-owned, fail-closed React Server Action authorization provider.
 
 ```ts
-import "veryfront/extensions/auth";
+import { createRscActionAuthorizationProvider, snapshotRscActionAuthorizationProvider, RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_ARRAY_LENGTH } from "veryfront/extensions/auth";
 ```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_ARRAY_LENGTH` | Maximum length of any one dense argument array: 50,000. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L47) |
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_DEPTH` | Maximum nested container depth in the detached authorization argument graph: 64. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L38) |
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_NODES` | Maximum values in the complete detached authorization argument graph: 50,000. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L41) |
+| `RSC_ACTION_AUTHORIZATION_MAX_ARGUMENT_PROPERTIES` | Maximum aggregate array elements and record properties in the argument graph: 100,000. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L44) |
+| `RSC_ACTION_AUTHORIZATION_TERMINATION_GRACE_MS` | Cooperative-cancellation grace: 1,000 ms before a non-settling generation is quarantined. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L35) |
+| `RSC_ACTION_AUTHORIZATION_TIMEOUT_MS` | Default deadline for one asynchronous authorization decision: 30 seconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L32) |
+| `RscActionAuthorizationProviderName` | Generation-owned contract name registered by an application-selected authorization extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L29) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `createRscActionAuthorizationProvider` | Create immutable provider registration metadata from a standalone authorizer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L186) |
+| `snapshotRscActionAuthorizationProvider` | Capture an exact `{ authorize }` extension registration without invoking accessors or retaining mutable provider metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L136) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `AuthProvider` | AuthProvider contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L60) |
+| `RscActionAuthorizationArray` | Immutable dense data-only array with stable index and iteration semantics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L59) |
+| `RscActionAuthorizationContext` | Detached immutable action metadata and bounded JSON-compatible arguments. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L70) |
+| `RscActionAuthorizationHeaders` | Immutable null-prototype lowercase header snapshot; it contains no request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L83) |
+| `RscActionAuthorizationProvider` | Required generation-owned Server Action authorization contract. An absent, malformed, retiring, failed, or non-cooperative provider returns 503 with `Cache-Control: no-store`; core has no allow-all fallback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L117) |
+| `RscActionAuthorizationRecord` | Immutable null-prototype data-only record; absent properties resolve to `undefined`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L65) |
+| `RscActionAuthorizationRequest` | Immutable, bodyless request metadata detached from the mutable request object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L89) |
+| `RscActionAuthorizationValue` | JSON-compatible, data-only value domain; numbers are always finite. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L50) |
+| `RscActionAuthorize` | Decide one Server Action invocation. `true` invokes the action and `false` returns 403. Throwing, rejecting, timing out, or returning a non-boolean fails closed with 503; the action is never loaded before authorization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/rsc-action-authorization-provider.ts#L107) |
 | `SignOptions` | Options for signing a token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L22) |
 | `TokenHeader` | The parsed, unverified header of a JWT. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L46) |
 | `TokenPayload` | Payload data stored within a signed token. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/auth/auth-provider.ts#L10) |

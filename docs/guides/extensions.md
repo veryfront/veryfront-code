@@ -137,8 +137,8 @@ For shared hosted or proxy runtimes, provision the same contract through the
 platform-owned extension generation; tenant configuration cannot execute the
 factory. Restart or reload, then verify an allowed action succeeds, a policy
 denial returns `403`, and removing the provider makes the endpoint fail closed
-with `503`. CSRF protection remains a separate check and must stay enabled for
-the action endpoint.
+with `503`. Configure CSRF protection independently through `security.csrf`;
+the authorization provider does not enable or replace it.
 
 Server Action arguments must be JSON-compatible: finite primitives, dense
 arrays, and plain records. Convert `FormData`, class instances, dates, and
