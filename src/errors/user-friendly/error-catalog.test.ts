@@ -58,6 +58,29 @@ describe("ERROR_SOLUTIONS", () => {
       assertExists(sol.example);
       assert(sol.example.includes("export default"));
     });
+
+    it("should list supported files without claiming init creates one", () => {
+      const sol = ERROR_SOLUTIONS["missing-config"];
+      assertExists(sol);
+      const guidance = JSON.stringify(sol).toLowerCase();
+
+      assert(guidance.includes("veryfront.config.js"));
+      assert(guidance.includes("veryfront.config.ts"));
+      assert(guidance.includes("veryfront.config.mjs"));
+      assertEquals(guidance.includes("veryfront init"), false);
+      assertEquals(guidance.includes("vf init"), false);
+    });
+  });
+
+  describe("invalid-config", () => {
+    it("should not describe legal trailing commas as invalid", () => {
+      const sol = ERROR_SOLUTIONS["invalid-config"];
+      assertExists(sol);
+      const guidance = JSON.stringify(sol).toLowerCase();
+
+      assertEquals(guidance.includes("remove any trailing comma"), false);
+      assert(guidance.includes("trailing commas are valid"));
+    });
   });
 
   describe("port-in-use", () => {
@@ -80,7 +103,20 @@ describe("ERROR_SOLUTIONS", () => {
       const sol = ERROR_SOLUTIONS["client-boundary"];
       assertExists(sol);
       assertExists(sol.docs);
-      assert(sol.docs.includes("rsc-boundaries"));
+      assertEquals(
+        sol.docs,
+        "https://veryfront.com/docs/errors/client-boundary-violation",
+      );
     });
+  });
+
+  it("should expose immutable solution definitions", () => {
+    const missingConfig = ERROR_SOLUTIONS["missing-config"];
+    assertExists(missingConfig);
+    assertExists(missingConfig.steps);
+
+    assertEquals(Object.isFrozen(ERROR_SOLUTIONS), true);
+    assertEquals(Object.isFrozen(missingConfig), true);
+    assertEquals(Object.isFrozen(missingConfig.steps), true);
   });
 });

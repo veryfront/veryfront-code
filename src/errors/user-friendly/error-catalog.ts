@@ -2,13 +2,13 @@ import type { ErrorSolution as CatalogErrorSolution } from "../catalog/types.ts"
 
 export type ErrorSolution = Pick<CatalogErrorSolution, "message" | "steps" | "example" | "docs">;
 
-export const ERROR_SOLUTIONS: Record<string, ErrorSolution> = {
+export const ERROR_SOLUTIONS: Readonly<Record<string, ErrorSolution>> = {
   "missing-config": {
-    message: "No veryfront.config.js found in project directory",
+    message: "No supported Veryfront configuration file found in the project directory",
     steps: [
-      "Create a veryfront.config.js file in your project root",
-      "Run 'veryfront init' to generate a default config",
-      "Or create one manually with minimal configuration",
+      "Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in the project root",
+      "Export a configuration object as the file's default export",
+      "Start with minimal configuration and add only the settings you need",
     ],
     example: `export default {
   title: "My App",
@@ -17,17 +17,17 @@ export const ERROR_SOLUTIONS: Record<string, ErrorSolution> = {
   },
 
   "invalid-config": {
-    message: "Invalid configuration in veryfront.config.js",
+    message: "Invalid configuration in veryfront.config.ts",
     steps: [
       "Check that your config exports a default object",
       "Ensure all values are valid JavaScript",
-      "Remove any trailing commas in objects",
+      "Check for missing brackets, quotes, or delimiters near the reported location",
     ],
     example: `export default {
   title: "My App",  // ✓ Valid string
   dev: {
     port: 3002,     // ✓ Valid number
-    open: true      // ✓ No trailing comma
+    open: true,     // ✓ Trailing commas are valid
   }
 };`,
   },
@@ -70,7 +70,7 @@ export default async function ServerComponent() {
 'use client';
 export default function ClientComponent({ data }) {
 }`,
-    docs: "https://github.com/veryfront/veryfront/docs/rsc-boundaries",
+    docs: "https://veryfront.com/docs/errors/client-boundary-violation",
   },
 
   "import-not-found": {
@@ -79,9 +79,9 @@ export default function ClientComponent({ data }) {
       "Check that the file path is correct",
       "Ensure the module is installed or available",
       "For remote imports, check network connectivity",
-      "Add missing imports to veryfront.config.js importMap",
+      "Add missing imports to veryfront.config.ts importMap",
     ],
-    example: `// veryfront.config.js
+    example: `// veryfront.config.ts
 resolve: {
   importMap: {
     imports: {
@@ -124,3 +124,9 @@ resolve: {
 "react-dom": "https://esm.sh/react-dom@19.1.1"`,
   },
 };
+
+for (const solution of Object.values(ERROR_SOLUTIONS)) {
+  if (solution.steps) Object.freeze(solution.steps);
+  Object.freeze(solution);
+}
+Object.freeze(ERROR_SOLUTIONS);

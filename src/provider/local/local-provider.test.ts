@@ -18,7 +18,7 @@ import { afterEach, describe, it } from "#std/testing/bdd";
 import { DEFAULT_LOCAL_MODEL, getLocalModelIds, resolveLocalModel } from "./model-catalog.ts";
 import { createLocalModel } from "./model-runtime-adapter.ts";
 import { clearModelProviders, ensureModelReady } from "../model-registry.ts";
-import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
 
 const RUN_LOCAL_AI_TESTS = Deno.env.get("VERYFRONT_RUN_LOCAL_AI_TESTS") === "1";
 const RUN_LOCAL_AI_GPU_TESTS = Deno.env.get("VERYFRONT_RUN_LOCAL_AI_GPU_TESTS") === "1";

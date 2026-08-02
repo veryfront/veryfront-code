@@ -1,21 +1,24 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const CONFIG_ERROR_CATALOG: PartialErrorCatalog = {
+export const CONFIG_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "config-not-found": createErrorSolution("config-not-found", {
     title: "Configuration file not found",
-    message: "Veryfront could not find veryfront.config.js in your project root.",
+    message: "Veryfront could not find a supported configuration file in your project root.",
     steps: [
-      "Create veryfront.config.js in your project root directory",
-      "Run 'veryfront init' to generate a default configuration",
-      "Or copy from an example project",
+      "Create veryfront.config.js, veryfront.config.ts, or veryfront.config.mjs in your project root",
+      "Export the configuration object as the file's default export",
+      "Copy a configuration from a compatible example project and adapt it",
     ],
-    example: `// veryfront.config.js
+    example: `// veryfront.config.ts
 export default {
   title: "My App",
   dev: { port: 3002 }
 }`,
-    tips: ["You can use .ts or .mjs extensions too", "Config is optional for simple projects"],
+    tips: [
+      "Supported filenames are veryfront.config.js, veryfront.config.ts, and veryfront.config.mjs",
+      "Start with an empty default export and add only the settings you need",
+    ],
   }),
 
   "config-invalid": createErrorSolution("config-invalid", {
@@ -24,7 +27,7 @@ export default {
     steps: [
       "Check that the config exports a default object",
       "Ensure all values are valid JavaScript types",
-      "Remove any trailing commas",
+      "Check for missing brackets, quotes, or delimiters near the reported location",
       "Verify property names match the schema",
     ],
     example: `// ✓ Valid config
@@ -32,7 +35,7 @@ export default {
   title: "My App",
   dev: {
     port: 3002,
-    open: true
+    open: true,
   }
 }`,
   }),
@@ -95,11 +98,11 @@ export default {
     message: "The CORS configuration is invalid.",
     steps: [
       "Use true for default CORS settings",
-      "Or provide an object with origin, methods, headers",
-      "Ensure origin is a string, not an array",
+      "Or provide an object with origin, methods, allowedHeaders, exposedHeaders, credentials, or maxAge",
+      "Use a non-empty origin string, a non-empty string array, or a synchronous validator function",
     ],
     example: `security: {
   cors: true  // or { origin: "https://example.com" }
 }`,
   }),
-};
+});

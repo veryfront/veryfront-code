@@ -53,3 +53,26 @@ Deno.test("browser-safe client modules include runtime shims reached by browser 
 		);
 	}
 });
+
+Deno.test("browser error adapters do not retain Node imports", async () => {
+	const output = await new Deno.Command(Deno.execPath(), {
+		args: [
+			"bundle",
+			"--platform=browser",
+			"--no-check",
+			"src/agent/react/use-agent.ts",
+		],
+		cwd: new URL("../../", import.meta.url),
+		stdin: "null",
+		stdout: "piped",
+		stderr: "piped",
+	}).output();
+	const stderr = new TextDecoder().decode(output.stderr);
+	assert(output.success, `browser bundle failed:\n${stderr}`);
+
+	const bundle = new TextDecoder().decode(output.stdout);
+	assert(
+		!/["']node:/.test(bundle),
+		"the useAgent browser bundle must not retain a Node builtin import",
+	);
+});

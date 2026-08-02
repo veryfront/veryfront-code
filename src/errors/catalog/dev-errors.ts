@@ -1,7 +1,18 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createSimpleError } from "./factory.ts";
 
-export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
+export const DEV_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
+  "hmr-error": createSimpleError(
+    "hmr-error",
+    "Hot Module Replacement error",
+    "HMR failed to update module.",
+    [
+      "Try refreshing the page",
+      "Check for syntax errors",
+      "Restart dev server if persistent",
+    ],
+  ),
+
   "dev-server-error": createSimpleError(
     "dev-server-error",
     "Development server error",
@@ -37,4 +48,4 @@ export const DEV_ERROR_CATALOG: PartialErrorCatalog = {
       "Check for corrupted build files",
     ],
   ),
-};
+});

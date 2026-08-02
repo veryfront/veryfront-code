@@ -225,11 +225,6 @@ export {
 
 export type { ErrorSolution as UserFriendlyErrorSolution } from "./user-friendly/index.ts";
 
-export {
-  createError,
-  ensureError,
-  fromError,
-  getErrorMessage,
-  toError,
-} from "./veryfront-error.ts";
+export { createError, ensureError, getErrorMessage, toError } from "./veryfront-error.ts";
 export type { ConfigContext, VeryfrontErrorData } from "./veryfront-error.ts";
+export { fromError } from "./legacy-error-codec.ts";
