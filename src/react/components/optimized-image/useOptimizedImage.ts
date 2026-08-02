@@ -1,31 +1,35 @@
-import { RESPONSIVE_IMAGE_WIDTH_LG, RESPONSIVE_IMAGE_WIDTHS } from "#veryfront/utils";
-import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
-
-const DEFAULT_SIZES = [...RESPONSIVE_IMAGE_WIDTHS];
-const DEFAULT_FORMATS: Array<"avif" | "webp" | "jpeg"> = ["avif", "webp", "jpeg"];
-
-type ImageFormat = "avif" | "webp" | "jpeg" | "png";
+import type { OptimizedImageFormat as ImageFormat, OptimizedImageMetadata } from "#veryfront/types";
+import { useOptimizedImageMetadata as useManifestMetadata } from "../../runtime/core.ts";
+import {
+  assertImageQuality,
+  generateSrcSet,
+  getAvailableFormats,
+  getImageMimeType,
+  getOptimizedPath,
+} from "./helpers.ts";
 
 export function useOptimizedImage(
   src: string,
+  metadata?: OptimizedImageMetadata,
   options: { formats?: ImageFormat[]; quality?: number } = {},
 ): {
   sources: Array<{ format: ImageFormat; srcSet: string; type: string }>;
   fallback: string;
 } {
-  const { formats = DEFAULT_FORMATS, quality = 80 } = options;
+  const resolvedMetadata = useManifestMetadata(src, metadata);
+  const { formats = getAvailableFormats(resolvedMetadata), quality } = options;
+  assertImageQuality(resolvedMetadata, quality);
 
   const sources = formats.map((format) => ({
     format,
-    srcSet: generateSrcSet(src, format, DEFAULT_SIZES, quality),
-    type: `image/${format}`,
+    srcSet: generateSrcSet(src, resolvedMetadata, format),
+    type: getImageMimeType(format),
   }));
 
   const fallback = getOptimizedPath(
     src,
-    getImageExtension(src),
-    RESPONSIVE_IMAGE_WIDTH_LG,
-    quality,
+    resolvedMetadata,
+    resolvedMetadata.defaultFormat,
   );
 
   return { sources, fallback };

@@ -1,19 +1,22 @@
 /**
  * Floating — shared Portal + fixed-positioning helper for the overlay
  * primitives (DropdownMenu, Popover, Select). Renders `children` into
- * `document.body`, positioned relative to `anchorRef`, so the surface escapes
- * any `overflow`/iframe clipping — the reason Radix uses a Portal. Anchors below
- * the trigger (flips above when it would overflow), clamps to the viewport,
- * follows scroll/resize, and dismisses on outside-click / `Escape`.
- *
- * TODO(a11y): focus management, RTL, richer collision handling. Private to the
- * chat module.
+ * the nearest Veryfront UI scope (or `document.body` when no scope exists),
+ * positioned relative to `anchorRef`, so the surface escapes a primitive's
+ * clipping container while retaining scoped design tokens. Anchors below the
+ * trigger (flips above when it would overflow), clamps to the viewport, follows
+ * scroll/resize, and dismisses on outside-click / `Escape`.
  *
  * @module react/components/ui/floating
  */
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
+import { focusFirst, focusWithoutScroll } from "./focus-management.ts";
+
+const VIEWPORT_PADDING_PX = 8;
+
+export type FloatingDismissReason = "escape" | "pointer";
 
 // Warn once per session, not per render, when a surface opens unanchored.
 let warnedMissingAnchor = false;
@@ -26,9 +29,13 @@ export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Horizontal edge to align to. */
   align?: "start" | "end";
   /** Called on outside-click or `Escape`. */
-  onDismiss: () => void;
+  onDismiss: (reason: FloatingDismissReason) => void;
   /** Give the surface at least the anchor's width (Select). */
   matchTriggerWidth?: boolean;
+  /** Move focus into the surface after it is portalled. */
+  initialFocus?: true | string;
+  /** Focus target for Escape dismissal when the positioning anchor is a wrapper. */
+  returnFocusRef?: React.RefObject<HTMLElement | null>;
 }
 
 /** Portal a positioned surface anchored to `anchorRef`. */
@@ -38,11 +45,18 @@ export function Floating({
   align = "start",
   onDismiss,
   matchTriggerWidth,
+  initialFocus,
+  returnFocusRef,
   style,
   children,
   ...rest
 }: FloatingProps): React.ReactElement | null {
   const ref = React.useRef<HTMLDivElement>(null);
+  // Portals have no server representation. Keep the server and the first
+  // hydration render identical, then enable the portal after the component has
+  // mounted in a browser. This also avoids touching `document` during SSR when
+  // a surface starts open via `defaultOpen`.
+  const [portalReady, setPortalReady] = React.useState(false);
   const [pos, setPos] = React.useState<React.CSSProperties>({
     position: "fixed",
     top: 0,
@@ -57,27 +71,49 @@ export function Floating({
   const onDismissRef = React.useRef(onDismiss);
   onDismissRef.current = onDismiss;
 
+  React.useEffect(() => {
+    setPortalReady(true);
+  }, []);
+
   React.useLayoutEffect(() => {
-    if (!open) return;
-    const update = () => {
-      if (anchorRef.current === null && !warnedMissingAnchor) {
+    if (!open || !portalReady) return;
+    const anchor = anchorRef.current;
+    if (!anchor) {
+      if (!warnedMissingAnchor) {
         warnedMissingAnchor = true;
         console.warn(
           "[ui] Floating surface opened without an anchor element. " +
             "If the trigger uses asChild, its child must forward `ref` to a DOM node.",
         );
       }
-      const a = anchorRef.current?.getBoundingClientRect();
+      return;
+    }
+    const ownerDocument = anchor.ownerDocument;
+    const ownerWindow = ownerDocument?.defaultView;
+    if (!ownerWindow) return;
+
+    const update = () => {
+      const a = anchor.getBoundingClientRect();
       const c = ref.current;
-      if (!a || !c) return;
+      if (!c) return;
       const cw = c.offsetWidth;
       const ch = c.offsetHeight;
-      const vw = globalThis.innerWidth;
-      const vh = globalThis.innerHeight;
-      let left = align === "end" ? a.right - cw : a.left;
-      left = Math.max(8, Math.min(left, vw - cw - 8));
-      let top = a.bottom + 8;
-      if (top + ch > vh - 8 && a.top - 8 - ch > 8) top = a.top - 8 - ch;
+      const vw = ownerWindow.innerWidth;
+      const vh = ownerWindow.innerHeight;
+      const isRtl = ownerWindow.getComputedStyle(anchor).direction === "rtl";
+      const alignRight = (align === "end") !== isRtl;
+      let left = alignRight ? a.right - cw : a.left;
+      left = Math.max(
+        VIEWPORT_PADDING_PX,
+        Math.min(left, vw - cw - VIEWPORT_PADDING_PX),
+      );
+      let top = a.bottom + VIEWPORT_PADDING_PX;
+      if (
+        top + ch > vh - VIEWPORT_PADDING_PX &&
+        a.top - VIEWPORT_PADDING_PX - ch > VIEWPORT_PADDING_PX
+      ) {
+        top = a.top - VIEWPORT_PADDING_PX - ch;
+      }
       setPos({
         position: "fixed",
         top,
@@ -92,38 +128,61 @@ export function Floating({
     // portalled surface has its final layout, leaving it stuck at the hidden
     // origin. A rAF re-run positions it once layout settles. Guarded because
     // `requestAnimationFrame` is browser-only (absent in test/SSR envs).
-    const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame(update) : 0;
-    globalThis.addEventListener("scroll", update, true);
-    globalThis.addEventListener("resize", update);
+    const raf = typeof ownerWindow.requestAnimationFrame === "function"
+      ? ownerWindow.requestAnimationFrame(update)
+      : 0;
+    ownerWindow.addEventListener("scroll", update, true);
+    ownerWindow.addEventListener("resize", update);
     const onPointer = (e: MouseEvent) => {
-      const t = e.target as Node;
+      const t = e.target;
+      if (!(t instanceof ownerWindow.Node)) return;
       if (
         ref.current && !ref.current.contains(t) &&
-        !anchorRef.current?.contains(t)
-      ) onDismissRef.current();
+        !anchor.contains(t)
+      ) onDismissRef.current("pointer");
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onDismissRef.current();
+      if (e.defaultPrevented || e.key !== "Escape") return;
+      e.preventDefault();
+      onDismissRef.current("escape");
+      queueMicrotask(() => {
+        const focusTarget = returnFocusRef?.current ?? anchor;
+        if (focusTarget.isConnected) focusWithoutScroll(focusTarget);
+      });
     };
-    document.addEventListener("mousedown", onPointer);
-    document.addEventListener("keydown", onKey);
+    ownerDocument.addEventListener("mousedown", onPointer);
+    ownerDocument.addEventListener("keydown", onKey);
     return () => {
-      if (raf) cancelAnimationFrame(raf);
-      globalThis.removeEventListener("scroll", update, true);
-      globalThis.removeEventListener("resize", update);
-      document.removeEventListener("mousedown", onPointer);
-      document.removeEventListener("keydown", onKey);
+      if (raf) ownerWindow.cancelAnimationFrame(raf);
+      ownerWindow.removeEventListener("scroll", update, true);
+      ownerWindow.removeEventListener("resize", update);
+      ownerDocument.removeEventListener("mousedown", onPointer);
+      ownerDocument.removeEventListener("keydown", onKey);
     };
-  }, [open, align, matchTriggerWidth, anchorRef]);
+  }, [open, portalReady, align, matchTriggerWidth, anchorRef, returnFocusRef]);
 
-  if (!open) return null;
+  React.useLayoutEffect(() => {
+    if (!open || !portalReady || !initialFocus) return;
+    const surface = ref.current;
+    if (!surface) return;
+    const target = initialFocus === true
+      ? undefined
+      : surface.querySelector<HTMLElement>(initialFocus);
+    if (target) focusWithoutScroll(target);
+    else focusFirst(surface);
+  }, [initialFocus, open, portalReady]);
+
+  if (!open || !portalReady) return null;
   // Portal into the nearest scope root rather than <body>: the design tokens are
   // scoped to `[data-vf-ui]` / `[data-vf-chat]`, so a surface under <body> would
   // resolve every `var(--…)` to nothing (transparent background, wrong text
   // color). The root still sits above the composer's `overflow-hidden`, so we
   // keep the clipping escape while staying inside the token scope.
-  const container = anchorRef.current?.closest<HTMLElement>(UI_SCOPE_SELECTOR) ??
-    document.body;
+  const anchor = anchorRef.current;
+  const ownerDocument = anchor?.ownerDocument;
+  if (!anchor || !ownerDocument) return null;
+  const container = anchor.closest<HTMLElement>("[data-vf-modal-content]") ??
+    anchor.closest<HTMLElement>(UI_SCOPE_SELECTOR) ?? ownerDocument.body;
   return createPortal(
     <div ref={ref} style={{ ...pos, ...style }} {...rest}>{children}</div>,
     container,

@@ -27,9 +27,11 @@ export interface MessageContextValue {
   onBranchNext?: () => void;
 
   // Actions
-  onCopy: () => Promise<void>;
+  onCopy: (ownerDocument?: Document) => Promise<void>;
   /** True briefly after `onCopy` — lifted here so composed layouts keep the tick. */
   copied: boolean;
+  /** True briefly after every available clipboard mechanism fails. */
+  copyFailed?: boolean;
   onEdit?: (content: string) => void;
   onRegenerate?: () => void;
   onFeedback?: (value: FeedbackValue) => void;

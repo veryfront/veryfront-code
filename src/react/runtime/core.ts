@@ -1,4 +1,9 @@
 import React, { useEffect } from "react";
+import type {
+  OptimizedImageManifestRenderSession,
+  OptimizedImageManifestSnapshot,
+  OptimizedImageMetadata,
+} from "#veryfront/types";
 import {
   descriptorFromHeadProps,
   HEAD_REACT_OWNER_ATTRIBUTE,
@@ -7,6 +12,12 @@ import {
   serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { getClientHeadManager, getManagedHeadNonce } from "#veryfront/html/client-head-manager.ts";
+import {
+  captureOptimizedImageManifestRenderSession,
+  normalizeOptimizedImageSourcePath,
+  snapshotOptimizedImageManifest,
+  snapshotOptimizedImageMetadata,
+} from "#veryfront/utils/optimized-image-manifest.ts";
 
 /** Router state exposed through `useRouter()`. */
 export interface RouterValue {
@@ -111,6 +122,17 @@ export interface PageContextProviderProps {
   pageContext?: PageContextSeed;
 }
 
+interface ImageManifestContextValue {
+  readonly identity: string;
+  resolve(source: string): OptimizedImageMetadata;
+}
+
+export interface ImageManifestProviderProps {
+  /** A server render session or the exact bounded subset serialized for hydration. */
+  manifest: OptimizedImageManifestRenderSession | OptimizedImageManifestSnapshot;
+  children: React.ReactNode;
+}
+
 const defaultRouter: RouterValue = {
   domain: "",
   path: "/",
@@ -138,6 +160,7 @@ const defaultPageContext: PageContextValue = {
 
 const ROUTER_CONTEXT_SYMBOL = Symbol.for("veryfront.react.router-context");
 const PAGE_CONTEXT_SYMBOL = Symbol.for("veryfront.react.page-context");
+const IMAGE_MANIFEST_CONTEXT_SYMBOL = Symbol.for("veryfront.react.image-manifest-context");
 
 const globalRouterContext = globalThis as typeof globalThis & {
   [ROUTER_CONTEXT_SYMBOL]?: React.Context<RouterValue>;
@@ -147,11 +170,20 @@ const globalPageContext = globalThis as typeof globalThis & {
   [PAGE_CONTEXT_SYMBOL]?: React.Context<PageContextValue>;
 };
 
+const globalImageManifestContext = globalThis as typeof globalThis & {
+  [IMAGE_MANIFEST_CONTEXT_SYMBOL]?: React.Context<ImageManifestContextValue | null>;
+};
+
 const RouterContext = globalRouterContext[ROUTER_CONTEXT_SYMBOL] ??
   (globalRouterContext[ROUTER_CONTEXT_SYMBOL] = React.createContext<RouterValue>(defaultRouter));
 
 const PageContextContext = globalPageContext[PAGE_CONTEXT_SYMBOL] ??
   (globalPageContext[PAGE_CONTEXT_SYMBOL] = React.createContext(defaultPageContext));
+
+const ImageManifestContext = globalImageManifestContext[IMAGE_MANIFEST_CONTEXT_SYMBOL] ??
+  (globalImageManifestContext[IMAGE_MANIFEST_CONTEXT_SYMBOL] = React.createContext<
+    ImageManifestContextValue | null
+  >(null));
 
 type ClientHeadDescriptor = ManagedHeadDescriptor;
 
@@ -431,6 +463,92 @@ export function PageContextProvider({
 /** Reads the current page context. */
 export function usePageContext(): PageContextValue {
   return React.useContext(PageContextContext);
+}
+
+function imageManifestHasEntriesDataProperty(value: object): boolean {
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, "entries");
+  } catch (cause) {
+    throw new TypeError("Optimized image manifest provider input could not be inspected", {
+      cause,
+    });
+  }
+  return descriptor !== undefined && "value" in descriptor;
+}
+
+function imageManifestContextFromSnapshot(value: unknown): ImageManifestContextValue {
+  const snapshot = snapshotOptimizedImageManifest(value);
+  return Object.freeze({
+    identity: snapshot.identity,
+    resolve(source: string): OptimizedImageMetadata {
+      const key = normalizeOptimizedImageSourcePath(source);
+      const metadata = snapshot.entries[key];
+      if (!metadata) {
+        throw new TypeError(
+          `Optimized image manifest has no entry for ${JSON.stringify(key)}`,
+        );
+      }
+      return metadata;
+    },
+  });
+}
+
+function captureImageManifestProviderValue(value: unknown): ImageManifestContextValue {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new TypeError("Optimized image manifest provider input must be an object");
+  }
+  if (imageManifestHasEntriesDataProperty(value)) {
+    return imageManifestContextFromSnapshot(value);
+  }
+  const session = captureOptimizedImageManifestRenderSession(value);
+  return Object.freeze({
+    identity: session.identity,
+    resolve: session.resolve,
+  });
+}
+
+/** Provide one immutable build manifest to an individual render or hydration tree. */
+export function ImageManifestProvider({
+  manifest,
+  children,
+}: ImageManifestProviderProps): React.ReactElement {
+  const value = React.useMemo(() => captureImageManifestProviderValue(manifest), [manifest]);
+  return React.createElement(ImageManifestContext.Provider, { value }, children);
+}
+
+function optimizedImageMetadataEquals(
+  left: OptimizedImageMetadata,
+  right: OptimizedImageMetadata,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** Resolve exact generated metadata and fail closed when the render has no matching entry. */
+export function useOptimizedImageMetadata(
+  source: string,
+  explicitMetadata?: OptimizedImageMetadata,
+): OptimizedImageMetadata {
+  const context = React.useContext(ImageManifestContext);
+  const expectedOriginal = normalizeOptimizedImageSourcePath(source);
+  const explicit = explicitMetadata === undefined
+    ? undefined
+    : snapshotOptimizedImageMetadata(explicitMetadata, expectedOriginal);
+
+  if (!context) {
+    if (explicit) return explicit;
+    throw new TypeError(
+      "Optimized image metadata requires ImageManifestProvider or an explicit metadata prop",
+    );
+  }
+
+  const resolved = context.resolve(source);
+  if (explicit && !optimizedImageMetadataEquals(explicit, resolved)) {
+    throw new TypeError(
+      `Explicit optimized image metadata does not match build manifest ${context.identity}`,
+    );
+  }
+  return explicit ?? resolved;
 }
 
 /**

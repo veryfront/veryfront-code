@@ -90,7 +90,7 @@ describe("MessageActionBar", () => {
   it("renders the composed copied-state leaf after copying", async () => {
     const dom = installDom();
     const writes: string[] = [];
-    Object.defineProperty(globalThis.navigator, "clipboard", {
+    Object.defineProperty(dom.window.navigator, "clipboard", {
       configurable: true,
       value: { writeText: (value: string) => Promise.resolve(writes.push(value)) },
     });
@@ -127,6 +127,64 @@ describe("MessageActionBar", () => {
       assertEquals(writes, ["Answer"]);
       assert(rootElement.querySelector('[data-testid="custom-copied"]'));
       assertStringIncludes(rootElement.innerHTML, "vf-copied");
+
+      flushSync(() => {
+        root.render(
+          <MessageActionBar content="Updated answer">
+            <MessageActionBar.Copy icon={<span data-testid="custom-copy">copy</span>} />
+            <MessageActionBar.Copied icon={<span data-testid="custom-copied">copied</span>} />
+          </MessageActionBar>,
+        );
+      });
+      assert(rootElement.querySelector('[data-testid="custom-copy"]'));
+      assert(!rootElement.querySelector('[data-testid="custom-copied"]'));
+
+      flushSync(() => root.unmount());
+    } finally {
+      dom.restore();
+    }
+  });
+
+  it("keeps the copy action available when every clipboard mechanism fails", async () => {
+    const dom = installDom();
+    Object.defineProperty(dom.window.navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: () => Promise.reject(new Error("denied")) },
+    });
+    Object.defineProperty(document, "execCommand", {
+      configurable: true,
+      value: () => false,
+    });
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "root element exists");
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <MessageActionBar content="Answer">
+            <MessageActionBar.Copy icon={<span data-testid="custom-copy">copy</span>} />
+            <MessageActionBar.Copied icon={<span data-testid="custom-copied">copied</span>} />
+          </MessageActionBar>,
+        );
+      });
+
+      const copy = rootElement.querySelector<HTMLButtonElement>(
+        '[aria-label="Copy to clipboard"]',
+      );
+      assert(copy, "copy action renders");
+      copy.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      flushSync(() => {});
+
+      assert(rootElement.querySelector('[data-testid="custom-copy"]'));
+      assert(!rootElement.querySelector('[data-testid="custom-copied"]'));
+      assertEquals(copy.getAttribute("aria-label"), "Unable to copy. Try again");
+      assertEquals(
+        rootElement.querySelector('[role="status"]')?.textContent,
+        "Unable to copy to clipboard",
+      );
+      assertEquals(document.querySelectorAll("textarea").length, 0);
 
       flushSync(() => root.unmount());
     } finally {

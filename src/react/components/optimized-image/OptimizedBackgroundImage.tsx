@@ -1,9 +1,11 @@
 import React from "react";
-import { RESPONSIVE_IMAGE_WIDTH_LG } from "#veryfront/utils/constants/network.ts";
-import { getOptimizedPath } from "./helpers.ts";
+import type { OptimizedImageMetadata } from "#veryfront/types";
+import { useOptimizedImageMetadata } from "../../runtime/core.ts";
+import { assertImageQuality, getOptimizedPath } from "./helpers.ts";
 
 type Props = {
   src: string;
+  metadata?: OptimizedImageMetadata;
   children?: React.ReactNode;
   format?: "webp" | "avif" | "jpeg" | "png";
   quality?: number;
@@ -14,14 +16,22 @@ type Props = {
 
 export function OptimizedBackgroundImage({
   src,
+  metadata,
   children,
-  format = "webp",
-  quality = 80,
-  size = RESPONSIVE_IMAGE_WIDTH_LG,
+  format,
+  quality,
+  size,
   className,
   style,
 }: Props): React.JSX.Element {
-  const optimizedSrc = getOptimizedPath(src, format, size, quality);
+  const resolvedMetadata = useOptimizedImageMetadata(src, metadata);
+  assertImageQuality(resolvedMetadata, quality);
+  const optimizedSrc = getOptimizedPath(
+    src,
+    resolvedMetadata,
+    format ?? resolvedMetadata.defaultFormat,
+    size,
+  );
 
   return (
     <div

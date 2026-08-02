@@ -31,8 +31,18 @@ export type { LinkProps, RouterProviderProps, RouterValue } from "./router/index
 // ---------------------------------------------------------------------------
 // Context (veryfront/context)
 // ---------------------------------------------------------------------------
-export { PageContextProvider, usePageContext } from "./context/index.tsx";
-export type { MdxHeading, PageContextProviderProps, PageContextValue } from "./context/index.tsx";
+export {
+  ImageManifestProvider,
+  PageContextProvider,
+  useOptimizedImageMetadata,
+  usePageContext,
+} from "./context/index.tsx";
+export type {
+  ImageManifestProviderProps,
+  MdxHeading,
+  PageContextProviderProps,
+  PageContextValue,
+} from "./context/index.tsx";
 
 // ---------------------------------------------------------------------------
 // Fonts (veryfront/fonts)
@@ -237,6 +247,59 @@ export type {
   ToolCallProps,
   ToolCallTriggerProps,
   UploadedFile,
+} from "./components/chat/chat.tsx";
+
+// Chat — Compound component and headless-hook parity
+export {
+  AgentAvatar,
+  type AgentAvatarProps,
+  type AttachmentPillContextValue,
+  type AttachmentsPanelActionProps,
+  type AttachmentsPanelContextValue,
+  type AttachmentsPanelEmptyProps,
+  type AttachmentsPanelHeaderProps,
+  type AttachmentsPanelItemProps,
+  type AttachmentsPanelListProps,
+  type AttachmentsPanelLoadingProps,
+  ChatEmptyState,
+  type ChatEmptyStateAvatarProps,
+  type ChatEmptyStateHeadingProps,
+  type ChatEmptyStateRootProps,
+  type ChatEmptyStateSuggestionProps,
+  type ChatEmptyStateSuggestionsProps,
+  ChatMessagesSkeleton,
+  type ChatMessagesSkeletonProps,
+  isSkillToolPart,
+  type ModelSelectorContentProps,
+  type ModelSelectorContextValue,
+  type ModelSelectorItemProps,
+  type ModelSelectorTriggerProps,
+  SkillBadge,
+  type SkillBadgeProps,
+  SourcePill,
+  type SourcePillProps,
+  type SourcesContextValue,
+  type SourcesListProps,
+  type StepIndicatorContextValue,
+  useAttachmentPill,
+  useAttachments,
+  type UseAttachmentsOptions,
+  useAttachmentsPanel,
+  type UseAttachmentsRequestState,
+  type UseAttachmentsResult,
+  type UseAttachmentsStorageState,
+  useModelSelector,
+  useSources,
+  useStepIndicator,
+  useStickToBottom,
+  type UseStickToBottomOptions,
+  type UseStickToBottomResult,
+  useUpload,
+  type UseUploadOptions,
+  type UseUploadResult,
+  useUploadsRegistry,
+  type UseUploadsRegistryOptions,
+  type UseUploadsRegistryResult,
 } from "./components/chat/chat.tsx";
 
 export { AgentCard } from "./components/chat/agent-card.tsx";

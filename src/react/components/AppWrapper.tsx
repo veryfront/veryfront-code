@@ -4,13 +4,13 @@ import type { MdxBundle } from "./LayoutComponent.tsx";
 import { LayoutComponent } from "./LayoutComponent.tsx";
 import { ProviderComponent } from "./ProviderComponent.tsx";
 
+export { type MdxWrapperKind, MdxWrapperRenderError } from "./mdx-wrapper-error.ts";
+
 export interface AppWrapperProps {
   children: React.ReactNode;
   providers?: MdxBundle[];
   layout?: MdxBundle;
   components?: MDXComponents;
-  mode?: string;
-  studioEnabled?: boolean;
   pageContext?: TypedPageContext;
 }
 

@@ -232,6 +232,47 @@ export type {
   UseUploadResult,
 } from "./chat.tsx";
 
+// Compound component and headless-hook parity with the canonical chat barrel.
+export {
+  AgentAvatar,
+  type AgentAvatarProps,
+  type AttachmentPillContextValue,
+  type AttachmentsPanelActionProps,
+  type AttachmentsPanelContextValue,
+  type AttachmentsPanelEmptyProps,
+  type AttachmentsPanelHeaderProps,
+  type AttachmentsPanelItemProps,
+  type AttachmentsPanelListProps,
+  type AttachmentsPanelLoadingProps,
+  ChatMessagesSkeleton,
+  type ChatMessagesSkeletonProps,
+  type ModelSelectorContentProps,
+  type ModelSelectorContextValue,
+  type ModelSelectorItemProps,
+  type ModelSelectorTriggerProps,
+  SourcePill,
+  type SourcePillProps,
+  type SourcesContextValue,
+  type SourcesListProps,
+  type StepIndicatorContextValue,
+  useAttachmentPill,
+  useAttachments,
+  type UseAttachmentsOptions,
+  useAttachmentsPanel,
+  type UseAttachmentsRequestState,
+  type UseAttachmentsResult,
+  type UseAttachmentsStorageState,
+  useModelSelector,
+  useSources,
+  useStepIndicator,
+  useStickToBottom,
+  type UseStickToBottomOptions,
+  type UseStickToBottomResult,
+  useUploadsRegistry,
+  type UseUploadsRegistryOptions,
+  type UseUploadsRegistryResult,
+} from "./chat.tsx";
+
 // ---------------------------------------------------------------------------
 // Agent Card
 // ---------------------------------------------------------------------------

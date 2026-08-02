@@ -52,7 +52,7 @@ react/
     │   ├── chat.tsx        # Complete chat interface
     │   ├── agent-card.tsx  # Agent status visualization
     │   ├── message.tsx     # Standalone message component
-    │   ├── markdown.tsx    # Markdown rendering component
+    │   ├── markdown.tsx    # Plain source + rich-renderer capability boundary
     │   ├── model-selector.tsx # Model selection UI
     │   ├── chat-with-sidebar.tsx # Chat with sidebar layout
     │   ├── theme.ts        # Theme system and defaults
@@ -84,7 +84,7 @@ react/
 - `Chat` - Complete chat interface with theme system and composition API
 - `AgentCard` - Agent status and tool visualization
 - `Message` - Standalone message component (parts-based format)
-- `Markdown` - Markdown rendering with syntax highlighting
+- `Markdown` - Escaped Markdown source, with semantic rendering supplied by an extension
 - `ModelSelector` - Model selection UI component
 - `ChatSidebar` - Conversation rail (pairs with `ConversationsProvider`)
 - `OptimizedImage` - Responsive image with lazy loading
@@ -309,7 +309,8 @@ const response = buildResponse(html, {
 
 - All React 18 features
 - RSC (React Server Components)
-- Server Actions
+- Server Actions with a required generation-owned authorization provider; see
+  [Authorize React Server Actions](../../docs/guides/extensions.md#authorize-react-server-actions)
 - Improved Suspense
 - Enhanced streaming
 

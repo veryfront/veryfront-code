@@ -98,14 +98,14 @@ const FILE_SIZE_CEILINGS: Record<string, number> = {
   // only for the explicit conversation-persistence contracts exported here.
   "src/react/components/chat/chat/index.tsx": 280,
   // Message.Sources extracted to composition/message-sources.tsx.
-  "src/react/components/chat/chat/composition/message.tsx": 987,
+  "src/react/components/chat/chat/composition/message.tsx": 906,
   // Includes the ChatSidebar.Item menu compound (Item.Menu/.Rename/.Delete).
   // Split responsibilities before adding more behavior to this file.
-  "src/react/components/chat/chat/components/sidebar.tsx": 736,
+  "src/react/components/chat/chat/components/sidebar.tsx": 721,
   // useComposerValue extracted to composition/use-composer-value.ts.
   "src/react/components/chat/chat/composition/chat-composer.tsx": 619,
-  "src/react/components/chat/agent-picker.tsx": 502,
-  "src/react/components/chat/chat-actions.tsx": 515,
+  "src/react/components/chat/agent-picker.tsx": 494,
+  "src/react/components/chat/chat-actions.tsx": 315,
   "src/react/components/chat/chat/controlled-chat.tsx": 242,
   "src/react/components/chat/chat/app-mode-chat.tsx": 177,
 };

@@ -32,6 +32,8 @@ function fakeSession(overrides: Partial<UseChatResult> = {}): UseChatResult {
     messages: [],
     input: "",
     isLoading: false,
+    status: "ready",
+    streamingMessageId: null,
     error: null,
     model: undefined,
     activeModel: undefined,

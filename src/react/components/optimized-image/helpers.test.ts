@@ -1,63 +1,99 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
+import type { OptimizedImageMetadata } from "#veryfront/types";
+import {
+  assertImageQuality,
+  generateSrcSet,
+  getImageExtension,
+  getImageMimeType,
+  getOptimizedPath,
+} from "./helpers.ts";
+
+const metadata: OptimizedImageMetadata = {
+  original: "images/photo.jpg",
+  originalSize: 100,
+  defaultFormat: "jpeg",
+  aspectRatio: 4 / 3,
+  engineIdentity: "test-engine@1",
+  quality: 73,
+  variants: [
+    {
+      format: "webp",
+      size: 320,
+      width: 320,
+      height: 240,
+      path: "images/photo-320w-q73.webp",
+      fileSize: 10,
+      quality: 73,
+    },
+    {
+      format: "webp",
+      size: 640,
+      width: 640,
+      height: 480,
+      path: "images/photo-640w-q73.webp",
+      fileSize: 20,
+      quality: 73,
+    },
+    {
+      format: "jpeg",
+      size: 640,
+      width: 640,
+      height: 480,
+      path: "images/photo-640w-q73.jpeg",
+      fileSize: 30,
+      quality: 73,
+    },
+  ],
+};
 
 describe("optimized-image helpers", () => {
-  describe("getOptimizedPath", () => {
-    it("generates path with size and format", () => {
-      assertEquals(
-        getOptimizedPath("/images/photo.png", "webp", 640),
-        "/.veryfront/optimized-images/images/photo-640w.webp",
-      );
-    });
-
-    it("strips original extension", () => {
-      assertEquals(
-        getOptimizedPath("/hero.jpg", "avif", 1024),
-        "/.veryfront/optimized-images/hero-1024w.avif",
-      );
-    });
-
-    it("handles nested paths", () => {
-      assertEquals(
-        getOptimizedPath("/assets/blog/cover.jpeg", "webp", 320),
-        "/.veryfront/optimized-images/assets/blog/cover-320w.webp",
-      );
-    });
+  it("selects only paths present in the generated manifest", () => {
+    assertEquals(
+      getOptimizedPath("/images/photo.jpg", metadata, "webp", 400),
+      "/_vf/assets/images/images/photo-640w-q73.webp",
+    );
+    assertEquals(
+      getOptimizedPath("/images/photo.jpg", metadata, "webp", 900),
+      "/_vf/assets/images/images/photo-640w-q73.webp",
+    );
   });
 
-  describe("generateSrcSet", () => {
-    it("generates srcset string with multiple sizes", () => {
-      const parts = generateSrcSet("/photo.png", "webp", [320, 640, 1024], 80).split(", ");
-      assertEquals(parts.length, 3);
-
-      parts.forEach((part) => assertExists(part));
-      assertEquals(parts[0].endsWith("320w"), true);
-      assertEquals(parts[1].endsWith("640w"), true);
-      assertEquals(parts[2].endsWith("1024w"), true);
-    });
-
-    it("generates single-size srcset", () => {
-      const srcset = generateSrcSet("/photo.png", "webp", [640], 80);
-      assertEquals(srcset.includes("640w"), true);
-      assertEquals(srcset.includes(","), false);
-    });
+  it("builds srcset from actual manifest widths", () => {
+    assertEquals(
+      generateSrcSet("/images/photo.jpg", metadata, "webp"),
+      "/_vf/assets/images/images/photo-320w-q73.webp 320w, " +
+        "/_vf/assets/images/images/photo-640w-q73.webp 640w",
+    );
   });
 
-  describe("getImageExtension", () => {
-    it("returns extension for known image types", () => {
-      assertEquals(getImageExtension("/photo.png"), "png");
-      assertEquals(getImageExtension("/photo.jpg"), "jpg");
-      assertEquals(getImageExtension("/photo.webp"), "webp");
-    });
+  it("fails when source, format, or quality was not produced", () => {
+    assertThrows(
+      () => getOptimizedPath("/images/other.jpg", metadata, "webp"),
+      TypeError,
+      "does not match",
+    );
+    assertThrows(
+      () => getOptimizedPath("/images/photo.jpg", metadata, "avif"),
+      TypeError,
+      "no avif variant",
+    );
+    assertThrows(
+      () => assertImageQuality(metadata, 80),
+      TypeError,
+      "manifest quality is 73",
+    );
+    assertThrows(
+      () => getOptimizedPath("/images/photo.jpg", metadata, "webp", Number.NaN),
+      TypeError,
+      "width must be a positive finite number",
+    );
+  });
 
-    it("returns jpeg for paths without extension", () => {
-      assertEquals(getImageExtension("/photo"), "jpeg");
-    });
-
-    it("handles nested paths", () => {
-      assertEquals(getImageExtension("/images/blog/hero.avif"), "avif");
-    });
+  it("normalizes jpg to the encoder's jpeg identifier and MIME type", () => {
+    assertEquals(getImageExtension("/photo.jpg"), "jpeg");
+    assertEquals(getImageExtension("/photo.jpeg"), "jpeg");
+    assertEquals(getImageMimeType("jpeg"), "image/jpeg");
   });
 });

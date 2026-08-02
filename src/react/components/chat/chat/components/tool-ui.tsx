@@ -16,9 +16,17 @@ import {
 import { Alert, AlertContent, AlertIcon } from "../../../ui/alert.tsx";
 import { createStrictContext } from "../../../create-strict-context.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
+import { type ChatJsonValue, toChatJsonValue } from "../../../../../chat/json-value.ts";
 import { escapeHtml } from "#veryfront/utils/html-escape.ts";
 import { isSkillToolPart } from "../utils/message-parts.ts";
 import { getSkillToolProps, SkillTool } from "./skill-tool.tsx";
+
+const TOOL_VALUE_LIMITS = Object.freeze({
+  maxContainerEntries: 500,
+  maxDepth: 12,
+  maxNodes: 2_000,
+  maxStringChars: 64 * 1024,
+});
 
 /** Tool status configuration mapping state to label and icon */
 const TOOL_STATUS_CONFIG: Record<
@@ -95,10 +103,10 @@ export function ToolStatusBadge(
  * Format JSON with syntax highlighting
  * Note: Escapes HTML first to prevent XSS, then applies safe highlighting
  */
-function formatJsonWithHighlight(obj: unknown): React.ReactNode {
-  if (obj == null) return null;
-
-  const jsonStr = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
+function formatJsonSnapshotWithHighlight(
+  snapshot: ChatJsonValue,
+): React.ReactNode {
+  const jsonStr = typeof snapshot === "string" ? snapshot : JSON.stringify(snapshot, null, 2);
 
   // SECURITY: Escape HTML first to prevent XSS attacks
   const escaped = escapeHtml(jsonStr);
@@ -130,7 +138,14 @@ function formatJsonWithHighlight(obj: unknown): React.ReactNode {
   );
 }
 
-function renderOutputAsTable(output: unknown): React.ReactNode | null {
+function formatJsonWithHighlight(obj: unknown): React.ReactNode {
+  if (obj == null) return null;
+  return formatJsonSnapshotWithHighlight(
+    toChatJsonValue(obj, TOOL_VALUE_LIMITS),
+  );
+}
+
+function renderOutputAsTable(output: ChatJsonValue): React.ReactNode | null {
   if (!Array.isArray(output) || output.length === 0) return null;
 
   const firstItem = output[0];
@@ -392,7 +407,8 @@ function ToolCallOutput(
 ): React.JSX.Element | null {
   const { tool, hasOutput } = useToolCall();
   if (!hasOutput) return null;
-  const tableOutput = renderOutputAsTable(tool.output);
+  const output = toChatJsonValue(tool.output, TOOL_VALUE_LIMITS);
+  const tableOutput = renderOutputAsTable(output);
   return (
     <div
       className={cn(
@@ -406,7 +422,7 @@ function ToolCallOutput(
       <div className="overflow-x-auto rounded-[var(--radius-md)] bg-[var(--secondary)] text-[var(--foreground)]">
         {children ?? tableOutput ?? (
           <div className="p-3">
-            {formatJsonWithHighlight(tool.output)}
+            {formatJsonSnapshotWithHighlight(output)}
           </div>
         )}
       </div>
