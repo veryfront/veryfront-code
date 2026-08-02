@@ -35,6 +35,10 @@ export const DEFAULT_INCLUDES = [
   "extensions/ext-parser-babel/src/index.ts",
   "extensions/ext-parser-babel/src/parser-only.ts",
   "extensions/ext-react-ssr/src/index.ts",
+  // Resolved through a computed sibling URL at runtime, so compile cannot
+  // discover either the worker entrypoint or its embedded renderer payload.
+  "extensions/ext-react-ssr/src/worker-renderer.ts",
+  "extensions/ext-react-ssr/src/worker-renderer-bundle.generated.ts",
   "extensions/ext-sandbox-shell-tools/src/index.ts",
   // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
   "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
