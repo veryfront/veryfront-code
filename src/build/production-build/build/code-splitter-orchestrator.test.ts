@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 
@@ -31,6 +31,47 @@ describe("build/production-build/build/code-splitter-orchestrator", () => {
       const result = await runCodeSplitting("/project", "/output", [], false, true);
       assertEquals(result.manifest, null);
       assertEquals(result.chunks, 0);
+    });
+
+    it("does not emit placeholder chunks for Markdown routes", async () => {
+      const result = await runCodeSplitting(
+        "/project",
+        "/output",
+        [{ path: "/", file: "/project/pages/index.mdx", slug: "index" }],
+        true,
+        false,
+      );
+
+      assertEquals(result.manifest, null);
+      assertEquals(result.chunks, 0);
+    });
+
+    it("rejects conflicting source files for one dynamic template identity", async () => {
+      await assertRejects(
+        () =>
+          runCodeSplitting(
+            "/project",
+            "/output",
+            [
+              {
+                path: "/blog/hello",
+                templatePath: "/blog/[slug]",
+                file: "/project/pages/blog/[slug].tsx",
+                slug: "blog/hello",
+              },
+              {
+                path: "/blog/world",
+                templatePath: "/blog/[slug]",
+                file: "/project/pages/other/[slug].tsx",
+                slug: "blog/world",
+              },
+            ],
+            true,
+            false,
+          ),
+        TypeError,
+        "maps to both",
+      );
     });
   });
 });

@@ -9,6 +9,8 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";
 import { createSplitterPlugin } from "./esbuild-plugin.ts";
 import type { SplitOptions } from "./types.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
+import { combinePrimaryAndCleanupFailures } from "./lifecycle-errors.ts";
 
 /** Veryfront client modules that may be externalized based on moduleResolution setting */
 const VERYFRONT_CLIENT_MODULES = [
@@ -36,12 +38,12 @@ export function getExternalDependencies(
   }
 
   external.push(...customExternal);
-  return external;
+  return [...new Set(external)];
 }
 
 /** Creates a browser shim file for global compatibility */
 export async function createShimFile(outDir: string): Promise<string> {
-  const shimPath = join(outDir, ".veryfront-shim.js");
+  const shimPath = join(outDir, `.veryfront-shim-${crypto.randomUUID()}.js`);
   const reactImports = JSON.stringify(getReactImportMap(REACT_DEFAULT_VERSION));
   const shimContent = `
 if (typeof global === 'undefined') {
@@ -72,27 +74,94 @@ export async function createBuildContext(
   const isProduction = options.mode === "production";
   const isDevelopment = options.mode === "development";
 
-  return context({
-    entryPoints,
-    bundle: true,
-    splitting: true,
-    format: "esm",
-    target: ["es2022"],
-    platform: "browser",
-    outdir: options.outDir,
-    metafile: true,
-    minify: isProduction,
-    sourcemap: isDevelopment,
-    treeShaking: isProduction,
-    chunkNames: "chunks/[name]-[hash]",
-    entryNames: "[name]",
-    assetNames: "assets/[name]-[hash]",
-    external,
-    inject: [shimFile],
-    define: {
-      "process.env.NODE_ENV": JSON.stringify(options.mode),
-      __DEV__: JSON.stringify(isDevelopment),
+  const fs = createFileSystem();
+  const removeShim = async (): Promise<void> => {
+    try {
+      await fs.remove(shimFile);
+    } catch (error) {
+      if (!isNotFoundError(error)) throw error;
+    }
+  };
+
+  let delegate: BuildContext;
+  try {
+    delegate = await context({
+      entryPoints,
+      bundle: true,
+      splitting: true,
+      format: "esm",
+      target: ["es2022"],
+      platform: "browser",
+      outdir: options.outDir,
+      metafile: true,
+      minify: isProduction,
+      sourcemap: isDevelopment,
+      treeShaking: isProduction,
+      chunkNames: "chunks/[name]-[hash]",
+      entryNames: "[name]",
+      assetNames: "assets/[name]-[hash]",
+      external,
+      inject: [shimFile],
+      define: {
+        "process.env.NODE_ENV": JSON.stringify(options.mode),
+        __DEV__: JSON.stringify(isDevelopment),
+      },
+      plugins: [createSplitterPlugin(options.projectDir, [shimFile])],
+    });
+  } catch (error) {
+    try {
+      await removeShim();
+    } catch (cleanupError) {
+      throw combinePrimaryAndCleanupFailures(
+        error,
+        cleanupError,
+        "Code-splitter context creation failed and shim cleanup also failed",
+      );
+    }
+    throw error;
+  }
+
+  let delegateDisposed = false;
+  let shimRemoved = false;
+  let disposePromise: Promise<void> | undefined;
+
+  const disposeGeneration = async (): Promise<void> => {
+    const failures: unknown[] = [];
+    if (!delegateDisposed) {
+      try {
+        await delegate.dispose();
+        delegateDisposed = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (!shimRemoved) {
+      try {
+        await removeShim();
+        shimRemoved = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) {
+      throw new AggregateError(failures, "Code-splitter context disposal failed");
+    }
+  };
+
+  return {
+    rebuild: () => delegate.rebuild(),
+    dispose(): Promise<void> {
+      if (delegateDisposed && shimRemoved) return Promise.resolve();
+      if (disposePromise) return disposePromise;
+
+      const current = disposeGeneration();
+      const tracked = current.finally(() => {
+        if (disposePromise === tracked) disposePromise = undefined;
+      });
+      disposePromise = tracked;
+      return tracked;
     },
-    plugins: [createSplitterPlugin(options.projectDir)],
-  });
+  };
 }

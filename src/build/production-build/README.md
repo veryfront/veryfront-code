@@ -1,443 +1,206 @@
-# Build Module
+# Production build internals
 
-The Build module provides the production build system for Veryfront, including static site generation, asset bundling, client runtime generation, and build manifest creation.
+This is a maintainer reference for `src/build/production-build/`. Application
+authors should use `veryfront build` or `buildProduction()` from
+`veryfront/build`; see the [Build module overview](../README.md).
 
-## Import Map Aliases
+The internal barrel in [`index.ts`](./index.ts) supports repository code and
+tests. It is not a separate published package entry point.
 
-```typescript
-// Using import map aliases (recommended)
-import { buildProduction, copyStaticAssets } from "#server/build";
-import { buildProduction } from "#server/build/build";
+## Orchestration
 
-// Using barrel files
-import { buildProduction, copyStaticAssets } from "./server/build/index.ts";
-import { buildProduction } from "./server/build/build/index.ts";
+[`build/build-orchestrator.ts`](./build/build-orchestrator.ts) owns the
+production transaction:
+
+1. Normalize options. Verbose `enable*` fields take precedence over the
+   `splitting`, `compress`, and `prefetch` shorthands.
+2. Stat the project path and reject missing, inaccessible, or non-directory
+   inputs with distinct errors.
+3. Initialize the runtime adapter, configuration, renderer, and build stats.
+4. Prove that the requested output does not replace or overlap the project,
+   `public`, Pages, or App Router sources.
+5. Collect routes, discover public assets, and preflight every portable output
+   collision before writing.
+6. Acquire the output lock and allocate a unique sibling staging directory.
+7. Generate optional local dependency assets and split script-based Pages
+   routes.
+8. Render Pages and App Router routes.
+9. Generate client runtimes, copy public assets, create the build manifest,
+   service worker and redirects, then create compressed sidecars when enabled.
+10. Reject an empty non-dry build.
+11. Promote the complete staging directory and remove its backup.
+12. Release publication resources, destroy the renderer, and clear transform
+    caches.
+
+Every cleanup stage is attempted. If a build and cleanup both fail, an
+`AggregateError` preserves the build failure first. A successful publication
+also reports cleanup failure if resources cannot ultimately be removed.
+
+## Option normalization
+
+The shared `BuildOptions` contract is defined in
+[`server/build-types.ts`](../../server/build-types.ts).
+
+| Normalized field     | Resolution                                                        |
+| -------------------- | ----------------------------------------------------------------- |
+| `outputDir`          | Explicit value, otherwise `<projectDir>/.veryfront/output`.       |
+| `enableSplitting`    | `enableSplitting`, then `splitting`, then `true`.                 |
+| `enableCompression`  | `enableCompression`, then `compress`, then `true`.                |
+| `enablePrefetch`     | `enablePrefetch`, then `prefetch`, then `true`.                   |
+| `ssg`                | Left unset until config is loaded; explicit, config, then `true`. |
+| `dryRun`             | Explicit value, otherwise `false`.                                |
+| `include`, `exclude` | Passed to route collection without implicit rewriting.            |
+
+`ssg: false` collects no static routes. A non-dry build that consequently
+emits no pages is rejected because it is not a deployable static artifact.
+
+## Publication contract
+
+[`build/build-publication.ts`](./build/build-publication.ts) provides the local
+filesystem transaction.
+
+- The lock is created exclusively next to the final output and contains a
+  random ownership token.
+- Concurrent builds for the same output serialize or time out.
+- Build content is written to
+  `.<output>.veryfront-stage-<id>`.
+- An existing output is renamed to
+  `.<output>.veryfront-backup-<id>` only when the staged build is ready.
+- Promotion uses same-parent filesystem renames.
+- A failed promotion restores the previous output.
+- Backup, staging, and lock cleanup is retryable and coalesces concurrent
+  calls.
+- Lock ownership is verified before removal.
+- A backup-deletion failure is retried during cleanup and cannot disappear as
+  a warning-only success.
+
+If both promotion and restoration fail, the backup is deliberately preserved
+for recovery rather than deleted by generic cleanup.
+
+Dry runs do not create stage, backup, or lock artifacts.
+
+## Output contract
+
+A successful static build can contain:
+
+```text
+<output>/
+├── _veryfront/
+│   ├── app.js
+│   ├── client.js
+│   ├── router.js
+│   ├── prefetch.js
+│   ├── hydration-runtime.js
+│   ├── manifest.json
+│   ├── chunks/
+│   │   ├── manifest.json
+│   │   └── ...
+│   └── release-asset-manifest.json
+├── <route>/index.html
+├── sw.js
+├── _redirects
+└── <copied public assets>
 ```
 
-## Public API Overview
-
-The Build module exports:
-
-### Main Module (`server/build/`)
-
-- **Asset Generation** - `copyStaticAssets()`, `loadClientStyles()`, `AssetStats`
-- **Client Runtime** - `generateAppModule()`, `generateClientModule()`, `generateRouterScript()`, `generatePrefetchScript()`, `generateImportMap()`
-- **Build Manifest** - `generateManifest()`, `generateRedirects()`, `BuildManifest`, `ManifestOptions`
-- **Static Site Generation** - `buildPagesRoutes()`, `buildAppRoutes()`, `PageRenderResult`, `SSGStats`, `SSGOptions`
-
-### Build Orchestration (`server/build/build/`)
-
-- **Orchestration** - `buildProduction()`, `cleanupCaches()`, `cleanupRenderer()`, `logBuildCompletion()`
-- **Execution** - `executeBuild()`, `BuildExecutorOptions`, `BuildResult`
-- **Initialization** - `initializeBuildContext()`, `normalizeBuildOptions()`, `BuildContext`
-- **Setup** - `setupBuildDirectories()`
-- **Cleanup** - Build cleanup utilities
-- **Code Splitting** - `runCodeSplitting()`, `SplitResult`
-- **Output Generation** - `generateClientScripts()`, `generateManifestAndServiceWorker()`, `generateRedirectsFile()`, `copyAssets()`
-- **Route Collection** - Route discovery and collection utilities
-
-## File Structure
-
-```
-server/build/
-├── index.ts                      # Public API (barrel file) ← USE THIS
-├── README.md                     # This file
-├── asset-generation.ts           # Static asset handling
-├── client-runtime.ts             # Client-side runtime generation
-├── manifest.ts                   # Build manifest generation
-├── static-generation.ts          # SSG implementation
-└── build/                        # Build orchestration (has own barrel)
-    ├── index.ts                  # Build orchestration barrel file ← USE THIS
-    ├── build-orchestrator.ts     # Main build workflow
-    ├── build-executor.ts         # Build execution logic
-    ├── build-initializer.ts      # Build context initialization
-    ├── build-setup.ts            # Directory setup
-    ├── build-cleanup.ts          # Build cleanup utilities
-    ├── code-splitter-orchestrator.ts  # Code splitting
-    ├── output-generator.ts       # Output file generation
-    └── route-collector.ts        # Route discovery
-```
-
-## Quick Start
-
-### Run Production Build
-
-```typescript
-import { buildProduction } from "#server/build/build";
-import { runtime } from "#veryfront/platform/adapters/registry.ts";
-
-const adapter = await runtime.get();
-
-const stats = await buildProduction({
-  projectDir: "./my-app",
-  outDir: "./dist",
-  adapter,
-  minify: true,
-  sourceMaps: false,
-});
-
-console.log(`Built ${stats.totalPages} pages in ${stats.buildTime}ms`);
-```
-
-### Generate Static Sites
-
-```typescript
-import { buildPagesRoutes } from "#server/build";
-
-const stats = await buildPagesRoutes({
-  projectDir: "./my-app",
-  outDir: "./dist",
-  adapter,
-  parallel: true,
-});
-
-console.log(`Generated ${stats.pagesBuilt} static pages`);
-```
-
-### Copy Static Assets
-
-```typescript
-import { copyStaticAssets } from "#server/build";
-
-await copyStaticAssets(
-  adapter,
-  "/project/root",
-  "/output/public",
-);
-```
-
-### Generate Client Runtime
-
-```typescript
-import { generateAppModule, generateImportMap, generateRouterScript } from "#server/build";
-
-// Generate main app module
-const appCode = generateAppModule();
-
-// Generate import map
-const importMap = await generateImportMap();
-
-// Generate router script
-const routerCode = generateRouterScript();
-```
-
-## Key Concepts
-
-### 1. Build Workflow
-
-The production build follows these steps:
-
-1. **Initialize** - Set up build context and options
-2. **Setup** - Create output directories
-3. **Collect Routes** - Discover all pages and API routes
-4. **Generate Static** - Pre-render static pages
-5. **Bundle Client** - Generate client-side runtime
-6. **Code Split** - Split large bundles into chunks
-7. **Generate Assets** - Copy static assets
-8. **Create Manifest** - Generate build manifest
-9. **Cleanup** - Clean up temporary files and caches
-
-### 2. Static Site Generation (SSG)
-
-Pre-render pages at build time:
-
-```typescript
-import { buildAppRoutes, buildPagesRoutes } from "#server/build";
-
-// Build Pages Router routes
-const pagesStats = await buildPagesRoutes({
-  projectDir: "./app",
-  outDir: "./dist",
-  adapter,
-  parallel: true,
-  concurrency: 4,
-});
-
-// Build App Router routes
-const appStats = await buildAppRoutes({
-  projectDir: "./app",
-  outDir: "./dist",
-  adapter,
-});
-```
-
-### 3. Build Manifest
-
-The build manifest tracks all generated files:
-
-```typescript
-import { generateManifest } from "#server/build";
-
-const manifest = generateManifest({
-  routes: allRoutes,
-  assets: staticAssets,
-  chunks: codeChunks,
-  version: "1.0.0",
-});
-
-// Save manifest
-await Deno.writeTextFile(
-  "dist/manifest.json",
-  JSON.stringify(manifest, null, 2),
-);
-```
-
-### 4. Client Runtime
-
-Generate client-side JavaScript:
-
-```typescript
-import { generateClientModule } from "#server/build";
-
-const clientCode = generateClientModule({
-  hydration: true,
-  routing: true,
-  prefetching: true,
-});
-```
-
-## Advanced Usage
-
-### Custom Build Options
-
-```typescript
-import { type BuildOptions, buildProduction } from "#server/build/build";
-
-const options: BuildOptions = {
-  projectDir: "./app",
-  outDir: "./dist",
-  adapter,
-
-  // Optimization options
-  minify: true,
-  sourceMaps: false,
-  treeshake: true,
-
-  // SSG options
-  parallel: true,
-  concurrency: 8,
-
-  // Caching
-  cache: {
-    enabled: true,
-    dir: ".cache",
-  },
-
-  // Output options
-  publicPath: "/static/",
-  assetPrefix: "https://cdn.example.com/",
-};
-
-const stats = await buildProduction(options);
-```
-
-### Code Splitting
-
-Split large bundles into smaller chunks:
-
-```typescript
-import { runCodeSplitting } from "#server/build/build";
-
-const splitResult = await runCodeSplitting({
-  entryPoints: ["app.js", "router.js"],
-  outDir: "./dist/chunks",
-  splitting: true,
-  chunkNames: "[name]-[hash]",
-});
-
-console.log(`Created ${splitResult.chunks.length} chunks`);
-```
-
-### Build Cleanup
-
-Clean up after failed builds:
-
-```typescript
-import { cleanupCaches, performCleanup } from "#server/build/build";
-
-// Clean up all build artifacts
-await performCleanup({
-  outDir: "./dist",
-  cacheDir: ".cache",
-  tempDir: ".tmp",
-});
-
-// Clean up caches only
-await cleanupCaches({
-  cacheDir: ".cache",
-});
-```
-
-### Incremental Builds
-
-Only rebuild changed pages:
-
-```typescript
-import { buildPagesRoutes } from "#server/build";
-
-const stats = await buildPagesRoutes({
-  projectDir: "./app",
-  outDir: "./dist",
-  adapter,
-  incremental: true, // Only rebuild changed pages
-  cache: {
-    enabled: true,
-    dir: ".cache",
-  },
-});
-
-console.log(`Rebuilt ${stats.pagesRebuilt} of ${stats.totalPages} pages`);
-```
-
-### Build Monitoring
-
-Monitor build progress:
-
-```typescript
-import { buildProduction } from "#server/build/build";
-
-const stats = await buildProduction({
-  projectDir: "./app",
-  outDir: "./dist",
-  adapter,
-  onProgress: (event) => {
-    console.log(`[${event.stage}] ${event.message}`);
-  },
-});
-
-// stats includes:
-// - totalPages: number
-// - pagesBuilt: number
-// - buildTime: number
-// - errors: Error[]
-```
-
-## Build Statistics
-
-The build system provides comprehensive statistics:
-
-```typescript
-interface SSGStats {
-  totalPages: number;
-  pagesBuilt: number;
-  pagesFailed: number;
-  buildTime: number;
-  averagePageTime: number;
-  errors: Array<{ slug: string; error: Error }>;
-}
-```
-
-## Testing
-
-Tests are located in `tests/integration/server/build/`:
+The chunk manifest exists only when script-based Pages routes are split. The
+release-asset manifest exists only when local dependency import-map generation
+is enabled. Compression adds supported `.gz` and `.br` sidecars without
+replacing the source files.
+
+`_veryfront/manifest.json` uses
+`PRODUCTION_BUILD_FORMAT_VERSION`. Its routes and chunk metadata are
+canonicalized into a detached, deterministic snapshot before serialization.
+Reported route and chunk counts must agree with generated output.
+
+## Code-splitting boundary
+
+The code splitter:
+
+- accepts canonical, NFC route paths only;
+- rejects duplicate routes and generated entry-name collisions;
+- resolves project modules through physical project boundaries;
+- reads only stable regular source files up to 32 MiB;
+- rejects invalid UTF-8 and source files that change during the read;
+- filters external imports from asset references;
+- validates chunk sizes against bundler metadata;
+- rejects output and symbolic-link escapes;
+- produces stable route, chunk, import, preload, and shared ordering; and
+- validates the complete referential graph before returning or writing a
+  manifest.
+
+Build contexts and their injected shim files have coalesced, retryable
+disposal. Rebuild and disposal failures are both retained.
+
+## Public-asset boundary
+
+`discoverStaticAssets()` and `copyStaticAssets()` treat `<projectDir>/public`
+as untrusted input:
+
+- discovery is deterministic and bounded;
+- symbolic links and unsupported entry types are rejected;
+- generated/reserved paths and portable case or Unicode collisions are
+  rejected;
+- all destinations are preflighted before the first copy;
+- binary bytes pass through the selected runtime adapter; and
+- a failed copy rolls back files and directories created by that attempt.
+
+Missing `public` is a valid empty inventory. Other discovery and adapter errors
+propagate.
+
+## Local dependency assets
+
+When `VERYFRONT_RELEASE_ASSET_DEPENDENCY_IMPORT_MAP=1`,
+`generateLocalReleaseAssetManifest()` vendors content-addressed React,
+framework, and eligible cached HTTP modules.
+
+Generation is dependency-only: the local manifest intentionally has empty
+project-module, CSS, and route collections, and consumers keep release-scoped
+JIT URLs for those per-entry misses. An authorized caller must supply the browser
+transform and a policy-enforced HTTP dependency vendor implemented by an
+extension. The default production-build entry point installs neither capability,
+so enabling local immutable dependencies fails closed. Local generation does not
+import a vendor implementation or fall back to the legacy HTTP cache.
+
+Cached modules must be bounded regular UTF-8 files with validated HTTP(S)
+provenance. Conflicting claims, hash mismatches, symbolic links, unsafe cache
+roots, and unreferenced outputs fail the build. Writes are bounded,
+preflighted, and rolled back on failure. The assembled manifest is parsed by
+the Release Assets schema before it is returned or written.
+
+## Files
+
+| Path                                  | Responsibility                                  |
+| ------------------------------------- | ----------------------------------------------- |
+| `asset-generation.ts`                 | Discover and copy `public` assets.              |
+| `client-runtime.ts`                   | Generate embedded browser runtimes.             |
+| `compression.ts`                      | Create deterministic compressed sidecars.       |
+| `local-release-assets.ts`             | Vendor optional local dependency assets.        |
+| `manifest.ts`                         | Validate and build the production manifest.     |
+| `static-generation.ts`                | Render Pages and App Router static output.      |
+| `templates.ts`                        | Checked-in generated client templates.          |
+| `build/build-initializer.ts`          | Normalize options and create build context.     |
+| `build/output-plan.ts`                | Validate output safety and collision plans.     |
+| `build/build-publication.ts`          | Lock, stage, promote, restore, and clean up.    |
+| `build/route-collector.ts`            | Collect configured Pages and App routes.        |
+| `build/code-splitter-orchestrator.ts` | Split eligible Pages routes.                    |
+| `build/build-executor.ts`             | Coordinate Pages and App static generation.     |
+| `build/output-generator.ts`           | Generate runtime and deployment output files.   |
+| `build/build-cleanup.ts`              | Destroy renderer and transform-cache resources. |
+| `build/build-orchestrator.ts`         | Own the end-to-end production transaction.      |
+
+## Verification
+
+Focused production-build verification:
 
 ```bash
-deno test tests/integration/server/build/
+deno test --frozen --allow-all src/build/production-build
+deno lint src/build/production-build
+deno check --frozen \
+  src/build/index.ts \
+  src/build/production-build/index.ts
 ```
 
-## Module Boundaries
-
-The `server/build/` module has established boundaries to ensure clean architecture and maintainability.
-
-### Public API (via Barrel Files)
-
-**Always import from barrel files** (`index.ts`):
-
-```typescript
-// CORRECT - Using import map aliases
-import { buildProduction } from "#server/build/build";
-import { copyStaticAssets } from "#server/build";
-
-// ALSO CORRECT - Using barrel files directly
-import { buildProduction } from "./server/build/build/index.ts";
-import { copyStaticAssets } from "./server/build/index.ts";
-
-// WRONG - Deep imports bypassing barrel files
-import { buildProduction } from "./server/build/build/build-orchestrator.ts";
-import { copyStaticAssets } from "./server/build/asset-generation.ts";
-```
-
-### Internal Files (Do Not Import Directly)
-
-These are implementation details and should not be imported from outside the module:
-
-**Main Module Internals**:
-
-- `asset-generation.ts` - Internal asset handling
-- `client-runtime.ts` - Internal runtime generation
-- `manifest.ts` - Internal manifest creation
-- `static-generation.ts` - Internal SSG implementation
-
-**Build Orchestration Internals**:
-
-- `build/build-orchestrator.ts` - Internal orchestration
-- `build/build-executor.ts` - Internal execution
-- `build/build-initializer.ts` - Internal initialization
-- `build/build-setup.ts` - Internal setup
-- `build/build-cleanup.ts` - Internal cleanup
-- `build/code-splitter-orchestrator.ts` - Internal code splitting
-- `build/output-generator.ts` - Internal output generation
-- `build/route-collector.ts` - Internal route collection
-
-### Enforcing Boundaries
-
-Run the deep import linter to check for violations:
-
-```bash
-deno task lint:ban-deep-imports
-```
-
-This will detect any imports that bypass the barrel files and suggest corrections.
-
-### Why Module Boundaries Matter
-
-1. **Encapsulation**: Internal implementation can be refactored without breaking external code
-2. **Clear API**: Public API is explicitly defined in one place (two barrel files)
-3. **Maintainability**: Changes to internal files don't affect consumers
-4. **Discoverability**: Developers know exactly what's public by reading `index.ts` files
-5. **Type Safety**: Export types are properly managed and versioned
-
-## Related Domains
-
-- **rendering/**: Rendering system used during build
-- **data/**: Data fetching for static generation
-- **cli/**: CLI commands that trigger builds
-- **server/**: Server implementations that serve built assets
-
-## Performance Tips
-
-1. **Use Parallel Builds** - Enable `parallel: true` for faster builds
-2. **Enable Caching** - Use incremental builds with caching
-3. **Optimize Concurrency** - Tune `concurrency` based on CPU cores
-4. **Code Splitting** - Split large bundles into chunks
-5. **Minify Output** - Enable minification for production
-
-## Troubleshooting
-
-### Build Fails with Out of Memory
-
-```typescript
-// Reduce concurrency
-const stats = await buildPagesRoutes({
-  // ...
-  concurrency: 2, // Lower from default 4
-});
-```
-
-### Assets Not Copied
-
-```typescript
-// Ensure public directory exists
-await copyStaticAssets(adapter, projectDir, publicDir);
-```
-
-### Manifest Generation Fails
-
-```typescript
-// Check all routes are valid
-const manifest = generateManifest({
-  routes: validRoutes, // Ensure routes are properly formatted
-  assets,
-  chunks,
-});
-```
+Changes to client runtime generation must also run the checked-in generated
+source comparison in `client-runtime.test.ts`. Changes to public behavior or
+examples require `deno task docs:validate` and the repository consumer
+type-check.

@@ -1,46 +1,31 @@
 import { serverLogger as logger } from "#veryfront/utils";
-import { join } from "#veryfront/compat/path/index.ts";
-import { handleErrorWithFallback } from "#veryfront/errors";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { type BuildOutputOwnership, ensureOwnedBuildDescendant } from "./build-publication.ts";
+
+export type BuildDirectorySetupTarget =
+  | { readonly dryRun: true }
+  | { readonly dryRun: false; readonly output: BuildOutputOwnership };
 
 export async function setupBuildDirectories(
   adapter: RuntimeAdapter,
-  outputDir: string,
-  dryRun: boolean,
+  target: BuildDirectorySetupTarget,
 ): Promise<void> {
   logger.debug("Setting up build directories...");
 
-  await handleErrorWithFallback(
-    () => adapter.fs.remove(outputDir, { recursive: true }),
-    undefined,
-    logger,
-  );
-
-  if (dryRun) {
+  if (target.dryRun) {
     logger.debug("Build directories ready");
     return;
   }
 
-  const fs = createFileSystem();
   const dirs = [
-    outputDir,
-    join(outputDir, "_veryfront"),
-    join(outputDir, "_veryfront/chunks"),
-    join(outputDir, "_veryfront/data"),
-    join(outputDir, "assets"),
+    "_veryfront",
+    "_veryfront/chunks",
+    "_veryfront/data",
+    "assets",
   ];
 
   for (const dir of dirs) {
-    try {
-      await fs.mkdir(dir, { recursive: true });
-    } catch (error) {
-      const code = error && typeof error === "object" && "code" in error
-        ? (error as { code?: string }).code
-        : undefined;
-
-      if (code !== "EEXIST") throw error;
-    }
+    await ensureOwnedBuildDescendant(target.output, adapter.fs, dir);
   }
 
   logger.debug("Build directories ready");

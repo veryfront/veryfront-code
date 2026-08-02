@@ -27,6 +27,8 @@ export {
 } from "./static-generation.ts";
 export {
   buildProduction,
+  type BuildProductionOptions,
+  type BuildProductionReleaseAssetProviders,
   cleanupCaches,
   cleanupRenderer,
   logBuildCompletion,

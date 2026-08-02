@@ -24,6 +24,7 @@ export interface BuildExecutorOptions {
   baseUrl: string;
   dryRun: boolean;
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  ignoredSourceDirs?: string[];
   /** Select adapter-backed package reads for virtual/proxy build sources. */
   isLocalProject?: boolean;
   dependencyPinningCacheKey?: string;

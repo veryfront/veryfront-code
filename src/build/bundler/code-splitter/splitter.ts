@@ -1,14 +1,14 @@
 import { bundlerLogger as logger } from "#veryfront/utils";
-import type { BuildContext, BundleResult, Metafile } from "veryfront/extensions/bundler";
-import { ensureDir } from "#std/fs.ts";
-import { relative } from "#veryfront/compat/path/index.ts";
+import type { BuildContext, BundleResult } from "veryfront/extensions/bundler";
+import { ensureDir } from "#veryfront/compat/std/fs.ts";
 import type { ChunkInfo, SplitOptions, SplitResult } from "./types.ts";
 import { createEntryPoints } from "./entry-points.ts";
 import { createBuildContext } from "./build-context.ts";
-import { buildManifest, getChunkInfo, writeManifest } from "./manifest-builder.ts";
-import { createError, toError } from "#veryfront/errors";
+import { buildManifest, writeManifest } from "./manifest-builder.ts";
+import { BUILD_FAILED, createError, toError } from "#veryfront/errors";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ensureDefaultParserContracts } from "#veryfront/extensions/parser/defaults.ts";
+import { combinePrimaryAndCleanupFailures } from "./lifecycle-errors.ts";
 
 /** @internal */
 export async function rebuildAndDispose(buildContext: BuildContext): Promise<BundleResult> {
@@ -19,9 +19,11 @@ export async function rebuildAndDispose(buildContext: BuildContext): Promise<Bun
     try {
       await buildContext.dispose();
     } catch (disposeError) {
-      logger.warn("Failed to dispose code-splitter context after rebuild error", {
-        error: String(disposeError),
-      } as unknown);
+      throw combinePrimaryAndCleanupFailures(
+        rebuildError,
+        disposeError,
+        "Code-splitter rebuild failed and context disposal also failed",
+      );
     }
     throw rebuildError;
   }
@@ -46,13 +48,18 @@ export class CodeSplitter {
           mode: this.options.mode,
         });
 
+        const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
         await ensureDir(this.options.outDir);
         await ensureDefaultParserContracts();
 
-        const { entryPoints, routeMap } = createEntryPoints(this.options.routes);
         const buildContext = await createBuildContext(this.options, entryPoints);
         const result = await rebuildAndDispose(buildContext);
 
+        if (result.errors.length > 0) {
+          throw BUILD_FAILED.create({
+            detail: `Code splitting reported ${result.errors.length} bundler error(s)`,
+          });
+        }
         const metafile = result.metafile;
         if (!metafile?.outputs) {
           throw toError(
@@ -66,7 +73,7 @@ export class CodeSplitter {
         const manifest = await buildManifest(metafile, routeMap, this.options.outDir);
         await writeManifest(manifest, this.options.outDir);
 
-        const { entries, shared } = await this.processOutputs(metafile.outputs);
+        const { entries, shared } = this.processManifest(manifest);
 
         logger.info("Code splitting complete", {
           entries: entries.size,
@@ -83,21 +90,25 @@ export class CodeSplitter {
     );
   }
 
-  private async processOutputs(
-    outputs: Metafile["outputs"],
-  ): Promise<{ entries: Map<string, ChunkInfo>; shared: Map<string, ChunkInfo> }> {
+  private processManifest(
+    manifest: SplitResult["manifest"],
+  ): { entries: Map<string, ChunkInfo>; shared: Map<string, ChunkInfo> } {
     const entries = new Map<string, ChunkInfo>();
     const shared = new Map<string, ChunkInfo>();
 
-    for (const [file, info] of Object.entries(outputs)) {
-      const relativePath = relative(this.options.outDir, file);
-      const chunkInfo = await getChunkInfo(file, info, this.options.outDir);
-
-      if (info.entryPoint) {
-        entries.set(relativePath, chunkInfo);
-      } else {
-        shared.set(relativePath, chunkInfo);
+    for (const route of Object.values(manifest.routes)) {
+      const chunk = manifest.chunks[route.entry];
+      if (!chunk) {
+        throw new TypeError(`Chunk manifest is missing route entry ${route.entry}`);
       }
+      entries.set(route.entry, chunk);
+    }
+    for (const path of manifest.shared) {
+      const chunk = manifest.chunks[path];
+      if (!chunk) {
+        throw new TypeError(`Chunk manifest is missing shared chunk ${path}`);
+      }
+      shared.set(path, chunk);
     }
 
     return { entries, shared };

@@ -1,7 +1,7 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import type { BuildOptions, BuildStats } from "#veryfront/server/build-types.ts";
-import { createError, toError } from "#veryfront/errors";
-import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
+import { CONFIG_INVALID, createError, toError } from "#veryfront/errors";
+import { createFileSystem, isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import {
   cleanupCaches,
   cleanupRenderer,
@@ -10,12 +10,19 @@ import {
 } from "./build-cleanup.ts";
 import { executeBuild } from "./build-executor.ts";
 import { initializeBuildContext, normalizeBuildOptions } from "./build-initializer.ts";
-import { setupBuildDirectories } from "./build-setup.ts";
+import { type BuildDirectorySetupTarget, setupBuildDirectories } from "./build-setup.ts";
 import { runCodeSplitting } from "./code-splitter-orchestrator.ts";
 import { generateAllOutputs } from "./output-generator.ts";
 import { collectAllRoutes, type CollectedRoutes } from "./route-collector.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { generateLocalReleaseAssetManifest } from "../local-release-assets.ts";
+import {
+  generateLocalReleaseAssetManifest,
+  type LocalReleaseAssetOptions,
+} from "../local-release-assets.ts";
+import { discoverStaticAssets } from "../asset-generation.ts";
+import { assertSafeBuildOutputDirectory, validateBuildOutputPlan } from "./output-plan.ts";
+import { type BuildPublication, createBuildPublication } from "./build-publication.ts";
+import { expandPagesStaticPaths } from "../static-path-expansion.ts";
 import {
   createDependencyPinningSource,
   type DependencyPinningSnapshot,
@@ -36,6 +43,17 @@ interface BuildDependencySnapshotOptions {
 interface BuildDependencyContext {
   source: DependencyPinningSource;
   snapshot: DependencyPinningSnapshot;
+}
+
+/** Trusted providers composed by the production-build entry point. */
+export interface BuildProductionReleaseAssetProviders {
+  readonly vendorHttpImports: NonNullable<LocalReleaseAssetOptions["vendorHttpImports"]>;
+  readonly frameworkTransform: NonNullable<LocalReleaseAssetOptions["frameworkTransform"]>;
+}
+
+/** Production-build options, including optional flag-gated release asset providers. */
+export interface BuildProductionOptions extends BuildOptions {
+  readonly localReleaseAssetProviders?: BuildProductionReleaseAssetProviders;
 }
 
 async function captureBuildDependencyContext(
@@ -61,25 +79,43 @@ export async function captureBuildDependencySnapshot(
   return (await captureBuildDependencyContext(options)).snapshot;
 }
 
-export function buildProduction(options: BuildOptions): Promise<BuildStats> {
+export function buildProduction(options: BuildProductionOptions): Promise<BuildStats> {
   return withSpan(
     "build.production",
     async () => {
       const startTime = Date.now();
       const normalizedOptions = normalizeBuildOptions(options);
 
+      const fs = createFileSystem();
+      let projectInfo: Awaited<ReturnType<typeof fs.stat>>;
       try {
-        const fs = createFileSystem();
-        const exists = await fs.exists(normalizedOptions.projectDir);
-        if (!exists) throw new Error("Directory does not exist");
+        projectInfo = await fs.stat(normalizedOptions.projectDir);
       } catch (error) {
-        logger.error(`Project directory check failed: ${error}`);
-        throw toError(
-          createError({
-            type: "config",
-            message: `Invalid project directory: ${normalizedOptions.projectDir} does not exist`,
-          }),
-        );
+        if (isNotFoundError(error)) {
+          throw CONFIG_INVALID.create({
+            detail: `Invalid project directory: ${
+              JSON.stringify(normalizedOptions.projectDir)
+            } does not exist`,
+            cause: error,
+          });
+        }
+        logger.error("Project directory inspection failed", {
+          projectDir: normalizedOptions.projectDir,
+          error,
+        });
+        throw CONFIG_INVALID.create({
+          detail: `Could not inspect project directory ${
+            JSON.stringify(normalizedOptions.projectDir)
+          }`,
+          cause: error,
+        });
+      }
+      if (!projectInfo.isDirectory) {
+        throw CONFIG_INVALID.create({
+          detail: `Invalid project directory: ${
+            JSON.stringify(normalizedOptions.projectDir)
+          } is not a directory`,
+        });
       }
 
       logger.debug("Starting production build", options);
@@ -90,6 +126,10 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         {},
       );
 
+      let publication: BuildPublication | undefined;
+      let result: BuildStats | undefined;
+      let buildError: unknown;
+      let buildFailed = false;
       try {
         const dependencyContext = await captureBuildDependencyContext({
           projectDir: normalizedOptions.projectDir,
@@ -105,7 +145,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
           dependencyPinningCacheKey: dependencySnapshot.cacheKey,
           dependencyPinningDependencies: dependencySnapshot.dependencies,
         });
-        const outputDir = normalizedOptions.outputDir ?? "";
+        const finalOutputDir = normalizedOptions.outputDir ?? "";
         const dryRun = normalizedOptions.dryRun ?? false;
         const enableSplitting = normalizedOptions.enableSplitting ?? true;
         const enablePrefetch = normalizedOptions.enablePrefetch ?? true;
@@ -118,8 +158,66 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
         const ssg = normalizedOptions.ssg ?? context.config.build?.ssg ?? true;
 
         await withSpan(
+          "build.validateOutputDirectory",
+          () =>
+            assertSafeBuildOutputDirectory(
+              normalizedOptions.projectDir,
+              finalOutputDir,
+              context.config,
+            ),
+          {},
+        );
+
+        const collectedRoutes = await withSpan(
+          "build.collectRoutes",
+          () =>
+            collectAllRoutes(
+              context.adapter,
+              normalizedOptions.projectDir,
+              ssg,
+              normalizedOptions.include,
+              normalizedOptions.exclude,
+              context.config,
+            ),
+          {},
+        );
+        const routes: CollectedRoutes = {
+          ...collectedRoutes,
+          pages: await withSpan(
+            "build.expandStaticPaths",
+            () => expandPagesStaticPaths(collectedRoutes.pages, context.renderer),
+            {},
+          ),
+        };
+
+        const publicEntries = await withSpan(
+          "build.discoverPublicAssets",
+          () => discoverStaticAssets(context.adapter, normalizedOptions.projectDir),
+          {},
+        );
+        validateBuildOutputPlan({
+          pagesRoutes: routes.pages,
+          appRoutes: routes.app,
+          publicEntries,
+        });
+
+        publication = await withSpan(
+          "build.preparePublication",
+          () =>
+            createBuildPublication(finalOutputDir, dryRun, {
+              fs: context.adapter.fs,
+            }),
+          {},
+        );
+        const outputDir = publication.buildDir;
+        const setupTarget: BuildDirectorySetupTarget = publication.dryRun ? { dryRun: true } : {
+          dryRun: false,
+          output: publication.outputOwnership,
+        };
+
+        await withSpan(
           "build.setupDirectories",
-          () => setupBuildDirectories(context.adapter, outputDir, dryRun),
+          () => setupBuildDirectories(context.adapter, setupTarget),
           {},
         );
 
@@ -135,21 +233,9 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               reactVersion: buildReactVersion,
               dependencyPinningSource: dependencyContext.source,
               dependencyPinningSnapshot: dependencySnapshot,
+              vendorHttpImports: options.localReleaseAssetProviders?.vendorHttpImports,
+              frameworkTransform: options.localReleaseAssetProviders?.frameworkTransform,
             }),
-          {},
-        );
-
-        const routes = await withSpan(
-          "build.collectRoutes",
-          () =>
-            collectAllRoutes(
-              context.adapter,
-              normalizedOptions.projectDir,
-              ssg,
-              normalizedOptions.include,
-              normalizedOptions.exclude,
-              context.config,
-            ),
           {},
         );
 
@@ -181,6 +267,7 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               baseUrl: "",
               dryRun,
               releaseAssetManifest,
+              ignoredSourceDirs: [finalOutputDir, outputDir],
               isLocalProject: true,
               dependencyPinningCacheKey: dependencySnapshot.cacheKey,
               dependencyPinningDependencies: dependencySnapshot.dependencies,
@@ -194,11 +281,19 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
 
         await withSpan(
           "build.generateOutputs",
-          () =>
-            generateAllOutputs({
+          () => {
+            const outputTarget = publication!.dryRun
+              ? {
+                dryRun: true as const,
+                outputDir,
+              }
+              : {
+                dryRun: false as const,
+                outputOwnership: publication!.outputOwnership,
+              };
+            return generateAllOutputs({
               adapter: context.adapter,
               projectDir: normalizedOptions.projectDir,
-              outputDir,
               routes: routes.pages,
               appRoutes: routes.app,
               stats: context.stats,
@@ -206,10 +301,11 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
               enablePrefetch,
               enableCompression,
               chunkManifest: splitResult.manifest,
-              dryRun,
               config: context.config,
               releaseAssetManifest,
-            }),
+              ...outputTarget,
+            });
+          },
           {},
         );
 
@@ -217,19 +313,57 @@ export function buildProduction(options: BuildOptions): Promise<BuildStats> {
 
         assertBuildProducedOutput(context.stats, routes, ssg, dryRun);
 
-        logBuildCompletion(context.stats);
+        await withSpan(
+          "build.publish",
+          () => publication!.publish(),
+          {},
+        );
+        context.stats.duration = Date.now() - startTime;
 
-        return context.stats;
-      } finally {
-        await performCleanup(context.renderer);
+        result = context.stats;
+      } catch (error) {
+        buildFailed = true;
+        buildError = error;
       }
+
+      const cleanupFailures: unknown[] = [];
+      try {
+        await publication?.cleanup();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+      try {
+        await performCleanup(context.renderer);
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+
+      if (buildFailed) {
+        if (cleanupFailures.length === 0) throw buildError;
+        throw new AggregateError(
+          [buildError, ...cleanupFailures],
+          "Production build failed and cleanup also failed",
+        );
+      }
+      if (cleanupFailures.length === 1) throw cleanupFailures[0];
+      if (cleanupFailures.length > 1) {
+        throw new AggregateError(
+          cleanupFailures,
+          "Production build completed but cleanup failed",
+        );
+      }
+      if (!result) {
+        throw new Error("Build completed without producing a result");
+      }
+      logBuildCompletion(result);
+      return result;
     },
     { "build.projectDir": options.projectDir },
   );
 }
 
 /**
- * A build that emits zero pages and zero chunks is not a deployable artifact,
+ * A build that emits zero pages is not a deployable static artifact,
  * so reporting it as a success lets broken releases through (an empty dist/
  * deployed behind a "Build completed successfully" message serves only 404s).
  * Fail the build instead, with a message that points at the actual cause.
@@ -240,7 +374,7 @@ export function assertBuildProducedOutput(
   ssg: boolean,
   dryRun: boolean,
 ): void {
-  if (dryRun || stats.pages > 0 || stats.chunks > 0) return;
+  if (dryRun || stats.pages > 0) return;
 
   const routeCount = routes.pages.length + routes.app.length;
   const message = !ssg

@@ -6,9 +6,11 @@
 import { serverLogger as logger } from "#veryfront/utils";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { ChunkManifest } from "#veryfront/build/bundler/index.ts";
+import { resolveProjectSourcePath } from "#veryfront/build/bundler/project-module-resolver.ts";
 import { renderAppRouteToHTML } from "#veryfront/server/build-app-route-renderer.ts";
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import { loadClientStyles } from "./asset-generation.ts";
@@ -18,12 +20,18 @@ import {
   acquireCSSGenerationSession,
   cacheCSSAsync,
   extractCandidatesFromFiles,
-  generateTailwindCSS,
+  generateCSS,
   hashCSS,
 } from "#veryfront/html/styles-builder/index.ts";
 import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
-import { SSG_GENERATION_ERROR } from "#veryfront/errors";
+import { createSecureFs } from "#veryfront/security";
+import { COMPILATION_ERROR, SSG_GENERATION_ERROR } from "#veryfront/errors";
+import { collectCSSCandidateSourceFiles } from "../../html/styles-builder/css-source-collector.ts";
+import { getRouteOutputPath } from "./output-paths.ts";
+import { captureBoundedTextReader } from "#veryfront/platform/adapters/bounded-text-reader.ts";
+import { MAX_CSS_FILE_BYTES } from "#veryfront/utils/constants/css.ts";
+import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -59,18 +67,10 @@ export interface SSGOptions {
   /** React version for import map generation */
   reactVersion?: string;
   releaseAssetManifest?: ReleaseAssetManifest | null;
+  /** Build output trees that must not be scanned as CSS candidate source input. */
+  ignoredSourceDirs?: string[];
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
-}
-
-function getOutputPath(outputDir: string, slug: string): string {
-  if (slug === "index") return join(outputDir, "index.html");
-  return join(outputDir, slug, "index.html");
-}
-
-function getAppRouteOutputPath(outputDir: string, routePath: string): string {
-  if (routePath === "/") return join(outputDir, "index.html");
-  return join(outputDir, routePath.slice(1), "index.html");
 }
 
 function defaultTraceStep<T>(_: string, fn: () => Promise<T>): Promise<T> {
@@ -104,7 +104,20 @@ function getConfiguredModuleServerOrigin(baseUrl?: string): string | undefined {
 }
 
 function hasImportMapScript(html: string): boolean {
-  return /<script\b[^>]*\btype=(["'])importmap\1/i.test(html);
+  return /<script\b[^>]*\btype\s*=\s*(?:(["'])importmap\1|importmap(?=[\s>]))/i.test(html);
+}
+
+function injectBeforeClosingTag(
+  html: string,
+  tag: "head" | "body",
+  content: string,
+): string {
+  const closingTag = tag === "head" ? /<\/head\s*>/i : /<\/body\s*>/i;
+  const match = closingTag.exec(html);
+  if (match?.index === undefined) {
+    throw new TypeError(`Rendered HTML is missing a closing </${tag}> tag`);
+  }
+  return html.slice(0, match.index) + content + html.slice(match.index);
 }
 
 function extractClientNavigationHtml(html: string): string {
@@ -121,97 +134,81 @@ function extractClientNavigationHtml(html: string): string {
   return html.slice(contentStart, rootClose);
 }
 
-const APP_ROUTE_STYLE_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
-const APP_ROUTE_STYLE_SKIP_DIRS = new Set([
-  ".deno_cache",
-  ".git",
-  ".veryfront",
-  "coverage",
-  "dist",
-  "node_modules",
-]);
-
-async function readOptionalFile(
-  adapter: RuntimeAdapter,
+async function readResolvedStylesheet(
+  filesystem: unknown,
   path: string,
+  configured: boolean,
 ): Promise<string | undefined> {
+  const reader = captureBoundedTextReader(filesystem, "Build stylesheet filesystem");
   try {
-    return await adapter.fs.readFile(path);
-  } catch (_) {
-    return undefined;
+    return (await reader.readUtf8(path, MAX_CSS_FILE_BYTES, "Build stylesheet")).content;
+  } catch (error) {
+    if (!configured && isNotFoundError(error)) return undefined;
+    throw error;
   }
-}
-
-async function collectAppRouteStyleSources(
-  adapter: RuntimeAdapter,
-  dir: string,
-): Promise<Array<{ path: string; content?: string }>> {
-  const files: Array<{ path: string; content?: string }> = [];
-
-  async function walk(currentDir: string): Promise<void> {
-    let entries: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
-    try {
-      entries = adapter.fs.readDir(currentDir);
-    } catch (_) {
-      return;
-    }
-
-    for await (const entry of entries) {
-      if (entry.isDirectory) {
-        if (!APP_ROUTE_STYLE_SKIP_DIRS.has(entry.name)) {
-          await walk(join(currentDir, entry.name));
-        }
-        continue;
-      }
-
-      if (!entry.isFile) continue;
-      if (!APP_ROUTE_STYLE_SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
-
-      const path = join(currentDir, entry.name);
-      const content = await readOptionalFile(adapter, path);
-      if (content !== undefined) files.push({ path, content });
-    }
-  }
-
-  await walk(dir);
-  return files;
 }
 
 async function prepareAppRouteStylesheet(
   options: SSGOptions,
 ): Promise<string | undefined> {
-  const stylesheetPath = options.config.tailwind?.stylesheet ?? "globals.css";
-  const stylesheet = await readOptionalFile(
-    options.adapter,
-    join(options.projectDir, stylesheetPath),
+  const configuredStylesheetPath = options.config.styles?.stylesheet;
+  const stylesheetPath = configuredStylesheetPath ?? "globals.css";
+  const resolvedStylesheetPath = resolveProjectSourcePath(
+    stylesheetPath,
+    options.projectDir,
+    "CSS stylesheet",
   );
-  const sourceFiles = await collectAppRouteStyleSources(options.adapter, options.projectDir);
+  const secureFs = createSecureFs({
+    baseDir: options.projectDir,
+    adapter: options.adapter,
+    context: "build",
+    validationOptions: {
+      followSymlinks: false,
+    },
+  });
+  const styleProfile = createStyleScopeProfile(options.config);
+  const stylesheet = await readResolvedStylesheet(
+    secureFs,
+    resolvedStylesheetPath,
+    configuredStylesheetPath !== undefined,
+  );
+  const sourceFiles = await collectCSSCandidateSourceFiles({
+    adapter: options.adapter,
+    projectDir: options.projectDir,
+    ignoredDirs: options.ignoredSourceDirs,
+    styleProfile,
+  });
   const candidates = extractCandidatesFromFiles(sourceFiles, {
     projectDir: options.projectDir,
+    styleProfile,
   });
   for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
+  const cssPipeline = await acquireCSSGenerationSession(true);
+  const resolvedStylesheet = stylesheet ?? cssPipeline.compilationSession.defaultStylesheet;
 
-  const generationSession = acquireCSSGenerationSession(true);
-  const resolvedStylesheet = stylesheet ?? generationSession.compilationSession.defaultStylesheet;
-  const generated = await generateTailwindCSS(resolvedStylesheet, candidates, {
+  const generated = await generateCSS(resolvedStylesheet, candidates, {
     minify: true,
     environment: "production",
     buildMode: "production",
-  }, { generationSession });
+    projectSlug: options.projectDir,
+  }, { generationSession: cssPipeline });
+
+  if (candidates.size > 0 && generated.css.trim().length === 0) {
+    throw COMPILATION_ERROR.create({
+      detail: "App Router CSS compilation returned empty CSS for non-empty candidates",
+    });
+  }
 
   const hash = hashCSS(generated.css);
-  if (!hash) return undefined;
-
-  await cacheCSSAsync(generated.css, hash, {
-    candidates,
-    stylesheet: resolvedStylesheet,
-    pipelineIdentity: generated.cacheIdentity,
-  });
 
   if (!options.dryRun) {
     const cssPath = join(options.outputDir, "_vf/css", `${hash}.css`);
     await options.adapter.fs.mkdir(dirname(cssPath), { recursive: true });
     await options.adapter.fs.writeFile(cssPath, generated.css);
+    await cacheCSSAsync(generated.css, hash, {
+      candidates,
+      stylesheet: resolvedStylesheet,
+    });
   }
 
   return `/_vf/css/${hash}.css`;
@@ -245,6 +242,7 @@ export async function buildPagesRoutes(
           renderer.renderPage(route.slug, {
             contentSourceId,
             ...staticRouteContext,
+            ...(route.params ? { params: route.params } : {}),
             releaseAssetManifest: options.releaseAssetManifest,
             dependencyPinningCacheKey: options.dependencyPinningCacheKey,
             dependencyPinningDependencies: options.dependencyPinningDependencies,
@@ -259,10 +257,10 @@ export async function buildPagesRoutes(
         );
         const preloadLinks = generatePreloadLinks(
           chunkManifest,
-          route.path,
+          route.templatePath ?? route.path,
           "/_veryfront/chunks",
         );
-        enhancedHtml = enhancedHtml.replace("</head>", `${preloadLinks}\n</head>`);
+        enhancedHtml = injectBeforeClosingTag(enhancedHtml, "head", `${preloadLinks}\n`);
       }
 
       if (!hasImportMapScript(enhancedHtml)) {
@@ -274,8 +272,9 @@ export async function buildPagesRoutes(
           dependencyPinningCacheKey: options.dependencyPinningCacheKey,
           dependencyPinningDependencies: options.dependencyPinningDependencies,
         });
-        enhancedHtml = enhancedHtml.replace(
-          "</head>",
+        enhancedHtml = injectBeforeClosingTag(
+          enhancedHtml,
+          "head",
           `
   <!-- Import map for React dependencies -->
   <script type="importmap">
@@ -286,27 +285,28 @@ export async function buildPagesRoutes(
   <style>
 ${clientStyles}
   </style>
-</head>`,
+`,
         );
       } else {
-        enhancedHtml = enhancedHtml.replace(
-          "</head>",
+        enhancedHtml = injectBeforeClosingTag(
+          enhancedHtml,
+          "head",
           `
   <!-- Basic styles -->
   <style>
 ${clientStyles}
   </style>
-</head>`,
+`,
         );
       }
 
-      enhancedHtml = enhancedHtml.replace(
-        "</body>",
+      enhancedHtml = injectBeforeClosingTag(
+        enhancedHtml,
+        "body",
         generateClientRuntime(route, result, baseUrl),
       );
 
-      const outputPath = getOutputPath(outputDir, route.slug);
-      await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
+      const outputPath = getRouteOutputPath(outputDir, route.path);
 
       if (dryRun) {
         stats.pages++;
@@ -316,6 +316,7 @@ ${clientStyles}
         continue;
       }
 
+      await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
       await traceStep(`write:${route.slug}`, () => adapter.fs.writeFile(outputPath, enhancedHtml));
 
       const pageData = {
@@ -375,10 +376,20 @@ export async function buildAppRoutes(
   if (appRoutes.length === 0) return stats;
 
   logger.debug("Building App Router static pages...");
-  const stylesheetHref = await traceStep(
-    "app:styles",
-    () => prepareAppRouteStylesheet(options),
-  );
+  let stylesheetHref: string | undefined;
+  try {
+    stylesheetHref = await traceStep(
+      "app:styles",
+      () => prepareAppRouteStylesheet(options),
+    );
+  } catch (error) {
+    logger.error("Failed to prepare App Router styles:", error);
+    throw SSG_GENERATION_ERROR.create({
+      detail: "Failed to prepare App Router styles",
+      cause: error,
+      context: { stage: "app-styles" },
+    });
+  }
 
   for (const route of appRoutes) {
     try {
@@ -399,7 +410,7 @@ export async function buildAppRoutes(
           dependencyPinningDependencies: options.dependencyPinningDependencies,
         }));
 
-      const outputPath = getAppRouteOutputPath(outputDir, route.path);
+      const outputPath = getRouteOutputPath(outputDir, route.path);
 
       if (!dryRun) {
         await adapter.fs.mkdir(dirname(outputPath), { recursive: true });
@@ -454,5 +465,5 @@ function generateClientRuntime(
       boot({ slug: ${jsonForInlineScript(route.slug)} });
     }
   </script>
-</body>`;
+`;
 }
