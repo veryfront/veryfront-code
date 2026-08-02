@@ -564,7 +564,11 @@ describe("hydration-script-builder/runtime/router", () => {
     }, "/page-c");
 
     assertEquals(
-      [...harness.document.querySelectorAll('[data-vf-route-head="true"]')].length,
+      harness.document.querySelector('title[data-vf-route-head="true"]')?.textContent,
+      "Page B",
+    );
+    assertEquals(
+      [...harness.document.querySelectorAll('meta[data-vf-route-head="true"]')].length,
       0,
     );
     assertStrictEquals(harness.document.getElementById("third-party-description"), thirdParty);

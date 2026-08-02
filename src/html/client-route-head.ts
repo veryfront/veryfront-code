@@ -206,7 +206,11 @@ export function handoffClientRouteMetadata(
   metadata: ClientRouteHeadMetadata,
   targetDocument: Document = document,
 ): void {
+  const retainedTitle = targetDocument.title;
   retireClientHeadOwnership(targetDocument);
-  updateRouteTitle(metadata.title, targetDocument);
+  updateRouteTitle(
+    typeof metadata.title === "string" && metadata.title ? metadata.title : retainedTitle,
+    targetDocument,
+  );
   updateRouteMetaTags(metadata, targetDocument);
 }

@@ -597,7 +597,11 @@ describe("PageTransition", () => {
         );
         await delay(200);
 
-        assertEquals(targetDocument.querySelectorAll('[data-vf-route-head="true"]').length, 0);
+        assertEquals(
+          targetDocument.querySelector('title[data-vf-route-head="true"]')?.textContent,
+          "Page C",
+        );
+        assertEquals(targetDocument.querySelectorAll('meta[data-vf-route-head="true"]').length, 0);
         assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 1);
         assertStrictEquals(targetDocument.getElementById("third-party"), thirdParty);
         assertStrictEquals(targetDocument.querySelector('meta[name="viewport"]'), viewport);
