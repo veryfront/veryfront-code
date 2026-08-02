@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertRejects, assertThrows } from "#std/assert";
+import { FakeTime } from "#std/testing/time";
 import { MemoryTokenStore } from "./memory.ts";
 import type { OAuthTokens, StoredOAuthState } from "../types.ts";
 
@@ -60,6 +61,18 @@ Deno.test("MemoryTokenStore consumeState is one-shot and rejects unknown", async
   // One-shot: second read returns null.
   assertEquals(await store.consumeState("state-1"), null);
   assertEquals(await store.consumeState("never-set"), null);
+});
+
+Deno.test("MemoryTokenStore consumeState rejects and drops expired state", async () => {
+  using time = new FakeTime();
+  const store = new MemoryTokenStore();
+  await store.setState("old", oauthState("alice"));
+
+  // Past the 10-minute state window the CSRF token is no longer redeemable.
+  await time.tickAsync(11 * 60_000);
+  assertEquals(await store.consumeState("old"), null);
+  // Expired entries are removed on read, so a retry cannot resurrect them.
+  assertEquals(await store.consumeState("old"), null);
 });
 
 Deno.test("MemoryTokenStore bounds OAuth states via oldest-entry eviction", async () => {

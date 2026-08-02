@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals, assertThrows } from "#std/assert";
+import { FakeTime } from "#std/testing/time";
 import { createTestEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import {
   createOAuthCallbackHandler as createRuntimeOAuthCallbackHandler,
@@ -155,6 +156,35 @@ Deno.test("callback-handler: rejects request when state has expired", async () =
     scopes: ["read"],
     createdAt: Date.now() - 11 * 60 * 1000, // 11 minutes ago, past 10-minute expiry
   });
+
+  const handler = createOAuthCallbackHandler(TEST_CONFIG, {
+    tokenStore,
+    baseUrl: "http://localhost:3000",
+    envReader: (key) => ENV[key],
+  });
+
+  const response = await handler(
+    makeRequest({ code: "auth-code-123", state: "expired-state" }),
+  );
+
+  assertEquals(response.status, 302);
+  const location = new URL(response.headers.get("location")!);
+  assertEquals(location.searchParams.get("error"), "invalid_state");
+});
+
+Deno.test("callback-handler: rejects state that expired inside the token store", async () => {
+  using time = new FakeTime();
+  const tokenStore = new MemoryTokenStore();
+  await tokenStore.setState("expired-state", {
+    userId: "alice",
+    serviceId: TEST_CONFIG.serviceId,
+    codeVerifier: CODE_VERIFIER,
+    redirectUri: "http://localhost:3000/api/auth/test-provider/callback",
+    scopes: ["read"],
+    createdAt: Date.now(),
+  });
+  // The user takes 11 minutes to complete consent, past the 10-minute window.
+  await time.tickAsync(11 * 60 * 1000);
 
   const handler = createOAuthCallbackHandler(TEST_CONFIG, {
     tokenStore,
