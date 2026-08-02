@@ -172,18 +172,12 @@ function extractToolArgs(
         return parsed;
       }
     } catch {
-      throw new SyntaxError(
-        `Malformed streamed tool input for tool call "${
-          getPartString(part, "toolCallId", "tool_call_id", "id") ?? "unknown"
-        }"`,
-      );
+      // This converter only replays persisted thread history, so a tool call
+      // truncated by an interrupted stream is already in the record. Throwing
+      // here would poison the thread permanently: every later turn would fail
+      // during request conversion, before the run even starts.
+      return {};
     }
-
-    throw new SyntaxError(
-      `Malformed streamed tool input for tool call "${
-        getPartString(part, "toolCallId", "tool_call_id", "id") ?? "unknown"
-      }"`,
-    );
   }
 
   if (isRecordObject(args)) {
