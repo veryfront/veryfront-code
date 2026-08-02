@@ -798,6 +798,46 @@ describe("ext-llm-google/google-stream", () => {
       ProviderRequestError,
       "candidate function call arguments were not an object",
     );
+    await assertRejects(
+      () =>
+        collectParts(streamFromText(data({
+          candidates: [{
+            content: {
+              parts: [{ functionCall: { id: "tool_1", name: "lookup", args: null } }],
+            },
+            finishReason: "STOP",
+          }],
+        }))),
+      ProviderRequestError,
+      "candidate function call arguments were not an object",
+    );
+  });
+
+  it("treats an omitted function call args field as empty arguments", async () => {
+    const parts = await collectParts(streamFromText([
+      data({
+        candidates: [{
+          content: { role: "model", parts: [{ functionCall: { id: "tool_1", name: "ping" } }] },
+          finishReason: "STOP",
+        }],
+      }),
+      "data: [DONE]\r\n\r\n",
+    ].join("")));
+
+    assertEquals(
+      parts.filter((part) =>
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        part.type === "tool-call"
+      ),
+      [{
+        type: "tool-call",
+        toolCallId: "tool_1",
+        toolName: "ping",
+        input: "{}",
+      }],
+    );
   });
 
   it("fully processes a trailing terminal record without a final delimiter", async () => {

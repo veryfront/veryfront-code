@@ -462,7 +462,10 @@ export async function* streamGoogleCompatibleParts(
         ) {
           throw invalidGoogleStream(context, "candidate function call id was malformed");
         }
-        const functionCallArgs = readRecord(functionCall.args);
+        // Gemini omits `args` entirely for zero-parameter tool calls.
+        const functionCallArgs = functionCall.args === undefined
+          ? {}
+          : readRecord(functionCall.args);
         if (!functionCallArgs) {
           throw invalidGoogleStream(
             context,
