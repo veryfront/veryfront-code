@@ -99,9 +99,10 @@ export async function tryNotFoundFallback(
 
     try {
       const rendered = await runWithHeadCollector(
-        () =>
+        (renderContext) =>
           renderToStringAdapter(element, {
             nonce: builder.nonce,
+            renderContext,
             reactVersion,
           }),
         { nonce: builder.nonce },

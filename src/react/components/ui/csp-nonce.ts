@@ -1,4 +1,5 @@
 import { getHeadCollectorNonce } from "../../head-collector.ts";
+import { useServerRenderContext } from "../../server-render-context.ts";
 
 /**
  * Reuse the response-scoped CSP nonce for framework-owned inline elements.
@@ -7,11 +8,18 @@ import { getHeadCollectorNonce } from "../../head-collector.ts";
  * updates.
  */
 export function getDocumentNonce(): string | undefined {
-  if (typeof document === "undefined") return getHeadCollectorNonce();
+  const serverNonce = getHeadCollectorNonce();
+  if (serverNonce) return serverNonce;
+  if (typeof document === "undefined") return undefined;
 
   const element = document.querySelector<HTMLElement>("script[nonce], style[nonce], link[nonce]");
   if (!element) return undefined;
 
   const nonce = element.nonce || element.getAttribute("nonce") || "";
   return nonce || undefined;
+}
+
+/** Read the nonce from the Suspense-safe server provider or the browser DOM. */
+export function useDocumentNonce(): string | undefined {
+  return useServerRenderContext()?.nonce ?? getDocumentNonce();
 }

@@ -199,7 +199,7 @@ describe("routing/client/page-loader", () => {
   });
 
   describe("page data URL", () => {
-    it("extracts root content and complete managed head from a full-document JSON payload", async () => {
+    it("extracts trusted managed head without accepting root payload markers", async () => {
       const originalFetch = globalThis.fetch;
       const restoreDOMParser = installJSDOMParser();
       const structured = serializeManagedHeadPayload([
@@ -228,7 +228,6 @@ describe("routing/client/page-loader", () => {
             tagName: "meta",
             attributes: [["content", "Destination"], ["name", "description"]],
           },
-          { tagName: "title", attributes: [], content: "Destination title" },
         ]);
       } finally {
         globalThis.fetch = originalFetch;

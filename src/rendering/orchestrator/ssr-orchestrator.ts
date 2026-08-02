@@ -96,7 +96,7 @@ export class SSROrchestrator {
 
     try {
       const rendered = await runWithHeadCollector(
-        () =>
+        (renderContext) =>
           withSpan(
             SpanNames.SSR_ORCHESTRATOR_RENDER,
             () =>
@@ -104,6 +104,7 @@ export class SSROrchestrator {
                 mode: this.config.mode,
                 wantsStream,
                 nonce: options?.nonce,
+                renderContext,
                 debugMode: this.config.debugMode,
                 dependencyPinningCacheKey: options?.dependencyPinningCacheKey,
                 dependencyPinningDependencies: options?.dependencyPinningDependencies,
@@ -252,11 +253,12 @@ export class SSROrchestrator {
       : errorInfo.element;
 
     const rendered = await runWithHeadCollector(
-      () =>
+      (renderContext) =>
         this.config.ssrRenderer.renderToHTML(fallbackElement as React.ReactElement, {
           mode: this.config.mode,
           wantsStream: false,
           nonce: renderOptions?.nonce,
+          renderContext,
           debugMode: this.config.debugMode,
           dependencyPinningCacheKey: renderOptions?.dependencyPinningCacheKey,
           dependencyPinningDependencies: renderOptions?.dependencyPinningDependencies,

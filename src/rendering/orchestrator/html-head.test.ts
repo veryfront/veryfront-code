@@ -8,37 +8,42 @@ import {
   serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { Head } from "#veryfront/react/runtime/core.ts";
+import { wrapWithServerRenderContext } from "#veryfront/react/server-render-context.ts";
 import {
   buildHeadElements,
   mergeCollectedHeadWithShell,
   resolveCommittedHeadFromHTML,
 } from "./html-head.ts";
 
+function renderWithCollectedHead(element: React.ReactNode) {
+  return runWithHeadCollector((renderContext) =>
+    renderToString(wrapWithServerRenderContext(element, renderContext))
+  );
+}
+
 describe("committed React Head resolution", () => {
   it("resolves registered payloads in committed SSR order", async () => {
-    const rendered = await runWithHeadCollector(() =>
-      renderToString(
+    const rendered = await renderWithCollectedHead(
+      React.createElement(
+        React.Fragment,
+        null,
         React.createElement(
-          React.Fragment,
+          Head,
           null,
-          React.createElement(
-            Head,
-            null,
-            React.createElement("title", null, "Layout"),
-            React.createElement("meta", {
-              name: "author",
-              content: "Layout author",
-            }),
-          ),
-          React.createElement(
-            Head,
-            null,
-            React.createElement("title", null, "Page"),
-            React.createElement("style", null, ".page{}"),
-            React.createElement("script", { id: "page-script" }, "safe()"),
-          ),
+          React.createElement("title", null, "Layout"),
+          React.createElement("meta", {
+            name: "author",
+            content: "Layout author",
+          }),
         ),
-      )
+        React.createElement(
+          Head,
+          null,
+          React.createElement("title", null, "Page"),
+          React.createElement("style", null, ".page{}"),
+          React.createElement("script", { id: "page-script" }, "safe()"),
+        ),
+      ),
     );
 
     const resolved = resolveCommittedHeadFromHTML(rendered.result, rendered.head);
@@ -78,14 +83,12 @@ describe("committed React Head resolution", () => {
   });
 
   it("ignores registered payloads absent from the completed HTML", async () => {
-    const rendered = await runWithHeadCollector(() =>
-      renderToString(
-        React.createElement(
-          Head,
-          null,
-          React.createElement("script", null, "globalThis.__ABANDONED_HEAD__=1"),
-        ),
-      )
+    const rendered = await renderWithCollectedHead(
+      React.createElement(
+        Head,
+        null,
+        React.createElement("script", null, "globalThis.__ABANDONED_HEAD__=1"),
+      ),
     );
 
     const resolved = resolveCommittedHeadFromHTML("<main>committed</main>", rendered.head);
@@ -93,14 +96,12 @@ describe("committed React Head resolution", () => {
   });
 
   it("does not accept a commit token in another request context", async () => {
-    const first = await runWithHeadCollector(() =>
-      renderToString(
-        React.createElement(
-          Head,
-          null,
-          React.createElement("script", null, "globalThis.__FIRST_REQUEST__=1"),
-        ),
-      )
+    const first = await renderWithCollectedHead(
+      React.createElement(
+        Head,
+        null,
+        React.createElement("script", null, "globalThis.__FIRST_REQUEST__=1"),
+      ),
     );
     const second = await runWithHeadCollector(() => undefined);
 
@@ -110,6 +111,27 @@ describe("committed React Head resolution", () => {
 });
 
 describe("collected Head serialization", () => {
+  it("nonces inline head scripts but leaves external scripts to CSP sources", () => {
+    const result = buildHeadElements({
+      metas: [],
+      links: [],
+      styles: [],
+      scripts: [
+        { id: "inline", content: "boot()" },
+        { id: "external", src: "https://cdn.example/app.js" },
+      ],
+    }, "response-nonce");
+
+    assertStringIncludes(result.scripts, 'id="inline" nonce="response-nonce"');
+    assertStringIncludes(result.scripts, 'id="external" src="https://cdn.example/app.js"');
+    assertEquals(
+      result.scripts.includes(
+        'id="external" nonce="response-nonce" src="https://cdn.example/app.js"',
+      ),
+      false,
+    );
+  });
+
   it("marks every emitted node and preserves empty content and style attributes", () => {
     const result = buildHeadElements({
       metas: [{ name: "author", content: "" }],

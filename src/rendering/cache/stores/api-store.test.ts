@@ -93,6 +93,7 @@ describe("rendering/cache/stores/api-store", () => {
       storedAt: number;
       expiresAt?: number;
       staleUntil?: number;
+      htmlNoncePlaceholder?: string;
     }
 
     function makePayload(overrides: Record<string, unknown> = {}): TestPayload {
@@ -142,6 +143,17 @@ describe("rendering/cache/stores/api-store", () => {
       const deserialized = (store as any).deserialize(serialized);
       assertEquals(deserialized.result.ssrHash, "hash123");
       assertEquals(deserialized.result.css, "body{}");
+    });
+
+    it("round-trips cache-owned CSP nonce metadata", () => {
+      const store = new APICacheStore();
+      const payload = {
+        ...makePayload(),
+        htmlNoncePlaceholder: `vf-cache-${"a".repeat(48)}`,
+      };
+      const serialized = (store as any).serialize(payload);
+      const deserialized = (store as any).deserialize(serialized);
+      assertEquals(deserialized.htmlNoncePlaceholder, payload.htmlNoncePlaceholder);
     });
 
     it("round-trips payload with pageModule", () => {

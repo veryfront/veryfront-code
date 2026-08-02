@@ -9,7 +9,7 @@
 import * as React from "react";
 import { createStrictContext } from "../create-strict-context.ts";
 import { jsonForInlineScript } from "#veryfront/security/client/html-sanitizer.ts";
-import { getDocumentNonce } from "./csp-nonce.ts";
+import { useDocumentNonce } from "./csp-nonce.ts";
 
 type ColorMode = "light" | "dark" | "system";
 type ResolvedColorMode = "light" | "dark";
@@ -159,7 +159,7 @@ export function ColorModeScript({
   storageKey?: string;
   attribute?: "class" | "data-theme";
 }): React.ReactElement {
-  const nonce = getDocumentNonce();
+  const nonce = useDocumentNonce();
   const applyAttribute = attribute === "class"
     ? 'd.classList.add(r);d.classList.remove(r==="dark"?"light":"dark")'
     : 'd.setAttribute("data-theme",r)';

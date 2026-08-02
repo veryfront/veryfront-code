@@ -5,6 +5,7 @@ import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getReactDOMServer } from "./server-loader.ts";
 import { getSSRAdapterTimeoutMs, getSSRBufferLimitBytes } from "./timeout.ts";
 import type { SSROptions } from "./types.ts";
+import { wrapWithServerRenderContext } from "../../server-render-context.ts";
 
 const STREAM_YIELD_INTERVAL_BYTES = 256 * 1024;
 
@@ -142,6 +143,7 @@ export async function renderToStringAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
+  const renderElement = wrapWithServerRenderContext(element, options.renderContext);
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
   const server = await getReactDOMServer(options.reactVersion);
   const canUseReadableStream = server.renderToReadableStream && !isCompiledBinary();
@@ -154,7 +156,7 @@ export async function renderToStringAdapter(
       const setupPromise = withSpan(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,
         () =>
-          server.renderToReadableStream!(element, {
+          server.renderToReadableStream!(renderElement, {
             bootstrapModules: options.bootstrapModules,
             bootstrapScripts: options.bootstrapScripts,
             identifierPrefix: options.identifierPrefix,
@@ -211,7 +213,7 @@ export async function renderToStringAdapter(
       SpanNames.SSR_REACT_RENDER_TO_STRING,
       () =>
         Promise.resolve(
-          server.renderToString(element, {
+          server.renderToString(renderElement, {
             identifierPrefix: options.identifierPrefix,
           }),
         ),
@@ -230,11 +232,12 @@ export async function renderToStaticMarkupAdapter(
   element: React.ReactNode,
   options: SSROptions = {},
 ): Promise<string> {
+  const renderElement = wrapWithServerRenderContext(element, options.renderContext);
   const maxBufferedBytes = getSSRBufferLimitBytes(options.maxBufferedBytes);
   const { renderToStaticMarkup } = await getReactDOMServer(options.reactVersion);
 
   try {
-    const html = renderToStaticMarkup(element, {
+    const html = renderToStaticMarkup(renderElement, {
       identifierPrefix: options.identifierPrefix,
     });
     assertBufferedOutputWithinLimit(html, maxBufferedBytes);

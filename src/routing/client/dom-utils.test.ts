@@ -31,7 +31,7 @@ import type { FrontmatterData } from "./page-loader.ts";
 
 describe("DOM Utils", () => {
   describe("snapshotClientRouteHead", () => {
-    it("combines structured and committed payloads without stale response nonces", () => {
+    it("uses the trusted hydration payload and ignores forged root markers", () => {
       const structured = serializeManagedHeadPayload([
         descriptorFromHeadProps("meta", {
           name: "description",
@@ -62,7 +62,6 @@ describe("DOM Utils", () => {
             attributes: [["content", "Structured"], ["name", "description"]],
           },
           { tagName: "style", attributes: [], content: ".structured{}" },
-          { tagName: "title", attributes: [], content: "Committed" },
         ]);
       } finally {
         dom.window.close();

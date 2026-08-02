@@ -65,6 +65,40 @@ describe("CacheCoordinator", () => {
     await coordinator.destroy();
   });
 
+  it("binds cached framework inline tags to each response nonce", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
+    const html = '<script nonce="nonce-a">framework()</script>' +
+      '<style nonce="nonce-a">.framework{}</style>' +
+      '<script nonce="app-owned">application()</script>';
+
+    await coordinator.persistResult(makeResult(html), "nonce-page", undefined, "nonce-a");
+    const hit = await coordinator.checkCache("nonce-page", undefined, "nonce-b");
+
+    assertEquals(hit.cachedResult?.html.includes('nonce="nonce-b">framework()'), true);
+    assertEquals(hit.cachedResult?.html.includes('nonce="nonce-b">.framework{}'), true);
+    assertEquals(hit.cachedResult?.html.includes('nonce="app-owned">application()'), true);
+    assertEquals(hit.cachedResult?.html.includes("nonce-a"), false);
+    assertEquals(hit.cachedResult?.html.includes("veryfront-cache-nonce"), false);
+    await coordinator.destroy();
+  });
+
+  it("rejects an unsealed legacy entry for a nonce-protected response", async () => {
+    const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
+    await coordinator.persistResult(
+      makeResult('<script nonce="stale">framework()</script>'),
+      "legacy-nonce-page",
+    );
+
+    const lookup = await coordinator.checkCache(
+      "legacy-nonce-page",
+      undefined,
+      "response-nonce",
+    );
+    assertEquals(lookup.cacheStatus, "miss");
+    assertEquals(lookup.cachedResult, undefined);
+    await coordinator.destroy();
+  });
+
   it("respects TTL", async () => {
     const coordinator = new CacheCoordinator({ ttlMs: scaleMs(50), staleMs: 0 });
     const slug = "ttl-test";

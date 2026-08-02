@@ -21,6 +21,7 @@ const SERIALIZED_CACHE_CODEC_VERSION = 1;
 const SERIALIZED_CACHE_DATE_PATHS_FIELD = "datePaths";
 const CACHE_VALUE_TAG = "$veryfrontCacheValue";
 const CACHE_VALUE_FIELD = "value";
+const HTML_NONCE_PLACEHOLDER_PATTERN = /^vf-cache-[a-f0-9]{48}$/u;
 
 type CacheDatePathSegment = string | number;
 type CacheDatePath = CacheDatePathSegment[];
@@ -788,6 +789,7 @@ function buildCachePayload(value: unknown): CachePayload {
   const ssrHash = ownDataValue(result, "ssrHash");
   const stream = ownDataValue(result, "stream");
   const rawFrontmatter = ownDataValue(result, "frontmatter");
+  const rawHtmlNoncePlaceholder = ownDataValue(value, "htmlNoncePlaceholder");
 
   if (typeof html !== "string") fail("result.html must be a string");
   if (css !== undefined && typeof css !== "string") {
@@ -800,6 +802,13 @@ function buildCachePayload(value: unknown): CachePayload {
     fail("result.stream must be null when present");
   }
   if (!isPlainRecord(rawFrontmatter)) fail("result.frontmatter must be an object");
+  if (
+    rawHtmlNoncePlaceholder !== undefined &&
+    (typeof rawHtmlNoncePlaceholder !== "string" ||
+      !HTML_NONCE_PLACEHOLDER_PATTERN.test(rawHtmlNoncePlaceholder))
+  ) {
+    fail("htmlNoncePlaceholder is invalid");
+  }
 
   const state: CloneState = { nodes: 0, stringBytes: 0, ancestors: new WeakSet<object>() };
   const clonedHtml = cloneBoundedString(
@@ -820,6 +829,14 @@ function buildCachePayload(value: unknown): CachePayload {
     "result.ssrHash",
     MAX_METADATA_STRING_UTF8_BYTES,
   );
+  const htmlNoncePlaceholder = rawHtmlNoncePlaceholder === undefined
+    ? undefined
+    : cloneBoundedString(
+      rawHtmlNoncePlaceholder,
+      state,
+      "htmlNoncePlaceholder",
+      MAX_METADATA_STRING_UTF8_BYTES,
+    );
   const frontmatter = cloneJsonValue(rawFrontmatter, state);
   if (!isPlainRecord(frontmatter)) fail("result.frontmatter must be an object");
 
@@ -859,6 +876,7 @@ function buildCachePayload(value: unknown): CachePayload {
       ...(pageModule === undefined ? {} : { pageModule }),
       ...(clonedSsrHash === undefined ? {} : { ssrHash: clonedSsrHash }),
     },
+    ...(htmlNoncePlaceholder === undefined ? {} : { htmlNoncePlaceholder }),
     storedAt,
     ...(expiresAt === undefined ? {} : { expiresAt }),
     ...(staleUntil === undefined ? {} : { staleUntil }),
@@ -918,6 +936,9 @@ export function serializeCachePayload(value: CachePayload): string {
         : { pageModule: snapshot.result.pageModule }),
       ...(snapshot.result.ssrHash === undefined ? {} : { ssrHash: snapshot.result.ssrHash }),
     },
+    ...(snapshot.htmlNoncePlaceholder === undefined
+      ? {}
+      : { htmlNoncePlaceholder: snapshot.htmlNoncePlaceholder }),
     ...(encodedNodeMapEntries === undefined ? {} : { nodeMapEntries: encodedNodeMapEntries }),
     storedAt: snapshot.storedAt,
     ...(snapshot.expiresAt === undefined ? {} : { expiresAt: snapshot.expiresAt }),

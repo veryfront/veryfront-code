@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { addNonceToHtmlStream, addNonceToHtmlTags } from "./nonce-injection.ts";
+import {
+  addNonceToHtmlStream,
+  addNonceToHtmlTags,
+  bindHtmlNonceFromCache,
+  sealHtmlNonceForCache,
+} from "./nonce-injection.ts";
 
 async function readUtf8Stream(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
@@ -16,6 +21,23 @@ async function readUtf8Stream(stream: ReadableStream<Uint8Array>): Promise<strin
 }
 
 describe("html/nonce-injection", () => {
+  it("rebinds only previously authorized inline cache nonce slots", () => {
+    const html = '<script nonce="nonce-a">framework()</script>' +
+      '<style nonce="nonce-a">.framework{}</style>' +
+      '<script src="/framework.js" nonce="nonce-a"></script>' +
+      '<script nonce="app-owned">application()</script>';
+
+    const sealed = sealHtmlNonceForCache(html, "nonce-a");
+    assertEquals(sealed.html.includes('nonce="nonce-a">framework()'), false);
+    const rebound = bindHtmlNonceFromCache(sealed.html, sealed.placeholder, "nonce-b");
+
+    assertEquals(rebound.includes('nonce="nonce-b">framework()'), true);
+    assertEquals(rebound.includes('nonce="nonce-b">.framework{}'), true);
+    assertEquals(rebound.includes('src="/framework.js" nonce="nonce-a"'), true);
+    assertEquals(rebound.includes('nonce="app-owned">application()'), true);
+    assertEquals(rebound.includes(sealed.placeholder!), false);
+  });
+
   it("adds a nonce to inline script and style tags", () => {
     const html = addNonceToHtmlTags(
       `<style>.chat{color:red}</style><script>window.__vf=1</script>`,
@@ -24,6 +46,15 @@ describe("html/nonce-injection", () => {
 
     assertEquals(html.includes('<style nonce="nonce-123">.chat{color:red}</style>'), true);
     assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
+  });
+
+  it("leaves external scripts to the CSP source allowlist", () => {
+    const html = addNonceToHtmlTags(
+      `<script src="https://cdn.example/app.js"></script><script src=""></script>`,
+      "nonce-123",
+    );
+
+    assertEquals(html.includes("nonce="), false);
   });
 
   it("replaces an existing nonce attribute with the response nonce", () => {

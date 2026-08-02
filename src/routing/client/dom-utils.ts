@@ -14,7 +14,6 @@ import {
   HEAD_REACT_OWNER_ATTRIBUTE,
   HEAD_ROUTE_MANAGED_ATTRIBUTE,
   HEAD_SHELL_PROVENANCE_ATTRIBUTE,
-  HEAD_SSR_PAYLOAD_ATTRIBUTE,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
   isHeadFrameworkAttribute,
@@ -233,17 +232,6 @@ function descriptorFromDocumentHeadElement(element: Element): ManagedHeadDescrip
   });
 }
 
-function payloadDescriptors(root: ParentNode | null): ManagedHeadDescriptor[] {
-  if (!root || typeof root.querySelectorAll !== "function") return [];
-  const descriptors: ManagedHeadDescriptor[] = [];
-  for (const element of root.querySelectorAll(`[${HEAD_SSR_PAYLOAD_ATTRIBUTE}]`)) {
-    if (element.getAttribute(HEAD_REACT_OWNER_ATTRIBUTE) !== "1") continue;
-    const payload = element.getAttribute(HEAD_SSR_PAYLOAD_ATTRIBUTE);
-    if (payload) descriptors.push(...deserializeManagedHeadPayload(payload));
-  }
-  return descriptors;
-}
-
 export function snapshotClientRouteHead(
   targetDocument: Document = document,
 ): ClientRouteHeadEntry[] {
@@ -256,20 +244,27 @@ export function snapshotClientRouteHead(
         managedHeadPayload?: unknown;
       };
       if (typeof hydrationData.managedHeadPayload === "string") {
-        descriptors.push(...deserializeManagedHeadPayload(hydrationData.managedHeadPayload));
         hasStructuredPayload = true;
+        descriptors.push(...deserializeManagedHeadPayload(hydrationData.managedHeadPayload));
       }
     } catch {
-      // A partial or corrupt hydration payload cannot own head state. The
-      // provenance fallback below remains safe to snapshot.
+      // A declared but corrupt out-of-band payload fails closed. Raw root
+      // markers are application-controlled DOM and never gain head authority.
+      if (hasStructuredPayload) return [];
     }
   }
 
-  const committedDescriptors = payloadDescriptors(targetDocument.getElementById("root"));
-  descriptors.push(...committedDescriptors);
+  // The hydration payload was produced by the server outside application
+  // markup and is authoritative. Never augment it from forgeable root attrs.
+  if (hasStructuredPayload) {
+    const aggregated = aggregateManagedHeadDescriptors(descriptors);
+    assertManagedHeadDescriptorBudget(aggregated);
+    return aggregated.map(managedHeadDescriptorToTransportEntry);
+  }
+
   const fallbackSelector = [
-    ...(committedDescriptors.length === 0 ? [`[${HEAD_PROVENANCE_ATTRIBUTE}="true"]`] : []),
-    ...(!hasStructuredPayload ? [`[${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true"]`] : []),
+    `[${HEAD_PROVENANCE_ATTRIBUTE}="true"]`,
+    `[${HEAD_SHELL_PROVENANCE_ATTRIBUTE}="true"]`,
   ].join(", ");
   if (fallbackSelector && targetDocument.head?.querySelectorAll) {
     for (const element of targetDocument.head.querySelectorAll(fallbackSelector)) {

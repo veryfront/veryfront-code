@@ -18,6 +18,7 @@ import {
   resolveProjectReactVersion,
   stripSemverRange,
 } from "#veryfront/transforms/esm/package-registry.ts";
+import type { ServerRenderContextValue } from "#veryfront/react/server-render-context.ts";
 
 function supportsStreamingReactVersion(version: string): boolean {
   return Number(version.split(".")[0]) >= 18;
@@ -109,6 +110,8 @@ export interface SSRRenderOptions {
   wantsStream: boolean;
   /** Response-scoped CSP nonce for React-owned bootstrap scripts. */
   nonce?: string;
+  /** Request capabilities that must survive async React retries. */
+  renderContext?: ServerRenderContextValue;
   debugMode?: boolean;
   dependencyPinningCacheKey?: string;
   dependencyPinningDependencies?: Readonly<Record<string, string>>;
@@ -214,6 +217,7 @@ export class SSRRenderer {
             identifierPrefix: "vf",
             maxBufferedBytes,
             nonce: options.nonce,
+            renderContext: options.renderContext,
             reactVersion,
           }),
         {
@@ -237,6 +241,7 @@ export class SSRRenderer {
           identifierPrefix: "vf",
           maxBufferedBytes,
           nonce: options.nonce,
+          renderContext: options.renderContext,
           reactVersion,
         }),
       {

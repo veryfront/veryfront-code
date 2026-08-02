@@ -5,10 +5,10 @@ import {
   HEAD_SERVER_COMMIT_ATTRIBUTE,
   HEAD_SSR_PAYLOAD_ATTRIBUTE,
   type ManagedHeadDescriptor,
-  registerServerHeadPayload,
   serializeManagedHeadPayload,
 } from "#veryfront/html/managed-head-protocol.ts";
 import { getClientHeadManager, getManagedHeadNonce } from "#veryfront/html/client-head-manager.ts";
+import { useServerRenderContext } from "../server-render-context.ts";
 
 /** Router state exposed through `useRouter()`. */
 export interface RouterValue {
@@ -459,6 +459,7 @@ function flattenHeadChildren(children: React.ReactNode): React.ReactElement[] {
 
 /** Applies document head elements during SSR and client rendering. */
 export function Head({ children }: { children: React.ReactNode }): React.ReactElement {
+  const serverRenderContext = useServerRenderContext();
   const ownerRef = React.useRef<object | null>(null);
   const anchorRef = React.useRef<HTMLDivElement | null>(null);
   const managerRef = React.useRef<ReturnType<typeof getClientHeadManager> | null>(
@@ -470,7 +471,7 @@ export function Head({ children }: { children: React.ReactNode }): React.ReactEl
       .map((child) => createClientHeadDescriptor(child, undefined))
       .filter((descriptor): descriptor is ClientHeadDescriptor => descriptor !== null),
   );
-  const serverCommitToken = registerServerHeadPayload(payload);
+  const serverCommitToken = serverRenderContext?.registerHeadPayload(payload);
 
   useEffect(() => {
     const owner = ownerRef.current;

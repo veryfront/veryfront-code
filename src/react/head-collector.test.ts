@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   collectHead,
@@ -8,7 +8,10 @@ import {
   HEAD_COLLECTOR_SYMBOL,
   runWithHeadCollector,
 } from "./head-collector.ts";
-import { HEAD_SERVER_REGISTRAR_SYMBOL } from "#veryfront/html/managed-head-protocol.ts";
+import {
+  descriptorFromHeadProps,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
 
 describe("head-collector", () => {
   describe("collectHead", () => {
@@ -277,6 +280,44 @@ describe("head-collector", () => {
       assertEquals(second.result, "nonce-b");
       assertEquals(getHeadCollectorNonce(), undefined);
     });
+
+    it("counts repeated singleton titles before aggregation", async () => {
+      await assertRejects(
+        () =>
+          runWithHeadCollector((renderContext) => {
+            for (let index = 0; index <= 128; index++) {
+              renderContext.registerHeadPayload(
+                serializeManagedHeadPayload([
+                  descriptorFromHeadProps("title", { children: `title-${index}` })!,
+                ]),
+              );
+            }
+          }),
+        TypeError,
+        "128-entry request limit",
+      );
+    });
+
+    it("counts repeated script identities before aggregation", async () => {
+      const content = "x".repeat(750_000);
+      await assertRejects(
+        () =>
+          runWithHeadCollector((renderContext) => {
+            for (let index = 0; index < 3; index++) {
+              renderContext.registerHeadPayload(
+                serializeManagedHeadPayload([
+                  descriptorFromHeadProps("script", {
+                    id: "repeated-script",
+                    children: `${content}${index}`,
+                  })!,
+                ]),
+              );
+            }
+          }),
+        TypeError,
+        "2097152-byte request limit",
+      );
+    });
   });
 
   describe("hasCollectedHead", () => {
@@ -339,18 +380,6 @@ describe("head-collector", () => {
       })[HEAD_COLLECTOR_SYMBOL];
 
       assertEquals(globalCollector, collectHead);
-    });
-
-    it("locks the server payload registrar against cross-request replacement", () => {
-      const descriptor = Reflect.getOwnPropertyDescriptor(
-        globalThis,
-        HEAD_SERVER_REGISTRAR_SYMBOL,
-      );
-
-      assertEquals(typeof descriptor?.value, "function");
-      assertEquals(descriptor?.configurable, false);
-      assertEquals(descriptor?.enumerable, false);
-      assertEquals(descriptor?.writable, false);
     });
 
     it("keeps the first evaluated copy connected after a second copy loads", async () => {

@@ -13,15 +13,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import {
   aggregateManagedHeadDescriptors,
   assertManagedHeadDescriptorBudget,
-  deserializeManagedHeadPayload,
-  HEAD_SERVER_REGISTRAR_SYMBOL,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
   headScriptKeysIntersect,
+  inspectManagedHeadPayload,
   type ManagedHeadDescriptor,
+  MAX_MANAGED_HEAD_BYTES,
   MAX_MANAGED_HEAD_ENTRIES,
+  MAX_MANAGED_HEAD_PAYLOAD_BYTES,
   scriptIdentityKeysFromRecord,
 } from "#veryfront/html/managed-head-protocol.ts";
+import type { ServerRenderContextValue } from "./server-render-context.ts";
 
 export interface HeadMeta {
   name?: string;
@@ -95,8 +97,6 @@ function createEmpty(): CollectedHead {
 }
 
 type HeadCollector = (data: Partial<CollectedHead>) => void;
-type HeadPayloadRegistrar = (payload: string) => string | undefined;
-
 interface RegisteredHeadPayload {
   readonly token: string;
   readonly descriptors: readonly ManagedHeadDescriptor[];
@@ -105,13 +105,14 @@ interface RegisteredHeadPayload {
 interface HeadRegistrationState {
   readonly byPayload: Map<string, RegisteredHeadPayload>;
   readonly byToken: Map<string, RegisteredHeadPayload>;
-  budgetDescriptors: ManagedHeadDescriptor[];
+  entryCount: number;
+  descriptorBytes: number;
+  payloadBytes: number;
 }
 
 interface HeadCollectorState {
   readonly storage: AsyncLocalStorage<HeadCollectorContext>;
   readonly collect: HeadCollector;
-  readonly registerPayload: HeadPayloadRegistrar;
 }
 
 type HeadCollectorContext = CollectedHead & {
@@ -217,7 +218,9 @@ function createRegistrationState(): HeadRegistrationState {
   return {
     byPayload: new Map(),
     byToken: new Map(),
-    budgetDescriptors: [],
+    entryCount: 0,
+    descriptorBytes: 0,
+    payloadBytes: 0,
   };
 }
 
@@ -237,35 +240,7 @@ function createHeadCollectorState(): HeadCollectorState {
     const collected = storage.getStore();
     if (collected) collectInto(collected, data);
   };
-  const registerPayload: HeadPayloadRegistrar = (payload) => {
-    const context = storage.getStore();
-    if (!context) return undefined;
-
-    const registrations = context[HEAD_RENDER_REGISTRATIONS_SYMBOL];
-    const existing = registrations.byPayload.get(payload);
-    if (existing) return existing.token;
-    if (registrations.byPayload.size >= MAX_MANAGED_HEAD_ENTRIES) {
-      throw new TypeError(
-        `Managed head exceeds the ${MAX_MANAGED_HEAD_ENTRIES}-registration request limit`,
-      );
-    }
-
-    const descriptors = deserializeManagedHeadPayload(payload);
-    const budgetDescriptors = aggregateManagedHeadDescriptors([
-      ...registrations.budgetDescriptors,
-      ...descriptors,
-    ]);
-    assertManagedHeadDescriptorBudget(budgetDescriptors);
-
-    const token = createCommitToken(registrations);
-    const registration = { token, descriptors };
-    registrations.byPayload.set(payload, registration);
-    registrations.byToken.set(token, registration);
-    registrations.budgetDescriptors = budgetDescriptors;
-    return token;
-  };
-
-  return { storage, collect, registerPayload };
+  return { storage, collect };
 }
 
 const globalHeadCollectorState = globalThis as typeof globalThis & {
@@ -289,26 +264,51 @@ const globalHeadCollector = globalThis as typeof globalThis & {
 };
 globalHeadCollector[HEAD_COLLECTOR_SYMBOL] = collectHead;
 
-const globalHeadRegistrar = globalThis as typeof globalThis & {
-  [HEAD_SERVER_REGISTRAR_SYMBOL]?: HeadPayloadRegistrar;
-};
-const installedRegistrar = Reflect.getOwnPropertyDescriptor(
-  globalHeadRegistrar,
-  HEAD_SERVER_REGISTRAR_SYMBOL,
-);
-if (!installedRegistrar) {
-  Object.defineProperty(globalHeadRegistrar, HEAD_SERVER_REGISTRAR_SYMBOL, {
-    value: headCollectorState.registerPayload,
-    configurable: false,
-    enumerable: false,
-    writable: false,
-  });
-} else if (installedRegistrar.value !== headCollectorState.registerPayload) {
-  throw new TypeError("Managed-head server registrar integrity check failed");
+function registerPayloadForContext(
+  context: HeadCollectorContext,
+  payload: string,
+): string {
+  const registrations = context[HEAD_RENDER_REGISTRATIONS_SYMBOL];
+  const existing = registrations.byPayload.get(payload);
+  if (existing) return existing.token;
+
+  const inspected = inspectManagedHeadPayload(payload);
+  const nextEntryCount = registrations.entryCount + inspected.entryCount;
+  const nextDescriptorBytes = registrations.descriptorBytes + inspected.descriptorBytes;
+  const nextPayloadBytes = registrations.payloadBytes + inspected.payloadBytes;
+  if (nextEntryCount > MAX_MANAGED_HEAD_ENTRIES) {
+    throw new TypeError(
+      `Managed head exceeds the ${MAX_MANAGED_HEAD_ENTRIES}-entry request limit`,
+    );
+  }
+  if (nextDescriptorBytes > MAX_MANAGED_HEAD_BYTES) {
+    throw new TypeError(
+      `Managed head exceeds the ${MAX_MANAGED_HEAD_BYTES}-byte request limit`,
+    );
+  }
+  if (nextPayloadBytes > MAX_MANAGED_HEAD_PAYLOAD_BYTES) {
+    throw new TypeError(
+      `Managed head exceeds the ${MAX_MANAGED_HEAD_PAYLOAD_BYTES}-byte payload request limit`,
+    );
+  }
+  if (registrations.byPayload.size >= MAX_MANAGED_HEAD_ENTRIES) {
+    throw new TypeError(
+      `Managed head exceeds the ${MAX_MANAGED_HEAD_ENTRIES}-registration request limit`,
+    );
+  }
+
+  const token = createCommitToken(registrations);
+  const registration = { token, descriptors: inspected.descriptors };
+  registrations.byPayload.set(payload, registration);
+  registrations.byToken.set(token, registration);
+  registrations.entryCount = nextEntryCount;
+  registrations.descriptorBytes = nextDescriptorBytes;
+  registrations.payloadBytes = nextPayloadBytes;
+  return token;
 }
 
 export async function runWithHeadCollector<T>(
-  fn: () => T | Promise<T>,
+  fn: (renderContext: ServerRenderContextValue) => T | Promise<T>,
   options: { nonce?: string } = {},
 ): Promise<{ result: T; head: CollectedHead }> {
   const head = createEmpty() as HeadCollectorContext;
@@ -322,7 +322,11 @@ export async function runWithHeadCollector<T>(
       enumerable: false,
     });
   }
-  const result = await headStorage.run(head, fn);
+  const renderContext = Object.freeze<ServerRenderContextValue>({
+    ...(options.nonce ? { nonce: options.nonce } : {}),
+    registerHeadPayload: (payload) => registerPayloadForContext(head, payload),
+  });
+  const result = await headStorage.run(head, () => fn(renderContext));
   return { result, head };
 }
 
@@ -390,7 +394,9 @@ function clearCollectedHead(store: CollectedHead): void {
   if (registrations) {
     registrations.byPayload.clear();
     registrations.byToken.clear();
-    registrations.budgetDescriptors = [];
+    registrations.entryCount = 0;
+    registrations.descriptorBytes = 0;
+    registrations.payloadBytes = 0;
   }
 }
 

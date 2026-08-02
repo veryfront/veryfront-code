@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertRejects,
+  assertStrictEquals,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import * as React from "react";
+import * as actualReactDOMServer from "react-dom/server";
 import type { ReactDOMServer } from "../react/compat/ssr-adapter/server-loader.ts";
 import {
   __injectReactDOMServerForTests,
@@ -9,6 +15,10 @@ import {
 } from "../react/compat/ssr-adapter/server-loader.ts";
 import { SSRRenderer } from "./ssr-renderer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { ColorModeScript } from "#veryfront/react/components/ui/color-mode.tsx";
+import { Head } from "#veryfront/react/runtime/core.ts";
+import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import { resolveCommittedHeadFromHTML } from "./orchestrator/html-head.ts";
 
 type PipeableSSRStream = ReturnType<NonNullable<ReactDOMServer["renderToPipeableStream"]>>;
 
@@ -97,6 +107,151 @@ describe("rendering/ssr-renderer", () => {
 
     assertEquals(observedNonce, "response-nonce");
     await result.stream?.cancel();
+  });
+
+  it("keeps the CSP nonce through real SSR globals and a suspended retry", async () => {
+    __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    const renderer = new SSRRenderer(
+      "production",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: React.version } } as VeryfrontConfig,
+    );
+    async function SuspendedColorModeScript() {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      return React.createElement(ColorModeScript);
+    }
+
+    const rendered = await runWithHeadCollector(
+      (renderContext) =>
+        renderer.renderToHTML(
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement("p", null, "loading") },
+            React.createElement(SuspendedColorModeScript),
+          ),
+          {
+            mode: "production",
+            wantsStream: false,
+            nonce: "response-nonce",
+            renderContext,
+          },
+        ),
+      { nonce: "response-nonce" },
+    );
+
+    assertStringIncludes(
+      rendered.result.html,
+      '<script nonce="response-nonce">',
+    );
+  });
+
+  it("retains request-bound Head authority after a true stream leaves async storage", async () => {
+    __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    const renderer = new SSRRenderer(
+      "production",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: React.version } } as VeryfrontConfig,
+    );
+    const release = Promise.withResolvers<void>();
+    async function SuspendedHead() {
+      await release.promise;
+      return React.createElement(
+        Head,
+        null,
+        React.createElement("title", null, "Async title"),
+      );
+    }
+
+    const rendered = await runWithHeadCollector(
+      (renderContext) =>
+        renderer.renderToHTML(
+          React.createElement(
+            React.Suspense,
+            { fallback: React.createElement("p", null, "loading") },
+            React.createElement(SuspendedHead),
+          ),
+          {
+            mode: "production",
+            wantsStream: true,
+            nonce: "stream-nonce",
+            renderContext,
+          },
+        ),
+      { nonce: "stream-nonce" },
+    );
+
+    release.resolve();
+    const html = await new Response(rendered.result.stream).text();
+    const head = resolveCommittedHeadFromHTML(html, rendered.head);
+    assertEquals(head?.title, "Async title");
+  });
+
+  it("isolates concurrent suspended streams and their nonces", async () => {
+    __injectReactDOMServerForTests(actualReactDOMServer, React.version);
+    const renderer = new SSRRenderer(
+      "production",
+      undefined,
+      undefined,
+      undefined,
+      { react: { version: React.version } } as VeryfrontConfig,
+    );
+    const firstRelease = Promise.withResolvers<void>();
+    const secondRelease = Promise.withResolvers<void>();
+
+    const startRequest = (title: string, nonce: string, release: Promise<void>) => {
+      async function SuspendedRequestContent() {
+        await release;
+        return React.createElement(
+          React.Fragment,
+          null,
+          React.createElement(
+            Head,
+            null,
+            React.createElement("title", null, title),
+          ),
+          React.createElement(ColorModeScript),
+        );
+      }
+      return runWithHeadCollector(
+        (renderContext) =>
+          renderer.renderToHTML(
+            React.createElement(
+              React.Suspense,
+              { fallback: React.createElement("p", null, "loading") },
+              React.createElement(SuspendedRequestContent),
+            ),
+            {
+              mode: "production",
+              wantsStream: true,
+              nonce,
+              renderContext,
+            },
+          ),
+        { nonce },
+      );
+    };
+
+    const [first, second] = await Promise.all([
+      startRequest("First title", "first-nonce", firstRelease.promise),
+      startRequest("Second title", "second-nonce", secondRelease.promise),
+    ]);
+    secondRelease.resolve();
+    firstRelease.resolve();
+    const [firstHtml, secondHtml] = await Promise.all([
+      new Response(first.result.stream).text(),
+      new Response(second.result.stream).text(),
+    ]);
+
+    assertEquals(resolveCommittedHeadFromHTML(firstHtml, first.head)?.title, "First title");
+    assertEquals(resolveCommittedHeadFromHTML(secondHtml, second.head)?.title, "Second title");
+    assertStringIncludes(firstHtml, 'nonce="first-nonce"');
+    assertStringIncludes(secondHtml, 'nonce="second-nonce"');
+    assertEquals(firstHtml.includes('nonce="second-nonce"'), false);
+    assertEquals(secondHtml.includes('nonce="first-nonce"'), false);
   });
 
   it("applies Web Stream backpressure to a pipeable producer", async () => {

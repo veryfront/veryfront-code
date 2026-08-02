@@ -10,6 +10,7 @@ import { ChatRoot } from "./chat/composition/chat-root.tsx";
 import { ColorModeScript } from "../ui/color-mode.tsx";
 import { DesignTokenStyle } from "../ui/tokens.tsx";
 import { runWithHeadCollector } from "../../head-collector.ts";
+import { setupSSRGlobals } from "#veryfront/rendering/ssr-globals.ts";
 
 const TEST_NONCE = "nonce-123";
 
@@ -239,6 +240,16 @@ function HydratingColorModeScriptFixture(): React.ReactElement {
 }
 
 describe("getDocumentNonce hydration behavior", () => {
+  it("prefers the server render nonce when SSR globals install a document stub", async () => {
+    setupSSRGlobals();
+    const { result: html } = await runWithHeadCollector(
+      () => renderToString(<DesignTokenStyle />),
+      { nonce: TEST_NONCE },
+    );
+
+    assert(html.startsWith(`<style nonce="${TEST_NONCE}">`));
+  });
+
   it("applies the isolated render nonce to framework-owned server styles", async () => {
     const { result: html } = await runWithHeadCollector(
       () => renderToString(<DesignTokenStyle />),

@@ -11,6 +11,7 @@ import {
   resetSSRAdapterTimeoutForTests,
   setSSRAdapterTimeoutForTests,
 } from "./timeout.ts";
+import { wrapWithServerRenderContext } from "../../server-render-context.ts";
 
 interface VeryfrontGlobal {
   __VERYFRONT_DEBUG__?: boolean;
@@ -371,22 +372,26 @@ export async function renderToStreamAdapter(
 ): Promise<SSRResult> {
   const debug = isDebugMode();
   const server = await getReactDOMServer(options.reactVersion);
+  const renderElement = wrapWithServerRenderContext(element, options.renderContext);
 
   if (server.renderToReadableStream) {
     if (debug) logger.info("SSR using renderToReadableStream");
-    return renderToReadableStreamImpl(element, options, server);
+    return renderToReadableStreamImpl(renderElement, options, server);
   }
 
   if (server.renderToPipeableStream) {
     if (debug) logger.info("SSR using renderToPipeableStream");
-    return renderToPipeableStreamImpl(element, options, server);
+    return renderToPipeableStreamImpl(renderElement, options, server);
   }
 
   const version = options.reactVersion ?? getReactVersionInfo().version;
   if (debug) logger.info("SSR using string rendering", { reactVersion: version });
 
   try {
-    const html = await renderToStringAdapter(element, options);
+    const html = await renderToStringAdapter(renderElement, {
+      ...options,
+      renderContext: undefined,
+    });
     return { html };
   } catch (error) {
     logger.error("SSR_ERROR string rendering failed", error);

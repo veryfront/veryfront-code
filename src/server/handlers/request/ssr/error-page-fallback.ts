@@ -355,9 +355,10 @@ async function renderErrorPage(
 
   try {
     const { result: inner } = await runWithHeadCollector(
-      () =>
+      (renderContext) =>
         renderToStringAdapter(element as React.ReactElement, {
           nonce: builder.nonce,
+          renderContext,
           reactVersion,
         }),
       { nonce: builder.nonce },
