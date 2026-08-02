@@ -1,15 +1,17 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
   guardedEgressFetch,
   WorkerEgressBlockedError,
 } from "#veryfront/security/sandbox/worker-egress-guard.ts";
-import {
-  createOriginBoundOutboundFetch,
-  guardedOutboundFetch,
-  OutboundRequestBlockedError,
-} from "./outbound-fetch.ts";
+import { createOutboundFetchBoundary, OutboundRequestBlockedError } from "./outbound-fetch.ts";
+
+function createTestBoundary(fetchImpl: typeof fetch) {
+  return createOutboundFetchBoundary({
+    fetch: fetchImpl,
+    pinnedFetch: (url, _addresses, init) => fetchImpl(url, init),
+  });
+}
 
 describe("guardedOutboundFetch", () => {
   it("rejects loopback and cloud metadata before invoking fetch", async () => {
@@ -18,14 +20,15 @@ describe("guardedOutboundFetch", () => {
       calls++;
       return Promise.resolve(new Response("unexpected"));
     };
+    const boundary = createTestBoundary(fetchImpl);
 
     await assertRejects(
-      () => withMockFetch(fetchImpl, () => guardedOutboundFetch("http://127.0.0.1/private")),
+      () => boundary.guardedFetch("http://127.0.0.1/private"),
       OutboundRequestBlockedError,
       "internal host",
     );
     await assertRejects(
-      () => withMockFetch(fetchImpl, () => guardedOutboundFetch("http://169.254.169.254/metadata")),
+      () => boundary.guardedFetch("http://169.254.169.254/metadata"),
       OutboundRequestBlockedError,
       "internal host",
     );
@@ -38,14 +41,14 @@ describe("guardedOutboundFetch", () => {
       calls++;
       return Promise.resolve(new Response("unexpected"));
     };
+    const boundary = createTestBoundary(fetchImpl);
     await assertRejects(
-      () => withMockFetch(fetchImpl, () => guardedOutboundFetch("file:///private/config")),
+      () => boundary.guardedFetch("file:///private/config"),
       OutboundRequestBlockedError,
       "unsupported URL scheme",
     );
     await assertRejects(
-      () =>
-        withMockFetch(fetchImpl, () => guardedOutboundFetch("https://user:secret@93.184.216.34/")),
+      () => boundary.guardedFetch("https://user:secret@93.184.216.34/"),
       OutboundRequestBlockedError,
       "URL credentials are not allowed",
     );
@@ -83,21 +86,18 @@ describe("guardedOutboundFetch", () => {
       }
       return Promise.resolve(new Response("unexpected"));
     };
+    const boundary = createTestBoundary(fetchImpl);
 
     await assertRejects(
       () =>
-        withMockFetch(
-          fetchImpl,
-          () =>
-            guardedOutboundFetch("https://93.184.216.34/start", undefined, {
-              authorizeUrl(url) {
-                seen.push(url.href);
-                if (url.hostname !== "93.184.216.34") {
-                  throw new OutboundRequestBlockedError("origin is not allowed");
-                }
-              },
-            }),
-        ),
+        boundary.guardedFetch("https://93.184.216.34/start", undefined, {
+          authorizeUrl(url) {
+            seen.push(url.href);
+            if (url.hostname !== "93.184.216.34") {
+              throw new OutboundRequestBlockedError("origin is not allowed");
+            }
+          },
+        }),
       OutboundRequestBlockedError,
       "origin is not allowed",
     );
@@ -119,10 +119,10 @@ describe("guardedOutboundFetch", () => {
       body: '{"message":"hello"}',
     });
 
-    const response = await withMockFetch(fetchImpl, () => {
-      const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
-      return providerFetch(request);
-    });
+    const providerFetch = createTestBoundary(fetchImpl).createOriginBoundFetch(
+      "https://93.184.216.34/v1",
+    );
+    const response = await providerFetch(request);
 
     assertEquals(response.status, 200);
     assertEquals(captured?.method, "POST");
@@ -141,15 +141,15 @@ describe("guardedOutboundFetch", () => {
         }),
       );
     };
+    const providerFetch = createTestBoundary(fetchImpl).createOriginBoundFetch(
+      "https://93.184.216.34/v1",
+    );
     await assertRejects(
       () =>
-        withMockFetch(fetchImpl, () => {
-          const providerFetch = createOriginBoundOutboundFetch("https://93.184.216.34/v1");
-          return providerFetch("https://93.184.216.34/v1/messages", {
-            method: "POST",
-            headers: { "x-api-key": "provider-secret" },
-            body: "payload",
-          });
+        providerFetch("https://93.184.216.34/v1/messages", {
+          method: "POST",
+          headers: { "x-api-key": "provider-secret" },
+          body: "payload",
         }),
       OutboundRequestBlockedError,
       "unexpected redirect",

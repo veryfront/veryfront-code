@@ -15,8 +15,12 @@ export function createPinnedFetchResponse(
   statusText: string,
   headers: Headers,
   body: BodyInit | null,
+  requestMethod = "GET",
 ): Response {
-  return new Response(NULL_BODY_STATUSES.has(status) ? null : body, {
+  const responseBody = requestMethod.toUpperCase() === "HEAD" || NULL_BODY_STATUSES.has(status)
+    ? null
+    : body;
+  return new Response(responseBody, {
     status,
     statusText,
     headers,
@@ -155,6 +159,7 @@ export async function fetchWithPinnedAddresses(
   }
   const headers = new Headers(init.headers);
   const body = await normalizeRequestBody(url, init, headers);
+  const method = (init.method ?? "GET").toUpperCase();
   const requestHeaders: Record<string, string> = {};
   for (const [name, value] of headers) requestHeaders[name] = value;
 
@@ -166,7 +171,7 @@ export async function fetchWithPinnedAddresses(
     hostname: url.hostname,
     port: url.port || undefined,
     path: `${url.pathname}${url.search}`,
-    method: init.method ?? "GET",
+    method,
     headers: requestHeaders,
     lookup: createPinnedLookup(addresses),
     // Let Node/Bun race the complete validated address set instead of binding
@@ -188,7 +193,7 @@ export async function fetchWithPinnedAddresses(
       try {
         const responseHeaders = copyResponseHeaders(message);
         const status = message.statusCode ?? 500;
-        if (NULL_BODY_STATUSES.has(status)) {
+        if (method === "HEAD" || NULL_BODY_STATUSES.has(status)) {
           message.once("end", cleanupAbortListener);
           message.once("close", cleanupAbortListener);
           message.once("error", cleanupAbortListener);
@@ -201,6 +206,7 @@ export async function fetchWithPinnedAddresses(
             message.statusMessage ?? "",
             responseHeaders,
             null,
+            method,
           ));
           return;
         }
@@ -216,6 +222,7 @@ export async function fetchWithPinnedAddresses(
           message.statusMessage ?? "",
           responseHeaders,
           webBody,
+          method,
         ));
       } catch (error) {
         rejectBeforeResponse(error);
