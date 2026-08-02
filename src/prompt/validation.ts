@@ -99,7 +99,8 @@ function parsePromptMCPConfig(value: unknown): PromptMCPConfig {
   }
   assertOptionalStringProperty(title, "Prompt MCP title");
 
-  let arguments_: PromptMCPConfig["arguments"];
+  // Omission remains distinct from an explicitly empty argument list.
+  let arguments_: PromptMCPConfig["arguments"] = undefined;
   if (argumentsProperty.value !== undefined) {
     let isArray = false;
     try {

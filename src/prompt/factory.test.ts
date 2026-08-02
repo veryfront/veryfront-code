@@ -255,5 +255,17 @@ describe("prompt factory", () => {
       assertEquals(Object.isFrozen(p.mcp?.arguments), true);
       assertEquals(Object.isFrozen(p.mcp?.arguments?.[0]), true);
     });
+
+    it("should preserve omitted MCP arguments without inventing an empty list", () => {
+      const p = prompt({
+        id: "mcp-without-arguments",
+        description: "desc",
+        content: "Hello",
+        mcp: { enabled: true },
+      });
+
+      assertEquals(p.mcp?.arguments, undefined);
+      assertEquals(Object.isFrozen(p.mcp), true);
+    });
   });
 });
