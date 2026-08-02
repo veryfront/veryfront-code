@@ -192,6 +192,11 @@ type ProjectSkillSource =
   | { kind: "flat"; skillsPath: string }
   | { kind: "explicit"; skillDir: string };
 
+function isProviderSafeCatalogSkillSource(source: ProjectSkillSource): boolean {
+  return source.kind === "explicit" &&
+    /^agents\/[^/]+\/skills\/[^/]+$/.test(source.skillDir);
+}
+
 function isSafeRuntimeSkillId(skillId: unknown): skillId is string {
   if (
     typeof skillId !== "string" ||
@@ -429,6 +434,7 @@ function isValidLoadedProjectSkill(input: {
     !directoryName ||
     !isValidStrictRuntimeSkillFileDocument(input.content, directoryName, {
       skillDocumentParserProvider: input.options.skillDocumentParserProvider,
+      providerSafeName: isProviderSafeCatalogSkillSource(input.source),
     })
   ) {
     input.options.logger?.warn?.(

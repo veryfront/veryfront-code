@@ -404,6 +404,8 @@ export type RuntimeSkillMetadataLogger = {
 export type RuntimeSkillMetadataParseOptions = {
   logger?: RuntimeSkillMetadataLogger;
   skillDocumentParserProvider?: SkillDocumentParserProvider;
+  /** Accept the provider-safe name grammar used by owner-scoped catalog ids. */
+  providerSafeName?: boolean;
 };
 
 function canUseLegacyInvokeAgent(availableToolNameSet: ReadonlySet<string> | null): boolean {
@@ -604,7 +606,12 @@ export function isValidStrictRuntimeSkillFileDocument(
   canonicalName: string,
   options: RuntimeSkillMetadataParseOptions = {},
 ): boolean {
-  return parseStrictRuntimeSkillFileSource(content, canonicalName, options) !== null;
+  return parseStrictRuntimeSkillFileSource(
+    content,
+    canonicalName,
+    options,
+    options.providerSafeName === true,
+  ) !== null;
 }
 
 /** Parses a bounded runtime skill document and fails closed on invalid input. */

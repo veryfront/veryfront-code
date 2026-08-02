@@ -91,6 +91,37 @@ function supplierInvoiceEvidenceMessages(): Message[] {
   ];
 }
 
+function submittedFormWithActiveSkillMessages(): Message[] {
+  return [
+    {
+      id: "skill-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "load-plan",
+        toolName: "load_skill",
+        result: {
+          skillId: "plan",
+          instructions: "# Plan",
+          allowedTools: ["load_skill"],
+          references: ["references/guide.md"],
+          scripts: [],
+        },
+      }],
+    },
+    {
+      id: "form-result",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "collect-plan-input",
+        toolName: "form_input",
+        result: { submitted: true, values: { topic: "Runtime policy" } },
+      }],
+    },
+  ];
+}
+
 describe("agent runtime refresh hooks", () => {
   it("requires universal load_skill to establish policy before parallel tool calls", async () => {
     const rootPath = await Deno.makeTempDir();
@@ -2254,5 +2285,105 @@ describe("agent runtime refresh hooks", () => {
       "Refreshed streaming system prompt",
     ]);
     assertEquals(body.includes("stream done"), true);
+  });
+
+  it("generate and stream permit an advertised active-skill reference after form submission", async () => {
+    let generateCalls = 0;
+    let streamCalls = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/post-form-skill-reference",
+      async doGenerate() {
+        generateCalls++;
+        if (generateCalls === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "read-plan-guide-generate",
+              toolName: "load_skill",
+              input: JSON.stringify({ skillId: "plan", file: "references/guide.md" }),
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+        return {
+          content: [{ type: "text", text: "generate done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        streamCalls++;
+        if (streamCalls === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "read-plan-guide-stream",
+                toolName: "load_skill",
+                input: JSON.stringify({ skillId: "plan", file: "references/guide.md" }),
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "stream done" },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const loadSkill = tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          skillId: v.string(),
+          file: v.string().optional(),
+        })
+      )(),
+      execute: ({ skillId, file }) => ({
+        skillId,
+        file,
+        content: "Guide",
+      }),
+    });
+    const assistant = eagerAgent({
+      id: "post-form-skill-reference-agent",
+      model: "hosted/post-form-skill-reference",
+      system: "Plan assistant",
+      skills: true,
+      tools: { load_skill: loadSkill },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const generated = await assistant.generate({
+      input: submittedFormWithActiveSkillMessages(),
+    });
+    const streamed = await (await assistant.stream({
+      messages: submittedFormWithActiveSkillMessages(),
+    })).toDataStreamResponse().text();
+
+    assertEquals(generated.toolCalls[0]?.error, undefined);
+    assertEquals(generated.toolCalls[0]?.status, "completed");
+    assertEquals(generated.toolCalls[0]?.result, {
+      skillId: "plan",
+      file: "references/guide.md",
+      content: "Guide",
+    });
+    assertEquals(streamed.includes("stream done"), true);
+    assertEquals(streamed.includes("Guide"), true);
   });
 });

@@ -570,6 +570,33 @@ Deno.test("loadProjectSkill resolves a colocated skill at its catalog sourcePath
   );
 });
 
+Deno.test("loadProjectSkill preserves provider-safe catalog identity at load time", async () => {
+  const context = {
+    ...PROJECT_CONTEXT,
+    skillSourcePaths: {
+      "a_b--x_y": "agents/a.b/skills/x_y/SKILL.md",
+    },
+  };
+  const { loader } = createLoader({
+    getProjectFile: (options) =>
+      Promise.resolve(
+        options.path === "agents/a.b/skills/x_y/SKILL.md"
+          ? {
+            path: options.path,
+            content: directorySkill("x_y", "Use the provider-safe skill."),
+          }
+          : null,
+      ),
+  });
+
+  const skill = await loader.loadProjectSkill(context, "a_b--x_y");
+
+  assertEquals(
+    skill?.instructions,
+    directorySkill("x_y", "Use the provider-safe skill."),
+  );
+});
+
 Deno.test("catalog source paths ignore inherited entries and reject accessors", async () => {
   const { loader, fileCalls } = createLoader();
   const inheritedContext = {

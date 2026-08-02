@@ -419,6 +419,62 @@ describe("agent/runtime-step", () => {
     ]);
   });
 
+  it("keeps only advertised active-skill reference loads after submitted form input", async () => {
+    const messages: Message[] = [{
+      id: "tool_result_1",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "call_form",
+        toolName: "form_input",
+        result: { submitted: true, values: { brief: "plan" } },
+      }],
+    }];
+    const prepared = await prepareAgentRuntimeStep({
+      agentId: "agent_1",
+      activeSkillId: "plan",
+      activeSkillPolicy: ["load_skill"],
+      activeSkillToolAvailability: {
+        hasActiveSkill: true,
+        references: ["references/guide.md"],
+        scripts: [],
+      },
+      allowedRemoteToolNames: undefined,
+      config: {
+        model: "auto",
+        system: "Base",
+        tools: true,
+        skills: true,
+        __vfToolLoadingMode: "eager",
+      } as AgentConfig,
+      forwardedRemoteToolDefinitions: undefined,
+      isLocalModel: false,
+      messages,
+      mode: "stream",
+      remoteToolSources: [],
+      runtimeContext: undefined,
+      step: 1,
+      systemPrompt: "Base",
+      toolContextBase: undefined,
+      getAvailableTools: async () => [
+        toolDefinition("form_input"),
+        toolDefinition("load_skill"),
+      ],
+      resolveRuntimeState: async () => ({ systemPrompt: "Base", context: undefined }),
+    });
+
+    assertEquals(prepared.tools.map((tool) => tool.name), ["load_skill"]);
+    assertEquals(prepared.tools[0]?.parameters, {
+      type: "object",
+      properties: {
+        skillId: { type: "string", enum: ["plan"] },
+        file: { type: "string", enum: ["references/guide.md"] },
+      },
+      required: ["skillId", "file"],
+      additionalProperties: false,
+    });
+  });
+
   it("hides intake tools but keeps delegation tools when hosted context records submitted form input", async () => {
     const prepared = await prepareAgentRuntimeStep({
       agentId: "agent_1",

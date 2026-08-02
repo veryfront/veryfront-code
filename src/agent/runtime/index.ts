@@ -1469,8 +1469,10 @@ export class AgentRuntime {
               activeSkillPolicy,
               mustLoadSkillFirstForStep,
               {
+                activeSkillId,
                 hasSubmittedFormInput: hasSubmittedFormInputInLoop,
                 skillToolAvailability: activeSkillToolAvailability,
+                toolInput: tc.input,
               },
             );
             if (!policyCheck.allowed) {
@@ -2126,8 +2128,10 @@ export class AgentRuntime {
           activeSkillPolicy,
           mustLoadSkillFirstForStep,
           {
+            activeSkillId,
             hasSubmittedFormInput: hasSubmittedFormInputInLoop,
             skillToolAvailability: activeSkillToolAvailability,
+            toolInput: toolCall.args,
           },
         );
         if (!policyCheck.allowed) {

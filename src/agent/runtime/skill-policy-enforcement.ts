@@ -395,7 +395,7 @@ export type SkillPolicyOptions = {
   hasSubmittedFormInput?: boolean;
   skillToolAvailability?: SkillToolAvailability;
   activeSkillId?: string;
-  toolInput?: Record<string, unknown>;
+  toolInput?: unknown;
 };
 
 function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
