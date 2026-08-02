@@ -105,6 +105,69 @@ describe("SchemaValidator.compileJsonSchema", () => {
     assertEquals((await validate(validator, 42)).success, false);
   });
 
+  it("compiles tool schemas carrying vendor extensions and annotations", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const validator = compile({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      title: "read_file",
+      examples: [{ path: "/etc/hosts" }],
+      "x-vendor": { provider: "mcp", cacheable: true },
+      properties: {
+        path: { type: "string", "x-hint": "filesystem-path" },
+        mode: { enum: ["read", "write"] },
+      },
+      required: ["path"],
+      additionalProperties: false,
+    } as never);
+
+    assertEquals((await validate(validator, { path: "/etc/hosts" })).success, true);
+    assertEquals((await validate(validator, { path: 1 })).success, false);
+    assertEquals((await validate(validator, { mode: "read" })).success, false);
+  });
+
+  it("compiles tool schemas without a root type and draft-07 tuple items", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+    const rootless = compile({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    } as never);
+    const tuple = compile({
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: { pair: { type: "array", items: [{ type: "string" }, { type: "number" }] } },
+    } as never);
+
+    assertEquals((await validate(rootless, { query: "hello" })).success, true);
+    assertEquals((await validate(rootless, { query: 1 })).success, false);
+    assertEquals((await validate(tuple, { pair: ["a", 1] })).success, true);
+    assertEquals((await validate(tuple, { pair: [1, "a"] })).success, false);
+  });
+
+  it("still rejects structurally malformed schemas and non-finite numbers", async () => {
+    const compile = createZodAdapter().compileJsonSchema;
+    assert(compile);
+
+    assertThrows(
+      () => compile({ type: "object", properties: "not-an-object" } as never),
+      Error,
+      "schema is invalid",
+    );
+    assertThrows(
+      () => compile({ type: "string", minLength: "three" } as never),
+      Error,
+      "schema is invalid",
+    );
+
+    // strictNumbers survives the relaxation: NaN is not a valid `number`.
+    const numeric = compile({ type: "number", minimum: 0 });
+    assertEquals((await validate(numeric, Number.NaN)).success, false);
+    assertEquals((await validate(numeric, 1)).success, true);
+  });
+
   it("snapshots proxied array lengths from their data descriptor", async () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);
@@ -382,15 +445,14 @@ describe("SchemaValidator.compileJsonSchema", () => {
     assertEquals(result.errors.map((error) => error.keyword), ["type"]);
   });
 
-  it("fails schema compilation for unsupported formats in strict mode", () => {
+  it("ignores unsupported formats instead of failing compilation", async () => {
     const compile = createZodAdapter().compileJsonSchema;
     assert(compile);
 
-    assertThrows(
-      () => compile({ type: "string", format: "future-unknown-format" }),
-      Error,
-      "unknown format",
-    );
+    const validator = compile({ type: "string", format: "future-unknown-format" });
+
+    assertEquals((await validate(validator, "anything")).success, true);
+    assertEquals((await validate(validator, 42)).success, false);
   });
 
   it("validates the standard email, uri, uuid, and date-time formats", async () => {

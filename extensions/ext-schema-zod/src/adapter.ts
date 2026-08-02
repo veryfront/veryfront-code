@@ -184,8 +184,18 @@ type JsonSchemaCompiler = {
   compile(schema: AnySchema): ValidateFunction<unknown>;
 };
 
+// Tool-parameter schemas arrive from MCP servers and model providers, so they
+// routinely carry vendor extensions (`x-*`), annotation keywords, roots without
+// an explicit `type`, and draft-07 tuple `items`. Ajv's schema-authoring
+// strictness throws on all of those, which would turn a third-party schema into
+// a compile-time failure rather than a validation result. Keep the strictness
+// that governs validation behavior (`strictNumbers` rejects NaN/Infinity) and
+// drop the authoring pedantry, which only applies to schemas we own.
 const JSON_SCHEMA_COMPILER_OPTIONS = {
-  strict: true,
+  strictSchema: false,
+  strictTypes: false,
+  strictTuples: false,
+  strictNumbers: true,
   allErrors: true,
   addUsedSchema: false,
   allowUnionTypes: true,
