@@ -320,6 +320,9 @@ export class ResilientCache implements TokenCache {
     if (this.state === "closed") return true;
     if (this.recoveryPromise) return await this.recoveryPromise;
     const currentTime = this.readClock();
+    // The injected clock is application code and can synchronously re-enter
+    // this cache. Join any recovery it started before claiming ownership.
+    if (this.recoveryPromise) return await this.recoveryPromise;
     if (
       this.state === "open" &&
       currentTime - (this.circuitOpenedAt ?? currentTime) < this.openDurationMs
