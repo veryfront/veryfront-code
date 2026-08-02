@@ -10,8 +10,13 @@ import {
   isInternalLink,
   manageFocus,
   parsePageDataFromHTML,
+  snapshotClientRouteHead,
   updateMetaTags,
 } from "./dom-utils.ts";
+import {
+  descriptorFromHeadProps,
+  serializeManagedHeadPayload,
+} from "#veryfront/html/managed-head-protocol.ts";
 import {
   createMockAnchor,
   createMockElement,
@@ -25,6 +30,46 @@ import {
 import type { FrontmatterData } from "./page-loader.ts";
 
 describe("DOM Utils", () => {
+  describe("snapshotClientRouteHead", () => {
+    it("combines structured and committed payloads without stale response nonces", () => {
+      const structured = serializeManagedHeadPayload([
+        descriptorFromHeadProps("meta", {
+          name: "description",
+          content: "Structured",
+        })!,
+        descriptorFromHeadProps("style", {
+          nonce: "response-a",
+          children: ".structured{}",
+        })!,
+      ]);
+      const committed = serializeManagedHeadPayload([
+        descriptorFromHeadProps("title", { children: "Committed" })!,
+      ]);
+      const dom = new JSDOM(`<!doctype html><html><head>
+        <meta data-vf-shell-head="true" name="ignored" content="fallback">
+        <script id="veryfront-hydration-data" type="application/json">${
+        JSON.stringify({ managedHeadPayload: structured })
+      }</script>
+      </head><body>
+        <div data-vf-react-head-owner="1" data-vf-ssr-head="${committed}"></div>
+        <div id="root"><div data-veryfront-head="1" data-vf-react-head-owner="1"
+          data-vf-ssr-head="${committed}"></div></div>
+      </body></html>`);
+      try {
+        assertEquals(snapshotClientRouteHead(dom.window.document), [
+          {
+            tagName: "meta",
+            attributes: [["content", "Structured"], ["name", "description"]],
+          },
+          { tagName: "style", attributes: [], content: ".structured{}" },
+          { tagName: "title", attributes: [], content: "Committed" },
+        ]);
+      } finally {
+        dom.window.close();
+      }
+    });
+  });
+
   describe("isInternalLink", () => {
     it("should return true for internal links", () => {
       const anchor = createMockAnchor("/about");
@@ -179,6 +224,7 @@ describe("DOM Utils", () => {
       tagName: string;
       getAttribute: (name: string) => string | null;
       setAttribute: (name: string, value: string) => void;
+      remove?: () => void;
     };
 
     function setupMockDocument(): { headElements: MockMetaElement[]; cleanup: () => void } {
@@ -220,13 +266,18 @@ describe("DOM Utils", () => {
         },
         createElement: (tag: string) => {
           const attributes = new Map<string, string>();
-          return {
+          const element: MockMetaElement = {
             tagName: tag.toUpperCase(),
             setAttribute: (name: string, value: string) => {
               attributes.set(name, value);
             },
             getAttribute: (name: string) => attributes.get(name) ?? null,
+            remove: () => {
+              const index = headElements.indexOf(element);
+              if (index !== -1) headElements.splice(index, 1);
+            },
           };
+          return element;
         },
       } as unknown as Document;
 
@@ -327,7 +378,7 @@ describe("DOM Utils", () => {
       }
     });
 
-    it("preserves an unowned meta tag and creates separate route metadata", () => {
+    it("replaces an unowned singleton so route metadata is authoritative", () => {
       const mocks = setupMockDocument();
       try {
         const attributes = new Map<string, string>([
@@ -338,13 +389,17 @@ describe("DOM Utils", () => {
           tagName: "META",
           getAttribute: (name: string) => attributes.get(name) ?? null,
           setAttribute: (name: string, value: string) => attributes.set(name, value),
+          remove: () => {
+            const index = mocks.headElements.indexOf(thirdPartyMeta);
+            if (index !== -1) mocks.headElements.splice(index, 1);
+          },
         };
         mocks.headElements.push(thirdPartyMeta);
 
         updateMetaTags({ description: "Route description" });
 
-        assertEquals(thirdPartyMeta.getAttribute("content"), "Third-party description");
-        assertEquals(mocks.headElements.length, 2);
+        assertEquals(mocks.headElements.includes(thirdPartyMeta), false);
+        assertEquals(mocks.headElements.length, 1);
         const routeMeta = mocks.headElements.find((element) =>
           element.getAttribute("data-vf-route-head") === "true"
         );

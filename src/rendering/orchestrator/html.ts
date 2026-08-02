@@ -3,6 +3,7 @@ import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
   buildImportMapJson,
+  buildStructuredManagedHeadDescriptors,
   escapeHTML,
   extractHTMLMetadata,
   generateHTMLShellParts,
@@ -37,6 +38,7 @@ import {
 } from "./html-project-css.ts";
 import {
   buildHeadElements as buildCollectedHeadElements,
+  extractCommittedHeadFromHTML,
   mergeCollectedHeadWithShell,
   mergeFrontmatter as mergeCollectedFrontmatter,
 } from "./html-head.ts";
@@ -234,26 +236,27 @@ export class HTMLGenerator {
   }
 
   async generateFullHTML(context: HTMLGenerationContext): Promise<string> {
+    const committedHead = extractCommittedHeadFromHTML(context.html);
+    const effectiveContext = committedHead ? { ...context, collectedHead: committedHead } : context;
     let html: string;
-    if (isFullHTMLDocument(context.html)) {
-      html = await this.handleFullHTMLDocument(context);
+    if (isFullHTMLDocument(effectiveContext.html)) {
+      html = await this.handleFullHTMLDocument(effectiveContext);
     } else {
-      html = await this.wrapHTMLFragment(context);
+      html = await this.wrapHTMLFragment(effectiveContext);
     }
-    const finalHtml = context.options?.studioEmbed ? injectElementSelectors(html) : html;
+    const finalHtml = effectiveContext.options?.studioEmbed ? injectElementSelectors(html) : html;
 
-    if (context.options?.studioEmbed) {
+    if (effectiveContext.options?.studioEmbed) {
       logger.debug("Injected element selectors for Studio");
     }
 
-    return addNonceToHtmlTags(finalHtml, context.options?.nonce);
+    return addNonceToHtmlTags(finalHtml, effectiveContext.options?.nonce);
   }
 
   async generateHTMLStream(
     reactStream: ReadableStream,
     context: Omit<HTMLGenerationContext, "html">,
   ): Promise<ReadableStream> {
-    const fullContext = context as HTMLGenerationContext;
     let reactContent: string;
     try {
       reactContent = (await streamToString(reactStream)).trim();
@@ -266,12 +269,18 @@ export class HTMLGenerator {
       throw error;
     }
 
+    const committedHead = extractCommittedHeadFromHTML(reactContent);
+    const fullContext = {
+      ...context,
+      html: reactContent,
+      ...(committedHead ? { collectedHead: committedHead } : {}),
+    } as HTMLGenerationContext;
+
     if (isFullHTMLDocument(reactContent)) {
       const encoder = new TextEncoder();
       const fullHtml = addNonceToHtmlTags(
         await this.handleFullHTMLDocument({
           ...fullContext,
-          html: reactContent,
         }),
         context.options?.nonce,
       );
@@ -334,9 +343,12 @@ export class HTMLGenerator {
     );
     const projectCSSPromise = startProjectCSSPreparation(context, htmlOptions);
     const metadata = extractHTMLMetadata(
-      (context.pageInfo.entity.frontmatter || {}) as MDXFrontmatter,
+      mergedFrontmatter,
       (context.layoutBundle?.frontmatter || {}) as MDXFrontmatter,
     );
+    // Full-document placeholders use the same bounded structured-head contract
+    // as framework shells even though their authored placement is custom.
+    buildStructuredManagedHeadDescriptors(metadata, metadata.title ?? "Veryfront App");
 
     const pagePath = context.pageInfo.entity.path;
     const [isClientPage, releaseAssetManifest] = await Promise.all([

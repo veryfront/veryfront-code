@@ -3,18 +3,52 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { runWithHeadCollector } from "#veryfront/react/head-collector.ts";
+import {
+  deserializeManagedHeadPayload,
+  HEAD_SSR_PAYLOAD_ATTRIBUTE,
+} from "#veryfront/html/managed-head-protocol.ts";
 import { Head } from "./core.ts";
 
 /**
- * The SSR collection pass runs synchronously in the component body, so
- * rendering `<Head>` to string inside a head collector exposes exactly the
- * tags that would reach the document `<head>`.
+ * Reads the head payload from committed SSR output. The payload, rather than
+ * render-time side effects, is authoritative so abandoned Suspense renders
+ * cannot leak stale head entries into the response.
  */
 function collectFromHead(node: React.ReactElement) {
-  return runWithHeadCollector(() => {
-    renderToString(node);
-  });
+  const html = renderToString(node);
+  const payload = html.match(
+    new RegExp(`${HEAD_SSR_PAYLOAD_ATTRIBUTE}="([A-Za-z0-9_-]*)"`),
+  )?.[1];
+  const entries = deserializeManagedHeadPayload(payload ?? "");
+  const head = {
+    title: undefined as string | undefined,
+    metas: [] as Record<string, string>[],
+    links: [] as Record<string, string>[],
+    styles: [] as Array<string | Record<string, string>>,
+    scripts: [] as Record<string, string>[],
+  };
+  for (const entry of entries) {
+    const record = Object.fromEntries(entry.attributes) as Record<string, string>;
+    if (entry.content !== undefined) record.content = entry.content;
+    switch (entry.tagName) {
+      case "title":
+        head.title = entry.content ?? "";
+        break;
+      case "meta":
+        head.metas.push(record);
+        break;
+      case "link":
+        head.links.push(record);
+        break;
+      case "style":
+        head.styles.push(entry.attributes.length === 0 ? (entry.content ?? "") : record);
+        break;
+      case "script":
+        head.scripts.push(record);
+        break;
+    }
+  }
+  return { head, html };
 }
 
 /**
@@ -27,7 +61,7 @@ function frag(key: string, ...children: React.ReactNode[]) {
   return React.createElement(React.Fragment, { key }, ...children);
 }
 
-describe("Head SSR collection", () => {
+describe("Head SSR committed payload", () => {
   it("collects direct children and .map() output", async () => {
     const multi = ["one", "two", "three"];
     const { head } = await collectFromHead(
@@ -164,13 +198,11 @@ describe("Head SSR collection", () => {
   });
 
   it("keeps charset shell-owned and preserves absent meta content", async () => {
-    const { head } = await runWithHeadCollector(() =>
-      renderToString(
-        <Head>
-          <meta charSet="utf-8" />
-          <meta name="custom-flag" />
-        </Head>,
-      )
+    const { head } = collectFromHead(
+      <Head>
+        <meta charSet="utf-8" />
+        <meta name="custom-flag" />
+      </Head>,
     );
 
     assertEquals(head.metas, [{ name: "custom-flag" }]);

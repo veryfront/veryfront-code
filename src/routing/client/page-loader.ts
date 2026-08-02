@@ -1,8 +1,10 @@
 import { rendererLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
+import { isFullHTMLDocument } from "#veryfront/html";
 import { parsePageDataFromHTML } from "./dom-utils.ts";
 
 export type {
+  ClientRouteHeadEntry,
   ComponentMap,
   FrontmatterData,
   LayoutInfo,
@@ -155,6 +157,20 @@ export class PageLoader {
       path,
       "route data",
     );
+    if (typeof data.html === "string" && isFullHTMLDocument(data.html)) {
+      const parsed = parsePageDataFromHTML(data.html);
+      this.assertDependencySnapshot(
+        parsed.dependencyPinningCacheKey,
+        path,
+        "route data HTML body",
+      );
+      return {
+        ...parsed.pageData,
+        ...data,
+        html: parsed.content,
+        managedHead: parsed.managedHead,
+      };
+    }
     return data;
   }
 

@@ -240,6 +240,7 @@ async function generateHTMLShellPartsImpl(
     styleTags,
     lang,
     bodyClass,
+    managedHeadPayload,
   } = processMetadata(meta);
 
   const noLayout = shouldDisableLayout(meta.frontmatter);
@@ -283,7 +284,7 @@ async function generateHTMLShellPartsImpl(
     params ?? {},
     props ?? {},
     { ...options, releaseAssetManifest: releaseManifest },
-    { pretty: useDevScripts },
+    { pretty: useDevScripts, managedHeadPayload },
   );
 
   const nonce = options.nonce ?? "";

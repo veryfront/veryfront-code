@@ -1,11 +1,16 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   aggregateManagedHeadDescriptors,
   descriptorFromHeadProps,
   descriptorFromManagedHeadRecord,
+  descriptorFromManagedHeadTransportEntry,
+  deserializeManagedHeadPayload,
   escapeManagedHeadRawText,
   managedHeadContentHash,
+  managedHeadDescriptorToTransportEntry,
+  MAX_MANAGED_HEAD_ENTRIES,
+  serializeManagedHeadPayload,
 } from "./managed-head-protocol.ts";
 
 describe("managed head protocol", () => {
@@ -283,5 +288,79 @@ describe("managed head protocol", () => {
       null,
     );
     assertEquals(descriptorFromHeadProps("title", { children: cyclic }), null);
+  });
+
+  it("round-trips transport payloads without carrying response nonces", () => {
+    const descriptors = [
+      descriptorFromHeadProps("title", { children: "Route" }),
+      descriptorFromHeadProps("style", { nonce: "response-a", children: ".route{}" }),
+      descriptorFromHeadProps("script", { nonce: "response-a", src: "/route.js" }),
+    ].filter((value): value is NonNullable<typeof value> => value !== null);
+
+    const restored = deserializeManagedHeadPayload(
+      serializeManagedHeadPayload(descriptors),
+      "response-b",
+    );
+
+    assertEquals(restored.map(managedHeadDescriptorToTransportEntry), [
+      { tagName: "title", attributes: [], content: "Route" },
+      { tagName: "style", attributes: [], content: ".route{}" },
+      { tagName: "script", attributes: [["src", "/route.js"]] },
+    ]);
+    assertEquals(restored[1]?.attributes, [["nonce", "response-b"]]);
+    assertEquals(restored[2]?.attributes, [["nonce", "response-b"], ["src", "/route.js"]]);
+  });
+
+  it("rejects non-canonical transport entries and base64url encodings", () => {
+    assertThrows(
+      () =>
+        descriptorFromManagedHeadTransportEntry({
+          tagName: "meta",
+          attributes: [["Name", "description"]],
+        }),
+      TypeError,
+      "not canonical",
+    );
+    assertThrows(
+      () =>
+        descriptorFromManagedHeadTransportEntry({
+          tagName: "script",
+          attributes: [["nonce", "stale"]],
+        }),
+      TypeError,
+      "not canonical",
+    );
+    assertThrows(
+      () => deserializeManagedHeadPayload("Zh"),
+      TypeError,
+      "non-canonical trailing bits",
+    );
+  });
+
+  it("enforces aggregate entry and byte budgets", () => {
+    const entries = Array.from(
+      { length: MAX_MANAGED_HEAD_ENTRIES + 1 },
+      (_, index) =>
+        descriptorFromHeadProps("meta", {
+          name: `repeatable-${index}`,
+          content: String(index),
+        }),
+    ).filter((value): value is NonNullable<typeof value> => value !== null);
+    assertThrows(
+      () => serializeManagedHeadPayload(entries),
+      TypeError,
+      "entry request limit",
+    );
+
+    const large = ["a", "b", "c"].map((prefix) =>
+      descriptorFromHeadProps("style", {
+        children: prefix + "x".repeat(800_000),
+      })
+    ).filter((value): value is NonNullable<typeof value> => value !== null);
+    assertThrows(
+      () => serializeManagedHeadPayload(large),
+      TypeError,
+      "byte request limit",
+    );
   });
 });

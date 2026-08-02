@@ -2,15 +2,21 @@ import type { CollectedHead } from "#veryfront/react/head-collector.ts";
 import type { MdxBundle } from "#veryfront/types";
 import type { MDXFrontmatter } from "#veryfront/transforms/mdx/types.ts";
 import {
+  aggregateManagedHeadDescriptors,
+  assertManagedHeadDescriptorBudget,
   BOOLEAN_HEAD_ATTRIBUTES,
   descriptorFromManagedHeadRecord,
+  deserializeManagedHeadPayload,
   HEAD_PROVENANCE_ATTRIBUTE,
+  HEAD_REACT_OWNER_ATTRIBUTE,
+  HEAD_SSR_PAYLOAD_ATTRIBUTE,
   headLinkSingletonKeyFromRecord,
   headMetaSingletonKeyFromRecord,
   headScriptKeysIntersect,
   isHeadFrameworkAttribute,
   type ManagedHeadAttribute,
   managedHeadContentHash,
+  type ManagedHeadDescriptor,
   normalizeManagedHeadString,
   scriptIdentityKeysFromRecord,
 } from "#veryfront/html/managed-head-protocol.ts";
@@ -33,6 +39,57 @@ export interface MergedHeadShellState {
 }
 
 type HeadRecord = Readonly<Record<string, string | undefined>>;
+
+export function extractCommittedHeadFromHTML(html: string): CollectedHead | undefined {
+  const descriptors: ManagedHeadDescriptor[] = [];
+  for (const match of html.matchAll(/<div\b[^>]*>/gi)) {
+    const openingTag = match[0];
+    if (
+      !new RegExp(`\\s${HEAD_REACT_OWNER_ATTRIBUTE}=["']1["']`, "i").test(openingTag) ||
+      !/\sdata-veryfront-head=["']1["']/i.test(openingTag)
+    ) {
+      continue;
+    }
+    const payloadMatch = openingTag.match(
+      new RegExp(`\\s${HEAD_SSR_PAYLOAD_ATTRIBUTE}=["']([A-Za-z0-9_-]+)["']`, "i"),
+    );
+    if (!payloadMatch?.[1]) continue;
+    descriptors.push(...deserializeManagedHeadPayload(payloadMatch[1]));
+  }
+  if (descriptors.length === 0) return undefined;
+
+  const aggregated = aggregateManagedHeadDescriptors(descriptors);
+  assertManagedHeadDescriptorBudget(aggregated);
+  const head: CollectedHead = { metas: [], links: [], styles: [], scripts: [] };
+  for (const descriptor of aggregated) {
+    const attributes = Object.fromEntries(descriptor.attributes);
+    switch (descriptor.tagName) {
+      case "title":
+        head.title = descriptor.content ?? "";
+        break;
+      case "meta":
+        head.metas.push(attributes);
+        break;
+      case "link":
+        head.links.push(attributes);
+        break;
+      case "style":
+        head.styles.push(
+          descriptor.attributes.length === 0
+            ? descriptor.content ?? ""
+            : { ...attributes, content: descriptor.content ?? "" },
+        );
+        break;
+      case "script":
+        head.scripts.push({
+          ...attributes,
+          ...(descriptor.content !== undefined && { content: descriptor.content }),
+        });
+        break;
+    }
+  }
+  return head;
+}
 
 function canonicalHeadRecordSignature(
   record: HeadRecord,

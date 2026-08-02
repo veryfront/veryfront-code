@@ -54,7 +54,7 @@ export function generateHydrationData(
   params: Record<string, string | string[]>,
   props: ComponentProps,
   options: HydrationOptions,
-  serializeOptions?: { pretty?: boolean },
+  serializeOptions?: { pretty?: boolean; managedHeadPayload?: string },
 ): string {
   const layouts = (options.nestedLayouts ?? [])
     .map((layout) => {
@@ -107,6 +107,7 @@ export function generateHydrationData(
     releaseId: options.releaseId,
     releaseAssetModules: buildReleaseAssetModules(options.releaseAssetManifest),
     frontmatter: options.frontmatter,
+    managedHeadPayload: serializeOptions?.managedHeadPayload,
     layoutProps: options.layoutProps,
     // In dev mode, client uses createRoot instead of hydrateRoot to avoid
     // hydration mismatches from compilation differences between SSR and client

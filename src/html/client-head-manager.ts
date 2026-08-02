@@ -77,6 +77,7 @@ function getClientHeadManagerState(): ClientHeadManagerState {
 export function getManagedHeadNonce(
   targetDocument: Document,
 ): string | undefined {
+  if (typeof targetDocument.querySelector !== "function") return undefined;
   const element = targetDocument.querySelector<HTMLElement>(
     "script[nonce], style[nonce], link[nonce]",
   );
