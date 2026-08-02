@@ -54,6 +54,10 @@ export interface HandlerContext {
   projectId?: string;
   /** Release ID (from domain lookup for production custom domains) */
   releaseId?: string;
+  /** Canonical branch ID supplied by the operator-authenticated proxy. */
+  branchId?: string;
+  /** Canonical branch name paired with branchId by the operator-authenticated proxy. */
+  branchName?: string;
   /** OAuth token from proxy (via x-token header) */
   proxyToken?: string;
   /** Actual environment name from API (e.g., "Development", "Production") */

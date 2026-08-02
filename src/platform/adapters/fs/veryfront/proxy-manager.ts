@@ -16,6 +16,27 @@ interface ProjectAdapter {
   adapter: VeryfrontFSAdapter;
   lastAccessed: number;
   initializing?: Promise<void>;
+  identity: ProxyAdapterIdentity;
+}
+
+interface ProxyAdapterIdentity {
+  projectSlug: string;
+  projectId: string | null;
+  credentialPrincipal: string;
+  productionMode: boolean;
+  releaseId: string | null;
+  environmentName: string | null;
+  branch: string | null;
+}
+
+const encodeText = TextEncoder.prototype.encode;
+const subtleDigest = crypto.subtle.digest.bind(crypto.subtle);
+const textEncoder = new TextEncoder();
+
+async function hashCredentialPrincipal(token: string): Promise<string> {
+  const bytes = encodeText.call(textEncoder, token);
+  const digest = new Uint8Array(await subtleDigest("SHA-256", bytes));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 interface ProxyFSAdapterManagerConfig {
@@ -71,6 +92,15 @@ export class ProxyFSAdapterManager {
     const effectiveEnvironmentName = environmentName ?? null;
     const effectiveBranch = branch ?? (effectiveProductionMode ? null : "main");
 
+    if (
+      this.baseConfig.veryfront?.proxyMode === true &&
+      (!projectId?.trim() || projectId !== projectId.trim())
+    ) {
+      throw INVALID_ARGUMENT.create({
+        detail: "[ProxyFSAdapterManager] Hosted proxy adapters require a canonical project ID",
+      });
+    }
+
     logger.debug("getAdapter START", {
       projectSlug,
       productionMode: effectiveProductionMode,
@@ -110,12 +140,24 @@ export class ProxyFSAdapterManager {
       });
     }
 
+    const credentialPrincipal = await hashCredentialPrincipal(token);
+    const identity: ProxyAdapterIdentity = Object.freeze({
+      projectSlug,
+      projectId: projectId ?? null,
+      credentialPrincipal,
+      productionMode: effectiveProductionMode,
+      releaseId: effectiveReleaseId,
+      environmentName: effectiveEnvironmentName,
+      branch: effectiveBranch,
+    });
+
     const cacheKey = buildProxyManagerCacheKey(
       projectSlug,
       effectiveProductionMode,
       effectiveReleaseId,
       effectiveBranch,
       effectiveEnvironmentName,
+      { projectId: identity.projectId, credentialPrincipal },
     );
 
     logger.debug("getAdapter called", {
@@ -132,7 +174,6 @@ export class ProxyFSAdapterManager {
     const existing = this.adapters.get(cacheKey);
     if (existing) {
       existing.lastAccessed = Date.now();
-      existing.adapter.setRequestToken(token);
 
       const existingContext = existing.adapter.getContentContext();
       logger.debug("REUSING_CACHED_ADAPTER", {
@@ -142,12 +183,12 @@ export class ProxyFSAdapterManager {
         cachedReleaseId: existingContext?.releaseId,
       });
 
-      this.assertContextMatches(cacheKey, existingContext, {
-        productionMode: effectiveProductionMode,
-        releaseId: effectiveReleaseId,
-        environmentName: effectiveEnvironmentName,
-        branch: effectiveBranch,
-      });
+      try {
+        this.assertContextMatches(cacheKey, existing, existingContext, identity);
+      } catch (error) {
+        this.evictAdapterByCacheKey(cacheKey);
+        throw error;
+      }
 
       return existing.adapter;
     }
@@ -161,6 +202,25 @@ export class ProxyFSAdapterManager {
 
       const waitStartTime = performance.now();
       const adapter = await pending;
+      const initialized = this.adapters.get(cacheKey);
+      if (!initialized) {
+        adapter.dispose();
+        throw CACHE_INVARIANT_VIOLATION.create({
+          detail: `[ProxyFSAdapterManager] Pending adapter completed without a cache identity`,
+        });
+      }
+
+      try {
+        this.assertContextMatches(
+          cacheKey,
+          initialized,
+          adapter.getContentContext(),
+          identity,
+        );
+      } catch (error) {
+        this.evictAdapterByCacheKey(cacheKey);
+        throw error;
+      }
 
       logger.debug("Pending adapter ready", {
         cacheKey,
@@ -168,7 +228,6 @@ export class ProxyFSAdapterManager {
         totalDuration: `${(performance.now() - getAdapterStartTime).toFixed(2)}ms`,
       });
 
-      adapter.setRequestToken(token);
       return adapter;
     }
 
@@ -191,19 +250,30 @@ export class ProxyFSAdapterManager {
       effectiveReleaseId,
       effectiveEnvironmentName,
       effectiveBranch,
+      identity,
     );
   }
 
   private assertContextMatches(
     cacheKey: string,
+    cached: ProjectAdapter,
     currentContext: ResolvedContentContext | null | undefined,
-    expected: {
-      productionMode: boolean;
-      releaseId: string | null;
-      environmentName: string | null;
-      branch: string | null;
-    },
+    expected: ProxyAdapterIdentity,
   ): void {
+    const cachedIdentityMismatch = this.getIdentityMismatchReason(cached.identity, expected);
+    if (cachedIdentityMismatch) {
+      logger.error("Adapter identity mismatch detected", {
+        cacheKey,
+        cachedIdentity: cached.identity,
+        expected,
+        mismatchReason: cachedIdentityMismatch,
+      });
+      throw CACHE_INVARIANT_VIOLATION.create({
+        detail: `[ProxyFSAdapterManager] FATAL: Identity mismatch for cached adapter. ` +
+          `Reason: ${cachedIdentityMismatch}. CacheKey: ${cacheKey}`,
+      });
+    }
+
     if (!currentContext) {
       logger.error("Null context detected", { cacheKey });
       throw CACHE_INVARIANT_VIOLATION.create({
@@ -231,6 +301,25 @@ export class ProxyFSAdapterManager {
         `Got: ${JSON.stringify(currentContext)} ` +
         `CacheKey: ${cacheKey}`,
     });
+  }
+
+  private getIdentityMismatchReason(
+    actual: ProxyAdapterIdentity,
+    expected: ProxyAdapterIdentity,
+  ): string | null {
+    const fields: Array<keyof ProxyAdapterIdentity> = [
+      "projectSlug",
+      "projectId",
+      "credentialPrincipal",
+      "productionMode",
+      "releaseId",
+      "environmentName",
+      "branch",
+    ];
+    for (const field of fields) {
+      if (actual[field] !== expected[field]) return `Cached ${field} does not match the request`;
+    }
+    return null;
   }
 
   private getContextMismatchReason(
@@ -282,9 +371,8 @@ export class ProxyFSAdapterManager {
     releaseId: string | null,
     environmentName: string | null,
     branch: string | null,
+    identity: ProxyAdapterIdentity,
   ): Promise<VeryfrontFSAdapter> {
-    const effectiveToken = token || this.baseConfig.veryfront?.apiToken;
-
     logger.debug("Creating NEW adapter", {
       cacheKey,
       projectSlug,
@@ -301,12 +389,11 @@ export class ProxyFSAdapterManager {
         ...this.baseConfig.veryfront,
         projectSlug,
         projectId,
-        apiToken: effectiveToken,
+        apiToken: token,
       },
       invalidationCallbacks: createDefaultInvalidationCallbacks({
         ...this.baseConfig.invalidationCallbacks,
-        evictCurrentAdapter: () =>
-          this.evictAdapter(projectSlug, productionMode, releaseId, branch, environmentName),
+        evictCurrentAdapter: () => this.evictAdapterByCacheKey(cacheKey),
       }),
     };
 
@@ -345,7 +432,7 @@ export class ProxyFSAdapterManager {
 
     adapter.setContentContext(context);
 
-    const projectAdapter: ProjectAdapter = { adapter, lastAccessed: Date.now() };
+    const projectAdapter: ProjectAdapter = { adapter, lastAccessed: Date.now(), identity };
 
     const initPromise = (async (): Promise<VeryfrontFSAdapter> => {
       const initStartTime = performance.now();
@@ -427,17 +514,20 @@ export class ProxyFSAdapterManager {
     releaseId?: string | null,
     branch?: string | null,
     environmentName?: string | null,
+    projectId?: string,
   ): boolean {
-    const effectiveProductionMode = productionMode ?? false;
-    const effectiveEnvironmentName = environmentName ?? null;
-    const cacheKey = buildProxyManagerCacheKey(
-      projectSlug,
-      effectiveProductionMode,
-      releaseId ?? null,
-      branch ?? null,
-      effectiveEnvironmentName,
+    this.assertValidSelection(projectSlug, productionMode, releaseId);
+    return Array.from(this.adapters.values()).some(({ identity }) =>
+      this.matchesAdapterSelection(
+        identity,
+        projectSlug,
+        productionMode,
+        releaseId,
+        branch,
+        environmentName,
+        projectId,
+      )
     );
-    return this.adapters.has(cacheKey);
   }
 
   evictAdapter(
@@ -446,26 +536,66 @@ export class ProxyFSAdapterManager {
     releaseId?: string | null,
     branch?: string | null,
     environmentName?: string | null,
+    projectId?: string,
   ): void {
-    const effectiveProductionMode = productionMode ?? false;
-    const effectiveEnvironmentName = environmentName ?? null;
-    const cacheKey = buildProxyManagerCacheKey(
-      projectSlug,
-      effectiveProductionMode,
-      releaseId ?? null,
-      branch ?? null,
-      effectiveEnvironmentName,
-    );
-
-    const adapter = this.adapters.get(cacheKey);
-    if (!adapter) {
-      logger.debug("No adapter to evict", { cacheKey });
-      return;
+    this.assertValidSelection(projectSlug, productionMode, releaseId);
+    let evicted = false;
+    for (const [cacheKey, { identity }] of this.adapters) {
+      if (
+        !this.matchesAdapterSelection(
+          identity,
+          projectSlug,
+          productionMode,
+          releaseId,
+          branch,
+          environmentName,
+          projectId,
+        )
+      ) continue;
+      this.evictAdapterByCacheKey(cacheKey);
+      evicted = true;
     }
+    if (!evicted) logger.debug("No adapter to evict", { projectSlug });
+  }
 
+  private evictAdapterByCacheKey(cacheKey: string): void {
+    const adapter = this.adapters.get(cacheKey);
+    if (!adapter) return;
     logger.debug("Evicting adapter", { cacheKey });
     adapter.adapter.dispose();
     this.adapters.delete(cacheKey);
+  }
+
+  private matchesAdapterSelection(
+    identity: ProxyAdapterIdentity,
+    projectSlug: string,
+    productionMode = false,
+    releaseId: string | null = null,
+    branch: string | null = null,
+    environmentName: string | null = null,
+    projectId?: string,
+  ): boolean {
+    if (identity.projectSlug !== projectSlug || identity.productionMode !== productionMode) {
+      return false;
+    }
+    if (projectId !== undefined && identity.projectId !== projectId) return false;
+    if (productionMode) {
+      return identity.releaseId === releaseId &&
+        identity.environmentName === environmentName;
+    }
+    return identity.branch === (branch ?? "main");
+  }
+
+  private assertValidSelection(
+    projectSlug: string,
+    productionMode = false,
+    releaseId: string | null = null,
+  ): void {
+    if (productionMode && !releaseId) {
+      throw CACHE_INVARIANT_VIOLATION.create({
+        detail: `Missing releaseId in production for ${projectSlug}`,
+      });
+    }
   }
 
   getStats(): { adapters: number; stats: Record<string, CacheStats> } {

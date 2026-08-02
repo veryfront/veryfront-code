@@ -177,6 +177,25 @@ describe("agent/runtime-agent-invocation-contract", () => {
     );
   });
 
+  it("rejects a non-main source for the canonical main-branch target", () => {
+    assertThrows(
+      () =>
+        RuntimeAgentRunInvocationSchema.parse(createInvocation({
+          run: {
+            ...createInvocation().run,
+            project: {
+              projectId,
+              projectSlug: "demo-project",
+              runtimeTargetKind: "main_branch",
+            },
+          },
+          agentSource: { type: "branch", branch: "feature-private" },
+        })),
+      Error,
+      "main-branch runtime target requires the canonical main branch source",
+    );
+  });
+
   it("requires an exact source for every runtime invocation", () => {
     assertThrows(() =>
       RuntimeAgentRunInvocationSchema.parse(createInvocation({ agentSource: undefined }))

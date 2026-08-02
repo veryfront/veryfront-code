@@ -114,8 +114,8 @@ export function extractRequestHeaders(
     projectSlug: projectSlugHeader ?? parsedDomain.slug ?? undefined,
     projectId: identityHeadersTrusted ? req.headers.get("x-project-id") ?? undefined : undefined,
     releaseId: req.headers.get("x-release-id") ?? undefined,
-    branchId: req.headers.get("x-branch-id") ?? undefined,
-    branchName: req.headers.get("x-branch-name") ?? undefined,
+    branchId: identityHeadersTrusted ? req.headers.get("x-branch-id") ?? undefined : undefined,
+    branchName: identityHeadersTrusted ? req.headers.get("x-branch-name") ?? undefined : undefined,
     environment,
     environmentId: identityHeadersTrusted
       ? req.headers.get("x-environment-id") ?? undefined

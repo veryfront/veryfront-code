@@ -3,6 +3,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
+  assertNotStrictEquals,
   assertRejects,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -404,6 +405,158 @@ describe("ProxyFSAdapterManager", () => {
       assertEquals(manager.getStats().adapters, 0);
       manager.dispose();
       assertEquals(manager.getStats().adapters, 0);
+    });
+  });
+
+  describe("hosted tenant and credential isolation", () => {
+    it("fails closed when shared proxy mode has no canonical project ID", async () => {
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+      });
+      try {
+        await assertGetAdapterRejects(
+          manager,
+          ["reusable-slug", "tenant-token", undefined, false, null, null, "main"],
+          "require a canonical project ID",
+        );
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("does not reuse source adapters after a project slug is reassigned", async () => {
+      const observedProjectIds: Array<string | undefined> = [];
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+        adapterFactory: (config) => {
+          observedProjectIds.push(config.veryfront?.projectId);
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      try {
+        const first = await manager.getAdapter(
+          "reusable-slug",
+          "same-token",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        const reassigned = await manager.getAdapter(
+          "reusable-slug",
+          "same-token",
+          "project-two",
+          false,
+          null,
+          null,
+          "main",
+        );
+
+        assertNotStrictEquals(first, reassigned);
+        assertEquals(observedProjectIds, ["project-one", "project-two"]);
+        assertEquals(manager.getStats().adapters, 2);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("partitions concurrent adapters by immutable credential principal", async () => {
+      const observedTokens: Array<string | undefined> = [];
+      const manager = createManager({
+        baseConfig: {
+          ...baseConfig,
+          veryfront: { ...baseConfig.veryfront, proxyMode: true },
+        },
+        adapterFactory: (config) => {
+          observedTokens.push(config.veryfront?.apiToken);
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = async () => await Promise.resolve();
+          adapter.setRequestToken = () => {
+            throw new Error("cached adapter token must remain immutable");
+          };
+          return adapter;
+        },
+      });
+      try {
+        const [first, second] = await Promise.all([
+          manager.getAdapter(
+            "tenant",
+            "credential-one",
+            "project-one",
+            false,
+            null,
+            null,
+            "main",
+          ),
+          manager.getAdapter(
+            "tenant",
+            "credential-two",
+            "project-one",
+            false,
+            null,
+            null,
+            "main",
+          ),
+        ]);
+
+        assertNotStrictEquals(first, second);
+        assertEquals(observedTokens.toSorted(), ["credential-one", "credential-two"]);
+      } finally {
+        manager.dispose();
+      }
+    });
+
+    it("evicts a cached adapter whose resolved source context is corrupted", async () => {
+      const manager = createManager({
+        adapterFactory: (config) => {
+          const adapter = new VeryfrontFSAdapter(config);
+          adapter.initialize = () => Promise.resolve();
+          return adapter;
+        },
+      });
+      try {
+        const adapter = await manager.getAdapter(
+          "tenant",
+          "credential",
+          "project-one",
+          false,
+          null,
+          null,
+          "main",
+        );
+        adapter.setContentContext({
+          sourceType: "branch",
+          projectSlug: "tenant",
+          branch: "other",
+        });
+
+        await assertRejects(
+          () =>
+            manager.getAdapter(
+              "tenant",
+              "credential",
+              "project-one",
+              false,
+              null,
+              null,
+              "main",
+            ),
+          Error,
+          "Context mismatch",
+        );
+        assertEquals(manager.hasAdapter("tenant", false, null, "main", null, "project-one"), false);
+      } finally {
+        manager.dispose();
+      }
     });
   });
 });

@@ -233,6 +233,18 @@ export function validateRuntimeAgentSourceTargetBinding(
       path: ["agentSource", "type"],
     });
   }
+
+  if (
+    sourceType === "branch" &&
+    kind === "main_branch" &&
+    input.agentSource.branch !== "main"
+  ) {
+    ctx.addIssue({
+      code: "custom",
+      message: "main-branch runtime target requires the canonical main branch source",
+      path: ["agentSource", "branch"],
+    });
+  }
 }
 
 export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>

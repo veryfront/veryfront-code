@@ -356,7 +356,7 @@ describe("prepareProjectRequest", () => {
     await assertJsonResponse(prepared.proxyGuard!.response, 502, {
       error: "Untrusted identity context",
       detail:
-        "x-project-id, x-environment-id, and x-environment-name require an operator-authenticated proxy boundary",
+        "project, environment, and branch identity headers require an operator-authenticated proxy boundary",
     });
   });
 
@@ -405,6 +405,28 @@ describe("prepareProjectRequest", () => {
     await assertJsonResponse(prepared.proxyGuard!.response, 502, {
       error: "Incomplete environment identity",
       detail: "x-environment-id and x-environment-name must be supplied together",
+    });
+  });
+
+  it("reports missing authentication before validating a trusted environment pair", async () => {
+    const req = new Request("http://localhost/page", {
+      headers: {
+        "x-project-slug": "project-a",
+        "x-project-id": "project-id-a",
+        "x-environment-id": "environment-id-a",
+      },
+    });
+
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: true,
+      trustProxy: () => Promise.resolve(true),
+    });
+
+    await assertJsonResponse(prepared.proxyGuard!.response, 502, {
+      error: "Missing authentication context",
+      detail: "x-token header is required in proxy mode",
     });
   });
 

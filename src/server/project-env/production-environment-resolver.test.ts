@@ -86,6 +86,84 @@ describe("ProductionEnvironmentResolver", () => {
     assertEquals((error as { status?: number }).status, 403);
   });
 
+  it("binds a named environment to its current active release", async () => {
+    globalThis.fetch = (() =>
+      Promise.resolve(Response.json({
+        data: [{
+          id: "env-staging",
+          name: "staging",
+          active_release_id: "release-staging-42",
+        }],
+      }))) as typeof fetch;
+
+    const resolver = new ProjectEnvironmentIdentityResolver();
+    assertEquals(
+      await resolver.resolveNamedForActiveRelease({
+        ...scope(),
+        environmentName: "staging",
+        expectedEnvironmentId: "env-staging",
+        expectedReleaseId: "release-staging-42",
+      }),
+      "env-staging",
+    );
+  });
+
+  it("fails closed when active release metadata is missing or does not match", async () => {
+    const activeReleaseIds: unknown[] = [undefined, null, "release-other"];
+    globalThis.fetch = (() =>
+      Promise.resolve(Response.json({
+        data: [{
+          id: "env-staging",
+          name: "staging",
+          active_release_id: activeReleaseIds.shift(),
+        }],
+      }))) as typeof fetch;
+
+    const resolver = new ProjectEnvironmentIdentityResolver();
+    for (let index = 0; index < 3; index += 1) {
+      const error = await assertRejects(() =>
+        resolver.resolveNamedForActiveRelease({
+          ...scope(),
+          environmentName: "staging",
+          expectedEnvironmentId: "env-staging",
+          expectedReleaseId: "release-staging-42",
+        })
+      );
+      assertEquals((error as { slug?: string }).slug, "permission-denied");
+      assertEquals((error as { status?: number }).status, 403);
+    }
+  });
+
+  it("does not cache mutable active-release metadata", async () => {
+    let fetchCalls = 0;
+    globalThis.fetch = (() => {
+      fetchCalls += 1;
+      return Promise.resolve(Response.json({
+        data: [{
+          id: "env-staging",
+          name: "staging",
+          active_release_id: fetchCalls === 1 ? "release-one" : "release-two",
+        }],
+      }));
+    }) as typeof fetch;
+
+    const resolver = new ProjectEnvironmentIdentityResolver();
+    await resolver.resolveNamedForActiveRelease({
+      ...scope(),
+      environmentName: "staging",
+      expectedEnvironmentId: "env-staging",
+      expectedReleaseId: "release-one",
+    });
+    await resolver.resolveNamedForActiveRelease({
+      ...scope(),
+      environmentName: "staging",
+      expectedEnvironmentId: "env-staging",
+      expectedReleaseId: "release-two",
+    });
+
+    assertEquals(fetchCalls, 2);
+  });
+
   it("rejects oversized lookup responses before parsing", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(

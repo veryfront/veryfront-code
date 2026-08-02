@@ -332,6 +332,8 @@ export async function resolveProjectRuntimeContext(
     projectSlug: projectRes.projectSlug,
     projectId: projectRes.projectId,
     releaseId: envRes.releaseId,
+    branchId: input.headers.branchId,
+    branchName: input.headers.branchName,
     proxyToken: reqCtx.token,
     environmentName: projectRes.environmentName,
     resolvedEnvironment: envRes.resolvedEnvironment ?? "preview",
@@ -406,7 +408,9 @@ function createProxyGuard(
     (
       req.headers.has("x-project-id") ||
       req.headers.has("x-environment-id") ||
-      req.headers.has("x-environment-name")
+      req.headers.has("x-environment-name") ||
+      req.headers.has("x-branch-id") ||
+      req.headers.has("x-branch-name")
     );
   const hasIncompleteEnvironmentIdentity = identityHeadersTrusted &&
     Boolean(headers.environmentId) !== Boolean(headers.environmentName);
@@ -414,12 +418,7 @@ function createProxyGuard(
     ? {
       error: "Untrusted identity context",
       detail:
-        "x-project-id, x-environment-id, and x-environment-name require an operator-authenticated proxy boundary",
-    }
-    : hasIncompleteEnvironmentIdentity
-    ? {
-      error: "Incomplete environment identity",
-      detail: "x-environment-id and x-environment-name must be supplied together",
+        "project, environment, and branch identity headers require an operator-authenticated proxy boundary",
     }
     : !headers.projectSlug
     ? {
@@ -430,6 +429,11 @@ function createProxyGuard(
     ? {
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",
+    }
+    : hasIncompleteEnvironmentIdentity
+    ? {
+      error: "Incomplete environment identity",
+      detail: "x-environment-id and x-environment-name must be supplied together",
     }
     : !proxyTrusted
     ? {

@@ -53,7 +53,12 @@ import {
   type RuntimeRunAgentInput,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
-import { errorToResponse, INVALID_ARGUMENT, isVeryfrontError } from "#veryfront/errors";
+import {
+  errorToResponse,
+  INVALID_ARGUMENT,
+  isVeryfrontError,
+  PERMISSION_DENIED,
+} from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -375,7 +380,7 @@ async function resolveAgentSourceEnvironment(
     });
   }
 
-  const environmentId = await _environmentIdentityResolver.resolveNamed(
+  const environmentId = await _environmentIdentityResolver.resolveNamedForActiveRelease(
     {
       apiBaseUrl: resolveVeryfrontApiBaseUrlFromHostEnv(),
       projectSlug: ctx.projectSlug,
@@ -383,6 +388,7 @@ async function resolveAgentSourceEnvironment(
       token: apiAuthToken,
       environmentName: sourceContext.environmentName,
       expectedEnvironmentId: targetIdentity.runtimeTargetEnvironmentId,
+      expectedReleaseId: sourceContext.releaseId,
     },
     signal,
   );
@@ -589,6 +595,27 @@ type SourceContextFsWrapper = {
   ) => Promise<R>;
 };
 
+function assertAgentSourceMatchesHostedTarget(
+  ctx: HandlerContext,
+  payload: InternalAgentStreamRequest,
+): void {
+  const fsWrapper = ctx.adapter.fs as SourceContextFsWrapper;
+  if (!fsWrapper.isMultiProjectMode?.()) return;
+  if (payload.runtimeTargetKind !== "preview_branch") return;
+
+  if (
+    payload.agentSource.type !== "branch" ||
+    !ctx.branchId ||
+    !ctx.branchName ||
+    payload.runtimeTargetBranchId !== ctx.branchId ||
+    payload.agentSource.branch !== ctx.branchName
+  ) {
+    throw PERMISSION_DENIED.create({
+      detail: "Signed agent source does not match the trusted preview branch target",
+    });
+  }
+}
+
 function buildAgentSourceRunOptions(sourceContext: RuntimeAgentSourceContext): {
   productionMode: boolean;
   releaseId?: string | null;
@@ -720,6 +747,7 @@ export class AgentStreamHandler extends BaseHandler {
         expectedSubject: payload.runId,
         expectedSurface: "studio",
       });
+      assertAgentSourceMatchesHostedTarget(ctx, payload);
       const apiAuthToken = payload.credentials?.authToken || ctx.proxyToken ||
         getHostEnv("VERYFRONT_API_TOKEN") || "";
       const requestScopedContext: HandlerContext = {

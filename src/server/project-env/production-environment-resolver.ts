@@ -33,6 +33,15 @@ export interface NamedProjectEnvironmentScope extends ProductionEnvironmentScope
   expectedEnvironmentId?: string;
 }
 
+export interface ReleaseBoundNamedProjectEnvironmentScope extends NamedProjectEnvironmentScope {
+  expectedReleaseId: string;
+}
+
+interface NamedProjectEnvironmentIdentity {
+  environmentId: string;
+  activeReleaseId: string | null;
+}
+
 function frame(value: string): string {
   return `${value.length}:${value}`;
 }
@@ -126,7 +135,10 @@ function normalizeNamedScope(input: NamedProjectEnvironmentScope): NamedProjectE
   });
 }
 
-function parseNamedEnvironmentId(body: unknown, environmentName: string): string {
+function parseNamedEnvironmentIdentity(
+  body: unknown,
+  environmentName: string,
+): NamedProjectEnvironmentIdentity {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     throw NETWORK_ERROR.create({
       detail: "Project environment lookup returned an invalid response",
@@ -139,7 +151,7 @@ function parseNamedEnvironmentId(body: unknown, environmentName: string): string
     });
   }
 
-  const matchingIds: string[] = [];
+  const matching: NamedProjectEnvironmentIdentity[] = [];
   for (const entry of data) {
     if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
       throw NETWORK_ERROR.create({
@@ -153,17 +165,36 @@ function parseNamedEnvironmentId(body: unknown, environmentName: string): string
         detail: "Project environment lookup returned an invalid environment entry",
       });
     }
-    if (name === environmentName) matchingIds.push(id);
+    const rawActiveReleaseId = (entry as { active_release_id?: unknown }).active_release_id;
+    if (
+      rawActiveReleaseId !== undefined &&
+      rawActiveReleaseId !== null &&
+      (
+        typeof rawActiveReleaseId !== "string" ||
+        !rawActiveReleaseId.trim() ||
+        rawActiveReleaseId !== rawActiveReleaseId.trim()
+      )
+    ) {
+      throw NETWORK_ERROR.create({
+        detail: "Project environment lookup returned an invalid active release identity",
+      });
+    }
+    if (name === environmentName) {
+      matching.push({
+        environmentId: id,
+        activeReleaseId: typeof rawActiveReleaseId === "string" ? rawActiveReleaseId : null,
+      });
+    }
   }
 
-  if (matchingIds.length !== 1) {
+  if (matching.length !== 1) {
     throw NETWORK_ERROR.create({
-      detail: matchingIds.length === 0
+      detail: matching.length === 0
         ? "Requested environment is not configured"
         : "Requested environment identity is ambiguous",
     });
   }
-  return matchingIds[0]!;
+  return matching[0]!;
 }
 
 /** Resolve and briefly cache canonical named project-environment identities. */
@@ -205,6 +236,46 @@ export class ProjectEnvironmentIdentityResolver {
       return cached;
     }
 
+    const identity = await this.fetchNamedEnvironmentIdentity(scope, signal);
+    this.assertExpectedEnvironmentId(identity.environmentId, scope.expectedEnvironmentId);
+    this.cache.set(key, identity.environmentId);
+    return identity.environmentId;
+  }
+
+  /**
+   * Resolve a named environment and bind it to its current immutable release.
+   *
+   * Active-release metadata is deliberately fetched on every call: unlike an
+   * environment ID, it is mutable and must not inherit the identity cache TTL.
+   */
+  async resolveNamedForActiveRelease(
+    input: ReleaseBoundNamedProjectEnvironmentScope,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    signal?.throwIfAborted();
+    const scope = normalizeNamedScope(input);
+    if (
+      typeof input.expectedReleaseId !== "string" ||
+      !input.expectedReleaseId.trim() ||
+      input.expectedReleaseId !== input.expectedReleaseId.trim()
+    ) {
+      throw new TypeError("Expected release ID must be canonical and non-empty");
+    }
+
+    const identity = await this.fetchNamedEnvironmentIdentity(scope, signal);
+    this.assertExpectedEnvironmentId(identity.environmentId, scope.expectedEnvironmentId);
+    if (identity.activeReleaseId !== input.expectedReleaseId) {
+      throw PERMISSION_DENIED.create({
+        detail: "Signed release identity does not match the environment active release",
+      });
+    }
+    return identity.environmentId;
+  }
+
+  private async fetchNamedEnvironmentIdentity(
+    scope: NamedProjectEnvironmentScope,
+    signal?: AbortSignal,
+  ): Promise<NamedProjectEnvironmentIdentity> {
     let transport: VeryfrontApiTransport<unknown>;
     try {
       transport = createVeryfrontApiTransport({
@@ -225,10 +296,7 @@ export class ProjectEnvironmentIdentityResolver {
           signal,
         },
       );
-      const environmentId = parseNamedEnvironmentId(body, scope.environmentName);
-      this.assertExpectedEnvironmentId(environmentId, scope.expectedEnvironmentId);
-      this.cache.set(key, environmentId);
-      return environmentId;
+      return parseNamedEnvironmentIdentity(body, scope.environmentName);
     } catch (error) {
       throw mapLookupError(error, signal);
     }

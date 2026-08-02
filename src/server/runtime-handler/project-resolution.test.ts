@@ -53,20 +53,32 @@ describe("server/runtime-handler/project-resolution", () => {
       assertEquals(headers.releaseId, "rel-456");
     });
 
-    it("extracts branch id from header", () => {
+    it("extracts branch id only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-id": "branch-1" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchId, "branch-1");
     });
 
-    it("extracts branch name from header", () => {
+    it("extracts branch name only at an operator-authenticated proxy boundary", () => {
       const req = new Request("http://localhost/", {
         headers: { "x-branch-name": "feature-x" },
       });
-      const headers = extractRequestHeaders(req, new URL(req.url));
+      const headers = extractRequestHeaders(req, new URL(req.url), false, true);
       assertEquals(headers.branchName, "feature-x");
+    });
+
+    it("ignores branch identity from an untrusted request", () => {
+      const req = new Request("http://localhost/", {
+        headers: {
+          "x-branch-id": "branch-1",
+          "x-branch-name": "feature-x",
+        },
+      });
+      const headers = extractRequestHeaders(req, new URL(req.url));
+      assertEquals(headers.branchId, undefined);
+      assertEquals(headers.branchName, undefined);
     });
 
     it("extracts environment from header when proxy headers are trusted", () => {

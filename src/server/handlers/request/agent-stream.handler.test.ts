@@ -90,6 +90,48 @@ function createRuntimeAgentRunInvocationBody() {
 }
 
 describe("server/handlers/request/agent-stream.handler", () => {
+  it("rejects a preview source whose signed branch ID differs from the trusted target", async () => {
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
+      },
+      agentSource: { type: "branch", branch: "main" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      {
+        ...createCtx(publicKeyPem),
+        branchId: "20000000-2000-4000-8000-200000000006",
+      },
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 403);
+    assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+    assertEquals(discoveryCalls, 0);
+  });
+
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
     let streamContext: Record<string, unknown> | undefined;
@@ -616,6 +658,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+    const ctx = createCtx(publicKeyPem);
+    ctx.branchId = "50000000-5000-4000-8000-500000000001";
 
     const result = await handler.handle(
       new Request("https://example.com/api/control-plane/runs/run_1/stream", {
@@ -626,7 +670,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         },
         body,
       }),
-      createCtx(publicKeyPem),
+      ctx,
     );
 
     assertExists(result.response);
@@ -924,11 +968,17 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
 
     const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "50000000-5000-4000-8000-500000000002",
+      },
       agentSource: { type: "branch", branch: "restrict-gmail" },
       credentials: { authToken: "request-scoped-user-token" },
     });
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
     const ctx = createCtx(publicKeyPem);
+    ctx.branchId = "50000000-5000-4000-8000-500000000002";
+    ctx.branchName = "restrict-gmail";
     ctx.adapter = {
       ...ctx.adapter,
       env: createNoopEnvAdapter(publicKeyPem),
@@ -1834,6 +1884,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
                   id: "10000000-1000-4000-8000-100000000097",
                   name: "production",
                   protected: false,
+                  active_release_id: "release-production",
                 },
               ],
             }),
@@ -2062,6 +2113,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
                   id: "10000000-1000-4000-8000-100000000096",
                   name: "production",
                   protected: false,
+                  active_release_id: "release-production",
                 },
               ],
             }),
@@ -2636,6 +2688,74 @@ describe("server/handlers/request/agent-stream.handler", () => {
       );
       assertEquals(discoveryCalls, 0);
       assertEquals(redirect, "error");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("rejects a stale named environment source before loading project secrets", async () => {
+    const originalFetch = globalThis.fetch;
+    let discoveryCalls = 0;
+    let environmentVariableCalls = 0;
+    globalThis.fetch = ((input) => {
+      const url = String(input);
+      if (url.endsWith("/projects/support-agent-fork/environments")) {
+        return Promise.resolve(Response.json({
+          data: [{
+            id: "10000000-1000-4000-8000-100000000098",
+            name: "staging",
+            active_release_id: "release-new",
+          }],
+        }));
+      }
+      if (url.includes("/environment-variables?")) {
+        environmentVariableCalls += 1;
+      }
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    }) as typeof fetch;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: {
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: "10000000-1000-4000-8000-100000000098",
+      },
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "release-old",
+      },
+      credentials: { authToken: "project-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: "support-agent-fork",
+      requestId: "run_1",
+    });
+
+    try {
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        { ...createCtx(publicKeyPem), projectSlug: "support-agent-fork" },
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 403);
+      assertEquals(result.response.headers.get("content-type"), "application/problem+json");
+      assertEquals(environmentVariableCalls, 0);
+      assertEquals(discoveryCalls, 0);
     } finally {
       globalThis.fetch = originalFetch;
     }
