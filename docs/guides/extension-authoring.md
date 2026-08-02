@@ -304,17 +304,26 @@ deno test --no-check --allow-all extensions/my-cache/src/
 Package an extension only when it needs reuse across projects.
 
 1. Export the extension factory as the default export.
-2. Set `veryfront.extension: true` in `deno.json` or `package.json`.
-3. Declare capabilities in package metadata and in the factory.
-4. Declare contract metadata through `contracts` or static `provides`.
-5. Include tests for the factory and contract implementation.
-6. Publish to npm or JSR.
+2. Set `veryfront.extension: true` in `deno.json`, `deno.jsonc`, or
+   `package.json`.
+3. Set `veryfront.activation` to `"auto"` or `"explicit"`.
+4. Declare capabilities in package metadata and in the factory.
+5. Declare contract metadata through `contracts` or static `provides`.
+6. Include tests for the factory and contract implementation.
+7. Publish to npm or JSR.
 
 Users install the package and Veryfront discovers it:
 
 ```bash
 deno add @myorg/ext-custom-cache
 ```
+
+Use `"auto"` only when importing and setting up the package is safe merely
+because it is installed. Use `"explicit"` for credentialed, native, or
+side-effecting providers; Veryfront then ignores the installed package until
+the project imports its factory and adds the resulting extension to
+`veryfront.config.ts`. Omitting `activation` retains the legacy `"auto"`
+behavior. Unknown or malformed activation metadata fails closed.
 
 Use semver for releases. Treat contract shape changes as breaking changes.
 

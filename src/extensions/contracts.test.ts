@@ -41,6 +41,22 @@ describe("extensions/contracts", () => {
         "Install it with: deno add npm:@veryfront/ext-react-ssr",
       );
     });
+
+    it("recommends first-party asset engine extensions", () => {
+      for (
+        const [contract, packageName] of [
+          ["CSSOptimizationEngine", "@veryfront/ext-css-lightning"],
+          ["CSSPurgingEngine", "@veryfront/ext-css-purgecss"],
+          ["ImageOptimizationEngine", "@veryfront/ext-image-sharp"],
+        ] as const
+      ) {
+        assertThrows(
+          () => resolve(contract),
+          Error,
+          `deno add ${packageName}`,
+        );
+      }
+    });
   });
 
   describe("tryResolve()", () => {

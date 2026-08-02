@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { StreamTimeoutError, streamToString } from "./stream-utils.ts";
+import { StreamSizeLimitError, StreamTimeoutError, streamToString } from "./stream-utils.ts";
 
 function createStream(
   chunks: Array<Uint8Array | null>,
@@ -92,5 +92,74 @@ describe("streamToString", () => {
       if (!(error instanceof StreamTimeoutError)) throw error;
       assertEquals(error.partialContent, "Partial content");
     }
+  });
+
+  it("enforces an absolute deadline when ready reads starve timers", async () => {
+    let cancelReason: unknown;
+    let thrown: unknown;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(1024));
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+
+    await assertRejects(
+      async () => {
+        try {
+          await streamToString(stream, 1);
+        } catch (error) {
+          thrown = error;
+          throw error;
+        }
+      },
+      StreamTimeoutError,
+      "timed out after 1ms",
+    );
+    assertStrictEquals(cancelReason, thrown);
+  });
+
+  it("cancels with the owned failure when buffered output exceeds its limit", async () => {
+    let cancelReason: unknown;
+    let thrown: unknown;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3, 4, 5]));
+      },
+      cancel(reason) {
+        cancelReason = reason;
+      },
+    });
+
+    await assertRejects(
+      async () => {
+        try {
+          await streamToString(stream, 100, 4);
+        } catch (error) {
+          thrown = error;
+          throw error;
+        }
+      },
+      StreamSizeLimitError,
+      "limit of 4 bytes",
+    );
+    assertStrictEquals(cancelReason, thrown);
+  });
+
+  it("rejects invalid timeout and byte limits before locking the stream", async () => {
+    const stream = createStream([]);
+    await assertRejects(
+      () => streamToString(stream, 0),
+      RangeError,
+      "timeout must be a positive safe integer",
+    );
+    await assertRejects(
+      () => streamToString(stream, 100, Number.MAX_VALUE),
+      RangeError,
+      "output limit must be a positive safe integer",
+    );
+    assertEquals(stream.locked, false);
   });
 });

@@ -173,6 +173,44 @@ Deno.test("prepareHostedChatRuntimeToolAssembly defers an unrestricted tools tru
   assertEquals(taskContext.availableToolNames, ["tool_search"]);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly preserves the full deferred OpenAI catalog", async () => {
+  const remoteTools = [
+    ...Array.from(
+      { length: 132 },
+      (_, index) => remoteTool(`catalog_tool_${String(index).padStart(3, "0")}`, "Catalog tool"),
+    ),
+    remoteTool("write_sandbox_files", "Write sandbox files"),
+  ];
+  const remoteToolNames = remoteTools.map((tool) => tool.name);
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-5.5",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+    taskContext,
+    instructions: "Base instructions",
+    localTools: { load_skill: localTool("Load skill") },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: null,
+    createRemoteToolSource: (config) => ({
+      id: config.id ?? "api-mcp",
+      listTools: () => Promise.resolve(remoteTools),
+      executeTool: () => Promise.resolve({ ok: true }),
+    }),
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.toolLoadingMode, "deferred");
+  assertEquals(toolAssembly.remoteToolNames, remoteToolNames);
+  assertEquals(toolAssembly.compatibleRemoteToolNames, remoteToolNames);
+  assertEquals(toolAssembly.availableToolNames, ["load_skill", ...remoteToolNames].sort());
+  assertEquals(taskContext.availableToolNames, ["load_skill", "tool_search"]);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly enforces the host authorization ceiling before discovery", async () => {
   const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
     sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,

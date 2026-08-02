@@ -139,6 +139,13 @@ describe("CommonSchemas", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ page: -1 }));
     });
 
+    it("should reject page numbers above the maximum safe integer", () => {
+      const unsafePage = Number.MAX_SAFE_INTEGER + 1;
+
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: unsafePage }));
+      assertParseFailure(CommonSchemas.pagination.safeParse({ page: String(unsafePage) }));
+    });
+
     it("should reject limit exceeding 100", () => {
       assertParseFailure(CommonSchemas.pagination.safeParse({ limit: 101 }));
     });

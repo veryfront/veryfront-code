@@ -30,6 +30,9 @@ export type {
   ResolvedExtension,
 } from "./types.ts";
 
+// Runtime compatibility
+export { composeAbortSignals } from "./abort-signal.ts";
+
 // Contract registry — resolve/tryResolve are the consumer-facing API.
 // register()/reset() are internal primitives (used by ExtensionLoader and
 // tests) and are intentionally not exported here.

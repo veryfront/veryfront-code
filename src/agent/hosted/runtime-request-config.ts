@@ -9,7 +9,10 @@ import {
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
 import { AGENT_DELEGATE_TOOL_PREFIX } from "../runtime/agent-delegation-names.ts";
-import type { ToolExposureCheckpoint } from "../runtime/tool-exposure.ts";
+import {
+  isSupportedToolExposureCheckpointVersion,
+  type ToolExposureCheckpoint,
+} from "../runtime/tool-exposure.ts";
 
 /** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
@@ -66,7 +69,7 @@ export function getServerResolvedToolExposureCheckpoint(
   const value = forwardedProps?.serverResolvedToolExposureCheckpoint;
   if (
     !isRecord(value) ||
-    value.version !== 1 ||
+    !isSupportedToolExposureCheckpointVersion(value.version) ||
     !Array.isArray(value.loadedToolNames) ||
     !value.loadedToolNames.every((name) => typeof name === "string" && name.length > 0) ||
     new Set(value.loadedToolNames).size !== value.loadedToolNames.length
@@ -74,7 +77,7 @@ export function getServerResolvedToolExposureCheckpoint(
     return undefined;
   }
   return {
-    version: 1,
+    version: value.version,
     loadedToolNames: [...value.loadedToolNames],
   };
 }

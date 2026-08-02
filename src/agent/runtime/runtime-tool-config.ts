@@ -3,7 +3,11 @@ import type { AgentConfig } from "../types.ts";
 import type { RuntimeRemoteToolConfig } from "./mcp-server-tool-sources.ts";
 import { resolveEffectiveSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { type SourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
-import { isValidToolExposureCheckpointName, type ToolExposureCheckpoint } from "./tool-exposure.ts";
+import {
+  isSupportedToolExposureCheckpointVersion,
+  isValidToolExposureCheckpointName,
+  type ToolExposureCheckpoint,
+} from "./tool-exposure.ts";
 
 /** Internal schema-loading mode derived from the authored tools selector. */
 export type RuntimeToolLoadingMode = "eager" | "deferred";
@@ -151,7 +155,7 @@ export function getRuntimeToolExposureCheckpoint(
 ): ToolExposureCheckpoint | undefined {
   const value = (config as RuntimeToolFilterConfig).__vfToolExposureCheckpoint;
   if (
-    value?.version !== 1 ||
+    !isSupportedToolExposureCheckpointVersion(value?.version) ||
     !Array.isArray(value.loadedToolNames) ||
     !value.loadedToolNames.every(isValidToolExposureCheckpointName)
   ) {

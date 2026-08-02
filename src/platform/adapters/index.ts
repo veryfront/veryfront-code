@@ -9,6 +9,7 @@ export type {
   BoundedFileSystemAdapter,
   DirEntry,
   EnvironmentAdapter,
+  ExactBoundedFileSystemAdapter,
   FileChangeEvent,
   FileChangeKind,
   FileInfo,

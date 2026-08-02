@@ -2,6 +2,8 @@ import { DEFAULT_PORT } from "#veryfront/platform/compat/constants.ts";
 export { DEFAULT_PORT };
 export const DEFAULT_TIMEOUT_MS = 5000;
 export const SSR_TIMEOUT_MS = 10000;
+/** Default ceiling for request-local buffered SSR output; streaming output is unaffected. */
+export const SSR_MAX_BUFFERED_BYTES = 16 * 1024 * 1024;
 export const SANDBOX_TIMEOUT_MS = 5000;
 
 /** Timeout for user data fetching functions (getServerData, getStaticData) */

@@ -30,6 +30,8 @@ export interface HydrationDataStructure {
   /** Server/runtime identity used to reject stale cross-deploy SPA payloads. */
   buildVersion?: BuildVersion;
   frontmatter?: Record<string, unknown>;
+  /** Bounded, nonce-free route head descriptors for deterministic navigation handoff. */
+  managedHeadPayload?: string;
   layoutProps?: Record<string, Record<string, unknown>>;
   /**
    * Whether running in development mode.

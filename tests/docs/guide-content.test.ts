@@ -59,6 +59,18 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "`scope`, `perUser`, and\n`tools` fields are rejected");
   });
 
+  it("documents fail-closed extension activation modes", async () => {
+    const guide = await Deno.readTextFile(
+      "docs/guides/extension-authoring.md",
+    );
+
+    assertStringIncludes(guide, "`veryfront.activation`");
+    assertStringIncludes(guide, '`"auto"` or `"explicit"`');
+    assertStringIncludes(guide, "ignores the installed package until");
+    assertStringIncludes(guide, 'legacy `"auto"`\nbehavior');
+    assertStringIncludes(guide, "malformed activation metadata fails closed");
+  });
+
   it("does not document caller-provided endUserId as tool context authority", async () => {
     const guide = await Deno.readTextFile("docs/guides/tools.md");
 

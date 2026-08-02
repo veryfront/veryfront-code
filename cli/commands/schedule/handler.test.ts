@@ -253,6 +253,7 @@ describe("schedule command", () => {
         },
       });
     } finally {
+      Deno.chdir(originalCwd);
       await stopEsbuild();
       await Deno.remove(projectDir, { recursive: true });
       await Deno.remove(configHome, { recursive: true });

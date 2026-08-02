@@ -156,6 +156,18 @@ describe("agent/runtime-tool-config", () => {
           loadedToolNames: ["get_release"],
         },
       })),
+      {
+        version: 2,
+        loadedToolNames: ["get_release"],
+      },
+    );
+    assertEquals(
+      getRuntimeToolExposureCheckpoint(runtimeConfig({
+        __vfToolExposureCheckpoint: {
+          version: 3,
+          loadedToolNames: ["get_release"],
+        },
+      })),
       undefined,
     );
   });

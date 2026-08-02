@@ -18,6 +18,12 @@ export default defineConfig({
 });
 ```
 
+Core never discovers or auto-registers this provider. Production pipelines
+that request CSS minification must also explicitly compose a
+`CSSOptimizationEngine` provider such as `@veryfront/ext-css-lightning`.
+If either requested provider is absent, compilation fails instead of returning
+empty or regex-rewritten CSS.
+
 ## Provided contract
 
 `CSSProcessor` — exposes:

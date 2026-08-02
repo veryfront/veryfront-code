@@ -9,7 +9,7 @@ import { assertEquals } from "#veryfront/testing/assert";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
 import type { ModelRuntime } from "../../src/provider/types.ts";
 
-import { createError, fromError, toError } from "../../src/errors/veryfront-error.ts";
+import { createError, fromError, toError } from "#veryfront/errors";
 
 function createMockStreamingModel(
   provider: string,

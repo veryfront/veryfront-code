@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.1183",
+  "version": "0.1.1186",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "minimumDependencyAge": {
@@ -133,6 +133,7 @@
     "./security": "./src/security/index.ts",
     "./observability": "./src/observability/index.ts",
     "./observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",
+    "./platform/env": "./src/platform/compat/process/env.ts",
     "./utils": "./src/utils/index.ts",
     "./utils/logger": "./src/utils/logger/index.ts",
     "./release-assets": "./src/release-assets/index.ts",
@@ -236,6 +237,7 @@
     "veryfront/transforms/mdx-cache": "./src/transforms/mdx/esm-module-loader/cache/index.ts",
     "veryfront/observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",
     "veryfront/platform/esbuild-init": "./src/platform/compat/esbuild-init.ts",
+    "veryfront/platform/env": "./src/platform/compat/process/env.ts",
     "veryfront/platform/process": "./src/platform/compat/process.ts",
     "veryfront/platform/path": "./src/platform/compat/path/index.ts",
     "veryfront/platform/http": "./src/platform/compat/http/index.ts",
@@ -429,8 +431,7 @@
     "react/jsx-runtime": "./react/jsx-runtime.ts",
     "react/jsx-dev-runtime": "./react/jsx-dev-runtime.ts",
     "veryfront/schemas": "./src/schemas/index.ts",
-    "veryfront/chat/message-prep": "./src/chat/message-prep.ts",
-    "#dnt": "jsr:@deno/dnt@0.42.3"
+    "veryfront/chat/message-prep": "./src/chat/message-prep.ts"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

@@ -46,6 +46,9 @@ export interface CacheBackend {
    */
   get(key: string): Promise<string | null>;
 
+  /** Return a value only when its complete UTF-8 payload fits within the limit. */
+  getWithinLimit?(key: string, maximumBytes: number): Promise<string | null>;
+
   /**
    * Read one value while enforcing an exact UTF-8 payload-byte ceiling before
    * an untrusted backend can materialize an oversized value. Overflow rejects

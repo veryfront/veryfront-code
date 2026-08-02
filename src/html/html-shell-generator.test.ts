@@ -341,7 +341,10 @@ describe("html-generation/html-shell-generator", () => {
         createOptions(),
       );
 
-      assertStringIncludes(result, "<title>My Test Page</title>");
+      assertStringIncludes(
+        result,
+        '<title data-vf-shell-head="true">My Test Page</title>',
+      );
     });
 
     it("should use frontmatter title if provided", async () => {
@@ -354,7 +357,10 @@ describe("html-generation/html-shell-generator", () => {
         createOptions(),
       );
 
-      assertStringIncludes(result, "<title>Frontmatter Title</title>");
+      assertStringIncludes(
+        result,
+        '<title data-vf-shell-head="true">Frontmatter Title</title>',
+      );
     });
 
     it("should include import map", async () => {

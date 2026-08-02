@@ -9,7 +9,6 @@ export interface NodeIncomingMessage {
   method?: string;
   headers: Record<string, string | string[] | undefined>;
 }
-
 export interface NodeServerResponse {
   statusCode: number;
   statusMessage: string;

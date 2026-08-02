@@ -13,6 +13,7 @@ import {
   PAGE_TRANSITION_DELAY_MS,
   SANDBOX_TIMEOUT_MS,
   SIZE_HISTOGRAM_BOUNDARIES_KB,
+  SSR_MAX_BUFFERED_BYTES,
   SSR_TIMEOUT_MS,
 } from "./defaults.ts";
 
@@ -38,6 +39,10 @@ describe("config/defaults", () => {
 
     it("should have correct SSR_TIMEOUT_MS", () => {
       assertEquals(SSR_TIMEOUT_MS, 10000);
+    });
+
+    it("should bound request-local buffered SSR output", () => {
+      assertEquals(SSR_MAX_BUFFERED_BYTES, 16 * 1024 * 1024);
     });
 
     it("should have correct SANDBOX_TIMEOUT_MS", () => {

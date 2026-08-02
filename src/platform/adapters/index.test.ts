@@ -45,6 +45,13 @@ describe("adapters/index.ts exports", () => {
     });
   });
 
+  describe("filesystem snapshot errors", () => {
+    it("exports the stable snapshot error contract", async () => {
+      await assertExport("FileSnapshotChangedError", "function");
+      await assertExport("isFileSnapshotChangedError", "function");
+    });
+  });
+
   describe("FS Adapters", () => {
     it("should export createFSAdapter", async () => {
       await assertExport("createFSAdapter", "function");

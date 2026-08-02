@@ -128,10 +128,6 @@ function commandNameForJson(args: ParsedArgs): string {
   return typeof command === "string" && command.length > 0 ? command : "cli";
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 async function outputCliJsonError(
   command: string,
   error: {
@@ -259,16 +255,16 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     const handler = await handlerLoader();
     await handler(args);
   }, {
-    onError: async (error, vfError) => {
+    onError: async (_error, vfError) => {
       if (!isJsonMode()) {
-        console.error((await import("veryfront/errors")).formatCLIError(error, {
+        console.error((await import("veryfront/errors")).formatCLIError(vfError, {
           color: shouldUseColor(),
           verbose: isVerbose(),
         }));
         return;
       }
 
-      const message = errorMessage(error);
+      const message = vfError.detail ?? vfError.message;
       const isUsageError = vfError.exitCode === 2 || message.startsWith("Invalid ");
       await outputCliJsonError(commandNameForJson(args), {
         code: isUsageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
@@ -279,7 +275,7 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       });
     },
     getExitCode: (_error, vfError) =>
-      vfError.exitCode ?? (errorMessage(vfError).startsWith("Invalid ") ? 2 : 1),
+      vfError.exitCode ?? ((vfError.detail ?? vfError.message).startsWith("Invalid ") ? 2 : 1),
   });
 
   // Wait for update check to finish (with timeout to avoid hanging)

@@ -5,10 +5,12 @@ import "#veryfront/schemas/_test-setup.ts";
  * @module extensions/factory-loader.test
  */
 
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { toFileUrl } from "#veryfront/compat/path";
 import { join } from "@std/path";
-import { loadExtensionFactory } from "./factory-loader.ts";
+import { bindExtensionEntrypoint, captureExtensionOwner } from "./entrypoint-identity.ts";
+import { assertCanonicalExtensionImport, loadExtensionFactory } from "./factory-loader.ts";
 
 describe("loadExtensionFactory()", () => {
   let tmp: string;
@@ -153,4 +155,130 @@ describe("loadExtensionFactory()", () => {
     const resolved = await loadExtensionFactory(path, "package");
     assertEquals(resolved.source, "package");
   });
+
+  it("does not call DNT's incompatible import.meta.resolve ponyfill on Node 18", () => {
+    let resolverCalls = 0;
+    assertCanonicalExtensionImport(
+      "file:///project/extension.ts",
+      "/project/extension.ts",
+      {
+        runtime: "node",
+        resolver: () => {
+          resolverCalls++;
+          throw new Error("require.resolve cannot load file URLs");
+        },
+      },
+    );
+    assertEquals(resolverCalls, 0);
+  });
+
+  it("fails closed without a resolver outside Node", () => {
+    assertThrows(
+      () =>
+        assertCanonicalExtensionImport(
+          "file:///project/extension.ts",
+          "/project/extension.ts",
+          { runtime: "other" },
+        ),
+      Error,
+      "cannot verify extension import target",
+    );
+  });
+
+  it("rejects a discovered target replaced before import", async () => {
+    const ownerPath = join(tmp, "bound-extension");
+    const targetPath = join(ownerPath, "index.ts");
+    await Deno.mkdir(ownerPath, { recursive: true });
+    await Deno.writeTextFile(
+      targetPath,
+      'export default () => ({ name: "first", version: "1", capabilities: [] });',
+    );
+    const owner = await captureExtensionOwner(ownerPath);
+    const binding = await bindExtensionEntrypoint(owner, "./index.ts");
+
+    await Deno.rename(targetPath, join(ownerPath, "first.ts"));
+    await Deno.writeTextFile(
+      targetPath,
+      'export default () => ({ name: "replacement", version: "1", capabilities: [] });',
+    );
+
+    await assertRejects(
+      () => loadExtensionFactory(binding.path, "project", undefined, binding),
+      Error,
+      "target identity changed",
+    );
+  });
+
+  for (const mappingKind of ["exact", "prefix"] as const) {
+    it(`rejects ${mappingKind} import-map redirection of an unbound local file URL`, async () => {
+      const targetDirectory = join(tmp, "authorized");
+      const redirectDirectory = join(tmp, "redirected");
+      const targetPath = join(targetDirectory, "index.ts");
+      const redirectedPath = join(redirectDirectory, "index.ts");
+      const configPath = join(tmp, `${mappingKind}.deno.json`);
+      const childPath = join(tmp, `${mappingKind}.child.ts`);
+      await Deno.mkdir(targetDirectory, { recursive: true });
+      await Deno.mkdir(redirectDirectory, { recursive: true });
+      await Deno.writeTextFile(
+        targetPath,
+        'export default () => ({ name: "authorized", version: "1", capabilities: [] });',
+      );
+      await Deno.writeTextFile(
+        redirectedPath,
+        'export default () => ({ name: "redirected", version: "1", capabilities: [] });',
+      );
+
+      const repositoryRoot = Deno.cwd();
+      const targetUrl = toFileUrl(targetPath).href;
+      const mappings: Record<string, string> = {
+        "#veryfront/compat/path": toFileUrl(
+          join(repositoryRoot, "src", "platform", "compat", "path", "index.ts"),
+        ).href,
+        "#veryfront/compat/": `${
+          toFileUrl(join(repositoryRoot, "src", "platform", "compat")).href
+        }/`,
+        "#veryfront/errors/": `${toFileUrl(join(repositoryRoot, "src", "errors")).href}/`,
+        "#veryfront/platform/": `${toFileUrl(join(repositoryRoot, "src", "platform")).href}/`,
+        "#veryfront/": `${toFileUrl(join(repositoryRoot, "src")).href}/`,
+      };
+      if (mappingKind === "exact") {
+        mappings[targetUrl] =
+          "data:text/javascript,export default () => ({ name: 'redirected', version: '1', capabilities: [] })";
+      } else {
+        mappings[`${toFileUrl(targetDirectory).href}/`] = `${toFileUrl(redirectDirectory).href}/`;
+      }
+      await Deno.writeTextFile(configPath, JSON.stringify({ imports: mappings }));
+
+      const loaderUrl = new URL("./factory-loader.ts", import.meta.url).href;
+      await Deno.writeTextFile(
+        childPath,
+        `import { loadExtensionFactory } from ${JSON.stringify(loaderUrl)};
+try {
+  await loadExtensionFactory(${JSON.stringify(targetPath)}, "local-file");
+  Deno.exit(2);
+} catch (error) {
+  const detail = error && typeof error === "object" && "detail" in error
+    ? String(error.detail)
+    : String(error);
+  if (!detail.includes("remapped")) {
+    console.error(detail);
+    Deno.exit(3);
+  }
+  console.log("rejected-remap");
+}`,
+      );
+
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "--config", configPath, "--allow-read", childPath],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(
+        output.success,
+        true,
+        new TextDecoder().decode(output.stderr),
+      );
+      assertEquals(new TextDecoder().decode(output.stdout).trim(), "rejected-remap");
+    });
+  }
 });

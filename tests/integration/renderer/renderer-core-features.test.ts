@@ -129,7 +129,10 @@ description: Test description
           assertStringIncludes(result.html.toLowerCase(), "<!doctype");
           assertStringIncludes(result.html, "<html");
           assertStringIncludes(result.html, "<head>");
-          assertStringIncludes(result.html, "<title>Test Page</title>");
+          assertStringIncludes(
+            result.html,
+            '<title data-vf-shell-head="true">Test Page</title>',
+          );
           assertStringIncludes(result.html, "<body");
           assertStringIncludes(result.html, "suppressHydrationWarning");
         });
@@ -189,7 +192,10 @@ export const metadata = {
           });
 
           const result = await renderer.renderPage("meta");
-          assertStringIncludes(result.html, "<title>Meta Test</title>");
+          assertStringIncludes(
+            result.html,
+            '<title data-vf-shell-head="true">Meta Test</title>',
+          );
         });
       });
 
@@ -223,7 +229,10 @@ export async function generateMetadata(ctx) {
             url: new URL("https://example.com/query-meta?tab=details&q=search-term"),
           });
 
-          assertStringIncludes(result.html, "<title>Query title: details</title>");
+          assertStringIncludes(
+            result.html,
+            '<title data-vf-shell-head="true">Query title: details</title>',
+          );
           assertStringIncludes(result.html, 'content="Search: search-term"');
         });
       });
