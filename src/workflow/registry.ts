@@ -1,8 +1,15 @@
 import type { Workflow, WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import { agentLogger as logger } from "#veryfront/utils";
+import { snapshotThrowableDiagnostic } from "#veryfront/errors/safe-diagnostics.ts";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
+import {
+  captureWorkflowDefinition,
+  captureWorkflowNodes,
+  captureWorkflowStaticValue,
+} from "./executor/workflow-definition-snapshot.ts";
 
 export interface NodeInfo {
   id: string;
@@ -42,6 +49,8 @@ export interface WorkflowMetadata {
   hasOutputSchema: boolean;
   /** JSON Schema representation of input schema (if available) */
   inputSchemaJson?: Record<string, unknown>;
+  /** Conversion failure when an input schema cannot be represented as JSON Schema. */
+  inputSchemaError?: string;
   registeredAt: string;
 }
 
@@ -55,7 +64,38 @@ function createProxy(): unknown {
 }
 
 function getWorkflowDefinition(workflow: Workflow | WorkflowDefinition): WorkflowDefinition {
-  return "definition" in workflow ? workflow.definition : workflow;
+  if (
+    (typeof workflow === "object" || typeof workflow === "function") &&
+    workflow !== null && !isProxyWithoutHooks(workflow)
+  ) {
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(workflow, "definition");
+      if (descriptor && "value" in descriptor) {
+        return descriptor.value as WorkflowDefinition;
+      }
+    } catch {
+      // Canonical capture below produces the public validation error without
+      // evaluating getters, coercion hooks, or inherited properties.
+    }
+  }
+
+  return workflow as WorkflowDefinition;
+}
+
+function getCollaboratorId(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value !== "object" || value === null || isProxyWithoutHooks(value)) {
+    return undefined;
+  }
+
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, "id");
+    return descriptor && "value" in descriptor && typeof descriptor.value === "string"
+      ? descriptor.value
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
@@ -79,14 +119,17 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         const dummyInput = createProxy();
         const dummyContext: Record<string, unknown> = { input: createProxy() };
 
-        workflowNodes = definition.steps(
-          {
-            input: dummyInput,
-            context: dummyContext,
-          } as Parameters<typeof definition.steps>[0],
+        workflowNodes = captureWorkflowNodes(
+          definition.steps(
+            {
+              input: dummyInput,
+              context: dummyContext,
+            } as Parameters<typeof definition.steps>[0],
+          ),
+          `Workflow "${definition.id}" introspection`,
         );
       } catch (error) {
-        introspectionError = error instanceof Error ? error.message : String(error);
+        introspectionError = snapshotThrowableDiagnostic(error);
         logger.warn(
           `[WorkflowRegistry] Failed to introspect steps for "${definition.id}": ${introspectionError}`,
         );
@@ -110,16 +153,16 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
       const nodeInfo: NodeInfo = {
         id: node.id,
         type,
-        dependsOn: node.dependsOn,
+        dependsOn: node.dependsOn === undefined
+          ? undefined
+          : Object.freeze([...node.dependsOn]) as string[],
       };
 
       const config = node.config as unknown as Record<string, unknown>;
 
       if (type === "step") {
         const agentValue = config.agent;
-        const agentRef = typeof agentValue === "string"
-          ? agentValue
-          : (agentValue as { id?: string } | undefined)?.id;
+        const agentRef = getCollaboratorId(agentValue);
 
         if (agentRef) {
           nodeInfo.agent = agentRef;
@@ -127,9 +170,7 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         }
 
         const toolValue = config.tool;
-        const toolRef = typeof toolValue === "string"
-          ? toolValue
-          : (toolValue as { id?: string } | undefined)?.id;
+        const toolRef = getCollaboratorId(toolValue);
 
         if (toolRef) {
           nodeInfo.tool = toolRef;
@@ -153,9 +194,9 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
         children.push(...extractNodeInfo(config.else as WorkflowNode[]));
       }
 
-      if (children.length) nodeInfo.children = children;
+      if (children.length) nodeInfo.children = Object.freeze(children) as string[];
 
-      nodeInfoList.push(nodeInfo);
+      nodeInfoList.push(Object.freeze(nodeInfo));
     }
 
     return ids;
@@ -164,15 +205,22 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
   extractNodeInfo(workflowNodes);
 
   let inputSchemaJson: Record<string, unknown> | undefined;
+  let inputSchemaError: string | undefined;
   if (definition.inputSchema) {
     try {
-      inputSchemaJson = zodToJsonSchema(definition.inputSchema) as Record<string, unknown>;
-    } catch (_) {
-      /* expected: zod-to-json-schema conversion may not support all types */
+      inputSchemaJson = captureWorkflowStaticValue(
+        zodToJsonSchema(definition.inputSchema) as Record<string, unknown>,
+        `Workflow "${definition.id}" input schema metadata`,
+      );
+    } catch (error) {
+      inputSchemaError = snapshotThrowableDiagnostic(error);
+      logger.warn(
+        `[WorkflowRegistry] Failed to convert input schema for "${definition.id}": ${inputSchemaError}`,
+      );
     }
   }
 
-  return {
+  return Object.freeze({
     id: definition.id,
     description: definition.description,
     version: definition.version,
@@ -181,15 +229,16 @@ function extractMetadata(definition: WorkflowDefinition): WorkflowMetadata {
     introspectionSkipped,
     introspectionError,
     nodeCount: workflowNodes.length,
-    nodeTypes: Array.from(nodeTypes),
-    nodes: nodeInfoList,
-    agentRefs: Array.from(agentRefs),
-    toolRefs: Array.from(toolRefs),
+    nodeTypes: Object.freeze(Array.from(nodeTypes)) as string[],
+    nodes: Object.freeze(nodeInfoList) as NodeInfo[],
+    agentRefs: Object.freeze(Array.from(agentRefs)) as string[],
+    toolRefs: Object.freeze(Array.from(toolRefs)) as string[],
     hasInputSchema: !!definition.inputSchema,
     hasOutputSchema: !!definition.outputSchema,
     inputSchemaJson,
+    inputSchemaError,
     registeredAt: new Date().toISOString(),
-  };
+  });
 }
 
 const workflowMetadataManager = new ProjectScopedRegistryManager<WorkflowMetadata>("workflow");
@@ -200,9 +249,11 @@ const workflowDefinitionManager = new ProjectScopedRegistryManager<WorkflowDefin
 const workflowMetadataRegistry = new ScopedRegistryFacade(workflowMetadataManager);
 const workflowDefinitionRegistry = new ScopedRegistryFacade(workflowDefinitionManager);
 
-class WorkflowRegistryClass {
+class WorkflowRegistryInternal {
   private storeWorkflow(workflow: Workflow | WorkflowDefinition, shared: boolean): void {
-    const definition = getWorkflowDefinition(workflow);
+    const definition = captureWorkflowDefinition(getWorkflowDefinition(workflow), {
+      allowEmptySteps: true,
+    });
     const metadata = extractMetadata(definition);
 
     if (shared) {
@@ -294,9 +345,59 @@ class WorkflowRegistryClass {
   }
 }
 
-export const workflowRegistry = new WorkflowRegistryClass();
+/** Framework-only workflow registry with process-wide maintenance capabilities. */
+export const workflowRegistryInternal = new WorkflowRegistryInternal();
 
-export { WorkflowRegistryClass };
+/** Project-scoped workflow registry API safe for application code. */
+export class WorkflowRegistryClass {
+  readonly #registry: WorkflowRegistryInternal;
+
+  constructor(registry: WorkflowRegistryInternal = workflowRegistryInternal) {
+    this.#registry = registry;
+  }
+
+  register(workflow: Workflow | WorkflowDefinition): void {
+    this.#registry.register(workflow);
+  }
+
+  get(id: string): WorkflowMetadata | undefined {
+    return this.#registry.get(id);
+  }
+
+  getDefinition(id: string): WorkflowDefinition | undefined {
+    return this.#registry.getDefinition(id);
+  }
+
+  has(id: string): boolean {
+    return this.#registry.has(id);
+  }
+
+  getAllIds(): string[] {
+    return this.#registry.getAllIds();
+  }
+
+  getAll(): Map<string, WorkflowMetadata> {
+    return this.#registry.getAll();
+  }
+
+  getAllAsArray(): WorkflowMetadata[] {
+    return this.#registry.getAllAsArray();
+  }
+
+  getStats(): ReturnType<WorkflowRegistryInternal["getStats"]> {
+    return this.#registry.getStats();
+  }
+
+  unregister(id: string): boolean {
+    return this.#registry.unregister(id);
+  }
+
+  clear(): void {
+    this.#registry.clear();
+  }
+}
+
+export const workflowRegistry = new WorkflowRegistryClass();
 
 export function registerWorkflow(workflow: Workflow | WorkflowDefinition): void {
   workflowRegistry.register(workflow);

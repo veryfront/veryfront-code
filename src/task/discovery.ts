@@ -20,7 +20,7 @@
  * ```
  */
 
-import { join } from "#veryfront/compat/path";
+import { fromFileUrl, join } from "#veryfront/compat/path";
 import { logger as baseLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -38,6 +38,16 @@ const TASK_IGNORE_PATTERNS = [
   "*.test.*",
   "*.spec.*",
 ] as const;
+
+function normalizeTaskDiscoveryPath(value: string): string {
+  const fromUrl = value.startsWith("file://");
+  const path = fromUrl ? fromFileUrl(value) : value;
+  const normalized = path.replaceAll("\\", "/");
+  // `fromFileUrl()` represents a Windows drive URL as `/C:/...` on POSIX.
+  // Normalize that transport-only leading slash so it matches an authored
+  // Windows tasks directory without changing ordinary POSIX paths.
+  return fromUrl && /^\/[A-Za-z]:\//.test(normalized) ? normalized.slice(1) : normalized;
+}
 
 /**
  * Discovered task info.
@@ -111,16 +121,23 @@ function toErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function compareText(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 async function collectTaskFiles(baseDir: string, adapter: RuntimeAdapter): Promise<
   Awaited<ReturnType<typeof collectFiles>>
 > {
-  return await collectFiles({
+  const files = await collectFiles({
     baseDir,
     extensions: [...TASK_FILE_EXTENSIONS],
     recursive: true,
     ignorePatterns: [...TASK_IGNORE_PATTERNS],
     adapter,
   });
+  return files.sort((left, right) =>
+    compareText(left.path.replaceAll("\\", "/"), right.path.replaceAll("\\", "/"))
+  );
 }
 
 function extractTaskExport(
@@ -155,11 +172,50 @@ async function loadTaskFromFile(
 
   return {
     id,
-    name: taskExport.definition.name || id,
+    name: typeof taskExport.definition.name === "string" &&
+        taskExport.definition.name.trim().length > 0
+      ? taskExport.definition.name
+      : id,
     filePath,
     exportName: taskExport.exportName,
     definition: taskExport.definition,
   };
+}
+
+function finalizeTaskDiscoveryResult(
+  tasks: DiscoveredTask[],
+  errors: TaskDiscoveryResult["errors"],
+): TaskDiscoveryResult {
+  const tasksById = new Map<string, DiscoveredTask[]>();
+  for (const task of tasks) {
+    const matches = tasksById.get(task.id) ?? [];
+    matches.push(task);
+    tasksById.set(task.id, matches);
+  }
+
+  const uniqueTasks: DiscoveredTask[] = [];
+  for (const [id, matches] of tasksById) {
+    if (matches.length === 1) {
+      uniqueTasks.push(matches[0]!);
+      continue;
+    }
+
+    const paths = matches.map((task) => task.filePath).sort(compareText);
+    for (const filePath of paths) {
+      errors.push({
+        filePath,
+        error: `Duplicate task id "${id}" was declared by: ${paths.join(", ")}`,
+      });
+    }
+  }
+
+  uniqueTasks.sort((left, right) =>
+    compareText(left.id, right.id) || compareText(left.filePath, right.filePath)
+  );
+  errors.sort((left, right) =>
+    compareText(left.filePath, right.filePath) || compareText(left.error, right.error)
+  );
+  return { tasks: uniqueTasks, errors };
 }
 
 function logDiscoveredTask(task: DiscoveredTask, debug: boolean): void {
@@ -175,13 +231,12 @@ function logDiscoveredTask(task: DiscoveredTask, debug: boolean): void {
  * instead.
  */
 export function deriveTaskId(filePath: string, tasksDir: string): string {
-  // Remove the tasks dir prefix and extension
-  let relative = filePath;
-  const dirPrefix = tasksDir.endsWith("/") ? tasksDir : `${tasksDir}/`;
+  let relative = normalizeTaskDiscoveryPath(filePath);
+  const normalizedTasksDir = normalizeTaskDiscoveryPath(tasksDir).replace(/\/+$/, "");
+  const dirPrefix = normalizedTasksDir === "" ? "/" : `${normalizedTasksDir}/`;
   if (relative.startsWith(dirPrefix)) {
     relative = relative.slice(dirPrefix.length);
   }
-  // Remove extension
   return relative.replace(/\.(ts|tsx|js|jsx)$/, "");
 }
 
@@ -215,7 +270,7 @@ export async function discoverTasks(
       if (debug) {
         logger.info(`No tasks directory found at ${baseDir}`);
       }
-      return { tasks, errors };
+      return finalizeTaskDiscoveryResult(tasks, errors);
     }
 
     const files = await collectTaskFiles(baseDir, adapter);
@@ -245,18 +300,17 @@ export async function discoverTasks(
         }
       }
     }
-
-    if (debug) {
-      logger.info(`Discovered ${tasks.length} tasks`);
-    }
-
-    return { tasks, errors };
   } catch (error) {
     const errorMsg = toErrorMessage(error);
     logger.error(`Task discovery failed: ${errorMsg}`);
     errors.push({ filePath: baseDir, error: errorMsg });
-    return { tasks, errors };
   }
+
+  const result = finalizeTaskDiscoveryResult(tasks, errors);
+  if (debug) {
+    logger.info(`Discovered ${result.tasks.length} tasks`);
+  }
+  return result;
 }
 
 /**
@@ -283,6 +337,7 @@ export async function findTaskById(
     if (!dirExists) return null;
 
     const files = await collectTaskFiles(baseDir, adapter);
+    const matches: DiscoveredTask[] = [];
 
     for (const file of files) {
       const id = deriveTaskId(file.path, baseDir);
@@ -291,8 +346,7 @@ export async function findTaskById(
       try {
         const task = await loadTaskFromFile(file.path, id, adapter, projectDir);
         if (task) {
-          logDiscoveredTask(task, debug);
-          return task;
+          matches.push(task);
         }
       } catch (error) {
         const errorMsg = toErrorMessage(error);
@@ -301,6 +355,18 @@ export async function findTaskById(
         }
       }
     }
+
+    if (matches.length > 1) {
+      const paths = matches.map((task) => task.filePath).sort(compareText);
+      logger.error(
+        `Task id "${taskId}" is ambiguous and was declared by: ${paths.join(", ")}`,
+      );
+      return null;
+    }
+
+    const task = matches[0] ?? null;
+    if (task) logDiscoveredTask(task, debug);
+    return task;
   } catch (error) {
     const errorMsg = toErrorMessage(error);
     logger.error(`Task discovery failed while finding "${taskId}": ${errorMsg}`);

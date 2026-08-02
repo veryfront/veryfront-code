@@ -23,7 +23,10 @@
 
 export { webhook } from "./factory.ts";
 export { discoverWebhooks } from "./discovery.ts";
+export { prepareWebhookInvocation } from "./runtime.ts";
+export { isWebhookId } from "./validation.ts";
 export type {
+  WebhookAgentConversationMode,
   WebhookAgentMessageMapping,
   WebhookConfig,
   WebhookDefinition,
@@ -34,3 +37,4 @@ export type {
 } from "./types.ts";
 export { isWebhookDefinition } from "./types.ts";
 export type { WebhookDiscoveryOptions, WebhookDiscoveryResult } from "./discovery.ts";
+export type { PreparedWebhookInvocation } from "./runtime.ts";

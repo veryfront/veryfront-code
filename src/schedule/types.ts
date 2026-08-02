@@ -1,157 +1,94 @@
 import type { TriggerTarget } from "#veryfront/trigger/target.ts";
+import { isValidScheduleDefinition } from "./validation.ts";
 
+/** Behavior when a scheduled occurrence overlaps an active run. */
 export type ScheduleConcurrencyPolicy = "Allow" | "Forbid" | "Replace";
 
 /** Marks a schedule unhealthy when it has not succeeded within the given budget. */
 export interface ScheduleHealth {
+  /** Maximum elapsed seconds since the most recent successful run. */
   maxStalenessSeconds: number;
 }
 
+/** Stable integration resource key used for source-owned access requirements. */
 export interface ScheduleIntegrationResourceIdentity {
+  /** Lowercase resource category, such as `workspace` or `channel`. */
   kind: string;
+  /** Provider-owned resource identifier. */
   id: string;
 }
 
+/** Integration resource optionally scoped beneath a parent resource. */
 export interface ScheduleIntegrationResource extends ScheduleIntegrationResourceIdentity {
+  /** Optional parent identity, such as the workspace containing a channel. */
   parent?: ScheduleIntegrationResourceIdentity;
 }
 
+/** Canonical integration access required before a scheduled run can start. */
 export interface ScheduleIntegrationRequirement {
+  /** Lowercase integration identifier. */
   integration: string;
+  /** Unique provider scopes required by the target. */
   requiredScopes: string[];
+  /** Unique provider resources required by the target. */
   resources: ScheduleIntegrationResource[];
 }
 
+/** Author-facing integration requirement; omitted collections default to empty. */
 export interface ScheduleIntegrationRequirementConfig {
+  /** Lowercase integration identifier. */
   integration: string;
+  /** Unique provider scopes required by the target. */
   requiredScopes?: string[];
+  /** Unique provider resources required by the target. */
   resources?: ScheduleIntegrationResource[];
 }
 
+/** Validated, canonical source definition for one recurring schedule. */
 export interface ScheduleDefinition {
+  /** Canonical slash-separated source trigger identifier. */
   id: string;
+  /** Optional human-readable display name. */
   name?: string;
+  /** Optional operator-facing description. */
   description?: string;
+  /** Canonical five-field POSIX cron expression. */
   schedule: string;
+  /** Supported IANA timezone name; platform default when omitted. */
   timezone?: string;
+  /** Task, workflow, or agent invoked by each occurrence. */
   target: TriggerTarget;
+  /** Bounded JSON object copied into each target run. */
   input?: Record<string, unknown>;
+  /** Positive execution timeout in seconds. */
   timeoutSeconds?: number;
+  /** Non-negative retry count; zero disables retries. */
   backoffLimit?: number;
+  /** Policy applied when an earlier occurrence is still running. */
   concurrencyPolicy?: ScheduleConcurrencyPolicy;
+  /** Positive lifetime cap on runs created by this schedule. */
   maxRuns?: number;
+  /** Optional schedule-health monitoring budget. */
   health?: ScheduleHealth;
+  /** Integration scopes and resources required by the target. */
   integrationRequirements?: ScheduleIntegrationRequirement[];
 }
 
+/**
+ * Author-facing recurring schedule configuration.
+ *
+ * `cron` is an alias for `schedule`; the factory emits only `schedule`.
+ */
 export type ScheduleConfig = Omit<ScheduleDefinition, "schedule" | "integrationRequirements"> & {
+  /** Alias for a five-field POSIX `schedule` expression. */
   cron?: string;
+  /** Five-field POSIX cron expression. */
   schedule?: string;
+  /** Integration requirements; omitted collections default to empty. */
   integrationRequirements?: ScheduleIntegrationRequirementConfig[];
 };
 
+/** Return true only when every schedule field and nested invariant is valid. */
 export function isScheduleDefinition(value: unknown): value is ScheduleDefinition {
-  if (!value || typeof value !== "object") return false;
-  const definition = value as Record<string, unknown>;
-  return (
-    typeof definition.id === "string" &&
-    typeof definition.schedule === "string" &&
-    definition.target !== null &&
-    typeof definition.target === "object" &&
-    isScheduleHealth(definition.health) &&
-    isScheduleIntegrationRequirements(definition.integrationRequirements)
-  );
-}
-
-function isScheduleHealth(value: unknown): value is ScheduleHealth {
-  if (value === undefined) return true;
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-
-  const record = value as Record<string, unknown>;
-  return hasOnlyKeys(record, ["maxStalenessSeconds"]) &&
-    typeof record.maxStalenessSeconds === "number" &&
-    Number.isInteger(record.maxStalenessSeconds) &&
-    record.maxStalenessSeconds > 0;
-}
-
-function isScheduleIntegrationRequirements(
-  value: unknown,
-): value is ScheduleIntegrationRequirement[] {
-  if (value === undefined) return true;
-  if (!Array.isArray(value) || value.length > 20) return false;
-
-  const integrations = new Set<string>();
-  for (const requirement of value) {
-    if (!requirement || typeof requirement !== "object" || Array.isArray(requirement)) {
-      return false;
-    }
-
-    const record = requirement as Record<string, unknown>;
-    const integration = isIntegrationName(record.integration) ? record.integration : undefined;
-    if (
-      integration === undefined ||
-      !hasOnlyKeys(record, ["integration", "requiredScopes", "resources"]) ||
-      integrations.has(integration.toLowerCase()) ||
-      !isStringArray(record.requiredScopes) ||
-      !isScheduleIntegrationResources(record.resources)
-    ) {
-      return false;
-    }
-
-    integrations.add(integration.toLowerCase());
-  }
-
-  return true;
-}
-
-function isScheduleIntegrationResources(value: unknown): value is ScheduleIntegrationResource[] {
-  if (!Array.isArray(value) || value.length > 50) return false;
-
-  return value.every((resource) => {
-    if (!resource || typeof resource !== "object" || Array.isArray(resource)) return false;
-
-    const record = resource as Record<string, unknown>;
-    return (
-      hasOnlyKeys(record, ["kind", "id", "parent"]) &&
-      isRequirementKind(record.kind) &&
-      isBoundedString(record.id, 512) &&
-      (record.parent === undefined || isScheduleIntegrationResourceIdentity(record.parent))
-    );
-  });
-}
-
-function isScheduleIntegrationResourceIdentity(
-  value: unknown,
-): value is ScheduleIntegrationResourceIdentity {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-
-  const record = value as Record<string, unknown>;
-  return hasOnlyKeys(record, ["kind", "id"]) &&
-    isRequirementKind(record.kind) && isBoundedString(record.id, 512);
-}
-
-function hasOnlyKeys(record: Record<string, unknown>, allowedKeys: string[]): boolean {
-  const allowed = new Set(allowedKeys);
-  return Object.keys(record).every((key) => allowed.has(key));
-}
-
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.length <= 50 &&
-    value.every((item) => isBoundedString(item, 255));
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isBoundedString(value: unknown, maxLength: number): value is string {
-  return isNonEmptyString(value) && value.trim().length <= maxLength;
-}
-
-function isIntegrationName(value: unknown): value is string {
-  return isBoundedString(value, 255) && /^[a-z0-9][a-z0-9_-]*$/.test(value.trim());
-}
-
-function isRequirementKind(value: unknown): value is string {
-  return isBoundedString(value, 64) && /^[a-z][a-z0-9_-]*$/.test(value.trim());
+  return isValidScheduleDefinition(value);
 }
