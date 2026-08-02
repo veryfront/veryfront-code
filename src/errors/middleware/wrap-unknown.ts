@@ -35,7 +35,8 @@ function snapshotContext(
  *
  * @param error - Any error value (Error, VeryfrontError, string, etc.)
  * @param context - Optional context to add to the wrapped error
- * @returns VeryfrontError instance with unknown-error slug
+ * @returns A detached, framework-owned VeryfrontError. Valid VeryfrontError
+ * inputs retain safe identity fields; other inputs use the unknown-error slug.
  *
  * @example
  * ```typescript

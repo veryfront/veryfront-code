@@ -116,9 +116,11 @@ metadata, and return RFC 9457 responses.
 Use `cliErrorBoundary()` for CLI entry points. CLI output may include local
 diagnostic details and development stack frames.
 
-`wrapUnknownError()` retains an existing `VeryfrontError` or creates the
-canonical `unknown-error`. `wrapWithContext()` creates a new error and preserves
-the original error as provenance.
+`wrapUnknownError()` always returns a detached, framework-owned error. A valid
+`VeryfrontError` keeps its stable slug, category, status, title, and other safe
+identity fields, but never its object identity or mutable caller-owned context.
+Other values become the canonical `unknown-error`. `wrapWithContext()` creates
+a new error and preserves the original error as provenance.
 
 Boundary adapters inspect genuine errors through runtime brand checks and own
 data properties. Proxy-wrapped errors and arbitrary thrown objects are opaque:
