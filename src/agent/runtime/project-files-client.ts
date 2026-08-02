@@ -4,6 +4,8 @@ import { NETWORK_ERROR } from "#veryfront/errors";
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
+const PROJECT_FILE_JSON_OVERHEAD_BYTES = 65_536;
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
 export const getRuntimeProjectFileSchema = defineSchema((v) =>
   v.object({
@@ -63,6 +65,8 @@ export type RuntimeProjectFilesApiOptions = {
 /** Options accepted by runtime get project file. */
 export type RuntimeGetProjectFileOptions = RuntimeProjectFilesApiOptions & {
   path: string;
+  /** Reject returned text content above this character count. */
+  maximumContentCharacters?: number;
 };
 
 /** Public API contract for runtime project files fetch. */
@@ -116,6 +120,17 @@ export function createRuntimeProjectFilesClient(
 export async function getRuntimeProjectFile(
   options: RuntimeProjectFilesClientOptions & RuntimeGetProjectFileOptions,
 ): Promise<RuntimeProjectFile | null> {
+  if (
+    options.maximumContentCharacters !== undefined &&
+    (!Number.isSafeInteger(options.maximumContentCharacters) ||
+      options.maximumContentCharacters <= 0 ||
+      options.maximumContentCharacters >
+        Math.floor((Number.MAX_SAFE_INTEGER - PROJECT_FILE_JSON_OVERHEAD_BYTES) / 6))
+  ) {
+    throw new RangeError(
+      "Project file maximumContentCharacters must be a positive bounded safe integer",
+    );
+  }
   return traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
     const url = createRuntimeProjectFileUrl({
       ...options,
@@ -136,7 +151,13 @@ export async function getRuntimeProjectFile(
       });
     }
 
-    const parsed = getRuntimeProjectFileSchema().safeParse(await response.json());
+    const responseValue = options.maximumContentCharacters === undefined
+      ? await response.json()
+      : await readJsonResponseWithinLimit(
+        response,
+        options.maximumContentCharacters * 6 + PROJECT_FILE_JSON_OVERHEAD_BYTES,
+      );
+    const parsed = getRuntimeProjectFileSchema().safeParse(responseValue);
     if (!parsed.success) {
       throw NETWORK_ERROR.create({
         detail:
@@ -144,8 +165,56 @@ export async function getRuntimeProjectFile(
       });
     }
 
+    if (
+      options.maximumContentCharacters !== undefined &&
+      parsed.data.content.length > options.maximumContentCharacters
+    ) {
+      throw new RangeError(
+        `Project file content may contain at most ${options.maximumContentCharacters} characters`,
+      );
+    }
     return parsed.data;
   });
+}
+
+async function readJsonResponseWithinLimit(
+  response: Response,
+  byteLimit: number,
+): Promise<unknown> {
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const length = Number(declaredLength);
+    if (Number.isFinite(length) && length > byteLimit) {
+      throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
+    }
+  }
+  if (!response.body) return JSON.parse(await response.text());
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      total += result.value.byteLength;
+      if (total > byteLimit) {
+        await reader.cancel(new RangeError("Project file response exceeded its byte limit"));
+        throw new RangeError(`Project file response may contain at most ${byteLimit} bytes`);
+      }
+      chunks.push(result.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(utf8Decoder.decode(bytes));
 }
 
 /** Return runtime project files. */

@@ -97,6 +97,7 @@ Use project instructions.`,
       authToken: "token-1",
       branchId: "branch-1",
       path: "AGENTS.md",
+      maximumContentCharacters: 1_048_576,
     });
   });
 });

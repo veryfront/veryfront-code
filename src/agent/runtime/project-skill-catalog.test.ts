@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import { resolve } from "node:path";
 import {
   getRuntimeProjectInstructions,
@@ -93,6 +93,7 @@ Deno.test("getRuntimeProjectInstructions returns the first available instruction
     {
       ...PROJECT_CONTEXT,
       path: "AGENTS.md",
+      maximumContentCharacters: 1_048_576,
     },
   ]);
 });
@@ -110,6 +111,28 @@ Deno.test("getRuntimeProjectSkillCatalog returns builtin skills when project fil
   const { catalog } = createSkillCatalog({ builtinSkills, paths: null });
 
   assertEquals(await catalog(), builtinSkills);
+});
+
+Deno.test("project skill catalog rejects oversized discovery before scheduling file reads", async () => {
+  let fileReads = 0;
+  await assertRejects(
+    () =>
+      getRuntimeProjectSkillCatalog({
+        ...PROJECT_CONTEXT,
+        builtinSkills: [],
+        getProjectFiles: () =>
+          Promise.resolve(
+            Array.from({ length: 1_001 }, (_, index) => ({ path: `skills/${index}.md` })),
+          ),
+        getProjectFile: () => {
+          fileReads += 1;
+          return Promise.resolve(null);
+        },
+      }),
+    RangeError,
+    "may contain at most 1000 entries",
+  );
+  assertEquals(fileReads, 0);
 });
 
 Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and references", async () => {
@@ -134,11 +157,12 @@ Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and ref
   assertEquals(research.maxSteps, 7);
   assertEquals(research.allowedTools, ["bash"]);
   assertEquals(research.references, ["references/checklists/checklist.md"]);
-  assertEquals(filesCalls, [PROJECT_CONTEXT]);
+  assertEquals(filesCalls, [{ ...PROJECT_CONTEXT, maximumEntries: 1_000 }]);
   assertEquals(fileCalls, [
     {
       ...PROJECT_CONTEXT,
       path: "skills/research/SKILL.md",
+      maximumContentCharacters: 1_048_576,
     },
   ]);
 });

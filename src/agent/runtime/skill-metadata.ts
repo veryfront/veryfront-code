@@ -6,6 +6,12 @@ import {
   resolveSkillSelector,
 } from "#veryfront/skill/selector.ts";
 import { SKILL_NAME_REGEX, SKILL_PROVIDER_SAFE_ID_REGEX } from "#veryfront/skill/types.ts";
+import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH,
+  SKILL_DOCUMENT_MAX_CHARACTERS,
+  SKILL_SUBDIR_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
 
 function normalizeAllowedTools(value: string | string[] | undefined): string[] {
   if (value === undefined) {
@@ -322,6 +328,16 @@ export function buildRuntimeSkillDefinition(input: {
   sourcePath?: string;
   logger?: RuntimeSkillMetadataLogger;
 }): RuntimeSkillDefinition | null {
+  if (input.content.length > SKILL_DOCUMENT_MAX_CHARACTERS) {
+    throw new RangeError(
+      `Skill document may contain at most ${SKILL_DOCUMENT_MAX_CHARACTERS} characters`,
+    );
+  }
+  if ((input.references?.length ?? 0) > SKILL_SUBDIR_MAX_ENTRIES) {
+    throw new RangeError(
+      `Skill references may contain at most ${SKILL_SUBDIR_MAX_ENTRIES} entries`,
+    );
+  }
   if (!isRuntimeSkillIdValid(input)) {
     input.logger?.error?.("Invalid skill id; skipping skill", {
       id: input.id,
@@ -338,6 +354,18 @@ export function buildRuntimeSkillDefinition(input: {
   }
 
   const { metadata, body } = document;
+  if (metadata.allowedTools.length > SKILL_ALLOWED_TOOL_MAX_PATTERNS) {
+    throw new RangeError(
+      `Skill allowed-tools may contain at most ${SKILL_ALLOWED_TOOL_MAX_PATTERNS} entries`,
+    );
+  }
+  if (
+    metadata.allowedTools.some((pattern) => pattern.length > SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH)
+  ) {
+    throw new RangeError(
+      `Skill allowed-tool patterns may contain at most ${SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH} characters`,
+    );
+  }
   const canonicalName = input.id;
   const explicitDisplayName = metadata.metadata?.display_name?.trim() || undefined;
   const legacyDisplayName = metadata.name && metadata.name !== canonicalName

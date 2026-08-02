@@ -144,6 +144,25 @@ Deno.test("getRuntimeProjectFile reports upstream and network errors", async () 
   assertStringIncludes(getErrorMessage(networkError), "ECONNREFUSED");
 });
 
+Deno.test("getRuntimeProjectFile bounds the response before parsing skill content", async () => {
+  const oversized = "x".repeat(70_000);
+  const fetchSpy = mockFetchResponses(
+    jsonResponse({ path: "skills/large/SKILL.md", content: oversized }),
+  );
+
+  await assertRejects(
+    () =>
+      getRuntimeProjectFile({
+        ...baseOptions,
+        fetch: fetchSpy,
+        path: "skills/large/SKILL.md",
+        maximumContentCharacters: 1,
+      }),
+    RangeError,
+    "response may contain at most",
+  );
+});
+
 Deno.test("getRuntimeProjectFile passes project, path, branch, fields, and auth through REST", async () => {
   const fetchSpy = mockFetchResponses(jsonResponse({ path: "src/index.ts", content: "hello" }));
 
