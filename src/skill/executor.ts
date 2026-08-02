@@ -10,17 +10,45 @@ import { getEnv, runCommand } from "#veryfront/platform/compat/process.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { extname } from "#veryfront/compat/path";
-import { readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { createFileSystem, readTextFile } from "#veryfront/platform/compat/fs.ts";
+import { captureSnapshotReadCapability } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { createError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type { SkillScriptExecutor, SkillScriptExecutorInput, SkillScriptResult } from "./types.ts";
-import { SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
+import { SKILL_SCRIPT_MAX_CONTENT_BYTES, SKILL_SCRIPT_MAX_OUTPUT_BYTES } from "./limits.ts";
 
 const DEFAULT_SCRIPT_TIMEOUT_MS = 60_000;
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
 const TIMEOUT_EXIT_CODE = 124;
 const ENV_KEY_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TIMEOUT_SENTINEL = Symbol("skill-script-timeout");
+const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+
+async function resolveValidatedScriptContent(
+  input: SkillScriptExecutorInput,
+): Promise<string | undefined> {
+  if (input.validatedSourceRoot === undefined) return input.scriptContent;
+
+  const snapshot = captureSnapshotReadCapability(
+    createFileSystem(),
+    "Native skill script filesystem",
+  );
+  if (snapshot === undefined) {
+    throw new TypeError("Native skill script filesystem must support snapshot reads");
+  }
+
+  const content = utf8Decoder.decode(
+    await snapshot.read(
+      input.scriptPath,
+      input.validatedSourceRoot,
+      SKILL_SCRIPT_MAX_CONTENT_BYTES,
+    ),
+  );
+  if (input.scriptContent !== undefined && content !== input.scriptContent) {
+    throw new TypeError("Skill script changed after validation");
+  }
+  return content;
+}
 
 function resolveTimeoutMs(timeoutMs?: number): number {
   if (timeoutMs === undefined || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -121,6 +149,7 @@ export function detectRuntime(scriptPath: string): { command: string; args: stri
  */
 export class LocalScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
+    await resolveValidatedScriptContent(input);
     const timeoutMs = resolveTimeoutMs(input.timeoutMs);
     const { command, args: runtimeArgs } = detectRuntime(input.scriptPath);
     const allArgs = [...runtimeArgs, ...(input.args ?? [])];
@@ -155,6 +184,8 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
 class CloudScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
     const timeoutMs = resolveTimeoutMs(input.timeoutMs);
+    const scriptContent = await resolveValidatedScriptContent(input) ??
+      await readTextFile(input.scriptPath);
 
     // Lazy import to avoid bundling sandbox in non-cloud environments
     const { Sandbox } = await import("#veryfront/sandbox");
@@ -162,7 +193,6 @@ class CloudScriptExecutor implements SkillScriptExecutor {
     const sandbox = await Sandbox.create(authToken ? { authToken } : undefined);
     try {
       const sandboxScriptPath = createSandboxScriptPath(input.scriptPath);
-      const scriptContent = input.scriptContent ?? await readTextFile(input.scriptPath);
 
       await sandbox.writeFiles([{ path: sandboxScriptPath, content: scriptContent }]);
       await sandbox.executeCommand(buildShellCommand(["chmod", "+x", sandboxScriptPath]));

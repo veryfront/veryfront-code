@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
@@ -125,6 +125,48 @@ describe("src/skill/executor", () => {
       assertEquals(result.exitCode, 124);
       assertEquals(result.stderr.includes("timed out"), true);
     });
+
+    it("rejects a native script changed after framework validation", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-skill-executor-" });
+      const scriptPath = `${root}/run.sh`;
+      try {
+        await Deno.writeTextFile(scriptPath, "echo changed");
+
+        await assertRejects(
+          () =>
+            new LocalScriptExecutor().execute({
+              scriptPath,
+              scriptContent: "echo validated",
+              validatedSourceRoot: root,
+            }),
+          TypeError,
+          "changed after validation",
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+
+    it("rejects a native script outside the validated source root", async () => {
+      const root = await Deno.makeTempDir({ prefix: "vf-skill-root-" });
+      const outside = await Deno.makeTempFile({ prefix: "vf-skill-outside-", suffix: ".sh" });
+      try {
+        await Deno.writeTextFile(outside, "echo outside");
+
+        await assertRejects(
+          () =>
+            new LocalScriptExecutor().execute({
+              scriptPath: outside,
+              scriptContent: "echo outside",
+              validatedSourceRoot: root,
+            }),
+          Error,
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+        await Deno.remove(outside);
+      }
+    });
   });
 
   describe("getSkillScriptExecutor", () => {
@@ -152,6 +194,29 @@ describe("src/skill/executor", () => {
 
       const executor = getSkillScriptExecutor();
       assertEquals(executor.constructor.name, "CloudScriptExecutor");
+    });
+
+    it("rejects changed native content before creating a cloud sandbox", async () => {
+      setEnv("SANDBOX_AUTH_TOKEN", "sandbox-token");
+      const root = await Deno.makeTempDir({ prefix: "vf-cloud-skill-executor-" });
+      const scriptPath = `${root}/run.sh`;
+      try {
+        await Deno.writeTextFile(scriptPath, "echo changed");
+
+        await assertRejects(
+          () =>
+            getSkillScriptExecutor().execute({
+              scriptPath,
+              scriptContent: "echo validated",
+              validatedSourceRoot: root,
+            }),
+          TypeError,
+          "changed after validation",
+        );
+        assertEquals(fetchCalls.length, 0);
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
     });
 
     it("handles a late sandbox command rejection after timeout", async () => {

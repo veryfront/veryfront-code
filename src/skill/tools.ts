@@ -19,7 +19,7 @@ import {
   captureSnapshotReadCapability,
 } from "#veryfront/platform/adapters/file-system-capabilities.ts";
 import { createError, toError } from "#veryfront/errors";
-import { skillRegistry } from "./registry.ts";
+import { skillRegistryInternal } from "./registry.ts";
 import { parseSkillFrontmatter } from "./parser.ts";
 import { listStrictSkillSubdir, validateStrictSkillPath } from "./path-safety.ts";
 import { createSkillOperationBudget, type SkillOperationBudget } from "./operation-budget.ts";
@@ -30,6 +30,7 @@ import {
   SKILL_SCRIPT_MAX_ARG_BYTES_TOTAL,
   SKILL_SCRIPT_MAX_ARG_LENGTH,
   SKILL_SCRIPT_MAX_ARGS,
+  SKILL_SCRIPT_MAX_CONTENT_BYTES,
   SKILL_SCRIPT_MAX_ENV_BYTES_TOTAL,
   SKILL_SCRIPT_MAX_ENV_ENTRIES,
   SKILL_SCRIPT_MAX_ENV_KEY_LENGTH,
@@ -263,7 +264,7 @@ function resolveVisibleSkillOrThrow(
 ): Skill {
   const scope = { agentId: context?.agentId };
   const allowedSkillIds = getSelectorAllowedSkillIds(context, options);
-  const skill = skillRegistry.resolveVisibleSkill(skillId, scope);
+  const skill = skillRegistryInternal.resolveVisibleSkill(skillId, scope);
   if (skill) {
     assertSkillAllowedBySelector(skill, allowedSkillIds);
     return skill;
@@ -285,7 +286,7 @@ function resolveVisibleSkillOrThrow(
     );
   }
 
-  const visible = skillRegistry.getVisibleSkillIds(scope).join(", ");
+  const visible = skillRegistryInternal.getVisibleSkillIds(scope).join(", ");
   throw toError(
     createError({
       type: "agent",
@@ -547,7 +548,7 @@ export function createExecuteSkillScriptTool(
       const scriptContent = await readSkillFile(
         skill,
         validatedPath,
-        SKILL_TEXT_FILE_MAX_BYTES,
+        SKILL_SCRIPT_MAX_CONTENT_BYTES,
         budget,
       );
       const executor = options.executor ?? getSkillScriptExecutor();
@@ -558,6 +559,7 @@ export function createExecuteSkillScriptTool(
           args: input.args,
           env: input.env,
           cwd: skill.rootPath,
+          validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
           timeoutMs: budget.remainingMs(),
           abortSignal,
         })

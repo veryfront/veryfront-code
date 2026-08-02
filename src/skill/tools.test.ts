@@ -79,6 +79,36 @@ Do work.`,
     assertEquals(result.scripts, ["scripts/run.sh"]);
   });
 
+  it("framework tools use the immutable normalized registry snapshot", async () => {
+    const registeredAdapter = createSkillTestAdapter({
+      "/project/skills/registered/SKILL.md": `---
+name: registered
+description: Registered skill
+---
+# Instructions
+Use the registered snapshot.`,
+    });
+    const mutatedAdapter = createSkillTestAdapter({});
+    const source: Skill = {
+      id: "definition-id",
+      metadata: { name: "registered", description: "Registered skill" },
+      rootPath: "/project/skills/registered",
+      fsAdapter: registeredAdapter,
+    };
+    registerSkill("registry-id", source);
+
+    source.id = "mutated-id";
+    source.rootPath = "/project/skills/mutated";
+    source.fsAdapter = mutatedAdapter;
+
+    const result = await createLoadSkillTool().execute({ skillId: "registry-id" }, {
+      allowedSkillIds: ["registry-id"],
+    });
+
+    assertEquals(result.skillId, "registry-id");
+    assertEquals(result.instructions, "# Instructions\nUse the registered snapshot.");
+  });
+
   it("load_skill preserves an adapter-relative skill root", async () => {
     const fsAdapter = createSkillTestAdapter({
       "skills/cloud-skill/SKILL.md": `---
