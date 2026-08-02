@@ -17,6 +17,7 @@ import {
 } from "../bounded-read.ts";
 import {
   JsonStringValueTooLargeError,
+  maximumJsonStringDocumentBytes,
   readResponseJsonStringWithinLimit,
   readResponseTextPrefix,
 } from "#veryfront/utils/response-body.ts";
@@ -140,10 +141,22 @@ export class ApiCacheBackend implements CacheBackend {
     body?: Record<string, unknown>,
     options: CacheRequestOptions = {},
   ): Promise<T | null> {
-    const boundedJsonString = options.boundedJsonString === undefined ? undefined : {
-      fieldName: options.boundedJsonString.fieldName,
-      maximumBytes: assertCacheReadMaximumBytes(options.boundedJsonString.maximumBytes),
-    };
+    let boundedJsonString:
+      | { fieldName: string; maximumBytes: number; maximumDocumentBytes: number }
+      | undefined;
+    if (options.boundedJsonString !== undefined) {
+      const maximumBytes = assertCacheReadMaximumBytes(
+        options.boundedJsonString.maximumBytes,
+      );
+      boundedJsonString = {
+        fieldName: options.boundedJsonString.fieldName,
+        maximumBytes,
+        maximumDocumentBytes: maximumJsonStringDocumentBytes(
+          maximumBytes,
+          this.maxResponseBytes,
+        ),
+      };
+    }
     const reqCtx = getCurrentRequestContext();
     const hostToken = getHostEnv("VERYFRONT_API_TOKEN");
     const envToken = getEnvValue("VERYFRONT_API_TOKEN");
@@ -230,7 +243,7 @@ export class ApiCacheBackend implements CacheBackend {
                 response,
                 boundedJsonString.fieldName,
                 boundedJsonString.maximumBytes,
-                this.maxResponseBytes,
+                boundedJsonString.maximumDocumentBytes,
                 controller.signal,
               ) as T;
             } catch (error) {

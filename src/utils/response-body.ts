@@ -190,6 +190,40 @@ type JsonNumberState =
 const MAX_STREAMED_JSON_NESTING_DEPTH = 128;
 const STREAMED_JSON_DECODE_CHUNK_BYTES = 64 * 1024;
 const STRING_DECODE_CHUNK_CODE_UNITS = 8 * 1024;
+// A JSON encoder may represent one single-byte code point as `\u00xx`.
+// No valid JSON string representation can use more wire bytes per decoded
+// logical UTF-8 byte; supplementary code points use at most 12 / 4 = 3x.
+const MAX_JSON_STRING_WIRE_BYTES_PER_LOGICAL_UTF8_BYTE = 6;
+
+/**
+ * Derive a hard JSON-document ceiling that admits every string within its
+ * logical UTF-8 limit plus a separate policy budget for keys, metadata,
+ * delimiters, and other non-value bytes.
+ */
+export function maximumJsonStringDocumentBytes(
+  maximumValueBytes: number,
+  maximumNonValueBytes: number,
+): number {
+  const valueLimit = validateJsonStringReadLimit(
+    maximumValueBytes,
+    "JSON string byte limit",
+    true,
+  );
+  const nonValueLimit = validateJsonStringReadLimit(
+    maximumNonValueBytes,
+    "JSON non-value byte limit",
+    true,
+  );
+  if (
+    valueLimit >
+      (Number.MAX_SAFE_INTEGER - nonValueLimit) /
+        MAX_JSON_STRING_WIRE_BYTES_PER_LOGICAL_UTF8_BYTE
+  ) {
+    throw new RangeError("Combined JSON response byte limit exceeds the safe integer range");
+  }
+  return nonValueLimit +
+    valueLimit * MAX_JSON_STRING_WIRE_BYTES_PER_LOGICAL_UTF8_BYTE;
+}
 
 function jsonSyntaxError(detail: string): InvalidResponseBodyJsonError {
   return new InvalidResponseBodyJsonError(`Response body is not valid JSON: ${detail}`);

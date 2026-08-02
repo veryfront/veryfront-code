@@ -13,6 +13,7 @@ import {
   InvalidResponseBodyJsonError,
   InvalidResponseBodyJsonNestingError,
   JsonStringValueTooLargeError,
+  maximumJsonStringDocumentBytes,
   readResponseJsonStringBytesWithinLimit,
   readResponseTextPrefix,
   ResponseBodyTooLargeError,
@@ -36,7 +37,11 @@ export interface TransportRequestInit {
   headers?: HeadersInit;
   body?: BodyInit | null;
   returnText?: boolean;
-  /** Maximum encoded response bytes admitted before parsing. */
+  /**
+   * Maximum encoded bytes for an ordinary response. For a bounded JSON-string
+   * read, this is the independent policy budget for the rest of the document;
+   * the transport derives a larger hard ceiling for worst-case string escapes.
+   */
   maxResponseBytes?: number;
   /** Decode one top-level JSON string directly from the bounded response stream. */
   jsonStringFieldWithinLimit?: {
@@ -108,6 +113,8 @@ function snapshotRequestInit(init: TransportRequestInit): TransportRequestInit {
         "Veryfront API bounded JSON field maximumBytes must be a non-negative safe integer",
       );
     }
+    // Validate the combined ceiling before a request can perform I/O.
+    maximumJsonStringDocumentBytes(maximumBytes, maxResponseBytes);
     jsonStringFieldWithinLimit = { fieldName, maximumBytes };
   }
 
@@ -314,11 +321,15 @@ async function defaultOnResponse(
 
   if (init.jsonStringFieldWithinLimit !== undefined) {
     try {
+      const maximumDocumentBytes = maximumJsonStringDocumentBytes(
+        init.jsonStringFieldWithinLimit.maximumBytes,
+        maxResponseBytes,
+      );
       return await readResponseJsonStringBytesWithinLimit(
         response,
         init.jsonStringFieldWithinLimit.fieldName,
         init.jsonStringFieldWithinLimit.maximumBytes,
-        maxResponseBytes,
+        maximumDocumentBytes,
         abortSignal,
       );
     } catch (cause) {
