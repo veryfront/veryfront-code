@@ -56,6 +56,7 @@ describe("buildDiscoveryConfig", () => {
       signal: new AbortController().signal,
       requestInterceptor: (request: Request) => request,
       defaultProjectId: "local-my-agent",
+      localProjects: { "my-agent": "/tmp/my-agent" },
       linkedProjectSlug: undefined,
     });
 
@@ -73,6 +74,7 @@ describe("buildDiscoveryConfig", () => {
       signal: new AbortController().signal,
       requestInterceptor: (request: Request) => request,
       defaultProjectId: "local-my-agent",
+      localProjects: { "my-agent": "/tmp/my-agent" },
       linkedProjectSlug: "linked-project",
     });
 

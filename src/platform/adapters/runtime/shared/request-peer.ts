@@ -20,6 +20,7 @@ export interface RequestPeerProvenance {
 }
 
 const requestPeerProvenance = new WeakMap<Request, RequestPeerProvenance>();
+const sameProcessProxyRequests = new WeakSet<Request>();
 const MAX_PEER_HOSTNAME_CHARACTERS = 255;
 const DECIMAL_OCTET_PATTERN = /^(?:0|[1-9][0-9]{0,2})$/;
 const IPV4_MAPPED_IPV6_PATTERN = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/;
@@ -114,6 +115,35 @@ export function inheritRequestPeerProvenance<T extends Request>(
   if (provenance === undefined) requestPeerProvenance.delete(target);
   else requestPeerProvenance.set(target, provenance);
   return target;
+}
+
+/**
+ * @internal Bind a proxy-produced replacement to its transport-authenticated
+ * source request. The replacement is trusted only when the native adapter
+ * recorded the source peer before proxy code ran; an arbitrary constructed
+ * Request therefore cannot manufacture same-process proxy provenance.
+ */
+export function recordSameProcessProxyRequest<T extends Request>(
+  source: Request,
+  target: T,
+): T {
+  if (source === target) return target;
+
+  const provenance = requestPeerProvenance.get(source);
+  if (provenance === undefined) {
+    requestPeerProvenance.delete(target);
+    sameProcessProxyRequests.delete(target);
+    return target;
+  }
+
+  requestPeerProvenance.set(target, provenance);
+  sameProcessProxyRequests.add(target);
+  return target;
+}
+
+/** True only for a proxy replacement bound to recorded native transport provenance. */
+export function isSameProcessProxyRequest(request: Request): boolean {
+  return sameProcessProxyRequests.has(request) && requestPeerProvenance.has(request);
 }
 
 /** @internal True for IPv4 127/8, IPv6 ::1, or mapped IPv4 127/8. */

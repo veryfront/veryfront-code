@@ -251,6 +251,7 @@ export async function startCommand(options: StartOptions): Promise<void> {
       signal: shutdownController.signal,
       requestInterceptor,
       defaultProjectId,
+      localProjects: Object.fromEntries(allProjects),
       linkedProjectSlug,
     });
   } else {

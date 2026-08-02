@@ -73,26 +73,35 @@ flowchart TD
 
 ## Proxy topology boundary
 
-Routing-sensitive forwarded headers are trusted only when the runtime operator
-sets `VERYFRONT_TRUST_FORWARDED_HEADERS=1`. This setting means the runtime is
-behind a private, sanitizing proxy that replaces untrusted forwarding metadata.
-The value is matched exactly; alternative spellings and whitespace-padded
-values fail closed.
+In split deployments, routing-sensitive forwarded headers are trusted only
+when the runtime operator sets `VERYFRONT_TRUST_FORWARDED_HEADERS=1`. This
+setting means the runtime is behind a private, sanitizing proxy that replaces
+untrusted forwarding metadata. The value is matched exactly; alternative
+spellings and whitespace-padded values fail closed.
 
-In shared proxy mode, the runtime rejects every non-monitoring request when
-that topology setting is absent, including module assets and WebSocket
+Local combined CLI mode has no network hop between its proxy and renderer.
+Instead, the proxy replaces the inbound `Request` after sanitizing and deriving
+its context, then binds that replacement to the source request's immutable
+native peer provenance in an internal weak reference. A direct request, a
+constructed replacement without native provenance, and a copied header set
+cannot reproduce that capability. Tokenless routing is limited to a local path
+that both came from this same-process proxy and exactly matches the host-seeded
+local-project map.
+
+In deployed shared proxy mode, the runtime rejects every non-monitoring request
+when that topology setting is absent, including module assets and WebSocket
 requests. When it is present, all proxy-owned project, release, branch,
-environment, content-source, token, forwarded-host, and local-path metadata
-may be consumed as one edge-established routing context. The built-in proxy
-removes incoming `Forwarded`, `Via`, `x-forwarded-*`, `x-real-ip`, and
-`x-project-*` values before adding its authoritative context. Direct client
-address and protocol come from immutable native transport provenance. When a
-TLS terminator or ingress sits in front of the built-in proxy, operators must
-list its exact native peer IP in `VERYFRONT_PROXY_TRUSTED_INGRESS_IPS`. Only
-those peers may provide `x-forwarded-for` and `x-forwarded-proto`, and they must
-replace both headers with one canonical client IP and exactly `http` or
-`https`; missing, appended, or malformed values fail closed. Never list a
-public client network or an address from which direct requests can arrive.
+environment, content-source, token, forwarded-host, and local-path metadata may
+be consumed as one edge-established routing context. The built-in proxy removes
+incoming `Forwarded`, `Via`, `x-forwarded-*`, `x-real-ip`, and `x-project-*`
+values before adding its authoritative context. Direct client address and
+protocol come from immutable native transport provenance. When a TLS terminator
+or ingress sits in front of the built-in proxy, operators must list its exact
+native peer IP in `VERYFRONT_PROXY_TRUSTED_INGRESS_IPS`. Only those peers may
+provide `x-forwarded-for` and `x-forwarded-proto`, and they must replace both
+headers with one canonical client IP and exactly `http` or `https`; missing,
+appended, or malformed values fail closed. Never list a public client network
+or an address from which direct requests can arrive.
 
 The renderer resolves the resulting public origin and content-source identity
 once into `HandlerContext`; downstream handlers must use that context instead

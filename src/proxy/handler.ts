@@ -30,6 +30,7 @@ import {
 import { resolveProxyRequestHost } from "./request-host.ts";
 import { createProxyEndToEndHeaders } from "./hop-by-hop-headers.ts";
 import { withProxyStreamingBodyDuplex } from "./request-init.ts";
+import { recordSameProcessProxyRequest } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import {
   parseTrustedIngressProxyIps,
   ProxyIngressProvenanceError,
@@ -1329,7 +1330,7 @@ export function createProxyContextHeaders(
 }
 
 export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
-  return new Request(
+  const injected = new Request(
     req.url,
     withProxyStreamingBodyDuplex({
       method: req.method,
@@ -1339,4 +1340,5 @@ export function injectContextHeaders(req: Request, ctx: ProxyContext): Request {
       signal: req.signal,
     }),
   );
+  return recordSameProcessProxyRequest(req, injected);
 }

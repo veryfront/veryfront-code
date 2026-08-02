@@ -119,6 +119,26 @@ describe("local-project-discovery", () => {
       assertEquals(path, "/cached/path");
     });
 
+    it("accepts an exact host-seeded path without probing the remote adapter", async () => {
+      const adapter = createMockAdapter({});
+      let statCalls = 0;
+      const stat = adapter.fs.stat.bind(adapter.fs);
+      adapter.fs.stat = (path: string) => {
+        statCalls += 1;
+        return stat(path);
+      };
+      localProjectCache.set("seeded-project", "/seeded/project");
+
+      const path = await findLocalProjectPath(
+        "seeded-project",
+        adapter,
+        "/seeded/project",
+      );
+
+      assertEquals(path, "/seeded/project");
+      assertEquals(statCalls, 0);
+    });
+
     it("discovers project with app directory", async () => {
       const adapter = createMockAdapter({
         "data/projects/myapp": { isDirectory: true },

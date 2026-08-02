@@ -25,6 +25,7 @@ export interface StartCliProxyModeServerOptions {
   signal: AbortSignal;
   requestInterceptor: (req: Request) => Request | Promise<Request>;
   defaultProjectId: string;
+  localProjects: Record<string, string>;
   linkedProjectSlug?: string;
 }
 
@@ -75,6 +76,7 @@ export async function startCliProxyModeServer(
     projectDir: options.projectDir,
     signal: options.signal,
     requestInterceptor: options.requestInterceptor,
+    localProjects: options.localProjects,
     ...buildProxyRuntimeProjectIdentity(options),
     discoveryConfig: buildDiscoveryConfig(options),
   });

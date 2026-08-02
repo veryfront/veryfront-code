@@ -13,17 +13,21 @@
  * with attacker-selected `x-forwarded-host`, `x-project-path`, or environment
  * headers.
  *
- * Only the strict `VERYFRONT_TRUST_FORWARDED_HEADERS=1` operator setting can
- * enable this boundary. Other values, including whitespace-padded values, fail
- * closed.
+ * Trust is established by either the strict
+ * `VERYFRONT_TRUST_FORWARDED_HEADERS=1` operator setting, or a replacement
+ * request created by the framework's same-process proxy from a
+ * transport-authenticated source request. The latter is held in an internal
+ * WeakSet rather than a header, so a direct client cannot replay it. Other env
+ * values, including whitespace-padded values, fail closed.
  *
  * @module server/utils/proxy-trust
  */
 
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
+import { isSameProcessProxyRequest } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 
 export async function isProxyTrusted(
-  _req: Request,
+  req: Request,
 ): Promise<boolean> {
-  return isProxyTopologyTrusted();
+  return isProxyTopologyTrusted() || isSameProcessProxyRequest(req);
 }

@@ -4,7 +4,9 @@ import {
   getRequestPeerProvenance,
   inheritRequestPeerProvenance,
   isRequestFromLoopbackPeer,
+  isSameProcessProxyRequest,
   recordRequestPeerFromTransport,
+  recordSameProcessProxyRequest,
   type RequestPeerRuntime,
 } from "./request-peer.ts";
 
@@ -98,5 +100,27 @@ describe("runtime request peer provenance", () => {
     inheritRequestPeerProvenance(untrustedSource, target);
     assertEquals(getRequestPeerProvenance(target), undefined);
     assertEquals(isRequestFromLoopbackPeer(target), false);
+  });
+
+  it("binds same-process proxy trust only to a transport-backed replacement", () => {
+    const source = requestFromPeer("127.0.0.1", "deno");
+    const replacement = new Request(source);
+
+    assertStrictEquals(recordSameProcessProxyRequest(source, replacement), replacement);
+    assertEquals(isSameProcessProxyRequest(source), false);
+    assertEquals(isSameProcessProxyRequest(replacement), true);
+    assertStrictEquals(
+      getRequestPeerProvenance(replacement),
+      getRequestPeerProvenance(source),
+    );
+
+    const constructedSource = requestFromPeer();
+    const constructedReplacement = requestFromPeer("203.0.113.9");
+    recordSameProcessProxyRequest(constructedSource, constructedReplacement);
+    assertEquals(isSameProcessProxyRequest(constructedReplacement), false);
+    assertEquals(getRequestPeerProvenance(constructedReplacement), undefined);
+
+    recordSameProcessProxyRequest(source, source);
+    assertEquals(isSameProcessProxyRequest(source), false);
   });
 });

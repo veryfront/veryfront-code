@@ -2,6 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+import {
+  recordRequestPeerFromTransport,
+  recordSameProcessProxyRequest,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import { isProxyTrusted } from "./proxy-trust.ts";
 
 const ENV_KEY = "VERYFRONT_TRUST_FORWARDED_HEADERS";
@@ -47,6 +51,24 @@ describe("server/utils/proxy-trust", () => {
 
   it("fails closed without an explicit trusted-proxy topology", async () => {
     assertEquals(await isProxyTrusted(new Request("https://runtime.example/")), false);
+  });
+
+  it("trusts only a transport-backed replacement from the same-process proxy", async () => {
+    const inbound = new Request("https://runtime.example/");
+    recordRequestPeerFromTransport(inbound, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+      protocol: "http:",
+    });
+    const proxied = recordSameProcessProxyRequest(inbound, new Request(inbound));
+
+    assertEquals(await isProxyTrusted(inbound), false);
+    assertEquals(await isProxyTrusted(proxied), true);
+
+    const constructed = new Request("https://runtime.example/");
+    const forged = recordSameProcessProxyRequest(constructed, new Request(constructed));
+    assertEquals(await isProxyTrusted(forged), false);
   });
 
   it("does not promote a fresh signed dispatch credential into generic proxy trust", async () => {

@@ -7,6 +7,10 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import {
+  recordRequestPeerFromTransport,
+  recordSameProcessProxyRequest,
+} from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   __registerLogRecordEmitter,
@@ -247,7 +251,10 @@ describe("prepareProjectRequest", () => {
 
   it("returns the existing missing token proxy guard response", async () => {
     const req = new Request("http://localhost/page", {
-      headers: { "x-project-slug": "my-project" },
+      headers: {
+        "x-project-slug": "my-project",
+        "x-project-path": "/operator-proxy/project",
+      },
     });
 
     const prepared = await prepareProjectRequest({
@@ -262,6 +269,38 @@ describe("prepareProjectRequest", () => {
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",
     });
+  });
+
+  it("allows a tokenless local path only from the transport-backed same-process proxy", async () => {
+    const inbound = new Request("http://localhost/page");
+    recordRequestPeerFromTransport(inbound, {
+      runtime: "deno",
+      transport: "tcp",
+      hostname: "127.0.0.1",
+      protocol: "http:",
+    });
+    const req = recordSameProcessProxyRequest(
+      inbound,
+      new Request(inbound, {
+        headers: {
+          "x-project-slug": "local-project",
+          "x-project-path": "/trusted/local/project",
+          "x-environment": "preview",
+          "x-forwarded-host": "local-project.localhost",
+          "x-forwarded-proto": "http",
+        },
+      }),
+    );
+
+    const prepared = await prepareProjectRequest({
+      req,
+      url: new URL(req.url),
+      isProxyMode: true,
+    });
+
+    assertStrictEquals(prepared.proxyTrust.proxyTrusted, true);
+    assertEquals(prepared.headers.projectPath, "/trusted/local/project");
+    assertEquals(prepared.proxyGuard, undefined);
   });
 
   it("rejects every shared-runtime request from an untrusted topology", async () => {

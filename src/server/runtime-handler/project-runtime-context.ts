@@ -1,4 +1,5 @@
 import { isProxyTopologyTrusted } from "#veryfront/platform/compat/proxy-topology.ts";
+import { isSameProcessProxyRequest } from "#veryfront/platform/adapters/runtime/shared/request-peer.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { prepareDeclarativeConfigContext } from "#veryfront/config/declarative-evaluator.ts";
 import type { VirtualConfigSourceContext } from "#veryfront/cache/keys.ts";
@@ -380,12 +381,13 @@ function createProxyGuard(
   if (isLightweightPath(url.pathname) || isWebSocketPath(url.pathname)) return undefined;
 
   const token = req.headers.get("x-token");
+  const trustedLocalProject = isSameProcessProxyRequest(req) && headers.projectPath !== undefined;
   const body = !headers.projectSlug
     ? {
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",
     }
-    : !token
+    : !token && !trustedLocalProject
     ? {
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",

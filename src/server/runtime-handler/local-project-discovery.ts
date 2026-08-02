@@ -118,13 +118,20 @@ export async function findLocalProjectPath(
   headerPath?: string,
   cache: ProjectDiscoveryCache = defaultDiscoveryCache,
 ): Promise<string | undefined> {
+  const cached = cache.projects.get(slug);
   if (headerPath) {
     try {
       const normalizedPath = headerPath.trim();
+      const absolutePath = normalizedPath.startsWith("/")
+        ? normalizedPath
+        : `${cwd()}/${normalizedPath}`;
+      // Explicit local-project mappings are seeded by trusted host startup
+      // code. An exact proxy echo of that mapping needs no second filesystem
+      // validation through the proxy-mode adapter, which may only expose the
+      // remote project filesystem.
+      if (cached !== undefined && absolutePath === cached) return cached;
+
       if (normalizedPath && await isValidLocalProjectPath(normalizedPath, adapter)) {
-        const absolutePath = normalizedPath.startsWith("/")
-          ? normalizedPath
-          : `${cwd()}/${normalizedPath}`;
         cache.projects.set(slug, absolutePath);
         return absolutePath;
       }
@@ -141,7 +148,6 @@ export async function findLocalProjectPath(
     }
   }
 
-  const cached = cache.projects.get(slug);
   if (cached) return cached;
 
   for (const dir of standardProjectDirs) {
