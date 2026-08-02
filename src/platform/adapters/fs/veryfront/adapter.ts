@@ -46,9 +46,9 @@ import { requireBoundedFileReadLimit } from "../../bounded-file-read.ts";
 import {
   clearCachedReleaseAssetManifests,
   registerManifestFetcherForRelease,
-  unregisterManifestFetcherForRelease,
+  type ReleaseAssetManifestFetcher,
+  type ReleaseAssetManifestFetcherCleanup,
 } from "#veryfront/release-assets/manifest-cache.ts";
-import { parseReleaseAssetManifest } from "#veryfront/release-assets/manifest-schema.ts";
 
 const logger = baseLogger.component("veryfront-fs-adapter");
 const BRANCH_MISS_RECOVERY_FAILURE_TTL_MS = 5_000;
@@ -105,16 +105,8 @@ interface BranchSnapshotRecoveryOptions<T> {
  */
 function buildManifestFetcher(
   client: VeryfrontApiClient,
-): (
-  releaseId: string,
-) => Promise<{ state: string; manifest: ReturnType<typeof parseReleaseAssetManifest> } | null> {
-  return async (releaseId: string) => {
-    const response = await client.getReleaseAssetManifest(releaseId);
-    return {
-      state: response.state,
-      manifest: response.manifest ? parseReleaseAssetManifest(response.manifest) : null,
-    };
-  };
+): ReleaseAssetManifestFetcher {
+  return (releaseId: string) => client.getReleaseAssetManifest(releaseId);
 }
 
 export class VeryfrontFSAdapter implements FSAdapter {
@@ -154,6 +146,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private invalidationCallbacks: InvalidationCallbacks;
   private styleCallbacks: StyleCallbacks;
   private wsManager: WebSocketManager;
+  private manifestFetcherCleanup: ReleaseAssetManifestFetcherCleanup | null = null;
 
   /** Per-request branch override (for branch preview URLs) */
   private requestBranch: string | null = null;
@@ -1013,6 +1006,8 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
   dispose(): void {
     this.wsManager.dispose();
+    this.manifestFetcherCleanup?.();
+    this.manifestFetcherCleanup = null;
     this.cache.clear();
     this.statOps.clearIndex();
     this.dirOps.clearTree();
@@ -1157,21 +1152,20 @@ export class VeryfrontFSAdapter implements FSAdapter {
       contextWillChange: contextChanged,
     });
 
-    const oldReleaseId = oldContext?.releaseId;
     const nextReleaseId = context.releaseId;
 
-    // Unregister the manifest fetcher for the previous release (if any).
-    // Environment/domain contexts can also carry a deployed releaseId.
-    if (oldReleaseId && oldReleaseId !== nextReleaseId) {
-      unregisterManifestFetcherForRelease(oldReleaseId);
-    }
+    this.manifestFetcherCleanup?.();
+    this.manifestFetcherCleanup = null;
 
     // Register a per-releaseId manifest fetcher so production HTML can
     // consult ready manifests when the feature flag is on. Using the per-
     // releaseId registry ensures the correct project-scoped token is always
     // used, even under multi-tenant / proxy-manager operation.
     if (nextReleaseId) {
-      registerManifestFetcherForRelease(nextReleaseId, buildManifestFetcher(this.client));
+      this.manifestFetcherCleanup = registerManifestFetcherForRelease(
+        nextReleaseId,
+        buildManifestFetcher(this.client),
+      );
     }
 
     this.contentContext = context;

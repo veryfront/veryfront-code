@@ -69,6 +69,13 @@ export async function generateLocalReleaseAssetManifest(
   options: LocalReleaseAssetOptions,
 ): Promise<ReleaseAssetManifest | null> {
   if (!shouldBuildLocalDependencyAssets()) return null;
+  if (!options.vendorHttpImports || !options.frameworkTransform) {
+    throw new Error(
+      "Local immutable release assets require explicit HTTP vendoring and framework transform providers",
+    );
+  }
+  const vendorHttpImports = options.vendorHttpImports;
+  const frameworkTransform = options.frameworkTransform;
 
   const tempDir = await options.adapter.fs.makeTempDir("vf-local-release-assets-");
 
@@ -94,7 +101,7 @@ export async function generateLocalReleaseAssetManifest(
       const built = await buildReactImportMapDependencyAssets({
         tempDir,
         reactVersion,
-        vendorHttpImports: options.vendorHttpImports,
+        vendorHttpImports,
       });
       const cached = await buildCachedHttpDependencyAssets({
         cacheDir: join(options.projectDir, ".cache", "veryfront-http-bundle"),
@@ -106,7 +113,7 @@ export async function generateLocalReleaseAssetManifest(
         adapter: options.adapter,
         reactVersion,
         projectId: options.projectId ?? "local",
-        transform: options.frameworkTransform,
+        transform: frameworkTransform,
         dependencyUrls,
         dependencyPinningSource,
         dependencyPinningSnapshot,
@@ -117,6 +124,11 @@ export async function generateLocalReleaseAssetManifest(
         assetsByHash.set(asset.contentHash, asset);
       }
       const gaps = [...cached.gaps, ...built.gaps, ...framework.gaps];
+      if (gaps.length > 0) {
+        throw new Error(
+          `Local release asset coverage is incomplete: ${gaps.slice(0, 20).join(", ")}`,
+        );
+      }
       const sourceContentHash = await computeHashBytes(
         new TextEncoder().encode(
           [
@@ -139,6 +151,7 @@ export async function generateLocalReleaseAssetManifest(
         sourceContentHash,
         createdAt: new Date().toISOString(),
         assetBasePath: RELEASE_ASSET_BASE_PATH,
+        dependencyMode: "immutable",
         modules: {},
         css: [],
         routes: {},
@@ -149,7 +162,6 @@ export async function generateLocalReleaseAssetManifest(
             contentType: entry.contentType,
           }]),
         ),
-        fallback: { mode: "jit", gaps },
       };
 
       if (options.dryRun) return manifest;

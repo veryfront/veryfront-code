@@ -2,116 +2,180 @@
  * Release Asset Manifest — production CSS compiler.
  *
  * Provides the `compileProjectCss` implementation injected into the build
- * executor's client. It compiles project CSS through an explicitly registered
- * processor (`generateTailwindCSS` is retained as a compatibility name) against the candidates
+ * executor's client. It compiles project CSS directly through the
+ * provider-neutral compiler (`generateCSS`) against the candidates the executor
  * extracted from the materialized release file set, using the project
  * stylesheet the executor resolved from that same file set.
  *
  * Why this is safe to run inside the project runtime:
- * - It uses `generateTailwindCSS`, NOT `getProjectCSS`. `getProjectCSS` pulls in
+ * - It uses `generateCSS`, NOT `getProjectCSS`. `getProjectCSS` pulls in
  *   the distributed/project-CSS cache (`initializeProjectCSSCache`,
  *   prepared-project-css, style-artifact resolution) — the very machinery whose
  *   per-route candidate contract and distributed-cache init motivated deferring
- *   CSS from the builder. The compile primitive captures explicit compiler and
- *   optimizer providers once and performs no discovery, network loading, or
- *   empty-output fallback.
+ *   CSS from the builder. `generateCSS` is the pure compile primitive:
+ *   it resolves the explicitly composed `CSSProcessor` extension and calls
+ *   `compiler.build(candidates)` with no cross-request/distributed state.
  * - Work is bounded: one compile over the candidate set the executor already
  *   gathered, output minified, no background tasks.
- * - `null` means only that there is no stylesheet and no candidate to compile.
- *   Provider/compiler failures propagate to the executor, which records its
- *   explicit `css:compile-failed` gap.
+ * - Configuration and compile failures propagate; a release must not publish
+ *   a silent CSS gap.
  *
  * @module release-assets/css-compile
  */
 
-import { serverLogger } from "#veryfront/utils";
+import {
+  assertCSSPipelineIdentity,
+  assertStyleProfileHash,
+} from "#veryfront/utils/css-artifact-identity.ts";
+import { serverLogger } from "#veryfront/utils/logger/index.ts";
+import { COMPILATION_ERROR } from "#veryfront/errors";
 import type { VeryfrontConfig } from "#veryfront/config";
 import {
   acquireCSSGenerationSession,
   generateTailwindCSS,
   hashCSS,
 } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
-import { composeCSSStyleProfileHash } from "#veryfront/html/styles-builder/css-identity.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
+import { RELEASE_ASSET_MAX_SIZE_BYTES } from "./constants.ts";
+import { hasControlCharacters } from "./string-validation.ts";
 
 const logger = serverLogger.component("release-asset-css-compile");
+const MAX_PROJECT_SCOPE_LENGTH = 256;
+const MAX_CSS_CANDIDATES = 100_000;
+const MAX_CSS_CANDIDATE_LENGTH = 2_048;
+const textEncoder = new TextEncoder();
 
+/** Successful bounded CSS compilation output. */
 export interface CompileProjectCssResult {
-  css: string;
-  styleProfileHash: string | null;
+  readonly css: string;
+  readonly styleProfileHash: string;
+  readonly cssPipelineIdentity: string;
 }
 
+/** Configuration captured by a release-scoped CSS compiler. */
 export interface CompileProjectCssOptions {
   /** Project scope (slug or id) — isolates the compiler cache per project. */
   projectScope: string;
-  /** Fallback project config, used when the executor cannot provide release config. */
-  config?: VeryfrontConfig;
 }
 
+/** Per-build configuration resolved from the materialized release. */
 export interface CompileProjectCssRuntimeOptions {
-  /** Project config resolved from the materialized release file set. */
-  config?: VeryfrontConfig;
+  /** Validated project config resolved from the exact materialized release. */
+  config: VeryfrontConfig;
 }
 
 /**
  * Build a `compileProjectCss` function bound to a specific release build.
  *
  * The returned function matches the build executor's injected client signature:
- * `(candidates, stylesheet, options) => Promise<{ css, styleProfileHash } | null>`.
- * Missing providers and compilation failures reject; only a genuinely empty
- * CSS input resolves to `null`.
+ * `(candidates, stylesheet, options) => Promise<{ css, styleProfileHash,
+ * cssPipelineIdentity } | null>`.
+ * The factory rejects invalid configuration synchronously. The returned
+ * function returns `null` only when there is no stylesheet and no candidate;
+ * malformed input and compile failures reject.
  */
 export function createCompileProjectCss(
   options: CompileProjectCssOptions,
 ): (
   candidates: Set<string>,
   stylesheet: string | undefined,
-  runtimeOptions?: CompileProjectCssRuntimeOptions,
+  runtimeOptions: CompileProjectCssRuntimeOptions,
 ) => Promise<CompileProjectCssResult | null> {
+  if (
+    !options ||
+    typeof options !== "object" ||
+    typeof options.projectScope !== "string" ||
+    options.projectScope.length === 0 ||
+    options.projectScope.length > MAX_PROJECT_SCOPE_LENGTH ||
+    options.projectScope.trim() !== options.projectScope ||
+    hasControlCharacters(options.projectScope)
+  ) {
+    throw new TypeError("Release CSS project scope is invalid");
+  }
+
   return async (
     candidates: Set<string>,
     stylesheet: string | undefined,
-    runtimeOptions?: CompileProjectCssRuntimeOptions,
+    runtimeOptions: CompileProjectCssRuntimeOptions,
   ): Promise<CompileProjectCssResult | null> => {
+    if (!(candidates instanceof Set) || candidates.size > MAX_CSS_CANDIDATES) {
+      throw new TypeError(
+        `Release asset CSS candidates must be a Set with at most ${MAX_CSS_CANDIDATES} entries`,
+      );
+    }
+    const candidateSnapshot = new Set<string>();
+    for (const candidate of candidates) {
+      if (
+        typeof candidate !== "string" ||
+        candidate.length === 0 ||
+        candidate.length > MAX_CSS_CANDIDATE_LENGTH ||
+        hasControlCharacters(candidate)
+      ) {
+        throw new TypeError("Release asset CSS candidate is invalid");
+      }
+      candidateSnapshot.add(candidate);
+    }
+    if (
+      stylesheet !== undefined &&
+      (typeof stylesheet !== "string" ||
+        textEncoder.encode(stylesheet).byteLength > RELEASE_ASSET_MAX_SIZE_BYTES)
+    ) {
+      throw new TypeError(
+        `Release asset stylesheet exceeds ${RELEASE_ASSET_MAX_SIZE_BYTES} bytes`,
+      );
+    }
+
     // A stylesheet can emit base/custom CSS without any utility candidates
     // (CSS variables, global rules), so only skip when there is neither a
     // stylesheet nor any candidates to compile.
-    if (candidates.size === 0 && !stylesheet) {
+    if (candidateSnapshot.size === 0 && !stylesheet) {
       logger.debug("No CSS candidates or stylesheet for release; skipping compile", {
         projectScope: options.projectScope,
       });
       return null;
     }
 
-    const styleProfile = createStyleScopeProfile(runtimeOptions?.config ?? options.config);
-    const generationSession = acquireCSSGenerationSession(true);
-    const resolvedStylesheet = stylesheet ??
-      generationSession.compilationSession.defaultStylesheet;
+    if (!runtimeOptions || typeof runtimeOptions !== "object" || !runtimeOptions.config) {
+      throw new TypeError("Release CSS config is unavailable");
+    }
 
-    const result = await generateTailwindCSS(resolvedStylesheet, candidates, {
+    const styleProfileHash = assertStyleProfileHash(
+      createStyleScopeProfile(runtimeOptions.config).hash,
+      "Release CSS style profile hash",
+    );
+    const generationSession = acquireCSSGenerationSession(true);
+    const cssPipelineIdentity = assertCSSPipelineIdentity(
+      generationSession.cacheIdentity,
+      "Release CSS pipeline identity",
+    );
+
+    const result = await generateTailwindCSS(stylesheet, candidateSnapshot, {
       minify: true,
       environment: "production",
       buildMode: "production",
       projectSlug: options.projectScope,
     }, { generationSession });
 
-    if (result.css.length === 0) {
-      throw new TypeError("Release asset CSS compiler produced an empty output");
+    if (!result.css) {
+      throw COMPILATION_ERROR.create({
+        detail: "Release asset CSS compilation produced empty output",
+      });
     }
-
-    const styleArtifactProfileHash = composeCSSStyleProfileHash(
-      styleProfile.hash,
-      result.cacheIdentity,
-    );
+    if (textEncoder.encode(result.css).byteLength > RELEASE_ASSET_MAX_SIZE_BYTES) {
+      throw new TypeError(
+        `Release asset CSS output exceeds ${RELEASE_ASSET_MAX_SIZE_BYTES} bytes`,
+      );
+    }
 
     logger.debug("Release asset CSS compiled", {
       projectScope: options.projectScope,
-      candidateCount: candidates.size,
+      candidateCount: candidateSnapshot.size,
       cssLength: result.css.length,
       cssHash: hashCSS(result.css),
-      styleProfileHash: styleArtifactProfileHash,
+      styleProfileHash,
+      cssPipelineIdentity,
     });
 
-    return { css: result.css, styleProfileHash: styleArtifactProfileHash };
+    return { css: result.css, styleProfileHash, cssPipelineIdentity };
   };
 }

@@ -70,6 +70,7 @@ import {
   extractDependencyPinningPathKey,
 } from "#veryfront/transforms/import-rewriter/url-builder.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
+import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 
 const logger = serverLogger.component("module-server");
 const PROJECT_FALLBACK_EMBEDDED_POLYFILLS = new Set(["deno"]);
@@ -342,6 +343,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
         },
       });
       const platformFs = createFileSystem();
+      const dependencyCacheRoot = getHttpBundleCacheDir();
 
       const debugUserAgent = req.headers.get("user-agent") ?? "";
       logger.debug("Request", {
@@ -431,6 +433,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             },
             releaseRewriteOptions: {
               releaseId: options.releaseId,
+              dependencyCacheRoot,
               readDependencySource: (path) => platformFs.readTextFile(path),
             },
             profile: true,
@@ -538,6 +541,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
             },
             releaseRewriteOptions: {
               releaseId: options.releaseId,
+              dependencyCacheRoot,
               readDependencySource: (path) => platformFs.readTextFile(path),
             },
             profile: true,
@@ -750,6 +754,7 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
               releaseId: options.releaseId,
               manifest: releaseDependencyRewriteEnabled ? releaseDependencyManifest : undefined,
               manifestReadOptions: { refreshCachedNull: true },
+              dependencyCacheRoot,
               readDependencySource: (path) => platformFs.readTextFile(path),
             },
             profile: true,

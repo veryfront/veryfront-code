@@ -130,7 +130,13 @@ export async function startCliProductionServer(
     const manifest = parseReleaseAssetManifest(JSON.parse(manifestRaw));
     if (manifest) {
       clearReleaseAssetManifestCache();
-      configureReleaseAssetManifestFetcher(() => Promise.resolve({ state: "ready", manifest }));
+      configureReleaseAssetManifestFetcher(() =>
+        Promise.resolve({
+          state: "ready",
+          manifest_version: manifest.manifestVersion,
+          manifest,
+        })
+      );
       registeredLocalManifest = true;
       localReleaseId = manifest.releaseId;
     }
