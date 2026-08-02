@@ -12,7 +12,10 @@ import {
   createReleaseNotFoundProxyContext,
 } from "./proxy-error-context.ts";
 import { profileProxyServerTimingPhase, type ProxyServerTiming } from "./server-timing.ts";
-import { isVerifiedInternalControlPlaneRequest } from "./control-plane-signature.ts";
+import {
+  classifyInternalControlPlaneRequest,
+  isVerifiedInternalControlPlaneRequest,
+} from "./control-plane-signature.ts";
 import {
   createProjectMetadataClient,
   type DomainLookupResult,
@@ -118,8 +121,26 @@ export interface ProxyContext {
 }
 
 type ResolvedProjectMetadata =
-  | { projectId?: string; projectSlug?: string; releaseId?: string; environmentId?: string }
-  | { error: { status: number; message: string; redirectUrl?: string } };
+  | {
+    projectId?: string;
+    projectSlug?: string;
+    releaseId?: string;
+    environmentId?: string;
+    signedInternalControlPlaneRequest?: boolean;
+  }
+  | {
+    error: {
+      status: number;
+      message: string;
+      redirectUrl?: string;
+      discardToken?: boolean;
+    };
+  };
+
+type VerifySignedInternalControlPlaneBinding = (
+  projectSlug: string,
+  projectId: string,
+) => Promise<boolean>;
 
 export interface ProxyLogger {
   debug: (msg: string, extra?: Record<string, unknown>) => void;
@@ -559,13 +580,26 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     envMatcher: (env: ProjectLookupEnvironment) => boolean,
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
-    signedInternalControlPlaneRequest: boolean,
+    signedInternalControlPlaneCandidate: boolean,
+    verifySignedInternalControlPlaneBinding: VerifySignedInternalControlPlaneBinding,
   ): Promise<ResolvedProjectMetadata> {
     const lookupResult = await resolveProjectLookup(lookupKey, token, timing, req.signal);
     if (!lookupResult) return { projectId: undefined, releaseId: undefined };
 
     const matchingEnv = lookupResult.environments.find(envMatcher);
     if (!matchingEnv) return { projectId: undefined, releaseId: undefined };
+
+    const signedInternalControlPlaneRequest = signedInternalControlPlaneCandidate &&
+      await verifySignedInternalControlPlaneBinding(lookupResult.slug, lookupResult.id);
+    if (signedInternalControlPlaneCandidate && !signedInternalControlPlaneRequest) {
+      return {
+        error: {
+          status: 401,
+          message: "Control-plane project binding failed",
+          discardToken: true,
+        },
+      };
+    }
 
     const protectionError = await checkProtectedProxyAccess({
       url,
@@ -584,6 +618,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       projectSlug: lookupResult.slug,
       releaseId: matchingEnv?.active_release_id ?? undefined,
       environmentId: matchingEnv?.id,
+      signedInternalControlPlaneRequest,
     };
   }
 
@@ -596,7 +631,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     envMatcher: (env: ProjectLookupEnvironment) => boolean,
     timing: ProxyServerTiming | undefined,
     logContext: Record<string, unknown>,
-    signedInternalControlPlaneRequest: boolean,
+    signedInternalControlPlaneCandidate: boolean,
+    verifySignedInternalControlPlaneBinding: VerifySignedInternalControlPlaneBinding,
     requireActiveRelease: boolean,
   ): Promise<ResolvedProjectMetadata> {
     return await profileProxyServerTimingPhase(
@@ -622,7 +658,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             envMatcher,
             undefined,
             logContext,
-            signedInternalControlPlaneRequest,
+            signedInternalControlPlaneCandidate,
+            verifySignedInternalControlPlaneBinding,
           );
         }
 
@@ -648,7 +685,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             envMatcher,
             undefined,
             logContext,
-            signedInternalControlPlaneRequest,
+            signedInternalControlPlaneCandidate,
+            verifySignedInternalControlPlaneBinding,
           );
         }
 
@@ -665,8 +703,21 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
             envMatcher,
             undefined,
             logContext,
-            signedInternalControlPlaneRequest,
+            signedInternalControlPlaneCandidate,
+            verifySignedInternalControlPlaneBinding,
           );
+        }
+
+        const signedInternalControlPlaneRequest = signedInternalControlPlaneCandidate &&
+          await verifySignedInternalControlPlaneBinding(routingResult.slug, routingResult.id);
+        if (signedInternalControlPlaneCandidate && !signedInternalControlPlaneRequest) {
+          return {
+            error: {
+              status: 401,
+              message: "Control-plane project binding failed",
+              discardToken: true,
+            },
+          };
         }
 
         const protectionError = await checkProtectedProxyAccess({
@@ -686,6 +737,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           projectSlug: routingResult.slug,
           releaseId: routingEnv?.active_release_id ?? undefined,
           environmentId: routingEnv?.id,
+          signedInternalControlPlaneRequest,
         };
       },
     );
@@ -701,18 +753,31 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const scope = getScope(parsedDomain.environment);
     const base = { scope, host, parsedDomain };
 
-    // Verify the control-plane/dispatch signature once per request. This gates
-    // both the protected-environment access bypass and the x-token forwarding
-    // below, so it must be a real cryptographic check, not header presence.
-    const signedInternalControlPlaneRequest = await isVerifiedInternalControlPlaneRequest(
-      req,
-      url,
-    );
+    const internalRouteKind = classifyInternalControlPlaneRequest(req.method, url.pathname);
+    if (internalRouteKind === "reserved") {
+      return createProxyErrorContext(base, { status: 404, message: "Not found" });
+    }
 
     let projectSlug = parsedDomain.slug ?? undefined;
     let projectId: string | undefined;
     let releaseId: string | undefined;
     let environmentId: string | undefined;
+
+    // The first pass establishes an authentic, audience-bound candidate so its
+    // x-token can perform project metadata lookup. No authorization bypass is
+    // granted until a second pass binds the signature to the resolved id.
+    const signedInternalControlPlaneCandidate = projectSlug !== undefined &&
+      await isVerifiedInternalControlPlaneRequest(req, url, { audience: projectSlug });
+    let signedInternalControlPlaneRequest = false;
+
+    const verifySignedInternalControlPlaneBinding: VerifySignedInternalControlPlaneBinding = async (
+      resolvedProjectSlug,
+      resolvedProjectId,
+    ) =>
+      await isVerifiedInternalControlPlaneRequest(req, url, {
+        audience: resolvedProjectSlug,
+        expectedProjectId: resolvedProjectId,
+      });
 
     const isCustomDomain = !projectSlug && !parsedDomain.isVeryfrontDomain;
 
@@ -768,7 +833,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           envMatcher,
           timing,
           logContext,
-          signedInternalControlPlaneRequest,
+          signedInternalControlPlaneCandidate,
+          verifySignedInternalControlPlaneBinding,
           scope === "production",
         );
 
@@ -889,7 +955,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           tokenManager,
           logger,
           allowSignedInternalControlPlaneToken: true,
-          signedInternalControlPlaneRequest,
+          signedInternalControlPlaneRequest: signedInternalControlPlaneCandidate,
           tokenFetchErrorMessage: "Token fetch failed",
         },
       ));
@@ -987,7 +1053,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           return createProxyErrorContext(base, {
             status: resolved.error.status,
             message: resolved.error.message,
-            token,
+            token: resolved.error.discardToken ? undefined : token,
             redirectUrl: resolved.error.redirectUrl,
           });
         }
@@ -1005,6 +1071,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
         environmentId = resolved.environmentId;
+        signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         logger?.info("Resolved custom domain to project", {
           domain: host,
@@ -1028,7 +1095,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           return createProxyErrorContext(base, {
             status: resolved.error.status,
             message: resolved.error.message,
-            token,
+            token: resolved.error.discardToken ? undefined : token,
             redirectUrl: resolved.error.redirectUrl,
           });
         }
@@ -1046,6 +1113,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
         projectId = resolved.projectId;
         releaseId = resolved.releaseId;
         environmentId = resolved.environmentId;
+        signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         logger?.info("Resolved veryfront domain to project", {
           projectSlug,
@@ -1069,7 +1137,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           return createProxyErrorContext(base, {
             status: resolved.error.status,
             message: resolved.error.message,
-            token,
+            token: resolved.error.discardToken ? undefined : token,
             redirectUrl: resolved.error.redirectUrl,
           });
         }
@@ -1081,6 +1149,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         projectId = resolved.projectId;
         environmentId = resolved.environmentId;
+        signedInternalControlPlaneRequest = resolved.signedInternalControlPlaneRequest ?? false;
 
         if (projectId) {
           logger?.info("Resolved preview project", {
@@ -1090,6 +1159,13 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           });
         }
       }
+    }
+
+    if (signedInternalControlPlaneCandidate && !signedInternalControlPlaneRequest) {
+      return createProxyErrorContext(base, {
+        status: 401,
+        message: "Control-plane project binding failed",
+      });
     }
 
     if (scope === "production" && projectSlug && !releaseId && !isLocalProject) {
@@ -1133,6 +1209,8 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const parsedDomain = parseProjectDomain(host);
     const scope = getScope(parsedDomain.environment);
     const projectSlug = parsedDomain.slug ?? undefined;
+    const signedInternalControlPlaneRequest = projectSlug !== undefined &&
+      await isVerifiedInternalControlPlaneRequest(req, url, { audience: projectSlug });
     const { token } = await resolveProxyRequestToken({
       req,
       url,
@@ -1142,7 +1220,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       config,
       tokenManager,
       logger,
-      signedInternalControlPlaneRequest: await isVerifiedInternalControlPlaneRequest(req, url),
+      signedInternalControlPlaneRequest,
       tokenFetchErrorMessage: "Token fetch failed for API",
     });
     return token;

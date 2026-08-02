@@ -4,6 +4,7 @@ import { joinPath, normalizePath } from "#veryfront/utils/path-utils.ts";
 import { createSecureFs } from "#veryfront/security";
 import { computeEtag, hasMatchingEtag } from "../utils/etag.ts";
 import {
+  HTTP_METHOD_NOT_ALLOWED,
   HTTP_NOT_FOUND,
   HTTP_OK,
   PRIORITY_MEDIUM_LIB_MODULES,
@@ -84,19 +85,29 @@ export class LibModulesHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "LibModulesHandler",
     priority: PRIORITY_MEDIUM_LIB_MODULES as HandlerPriority,
-    patterns: [
-      { pattern: /^\/_veryfront\/lib\//, method: "GET" },
-      { pattern: /^\/_veryfront\/lib\//, method: "HEAD" },
-    ],
+    // Method-agnostic ownership is intentional: unsupported methods on this
+    // internal namespace must not fall through to application routing.
+    patterns: [{ pattern: /^\/_veryfront\/lib\// }],
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const method = req.method.toUpperCase();
-    if (method !== "GET" && method !== "HEAD") return this.continue();
-
     const requestUrl = new URL(req.url);
     const pathname = requestUrl.pathname;
     if (!pathname.startsWith(LIB_PREFIX)) return this.continue();
+
+    if (method !== "GET" && method !== "HEAD") {
+      return this.respond(
+        new Response("Method not allowed", {
+          status: HTTP_METHOD_NOT_ALLOWED,
+          headers: {
+            "Allow": "GET, HEAD",
+            "Cache-Control": "no-store",
+            "Content-Type": "text/plain; charset=utf-8",
+          },
+        }),
+      );
+    }
 
     const moduleResolution = ctx.config?.client?.moduleResolution ?? "cdn";
     if (moduleResolution !== "self-hosted") {

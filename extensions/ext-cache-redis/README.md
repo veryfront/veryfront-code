@@ -20,12 +20,12 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable         | Required                       | Description                                                                            |
-| ---------------- | ------------------------------ | -------------------------------------------------------------------------------------- |
-| `REDIS_URL`      | Yes (if explicit config unset) | Redis connection URL — e.g. `redis://localhost:6379` or `rediss://...` (TLS)           |
-| `REDIS_PREFIX`   | No                             | Token-key prefix (default: `vf:token:`)                                                |
-| `REDIS_PASSWORD` | No                             | Password override when credentials are not embedded in the connection URL              |
-| `CACHE_TYPE`     | Standalone proxy only          | Set to `extension` to select the already activated `TokenCacheStore` instead of memory |
+| Variable         | Required                       | Description                                                                                         |
+| ---------------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `REDIS_URL`      | Yes (if explicit config unset) | Redis connection URL — e.g. `redis://localhost:6379` or `rediss://...` (TLS)                        |
+| `REDIS_PREFIX`   | No                             | Token-key prefix (default: `vf:token:`)                                                             |
+| `REDIS_PASSWORD` | No                             | Password override when credentials are not embedded in the connection URL                           |
+| `CACHE_TYPE`     | Standalone proxy only          | Set to `extension` so the CLI activates this extension before importing the provider-neutral proxy |
 
 Explicit config under `ctx.config.proxy.cache.redis` wins over env vars.
 
@@ -53,11 +53,22 @@ config = {
 
 `url` is required; the rest are optional.
 
-For the standalone proxy, `CACHE_TYPE=extension` is an explicit, fail-closed
-selection: activate this extension before proxy startup and configure
-`REDIS_URL`. `REDIS_PREFIX` in this path must contain at most 256 visible ASCII
-characters and cannot contain Redis glob metacharacters (`*`, `?`, `[`, `]`,
-or `\`).
+For the standalone CLI proxy, select and configure the extension before
+startup:
+
+```bash
+CACHE_TYPE=extension \
+REDIS_URL=redis://localhost:6379 \
+veryfront serve --mode=proxy
+```
+
+The CLI activates `@veryfront/ext-cache-redis` through the extension loader
+before it imports the proxy runtime. Missing packages, missing Redis
+configuration, or a missing `TokenCacheStore` contract stop startup. The
+loader retains ownership of the store; the proxy borrows it and does not close
+it independently. `REDIS_PREFIX` in this path must contain at most 256 visible
+ASCII characters and cannot contain Redis glob metacharacters (`*`, `?`, `[`,
+`]`, or `\`).
 
 ## Provided contract
 

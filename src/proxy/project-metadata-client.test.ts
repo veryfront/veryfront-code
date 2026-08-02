@@ -150,10 +150,15 @@ describe("proxy project metadata client", () => {
   });
 
   it("enforces the deadline even when an injected fetch ignores abort", async () => {
+    let calls = 0;
     const client = createProjectMetadataClient({
       apiBaseUrl: "https://api.example.com",
       timeoutMs: 1,
-      fetchImpl: makeFetch(() => new Promise<Response>(() => {})),
+      maxInflight: 1,
+      fetchImpl: makeFetch(() => {
+        calls++;
+        return new Promise<Response>(() => {});
+      }),
     });
 
     const failure = await assertRejects(
@@ -162,6 +167,14 @@ describe("proxy project metadata client", () => {
       "timed out",
     );
     assertEquals((failure as ProxyLookupFailure).publicStatus, 504);
+
+    const capacity = await assertRejects(
+      () => client.lookupRouting("another-project", "token"),
+      ProxyLookupFailure,
+      "capacity",
+    );
+    assertEquals((capacity as ProxyLookupFailure).publicStatus, 503);
+    assertEquals(calls, 1);
   });
 
   it("propagates caller cancellation without reclassifying it as an upstream failure", async () => {
