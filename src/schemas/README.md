@@ -64,11 +64,12 @@ entries, and nested compilation is subject to a 24,000-unit work budget.
 Both schema documents and validation inputs cross the adapter boundary as
 bounded, data-only snapshots. A validation input uses the JSON value limits in
 the table above. Cycles, accessors, symbols, hidden properties, revoked
-proxies, and custom object prototypes are rejected before the compiler runs.
-Successful validation returns the accepted snapshot rather than caller-owned
-state. The snapshot does not invoke property getters, setters, iterators, or
-`toJSON`. Inspecting a Proxy necessarily invokes its reflection traps; a trap
-may run or throw before rejection.
+proxies, and custom object prototypes are rejected at the snapshot boundary.
+Invalid schemas do not reach compilation, and invalid inputs do not reach
+validation. Successful validation returns the accepted snapshot rather than
+caller-owned state. The snapshot does not invoke property getters, setters,
+iterators, or `toJSON`. Inspecting a Proxy necessarily invokes its reflection
+traps; a trap may run or throw before rejection.
 
 Compiled validators are cached locally by the default adapter. The cache holds
 at most 128 entries and has a 2 MiB aggregate source-weight budget; least
