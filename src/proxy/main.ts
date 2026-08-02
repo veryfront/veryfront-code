@@ -10,8 +10,13 @@
  * - VERYFRONT_PROXY_API_CLIENT_ID: OAuth client ID
  * - VERYFRONT_PROXY_API_CLIENT_SECRET: OAuth client secret
  * - VERYFRONT_PROXY_API_BASE_URL: Veryfront API base URL
+ * - VERYFRONT_API_REQUEST_TIMEOUT_MS: Deadline for BFF API requests
  * - VERYFRONT_SERVER_URL: URL of the production server service
+ * - VERYFRONT_SERVER_REQUEST_TIMEOUT_MS: Deadline for renderer requests
+ * - VERYFRONT_SERVER_RETRY_COUNT: Maximum safe renderer request retries
+ * - VERYFRONT_SERVER_RETRY_DELAY_MS: Delay between renderer request attempts
  * - VERYFRONT_PROXY_URL: Optional proxy bind URL (e.g. http://0.0.0.0:8080)
+ * - VERYFRONT_PROXY_MAX_WEBSOCKET_BRIDGES: Maximum live WebSocket bridges
  * - LOCAL_PROJECTS: JSON map of slug → filesystem path (for dev)
  * - CACHE_TYPE: "memory" (default) or "extension"
  * - VERYFRONT_PROXY_EXPECTED_REPLICAS: Minimum proxy replicas required to acknowledge routing changes
@@ -20,9 +25,10 @@
  * - VERYFRONT_API_INTERNAL_USER: Basic auth user for internal API
  * - VERYFRONT_API_INTERNAL_PASS: Basic auth pass for internal API
  * - SHUTDOWN_DRAIN_TIMEOUT_MS: Time to wait for active SSE responses during shutdown
+ * - SHUTDOWN_CLEANUP_TIMEOUT_MS: Time to wait for each bounded cleanup operation
  */
 
-import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
+import { createProxyHandler, INTERNAL_PROXY_HEADERS } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import {
   getReplayableRequestBodies,
@@ -33,12 +39,14 @@ import {
   authorizeWebSocketRequest,
   closeBridgePeer,
   createProxyClientWebSocketUpgradeOptions,
-  getClientWebSocketErrorLogLevel,
-  getServerWebSocketErrorLogLevel,
+  createProxyWebSocketBridge,
+  createProxyWebSocketTargetUrl,
+  isProxyWebSocketUpgrade,
+  ProxyWebSocketBridgeRegistry,
 } from "./websocket-bridge.ts";
 import { register } from "../extensions/contracts.ts";
 import { importFirstPartyExtensionModule } from "#veryfront/extensions/first-party-import.ts";
-import { ENV_VAR_MISSING, INITIALIZATION_ERROR } from "#veryfront/errors";
+import { INITIALIZATION_ERROR } from "#veryfront/errors";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import {
   endSpan,
@@ -55,8 +63,7 @@ import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
 import { getProxyFailureLogLevel } from "./log-noise.ts";
 import { createRendererRouterFromEnvironment } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
-import { exit, getEnv, onSignal } from "#veryfront/platform/compat/process.ts";
-import { isProduction } from "#veryfront/platform/environment.ts";
+import { exit, onSignal } from "#veryfront/platform/compat/process.ts";
 import { createHttpServer, upgradeWebSocket } from "#veryfront/platform/compat/http/index.ts";
 import { createProxyErrorResponse, jsonErrorResponse } from "./error-response.ts";
 import { handleReleaseAssetRequest, isReleaseAssetPath } from "./asset-handler.ts";
@@ -77,7 +84,6 @@ import { removeStickyCookieFromPublicCacheableResponse } from "./response-header
 import {
   closeProxyServerWithin,
   createProxyDrainingResponse,
-  parseProxyDrainTimeoutMs,
   ProxyRequestDrainTracker,
 } from "./request-drain.ts";
 import {
@@ -91,6 +97,15 @@ import {
 } from "#veryfront/observability/application-errors.ts";
 import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
 import { getTraceContext } from "./tracing.ts";
+import { readProxyStartupConfig } from "./startup-config.ts";
+import {
+  API_PROXY_PATH_PREFIX,
+  createApiTargetUrl,
+  createRendererTargetUrl,
+  fetchWithProxyDeadline,
+  ProxyOutboundRequestTimeoutError,
+  waitForProxyDelay,
+} from "./outbound-request.ts";
 
 await initializeSentryFromEnv("veryfront-proxy");
 
@@ -98,93 +113,32 @@ type AuthJwtExtensionModule = {
   createAuthProvider: (options?: Record<string, unknown>) => AuthProvider;
 };
 
-function getLocalProjects(): Record<string, string> {
-  const raw = getEnv("LOCAL_PROJECTS");
-  return raw ? (JSON.parse(raw) as Record<string, string>) : {};
-}
-
-// Configuration from environment variables
-const apiClientId = getEnv("VERYFRONT_PROXY_API_CLIENT_ID") || "";
-const apiClientSecret = getEnv("VERYFRONT_PROXY_API_CLIENT_SECRET") || "";
-
-const config: ProxyConfig = {
-  apiBaseUrl: getEnv("VERYFRONT_PROXY_API_BASE_URL") || "https://api.veryfront.com",
-  apiClientId,
-  apiClientSecret,
-  // Preview uses same service account (scopes determine access)
-  previewApiClientId: apiClientId,
-  previewApiClientSecret: apiClientSecret,
-  localProjects: getLocalProjects(),
-};
-
-function resolveProxyBinding(): { hostname: string; port: number } {
-  const proxyUrlRaw = getEnv("VERYFRONT_PROXY_URL");
-  if (proxyUrlRaw) {
-    const proxyUrl = new URL(proxyUrlRaw);
-    const port = proxyUrl.port ? Number(proxyUrl.port) : proxyUrl.protocol === "https:" ? 443 : 80;
-    return { hostname: proxyUrl.hostname, port };
-  }
-
-  const port = parseInt(getEnv("PORT") || "8080");
-  const hostname = getEnv("HOST") || "0.0.0.0";
-  return { hostname, port };
-}
-
-const serverUrlFromEnv = getEnv("VERYFRONT_SERVER_URL");
-// Fail closed in production: never silently forward to localhost.
-if (!serverUrlFromEnv && isProduction()) {
-  throw ENV_VAR_MISSING.create({
-    detail:
-      "VERYFRONT_SERVER_URL is required in production: refusing to fall back to http://localhost:3001.",
-  });
-}
-const PRODUCTION_SERVER_URL = serverUrlFromEnv || "http://localhost:3001";
+const startupConfig = readProxyStartupConfig();
+const config = startupConfig.proxyConfig;
+const PRODUCTION_SERVER_URL = startupConfig.productionServerUrl;
 
 const rendererRouter = createRendererRouterFromEnvironment(PRODUCTION_SERVER_URL);
 
 // Dedicated server resolver: routes environments to their dedicated server if assigned
-const apiInternalUrl = getEnv("VERYFRONT_API_INTERNAL_URL") || config.apiBaseUrl;
-const apiInternalUser = getEnv("VERYFRONT_API_INTERNAL_USER") || "";
-const apiInternalPass = getEnv("VERYFRONT_API_INTERNAL_PASS") || "";
+const apiInternalUrl = startupConfig.apiInternalUrl;
+const apiInternalUser = startupConfig.apiInternalUser;
+const apiInternalPass = startupConfig.apiInternalPass;
 const serverResolver = new ServerResolver(apiInternalUrl, apiInternalUser, apiInternalPass);
 
-const { hostname: HOST, port: PORT } = resolveProxyBinding();
-const WS_CONNECT_TIMEOUT_MS = 30_000;
-// Timeout for forwarding requests to production server (SSR can take time on cold start)
-const DEFAULT_SERVER_REQUEST_TIMEOUT_MS = 90_000;
-const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 25_000;
+const { hostname: HOST, port: PORT } = startupConfig.binding;
+const API_REQUEST_TIMEOUT_MS = startupConfig.apiRequestTimeoutMs;
+const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = startupConfig.serverRequestTimeoutMs;
+const VERYFRONT_SERVER_RETRY_COUNT = startupConfig.serverRetryCount;
+const VERYFRONT_SERVER_RETRY_DELAY_MS = startupConfig.serverRetryDelayMs;
+const SHUTDOWN_DRAIN_TIMEOUT_MS = startupConfig.shutdownDrainTimeoutMs;
+const SHUTDOWN_CLEANUP_TIMEOUT_MS = startupConfig.shutdownCleanupTimeoutMs;
 const PROXY_SERVER_CLOSE_TIMEOUT_MS = 1_000;
-const VERYFRONT_SERVER_REQUEST_TIMEOUT_MS = parseInt(
-  getEnv("VERYFRONT_SERVER_REQUEST_TIMEOUT_MS") || String(DEFAULT_SERVER_REQUEST_TIMEOUT_MS),
-);
-// Retry configuration for transient connection errors
-const DEFAULT_SERVER_RETRY_COUNT = 1;
-const DEFAULT_SERVER_RETRY_DELAY_MS = 100;
-const VERYFRONT_SERVER_RETRY_COUNT = parseInt(
-  getEnv("VERYFRONT_SERVER_RETRY_COUNT") || String(DEFAULT_SERVER_RETRY_COUNT),
-);
-const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
-  getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
-);
-const SHUTDOWN_DRAIN_TIMEOUT_MS = parseProxyDrainTimeoutMs(
-  getEnv("SHUTDOWN_DRAIN_TIMEOUT_MS"),
-  DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS,
-);
-const routingInvalidationSecret = getEnv("VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET") ?? "";
-const routingInvalidationSecretBytes =
-  new TextEncoder().encode(routingInvalidationSecret).byteLength;
-const expectedReplicasRaw = getEnv("VERYFRONT_PROXY_EXPECTED_REPLICAS");
-const expectedReplicas = Number(expectedReplicasRaw);
-const hasValidExpectedReplicas = Number.isInteger(expectedReplicas) && expectedReplicas > 0;
-if (isProduction() && !hasValidExpectedReplicas) {
-  throw new Error("VERYFRONT_PROXY_EXPECTED_REPLICAS must be a positive integer in production");
-}
-if (isProduction() && routingInvalidationSecretBytes < 32) {
-  throw new Error(
-    "VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET must contain at least 32 bytes in production",
-  );
-}
+const routingInvalidationSecret = startupConfig.routingInvalidationSecret;
+const expectedReplicas = startupConfig.expectedReplicas;
 const proxyRequestDrainTracker = new ProxyRequestDrainTracker();
+const webSocketBridgeRegistry = new ProxyWebSocketBridgeRegistry(
+  startupConfig.maxActiveWebSocketBridges,
+);
 let shuttingDown = false;
 
 const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExtensionModule>(
@@ -216,12 +170,12 @@ const proxyHandler = createProxyHandler({
   logger: routingInvalidationLogger,
 });
 const routingInvalidationBus = await startProxyRoutingInvalidationBus({
-  expectedReplicas: hasValidExpectedReplicas ? expectedReplicas : undefined,
+  expectedReplicas,
   integritySecret: routingInvalidationSecret,
   logger: routingInvalidationLogger,
   onInvalidate: proxyHandler.invalidateAndConfirmRoutingLookup,
 }).catch((error) => {
-  if (isProduction()) {
+  if (startupConfig.production) {
     throw new Error("Proxy routing invalidation bus failed to start", { cause: error });
   }
   proxyLogger.error(
@@ -231,7 +185,7 @@ const routingInvalidationBus = await startProxyRoutingInvalidationBus({
   );
   return null;
 });
-if (isProduction() && !routingInvalidationBus) {
+if (startupConfig.production && !routingInvalidationBus) {
   throw new Error(
     "Proxy routing invalidation bus requires REDIS_URL and a valid VERYFRONT_PROXY_ROUTING_INVALIDATION_SECRET in production",
   );
@@ -268,11 +222,13 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
   const scope = context.environment;
   const projectSlug = context.projectSlug;
 
-  const serverWsUrl = PRODUCTION_SERVER_URL.replace(/^http/, "ws");
-  const safePath = url.pathname.replace(/^\/\/+/, "/");
-  const targetUrl = new URL(`${serverWsUrl}${safePath}${url.search}`);
-  targetUrl.searchParams.set("x-project-slug", projectSlug || "");
-  targetUrl.searchParams.set("x-environment", scope);
+  const targetUrl = createProxyWebSocketTargetUrl(
+    PRODUCTION_SERVER_URL,
+    url,
+    projectSlug || "",
+    scope,
+  );
+  const target = new URL(targetUrl);
 
   proxyLogger.info("[WebSocket] Upgrade request received", {
     host,
@@ -280,7 +236,8 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
     projectSlug,
     environment: scope,
     parsedEnvironment: context.parsedDomain.environment,
-    targetUrl: targetUrl.toString(),
+    targetOrigin: target.origin,
+    targetPathname: target.pathname,
   });
 
   const { socket: clientSocket, response } = upgradeWebSocket(
@@ -288,115 +245,31 @@ async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response>
     createProxyClientWebSocketUpgradeOptions(),
   );
 
-  let serverSocket: WebSocket | null = null;
-  let connectTimeoutId: ReturnType<typeof setTimeout> | null = null;
-  let timedOut = false;
-
-  const clearConnectTimeout = (): void => {
-    if (!connectTimeoutId) return;
-    clearTimeout(connectTimeoutId);
-    connectTimeoutId = null;
-  };
-
-  clientSocket.onopen = () => {
-    proxyLogger.info("[WebSocket] Client connected, bridging to server", {
-      targetUrl: targetUrl.toString(),
+  try {
+    const bridge = createProxyWebSocketBridge({
+      clientSocket,
+      createServerSocket: (upstreamUrl) => new WebSocket(upstreamUrl),
+      logger: {
+        info: (message, context) => proxyLogger.info(message, context),
+        warn: (message, context) => proxyLogger.warn(message, context),
+        error: (message, context, error) => proxyLogger.error(message, context ?? {}, error),
+      },
+      targetUrl,
     });
-
-    try {
-      serverSocket = new WebSocket(targetUrl.toString());
-    } catch (error) {
-      proxyLogger.error("[WebSocket] Failed to create server WebSocket", {
-        error: error instanceof Error ? error.message : String(error),
-        targetUrl: targetUrl.toString(),
-      });
-      clientSocket.close(1011, "Failed to connect to server");
-      return;
-    }
-
-    connectTimeoutId = setTimeout(() => {
-      timedOut = true;
-      proxyLogger.error("[WebSocket] Server connection timeout", {
-        targetUrl: targetUrl.toString(),
-        timeoutMs: WS_CONNECT_TIMEOUT_MS,
-      });
-      serverSocket?.close();
-      if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.close(1001, "Server connection timeout");
-      }
-    }, WS_CONNECT_TIMEOUT_MS);
-
-    serverSocket.onopen = () => {
-      clearConnectTimeout();
-      if (timedOut) {
-        serverSocket?.close();
-        return;
-      }
-      proxyLogger.info("[WebSocket] Server connected, bridge established", {
+    webSocketBridgeRegistry.track(bridge);
+  } catch (error) {
+    proxyLogger.error(
+      "[WebSocket] Failed to initialize bridge",
+      {
         projectSlug,
         environment: scope,
-      });
-    };
-
-    serverSocket.onmessage = (event) => {
-      if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.send(event.data);
-      }
-    };
-
-    serverSocket.onerror = (event) => {
-      clearConnectTimeout();
-      const error = event instanceof ErrorEvent ? event.message : "Unknown error";
-      const logLevel = getServerWebSocketErrorLogLevel(error);
-      proxyLogger[logLevel]("[WebSocket] Server connection error", {
-        projectSlug,
-        environment: scope,
-        targetUrl: targetUrl.toString(),
-        error,
-      });
-      closeBridgePeer(clientSocket, 1011, "Server connection error");
-      closeBridgePeer(serverSocket, 1011, "Server connection error");
-    };
-
-    serverSocket.onclose = (event) => {
-      clearConnectTimeout();
-      proxyLogger.info("[WebSocket] Server connection closed", {
-        code: event.code,
-        reason: event.reason,
-        wasClean: event.wasClean,
-      });
-      if (clientSocket.readyState === WebSocket.OPEN) {
-        clientSocket.close(event.code, event.reason);
-      }
-    };
-  };
-
-  clientSocket.onmessage = (event) => {
-    if (serverSocket?.readyState === WebSocket.OPEN) {
-      serverSocket.send(event.data);
-    }
-  };
-
-  clientSocket.onerror = (event) => {
-    clearConnectTimeout();
-    const error = event instanceof ErrorEvent ? event.message : "Unknown error";
-    const logLevel = getClientWebSocketErrorLogLevel(error);
-    proxyLogger[logLevel]("[WebSocket] Client connection error", {
+        targetOrigin: target.origin,
+        targetPathname: target.pathname,
+      },
       error,
-    });
-  };
-
-  clientSocket.onclose = (event) => {
-    clearConnectTimeout();
-    proxyLogger.info("[WebSocket] Client connection closed", {
-      code: event.code,
-      reason: event.reason,
-      wasClean: event.wasClean,
-    });
-    if (serverSocket?.readyState === WebSocket.OPEN) {
-      serverSocket.close();
-    }
-  };
+    );
+    closeBridgePeer(clientSocket, 1011, "Failed to initialize WebSocket bridge");
+  }
 
   return response;
 }
@@ -478,9 +351,7 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
             const baseUrl = dedicatedServerUrl ??
               rendererRouter?.resolve(ctx.projectSlug) ??
               PRODUCTION_SERVER_URL;
-            // Collapse leading slashes to prevent protocol-relative URL interpretation (e.g. "//cms/..." → hostname "cms")
-            const safePath = url.pathname.replace(/^\/\/+/, "/");
-            const serverUrl = new URL(safePath + url.search, baseUrl);
+            const serverUrl = createRendererTargetUrl(baseUrl, url);
             // Delay before retry (not on first attempt)
             if (attempt > 0) {
               proxyLogger.info(
@@ -493,18 +364,16 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                 },
               );
               const retryDelayStartedAt = performance.now();
-              await new Promise((resolve) => setTimeout(resolve, VERYFRONT_SERVER_RETRY_DELAY_MS)); // no cleanup needed: one-shot
+              await waitForProxyDelay(
+                VERYFRONT_SERVER_RETRY_DELAY_MS,
+                req.signal,
+              );
               markProxyServerTimingPhase(
                 proxyTiming,
                 "proxy.retry_delay",
                 performance.now() - retryDelayStartedAt,
               );
             }
-
-            const abortController = new AbortController();
-            const timeoutId = setTimeout(() => {
-              abortController.abort();
-            }, VERYFRONT_SERVER_REQUEST_TIMEOUT_MS);
 
             try {
               const response = await profileProxyServerTimingPhase(
@@ -514,12 +383,15 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   withSpan(
                     ProxySpanNames.HTTP_CLIENT_FETCH,
                     () =>
-                      fetch(serverUrl.toString(), {
-                        method: req.method,
-                        headers: newHeaders,
-                        body: upstreamBodies[attempt] ?? null,
-                        redirect: "manual",
-                        signal: abortController.signal,
+                      fetchWithProxyDeadline(serverUrl, {
+                        timeoutMs: VERYFRONT_SERVER_REQUEST_TIMEOUT_MS,
+                        signal: req.signal,
+                        init: {
+                          method: req.method,
+                          headers: newHeaders,
+                          body: upstreamBodies[attempt] ?? null,
+                          redirect: "manual",
+                        },
                       }),
                     {
                       "http.method": req.method,
@@ -533,7 +405,6 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                   ),
               );
 
-              clearTimeout(timeoutId);
               const ms = Math.round(performance.now() - startTime);
 
               if (attempt > 0) {
@@ -555,10 +426,9 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
                 ),
               );
             } catch (error) {
-              clearTimeout(timeoutId);
               lastError = error as Error;
 
-              if (error instanceof Error && error.name === "AbortError") {
+              if (error instanceof ProxyOutboundRequestTimeoutError) {
                 const ms = Math.round(performance.now() - startTime);
                 proxyLogger.error(`${UPSTREAM_TIMEOUT_STATUS} ${req.method} ${url.pathname}`, {
                   ms,
@@ -668,27 +538,31 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
   const token = await proxyHandler.getTokenForApi(req, { url });
   if (!token) return jsonErrorResponse(401, { error: "No authentication token" });
 
-  const apiPath = url.pathname.replace(/^\/_vf\/api/, "");
-  const apiUrl = `${config.apiBaseUrl}${apiPath}${url.search}`;
-  const apiUrlObj = new URL(apiUrl);
+  const apiPath = url.pathname.slice(API_PROXY_PATH_PREFIX.length) || "/";
+  const apiUrl = createApiTargetUrl(config.apiBaseUrl, url);
 
   try {
     const response = await withSpan(
       ProxySpanNames.HTTP_CLIENT_FETCH,
       () =>
-        fetch(apiUrl, {
-          method: req.method,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: "application/json",
-            "Content-Type": req.headers.get("Content-Type") || "application/json",
+        fetchWithProxyDeadline(apiUrl, {
+          timeoutMs: API_REQUEST_TIMEOUT_MS,
+          signal: req.signal,
+          init: {
+            method: req.method,
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/json",
+              "Content-Type": req.headers.get("Content-Type") || "application/json",
+            },
+            body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
+            redirect: "manual",
           },
-          body: req.method !== "GET" && req.method !== "HEAD" ? req.body : undefined,
         }),
       {
         "http.method": req.method,
-        "http.url": apiUrl,
-        "http.host": apiUrlObj.host,
+        "http.url": apiUrl.toString(),
+        "http.host": apiUrl.host,
         "proxy.target": "api",
         "proxy.api_path": apiPath,
       },
@@ -703,6 +577,15 @@ async function handleApiProxy(req: Request, url: URL): Promise<Response> {
       },
     });
   } catch (error) {
+    if (error instanceof ProxyOutboundRequestTimeoutError) {
+      proxyLogger.error("API proxy request timed out", {
+        timeoutMs: API_REQUEST_TIMEOUT_MS,
+      });
+      return jsonErrorResponse(504, {
+        error: "Gateway Timeout",
+        message: "API request timed out",
+      });
+    }
     proxyLogger.error("API proxy error", error as Error);
     // Real error logged above; keep body generic so internal hostnames/paths in
     // error.message are not leaked to clients.
@@ -728,7 +611,7 @@ async function router(req: Request): Promise<Response> {
 
   try {
     let response: Response;
-    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+    if (isProxyWebSocketUpgrade(req)) {
       response = await handleWebSocketUpgrade(req, url);
     } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
       response = await handleProxyRoutingInvalidationRequest(req, {
@@ -738,7 +621,10 @@ async function router(req: Request): Promise<Response> {
       response = Object.keys(proxyHandler.localProjects).length === 0
         ? new Response("Forbidden", { status: 403 })
         : await handleStats();
-    } else if (url.pathname.startsWith("/_vf/api/")) {
+    } else if (
+      url.pathname === API_PROXY_PATH_PREFIX ||
+      url.pathname.startsWith(`${API_PROXY_PATH_PREFIX}/`)
+    ) {
       response = await handleApiProxy(req, url);
     } else if (isReleaseAssetPath(url.pathname)) {
       response = await handleReleaseAssetRequest(req, url, { apiBaseUrl: config.apiBaseUrl }) ??
@@ -785,7 +671,26 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
       });
     }
 
-    await routingInvalidationBus?.close();
+    const bridgesClosed = await closeProxyServerWithin(
+      () => webSocketBridgeRegistry.close(),
+      SHUTDOWN_CLEANUP_TIMEOUT_MS,
+    );
+    if (!bridgesClosed) {
+      proxyLogger.warn("Proxy WebSocket bridge cleanup timed out", {
+        activeBridges: webSocketBridgeRegistry.size,
+        cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      });
+    }
+
+    const routingBusClosed = await closeProxyServerWithin(
+      () => routingInvalidationBus?.close() ?? Promise.resolve(),
+      SHUTDOWN_CLEANUP_TIMEOUT_MS,
+    );
+    if (!routingBusClosed) {
+      proxyLogger.warn("Proxy routing invalidation cleanup timed out", {
+        cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      });
+    }
 
     const closed = await closeProxyServerWithin(
       () => server.close(),
@@ -801,7 +706,15 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     }
     rendererRouter?.close();
     serverResolver.close();
-    await proxyHandler.close();
+    const handlerClosed = await closeProxyServerWithin(
+      () => proxyHandler.close(),
+      SHUTDOWN_CLEANUP_TIMEOUT_MS,
+    );
+    if (!handlerClosed) {
+      proxyLogger.warn("Proxy handler cleanup timed out", {
+        cleanupTimeoutMs: SHUTDOWN_CLEANUP_TIMEOUT_MS,
+      });
+    }
     await shutdownOTLP();
     await flushApplicationErrors();
     proxyLogger.info("Closed connections");
