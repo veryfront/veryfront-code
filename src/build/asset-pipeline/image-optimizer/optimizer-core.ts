@@ -17,7 +17,11 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { DEFAULT_BUILD_CONCURRENCY, logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
-import { createBuildPublication } from "../../production-build/build/build-publication.ts";
+import {
+  type BuildPublicationLock,
+  createBuildPublication,
+  nativeBuildPublicationLock,
+} from "../../production-build/build/build-publication.ts";
 import {
   calculateRequiredAspectRatio,
   generateSrcSet,
@@ -47,6 +51,7 @@ const supportedFormats = new Set<ImageFormat>(SUPPORTED_FORMATS);
 export interface ImageOptimizerDependencies {
   fs?: FileSystem;
   loadSharp?: () => Promise<SharpConstructor>;
+  publicationLock?: BuildPublicationLock;
 }
 
 /** @internal — exported for testing */
@@ -123,6 +128,7 @@ export class ImageOptimizer {
   private imageManifest = new Map<string, OptimizedImageMetadata>();
   private fs: FileSystem;
   private loadSharpDependency: () => Promise<SharpConstructor>;
+  private publicationLock?: BuildPublicationLock;
   private outputUrlPath: string;
 
   constructor(
@@ -152,6 +158,8 @@ export class ImageOptimizer {
     };
     this.fs = dependencies.fs ?? createFileSystem();
     this.loadSharpDependency = dependencies.loadSharp ?? loadSharp;
+    this.publicationLock = dependencies.publicationLock ??
+      (dependencies.fs === undefined ? nativeBuildPublicationLock : undefined);
     this.validateConfiguration();
     this.outputUrlPath = portablePath(
       relative(this.options.projectDir, this.options.outputDir),
@@ -318,7 +326,7 @@ export class ImageOptimizer {
         const publication = await createBuildPublication(
           this.options.outputDir,
           false,
-          { fs: this.fs },
+          { fs: this.fs, lock: this.publicationLock },
         );
 
         let failed = false;
