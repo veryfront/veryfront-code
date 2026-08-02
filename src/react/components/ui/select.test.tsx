@@ -1124,6 +1124,12 @@ describe("Select", () => {
       );
       assertEquals(rootElement.contains(trigger), true);
       assertEquals(trigger.disabled, true);
+      // The invalid markup lands one commit before the close is announced, so
+      // the disabled trigger is observable while `onOpenChange` is still queued.
+      await waitFor(
+        () => openChanges.length > 0,
+        "default-open duplicate close notification",
+      );
       assertEquals(openChanges, [false]);
     } finally {
       await unmount(root);
