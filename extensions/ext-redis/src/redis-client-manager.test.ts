@@ -35,6 +35,7 @@ function createFakeClient(
     incr: () => Promise.resolve(1),
     pExpire: () => Promise.resolve(true),
     pTTL: () => Promise.resolve(1_000),
+    info: () => Promise.resolve(""),
     on(event, listener) {
       let eventListeners = listeners.get(event);
       if (!eventListeners) {

@@ -50,6 +50,7 @@ function createClient(
     incr: () => Promise.resolve(1),
     pExpire: () => Promise.resolve(true),
     pTTL: () => Promise.resolve(1_000),
+    info: () => Promise.resolve(""),
     on: () => undefined,
   };
 }

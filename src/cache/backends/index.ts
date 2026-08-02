@@ -13,6 +13,21 @@ export {
   captureBoundedCacheRead,
   readCacheValueWithinLimit,
 } from "../bounded-read.ts";
+export {
+  buildRevisionedCacheKey,
+  isRevisionedCacheBackend,
+  isRevisionedCacheKey,
+  MAX_REVISIONED_CACHE_SOURCE_KEY_LENGTH,
+  requireCacheExchangeResult,
+  REVISIONED_CACHE_KEY_PREFIX,
+  snapshotCacheRevisionResult,
+} from "../capabilities.ts";
+export { MAX_CACHE_REVISION_LENGTH } from "../types.ts";
+export type {
+  CacheRevisionMutation,
+  CacheRevisionSnapshot,
+  RevisionedCacheBackend,
+} from "../types.ts";
 
 // Backend implementations
 export { MemoryCacheBackend } from "./memory.ts";
