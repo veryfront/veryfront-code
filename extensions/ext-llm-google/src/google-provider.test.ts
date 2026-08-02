@@ -9,6 +9,7 @@ import {
 
 import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./google-provider.ts";
 import { buildGoogleGenerateContentRequest } from "./google-request-builder.ts";
+import { MAX_GOOGLE_PROVIDER_METADATA_BYTES } from "./google-thought-signatures.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
@@ -710,6 +711,33 @@ describe("ext-llm-google/google-provider", () => {
           google: { rawAssistantParts },
         },
       });
+    });
+
+    it("maps direct replay metadata budget failures to the typed response error", async () => {
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        fetch: () =>
+          Promise.resolve(
+            googleJsonResponse({
+              candidates: [{
+                content: {
+                  role: "model",
+                  parts: [{
+                    text: "x".repeat(MAX_GOOGLE_PROVIDER_METADATA_BYTES),
+                    thoughtSignature: "oversized-signed-part",
+                  }],
+                },
+                finishReason: "STOP",
+              }],
+            }),
+          ),
+      }, "gemini-3-pro");
+
+      await expectInvalidSuccessfulResponse(
+        runtime.doGenerate({ prompt: [userPrompt] }),
+        "google",
+        "provider metadata could not be retained safely",
+      );
     });
 
     it("normalizes correlated Google code execution and preserves every raw part for replay", async () => {

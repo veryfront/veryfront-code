@@ -458,7 +458,15 @@ function buildGoogleGenerateResult(
     }
   }
   const usage = sanitizeRuntimeUsage(extractGoogleUsage(payload));
-  const providerMetadata = createGoogleProviderMetadata(parts, groundingMetadata);
+  let providerMetadata: Record<string, unknown> | undefined;
+  try {
+    providerMetadata = createGoogleProviderMetadata(parts, groundingMetadata);
+  } catch {
+    throw invalidGoogleResponse(
+      context,
+      "provider metadata could not be retained safely",
+    );
+  }
 
   return {
     content,

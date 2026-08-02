@@ -363,6 +363,7 @@ function shouldPreserveAnthropicRawAssistantHistory(
 }
 
 function createAnthropicRawAssistantMetadata(
+  providerLabel: string,
   prompt: OpenAICompatibleLanguageOptions["prompt"],
   rawAssistantMessages: unknown[][],
   initialProviderToolNamesById: ReadonlyMap<string, string>,
@@ -370,14 +371,21 @@ function createAnthropicRawAssistantMetadata(
   if (rawAssistantMessages.length === 0) {
     return undefined;
   }
-  const snapshot = validateAnthropicRawAssistantMessages(
-    rawAssistantMessages,
-    new Map(initialProviderToolNamesById),
-  );
-  if (!shouldPreserveAnthropicRawAssistantHistory(prompt, snapshot)) {
-    return undefined;
+  try {
+    const snapshot = validateAnthropicRawAssistantMessages(
+      rawAssistantMessages,
+      new Map(initialProviderToolNamesById),
+    );
+    if (!shouldPreserveAnthropicRawAssistantHistory(prompt, snapshot)) {
+      return undefined;
+    }
+    return { anthropic: { rawAssistantMessages: snapshot } };
+  } catch {
+    throw invalidAnthropicResponse(
+      providerLabel,
+      "raw assistant metadata could not be retained safely",
+    );
   }
-  return { anthropic: { rawAssistantMessages: snapshot } };
 }
 
 function createProviderAbortScope(callerSignal: AbortSignal | undefined): {
@@ -544,6 +552,7 @@ export function createAnthropicModelRuntime(
 
       const drained = warnings.drain();
       const providerMetadata = createAnthropicRawAssistantMetadata(
+        providerName,
         options.prompt,
         rawAssistantMessages,
         initialProviderToolNamesById,
@@ -636,6 +645,7 @@ export function createAnthropicModelRuntime(
             : undefined;
           if (!continuationContent) {
             const providerMetadata = createAnthropicRawAssistantMetadata(
+              providerName,
               options.prompt,
               rawAssistantMessages,
               initialProviderToolNamesById,

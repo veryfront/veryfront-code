@@ -3,6 +3,7 @@ import { describe, it } from "@std/testing/bdd";
 
 import { ProviderRequestError } from "veryfront/provider/shared";
 
+import { MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES } from "./anthropic-native-content.ts";
 import { createAnthropicModelRuntime } from "./anthropic-provider.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
@@ -218,6 +219,47 @@ describe("anthropic-provider", () => {
     assertEquals(error.status, 200);
     assertEquals(error.retryable, false);
     assertEquals(error.message.includes(privatePayload), false);
+  });
+
+  it("maps raw assistant metadata budget failures to the typed response error", async () => {
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "k",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [
+                {
+                  type: "text",
+                  text: "x".repeat(MAX_ANTHROPIC_RAW_ASSISTANT_METADATA_BYTES),
+                },
+                {
+                  type: "server_tool_use",
+                  id: "srvtool_oversized_metadata",
+                  name: "web_search",
+                  input: { query: "bounded" },
+                },
+              ],
+              stop_reason: "end_turn",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    }, "claude-sonnet-4-6");
+
+    const error = await assertRejects(
+      () =>
+        runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "Search" }] }],
+        }),
+      ProviderRequestError,
+      "raw assistant metadata could not be retained safely",
+    );
+
+    assertEquals(error.provider, "anthropic");
+    assertEquals(error.status, 200);
+    assertEquals(error.retryable, false);
   });
 
   it("does not attach raw-assistant metadata to an empty assistant stream", async () => {
