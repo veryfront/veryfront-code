@@ -632,6 +632,61 @@ describe("tool/remote-mcp", () => {
     );
   });
 
+  it("enforces UTF-8 byte budgets for remote tool identity fields", async () => {
+    const cases = [
+      { name: "💥".repeat(33), description: "Tool", inputSchema: {} },
+      { name: "tool", description: "💥".repeat(257), inputSchema: {} },
+      { name: "tool", description: "Tool", title: "💥".repeat(257), inputSchema: {} },
+    ];
+
+    for (const tool of cases) {
+      const source = createRemoteMCPToolSource({
+        id: "docs",
+        endpoint: "https://mcp.test",
+      });
+      await assertRejects(
+        () =>
+          withMockFetch(
+            async () =>
+              Response.json({
+                jsonrpc: "2.0",
+                id: "docs:tools:list",
+                result: { tools: [tool] },
+              }),
+            async () => await source.listTools(),
+          ),
+        Error,
+        "malformed",
+      );
+    }
+  });
+
+  it("rejects compact remote schemas above the structural node budget", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+    const emptyValue: unknown[] = [];
+    const inputSchema = { enum: new Array(4_096).fill(emptyValue) };
+
+    await assertRejects(
+      () =>
+        withMockFetch(
+          async () =>
+            Response.json({
+              jsonrpc: "2.0",
+              id: "docs:tools:list",
+              result: {
+                tools: [{ name: "wide", description: "Tool", inputSchema }],
+              },
+            }),
+          async () => await source.listTools(),
+        ),
+      Error,
+      "malformed input schema",
+    );
+  });
+
   it("rejects duplicate tool names and repeated pagination cursors", async () => {
     let callCount = 0;
     const duplicateSource = createRemoteMCPToolSource({

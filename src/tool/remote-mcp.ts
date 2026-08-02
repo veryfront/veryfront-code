@@ -21,11 +21,12 @@ const MAX_ERROR_BODY_BYTES = MAX_ERROR_BODY_LENGTH * 4;
 export const MAX_REMOTE_MCP_TOOL_LIST_PAGES = 50;
 /** Maximum number of remote definitions admitted atomically. */
 export const MAX_REMOTE_MCP_TOOL_DEFINITIONS = 1_000;
-const MAX_REMOTE_MCP_TOOL_NAME_LENGTH = 128;
-const MAX_REMOTE_MCP_TOOL_DESCRIPTION_LENGTH = 1_024;
-const MAX_REMOTE_MCP_TOOL_TITLE_LENGTH = 1_024;
+const MAX_REMOTE_MCP_TOOL_NAME_BYTES = 128;
+const MAX_REMOTE_MCP_TOOL_DESCRIPTION_BYTES = 1_024;
+const MAX_REMOTE_MCP_TOOL_TITLE_BYTES = 1_024;
 const MAX_REMOTE_MCP_TOOL_SCHEMA_BYTES = 16_384;
 const MAX_REMOTE_MCP_TOOL_SCHEMA_DEPTH = 64;
+const MAX_REMOTE_MCP_TOOL_SCHEMA_NODES = 4_096;
 const MAX_REMOTE_MCP_CURSOR_LENGTH = 4_096;
 const UTF8_ENCODER = new TextEncoder();
 
@@ -108,12 +109,21 @@ function serializedByteLength(value: unknown): number {
   return UTF8_ENCODER.encode(JSON.stringify(value)).byteLength;
 }
 
-function isJsonDepthWithin(value: unknown, maxDepth: number): boolean {
+function isUtf8LengthWithin(value: string, maxBytes: number): boolean {
+  return value.length <= maxBytes && UTF8_ENCODER.encode(value).byteLength <= maxBytes;
+}
+
+function isJsonStructureWithin(
+  value: unknown,
+  maxDepth: number,
+  maxNodes: number,
+): boolean {
   const stack: Array<{ value: unknown; depth: number }> = [{ value, depth: 0 }];
+  let nodes = 0;
   while (stack.length > 0) {
     const current = stack.pop();
     if (!current) break;
-    if (current.depth > maxDepth) return false;
+    if (current.depth > maxDepth || ++nodes > maxNodes) return false;
 
     if (Array.isArray(current.value)) {
       for (const child of current.value) {
@@ -135,7 +145,11 @@ function normalizeParameters(inputSchema: unknown, toolName: string): JsonSchema
   if (
     !snapshot.success ||
     !isRecord(snapshot.value) ||
-    !isJsonDepthWithin(snapshot.value, MAX_REMOTE_MCP_TOOL_SCHEMA_DEPTH) ||
+    !isJsonStructureWithin(
+      snapshot.value,
+      MAX_REMOTE_MCP_TOOL_SCHEMA_DEPTH,
+      MAX_REMOTE_MCP_TOOL_SCHEMA_NODES,
+    ) ||
     serializedByteLength(snapshot.value) > MAX_REMOTE_MCP_TOOL_SCHEMA_BYTES
   ) {
     throw protocolError(
@@ -159,9 +173,9 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
   if (
     typeof entry.name !== "string" ||
     entry.name.length === 0 ||
-    entry.name.length > MAX_REMOTE_MCP_TOOL_NAME_LENGTH ||
+    !isUtf8LengthWithin(entry.name, MAX_REMOTE_MCP_TOOL_NAME_BYTES) ||
     typeof entry.description !== "string" ||
-    entry.description.length > MAX_REMOTE_MCP_TOOL_DESCRIPTION_LENGTH
+    !isUtf8LengthWithin(entry.description, MAX_REMOTE_MCP_TOOL_DESCRIPTION_BYTES)
   ) {
     throw protocolError(
       `Remote MCP tools/list returned a malformed tool definition at index ${index}`,
@@ -178,7 +192,7 @@ function normalizeToolDefinition(entry: unknown, index: number): ToolDefinition 
     if (
       typeof entry.title !== "string" ||
       entry.title.length === 0 ||
-      entry.title.length > MAX_REMOTE_MCP_TOOL_TITLE_LENGTH
+      !isUtf8LengthWithin(entry.title, MAX_REMOTE_MCP_TOOL_TITLE_BYTES)
     ) {
       throw protocolError(
         `Remote MCP tools/list returned a malformed title for tool "${entry.name}"`,
