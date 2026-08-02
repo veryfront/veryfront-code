@@ -25,6 +25,15 @@ type ParallelOptions = {
   timeoutMs?: number;
 };
 
+function resolveParallelSemaphore(options: ParallelOptions): Semaphore {
+  if (options.semaphore !== undefined) return options.semaphore;
+  if (options.concurrency === undefined) return apiSemaphore;
+  if (!Number.isSafeInteger(options.concurrency) || options.concurrency < 1) {
+    throw new RangeError("parallel concurrency must be a positive safe integer");
+  }
+  return new Semaphore(options.concurrency);
+}
+
 async function acquireOrThrow(
   semaphore: Semaphore,
   timeoutMs: number,
@@ -50,7 +59,7 @@ export function parallelMap<T, R>(
     async () => {
       if (items.length === 0) return [];
 
-      const semaphore = options.semaphore ?? apiSemaphore;
+      const semaphore = resolveParallelSemaphore(options);
       const timeoutMs = options.timeoutMs ?? ACQUIRE_TIMEOUT_MS;
       const results: R[] = new Array(items.length);
 
