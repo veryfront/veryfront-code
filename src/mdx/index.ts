@@ -1,5 +1,5 @@
 /**
- * Component overrides for `.mdx` page rendering.
+ * Composable component overrides for compiled `.mdx` page rendering.
  *
  * @module mdx
  *
@@ -11,6 +11,10 @@
  *   {children}
  * </MDXProvider>
  * ```
+ *
+ * Nested providers inherit outer entries, with the nearest override taking
+ * precedence. Component maps are application-owned React code; this module
+ * does not compile or sanitize arbitrary MDX source.
  *
  * For runtime markdown string rendering, use `veryfront/markdown` instead.
  */

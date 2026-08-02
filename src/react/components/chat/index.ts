@@ -241,8 +241,21 @@ export type { AgentCardProps } from "./agent-card.tsx";
 // ---------------------------------------------------------------------------
 // Markdown
 // ---------------------------------------------------------------------------
-export { Markdown } from "./markdown.tsx";
-export type { CodeBlockProps, MarkdownProps } from "./markdown.tsx";
+export {
+  Markdown,
+  MarkdownRendererCapabilityError,
+  MarkdownRendererProvider,
+} from "./markdown.tsx";
+export type {
+  CodeBlockProps,
+  Components,
+  MarkdownComponents,
+  MarkdownElementRendererProps,
+  MarkdownProps,
+  MarkdownRenderer,
+  MarkdownRendererProps,
+  MarkdownRendererProviderProps,
+} from "./markdown.tsx";
 
 // ---------------------------------------------------------------------------
 // Error Boundary

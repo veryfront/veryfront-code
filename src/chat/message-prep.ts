@@ -21,6 +21,7 @@ import {
 import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
 import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 import { safeJsonParse } from "#veryfront/utils/json.ts";
+import { stringifyChatJson } from "./json-value.ts";
 
 /** Tunable limits used while preparing chat history for model context. */
 export type MessagePrepLimits = {
@@ -97,7 +98,7 @@ export interface PrepareProviderModelMessagesFromUiMessagesOptions {
 
 /** Estimate tokens. */
 export function estimateTokens(value: unknown): number {
-  return Math.ceil(JSON.stringify(value ?? "").length / CHARS_PER_TOKEN);
+  return Math.ceil(stringifyChatJson(value ?? "").length / CHARS_PER_TOKEN);
 }
 
 /** Approximate token categories for context diagnostics. */
@@ -239,7 +240,7 @@ export function compressTurn(
     if (!msg) continue;
 
     if (msg.role === "user") {
-      const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
+      const text = typeof msg.content === "string" ? msg.content : stringifyChatJson(msg.content);
       userQuery = truncate(text, 100);
     } else if (msg.role === "assistant" && Array.isArray(msg.content)) {
       for (const part of msg.content) {
@@ -305,6 +306,12 @@ export function enforceTokenBudgetWithTurnCompression(
   budget: number,
   overhead: number,
 ): ProviderModelMessage[] {
+  if (!Number.isSafeInteger(budget) || budget < 0) {
+    throw new TypeError("Chat message token budget must be a non-negative safe integer");
+  }
+  if (!Number.isSafeInteger(overhead) || overhead < 0) {
+    throw new TypeError("Chat message token overhead must be a non-negative safe integer");
+  }
   const effectiveBudget = budget - overhead;
   let totalTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
   if (totalTokens <= effectiveBudget) return messages;
@@ -413,15 +420,11 @@ const DEFAULT_CHILD_AGENT_TOOL_INPUT_RETAIN_FIELDS: readonly HistoricalToolInput
 ];
 
 function serializedLength(value: unknown): number {
-  return JSON.stringify(value ?? "").length;
+  return stringifyChatJson(value ?? "").length;
 }
 
 function serializedValue(value: unknown): string {
-  try {
-    return JSON.stringify(value ?? null);
-  } catch {
-    return String(value);
-  }
+  return stringifyChatJson(value ?? null);
 }
 
 function stableHash(value: unknown): string {
@@ -457,7 +460,29 @@ function isChildAgentToolInput(toolName: string): boolean {
 }
 
 function resolveMessagePrepLimits(overrides?: Partial<MessagePrepLimits>): MessagePrepLimits {
-  return overrides ? { ...DEFAULT_MESSAGE_PREP_LIMITS, ...overrides } : DEFAULT_MESSAGE_PREP_LIMITS;
+  const resolved = overrides
+    ? { ...DEFAULT_MESSAGE_PREP_LIMITS, ...overrides }
+    : DEFAULT_MESSAGE_PREP_LIMITS;
+
+  if (!Number.isFinite(resolved.charsPerToken) || resolved.charsPerToken <= 0) {
+    throw new TypeError("Message preparation charsPerToken must be a positive finite number");
+  }
+  for (
+    const name of [
+      "historicalToolOutputMaskChars",
+      "historicalToolInputMaskChars",
+      "retainedMetadataStringMaxChars",
+      "retainedMetadataArrayMaxItems",
+      "retainedMetadataObjectMaxEntries",
+    ] as const
+  ) {
+    if (!Number.isSafeInteger(resolved[name]) || resolved[name] < 0) {
+      throw new TypeError(
+        `Message preparation ${name} must be a non-negative safe integer`,
+      );
+    }
+  }
+  return resolved;
 }
 
 function getDefaultHistoricalToolInputRetentionPolicy(
@@ -488,11 +513,64 @@ function resolveHistoricalToolInputRetentionPolicy(
   if (options?.resolvePolicy) {
     const resolved = options.resolvePolicy(toolName, input);
     if (resolved !== undefined) {
-      return resolved ?? undefined;
+      return resolved === null ? undefined : validateHistoricalToolInputRetentionPolicy(resolved);
     }
   }
 
-  return getDefaultHistoricalToolInputRetentionPolicy(toolName);
+  const fallback = getDefaultHistoricalToolInputRetentionPolicy(toolName);
+  return fallback ? validateHistoricalToolInputRetentionPolicy(fallback) : undefined;
+}
+
+function validateHistoricalToolInputRetentionPolicy(
+  policy: HistoricalToolInputRetentionPolicy,
+): HistoricalToolInputRetentionPolicy {
+  if (typeof policy.compactCompletedInput !== "boolean") {
+    throw new TypeError("Historical tool input compactCompletedInput must be a boolean");
+  }
+  if (
+    policy.compactAfterChars !== undefined &&
+    (!Number.isSafeInteger(policy.compactAfterChars) || policy.compactAfterChars < 0)
+  ) {
+    throw new TypeError(
+      "Historical tool input compactAfterChars must be a non-negative safe integer",
+    );
+  }
+  if (policy.retainInputFields !== undefined && !Array.isArray(policy.retainInputFields)) {
+    throw new TypeError("Historical tool input retainInputFields must be an array");
+  }
+
+  for (const field of policy.retainInputFields ?? []) {
+    if (typeof field === "string") {
+      if (field.length === 0) {
+        throw new TypeError("Historical tool input retained field names must not be empty");
+      }
+      continue;
+    }
+    if (!isRecord(field)) {
+      throw new TypeError("Historical tool input retained fields must be strings or objects");
+    }
+    if ("inputNames" in field) {
+      if (
+        !Array.isArray(field.inputNames) ||
+        field.inputNames.length === 0 ||
+        !field.inputNames.every((name) => typeof name === "string" && name.length > 0) ||
+        typeof field.outputName !== "string" ||
+        field.outputName.length === 0
+      ) {
+        throw new TypeError("Historical tool input multi-field selectors are invalid");
+      }
+      continue;
+    }
+    if (
+      typeof field.inputName !== "string" ||
+      field.inputName.length === 0 ||
+      (field.outputName !== undefined &&
+        (typeof field.outputName !== "string" || field.outputName.length === 0))
+    ) {
+      throw new TypeError("Historical tool input field selectors are invalid");
+    }
+  }
+  return policy;
 }
 
 function shouldCompactHistoricalToolInput(
@@ -874,21 +952,63 @@ function stripSupersededToolErrorParts(messages: ChatUiMessage[]): ChatUiMessage
   });
 }
 
-function isKeepableModelPart(part: unknown, includeReasoning: boolean): boolean {
+function hasNonEmptyStringField(record: Record<string, unknown>, key: string): boolean {
+  return typeof record[key] === "string" && record[key].trim().length > 0;
+}
+
+function hasValidToolResultOutput(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.type !== "string") {
+    return false;
+  }
+
+  switch (value.type) {
+    case "json":
+      return "value" in value;
+    case "text":
+    case "error-text":
+      return typeof value.value === "string";
+    default:
+      return false;
+  }
+}
+
+function isKeepableModelPart(
+  part: unknown,
+  role: ProviderModelMessage["role"],
+  includeReasoning: boolean,
+): boolean {
   if (!isRecord(part) || typeof part.type !== "string") return false;
 
   switch (part.type) {
     case "text":
-      return typeof part.text === "string" && part.text.trim().length > 0;
+      return role !== "tool" && hasNonEmptyStringField(part, "text");
     case "reasoning":
-      return includeReasoning;
+      return role === "assistant" &&
+        includeReasoning &&
+        (
+          hasNonEmptyStringField(part, "text") ||
+          hasNonEmptyStringField(part, "signature") ||
+          hasNonEmptyStringField(part, "redactedData")
+        );
     case "tool-call":
+      return role === "assistant" &&
+        hasNonEmptyStringField(part, "toolCallId") &&
+        hasNonEmptyStringField(part, "toolName") &&
+        isRecord(part.input) &&
+        (part.providerExecuted === undefined || typeof part.providerExecuted === "boolean");
     case "tool-result":
+      return (role === "assistant" || role === "tool") &&
+        hasNonEmptyStringField(part, "toolCallId") &&
+        hasNonEmptyStringField(part, "toolName") &&
+        hasValidToolResultOutput(part.output);
     case "image":
-      return true;
     case "file": {
-      const hasMediaType = typeof part.mediaType === "string" && part.mediaType.length > 0;
-      if (!hasMediaType) {
+      if (
+        role === "system" ||
+        role === "tool" ||
+        !hasNonEmptyStringField(part, "mediaType") ||
+        (!hasNonEmptyStringField(part, "data") && !hasNonEmptyStringField(part, "url"))
+      ) {
         return false;
       }
 
@@ -899,7 +1019,7 @@ function isKeepableModelPart(part: unknown, includeReasoning: boolean): boolean 
       return true;
     }
     default:
-      return true;
+      return false;
   }
 }
 
@@ -907,14 +1027,16 @@ function hasValidContent(message: ProviderModelMessage): boolean {
   const content = message.content;
 
   if (content === undefined || content === null) return false;
-  if (typeof content === "string") return content.trim().length > 0;
-  if (Array.isArray(content)) return content.some((part) => isKeepableModelPart(part, false));
-  return true;
+  if (typeof content === "string") {
+    return message.role !== "tool" && content.trim().length > 0;
+  }
+  if (Array.isArray(content)) return cleanContent(content, message.role).length > 0;
+  return false;
 }
 
-function cleanContent<T>(content: T[]): T[] {
-  const hasSubstantiveContent = content.some((part) => isKeepableModelPart(part, false));
-  return content.filter((part) => isKeepableModelPart(part, hasSubstantiveContent));
+function cleanContent<T>(content: T[], role: ProviderModelMessage["role"]): T[] {
+  const hasSubstantiveContent = content.some((part) => isKeepableModelPart(part, role, false));
+  return content.filter((part) => isKeepableModelPart(part, role, hasSubstantiveContent));
 }
 
 /** Sanitize provider model messages. */
@@ -926,17 +1048,17 @@ export function sanitizeProviderModelMessages(
   for (const message of messages) {
     if (Array.isArray(message.content)) {
       if (message.role === "user") {
-        const cleaned = cleanContent(message.content);
+        const cleaned = cleanContent(message.content, message.role);
         if (cleaned.length > 0) {
           result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
         }
       } else if (message.role === "assistant") {
-        const cleaned = cleanContent(message.content);
+        const cleaned = cleanContent(message.content, message.role);
         if (cleaned.length > 0) {
           result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
         }
       } else if (message.role === "tool") {
-        const cleaned = cleanContent(message.content);
+        const cleaned = cleanContent(message.content, message.role);
         if (cleaned.length > 0) {
           result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
         }
@@ -953,13 +1075,7 @@ export function sanitizeProviderModelMessages(
 }
 
 function filterValidMessages(messages: ProviderModelMessage[]): ProviderModelMessage[] {
-  return messages.filter((message) => {
-    const content = message.content;
-    if (content === undefined || content === null) return false;
-    if (typeof content === "string") return content.trim().length > 0;
-    if (Array.isArray(content)) return content.length > 0;
-    return true;
-  });
+  return messages.filter(hasValidContent);
 }
 
 function getMessagePartToolCallId(part: unknown): string | undefined {
@@ -1317,7 +1433,7 @@ function wrapToolResultOutput(
   original: ChatToolResultOutput,
   newValue: unknown,
 ): ChatToolResultOutput {
-  const textValue = typeof newValue === "string" ? newValue : JSON.stringify(newValue);
+  const textValue = typeof newValue === "string" ? newValue : stringifyChatJson(newValue);
   if (original.type === "text") {
     return { ...original, value: textValue };
   }
@@ -1686,48 +1802,53 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
 
     const movedResults = new Map<string, ChatToolResultPart>();
 
-    for (
-      let laterIndex = index + 2;
-      laterIndex < result.length && movedResults.size < unresolvedCalls.length;
-      laterIndex++
-    ) {
-      const laterMessage = result[laterIndex];
-      if (laterMessage?.role !== "tool" || !Array.isArray(laterMessage.content)) {
-        continue;
-      }
-
-      let removedFromLater = false;
-      const keptLaterContent = laterMessage.content.filter((part) => {
-        if (!isToolResultPart(part)) {
-          return true;
+    if (nextMessage?.role !== "user" && nextMessage?.role !== "system") {
+      for (
+        let laterIndex = index + 2;
+        laterIndex < result.length && movedResults.size < unresolvedCalls.length;
+        laterIndex++
+      ) {
+        const laterMessage = result[laterIndex];
+        if (laterMessage?.role === "user" || laterMessage?.role === "system") {
+          break;
+        }
+        if (laterMessage?.role !== "tool" || !Array.isArray(laterMessage.content)) {
+          continue;
         }
 
-        if (
-          !unresolvedCalls.some((toolCall) => toolCall.id === part.toolCallId) ||
-          movedResults.has(part.toolCallId)
-        ) {
-          return true;
+        let removedFromLater = false;
+        const keptLaterContent = laterMessage.content.filter((part) => {
+          if (!isToolResultPart(part)) {
+            return true;
+          }
+
+          if (
+            !unresolvedCalls.some((toolCall) => toolCall.id === part.toolCallId) ||
+            movedResults.has(part.toolCallId)
+          ) {
+            return true;
+          }
+
+          movedResults.set(part.toolCallId, part);
+          removedFromLater = true;
+          return false;
+        });
+
+        if (!removedFromLater) {
+          continue;
         }
 
-        movedResults.set(part.toolCallId, part);
-        removedFromLater = true;
-        return false;
-      });
+        if (keptLaterContent.length === 0) {
+          result.splice(laterIndex, 1);
+          laterIndex--;
+          continue;
+        }
 
-      if (!removedFromLater) {
-        continue;
+        result[laterIndex] = copyProviderModelMessageSourceId(laterMessage, {
+          ...laterMessage,
+          content: keptLaterContent,
+        });
       }
-
-      if (keptLaterContent.length === 0) {
-        result.splice(laterIndex, 1);
-        laterIndex--;
-        continue;
-      }
-
-      result[laterIndex] = copyProviderModelMessageSourceId(laterMessage, {
-        ...laterMessage,
-        content: keptLaterContent,
-      });
     }
 
     const repairedResults = unresolvedCalls.map(

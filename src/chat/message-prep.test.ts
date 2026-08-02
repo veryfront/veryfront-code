@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "#std/assert";
 import type { ChatUiMessage, ProviderModelMessage } from "./types.ts";
 import type { HistoricalToolInputCompactionDiagnostic } from "./message-prep.ts";
 import {
@@ -12,6 +12,7 @@ import {
   prepareProviderModelMessagesFromUiMessages,
   repairToolPairs,
   rewriteUnsupportedFilePartsAsAnnotations,
+  sanitizeProviderModelMessages,
   stripPendingToolParts,
 } from "./message-prep.ts";
 
@@ -71,6 +72,60 @@ function stripReplayMessages(messages: ReplayMessage[]): unknown {
   return stripPendingToolParts(messages as unknown as ChatUiMessage[]) as unknown;
 }
 
+Deno.test("estimateTokens handles cyclic and non-JSON runtime values", () => {
+  const value: Record<string, unknown> = { big: 42n, notANumber: Number.NaN };
+  value.self = value;
+
+  assertEquals(
+    estimateTokens(value),
+    Math.ceil('{"big":"42","notANumber":null,"self":"[Circular]"}'.length / 4),
+  );
+});
+
+Deno.test("historical compaction validates limits and handles cyclic tool input", () => {
+  const input: Record<string, unknown> = {
+    path: "src/example.ts",
+    content: "x".repeat(2_000),
+  };
+  input.self = input;
+  const messages = [
+    userReplayMessage("Create the file.", "user-old"),
+    assistantReplayMessage([
+      dynamicToolReplayPart(
+        "tool-cyclic",
+        "update_file",
+        input,
+        "output-available",
+        { ok: true },
+      ),
+    ]),
+    userReplayMessage("Continue.", "user-current"),
+  ] as unknown as ChatUiMessage[];
+
+  const compacted = compactHistoricalUiMessageToolInputs(messages);
+  assertStringIncludes(JSON.stringify(compacted), "historical_tool_input_summary");
+
+  assertThrows(
+    () =>
+      compactHistoricalUiMessageToolInputs(messages, {
+        limits: { charsPerToken: 0 },
+      }),
+    TypeError,
+    "charsPerToken",
+  );
+  assertThrows(
+    () =>
+      compactHistoricalUiMessageToolInputs(messages, {
+        resolvePolicy: () => ({
+          compactCompletedInput: true,
+          compactAfterChars: -1,
+        }),
+      }),
+    TypeError,
+    "compactAfterChars",
+  );
+});
+
 Deno.test("repairToolPairs moves a later tool result immediately after the matching tool call", () => {
   const messages = [
     {
@@ -122,6 +177,77 @@ Deno.test("repairToolPairs moves a later tool result immediately after the match
   assertEquals(toolResultMatches.length, 2);
   assertEquals(unavailableMatches.length, 0);
   assertEquals(repaired, [messages[0]!, messages[1]!, messages[3]!, messages[2]!]);
+});
+
+Deno.test("repairToolPairs never steals a matching result from a later user turn", () => {
+  const messages = [
+    {
+      role: "assistant",
+      content: [{
+        type: "tool-call",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        input: {},
+      }],
+    },
+    { role: "user", content: "Start a new turn." },
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        output: { type: "json", value: { from: "later turn" } },
+      }],
+    },
+  ] satisfies ProviderModelMessage[];
+
+  assertEquals(repairToolPairs(messages), [
+    messages[0]!,
+    {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "reused-tool-id",
+        toolName: "lookup",
+        output: { type: "text", value: "[tool result unavailable]" },
+      }],
+    },
+    messages[1]!,
+    messages[2]!,
+  ]);
+});
+
+Deno.test("sanitizeProviderModelMessages drops malformed and role-incompatible parts", () => {
+  const malformed = [
+    {
+      role: "user",
+      content: [
+        { type: "data-private", data: { secret: true } },
+        { type: "text", text: "Keep me" },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [
+        { type: "tool-call", toolCallId: "", toolName: "broken", input: {} },
+        { type: "text", text: "Also keep me" },
+      ],
+    },
+    {
+      role: "tool",
+      content: [{ type: "text", text: "not a tool result" }],
+    },
+    {
+      role: "system",
+      content: { unexpected: true },
+    },
+  ] as unknown as ProviderModelMessage[];
+
+  assertEquals(sanitizeProviderModelMessages(malformed), [
+    { role: "user", content: [{ type: "text", text: "Keep me" }] },
+    { role: "assistant", content: [{ type: "text", text: "Also keep me" }] },
+  ]);
 });
 
 Deno.test("maskOldToolOutputs masks large historical tool outputs and removes stale reasoning before the latest user turn", () => {

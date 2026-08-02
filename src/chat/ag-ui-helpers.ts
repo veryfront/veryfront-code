@@ -70,7 +70,7 @@ export function parseSerializedToolResult(value: unknown): unknown {
     trimmed !== "null" &&
     trimmed !== "true" &&
     trimmed !== "false" &&
-    !/^[-]?\d+(\.\d+)?$/.test(trimmed)
+    !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u.test(trimmed)
   ) {
     return value;
   }

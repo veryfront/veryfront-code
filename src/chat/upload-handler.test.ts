@@ -1,9 +1,14 @@
-import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withTempDir } from "#veryfront/testing";
 import { LocalBlobStorage } from "#veryfront/workflow/blob/local-storage.ts";
 import type { BlobRef, BlobStorage, StoreBlobOptions } from "#veryfront/workflow/blob/types.ts";
-import { createChatUploadHandler } from "./upload-handler.ts";
+import { type ChatUploadAuthorize, createChatUploadHandler } from "./upload-handler.ts";
 
 function postFile(file: File): Request {
   const form = new FormData();
@@ -14,9 +19,56 @@ function postFile(file: File): Request {
 const txt = (body: string, name = "note.txt", type = "text/plain") =>
   new File([body], name, { type });
 
+function createStubStorage(overrides: Partial<BlobStorage> = {}): BlobStorage {
+  const ref: BlobRef = {
+    __kind: "blob",
+    id: "blob-1",
+    size: 1,
+    mimeType: "text/plain",
+    createdAt: new Date(0),
+  };
+  return {
+    put: () => Promise.resolve(ref),
+    getStream: () => Promise.resolve(null),
+    getText: () => Promise.resolve(null),
+    getBytes: () => Promise.resolve(null),
+    delete: () => Promise.resolve(),
+    exists: () => Promise.resolve(false),
+    stat: () => Promise.resolve(null),
+    ...overrides,
+  };
+}
+
 describe("chat/upload-handler", () => {
+  it("rejects invalid upload limits at construction", () => {
+    for (const maxFileSize of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () =>
+          createChatUploadHandler({
+            storage: createStubStorage(),
+            maxFileSize,
+            authorize: () => true,
+          }),
+        Error,
+        "maxFileSize",
+      );
+    }
+
+    assertThrows(
+      () =>
+        createChatUploadHandler({
+          storage: createStubStorage(),
+          maxFileSize: 10,
+          maxBodySize: 9,
+          authorize: () => true,
+        }),
+      Error,
+      "maxBodySize",
+    );
+  });
+
   it("requires explicit unauthenticated mode when authorize is omitted", () =>
-    withTempDir((dir) => {
+    withTempDir(async (dir) => {
       assert(
         (() => {
           try {
@@ -146,11 +198,25 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 413, "oversized files should be rejected before storage");
       }));
 
-    it("rejects oversized Content-Length before trusting multipart parsing", () =>
+    it("accepts a file exactly at the file limit despite multipart overhead", () =>
       withTempDir(async (dir) => {
         const { POST } = createChatUploadHandler({
           storage: new LocalBlobStorage(dir),
           maxFileSize: 8,
+          authorize: () => true,
+        });
+
+        const res = await POST(postFile(txt("12345678")));
+
+        assertEquals(res.status, 200, "multipart overhead is not part of the file-size limit");
+      }));
+
+    it("rejects oversized Content-Length against the complete body limit", () =>
+      withTempDir(async (dir) => {
+        const { POST } = createChatUploadHandler({
+          storage: new LocalBlobStorage(dir),
+          maxFileSize: 8,
+          maxBodySize: 16,
           authorize: () => true,
         });
         const form = new FormData();
@@ -164,6 +230,113 @@ describe("chat/upload-handler", () => {
         );
         assertEquals(res.status, 413, "declared oversized bodies should be rejected early");
       }));
+
+    it("bounds chunked multipart bodies before parsing", async () => {
+      let cancelled = false;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("12345"));
+          controller.enqueue(new TextEncoder().encode("67890"));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const { POST } = createChatUploadHandler({
+        storage: createStubStorage(),
+        maxFileSize: 4,
+        maxBodySize: 8,
+        authorize: () => true,
+      });
+
+      const res = await POST(
+        new Request("http://localhost:3000/api/uploads", {
+          method: "POST",
+          headers: { "content-type": "multipart/form-data; boundary=test" },
+          body: stream,
+        }),
+      );
+
+      assertEquals(res.status, 413);
+      assertEquals(cancelled, true);
+    });
+
+    it("returns client errors for non-multipart and malformed bodies", async () => {
+      const { POST } = createChatUploadHandler({
+        storage: createStubStorage(),
+        authorize: () => true,
+      });
+
+      const wrongType = await POST(
+        new Request("http://localhost:3000/api/uploads", {
+          method: "POST",
+          headers: { "content-type": "text/plain" },
+          body: "not multipart",
+        }),
+      );
+      const malformed = await POST(
+        new Request("http://localhost:3000/api/uploads", {
+          method: "POST",
+          headers: { "content-type": "multipart/form-data; boundary=test" },
+          body: "--test\r\ninvalid\r\n--test--",
+        }),
+      );
+
+      assertEquals(wrongType.status, 415);
+      assertEquals(malformed.status, 400);
+    });
+
+    it("rejects multiple file fields", async () => {
+      const { POST } = createChatUploadHandler({
+        storage: createStubStorage(),
+        authorize: () => true,
+      });
+      const form = new FormData();
+      form.append("file", txt("one", "one.txt"));
+      form.append("file", txt("two", "two.txt"));
+
+      const res = await POST(
+        new Request("http://localhost:3000/api/uploads", { method: "POST", body: form }),
+      );
+
+      assertEquals(res.status, 400);
+    });
+
+    it("rejects unsafe ids and urls returned by custom storage", async () => {
+      const unsafeId = createStubStorage({
+        put: () =>
+          Promise.resolve({
+            __kind: "blob",
+            id: "../unsafe",
+            size: 1,
+            mimeType: "text/plain",
+            createdAt: new Date(0),
+          }),
+      });
+      const unsafeUrl = createStubStorage({
+        put: () =>
+          Promise.resolve({
+            __kind: "blob",
+            id: "safe-id",
+            size: 1,
+            mimeType: "text/plain",
+            createdAt: new Date(0),
+            url: "javascript:alert(1)",
+          }),
+      });
+
+      const invalidIdResponse = await createChatUploadHandler({
+        storage: unsafeId,
+        authorize: () => true,
+      }).POST(postFile(txt("x")));
+      const invalidUrlResponse = await createChatUploadHandler({
+        storage: unsafeUrl,
+        authorize: () => true,
+      }).POST(postFile(txt("x")));
+
+      assertEquals(invalidIdResponse.status, 502);
+      assertEquals(invalidUrlResponse.status, 502);
+    });
 
     it("returns 400 when no file field is present", () =>
       withTempDir(async (dir) => {
@@ -190,20 +363,22 @@ describe("chat/upload-handler", () => {
         assertEquals(res.status, 401, "authorize:false should block the upload");
       }));
 
-    it("fails closed when an authorize callback accidentally returns undefined", () =>
-      withTempDir(async (dir) => {
-        const { POST } = createChatUploadHandler({
-          storage: new LocalBlobStorage(dir),
-          authorize: (() => undefined) as unknown as () => boolean,
-        });
-        const res = await POST(
-          new Request("http://localhost:3000/api/uploads", {
-            method: "POST",
-            body: "body parsing must not run",
-          }),
-        );
-        assertEquals(res.status, 401, "a missing authorization decision must deny access");
-      }));
+    it("fails closed when an authorizer returns an invalid runtime result", async () => {
+      let putCalls = 0;
+      const storage = createStubStorage({
+        put: () => {
+          putCalls++;
+          return Promise.reject(new Error("must not be called"));
+        },
+      });
+      const authorize = (() => undefined) as unknown as ChatUploadAuthorize;
+      const { POST } = createChatUploadHandler({ storage, authorize });
+
+      const res = await POST(postFile(txt("secret")));
+
+      assertEquals(res.status, 401);
+      assertEquals(putCalls, 0);
+    });
 
     it("lets authorize short-circuit with its own Response", () =>
       withTempDir(async (dir) => {
@@ -241,6 +416,31 @@ describe("chat/upload-handler", () => {
         );
         assertEquals(await served.text(), "hello world", "the exact bytes should round-trip");
       }));
+
+    it("sanitizes storage metadata before building download headers", async () => {
+      const storage = createStubStorage({
+        stat: () =>
+          Promise.resolve({
+            __kind: "blob",
+            id: "blob-1",
+            size: 1,
+            mimeType: "text/plain",
+            createdAt: new Date(0),
+            metadata: { filename: 'report"\r\nX-Injected: yes.txt' },
+          }),
+        getStream: () => Promise.resolve(new Blob(["x"]).stream()),
+      });
+      const { GET } = createChatUploadHandler({ storage, authorize: () => true });
+
+      const res = await GET(new Request("http://localhost:3000/api/uploads?id=blob-1"));
+
+      assertEquals(res.status, 200);
+      assertEquals(res.headers.get("x-injected"), null);
+      assertEquals(
+        res.headers.get("content-disposition"),
+        'attachment; filename="reportX-Injected: yes.txt"',
+      );
+    });
 
     it("rejects an id that is not a safe token (path traversal) with 400", () =>
       withTempDir(async (dir) => {

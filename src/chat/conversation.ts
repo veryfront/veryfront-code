@@ -7,8 +7,12 @@ import type {
   ChatUiMessageRole,
   ProviderModelMessage,
 } from "./types.ts";
+import { stringifyChatJson, toChatJsonValue } from "./json-value.ts";
 
 const PROVIDER_MODEL_MESSAGE_SOURCE_ID = Symbol.for("veryfront.providerModelMessageSourceId");
+const UPLOAD_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+const getUploadIdSchema = defineSchema((v) => v.string().min(1).max(128).regex(UPLOAD_ID_PATTERN));
 
 /** Provider model message plus local-only source metadata. */
 export type ProviderModelMessageWithSourceId = ProviderModelMessage & {
@@ -49,13 +53,13 @@ export const getMessagePartSchema = defineSchema((v) =>
     v.object({ type: v.literal("text"), text: v.string() }),
     v.object({
       type: v.literal("image"),
-      upload_id: v.string().uuid(),
+      upload_id: getUploadIdSchema(),
       media_type: v.string(),
       url: v.string().optional(),
     }),
     v.object({
       type: v.literal("file"),
-      upload_id: v.string().uuid(),
+      upload_id: getUploadIdSchema(),
       media_type: v.string(),
       filename: v.string().optional(),
       url: v.string().optional(),
@@ -254,6 +258,16 @@ export function isUuid(value: string | null | undefined): value is string {
 
 /** Extract upload ID. */
 export function extractUploadId(url: string): string | null {
+  try {
+    const parsed = new URL(url, "https://veryfront.invalid");
+    const queryId = parsed.searchParams.get("id");
+    if (queryId && UPLOAD_ID_PATTERN.test(queryId)) {
+      return queryId;
+    }
+  } catch {
+    // Fall through to legacy UUID extraction for malformed or opaque URLs.
+  }
+
   const match = url.match(UUID_PATTERN);
   return match ? match[0] : null;
 }
@@ -313,12 +327,15 @@ function toRecord(value: unknown): Record<string, unknown> {
 /** Stringify unknown helper. */
 export function stringifyUnknown(value: unknown): string {
   if (typeof value === "string") return value;
-  try {
-    const serialized = JSON.stringify(value);
-    return serialized ?? String(value);
-  } catch {
+  if (
+    typeof value === "bigint" ||
+    typeof value === "undefined" ||
+    typeof value === "function" ||
+    typeof value === "symbol"
+  ) {
     return String(value);
   }
+  return stringifyChatJson(value);
 }
 
 /** Check whether a chat part is a custom data part. */
@@ -417,7 +434,9 @@ function pushFileConversationPart(
   parts: MessagePart[],
   part: Extract<ChatUiMessagePart, { type: "file" }>,
 ): void {
-  const uploadId = part.uploadId ?? extractUploadId(part.url);
+  const uploadId = part.uploadId && UPLOAD_ID_PATTERN.test(part.uploadId)
+    ? part.uploadId
+    : extractUploadId(part.url);
   if (!uploadId) return;
 
   if (part.mediaType.startsWith("image/")) {
@@ -434,6 +453,7 @@ function pushFileConversationPart(
     type: "file",
     upload_id: uploadId,
     media_type: part.mediaType,
+    ...(part.filename ? { filename: part.filename } : {}),
     ...(part.url ? { url: part.url } : {}),
   });
 }
@@ -658,25 +678,7 @@ export function extractTextFromMessage(message: ProviderModelMessage): string {
 }
 
 function toJsonValue(value: unknown): JsonValue {
-  if (value == null) {
-    return null;
-  }
-
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((entry) => toJsonValue(entry));
-  }
-
-  if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, toJsonValue(entry)]),
-    );
-  }
-
-  return JSON.stringify(value);
+  return toChatJsonValue(value);
 }
 
 function getFilePart(part: unknown): {

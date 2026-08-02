@@ -246,4 +246,39 @@ describe("chat/provider-errors", () => {
       },
     );
   });
+
+  it("extracts a bounded JSON error envelope from decorated log text", () => {
+    assertEquals(
+      parseProviderError(
+        'request {attempt=1} failed: {"slug":"resource-limit-exceeded","suggestion":"Reduce the request size."} [request_id=req_test]',
+      ),
+      {
+        code: "RESOURCE_LIMIT_EXCEEDED",
+        message: "Reduce the request size.",
+        status: 402,
+      },
+    );
+  });
+
+  it("bounds deeply nested acyclic provider error envelopes", () => {
+    let nestedError: Record<string, unknown> = {
+      type: "overloaded_error",
+      message: "Too deep to trust",
+    };
+    let nestedLastError: Record<string, unknown> = {
+      type: "overloaded_error",
+      message: "Too deep to trust",
+    };
+    for (let depth = 0; depth < 10_000; depth++) {
+      nestedError = { error: nestedError };
+      nestedLastError = { lastError: nestedLastError };
+    }
+
+    const expected = {
+      code: "EXTERNAL_SERVICE_ERROR",
+      message: "LLM provider service error",
+    };
+    assertEquals(parseProviderError(nestedError), expected);
+    assertEquals(parseProviderError(nestedLastError), expected);
+  });
 });

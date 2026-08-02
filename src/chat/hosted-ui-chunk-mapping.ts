@@ -245,7 +245,9 @@ export function mapHostedStreamPartToChatUiChunks(
       return [{ type: "abort" }];
 
     case "reasoning-start":
-      return [{ type: "reasoning-start", id: options.reasoningMessageId ?? part.id }];
+      return sendReasoning
+        ? [{ type: "reasoning-start", id: options.reasoningMessageId ?? part.id }]
+        : [];
 
     case "reasoning-delta":
       return sendReasoning
@@ -253,12 +255,14 @@ export function mapHostedStreamPartToChatUiChunks(
         : [];
 
     case "reasoning-end":
-      return [{
-        type: "reasoning-end",
-        id: options.reasoningMessageId ?? part.id,
-        ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
-        ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
-      }];
+      return sendReasoning
+        ? [{
+          type: "reasoning-end",
+          id: options.reasoningMessageId ?? part.id,
+          ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+          ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
+        }]
+        : [];
 
     case "text-start":
       return [{ type: "text-start", id: options.messageId ?? part.id }];

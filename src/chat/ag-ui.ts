@@ -90,10 +90,14 @@ export type AgUiDecodedChunk = {
 /** Public API contract for AG-UI decoder validation mode. */
 export type AgUiDecoderValidationMode = "permissive" | "strict";
 
+/** Default maximum characters retained for one AG-UI SSE frame. */
+export const DEFAULT_AG_UI_MAX_FRAME_CHARS = 8 * 1024 * 1024;
+
 /** State for AG-UI chat event decoder. */
 export type AgUiChatEventDecoderState = {
   remainder: string;
   lastEventId: number;
+  maxFrameChars: number;
   toolCalls: Map<string, ToolCallState>;
   reasoningFallbackIndex: number;
   activeFallbackReasoningPartId: string | null;
@@ -721,6 +725,8 @@ function mapWireEventToChatEvents(
 
   switch (wireEvent.eventName) {
     case "RunStarted":
+      state.toolCalls.clear();
+      state.activeFallbackReasoningPartId = null;
       return [{
         type: "start",
         messageMetadata: wireEvent.payload,
@@ -811,6 +817,7 @@ function mapWireEventToChatEvents(
 
     case "ToolCallResult": {
       const toolCall = state.toolCalls.get(wireEvent.payload.toolCallId);
+      state.toolCalls.delete(wireEvent.payload.toolCallId);
       const parsedResult = parseSerializedToolResult(
         wireEvent.payload.content ?? wireEvent.payload.result,
       );
@@ -870,6 +877,8 @@ function mapWireEventToChatEvents(
     }
 
     case "RunFinished":
+      state.toolCalls.clear();
+      state.activeFallbackReasoningPartId = null;
       return [{
         type: "finish",
         ...(mapFinishReason(wireEvent.payload.metadata?.finishReason)
@@ -878,6 +887,8 @@ function mapWireEventToChatEvents(
       }];
 
     case "RunError":
+      state.toolCalls.clear();
+      state.activeFallbackReasoningPartId = null;
       if (wireEvent.payload.code === "CANCELLED") {
         return [{ type: "abort" }];
       }
@@ -903,8 +914,9 @@ export function parseSseEvent(raw: string): ParsedSseEvent {
     }
 
     if (line.startsWith("id:")) {
-      const parsed = Number(line.slice(3).trim());
-      if (Number.isFinite(parsed)) {
+      const rawId = line.slice(3).trim();
+      const parsed = Number(rawId);
+      if (/^(?:0|[1-9]\d*)$/.test(rawId) && Number.isSafeInteger(parsed)) {
         id = parsed;
       }
       continue;
@@ -929,13 +941,24 @@ export function parseSseEvent(raw: string): ParsedSseEvent {
 export function createAgUiChatEventDecoderState(
   input: {
     lastEventId?: number;
+    maxFrameChars?: number;
     validationMode?: AgUiDecoderValidationMode;
     onInvalidJson?: (details: { eventName: string | null; dataLength: number }) => void;
   } = {},
 ): AgUiChatEventDecoderState {
+  const lastEventId = input.lastEventId ?? -1;
+  if (!Number.isSafeInteger(lastEventId) || lastEventId < -1) {
+    throw new RangeError("AG-UI decoder lastEventId must be a safe integer no less than -1");
+  }
+  const maxFrameChars = input.maxFrameChars ?? DEFAULT_AG_UI_MAX_FRAME_CHARS;
+  if (!Number.isSafeInteger(maxFrameChars) || maxFrameChars <= 0) {
+    throw new RangeError("AG-UI decoder maxFrameChars must be a positive safe integer");
+  }
+
   return {
     remainder: "",
-    lastEventId: input.lastEventId ?? -1,
+    lastEventId,
+    maxFrameChars,
     toolCalls: new Map<string, ToolCallState>(),
     reasoningFallbackIndex: 0,
     activeFallbackReasoningPartId: null,
@@ -949,13 +972,32 @@ export function decodeAgUiSseChunk(
   state: AgUiChatEventDecoderState,
   chunk: string,
 ): AgUiDecodedChunk {
-  const normalized = `${state.remainder}${normalizeNewlines(chunk)}`;
+  // A transport chunk may end between the CR and LF of an SSE line ending.
+  // Keep that final CR raw until the next chunk so it cannot become a false
+  // blank-line frame delimiter when the following LF arrives.
+  const combined = `${state.remainder}${chunk}`;
+  const hasTrailingCarriageReturn = combined.endsWith("\r");
+  const completeInput = hasTrailingCarriageReturn ? combined.slice(0, -1) : combined;
+  const normalized = normalizeNewlines(completeInput);
   const { frames, remainder } = splitSseFrames(normalized);
-  state.remainder = remainder;
+  const nextRemainder = `${remainder}${hasTrailingCarriageReturn ? "\r" : ""}`;
+  if (nextRemainder.length > state.maxFrameChars) {
+    state.remainder = "";
+    throw new RangeError(
+      `AG-UI SSE maximum frame size of ${state.maxFrameChars} characters exceeded`,
+    );
+  }
+  state.remainder = nextRemainder;
 
   const events: AgUiDecodedEvent[] = [];
 
   for (const rawFrame of frames) {
+    if (rawFrame.length > state.maxFrameChars) {
+      state.remainder = "";
+      throw new RangeError(
+        `AG-UI SSE maximum frame size of ${state.maxFrameChars} characters exceeded`,
+      );
+    }
     if (isCommentOnlySseFrame(rawFrame)) {
       continue;
     }
