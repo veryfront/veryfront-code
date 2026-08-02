@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createStreamTransformState,
@@ -376,6 +376,36 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("accepts extension event tokens without weakening SSE framing", () => {
+    const payload = formatAgUiEvent("Done.custom-v1", { ok: true });
+
+    assertEquals(
+      new TextDecoder().decode(payload),
+      'event: Done.custom-v1\ndata: {"ok":true}\n\n',
+    );
+  });
+
+  it("rejects event names that could inject or corrupt SSE frames", () => {
+    for (
+      const event of [
+        "",
+        "RunError\n",
+        "RunError\r",
+        "RunError\ndata: forged",
+        "RunError\r\n\r\nevent: Forged",
+        "RunError\u0000Forged",
+        "Run Error",
+        `A${"b".repeat(128)}`,
+      ]
+    ) {
+      assertThrows(
+        () => formatAgUiEvent(event, { message: "original" }),
+        TypeError,
+        "AG-UI event names",
+      );
+    }
+  });
+
   it("preserves extended usage metadata in RunFinished frames", () => {
     const payload = formatAgUiEvent("RunFinished", {
       metadata: {
@@ -388,7 +418,19 @@ describe("internal-agents/ag-ui-sse", () => {
         cacheCreationInputTokens: 6,
         cacheReadInputTokens: 4,
         reasoningTokens: 2,
+        billableInputTokens: 10,
+        billableOutputTokens: 7,
         costUsd: 0.002,
+        providerInputCostUsd: 0.001,
+        providerOutputCostUsd: 0.0005,
+        providerCostUsd: 0.0015,
+        veryfrontInputChargeUsd: 0.0012,
+        veryfrontOutputChargeUsd: 0.0007,
+        veryfrontChargeUsd: 0.0019,
+        veryfrontBilledUsd: 0.002,
+        costCredits: 2,
+        costSource: "gateway",
+        billingMode: "deferred",
         usageCaptureStatus: "complete",
         finishReason: "stop",
       },
@@ -396,7 +438,7 @@ describe("internal-agents/ag-ui-sse", () => {
 
     assertEquals(
       new TextDecoder().decode(payload),
-      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"costUsd":0.002,"usageCaptureStatus":"complete","finishReason":"stop"}}\n\n',
+      'event: RunFinished\ndata: {"metadata":{"provider":"veryfront-cloud","model":"anthropic/claude-sonnet-4-6","inputTokens":12,"outputTokens":8,"totalTokens":20,"cachedInputTokens":4,"cacheCreationInputTokens":6,"cacheReadInputTokens":4,"reasoningTokens":2,"billableInputTokens":10,"billableOutputTokens":7,"costUsd":0.002,"providerInputCostUsd":0.001,"providerOutputCostUsd":0.0005,"providerCostUsd":0.0015,"veryfrontInputChargeUsd":0.0012,"veryfrontOutputChargeUsd":0.0007,"veryfrontChargeUsd":0.0019,"veryfrontBilledUsd":0.002,"costCredits":2,"costSource":"gateway","billingMode":"deferred","usageCaptureStatus":"complete","finishReason":"stop"}}\n\n',
     );
   });
 

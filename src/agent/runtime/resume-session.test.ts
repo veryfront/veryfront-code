@@ -183,4 +183,27 @@ describe("agent/runtime/resume-session", () => {
 
     await assertRejects(() => pending, RunCancelledError);
   });
+
+  it("aborts active work and rejects parked waiters when reset", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({});
+    const runningSignal = manager.startRun({
+      runId: "run_running",
+      threadId: crypto.randomUUID(),
+    });
+    const waitingSignal = manager.startRun({
+      runId: "run_waiting",
+      threadId: crypto.randomUUID(),
+    });
+    const pending = manager.waitForSignal("run_waiting", "tool_1");
+
+    manager.reset();
+
+    assertEquals(runningSignal.aborted, true);
+    assertEquals(waitingSignal.aborted, true);
+    assertEquals((runningSignal.reason as DOMException).name, "AbortError");
+    assertEquals((waitingSignal.reason as DOMException).name, "AbortError");
+    await assertRejects(() => pending, RunCancelledError);
+    assertEquals(manager.getRunStatus("run_running"), null);
+    assertEquals(manager.getRunStatus("run_waiting"), null);
+  });
 });

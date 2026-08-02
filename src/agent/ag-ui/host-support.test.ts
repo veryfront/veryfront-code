@@ -1,5 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertInstanceOf, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertInstanceOf,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { AG_UI_MAX_REQUEST_BODY_BYTES } from "./request-shared.ts";
 import {
@@ -540,6 +545,21 @@ describe("agent/ag-ui-host-support", () => {
     assertStringIncludes(body, "event: RunError");
     assertStringIncludes(body, '"code":"OVERLOADED_ERROR"');
     assertStringIncludes(body, "Overloaded right now");
+  });
+
+  it("rejects invalid public AG-UI event names before constructing an SSE response", () => {
+    assertThrows(
+      () =>
+        createAgUiSseErrorResponse(
+          {
+            event: "RunError\ndata: forged\n\nevent: Forged",
+            payload: { message: "original" },
+          },
+          400,
+        ),
+      TypeError,
+      "AG-UI event names",
+    );
   });
 
   it("creates AG-UI SSE responses with the standard stream headers", () => {

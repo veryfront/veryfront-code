@@ -92,6 +92,35 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
         path: ["agentConfig", "id"],
       });
     }
+
+    const maxOutputTokens = input.forwardedProps?.maxOutputTokens;
+    if (
+      input.forwardedProps &&
+      Object.hasOwn(input.forwardedProps, "maxOutputTokens") &&
+      (
+        typeof maxOutputTokens !== "number" ||
+        !Number.isSafeInteger(maxOutputTokens) ||
+        maxOutputTokens <= 0
+      )
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "forwardedProps.maxOutputTokens must be a positive safe integer",
+        path: ["forwardedProps", "maxOutputTokens"],
+      });
+    }
+
+    const toolNames = new Set<string>();
+    for (const [index, tool] of input.tools.entries()) {
+      if (toolNames.has(tool.name)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `Injected tool name ${tool.name} must be unique`,
+          path: ["tools", index, "name"],
+        });
+      }
+      toolNames.add(tool.name);
+    }
   })
 );
 
@@ -143,8 +172,18 @@ function extractToolArgs(
         return parsed;
       }
     } catch {
-      return {};
+      throw new SyntaxError(
+        `Malformed streamed tool input for tool call "${
+          getPartString(part, "toolCallId", "tool_call_id", "id") ?? "unknown"
+        }"`,
+      );
     }
+
+    throw new SyntaxError(
+      `Malformed streamed tool input for tool call "${
+        getPartString(part, "toolCallId", "tool_call_id", "id") ?? "unknown"
+      }"`,
+    );
   }
 
   if (isRecordObject(args)) {

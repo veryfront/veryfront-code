@@ -199,6 +199,7 @@ function getGlobalAgentRunSessionManager(): AgentRunSessionManager {
 
 export function _resetGlobalAgentRunSessionManagerForTesting(): void {
   const runtimeGlobal = globalThis as AgentRunSessionManagerGlobal;
+  runtimeGlobal[AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY]?.reset();
   delete runtimeGlobal[AGENT_RUN_SESSION_MANAGER_GLOBAL_KEY];
 }
 

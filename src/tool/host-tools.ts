@@ -53,15 +53,12 @@ function isSchemaLike(value: unknown): value is Schema<unknown> {
   return "_output" in value && typeof value.safeParse === "function";
 }
 
-function isParserBackedPrecomputedSchema(input: {
+function hasPrecomputedSchema(input: {
   inputSchema?: unknown;
   inputSchemaJson?: unknown;
 }): boolean {
-  return (
-    isRecord(input.inputSchema) &&
-    typeof input.inputSchema.parse === "function" &&
-    isRecord(input.inputSchemaJson)
-  );
+  return isRecord(input.inputSchemaJson) &&
+    (input.inputSchema === undefined || isRecord(input.inputSchema));
 }
 
 function isHostToolDefinition(value: unknown): value is RunnableHostToolDefinition {
@@ -70,8 +67,7 @@ function isHostToolDefinition(value: unknown): value is RunnableHostToolDefiniti
     typeof value.description === "string" &&
     (
       isSchemaLike(value.inputSchema) ||
-      isParserBackedPrecomputedSchema(value) ||
-      (value.inputSchema === undefined && isRecord(value.inputSchemaJson))
+      hasPrecomputedSchema(value)
     ) &&
     typeof value.execute === "function"
   );
