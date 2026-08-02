@@ -101,10 +101,11 @@ describe("model-runtime-adapter", () => {
     assertEquals((model as any).modelId, "local/qwen3.5-0.8b");
   });
 
-  it("sets _isVfLocalModel marker for ensureModelReady detection", () => {
+  it("declares server-local placement and readiness explicitly", () => {
     const model = createLocalModel("qwen3.5-0.8b");
-    const m = model as Record<string, unknown>;
-    assertEquals(m._isVfLocalModel, true);
+    assertEquals(model.executionMode, "server-local");
+    assertEquals(model.runtimeCapabilities?.toolCalling, false);
+    assertEquals(typeof model.prepare, "function");
   });
 
   it("fails before creating a stream when local AI is disabled", async () => {
@@ -133,8 +134,8 @@ describe("ensureModelReady", () => {
     clearModelProviders();
   });
 
-  it("is a no-op for non-local models (no _isVfLocalModel marker)", async () => {
-    // A mock model without _isVfLocalModel should pass through immediately
+  it("is a no-op for runtimes without a preparation hook", async () => {
+    // A runtime without prepare() should pass through immediately.
     const mockModel = {
       specificationVersion: "v2" as const,
       provider: "openai",
@@ -143,9 +144,27 @@ describe("ensureModelReady", () => {
       doGenerate: async () => ({}),
       doStream: async () => ({ stream: new ReadableStream() }),
     };
-    // Should not throw. This returns without verifying runtime.
+    // Should not throw. This returns without running preparation.
     // deno-lint-ignore no-explicit-any
     await ensureModelReady(mockModel as any);
+  });
+
+  it("awaits an advertised runtime preparation hook", async () => {
+    let prepared = false;
+    const model = {
+      provider: "custom",
+      modelId: "custom/model",
+      prepare: async () => {
+        await Promise.resolve();
+        prepared = true;
+      },
+      doGenerate: async () => ({}),
+      doStream: async () => ({ stream: new ReadableStream() }),
+    };
+
+    await ensureModelReady(model);
+
+    assertEquals(prepared, true);
   });
 
   it("throws no_ai_available for local models when runtime unavailable", async () => {
