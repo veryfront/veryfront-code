@@ -12,7 +12,9 @@
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
+import { registerDismissableLayer } from "./dismissable-layer.ts";
 import { focusFirst, focusWithoutScroll } from "./focus-management.ts";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 const VIEWPORT_PADDING_PX = 8;
 
@@ -25,6 +27,8 @@ let warnedMissingAnchor = false;
 export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Element the surface is positioned against (usually the trigger element). */
   anchorRef: React.RefObject<HTMLElement | null>;
+  /** Current anchor value when the owner tracks callback-ref replacement. */
+  anchorElement?: HTMLElement | null;
   open: boolean;
   /** Horizontal edge to align to. */
   align?: "start" | "end";
@@ -41,6 +45,7 @@ export interface FloatingProps extends React.HTMLAttributes<HTMLDivElement> {
 /** Portal a positioned surface anchored to `anchorRef`. */
 export function Floating({
   anchorRef,
+  anchorElement,
   open,
   align = "start",
   onDismiss,
@@ -52,6 +57,7 @@ export function Floating({
   ...rest
 }: FloatingProps): React.ReactElement | null {
   const ref = React.useRef<HTMLDivElement>(null);
+  const resolvedAnchor = anchorElement ?? anchorRef.current;
   // Portals have no server representation. Keep the server and the first
   // hydration render identical, then enable the portal after the component has
   // mounted in a browser. This also avoids touching `document` during SSR when
@@ -75,9 +81,9 @@ export function Floating({
     setPortalReady(true);
   }, []);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!open || !portalReady) return;
-    const anchor = anchorRef.current;
+    const anchor = resolvedAnchor;
     if (!anchor) {
       if (!warnedMissingAnchor) {
         warnedMissingAnchor = true;
@@ -141,27 +147,28 @@ export function Floating({
         !anchor.contains(t)
       ) onDismissRef.current("pointer");
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.key !== "Escape") return;
-      e.preventDefault();
-      onDismissRef.current("escape");
-      queueMicrotask(() => {
-        const focusTarget = returnFocusRef?.current ?? anchor;
-        if (focusTarget.isConnected) focusWithoutScroll(focusTarget);
-      });
-    };
+    const unregisterDismissableLayer = registerDismissableLayer(
+      ownerDocument,
+      () => ref.current,
+      () => {
+        onDismissRef.current("escape");
+        queueMicrotask(() => {
+          const focusTarget = returnFocusRef?.current ?? anchor;
+          if (focusTarget.isConnected) focusWithoutScroll(focusTarget);
+        });
+      },
+    );
     ownerDocument.addEventListener("mousedown", onPointer);
-    ownerDocument.addEventListener("keydown", onKey);
     return () => {
       if (raf) ownerWindow.cancelAnimationFrame(raf);
       ownerWindow.removeEventListener("scroll", update, true);
       ownerWindow.removeEventListener("resize", update);
       ownerDocument.removeEventListener("mousedown", onPointer);
-      ownerDocument.removeEventListener("keydown", onKey);
+      unregisterDismissableLayer();
     };
-  }, [open, portalReady, align, matchTriggerWidth, anchorRef, returnFocusRef]);
+  }, [open, portalReady, align, matchTriggerWidth, resolvedAnchor, returnFocusRef]);
 
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (!open || !portalReady || !initialFocus) return;
     const surface = ref.current;
     if (!surface) return;
@@ -178,7 +185,7 @@ export function Floating({
   // resolve every `var(--…)` to nothing (transparent background, wrong text
   // color). The root still sits above the composer's `overflow-hidden`, so we
   // keep the clipping escape while staying inside the token scope.
-  const anchor = anchorRef.current;
+  const anchor = resolvedAnchor;
   const ownerDocument = anchor?.ownerDocument;
   if (!anchor || !ownerDocument) return null;
   const container = anchor.closest<HTMLElement>("[data-vf-modal-content]") ??

@@ -17,6 +17,7 @@ function installDom(dom: JSDOM): () => void {
     Element: window.Element,
     HTMLElement: window.HTMLElement,
     HTMLButtonElement: window.HTMLButtonElement,
+    KeyboardEvent: window.KeyboardEvent,
     MouseEvent: window.MouseEvent,
   };
   const previous = new Map<string, PropertyDescriptor | undefined>();
@@ -134,6 +135,60 @@ describe("Slot", () => {
         new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }),
       );
       assertEquals(slotCalls, 0);
+    } finally {
+      flushSync(() => root.unmount());
+      restore();
+    }
+  });
+
+  it("blocks disabled asChild activation before consumer handlers", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/start" },
+    );
+    const restore = installDom(dom);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+    let consumerCalls = 0;
+
+    try {
+      flushSync(() => {
+        root.render(
+          <Slot disabled onClick={() => consumerCalls += 1}>
+            <a
+              href="/target"
+              tabIndex={0}
+              onClickCapture={() => consumerCalls += 1}
+              onClick={() => consumerCalls += 1}
+            >
+              Disabled link
+            </a>
+          </Slot>,
+        );
+      });
+      const link = document.querySelector("a");
+      assert(link);
+      assertEquals(link.getAttribute("aria-disabled"), "true");
+      assertEquals(link.tabIndex, -1);
+
+      const click = new dom.window.MouseEvent("click", {
+        bubbles: true,
+        cancelable: true,
+      });
+      link.dispatchEvent(click);
+      assertEquals(click.defaultPrevented, true);
+      assertEquals(consumerCalls, 0);
+      assertEquals(dom.window.location.pathname, "/start");
+
+      const enter = new dom.window.KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: "Enter",
+      });
+      link.dispatchEvent(enter);
+      assertEquals(enter.defaultPrevented, true);
+      assertEquals(consumerCalls, 0);
     } finally {
       flushSync(() => root.unmount());
       restore();

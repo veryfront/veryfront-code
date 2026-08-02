@@ -295,6 +295,81 @@ describe("Floating SSR and hydration", () => {
     }
   });
 
+  it("rebinds positioning and dismissal when an open trigger is replaced", async () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { pretendToBeVisual: true, url: "https://example.com/" },
+    );
+    const restore = installDom(dom);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+    let replaceTrigger = (): void => {
+      throw new Error("replacement callback was not installed");
+    };
+
+    function ReanchoredPopover(): React.ReactElement {
+      const [replacement, setReplacement] = React.useState(false);
+      replaceTrigger = () => setReplacement(true);
+      const triggerRef = React.useCallback(
+        (element: HTMLButtonElement | null) => {
+          if (!element) return;
+          const left = replacement ? 200 : 10;
+          Object.defineProperty(element, "getBoundingClientRect", {
+            configurable: true,
+            value: () => ({
+              bottom: 50,
+              height: 30,
+              left,
+              right: left + 40,
+              top: 20,
+              width: 40,
+              x: left,
+              y: 20,
+              toJSON: () => ({}),
+            }),
+          });
+        },
+        [replacement],
+      );
+      return (
+        <div data-vf-ui="">
+          <Popover defaultOpen>
+            <PopoverTrigger key={replacement ? "replacement" : "initial"} ref={triggerRef}>
+              {replacement ? "Replacement" : "Initial"}
+            </PopoverTrigger>
+            <PopoverContent align="start" data-reanchored-surface="">
+              Content
+            </PopoverContent>
+          </Popover>
+        </div>
+      );
+    }
+
+    try {
+      flushSync(() => root.render(<ReanchoredPopover />));
+      await waitFor(() =>
+        document.querySelector<HTMLElement>("[data-reanchored-surface]")?.style.left === "10px"
+      );
+
+      flushSync(replaceTrigger);
+      await waitFor(() =>
+        document.querySelector<HTMLElement>("[data-reanchored-surface]")?.style.left === "200px"
+      );
+      const replacement = [...document.querySelectorAll("button")].find((button) =>
+        button.textContent === "Replacement"
+      );
+      assert(replacement);
+      replacement.dispatchEvent(
+        new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+      );
+      assert(document.querySelector("[data-reanchored-surface]"));
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
   it("uses the anchor owner document for portals and dismissal listeners", async () => {
     const globalDom = new JSDOM(
       '<!doctype html><html><body><div id="global-root"></div></body></html>',

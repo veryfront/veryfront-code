@@ -2,9 +2,6 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { logger } from "#veryfront/utils";
 import { MAX_PATH_LENGTH_CHARS } from "#veryfront/utils/constants/limits.ts";
 import {
-  MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS,
-} from "#veryfront/extensions/image/index.ts";
-import {
   createFileSystem,
   type FileSystem,
   isNotFoundError,
@@ -16,30 +13,11 @@ import {
   MAX_IMAGE_DIMENSION,
   MAX_IMAGE_FILES,
   MAX_IMAGE_MANIFEST_BYTES,
-  MAX_IMAGE_OUTPUT_SIZES,
   SUPPORTED_FORMATS,
 } from "./constants.ts";
 import type { ImageVariant, OptimizedImageMetadata } from "./types.ts";
 
 const supportedFormats = new Set<string>(SUPPORTED_FORMATS);
-const metadataProperties = new Set<PropertyKey>([
-  "original",
-  "originalSize",
-  "variants",
-  "defaultFormat",
-  "aspectRatio",
-  "engineIdentity",
-  "quality",
-]);
-const variantProperties = new Set<PropertyKey>([
-  "format",
-  "size",
-  "width",
-  "height",
-  "path",
-  "fileSize",
-  "quality",
-]);
 
 function comparePaths(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -129,7 +107,12 @@ export function loadManifest(
         throw new TypeError("Image manifest must be a JSON object");
       }
 
-      const entries = Object.entries(parsed);
+      const entries = Object.entries(parsed).map(
+        ([key, value]): [string, unknown] => [
+          key,
+          normalizeLegacyDuplicateVariants(value),
+        ],
+      );
       assertManifestEntries(entries);
       return new Map(entries);
     },
@@ -141,42 +124,10 @@ function isPositiveFinite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function isQuality(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= 100;
-}
-
-function isEngineIdentity(value: unknown): value is string {
-  return typeof value === "string" &&
-    value.length > 0 &&
-    value.length <= MAX_IMAGE_OPTIMIZATION_ENGINE_IDENTITY_CHARACTERS &&
-    value.trim() === value &&
-    value.normalize("NFC") === value &&
-    !hasControlCharacters(value);
-}
-
-function hasExactEnumerableDataProperties(
-  value: object,
-  expected: ReadonlySet<PropertyKey>,
-): boolean {
-  try {
-    const descriptors = Object.getOwnPropertyDescriptors(value);
-    const keys = Reflect.ownKeys(descriptors);
-    return keys.length === expected.size &&
-      keys.every((key) => expected.has(key)) &&
-      keys.every((key) => {
-        const descriptor = Reflect.getOwnPropertyDescriptor(value, key);
-        return descriptor !== undefined && "value" in descriptor && descriptor.enumerable;
-      });
-  } catch {
-    return false;
-  }
-}
-
-function isImageVariant(value: unknown, quality: number): value is ImageVariant {
+function isImageVariant(value: unknown): value is ImageVariant {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  if (!hasExactEnumerableDataProperties(value, variantProperties)) return false;
   const variant = value as Partial<ImageVariant>;
   return typeof variant.format === "string" &&
     supportedFormats.has(variant.format) &&
@@ -187,13 +138,45 @@ function isImageVariant(value: unknown, quality: number): value is ImageVariant 
     Number.isSafeInteger(variant.width) &&
     variant.width! > 0 &&
     variant.width! <= MAX_IMAGE_DIMENSION &&
-    variant.size === variant.width &&
     Number.isSafeInteger(variant.height) &&
     variant.height! > 0 &&
     variant.height! <= MAX_IMAGE_DIMENSION &&
     Number.isSafeInteger(variant.fileSize) &&
-    variant.fileSize! > 0 &&
-    variant.quality === quality;
+    variant.fileSize! > 0;
+}
+
+function variantFingerprint(variant: ImageVariant): string {
+  return JSON.stringify([
+    variant.format,
+    variant.size,
+    variant.width,
+    variant.height,
+    variant.path,
+    variant.fileSize,
+  ]);
+}
+
+/** Normalize only the exact duplicates emitted by the legacy size generator. */
+function normalizeLegacyDuplicateVariants(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const metadata = value as Partial<OptimizedImageMetadata>;
+  if (!Array.isArray(metadata.variants)) return value;
+
+  const fingerprints = new Set<string>();
+  const variants: ImageVariant[] = [];
+  let removedDuplicate = false;
+  for (const candidate of metadata.variants as unknown[]) {
+    if (!isImageVariant(candidate)) return value;
+    const fingerprint = variantFingerprint(candidate);
+    if (fingerprints.has(fingerprint)) {
+      removedDuplicate = true;
+      continue;
+    }
+    fingerprints.add(fingerprint);
+    variants.push(candidate);
+  }
+
+  return removedDuplicate ? { ...metadata, variants } : value;
 }
 
 function isOptimizedImageMetadata(
@@ -202,20 +185,17 @@ function isOptimizedImageMetadata(
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
-  if (!hasExactEnumerableDataProperties(value, metadataProperties)) return false;
   const metadata = value as Partial<OptimizedImageMetadata>;
   if (
     !isSafeImageManifestPath(metadata.original) ||
-    !Number.isSafeInteger(metadata.originalSize) ||
-    metadata.originalSize! <= 0 ||
+    (metadata.originalSize !== undefined &&
+      (!Number.isSafeInteger(metadata.originalSize) ||
+        metadata.originalSize <= 0)) ||
     !Array.isArray(metadata.variants) ||
     metadata.variants.length === 0 ||
-    metadata.variants.length > MAX_IMAGE_OUTPUT_SIZES * supportedFormats.size ||
     typeof metadata.defaultFormat !== "string" ||
     !supportedFormats.has(metadata.defaultFormat) ||
-    !isPositiveFinite(metadata.aspectRatio) ||
-    !isEngineIdentity(metadata.engineIdentity) ||
-    !isQuality(metadata.quality)
+    !isPositiveFinite(metadata.aspectRatio)
   ) {
     return false;
   }
@@ -224,7 +204,7 @@ function isOptimizedImageMetadata(
   const variantPaths = new Set<string>();
   let hasDefaultFormat = false;
   for (const candidate of metadata.variants as unknown[]) {
-    if (!isImageVariant(candidate, metadata.quality)) return false;
+    if (!isImageVariant(candidate)) return false;
     const variant = candidate;
 
     const identity = `${variant.format}\0${variant.size}`;

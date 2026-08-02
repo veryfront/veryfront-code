@@ -137,13 +137,34 @@ function mergeProps(slotProps: AnyProps, childProps: AnyProps): AnyProps {
 /** Props accepted by `<Slot>`. */
 export interface SlotProps extends React.HTMLAttributes<HTMLElement> {
   children?: React.ReactNode;
+  /** Block activation when an asChild consumer uses non-native disabled markup. */
+  disabled?: boolean;
 }
+
+function preventDisabledActivation(event: React.SyntheticEvent): void {
+  event.preventDefault();
+  event.stopPropagation();
+}
+
+function preventDisabledKeyboardActivation(event: React.KeyboardEvent): void {
+  if (event.key === "Enter" || event.key === " ") preventDisabledActivation(event);
+}
+
+const NATIVELY_DISABLEABLE_ELEMENTS = new Set([
+  "button",
+  "fieldset",
+  "input",
+  "optgroup",
+  "option",
+  "select",
+  "textarea",
+]);
 
 /** Render `Slot` — merge props onto its single child element. */
 export const Slot: React.ForwardRefExoticComponent<
   SlotProps & React.RefAttributes<HTMLElement>
 > = React.forwardRef<HTMLElement, SlotProps>(
-  function Slot({ children, ...slotProps }, forwardedRef) {
+  function Slot({ children, disabled = false, ...slotProps }, forwardedRef) {
     if (!React.isValidElement(children)) {
       throw new TypeError("Slot requires exactly one valid React element child");
     }
@@ -156,6 +177,21 @@ export const Slot: React.ForwardRefExoticComponent<
     );
 
     const merged = mergeProps(slotProps as AnyProps, childProps);
+    if (disabled) {
+      merged["aria-disabled"] = true;
+      merged.tabIndex = -1;
+      merged.onAuxClickCapture = preventDisabledActivation;
+      merged.onClickCapture = preventDisabledActivation;
+      merged.onKeyDownCapture = preventDisabledKeyboardActivation;
+      if (
+        typeof child.type === "string" &&
+        NATIVELY_DISABLEABLE_ELEMENTS.has(child.type)
+      ) {
+        merged.disabled = true;
+      } else {
+        delete merged.disabled;
+      }
+    }
     merged.ref = mergedRef;
     return React.cloneElement(
       child,

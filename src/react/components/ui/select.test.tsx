@@ -326,6 +326,10 @@ describe("Select", () => {
       assertEquals(alpha.getAttribute("role"), "option");
       assertEquals(alpha.getAttribute("aria-selected"), "true");
       assertEquals(alpha.hasAttribute("tabindex"), false);
+      await waitFor(
+        () => selectedText(trigger) === "Alpha",
+        "selected option registration",
+      );
 
       flushSync(() => beta.dispatchEvent(new MouseEvent("mousemove", { bubbles: true })));
       assertEquals(selectedText(trigger), "Alpha");

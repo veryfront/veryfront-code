@@ -7,12 +7,15 @@ import { cx as cn } from "./cva.ts";
 import { composeRefs, Slot } from "./slot.tsx";
 import { Floating } from "./floating.tsx";
 import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 /** Context value shared between an anchored skin's Root and its parts. */
 export interface AnchoredState {
   open: boolean;
   setOpen: (open: boolean) => void;
   anchorRef: React.RefObject<HTMLElement | null>;
+  anchorElement: HTMLElement | null;
+  setAnchorElement: React.Dispatch<React.SetStateAction<HTMLElement | null>>;
   triggerRef: React.RefObject<HTMLButtonElement | null>;
   defaultTriggerId: string;
   defaultContentId: string;
@@ -67,6 +70,7 @@ export function createAnchoredSurfaceParts() {
   ): React.ReactElement {
     const { open: isOpen, setOpen } = useDisclosure({ open, defaultOpen, onOpenChange });
     const anchorRef = React.useRef<HTMLElement | null>(null);
+    const [anchorElement, setAnchorElement] = React.useState<HTMLElement | null>(null);
     const triggerRef = React.useRef<HTMLButtonElement | null>(null);
     const reactId = stableDomId(React.useId());
     const defaultTriggerId = `vf-anchored-${reactId}-trigger`;
@@ -78,6 +82,8 @@ export function createAnchoredSurfaceParts() {
         open: isOpen,
         setOpen,
         anchorRef,
+        anchorElement,
+        setAnchorElement,
         triggerRef,
         defaultTriggerId,
         defaultContentId,
@@ -87,6 +93,7 @@ export function createAnchoredSurfaceParts() {
         setContentId,
       }),
       [
+        anchorElement,
         contentId,
         defaultContentId,
         defaultTriggerId,
@@ -132,7 +139,7 @@ export function createAnchoredSurfaceParts() {
     }
     const Comp = asChild ? Slot : "button";
     const resolvedId = id ?? ctx.defaultTriggerId;
-    React.useLayoutEffect(() => {
+    useIsomorphicLayoutEffect(() => {
       ctx.setTriggerId(resolvedId);
       return () => {
         ctx.setTriggerId((current) => current === resolvedId ? ctx.defaultTriggerId : current);
@@ -141,7 +148,8 @@ export function createAnchoredSurfaceParts() {
     const setTriggerRef = React.useCallback((element: HTMLButtonElement | null) => {
       ctx.triggerRef.current = element;
       ctx.anchorRef.current = element;
-    }, [ctx.anchorRef, ctx.triggerRef]);
+      ctx.setAnchorElement(element);
+    }, [ctx.anchorRef, ctx.setAnchorElement, ctx.triggerRef]);
     const composedRef = React.useMemo(
       () => composeRefs<HTMLButtonElement>(setTriggerRef, ref),
       [ref, setTriggerRef],
@@ -156,7 +164,7 @@ export function createAnchoredSurfaceParts() {
         aria-expanded={ctx.open}
         aria-controls={ctx.contentId}
         aria-disabled={asChild && disabled ? true : undefined}
-        disabled={asChild ? undefined : disabled}
+        disabled={disabled}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
           if (!e.defaultPrevented && !disabled) ctx.setOpen(!ctx.open);
@@ -185,7 +193,7 @@ export function createAnchoredSurfaceParts() {
       throw new Error("Anchored content parts must be used within their root");
     }
     const resolvedId = id ?? ctx.defaultContentId;
-    React.useLayoutEffect(() => {
+    useIsomorphicLayoutEffect(() => {
       ctx.setContentId(resolvedId);
       return () => {
         ctx.setContentId((current) => current === resolvedId ? ctx.defaultContentId : current);
@@ -195,6 +203,7 @@ export function createAnchoredSurfaceParts() {
       <Floating
         {...props}
         anchorRef={ctx.anchorRef}
+        anchorElement={ctx.anchorElement}
         open={ctx.open}
         align={align}
         onDismiss={() => ctx.setOpen(false)}

@@ -22,8 +22,6 @@ function createMetadata(
     originalSize: 1_024,
     defaultFormat: "webp",
     aspectRatio: 4 / 3,
-    engineIdentity: "test-image-engine@1",
-    quality: 80,
     variants: [],
     ...overrides,
   };
@@ -136,7 +134,6 @@ describe("build/utils/asset-utils", () => {
             height: 300,
             size: 1000,
             fileSize: 1000,
-            quality: 80,
           },
           {
             path: "hero-800w.webp",
@@ -145,7 +142,6 @@ describe("build/utils/asset-utils", () => {
             height: 600,
             size: 2000,
             fileSize: 2000,
-            quality: 80,
           },
           {
             path: "hero-400w.avif",
@@ -154,7 +150,6 @@ describe("build/utils/asset-utils", () => {
             height: 300,
             size: 800,
             fileSize: 800,
-            quality: 80,
           },
         ],
       });
@@ -174,7 +169,6 @@ describe("build/utils/asset-utils", () => {
             height: 300,
             size: 1000,
             fileSize: 1000,
-            quality: 80,
           },
           {
             path: "img-400w.avif",
@@ -183,7 +177,6 @@ describe("build/utils/asset-utils", () => {
             height: 300,
             size: 800,
             fileSize: 800,
-            quality: 80,
           },
         ],
       });
@@ -205,7 +198,6 @@ describe("build/utils/asset-utils", () => {
             height: 300,
             size: 1000,
             fileSize: 1000,
-            quality: 80,
           },
           {
             path: "img-800w.webp",
@@ -214,7 +206,6 @@ describe("build/utils/asset-utils", () => {
             height: 600,
             size: 2000,
             fileSize: 2000,
-            quality: 80,
           },
           {
             path: "img-400w.avif",
@@ -223,7 +214,6 @@ describe("build/utils/asset-utils", () => {
             height: 300,
             size: 1000,
             fileSize: 1000,
-            quality: 80,
           },
         ],
       });
@@ -244,7 +234,6 @@ describe("build/utils/asset-utils", () => {
             height: 300,
             size: 800,
             fileSize: 800,
-            quality: 80,
           },
         ],
       });

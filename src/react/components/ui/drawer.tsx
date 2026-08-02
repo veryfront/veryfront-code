@@ -8,6 +8,7 @@
 import * as React from "react";
 import { cx as cn } from "./cva.ts";
 import { createModalSurfaceParts } from "./modal-surface.tsx";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 // Per-skin context + machinery -- distinct from Dialog's instance so a
 // DialogClose nested inside a Drawer cannot accidentally close the Drawer.
@@ -74,7 +75,7 @@ export function DrawerTitle({
 }: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
   const modal = _hook();
   const resolvedId = id ?? modal.defaultTitleId;
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     modal.setTitleId(resolvedId);
     modal.setTitlePresent(true);
     return () => {

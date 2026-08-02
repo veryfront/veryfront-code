@@ -203,7 +203,7 @@ export function DropdownMenuItem({
       {...(asChild ? {} : { type: "button" as const })}
       role="menuitem"
       aria-disabled={disabled || undefined}
-      disabled={asChild ? undefined : disabled}
+      disabled={disabled}
       tabIndex={-1}
       className={cn(
         "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",

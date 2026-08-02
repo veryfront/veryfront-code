@@ -19,6 +19,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "./dropdown-menu.tsx";
+import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 
 function installDom(dom: JSDOM): () => void {
   const window = dom.window;
@@ -159,6 +160,12 @@ describe("modal surfaces", () => {
       assertEquals(trigger.getAttribute("aria-expanded"), "true");
       assertEquals(dialog.getAttribute("aria-modal"), "true");
       assertEquals(dialog.tabIndex, -1);
+      await waitFor(
+        () =>
+          dialog.getAttribute("aria-labelledby") !== null &&
+          dialog.getAttribute("aria-describedby") !== null,
+        "dialog labels were not registered",
+      );
       const titleId = dialog.getAttribute("aria-labelledby");
       const descriptionId = dialog.getAttribute("aria-describedby");
       assert(titleId && descriptionId);
@@ -312,6 +319,67 @@ describe("dropdown menu keyboard contract", () => {
         "menu did not close on Tab",
       );
       assertEquals(document.activeElement, after);
+    } finally {
+      await unmount(root);
+      restore();
+    }
+  });
+
+  it("dismisses only the topmost nested floating surface on Escape", async () => {
+    const dom = createDom();
+    const restore = installDom(dom);
+    const rootElement = document.getElementById("root");
+    assert(rootElement);
+    const root = createRoot(rootElement);
+
+    try {
+      flushSync(() => {
+        root.render(
+          <div data-vf-ui="">
+            <Popover defaultOpen>
+              <PopoverTrigger id="popover-trigger">Open popover</PopoverTrigger>
+              <PopoverContent>
+                <DropdownMenu defaultOpen>
+                  <DropdownMenuTrigger id="nested-menu-trigger">
+                    Open nested menu
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem id="nested-menu-item">Nested item</DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </PopoverContent>
+            </Popover>
+          </div>,
+        );
+      });
+      await waitFor(
+        () =>
+          document.querySelector('[role="dialog"]') !== null &&
+          document.querySelector('[role="menu"]') !== null,
+        "nested surfaces did not portal",
+      );
+      const item = document.getElementById("nested-menu-item");
+      const menuTrigger = document.getElementById("nested-menu-trigger");
+      assert(item && menuTrigger);
+      await waitFor(
+        () => document.activeElement === item,
+        "nested menu did not focus its item",
+      );
+
+      keydown(dom.window, item, "Escape");
+      await waitFor(
+        () => document.querySelector('[role="menu"]') === null,
+        "Escape did not close the nested menu",
+      );
+      assert(document.querySelector('[role="dialog"]'));
+      assertEquals(document.activeElement, menuTrigger);
+
+      keydown(dom.window, menuTrigger, "Escape");
+      await waitFor(
+        () => document.querySelector('[role="dialog"]') === null,
+        "second Escape did not close the outer popover",
+      );
+      assertEquals(document.activeElement, document.getElementById("popover-trigger"));
     } finally {
       await unmount(root);
       restore();

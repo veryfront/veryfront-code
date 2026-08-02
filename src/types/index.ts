@@ -77,44 +77,6 @@ export type {
 
 export type ComponentProps = Record<string, unknown>;
 
-/** Raster formats emitted by the optimized-image pipeline. */
-export type OptimizedImageFormat = "webp" | "avif" | "jpeg" | "png";
-
-/** One concrete encoded image emitted by the build. */
-export interface ImageVariant {
-  format: OptimizedImageFormat;
-  size: number;
-  width: number;
-  height: number;
-  path: string;
-  fileSize: number;
-  quality: number;
-}
-
-/** Build metadata for one source image. */
-export interface OptimizedImageMetadata {
-  original: string;
-  originalSize: number;
-  variants: ImageVariant[];
-  defaultFormat: OptimizedImageFormat;
-  aspectRatio: number;
-  engineIdentity: string;
-  quality: number;
-}
-
-/** Immutable optimized-image manifest payload, bounded for its transfer boundary. */
-export interface OptimizedImageManifestSnapshot {
-  identity: string;
-  entries: Record<string, OptimizedImageMetadata>;
-}
-
-/** Request-scoped optimized-image lookup used by server rendering. */
-export interface OptimizedImageManifestRenderSession {
-  readonly identity: string;
-  resolve(source: string): OptimizedImageMetadata;
-  snapshotReferenced(): OptimizedImageManifestSnapshot;
-}
-
 export type Component = React.ComponentType<ComponentProps>;
 
 export type ComponentFunction = (
@@ -230,8 +192,6 @@ export interface RenderResult {
     type: "mdx" | "component";
   };
   ssrHash?: string;
-  /** Exact optimized-image entries referenced while rendering this route. */
-  imageManifest?: OptimizedImageManifestSnapshot;
 }
 
 export type {

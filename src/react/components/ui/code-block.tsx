@@ -231,8 +231,8 @@ export interface CodeSurfaceProps {
   language: string;
   /** Resolved light/dark mode. */
   resolvedMode: CodeBlockMode;
-  /** Explicit extension-owned renderer, or `null` for plain source. */
-  renderer: React.ComponentType<CodeSyntaxRendererProps> | null;
+  /** Explicit extension-owned renderer; omitted or `null` renders plain source. */
+  renderer?: React.ComponentType<CodeSyntaxRendererProps> | null;
 }
 
 /** Render through an explicit extension capability or escaped plain source. */

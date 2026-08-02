@@ -24,15 +24,7 @@ const sampleMetadata: OptimizedImageMetadata = {
   original: "photo.jpg",
   originalSize: 24000,
   variants: [
-    {
-      format: "webp",
-      size: 320,
-      width: 320,
-      height: 180,
-      path: "photo-320w.webp",
-      fileSize: 5000,
-      quality: 80,
-    },
+    { format: "webp", size: 320, width: 320, height: 180, path: "photo-320w.webp", fileSize: 5000 },
     {
       format: "webp",
       size: 640,
@@ -40,22 +32,11 @@ const sampleMetadata: OptimizedImageMetadata = {
       height: 360,
       path: "photo-640w.webp",
       fileSize: 12000,
-      quality: 80,
     },
-    {
-      format: "avif",
-      size: 320,
-      width: 320,
-      height: 180,
-      path: "photo-320w.avif",
-      fileSize: 4000,
-      quality: 80,
-    },
+    { format: "avif", size: 320, width: 320, height: 180, path: "photo-320w.avif", fileSize: 4000 },
   ],
   defaultFormat: "webp",
   aspectRatio: 16 / 9,
-  engineIdentity: "test-image-engine@1",
-  quality: 80,
 };
 
 function createImageEngine(
@@ -249,13 +230,10 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
               height: 400,
               path: "banner-1920w.webp",
               fileSize: 30000,
-              quality: 80,
             },
           ],
           defaultFormat: "webp",
           aspectRatio: 1920 / 400,
-          engineIdentity: "test-image-engine@1",
-          quality: 80,
         };
         populateManifest(optimizer, [
           ["photo.jpg", sampleMetadata],
@@ -343,7 +321,6 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
               outputDir: ".veryfront/images",
               formats: ["webp"],
               sizes: [320],
-              quality: 73,
               preserveOriginal: true,
             },
             { engine: createImageEngine() },
@@ -353,23 +330,17 @@ describe("build/asset-pipeline/image-optimizer/optimizer-core", () => {
           const metadata = manifest.get("photo.jpg");
           assertEquals(metadata?.originalSize, source.length);
           assertEquals(metadata?.variants.length, 2);
-          assertEquals(metadata?.engineIdentity, "test-image-engine@1");
-          assertEquals(metadata?.quality, 73);
-          assertEquals(metadata?.variants.map((variant) => variant.quality), [73, 73]);
           assertEquals(
             await Deno.readFile(join(projectDir, ".veryfront/images/photo.jpg")),
             source,
           );
-          const serializedMetadata = JSON.parse(
-            await Deno.readTextFile(
-              join(projectDir, ".veryfront/images/image-manifest.json"),
-            ),
-          )["photo.jpg"];
-          assertEquals(serializedMetadata.engineIdentity, "test-image-engine@1");
-          assertEquals(serializedMetadata.quality, 73);
           assertEquals(
-            serializedMetadata.variants.map((variant: { quality: number }) => variant.quality),
-            [73, 73],
+            JSON.parse(
+              await Deno.readTextFile(
+                join(projectDir, ".veryfront/images/image-manifest.json"),
+              ),
+            )["photo.jpg"].variants.length,
+            2,
           );
           assertEquals(
             optimizer.generateSrcSet("photo.jpg"),

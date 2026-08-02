@@ -88,12 +88,9 @@ export {
 } from "./head-collector.ts";
 
 export {
-  ImageManifestProvider,
-  type ImageManifestProviderProps,
   type MdxHeading,
   PageContextProvider,
   type PageContextValue,
-  useOptimizedImageMetadata,
   usePageContext,
 } from "./context/index.tsx";
 

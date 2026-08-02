@@ -15,6 +15,7 @@ import {
   CodeBlock,
   CodeBlockRendererProvider,
   type CodeDiagramRendererProps,
+  CodeSurface,
   type CodeSyntaxRendererProps,
   useClipboard,
 } from "./code-block.tsx";
@@ -77,6 +78,15 @@ async function unmount(root: Root): Promise<void> {
 }
 
 describe("CodeBlock renderer boundary", () => {
+  it("keeps the standalone CodeSurface renderer optional", () => {
+    const html = renderToString(
+      <CodeSurface code="const answer = 42;" language="ts" resolvedMode="light" />,
+    );
+
+    assertStringIncludes(html, 'data-vf-code-renderer="plain"');
+    assertStringIncludes(html, "const answer = 42;");
+  });
+
   it("renders escaped plain source without extension capabilities", () => {
     const html = renderToString(
       <CodeBlock code='<script>alert("x")</script>' language="mermaid" />,

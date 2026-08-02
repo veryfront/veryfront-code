@@ -10,6 +10,7 @@ import { cx as cn } from "./cva.ts";
 import { ScrollFade } from "./scroll-fade.tsx";
 import { Button, type ButtonProps, LoadingButton } from "./button.tsx";
 import { createModalSurfaceParts } from "./modal-surface.tsx";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 
 // Per-skin context + machinery -- distinct from Drawer's instance so a
 // DrawerClose nested inside a Dialog cannot accidentally close the Dialog.
@@ -82,7 +83,7 @@ export function DialogTitle({
 }: React.HTMLAttributes<HTMLHeadingElement>): React.ReactElement {
   const modal = _hook();
   const resolvedId = id ?? modal.defaultTitleId;
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     modal.setTitleId(resolvedId);
     modal.setTitlePresent(true);
     return () => {
@@ -115,7 +116,7 @@ export function DialogDescription({
 }: React.HTMLAttributes<HTMLParagraphElement>): React.ReactElement {
   const modal = _hook();
   const resolvedId = id ?? modal.defaultDescriptionId;
-  React.useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     modal.setDescriptionId(resolvedId);
     modal.setDescriptionPresent(true);
     return () => {

@@ -1,23 +1,17 @@
 import React from "react";
-import type { OptimizedImageMetadata } from "#veryfront/types";
-import { useOptimizedImageMetadata } from "../../runtime/core.ts";
 import {
-  assertImageQuality,
-  generateSrcSet,
-  getAvailableFormats,
-  getImageMimeType,
-  getOptimizedPath,
-} from "./helpers.ts";
+  RESPONSIVE_IMAGE_WIDTH_LG,
+  RESPONSIVE_IMAGE_WIDTHS,
+} from "#veryfront/utils/constants/network.ts";
+import { generateSrcSet, getImageExtension, getOptimizedPath } from "./helpers.ts";
 
 export interface OptimizedImageProps {
   src: string;
-  /** Exact entry from the generated image-manifest.json. */
-  metadata?: OptimizedImageMetadata;
   alt: string;
   width?: number;
   height?: number;
   sizes?: string;
-  formats?: readonly ("avif" | "webp" | "jpeg" | "png")[];
+  formats?: ("avif" | "webp" | "jpeg" | "png")[];
   quality?: number;
   loading?: "lazy" | "eager";
   priority?: boolean;
@@ -30,15 +24,17 @@ export interface OptimizedImageProps {
   onError?: (event: React.SyntheticEvent<HTMLImageElement>) => void;
 }
 
+const DEFAULT_SIZES = RESPONSIVE_IMAGE_WIDTHS;
+const DEFAULT_FORMATS: ("avif" | "webp" | "jpeg")[] = ["avif", "webp", "jpeg"];
+
 export function OptimizedImage({
   src,
-  metadata,
   alt,
   width,
   height,
   sizes = "100vw",
-  formats,
-  quality,
+  formats = DEFAULT_FORMATS,
+  quality = 80,
   loading,
   priority = false,
   className,
@@ -49,10 +45,8 @@ export function OptimizedImage({
   onLoad,
   onError,
 }: OptimizedImageProps): React.JSX.Element {
-  const resolvedMetadata = useOptimizedImageMetadata(src, metadata);
   const loadingStrategy = priority ? "eager" : (loading ?? "lazy");
-  assertImageQuality(resolvedMetadata, quality);
-  const selectedFormats = formats ?? getAvailableFormats(resolvedMetadata);
+  const originalFormat = getImageExtension(src);
 
   const imgStyle: React.CSSProperties = {
     ...style,
@@ -63,22 +57,17 @@ export function OptimizedImage({
 
   return (
     <picture>
-      {selectedFormats.map((format) => (
+      {formats.map((format) => (
         <source
           key={format}
-          type={getImageMimeType(format)}
-          srcSet={generateSrcSet(src, resolvedMetadata, format)}
+          type={`image/${format}`}
+          srcSet={generateSrcSet(src, format, DEFAULT_SIZES, quality)}
           sizes={sizes}
         />
       ))}
 
       <img
-        src={getOptimizedPath(
-          src,
-          resolvedMetadata,
-          resolvedMetadata.defaultFormat,
-          width,
-        )}
+        src={getOptimizedPath(src, originalFormat, width ?? RESPONSIVE_IMAGE_WIDTH_LG, quality)}
         alt={alt}
         width={width}
         height={height}

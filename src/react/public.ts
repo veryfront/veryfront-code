@@ -31,18 +31,8 @@ export type { LinkProps, RouterProviderProps, RouterValue } from "./router/index
 // ---------------------------------------------------------------------------
 // Context (veryfront/context)
 // ---------------------------------------------------------------------------
-export {
-  ImageManifestProvider,
-  PageContextProvider,
-  useOptimizedImageMetadata,
-  usePageContext,
-} from "./context/index.tsx";
-export type {
-  ImageManifestProviderProps,
-  MdxHeading,
-  PageContextProviderProps,
-  PageContextValue,
-} from "./context/index.tsx";
+export { PageContextProvider, usePageContext } from "./context/index.tsx";
+export type { MdxHeading, PageContextProviderProps, PageContextValue } from "./context/index.tsx";
 
 // ---------------------------------------------------------------------------
 // Fonts (veryfront/fonts)

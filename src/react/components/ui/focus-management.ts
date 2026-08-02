@@ -22,6 +22,11 @@ function isHiddenOrInert(element: HTMLElement): boolean {
   ) {
     return true;
   }
+  const closedDetails = element.closest("details:not([open])");
+  if (closedDetails) {
+    const summary = closedDetails.querySelector(":scope > summary");
+    if (!summary?.contains(element)) return true;
+  }
   const view = element.ownerDocument.defaultView;
   if (!view) return false;
   for (let current: HTMLElement | null = element; current; current = current.parentElement) {
@@ -36,13 +41,31 @@ function isHiddenOrInert(element: HTMLElement): boolean {
   return false;
 }
 
+function isTabStopRadio(element: HTMLElement): boolean {
+  if (element.tagName !== "INPUT") return true;
+  const input = element as HTMLInputElement;
+  if (input.type !== "radio" || input.name === "") return true;
+
+  const root = input.getRootNode() as ParentNode;
+  if (typeof root.querySelectorAll !== "function") return true;
+  const group = [...root.querySelectorAll<HTMLInputElement>('input[type="radio"]')]
+    .filter((candidate) =>
+      candidate.name === input.name && candidate.form === input.form &&
+      !candidate.matches(":disabled") && candidate.tabIndex >= 0 &&
+      !isHiddenOrInert(candidate)
+    );
+  return (group.find((candidate) => candidate.checked) ?? group[0]) === input;
+}
+
 /** Return enabled, sequentially focusable descendants in DOM order. */
 export function getFocusableElements(container: HTMLElement): HTMLElement[] {
   return [...container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)]
     .filter((element) =>
       element.tabIndex >= 0 &&
+      !element.matches(":disabled") &&
       element.getAttribute("aria-disabled") !== "true" &&
-      !isHiddenOrInert(element)
+      !isHiddenOrInert(element) &&
+      isTabStopRadio(element)
     )
     .map((element, domIndex) => ({ domIndex, element }))
     .sort((left, right) => {
@@ -66,7 +89,17 @@ export function focusWithoutScroll(element: HTMLElement): void {
 
 /** Focus the first interactive descendant, or the container as a fallback. */
 export function focusFirst(container: HTMLElement): void {
-  focusWithoutScroll(getFocusableElements(container)[0] ?? container);
+  const first = getFocusableElements(container)[0];
+  if (first) {
+    focusWithoutScroll(first);
+    if (container.ownerDocument.activeElement === first) return;
+  }
+  focusWithoutScroll(container);
+}
+
+function focusOrFallback(element: HTMLElement, container: HTMLElement): void {
+  focusWithoutScroll(element);
+  if (container.ownerDocument.activeElement !== element) focusWithoutScroll(container);
 }
 
 /** Keep keyboard Tab navigation inside a modal container. */
@@ -87,9 +120,9 @@ export function trapTabKey(
   const last = focusable[focusable.length - 1]!;
   if (event.shiftKey && (active === first || !container.contains(active))) {
     event.preventDefault();
-    focusWithoutScroll(last);
+    focusOrFallback(last, container);
   } else if (!event.shiftKey && (active === last || !container.contains(active))) {
     event.preventDefault();
-    focusWithoutScroll(first);
+    focusOrFallback(first, container);
   }
 }

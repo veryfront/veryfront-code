@@ -15,6 +15,7 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { cx as cn } from "./cva.ts";
 import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
+import { registerDismissableLayer } from "./dismissable-layer.ts";
 
 type Side = "top" | "bottom" | "left" | "right";
 
@@ -331,18 +332,6 @@ export function Tooltip(
       setContentPresent(false);
     };
   }, [generatedContentId]);
-
-  useIsomorphicLayoutEffect(() => {
-    if (!interactions.open || !triggerElement) return;
-    const ownerDocument = triggerElement.ownerDocument;
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape" && !event.defaultPrevented) {
-        interactions.dismiss();
-      }
-    };
-    ownerDocument.addEventListener("keydown", onKeyDown);
-    return () => ownerDocument.removeEventListener("keydown", onKeyDown);
-  }, [interactions.dismiss, interactions.open, triggerElement]);
 
   const value = React.useMemo<TooltipContextValue>(
     () => ({
@@ -841,6 +830,7 @@ export function TooltipContent(
   const registerContent = context?.registerContent;
   const open = context?.open ?? false;
   const triggerElement = context?.triggerElement ?? null;
+  const dismiss = context?.dismiss;
   const offset = normalizeSideOffset(sideOffset);
 
   React.useEffect(() => {
@@ -868,6 +858,16 @@ export function TooltipContent(
       },
     );
   }, [offset, open, portalReady, side, triggerElement]);
+
+  useIsomorphicLayoutEffect(() => {
+    const content = ref.current;
+    if (!open || !portalReady || !content || !dismiss) return;
+    return registerDismissableLayer(
+      content.ownerDocument,
+      () => ref.current,
+      dismiss,
+    );
+  }, [dismiss, open, portalReady]);
 
   if (!open || !portalReady || !triggerElement) return null;
   const ownerDocument = triggerElement.ownerDocument;

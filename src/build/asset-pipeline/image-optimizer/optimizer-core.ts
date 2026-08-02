@@ -562,7 +562,6 @@ export class ImageOptimizer {
             height: variant.height,
             path: manifestPath,
             fileSize: variant.data.length,
-            quality: this.options.quality,
           });
         }
         if (this.options.preserveOriginal) {
@@ -583,8 +582,6 @@ export class ImageOptimizer {
               result.sourceWidth,
               result.sourceHeight,
             ),
-            engineIdentity: optimizationSession.cacheIdentity,
-            quality: this.options.quality,
           },
         ];
       },

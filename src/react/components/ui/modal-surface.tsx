@@ -7,6 +7,8 @@ import * as React from "react";
 import { createPortal } from "react-dom";
 import { UI_SCOPE_SELECTOR } from "./design-tokens.ts";
 import { type DisclosureOptions, useDisclosure } from "./disclosure.ts";
+import { registerDismissableLayer } from "./dismissable-layer.ts";
+import { useIsomorphicLayoutEffect } from "./use-isomorphic-layout-effect.ts";
 import { focusFirst, focusWithoutScroll, trapTabKey } from "./focus-management.ts";
 import { composeRefs, Slot } from "./slot.tsx";
 
@@ -98,14 +100,14 @@ function useModalContentEffect(
     const unlockScroll = lockDocumentScroll(document);
     const isTopModal = (): boolean => stack.at(-1) === panel;
 
+    const unregisterDismissableLayer = registerDismissableLayer(
+      document,
+      () => ref.current,
+      () => setOpen(false),
+    );
     const onKey = (e: KeyboardEvent) => {
       if (!isTopModal() || e.defaultPrevented) return;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setOpen(false);
-      } else {
-        trapTabKey(e, panel);
-      }
+      trapTabKey(e, panel);
     };
     document.addEventListener("keydown", onKey);
     const onFocusIn = (event: FocusEvent) => {
@@ -128,6 +130,7 @@ function useModalContentEffect(
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("focusin", onFocusIn);
+      unregisterDismissableLayer();
       const index = stack.lastIndexOf(panel);
       if (index >= 0) stack.splice(index, 1);
       if (stack.length === 0) modalStacks.delete(document);
@@ -243,7 +246,7 @@ export function createModalSurfaceParts(name: string) {
         aria-expanded={ctx.open}
         aria-controls={ctx.contentId}
         aria-disabled={asChild && disabled ? true : undefined}
-        disabled={asChild ? undefined : disabled}
+        disabled={disabled}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
           if (!e.defaultPrevented && !disabled) ctx.setOpen(true);
@@ -266,7 +269,7 @@ export function createModalSurfaceParts(name: string) {
         type={asChild ? type : type ?? "button"}
         ref={ref}
         aria-disabled={asChild && disabled ? true : undefined}
-        disabled={asChild ? undefined : disabled}
+        disabled={disabled}
         onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
           onClick?.(e);
           if (!e.defaultPrevented && !disabled) ctx.setOpen(false);
@@ -294,7 +297,7 @@ export function createModalSurfaceParts(name: string) {
     const resolvedId = id ?? ctx.defaultContentId;
     const [portalReady, setPortalReady] = React.useState(false);
     React.useEffect(() => setPortalReady(true), []);
-    React.useLayoutEffect(() => {
+    useIsomorphicLayoutEffect(() => {
       ctx.setContentId(resolvedId);
       return () => {
         ctx.setContentId((current) => current === resolvedId ? ctx.defaultContentId : current);

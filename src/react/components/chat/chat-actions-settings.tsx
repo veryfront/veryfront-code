@@ -9,7 +9,7 @@
  */
 import * as React from "react";
 import { Floating } from "../ui/floating.tsx";
-import { Switch } from "../ui/switch.tsx";
+import { focusWithoutScroll } from "../ui/focus-management.ts";
 import { cn } from "./theme.ts";
 
 /** The two toggle settings surfaced in the Settings submenu. */
@@ -78,25 +78,41 @@ function SettingsToggleRow({
   onCheckedChange: (value: boolean) => void;
 }): React.ReactElement {
   return (
-    <label className="relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] transition-colors hover:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)]">
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={checked}
+      tabIndex={-1}
+      onClick={() => onCheckedChange(!checked)}
+      className={cn(
+        "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
+        "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
+      )}
+    >
       <span>{label}</span>
-      <span className="ml-auto">
-        <Switch
-          size="sm"
-          checked={checked}
-          onCheckedChange={onCheckedChange}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative ml-auto inline-flex h-6 w-10 shrink-0 items-center rounded-full border border-[var(--background)] transition-colors dark:border-transparent",
+          checked ? "bg-[var(--primary)]" : "bg-[var(--input-bg)]",
+        )}
+      >
+        <span
+          className={cn(
+            "block size-4 translate-x-0.5 rounded-full bg-[var(--background)] transition-transform duration-200",
+            checked && "translate-x-[18px] bg-[var(--secondary)]",
+          )}
         />
       </span>
-    </label>
+    </button>
   );
 }
 
 /**
  * The Settings row and its portalled submenu.
  *
- * The close delay lets the pointer cross the portal gap. Capturing pointer
- * down inside the submenu prevents the parent menu's outside-dismiss handler
- * from closing the entire action menu while a switch is being toggled.
+ * The close delay lets the pointer cross the portal gap. The submenu owns its
+ * keyboard events and mouse-downs so its parent menu cannot dismiss first.
  */
 export function SettingsSubmenu({
   settings,
@@ -107,6 +123,8 @@ export function SettingsSubmenu({
   const rowRef = React.useRef<HTMLDivElement | null>(null);
   const triggerRef = React.useRef<HTMLButtonElement | null>(null);
   const closeTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const submenuId = React.useId();
+  const triggerId = `${submenuId}-trigger`;
 
   const cancelClose = React.useCallback(() => {
     if (closeTimer.current) {
@@ -118,11 +136,74 @@ export function SettingsSubmenu({
     cancelClose();
     setOpen(true);
   }, [cancelClose]);
+  const closeNow = React.useCallback(() => {
+    cancelClose();
+    setOpen(false);
+  }, [cancelClose]);
   const scheduleClose = React.useCallback(() => {
     cancelClose();
-    closeTimer.current = setTimeout(() => setOpen(false), 160);
-  }, [cancelClose]);
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = null;
+      const document = rowRef.current?.ownerDocument;
+      const submenu = document?.getElementById(submenuId);
+      if (!submenu?.contains(document?.activeElement ?? null)) setOpen(false);
+    }, 160);
+  }, [cancelClose, submenuId]);
   React.useEffect(() => cancelClose, [cancelClose]);
+
+  const closeAndRestoreFocus = React.useCallback(() => {
+    closeNow();
+    queueMicrotask(() => {
+      const trigger = triggerRef.current;
+      if (trigger?.isConnected) focusWithoutScroll(trigger);
+    });
+  }, [closeNow]);
+
+  const handleSubmenuKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+  ): void => {
+    // Tab follows the parent menu's established close-and-advance behavior.
+    if (event.key === "Tab") return;
+
+    // The portal remains in the parent menu's React tree. Stop propagation so
+    // the parent menu and both Floating Escape listeners cannot process the
+    // same interaction.
+    event.stopPropagation();
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>(
+      '[role="menuitemcheckbox"]',
+    )];
+    const activeIndex = items.indexOf(
+      event.currentTarget.ownerDocument.activeElement as HTMLElement,
+    );
+    const focusAt = (index: number): void => {
+      const item = items[(index + items.length) % items.length];
+      if (item) focusWithoutScroll(item);
+    };
+
+    switch (event.key) {
+      case "ArrowDown":
+        event.preventDefault();
+        focusAt(activeIndex + 1);
+        return;
+      case "ArrowUp":
+        event.preventDefault();
+        focusAt(activeIndex < 0 ? items.length - 1 : activeIndex - 1);
+        return;
+      case "Home":
+        event.preventDefault();
+        focusAt(0);
+        return;
+      case "End":
+        event.preventDefault();
+        focusAt(items.length - 1);
+        return;
+      case "ArrowLeft":
+      case "Escape":
+        event.preventDefault();
+        closeAndRestoreFocus();
+        return;
+    }
+  };
 
   return (
     <div
@@ -133,11 +214,27 @@ export function SettingsSubmenu({
     >
       <button
         ref={triggerRef}
+        id={triggerId}
         type="button"
         role="menuitem"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => (open ? scheduleClose() : openNow())}
+        aria-controls={submenuId}
+        onClick={openNow}
+        onKeyDown={(event) => {
+          if (
+            event.key === "ArrowRight" || event.key === "ArrowDown" ||
+            event.key === "Enter" || event.key === " "
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            openNow();
+          } else if (open && (event.key === "ArrowLeft" || event.key === "Escape")) {
+            event.preventDefault();
+            event.stopPropagation();
+            closeNow();
+          }
+        }}
         className={cn(
           "relative flex w-full cursor-pointer select-none items-center gap-2.5 rounded-md px-3 h-[36px] text-base font-normal text-left text-[var(--foreground)] outline-none transition-colors",
           "hover:bg-[var(--tertiary)] focus:bg-[var(--tertiary)] dark:hover:bg-[var(--accent)] dark:focus:bg-[var(--accent)]",
@@ -153,12 +250,16 @@ export function SettingsSubmenu({
         anchorRef={rowRef}
         open={open}
         align="end"
-        onDismiss={() => setOpen(false)}
+        onDismiss={closeNow}
         returnFocusRef={triggerRef}
+        initialFocus='[role="menuitemcheckbox"]'
+        id={submenuId}
         role="menu"
+        aria-labelledby={triggerId}
         onMouseEnter={openNow}
         onMouseLeave={scheduleClose}
-        onPointerDownCapture={(event) => event.stopPropagation()}
+        onMouseDownCapture={(event) => event.stopPropagation()}
+        onKeyDown={handleSubmenuKeyDown}
         className="z-50 min-w-[240px] overflow-hidden rounded-lg bg-[var(--popover)] p-2.5 shadow-sm outline-none"
       >
         <div
