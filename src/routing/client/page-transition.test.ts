@@ -549,12 +549,12 @@ describe("PageTransition", () => {
             ?.getAttribute("content"),
           "Page B description",
         );
-        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 1);
+        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 2);
         assertEquals(targetDocument.querySelector('link[rel="canonical"]'), null);
         assertEquals(targetDocument.querySelector("style"), null);
         assertStrictEquals(targetDocument.querySelector('meta[name="viewport"]'), viewport);
         assertStrictEquals(targetDocument.querySelector('link[rel="manifest"]'), manifest);
-        assertEquals(targetDocument.getElementById("third-party"), null);
+        assertStrictEquals(targetDocument.getElementById("third-party"), thirdParty);
 
         pageTransition.updatePage(
           {
@@ -598,7 +598,8 @@ describe("PageTransition", () => {
         await delay(200);
 
         assertEquals(targetDocument.querySelectorAll('[data-vf-route-head="true"]').length, 0);
-        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 0);
+        assertEquals(targetDocument.querySelectorAll('meta[name="description"]').length, 1);
+        assertStrictEquals(targetDocument.getElementById("third-party"), thirdParty);
         assertStrictEquals(targetDocument.querySelector('meta[name="viewport"]'), viewport);
         assertStrictEquals(targetDocument.querySelector('link[rel="manifest"]'), manifest);
         assertEquals(viewport.getAttribute("data-vf-shell-head"), "true");
