@@ -155,7 +155,7 @@ export class FSAdapterWrapper implements ExtendedFileSystemAdapter {
       ? "none"
       : undefined;
 
-    const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter");
+    const snapshotReader = captureSnapshotReadCapability(fsAdapter, "FSAdapter", true);
     let byteReaders: CapturedByteReaders;
     try {
       byteReaders = captureByteReadCapabilities(fsAdapter, "FSAdapter");

@@ -58,6 +58,9 @@ const BRANCH_SOURCE_SNAPSHOT_FRESHNESS_MS = 30_000;
 let sourceSnapshotGeneration = 0;
 
 function nextSourceSnapshotGeneration(): number {
+  if (sourceSnapshotGeneration >= Number.MAX_SAFE_INTEGER) {
+    throw new RangeError("Source snapshot generation space is exhausted");
+  }
   sourceSnapshotGeneration++;
   return sourceSnapshotGeneration;
 }
@@ -134,7 +137,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private readonly branchMissRecoveryFailures = new Map<string, number>();
   /** Last successful source check and generation of the materialized snapshot. */
   private sourceSnapshotCheckedAt = 0;
-  private sourceSnapshotVersion = 0;
+  private sourceSnapshotVersion = nextSourceSnapshotGeneration();
   private sourceSnapshotIdentity: string | undefined;
   private sourceSnapshotFiles: SourceSnapshotFile[] | undefined;
   private sourceSnapshotRefreshPromise: Promise<void> | null = null;
@@ -143,6 +146,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   private projectData?: Project;
   private apiBaseUrl: string;
   private apiToken: string;
+  private activeRequestToken: string;
   private projectSlug: string;
   private invalidationCallbacks: InvalidationCallbacks;
   private styleCallbacks: StyleCallbacks;
@@ -242,6 +246,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
 
     this.apiBaseUrl = vf.apiBaseUrl ?? "";
     this.apiToken = vf.apiToken ?? "";
+    this.activeRequestToken = this.apiToken;
     this.projectSlug = vf.projectSlug ?? "";
     this.contentSource = vf.contentSource ?? { type: "branch", branch: "main" };
     this.proxyMode = vf.proxyMode ?? false;
@@ -1006,6 +1011,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   dispose(): void {
+    this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
     this.wsManager.dispose();
     this.manifestFetcherCleanup?.();
     this.manifestFetcherCleanup = null;
@@ -1114,16 +1120,44 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   setRequestToken(token: string): void {
+    if (token !== this.activeRequestToken) {
+      this.activeRequestToken = token;
+      this.invalidateRequestAuthoritySnapshot();
+    }
     this.client.setRequestToken(token);
     this.wsManager.setApiToken(token);
   }
 
   clearRequestToken(): void {
+    if (this.activeRequestToken !== this.apiToken) {
+      this.activeRequestToken = this.apiToken;
+      this.invalidateRequestAuthoritySnapshot();
+    }
     this.client.clearRequestToken();
     this.wsManager.setApiToken(this.apiToken);
   }
 
+  private invalidateRequestAuthoritySnapshot(): void {
+    this.cache.clear();
+    this.readOps.clearFileListIndex();
+    this.statOps.clearIndex();
+    this.dirOps.clearTree();
+    this.fileListWarmupPromise = null;
+    this.fileListWarmupKey = null;
+    this.branchMissRecoveryPromise = null;
+    this.branchMissRecoveryGeneration++;
+    this.branchMissRecoveryFailures.clear();
+    this.sourceSnapshotCheckedAt = 0;
+    this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    this.sourceSnapshotRefreshPromise = null;
+    this.sourceSnapshotIdentity = undefined;
+    this.sourceSnapshotFiles = undefined;
+  }
+
   setRequestBranch(branch: string | null): void {
+    if (branch !== this.requestBranch) {
+      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    }
     this.requestBranch = branch;
     this.syncClientContext();
   }
@@ -1133,6 +1167,9 @@ export class VeryfrontFSAdapter implements FSAdapter {
   }
 
   clearRequestBranch(): void {
+    if (this.requestBranch !== null) {
+      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
+    }
     this.requestBranch = null;
     this.syncClientContext();
   }
@@ -1181,7 +1218,7 @@ export class VeryfrontFSAdapter implements FSAdapter {
       this.branchMissRecoveryGeneration++;
       this.branchMissRecoveryFailures.clear();
       this.sourceSnapshotCheckedAt = 0;
-      this.sourceSnapshotVersion = 0;
+      this.sourceSnapshotVersion = nextSourceSnapshotGeneration();
       this.sourceSnapshotIdentity = undefined;
       this.sourceSnapshotFiles = undefined;
       this.sourceSnapshotRefreshPromise = null;

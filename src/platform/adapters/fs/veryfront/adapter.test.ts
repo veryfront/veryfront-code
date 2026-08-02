@@ -227,6 +227,55 @@ describe("VeryfrontFSAdapter", () => {
       adapter.clearRequestToken();
       assertEquals(websocketToken, "static-token");
     });
+
+    it("invalidates snapshots and cached file lists across request-authority changes", async () => {
+      const adapter = createAdapter({
+        veryfront: {
+          apiBaseUrl: "https://api.example.com",
+          apiToken: "static-token",
+          projectSlug: "test-project",
+          cache: { enabled: true },
+        },
+      });
+      adapter.setContentContext({
+        sourceType: "branch",
+        projectSlug: "test-project",
+        branch: "main",
+      });
+      seedCachedFiles(adapter, [{ path: "tenant-a.ts", content: "tenant-a" }]);
+
+      const internals = adapter as unknown as {
+        getCachedFileListSync(): Array<{ path: string; content?: string }> | undefined;
+        getCurrentSourceSnapshotIdentity(): string | undefined;
+        initialized: boolean;
+        sourceSnapshotCheckedAt: number;
+        sourceSnapshotIdentity: string | undefined;
+        sourceSnapshotFiles: Array<{ path: string; content?: string }> | undefined;
+        sourceSnapshotRefreshPromise: Promise<void> | null;
+      };
+      internals.initialized = true;
+      internals.sourceSnapshotIdentity = internals.getCurrentSourceSnapshotIdentity();
+      internals.sourceSnapshotCheckedAt = Date.now();
+      internals.sourceSnapshotFiles = [{ path: "tenant-a.ts", content: "tenant-a" }];
+      internals.sourceSnapshotRefreshPromise = new Promise(() => {});
+      assertEquals(internals.getCachedFileListSync()?.[0]?.path, "tenant-a.ts");
+
+      let refreshCalls = 0;
+      adapter.refreshSourceSnapshot = () => {
+        refreshCalls++;
+        return Promise.resolve();
+      };
+      const before = adapter.getSourceSnapshotVersion();
+
+      adapter.setRequestToken("tenant-token");
+      assertEquals(internals.getCachedFileListSync(), undefined);
+      assertEquals(internals.sourceSnapshotRefreshPromise, null);
+      await adapter.ensureSourceSnapshotFresh("new-authority");
+      adapter.setRequestToken("static-token");
+
+      assertEquals(refreshCalls, 1);
+      assertEquals(adapter.getSourceSnapshotVersion() > before, true);
+    });
   });
 
   describe("content context", () => {
@@ -621,6 +670,44 @@ describe("VeryfrontFSAdapter", () => {
       adapter.setContentContext(ctx);
 
       assertEquals(adapter.getContentContext()?.branch, "main");
+    });
+
+    it("detects a source-context ABA change during an in-flight exact read", async () => {
+      const adapter = createAdapter();
+      const originalContext: ResolvedContentContext = {
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-a",
+      };
+      adapter.setContentContext(originalContext);
+      const before = adapter.getSourceSnapshotVersion();
+      const readStarted = Promise.withResolvers<void>();
+      const releaseRead = Promise.withResolvers<void>();
+      const internals = adapter as unknown as {
+        ensureExactReadInitialized(): Promise<void>;
+        readOps: {
+          readFileBytesWithinLimit(path: string, byteLimit: number): Promise<Uint8Array>;
+        };
+      };
+      internals.ensureExactReadInitialized = () => Promise.resolve();
+      internals.readOps.readFileBytesWithinLimit = async () => {
+        readStarted.resolve();
+        await releaseRead.promise;
+        return new Uint8Array([1]);
+      };
+
+      const pendingRead = adapter.readFileBytesWithinLimit("config.json", 1);
+      await readStarted.promise;
+      adapter.setContentContext({
+        sourceType: "release",
+        projectSlug: "test-project",
+        releaseId: "release-b",
+      });
+      adapter.setContentContext(originalContext);
+      releaseRead.resolve();
+
+      assertEquals([...(await pendingRead)], [1]);
+      assertEquals(adapter.getSourceSnapshotVersion() > before, true);
     });
 
     it("should detect context change between different source types", () => {
