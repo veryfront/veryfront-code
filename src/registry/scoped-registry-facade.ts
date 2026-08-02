@@ -54,3 +54,48 @@ export class ScopedRegistryFacade<T> {
     return this.manager.getStats();
   }
 }
+
+/**
+ * Project-scoped registry capabilities safe to expose to evaluated project
+ * code. Process-wide shared registration, global reset, and aggregate
+ * statistics deliberately remain on the internal facade only.
+ */
+export class ScopedRegistryView<T> {
+  readonly #registry: ScopedRegistryFacade<T>;
+
+  constructor(registry: ScopedRegistryFacade<T>) {
+    this.#registry = registry;
+  }
+
+  register(id: string, item: T): void {
+    this.#registry.register(id, item);
+  }
+
+  get(id: string): T | undefined {
+    return this.#registry.get(id);
+  }
+
+  getOwn(id: string): T | undefined {
+    return this.#registry.getOwn(id);
+  }
+
+  has(id: string): boolean {
+    return this.#registry.has(id);
+  }
+
+  getAllIds(): string[] {
+    return this.#registry.getAllIds();
+  }
+
+  getAll(): Map<string, T> {
+    return this.#registry.getAll();
+  }
+
+  delete(id: string): boolean {
+    return this.#registry.delete(id);
+  }
+
+  clear(): void {
+    this.#registry.clear();
+  }
+}
