@@ -206,7 +206,12 @@ export async function getEntityBySlug(
       });
 
       if (resolveFile) {
-        const basePaths = [pathHelper.join(projectDir, pagesDirectory, normalizedSlug)];
+        // The exact path first, then the directory index, mirroring the
+        // candidate order the non-adapter branch below builds.
+        const basePaths = [
+          pathHelper.join(projectDir, pagesDirectory, normalizedSlug),
+          pathHelper.join(projectDir, pagesDirectory, normalizedSlug, "index"),
+        ];
 
         if (isVeryfrontRoute) basePaths.unshift(pathHelper.join(projectDir, normalizedSlug));
         if (normalizedSlug === "index" || normalizedSlug === "") {
