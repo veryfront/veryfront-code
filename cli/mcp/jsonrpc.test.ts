@@ -3,12 +3,65 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildInitializeResult,
+  internalError,
+  invalidRequestError,
   MCP_SUPPORTED_VERSIONS,
   negotiateVersion,
+  parseError,
   toParamsRecord,
 } from "./jsonrpc.ts";
 
 describe("cli/mcp/jsonrpc", () => {
+  describe("error responses", () => {
+    it("does not expose parser diagnostics to the client", () => {
+      const response = parseError(
+        new Error("Unexpected token at an internal source location"),
+      );
+
+      assertEquals(response, {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32700,
+          message: "Parse error",
+        },
+      });
+    });
+
+    it("does not coerce untrusted thrown values", () => {
+      const response = parseError({
+        toString(): never {
+          throw new Error("untrusted coercion ran");
+        },
+      });
+
+      assertEquals(response.error?.message, "Parse error");
+      assertEquals(response.error?.data, undefined);
+    });
+
+    it("distinguishes invalid requests without exposing validation details", () => {
+      assertEquals(invalidRequestError(new Error("private schema detail")), {
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32600,
+          message: "Invalid Request",
+        },
+      });
+    });
+
+    it("contains unexpected handler failures", () => {
+      assertEquals(internalError(7), {
+        jsonrpc: "2.0",
+        id: 7,
+        error: {
+          code: -32603,
+          message: "Internal error",
+        },
+      });
+    });
+  });
+
   describe("toParamsRecord", () => {
     it("returns object params as-is", () => {
       const params = { foo: "bar" };
