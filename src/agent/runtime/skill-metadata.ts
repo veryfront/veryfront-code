@@ -25,7 +25,6 @@ import {
 import {
   parseBoundedSkillDocument,
   type ParsedSkillContent,
-  parseUnsafeLegacySkillDocument,
 } from "#veryfront/skill/document-parser.ts";
 import { validateSkillFileMetadata } from "#veryfront/skill/parser.ts";
 import {
@@ -614,10 +613,19 @@ function parseLegacyRuntimeSkillSource(
   content: string,
   options: RuntimeSkillMetadataParseOptions = {},
 ): ParsedRuntimeSkillSource | null {
+  const configuredProvider = options.skillDocumentParserProvider === undefined
+    ? tryResolve<SkillDocumentParserProvider>(SkillDocumentParserProviderName)
+    : options.skillDocumentParserProvider;
+  const parser = configuredProvider === undefined
+    ? undefined
+    : snapshotSkillDocumentParserProvider(configuredProvider);
   try {
-    const parsed = parseUnsafeLegacySkillDocument(
+    // Compatibility applies only to the legacy metadata shape. Document
+    // splitting, bounds, and YAML decoding remain on the strict extension-owned
+    // parser contract; core never falls back to a private YAML grammar.
+    const parsed = parseBoundedSkillDocument(
       content,
-      options.skillDocumentParserProvider,
+      parser,
     );
     const result = getUnsafeLegacyRuntimeSkillFrontmatterSchema().safeParse(parsed.frontmatter);
 
@@ -637,6 +645,9 @@ function parseLegacyRuntimeSkillSource(
       allowedToolsDeclared: hasDeclaredAllowedTools(parsed.frontmatter),
     };
   } catch (error) {
+    if (snapshotVeryfrontError(error)?.slug === "missing-extension") {
+      throw error;
+    }
     options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
       error: snapshotThrowableDiagnostic(error),
     });

@@ -107,7 +107,7 @@ Deno.test("strict runtime parsing sanitizes hostile parser failures without invo
   );
 });
 
-Deno.test("runtime parsing propagates missing YAML infrastructure while legacy scalar parsing remains available", () => {
+Deno.test("all runtime parsing requires the extension-owned YAML contract", () => {
   const previous = tryResolve<SkillDocumentParserProvider>(
     SkillDocumentParserProviderName,
   );
@@ -133,11 +133,13 @@ Deno.test("runtime parsing propagates missing YAML infrastructure while legacy s
       },
       body: "Plain body",
     });
-    assertEquals(
-      parseUnsafeLegacyRuntimeSkillDocument(
-        "---\nname: legacy\ndescription: Scalar fallback\n---\nBody",
-      )?.metadata.description,
-      "Scalar fallback",
+    assertThrows(
+      () =>
+        parseUnsafeLegacyRuntimeSkillDocument(
+          "---\nname: legacy\ndescription: No fallback\n---\nBody",
+        ),
+      Error,
+      "Missing extension",
     );
   } finally {
     if (previous !== undefined) {
@@ -887,9 +889,9 @@ Deno.test("parseStrictRuntimeSkillMetadata rejects ambiguous and invalid allowed
   );
 });
 
-Deno.test("generic runtime parsing is strict while unsafe legacy parsing remains compatible", () => {
+Deno.test("generic and compatibility runtime parsers share document bounds", () => {
   const oversized = "x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1);
-  assertExists(parseUnsafeLegacyRuntimeSkillMetadata(oversized));
+  assertEquals(parseUnsafeLegacyRuntimeSkillMetadata(oversized), null);
   assertEquals(parseRuntimeSkillMetadata(oversized), null);
   assertEquals(
     parseStrictRuntimeSkillMetadata(oversized),
@@ -1020,7 +1022,7 @@ Deno.test("generic runtime parser and path helpers fail closed", () => {
   assertEquals(normalizeRuntimeSkillReferencePath("references/secret\u0000.md"), null);
 });
 
-Deno.test("unsafe legacy runtime parser and path compatibility is explicitly named", () => {
+Deno.test("legacy-named runtime parser keeps strict document bounds", () => {
   const legacyParser = Reflect.get(
     runtimeSkillMetadata,
     "parseUnsafeLegacyRuntimeSkillMetadata",
@@ -1033,7 +1035,7 @@ Deno.test("unsafe legacy runtime parser and path compatibility is explicitly nam
   assertEquals(typeof legacyNormalizer, "function");
   if (typeof legacyParser !== "function" || typeof legacyNormalizer !== "function") return;
 
-  assertExists(legacyParser("x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1)));
+  assertEquals(legacyParser("x".repeat(SKILL_DOCUMENT_MAX_CHARACTERS + 1)), null);
   assertEquals(
     legacyNormalizer("C:\\private\\secret.md"),
     "C:/private/secret.md",
