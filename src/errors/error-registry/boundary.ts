@@ -48,6 +48,14 @@ export const RSC_PAYLOAD_ERROR = defineError({
   suggestion: "Ensure props are serializable (no functions, symbols, etc.)",
 });
 
+export const SSR_OUTPUT_LIMIT_EXCEEDED = defineError({
+  slug: "ssr-output-limit-exceeded",
+  category: "BOUNDARY",
+  status: 500,
+  title: "SSR output limit exceeded",
+  suggestion: "Reduce the rendered HTML size or split the response into smaller pages",
+});
+
 /** Registry fragment for BOUNDARY errors (slug → definition). */
 export const BOUNDARY_REGISTRY = {
   "client-boundary-violation": CLIENT_BOUNDARY_VIOLATION,
@@ -56,4 +64,5 @@ export const BOUNDARY_REGISTRY = {
   "invalid-use-client": INVALID_USE_CLIENT,
   "invalid-use-server": INVALID_USE_SERVER,
   "rsc-payload-error": RSC_PAYLOAD_ERROR,
+  "ssr-output-limit-exceeded": SSR_OUTPUT_LIMIT_EXCEEDED,
 } as const;

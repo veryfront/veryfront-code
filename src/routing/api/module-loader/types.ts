@@ -4,6 +4,8 @@ import type { APIContext } from "../context-builder.ts";
 
 export interface AppRouteContext {
   params: Record<string, string>;
+  /** Immutable environment snapshot for the current project request. */
+  env: Readonly<Record<string, string>>;
 }
 
 export type HTTPMethod =
