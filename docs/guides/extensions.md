@@ -112,7 +112,8 @@ Restart `veryfront dev` after editing `veryfront.config.ts`:
 
 - The dev log should print a setup line for each loaded extension.
 - Any contract the extension provides should now be resolvable through the
-  matching consumer (for example, a `TokenCacheStore` extension lets the proxy
-  share OAuth tokens across processes without a core Redis dependency).
+  matching consumer. For example, setting `CACHE_TYPE=extension` lets the proxy
+  use a registered `TokenCacheStore` to share OAuth tokens across processes
+  without a core Redis dependency.
 - If the factory throws during setup, the dev server prints the setup error
   with the extension name. Fix the error and reload.

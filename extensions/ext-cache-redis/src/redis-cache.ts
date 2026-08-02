@@ -14,6 +14,7 @@ import type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "veryfron
 const DEFAULT_PREFIX = "vf:token:";
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;
 const DEFAULT_SCAN_COUNT = 100;
+const MAX_PREFIX_CODE_UNITS = 256;
 const MAX_RECONNECT_RETRIES = 3;
 const RECONNECT_BACKOFF_BASE_MS = 100;
 const RECONNECT_BACKOFF_MAX_MS = 3_000;
@@ -24,6 +25,37 @@ const EXPECTED_DISCONNECT_PATTERNS = [
   "econnreset",
   "etimedout",
 ];
+
+function validatePrefix(prefix: unknown): string {
+  if (
+    typeof prefix !== "string" ||
+    prefix.length === 0 ||
+    prefix.length > MAX_PREFIX_CODE_UNITS
+  ) {
+    throw new TypeError(
+      "Redis token-cache prefix must contain 1 to 256 visible ASCII characters without glob metacharacters",
+    );
+  }
+
+  for (let index = 0; index < prefix.length; index += 1) {
+    const code = prefix.charCodeAt(index);
+    if (
+      code < 0x21 ||
+      code > 0x7e ||
+      code === 0x2a || // *
+      code === 0x3f || // ?
+      code === 0x5b || // [
+      code === 0x5c || // \
+      code === 0x5d // ]
+    ) {
+      throw new TypeError(
+        "Redis token-cache prefix must contain 1 to 256 visible ASCII characters without glob metacharacters",
+      );
+    }
+  }
+
+  return prefix;
+}
 
 /** Constructor options for `RedisTokenCacheStore`. */
 export interface RedisTokenCacheStoreOptions {
@@ -86,7 +118,7 @@ export class RedisTokenCacheStore implements TokenCacheStore {
     } = {},
   ) {
     this.url = options.url;
-    this.prefix = options.prefix ?? DEFAULT_PREFIX;
+    this.prefix = validatePrefix(options.prefix ?? DEFAULT_PREFIX);
     this.connectTimeout = options.connectTimeout ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.tls = options.tls ?? options.url.startsWith("rediss://");
     this.password = options.password;

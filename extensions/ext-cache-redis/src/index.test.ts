@@ -7,7 +7,12 @@
  * @module extensions/ext-cache-redis/test
  */
 
-import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertRejects,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
 import type { TokenCacheEntry, TokenCacheStore } from "veryfront/extensions/cache";
@@ -181,6 +186,46 @@ describe("ext-cache-redis extension", () => {
       await store.close();
     });
 
+    it("rejects prefixes that could widen the Redis clear pattern", async () => {
+      for (
+        const prefix of [
+          "",
+          " ",
+          "vf:\u001f",
+          "vf:\u007f",
+          "vf:é",
+          "a".repeat(257),
+          "vf:*",
+          "vf:?",
+          "vf:[",
+          "vf:]",
+          "vf:\\",
+        ]
+      ) {
+        assertThrows(
+          () => new RedisTokenCacheStore({ url: "redis://localhost:6379", prefix }),
+          TypeError,
+          "1 to 256 visible ASCII characters without glob metacharacters",
+        );
+      }
+
+      assertThrows(
+        () =>
+          new RedisTokenCacheStore({
+            url: "redis://localhost:6379",
+            prefix: 42 as unknown as string,
+          }),
+        TypeError,
+        "1 to 256 visible ASCII characters without glob metacharacters",
+      );
+
+      const store = new RedisTokenCacheStore({
+        url: "redis://localhost:6379",
+        prefix: "a".repeat(256),
+      });
+      await store.close();
+    });
+
     it("logs expected redis socket disconnects below error level", async () => {
       const { factory: clientFactory, client } = createStubClientFactory();
       const { logger, info, error } = capturingLogger();
@@ -277,6 +322,28 @@ describe("ext-cache-redis extension", () => {
         if (previousRedisUrl === undefined) Deno.env.delete("REDIS_URL");
         else Deno.env.set("REDIS_URL", previousRedisUrl);
       }
+    });
+
+    it("rejects an unsafe prefix before registering the cache contract", async () => {
+      const ext = factory();
+      const provides = new Map<string, unknown>();
+      const ctx = buildCtx(
+        {
+          proxy: {
+            cache: {
+              redis: { url: "redis://localhost:6379", prefix: "vf:*" },
+            },
+          },
+        },
+        provides,
+      );
+
+      await assertRejects(
+        async () => await ext.setup!(ctx),
+        TypeError,
+        "1 to 256 visible ASCII characters without glob metacharacters",
+      );
+      assertEquals(provides.has("TokenCacheStore"), false);
     });
 
     it("redacts credentials from the url before logging", async () => {

@@ -22,8 +22,8 @@ export default defineConfig({
 
 | Variable         | Required                       | Description                                                                                         |
 | ---------------- | ------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `REDIS_URL`      | Yes (if explicit config unset) | Redis connection URL — e.g. `redis://localhost:6379` or `rediss://...` (TLS)                        |
-| `REDIS_PREFIX`   | No                             | Token-key prefix (default: `vf:token:`)                                                             |
+| `REDIS_URL`      | Yes (if explicit config unset) | Redis connection URL, for example `redis://localhost:6379` or `rediss://...` (TLS)                    |
+| `REDIS_PREFIX`   | No                             | Token-key prefix (default: `vf:token:`); see prefix constraints below                               |
 | `REDIS_PASSWORD` | No                             | Password override when credentials are not embedded in the connection URL                           |
 | `CACHE_TYPE`     | Standalone proxy only          | Set to `extension` so the CLI activates this extension before importing the provider-neutral proxy |
 
@@ -66,13 +66,13 @@ The CLI activates `@veryfront/ext-cache-redis` through the extension loader
 before it imports the proxy runtime. Missing packages, missing Redis
 configuration, or a missing `TokenCacheStore` contract stop startup. The
 loader retains ownership of the store; the proxy borrows it and does not close
-it independently. `REDIS_PREFIX` in this path must contain at most 256 visible
+it independently. `REDIS_PREFIX` in this path must contain 1 to 256 visible
 ASCII characters and cannot contain Redis glob metacharacters (`*`, `?`, `[`,
 `]`, or `\`).
 
 ## Provided contract
 
-`TokenCacheStore` — `get(key)`, `set(key, entry)`, `delete(key)`, `clear()`,
+`TokenCacheStore`: `get(key)`, `set(key, entry)`, `delete(key)`, `clear()`,
 `has(key)`, `stats()`, and `close()`. Entry expiry is carried in
 `entry.expiresAt`. The proxy uses the contract for OAuth service-token caching.
 
