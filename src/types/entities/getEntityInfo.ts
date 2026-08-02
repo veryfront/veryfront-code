@@ -477,6 +477,11 @@ function escapesProjectRoot(relativePath: string): boolean {
   return relativePath.split(/[/\\]/).some((segment) => segment === "..");
 }
 
+// Drops empty and "." segments so the slug reaching entity.slug is canonical.
+// ".." is deliberately preserved for escapesProjectRoot to reject.
 function normalizeSlug(slug: string): string {
-  return slug === "/" ? "" : slug.replace(/^\/+/, "").replace(/\/+$/, "");
+  return slug
+    .split("/")
+    .filter((segment) => segment !== "" && segment !== ".")
+    .join("/");
 }
