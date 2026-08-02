@@ -379,15 +379,9 @@ export async function ensureModelReady(
   await prepare.call(model, abortSignal);
 }
 
-/**
- * Clear model providers registered in the current project source scope.
- *
- * Outside a project context, clears application bootstrap registrations.
- * Framework-provided shared providers and other projects remain available.
- */
+/** Clear all registered model providers and reset lazy built-ins (for testing). */
 export function clearModelProviders(): void {
-  manager.clear();
-  if (tryGetRegistryScopeId() === null) {
-    bootstrapProviders.clear();
-  }
+  manager.clearAll();
+  bootstrapProviders.clear();
+  autoInitialized = false;
 }

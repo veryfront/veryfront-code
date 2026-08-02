@@ -64,8 +64,6 @@ describe("provider/model-registry", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     clearModelRegistryEnv();
-    runWithCacheKeyContext(PROJECT_A, clearModelProviders);
-    runWithCacheKeyContext(PROJECT_B, clearModelProviders);
     clearModelProviders();
   });
 
@@ -110,9 +108,10 @@ describe("provider/model-registry", () => {
       "bootstrap",
     );
 
-    runWithCacheKeyContext(PROJECT_A, () => {
-      registerModelProvider("bootstrap", (id) => testRuntime("project-a", id));
+    const disposeProjectOverride = runWithCacheKeyContext(PROJECT_A, () => {
+      const dispose = registerModelProvider("bootstrap", (id) => testRuntime("project-a", id));
       assertEquals(resolveModel("bootstrap/model").provider, "project-a");
+      return dispose;
     });
     assertEquals(
       runWithCacheKeyContext(
@@ -122,7 +121,7 @@ describe("provider/model-registry", () => {
       "bootstrap",
     );
 
-    runWithCacheKeyContext(PROJECT_A, clearModelProviders);
+    disposeProjectOverride();
     assertEquals(
       runWithCacheKeyContext(
         PROJECT_A,
@@ -132,15 +131,15 @@ describe("provider/model-registry", () => {
     );
   });
 
-  it("clears only the current project and preserves other projects and built-ins", () => {
-    runWithCacheKeyContext(PROJECT_A, () => {
-      registerModelProvider("tenant", (id) => testRuntime("project-a", id));
+  it("scoped registration disposers preserve other projects and built-ins", () => {
+    const disposeProjectA = runWithCacheKeyContext(PROJECT_A, () => {
+      return registerModelProvider("tenant", (id) => testRuntime("project-a", id));
     });
     runWithCacheKeyContext(PROJECT_B, () => {
       registerModelProvider("tenant", (id) => testRuntime("project-b", id));
     });
 
-    runWithCacheKeyContext(PROJECT_A, clearModelProviders);
+    disposeProjectA();
     assertThrows(
       () =>
         runWithCacheKeyContext(
@@ -161,6 +160,30 @@ describe("provider/model-registry", () => {
       runWithCacheKeyContext(PROJECT_A, () => hasModelProvider("local")),
       true,
     );
+  });
+
+  it("clearModelProviders resets bootstrap, shared, and every project scope", () => {
+    registerModelProvider("bootstrap-reset", (id) => testRuntime("bootstrap", id));
+    runWithCacheKeyContext(PROJECT_A, () => {
+      registerModelProvider("tenant-reset", (id) => testRuntime("project-a", id));
+    });
+    runWithCacheKeyContext(PROJECT_B, () => {
+      registerModelProvider("tenant-reset", (id) => testRuntime("project-b", id));
+    });
+    assertEquals(hasModelProvider("local"), true);
+
+    clearModelProviders();
+
+    assertEquals(hasModelProvider("bootstrap-reset"), false);
+    assertEquals(
+      runWithCacheKeyContext(PROJECT_A, () => hasModelProvider("tenant-reset")),
+      false,
+    );
+    assertEquals(
+      runWithCacheKeyContext(PROJECT_B, () => hasModelProvider("tenant-reset")),
+      false,
+    );
+    assertEquals(hasModelProvider("local"), true);
   });
 
   it("reports bootstrap, project, and shared providers without duplicates", () => {
