@@ -32,6 +32,7 @@ import {
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
 import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { readLimitedCrossProjectSource } from "./cross-project-source-limit.ts";
+import { readBoundedModuleSource } from "./module-source-reader.ts";
 import { sha256Short } from "#veryfront/cache/hash.ts";
 import {
   getReleaseDependencyRewriteManifestState,
@@ -698,7 +699,11 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
           } else {
             source = isFrameworkFile
               ? await platformFs.readTextFile(sourceFile)
-              : await secureFs.readFile(sourceFile);
+              : await readBoundedModuleSource(
+                secureFs,
+                sourceFile,
+                (path) => secureFs.readFile(path),
+              );
           }
 
           const userAgent = req.headers.get("user-agent") ?? "";
@@ -855,7 +860,11 @@ async function readSourceFileForVersion(
   const platformFs = createFileSystem();
   return findResult.isFrameworkFile
     ? await platformFs.readTextFile(findResult.path)
-    : await secureFs.readFile(findResult.path);
+    : await readBoundedModuleSource(
+      secureFs,
+      findResult.path,
+      (path) => secureFs.readFile(path),
+    );
 }
 
 function createSSRTargetCacheBusterResolver(options: {
