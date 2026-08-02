@@ -231,16 +231,49 @@ describe("registry.ts", () => {
       assertEquals(runtime.isInitialized(), false);
     });
 
-    it("should succeed when old adapter shutdown() throws", async () => {
+    it("surfaces old adapter shutdown failure after committing the replacement", async () => {
       const oldAdapter = createMockAdapter();
-      oldAdapter.shutdown = () => Promise.reject(new Error("shutdown failed"));
+      const socketFailure = new Error("socket close failed");
+      const watcherFailure = new Error("watcher close failed");
+      const shutdownFailure = new AggregateError(
+        [socketFailure, watcherFailure],
+        "adapter resources remained live",
+      );
+      oldAdapter.shutdown = () => Promise.reject(shutdownFailure);
+      const replacement = createMockAdapter();
 
       await runtime.set(oldAdapter);
       assertEquals(runtime.isInitialized(), true);
 
-      // Setting a new adapter should succeed despite old shutdown failure
-      await runtime.set(createMockAdapter());
+      const error = await assertRejects(() => runtime.set(replacement));
+      assertEquals(error, shutdownFailure);
       assertEquals(runtime.isInitialized(), true);
+      assertEquals(await runtime.get(), replacement);
+    });
+
+    it("aggregates initialization and failed-candidate cleanup failures", async () => {
+      const oldAdapter = createMockAdapter();
+      const badAdapter = createMockAdapter();
+      const initializationFailure = new Error("initialization failed");
+      const socketFailure = new Error("candidate socket close failed");
+      const watcherFailure = new Error("candidate watcher close failed");
+      const cleanupFailure = new AggregateError(
+        [socketFailure, watcherFailure],
+        "candidate resources remained live",
+      );
+      badAdapter.initialize = () => Promise.reject(initializationFailure);
+      badAdapter.shutdown = () => Promise.reject(cleanupFailure);
+
+      await runtime.set(oldAdapter);
+      const error = await assertRejects(
+        () => runtime.set(badAdapter),
+        AggregateError,
+        "initialization failed and cleanup also failed",
+      ) as AggregateError;
+
+      assertEquals(error.errors, [initializationFailure, cleanupFailure]);
+      assertEquals(runtime.isInitialized(), true);
+      assertEquals(await runtime.get(), oldAdapter);
     });
   });
 
@@ -249,15 +282,22 @@ describe("registry.ts", () => {
       await runtime.reset();
     });
 
-    it("should clear state even when shutdown() throws", async () => {
+    it("clears state while surfacing shutdown failure", async () => {
       const adapter = createMockAdapter();
-      adapter.shutdown = () => Promise.reject(new Error("shutdown failed"));
+      const socketFailure = new Error("socket close failed");
+      const watcherFailure = new Error("watcher close failed");
+      const shutdownFailure = new AggregateError(
+        [socketFailure, watcherFailure],
+        "adapter resources remained live",
+      );
+      adapter.shutdown = () => Promise.reject(shutdownFailure);
 
       await runtime.set(adapter);
       assertEquals(runtime.isInitialized(), true);
 
-      await runtime.reset();
+      const error = await assertRejects(() => runtime.reset());
 
+      assertEquals(error, shutdownFailure);
       assertEquals(runtime.isInitialized(), false);
     });
   });

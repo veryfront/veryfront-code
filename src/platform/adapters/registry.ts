@@ -1,10 +1,7 @@
-import { logger as baseLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, PLATFORM_ERROR } from "#veryfront/errors";
 import type { RuntimeAdapter, RuntimeId } from "./base.ts";
 import { detectRuntime } from "./runtime-detection.ts";
-
-const logger = baseLogger.component("registry");
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 
@@ -136,7 +133,7 @@ export class AdapterRegistry {
           this.initialized = true;
 
           if (oldAdapter) {
-            await this.shutdownAdapter(oldAdapter, "Failed to shutdown old adapter");
+            await this.shutdownAdapter(oldAdapter);
           }
         }),
     );
@@ -169,7 +166,7 @@ export class AdapterRegistry {
           this.initialized = false;
 
           if (adapter) {
-            await this.shutdownAdapter(adapter, "Failed to shutdown adapter during reset");
+            await this.shutdownAdapter(adapter);
           }
         }),
     );
@@ -204,21 +201,21 @@ export class AdapterRegistry {
   private async initializeAdapter(adapter: RuntimeAdapter): Promise<void> {
     try {
       await adapter.initialize?.();
-    } catch (error) {
-      await this.shutdownAdapter(
-        adapter,
-        "Failed to shutdown adapter after initialization failure",
-      );
-      throw error;
+    } catch (initializationError) {
+      try {
+        await this.shutdownAdapter(adapter);
+      } catch (shutdownError) {
+        throw new AggregateError(
+          [initializationError, shutdownError],
+          "Runtime adapter initialization failed and cleanup also failed",
+        );
+      }
+      throw initializationError;
     }
   }
 
-  private async shutdownAdapter(adapter: RuntimeAdapter, message: string): Promise<void> {
-    try {
-      await adapter.shutdown?.();
-    } catch (error) {
-      logger.warn(message, error);
-    }
+  private async shutdownAdapter(adapter: RuntimeAdapter): Promise<void> {
+    await adapter.shutdown?.();
   }
 }
 
