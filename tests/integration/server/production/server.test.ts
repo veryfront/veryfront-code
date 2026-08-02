@@ -451,7 +451,10 @@ describe(
         const res = await fetch(`http://127.0.0.1:${port}/`);
         assertEquals(res.status, 200);
         const html = await res.text();
-        assertStringIncludes(html, "<title>Custom Title</title>");
+        assertStringIncludes(
+          html,
+          '<title data-vf-shell-head="true">Custom Title</title>',
+        );
         assertMatch(html, /<meta[^>]*name="description"[^>]*content="Custom Description"/i);
 
         controller.abort();
@@ -478,7 +481,10 @@ describe(
         const res = await fetch(`http://127.0.0.1:${port}/meta`);
         assertEquals(res.status, 200);
         const html = await res.text();
-        assertStringIncludes(html, "<title>GM Title</title>");
+        assertStringIncludes(
+          html,
+          '<title data-vf-shell-head="true">GM Title</title>',
+        );
         assertMatch(html, /<meta[^>]*name="description"[^>]*content="GM Desc"/i);
         assertMatch(html, /<meta[^>]*name="keywords"[^>]*content="foo,bar"/i);
 
