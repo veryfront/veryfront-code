@@ -54,10 +54,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [unit, integration]
+    name: tests (integration)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: ./.github/actions/setup-deno
@@ -66,15 +63,10 @@ jobs:
           warm-redis-cache: "true"
       - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
         with:
-          timeout_minutes: ${{ matrix.suite == 'integration' && 10 || 5 }}
+          timeout_minutes: 10
           max_attempts: 3
           retry_wait_seconds: 10
-          command: |
-            if [ "${{ matrix.suite }}" = "integration" ]; then
-              VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
-            else
-              deno task test:unit --no-lock
-            fi
+          command: VF_DISABLE_LRU_INTERVAL=1 deno task test:integration --no-lock
 
   coverage-shards:
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -106,6 +98,22 @@ jobs:
           retention-days: 1
       - name: Add coverage shard summary
         run: echo "### Coverage shard ${{ matrix.shard }}/8 completed in ${{ steps.coverage.outputs.duration }}" >> "$GITHUB_STEP_SUMMARY"
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    name: tests (unit)
+    needs: [coverage-shards]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+    steps:
+      - name: Require all unit test shards
+        env:
+          COVERAGE_SHARDS_RESULT: ${{ needs.coverage-shards.result }}
+        run: |
+          if [ "$COVERAGE_SHARDS_RESULT" != "success" ]; then
+            echo "::error::Unit test shards finished with $COVERAGE_SHARDS_RESULT"
+            exit 1
+          fi
 
   coverage:
     runs-on: ubuntu-latest
