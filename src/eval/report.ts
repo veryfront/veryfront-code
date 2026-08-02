@@ -44,7 +44,7 @@ const USAGE_NUMERIC_KEYS = [
 function sortJsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJsonValue);
   if (!value || typeof value !== "object") return value;
-  const sorted: Record<string, unknown> = {};
+  const sorted = Object.create(null) as Record<string, unknown>;
   for (const key of Object.keys(value).sort()) {
     sorted[key] = sortJsonValue((value as Record<string, unknown>)[key]);
   }

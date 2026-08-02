@@ -3,6 +3,12 @@ import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { generateText } from "#veryfront/runtime/runtime-bridge.ts";
 
 import type { EvalAnswerGroundednessMetricOptions } from "./types.ts";
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalString,
+} from "./validation.ts";
 
 type GroundednessJudge = NonNullable<EvalAnswerGroundednessMetricOptions["judge"]>;
 
@@ -338,13 +344,42 @@ function createLlmRubricJudge(
 function createLlmGroundednessJudge(
   options: EvalLlmGroundednessJudgeOptions = {},
 ): GroundednessJudge {
-  const threshold = options.threshold ?? DEFAULT_THRESHOLD;
-  const maxEvidenceChars = options.maxEvidenceChars ?? DEFAULT_MAX_EVIDENCE_CHARS;
-  const maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  if (!isEvalRecord(options)) {
+    throw createEvalValidationError("LLM groundedness judge options must be an object");
+  }
+  const validatedOptions = options as EvalLlmGroundednessJudgeOptions;
+  const threshold = validatedOptions.threshold ?? DEFAULT_THRESHOLD;
+  const maxEvidenceChars = validatedOptions.maxEvidenceChars ?? DEFAULT_MAX_EVIDENCE_CHARS;
+  const maxOutputTokens = validatedOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+  assertFiniteEvalNumber(threshold, "LLM groundedness judge threshold", { min: 0, max: 1 });
+  assertFiniteEvalNumber(maxEvidenceChars, "LLM groundedness judge maxEvidenceChars", {
+    integer: true,
+    min: 1,
+  });
+  assertFiniteEvalNumber(maxOutputTokens, "LLM groundedness judge maxOutputTokens", {
+    integer: true,
+    min: 1,
+  });
+  if (validatedOptions.temperature !== undefined) {
+    assertFiniteEvalNumber(validatedOptions.temperature, "LLM groundedness judge temperature", {
+      min: 0,
+    });
+  }
+  if (typeof validatedOptions.model === "string") {
+    normalizeEvalString(validatedOptions.model, "LLM groundedness judge model");
+  }
+  if (
+    validatedOptions.providerOptions !== undefined &&
+    !isEvalRecord(validatedOptions.providerOptions)
+  ) {
+    throw createEvalValidationError(
+      "LLM groundedness judge providerOptions must be an object",
+    );
+  }
 
   return async (input) => {
     try {
-      const model = resolveJudgeModel(options.model);
+      const model = resolveJudgeModel(validatedOptions.model);
       const response = await generateText({
         model,
         messages: [{
@@ -352,8 +387,10 @@ function createLlmGroundednessJudge(
           content: buildGroundednessPrompt(input, { threshold, maxEvidenceChars }),
         }],
         maxOutputTokens,
-        temperature: options.temperature ?? 0,
-        ...(options.providerOptions ? { providerOptions: options.providerOptions } : {}),
+        temperature: validatedOptions.temperature ?? 0,
+        ...(validatedOptions.providerOptions
+          ? { providerOptions: validatedOptions.providerOptions }
+          : {}),
       });
 
       return parseJudgeResponse(response.text, threshold);

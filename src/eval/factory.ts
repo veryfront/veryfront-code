@@ -4,16 +4,41 @@ import type {
   EvalDataset,
   EvalDefinition,
   EvalExampleInput,
+  EvalMetric,
   EvalTargetKind,
   EvalToolInput,
 } from "./types.ts";
-import { createEvalValidationError } from "./validation.ts";
+import {
+  assertFiniteEvalNumber,
+  createEvalValidationError,
+  isEvalRecord,
+  normalizeEvalString,
+  normalizeEvalStringList,
+} from "./validation.ts";
+
+const EVAL_DATASET_KINDS = new Set<EvalDataset["kind"]>(["inline", "json", "jsonl"]);
+const EVAL_METRIC_FAMILIES = new Set<EvalMetric["family"]>([
+  "answer",
+  "agent",
+  "ops",
+  "judge",
+  "knowledge",
+  "check",
+]);
+const EVAL_SEVERITIES = new Set<EvalMetric["severity"]>(["gate", "soft", "budget"]);
 
 function isEvalDataset(value: unknown): value is EvalDataset {
-  return !!value &&
-    typeof value === "object" &&
-    typeof (value as { kind?: unknown }).kind === "string" &&
-    typeof (value as { load?: unknown }).load === "function";
+  if (!isEvalRecord(value)) return false;
+  return EVAL_DATASET_KINDS.has(value.kind as EvalDataset["kind"]) &&
+    typeof value.load === "function";
+}
+
+function isEvalMetric(value: unknown): value is EvalMetric {
+  if (!isEvalRecord(value)) return false;
+  return typeof value.name === "string" && value.name.trim() !== "" &&
+    EVAL_METRIC_FAMILIES.has(value.family as EvalMetric["family"]) &&
+    EVAL_SEVERITIES.has(value.severity as EvalMetric["severity"]) &&
+    typeof value.evaluate === "function";
 }
 
 function normalizeDataset(dataset: EvalDataset | EvalExampleInput[]): EvalDataset {
@@ -22,34 +47,57 @@ function normalizeDataset(dataset: EvalDataset | EvalExampleInput[]): EvalDatase
 
 function normalizeRepetitions(repetitions: number | undefined): number {
   const value = repetitions ?? 1;
-  if (!Number.isInteger(value) || value < 1) {
-    throw createEvalValidationError(
-      "Eval repetitions must be an integer greater than or equal to 1",
-    );
-  }
+  assertFiniteEvalNumber(value, "Eval repetitions", {
+    integer: true,
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  });
   return value;
+}
+
+function normalizeMetrics(metrics: unknown): EvalMetric[] {
+  if (metrics === undefined) return [];
+  if (!Array.isArray(metrics) || !metrics.every(isEvalMetric)) {
+    throw createEvalValidationError("Eval metrics must be an array of valid metric definitions");
+  }
+  return [...metrics];
+}
+
+function normalizeMetadata(metadata: unknown): Record<string, unknown> {
+  if (metadata === undefined) return {};
+  if (!isEvalRecord(metadata)) {
+    throw createEvalValidationError("Eval metadata must be an object");
+  }
+  return { ...metadata };
+}
+
+function normalizeOptionalLabel(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  return normalizeEvalString(value, label);
 }
 
 function createEvalDefinition(
   targetKind: EvalTargetKind,
   input: EvalAgentInput | EvalToolInput,
 ): EvalDefinition {
-  if (typeof input.target !== "string" || input.target.trim() === "") {
-    throw createEvalValidationError("Eval target must be a non-empty string");
-  }
+  const target = normalizeEvalString(input.target, "Eval target");
+  const id = normalizeOptionalLabel(input.id, "Eval id") ?? "";
+  const name = normalizeOptionalLabel(input.name, "Eval name") ?? (id || target);
+  const description = normalizeOptionalLabel(input.description, "Eval description");
+  const tags = input.tags === undefined ? [] : normalizeEvalStringList(input.tags, "Eval tags");
 
   return {
     kind: "eval",
     targetKind,
-    id: input.id ?? "",
-    name: input.name ?? input.id ?? input.target,
-    ...(input.description ? { description: input.description } : {}),
-    target: input.target,
+    id,
+    name,
+    ...(description ? { description } : {}),
+    target,
     dataset: normalizeDataset(input.dataset),
-    metrics: input.metrics ?? [],
+    metrics: normalizeMetrics(input.metrics),
     repetitions: normalizeRepetitions(input.repetitions),
-    tags: input.tags ?? [],
-    metadata: input.metadata ?? {},
+    tags,
+    metadata: normalizeMetadata(input.metadata),
     ...("input" in input && input.input ? { input: input.input } : {}),
     ...("mockTools" in input && input.mockTools ? { mockTools: input.mockTools } : {}),
     ...(input.check ? { check: input.check } : {}),
@@ -68,12 +116,21 @@ export function evalTool(input: EvalToolInput): EvalDefinition {
 
 /** Check whether a value is a normalized eval definition. */
 export function isEvalDefinition(value: unknown): value is EvalDefinition {
-  if (!value || typeof value !== "object") return false;
-  const candidate = value as Partial<EvalDefinition>;
-  return candidate.kind === "eval" &&
-    (candidate.targetKind === "agent" || candidate.targetKind === "tool") &&
-    typeof candidate.target === "string" &&
-    isEvalDataset(candidate.dataset) &&
-    Array.isArray(candidate.metrics) &&
-    typeof candidate.repetitions === "number";
+  if (!isEvalRecord(value)) return false;
+  return value.kind === "eval" &&
+    (value.targetKind === "agent" || value.targetKind === "tool") &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    typeof value.target === "string" &&
+    value.target.trim() !== "" &&
+    isEvalDataset(value.dataset) &&
+    Array.isArray(value.metrics) &&
+    value.metrics.every(isEvalMetric) &&
+    Number.isSafeInteger(value.repetitions) &&
+    (value.repetitions as number) >= 1 &&
+    Array.isArray(value.tags) &&
+    value.tags.every((tag) => typeof tag === "string" && tag.trim() !== "") &&
+    isEvalRecord(value.metadata) &&
+    (value.input === undefined || typeof value.input === "function") &&
+    (value.check === undefined || typeof value.check === "function");
 }

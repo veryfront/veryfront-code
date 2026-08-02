@@ -137,6 +137,16 @@ describe("eval/factory", () => {
       Error,
       "repetitions",
     );
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          repetitions: Number.POSITIVE_INFINITY,
+        }),
+      Error,
+      "integer",
+    );
 
     assertThrows(
       () =>
@@ -147,5 +157,35 @@ describe("eval/factory", () => {
       Error,
       "input",
     );
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metrics: [{} as never],
+        }),
+      Error,
+      "valid metric",
+    );
+    assertThrows(
+      () =>
+        evalAgent({
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "hello" }]),
+          metadata: [] as never,
+        }),
+      Error,
+      "metadata",
+    );
+
+    const normalized = evalAgent({
+      id: " eval:trimmed ",
+      target: " agent:researcher ",
+      dataset: datasets.inline([{ id: " q1 ", input: "hello" }]),
+      tags: [" smoke ", "smoke"],
+    });
+    assertEquals(normalized.id, "eval:trimmed");
+    assertEquals(normalized.target, "agent:researcher");
+    assertEquals(normalized.tags, ["smoke"]);
   });
 });
