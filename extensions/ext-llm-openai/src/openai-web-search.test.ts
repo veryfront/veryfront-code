@@ -527,17 +527,15 @@ describe("ext-llm-openai/openai-web-search", () => {
         throw new Error("proxy property read");
       },
     });
-    assertEquals(
-      readOpenAIRawResponseOutputItems({
-        openai: { rawResponseOutputItems: proxiedItems },
-      }),
-      [{
-        id: "ws_proxy",
-        type: "web_search_call",
-        status: "completed",
-        action: { type: "search", query: "Veryfront" },
-      }],
+    const proxyError = captureThrownError(
+      () =>
+        readOpenAIRawResponseOutputItems({
+          openai: { rawResponseOutputItems: proxiedItems },
+        }),
+      TypeError,
+      "OpenAI raw response metadata was not valid bounded JSON",
     );
     assertEquals(proxyPropertyReads, 0);
+    assertEquals(proxyError.cause, undefined);
   });
 });
