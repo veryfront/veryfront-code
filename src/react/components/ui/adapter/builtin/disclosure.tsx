@@ -19,6 +19,8 @@ const DisclosureContext = React.createContext<
     toggle: () => void;
     triggerId: string;
     contentId: string;
+    hasExplicitTriggerId: boolean;
+    hasExplicitContentId: boolean;
     disabled?: boolean;
   } | null
 >(null);
@@ -57,9 +59,19 @@ const DisclosureRoot: DisclosureParts["Root"] = (
       toggle,
       triggerId,
       contentId,
+      hasExplicitTriggerId: explicitTriggerId !== undefined,
+      hasExplicitContentId: explicitContentId !== undefined,
       disabled,
     }),
-    [isOpen, toggle, triggerId, contentId, disabled],
+    [
+      isOpen,
+      toggle,
+      triggerId,
+      contentId,
+      explicitTriggerId,
+      explicitContentId,
+      disabled,
+    ],
   );
   return (
     <div {...props} ref={ref} data-state={isOpen ? "open" : "closed"}>
@@ -74,10 +86,17 @@ const DisclosureTrigger: DisclosureParts["Trigger"] = (
   const ctx = useDisclosureContext("Disclosure Trigger");
   const Comp = asChild ? Slot : "button";
   const isDisabled = Boolean(ctx.disabled || disabled);
-  if (id !== undefined && id !== ctx.triggerId) {
+  const childId = asChild && React.isValidElement<{ id?: string }>(children)
+    ? children.props.id
+    : undefined;
+  if (id !== undefined && childId !== undefined && id !== childId) {
+    throw new Error("Disclosure Trigger id must match its composed child's id");
+  }
+  const declaredId = id ?? childId;
+  if (ctx.hasExplicitTriggerId && declaredId !== undefined && declaredId !== ctx.triggerId) {
     throw new Error("Disclosure Trigger id must match the triggerId owned by Disclosure Root");
   }
-  const realizedId = id ?? ctx.triggerId;
+  const realizedId = declaredId ?? ctx.triggerId;
   return (
     <Comp
       {...props}
@@ -107,7 +126,7 @@ const DisclosureContent: DisclosureParts["Content"] = (
   { children, ref, id, hidden, ...props },
 ) => {
   const ctx = useDisclosureContext("Disclosure Content");
-  if (id !== undefined && id !== ctx.contentId) {
+  if (ctx.hasExplicitContentId && id !== undefined && id !== ctx.contentId) {
     throw new Error("Disclosure Content id must match the contentId owned by Disclosure Root");
   }
   const realizedId = id ?? ctx.contentId;

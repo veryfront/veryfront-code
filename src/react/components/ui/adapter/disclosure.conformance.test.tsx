@@ -237,6 +237,36 @@ function runDisclosureConformance(
         unmount();
       }
     });
+
+    it("preserves ids declared by opaque public-part wrappers", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosureWrappedPartIdProbe />
+        </Wrap>,
+      );
+      try {
+        const trigger = host.querySelector("button")!;
+        const content = host.querySelector<HTMLElement>("[role=region]")!;
+        assert(trigger.id === "wrapped-trigger", "keeps the wrapped trigger id");
+        assert(content.id === "wrapped-content", "keeps the wrapped content id");
+      } finally {
+        unmount();
+      }
+    });
+
+    it("preserves a composed child id declared by an opaque trigger wrapper", () => {
+      const { host, unmount } = render(
+        <Wrap>
+          <DisclosureWrappedComposedIdProbe />
+        </Wrap>,
+      );
+      try {
+        const trigger = host.querySelector("a")!;
+        assert(trigger.id === "wrapped-composed-trigger", "keeps the wrapped child id");
+      } finally {
+        unmount();
+      }
+    });
   });
 }
 
@@ -313,6 +343,40 @@ function DisclosureComposedIdProbe(): React.ReactElement {
         <a id="composed-trigger" href="#details">Toggle</a>
       </CollapsibleTrigger>
       <CollapsibleContent role="region">Body</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function WrappedCollapsibleTrigger(): React.ReactElement {
+  return <CollapsibleTrigger id="wrapped-trigger">Toggle</CollapsibleTrigger>;
+}
+
+function WrappedCollapsibleContent(): React.ReactElement {
+  return <CollapsibleContent id="wrapped-content" role="region">Body</CollapsibleContent>;
+}
+
+function DisclosureWrappedPartIdProbe(): React.ReactElement {
+  return (
+    <Collapsible>
+      <WrappedCollapsibleTrigger />
+      <WrappedCollapsibleContent />
+    </Collapsible>
+  );
+}
+
+function WrappedComposedCollapsibleTrigger(): React.ReactElement {
+  return (
+    <CollapsibleTrigger asChild>
+      <a id="wrapped-composed-trigger" href="#wrapped-details">Toggle</a>
+    </CollapsibleTrigger>
+  );
+}
+
+function DisclosureWrappedComposedIdProbe(): React.ReactElement {
+  return (
+    <Collapsible>
+      <WrappedComposedCollapsibleTrigger />
+      <CollapsibleContent>Body</CollapsibleContent>
     </Collapsible>
   );
 }

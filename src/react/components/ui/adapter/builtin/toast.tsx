@@ -70,7 +70,9 @@ function BuiltinToastProvider(
   const enqueue = React.useCallback((record: Omit<ToastRecord, "id">) => {
     assertToastDuration(record.duration ?? duration, "toast duration");
     const id = `toast-${idRef.current++}`;
-    setToasts((list) => [...list, { duration, ...record, id }].slice(-maxToasts));
+    setToasts((list) =>
+      [...list, { ...record, duration: record.duration ?? duration, id }].slice(-maxToasts)
+    );
     return id;
   }, [duration, maxToasts]);
 

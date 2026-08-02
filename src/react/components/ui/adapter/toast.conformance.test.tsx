@@ -173,6 +173,10 @@ export function runToastConformance(
         await waitFor(() => h.text().includes("Default duration"));
         await waitFor(() => !h.text().includes("Default duration"));
 
+        flushSync(() => api!.toast({ title: "Undefined duration", duration: undefined }));
+        await waitFor(() => h.text().includes("Undefined duration"));
+        await waitFor(() => !h.text().includes("Undefined duration"));
+
         let persistentId = "";
         flushSync(() =>
           persistentId = api!.toast({ title: "Persistent override", duration: Infinity })
