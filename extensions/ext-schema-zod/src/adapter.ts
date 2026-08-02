@@ -168,17 +168,55 @@ const coerce: SchemaValidatorCoerce = {
 };
 
 const JSON_SCHEMA_VALIDATOR_CACHE_SIZE = 128;
+const JSON_SCHEMA_VALIDATOR_CACHE_MAX_WEIGHT = 2 * 1024 * 1024;
 
 // Raw schemas can originate in extensions and tool metadata, so snapshot them
 // through a deliberately bounded JSON boundary before handing them to Ajv.
 // These ceilings are comfortably above practical tool schemas while keeping a
 // single compilation from consuming unbounded stack, CPU, or memory.
-const JSON_SCHEMA_MAX_DEPTH = 128;
-const JSON_SCHEMA_MAX_NODES = 100_000;
-const JSON_SCHEMA_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
-const JSON_SCHEMA_MAX_STRING_BYTES = 1024 * 1024;
-const JSON_SCHEMA_MAX_KEY_BYTES = 16 * 1024;
+const JSON_SCHEMA_MAX_DEPTH = 64;
+const JSON_SCHEMA_MAX_NODES = 8_192;
+const JSON_SCHEMA_MAX_SERIALIZED_BYTES = 512 * 1024;
+const JSON_SCHEMA_MAX_STRING_BYTES = 256 * 1024;
+const JSON_SCHEMA_MAX_KEY_BYTES = 4 * 1024;
+const JSON_SCHEMA_MAX_COMBINATOR_FANOUT = 256;
+const JSON_SCHEMA_MAX_COMPILATION_WORK = 24_000;
+const JSON_INSTANCE_MAX_DEPTH = 128;
+const JSON_INSTANCE_MAX_NODES = 100_000;
+const JSON_INSTANCE_MAX_SERIALIZED_BYTES = 4 * 1024 * 1024;
+const JSON_INSTANCE_MAX_STRING_BYTES = 1024 * 1024;
+const JSON_INSTANCE_MAX_KEY_BYTES = 16 * 1024;
 const JSON_UTF8_ENCODER = new TextEncoder();
+
+interface CanonicalizationLimits {
+  maxDepth: number;
+  maxNodes: number;
+  maxSerializedBytes: number;
+  maxStringBytes: number;
+  maxKeyBytes: number;
+}
+
+interface CanonicalJsonSnapshot {
+  value: unknown;
+  nodeCount: number;
+  serializedBytes: number;
+}
+
+const JSON_SCHEMA_LIMITS: CanonicalizationLimits = {
+  maxDepth: JSON_SCHEMA_MAX_DEPTH,
+  maxNodes: JSON_SCHEMA_MAX_NODES,
+  maxSerializedBytes: JSON_SCHEMA_MAX_SERIALIZED_BYTES,
+  maxStringBytes: JSON_SCHEMA_MAX_STRING_BYTES,
+  maxKeyBytes: JSON_SCHEMA_MAX_KEY_BYTES,
+};
+
+const JSON_INSTANCE_LIMITS: CanonicalizationLimits = {
+  maxDepth: JSON_INSTANCE_MAX_DEPTH,
+  maxNodes: JSON_INSTANCE_MAX_NODES,
+  maxSerializedBytes: JSON_INSTANCE_MAX_SERIALIZED_BYTES,
+  maxStringBytes: JSON_INSTANCE_MAX_STRING_BYTES,
+  maxKeyBytes: JSON_INSTANCE_MAX_KEY_BYTES,
+};
 
 type JsonSchemaCompiler = {
   compile(schema: AnySchema): ValidateFunction<unknown>;
@@ -282,7 +320,9 @@ class JsonSchemaCanonicalizer {
   private nodeCount = 0;
   private serializedBytes = 0;
 
-  canonicalize(value: unknown): unknown {
+  constructor(private readonly limits: CanonicalizationLimits) {}
+
+  canonicalize(value: unknown): CanonicalJsonSnapshot {
     this.stack.push({ kind: "visit", value, depth: 0 });
     while (this.stack.length > 0) {
       const frame = this.stack.pop();
@@ -297,7 +337,11 @@ class JsonSchemaCanonicalizer {
     if (!this.rootAssigned) {
       throw new TypeError("JSON Schema must contain a JSON value");
     }
-    return this.canonicalRoot;
+    return {
+      value: this.canonicalRoot,
+      nodeCount: this.nodeCount,
+      serializedBytes: this.serializedBytes,
+    };
   }
 
   private visit(frame: CanonicalizationVisitFrame): void {
@@ -326,7 +370,7 @@ class JsonSchemaCanonicalizer {
       return true;
     }
     if (typeof current === "string") {
-      boundedUtf8Length(current, JSON_SCHEMA_MAX_STRING_BYTES, "string");
+      boundedUtf8Length(current, this.limits.maxStringBytes, "string");
       this.assign(frame, current);
       this.addSerializedBytes(serializedJsonTokenByteLength(current));
       return true;
@@ -357,8 +401,10 @@ class JsonSchemaCanonicalizer {
     ) {
       throw new TypeError("JSON Schema arrays must have a non-negative integer data length");
     }
-    if (length > JSON_SCHEMA_MAX_NODES) {
-      throw new TypeError(`JSON Schema exceeds the maximum node count of ${JSON_SCHEMA_MAX_NODES}`);
+    if (length > this.limits.maxNodes) {
+      throw new TypeError(
+        `JSON Schema exceeds the maximum node count of ${this.limits.maxNodes}`,
+      );
     }
     const ownKeys = Reflect.ownKeys(current);
     if (
@@ -406,8 +452,10 @@ class JsonSchemaCanonicalizer {
       throw new TypeError("JSON Schema objects must be plain JSON objects");
     }
     const ownKeys = Reflect.ownKeys(current);
-    if (ownKeys.length > JSON_SCHEMA_MAX_NODES) {
-      throw new TypeError(`JSON Schema exceeds the maximum node count of ${JSON_SCHEMA_MAX_NODES}`);
+    if (ownKeys.length > this.limits.maxNodes) {
+      throw new TypeError(
+        `JSON Schema exceeds the maximum node count of ${this.limits.maxNodes}`,
+      );
     }
     if (ownKeys.some((key) => typeof key === "symbol")) {
       throw new TypeError("JSON Schema objects must not contain symbol keys");
@@ -415,7 +463,7 @@ class JsonSchemaCanonicalizer {
     this.addSerializedBytes(2 + Math.max(0, ownKeys.length - 1));
 
     const entries = (ownKeys as string[]).map((key) => {
-      boundedUtf8Length(key, JSON_SCHEMA_MAX_KEY_BYTES, "key");
+      boundedUtf8Length(key, this.limits.maxKeyBytes, "key");
       this.addSerializedBytes(serializedJsonTokenByteLength(key) + 1);
       const descriptor = Object.getOwnPropertyDescriptor(current, key);
       if (!descriptor || !("value" in descriptor)) {
@@ -447,20 +495,22 @@ class JsonSchemaCanonicalizer {
   }
 
   private consumeNode(depth: number): void {
-    if (depth > JSON_SCHEMA_MAX_DEPTH) {
-      throw new TypeError(`JSON Schema exceeds the maximum depth of ${JSON_SCHEMA_MAX_DEPTH}`);
+    if (depth > this.limits.maxDepth) {
+      throw new TypeError(`JSON Schema exceeds the maximum depth of ${this.limits.maxDepth}`);
     }
     this.nodeCount++;
-    if (this.nodeCount > JSON_SCHEMA_MAX_NODES) {
-      throw new TypeError(`JSON Schema exceeds the maximum node count of ${JSON_SCHEMA_MAX_NODES}`);
+    if (this.nodeCount > this.limits.maxNodes) {
+      throw new TypeError(
+        `JSON Schema exceeds the maximum node count of ${this.limits.maxNodes}`,
+      );
     }
   }
 
   private addSerializedBytes(amount: number): void {
     this.serializedBytes += amount;
-    if (this.serializedBytes > JSON_SCHEMA_MAX_SERIALIZED_BYTES) {
+    if (this.serializedBytes > this.limits.maxSerializedBytes) {
       throw new TypeError(
-        `JSON Schema exceeds the ${JSON_SCHEMA_MAX_SERIALIZED_BYTES}-byte serialized limit`,
+        `JSON Schema exceeds the ${this.limits.maxSerializedBytes}-byte serialized limit`,
       );
     }
   }
@@ -479,18 +529,143 @@ class JsonSchemaCanonicalizer {
   }
 }
 
-function canonicalizeJsonValue(value: unknown): unknown {
-  return new JsonSchemaCanonicalizer().canonicalize(value);
+function canonicalizeJsonValue(
+  value: unknown,
+  limits: CanonicalizationLimits,
+): CanonicalJsonSnapshot {
+  return new JsonSchemaCanonicalizer(limits).canonicalize(value);
 }
 
-function snapshotJsonSchema(schema: JsonSchema): { key: string; schema: JsonSchema } {
-  const canonical = canonicalizeJsonValue(schema);
+interface JsonSchemaSnapshot {
+  key: string;
+  schema: JsonSchema;
+  nodeCount: number;
+  serializedBytes: number;
+  compilationWork: number;
+  cacheWeight: number;
+}
+
+const COMBINATOR_KEYWORDS = new Set(["allOf", "anyOf", "oneOf"]);
+const CODE_GENERATING_MAP_KEYWORDS = new Map<string, number>([
+  ["properties", 4],
+  ["patternProperties", 8],
+  ["dependencies", 4],
+  ["dependentRequired", 4],
+  ["dependentSchemas", 4],
+]);
+const RETAINED_SCHEMA_MAP_KEYWORDS = new Set(["$defs", "definitions"]);
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Estimate generated-validator work before Ajv sees a schema. Node and byte
+ * limits alone do not capture wide combinators, large enums, or property maps,
+ * all of which expand generated code and retained compiler state.
+ */
+function estimateCompilationWork(schema: JsonSchema): number {
+  const stack: unknown[] = [schema];
+  let work = 0;
+  const addWork = (amount: number): void => {
+    work += amount;
+    if (work > JSON_SCHEMA_MAX_COMPILATION_WORK) {
+      throw new TypeError(
+        `JSON Schema exceeds the compilation work limit of ${JSON_SCHEMA_MAX_COMPILATION_WORK}`,
+      );
+    }
+  };
+  const addBoundedCollectionWork = (
+    keyword: string,
+    length: number,
+    multiplier: number,
+  ): void => {
+    if (length > JSON_SCHEMA_MAX_COMBINATOR_FANOUT) {
+      throw new TypeError(
+        `JSON Schema ${keyword} exceeds the code-generation collection limit of ${JSON_SCHEMA_MAX_COMBINATOR_FANOUT}`,
+      );
+    }
+    addWork(length * multiplier);
+  };
+
+  while (stack.length > 0) {
+    const value = stack.pop();
+    if (!value || typeof value !== "object") continue;
+    if (Array.isArray(value)) {
+      for (let index = value.length - 1; index >= 0; index--) stack.push(value[index]);
+      continue;
+    }
+
+    const schemaObject = value as Record<string, unknown>;
+    const propertyCount = isJsonObject(schemaObject.properties)
+      ? Object.keys(schemaObject.properties).length
+      : 0;
+    const patternPropertyCount = isJsonObject(schemaObject.patternProperties)
+      ? Object.keys(schemaObject.patternProperties).length
+      : 0;
+    if (propertyCount > 0 && patternPropertyCount > 0) {
+      // In Ajv strict mode every pattern is checked against every named
+      // property during compilation, so account for the cross-product.
+      addWork(propertyCount * patternPropertyCount);
+    }
+
+    for (const [keyword, keywordValue] of Object.entries(schemaObject)) {
+      addWork(1);
+      if (COMBINATOR_KEYWORDS.has(keyword) && Array.isArray(keywordValue)) {
+        addBoundedCollectionWork(keyword, keywordValue.length, 8);
+      } else if (
+        (keyword === "prefixItems" || keyword === "items") && Array.isArray(keywordValue)
+      ) {
+        addBoundedCollectionWork(keyword, keywordValue.length, 2);
+      } else if (
+        (keyword === "enum" || keyword === "required" || keyword === "type") &&
+        Array.isArray(keywordValue)
+      ) {
+        addBoundedCollectionWork(keyword, keywordValue.length, keyword === "required" ? 4 : 2);
+      } else if (isJsonObject(keywordValue) && CODE_GENERATING_MAP_KEYWORDS.has(keyword)) {
+        const entryCount = Object.keys(keywordValue).length;
+        addBoundedCollectionWork(
+          keyword,
+          entryCount,
+          CODE_GENERATING_MAP_KEYWORDS.get(keyword)!,
+        );
+        if (keyword === "dependentRequired" || keyword === "dependencies") {
+          for (const dependencyValue of Object.values(keywordValue)) {
+            if (Array.isArray(dependencyValue)) {
+              addBoundedCollectionWork(`${keyword} entry`, dependencyValue.length, 4);
+            }
+          }
+        }
+      } else if (isJsonObject(keywordValue) && RETAINED_SCHEMA_MAP_KEYWORDS.has(keyword)) {
+        addWork(Object.keys(keywordValue).length * 2);
+      } else if (keyword === "pattern" && typeof keywordValue === "string") {
+        addWork(Math.ceil(keywordValue.length / 8));
+      }
+      stack.push(keywordValue);
+    }
+  }
+
+  return work;
+}
+
+function snapshotJsonSchema(schema: JsonSchema): JsonSchemaSnapshot {
+  const snapshot = canonicalizeJsonValue(schema, JSON_SCHEMA_LIMITS);
+  const canonical = snapshot.value;
   if (canonical === null || typeof canonical !== "object" || Array.isArray(canonical)) {
     throw new TypeError("JSON Schema root must be a plain object");
   }
   const key = JSON.stringify(canonical);
   if (key === undefined) throw new TypeError("JSON Schema must be JSON serializable");
-  return { key, schema: canonical as JsonSchema };
+  const compilationWork = estimateCompilationWork(canonical as JsonSchema);
+  const cacheWeight = snapshot.serializedBytes + snapshot.nodeCount * 64 + compilationWork * 32;
+  return {
+    key,
+    schema: canonical as JsonSchema,
+    nodeCount: snapshot.nodeCount,
+    serializedBytes: snapshot.serializedBytes,
+    compilationWork,
+    cacheWeight,
+  };
 }
 
 function copyValidationIssue(error: ErrorObject): JsonSchemaValidationIssue {
@@ -523,6 +698,29 @@ function validationSuccess<T>(input: unknown): JsonSchemaValidationSuccess<T> {
   return { success: true, value: input as T };
 }
 
+const DATA_ONLY_INPUT_FAILURE: JsonSchemaValidationFailure = Object.freeze({
+  success: false,
+  errors: Object.freeze([
+    Object.freeze({
+      instancePath: "",
+      schemaPath: "",
+      keyword: "veryfrontDataOnly",
+      params: Object.freeze({}),
+      message: "Input must be a bounded, data-only JSON value",
+    }),
+  ]),
+});
+
+function snapshotJsonInstance(input: unknown): CanonicalJsonSnapshot | undefined {
+  try {
+    return canonicalizeJsonValue(input, JSON_INSTANCE_LIMITS);
+  } catch {
+    // Accessors, throwing/revoked Proxies, cycles, custom prototypes, and
+    // oversized inputs are ordinary validation failures at this boundary.
+    return undefined;
+  }
+}
+
 function errorObjectsFromUnknown(error: unknown): ErrorObject[] | undefined {
   if (!error || typeof error !== "object" || !("errors" in error)) {
     return undefined;
@@ -541,10 +739,13 @@ function compileJsonSchemaValidator<T>(schema: JsonSchema): JsonSchemaValidation
   const validate = createJsonSchemaCompiler(schema).compile(schemaForCompilation(schema));
 
   return (input) => {
-    const outcome = validate(input);
+    const inputSnapshot = snapshotJsonInstance(input);
+    if (!inputSnapshot) return DATA_ONLY_INPUT_FAILURE;
+    const acceptedInput = inputSnapshot.value;
+    const outcome = validate(acceptedInput);
     if (isPromiseLike(outcome)) {
       return Promise.resolve(outcome).then(
-        () => validationSuccess<T>(input),
+        () => validationSuccess<T>(acceptedInput),
         (error: unknown) => {
           const errors = errorObjectsFromUnknown(error);
           if (errors) return validationFailure(errors);
@@ -553,12 +754,17 @@ function compileJsonSchemaValidator<T>(schema: JsonSchema): JsonSchemaValidation
       );
     }
 
-    return outcome ? validationSuccess<T>(input) : validationFailure(validate.errors);
+    return outcome ? validationSuccess<T>(acceptedInput) : validationFailure(validate.errors);
   };
 }
 
 function createJsonSchemaCompilationCache(): SchemaValidator["compileJsonSchema"] {
-  const cache = new Map<string, JsonSchemaValidationFunction>();
+  interface CacheEntry {
+    validator: JsonSchemaValidationFunction;
+    weight: number;
+  }
+  const cache = new Map<string, CacheEntry>();
+  let cacheWeight = 0;
 
   return <T>(schema: JsonSchema): JsonSchemaValidationFunction<T> => {
     const snapshot = snapshotJsonSchema(schema);
@@ -566,16 +772,22 @@ function createJsonSchemaCompilationCache(): SchemaValidator["compileJsonSchema"
     if (cached) {
       cache.delete(snapshot.key);
       cache.set(snapshot.key, cached);
-      return cached as JsonSchemaValidationFunction<T>;
+      return cached.validator as JsonSchemaValidationFunction<T>;
     }
 
     const compiled = compileJsonSchemaValidator<T>(snapshot.schema);
-    while (cache.size >= JSON_SCHEMA_VALIDATOR_CACHE_SIZE) {
+    while (
+      cache.size >= JSON_SCHEMA_VALIDATOR_CACHE_SIZE ||
+      cacheWeight + snapshot.cacheWeight > JSON_SCHEMA_VALIDATOR_CACHE_MAX_WEIGHT
+    ) {
       const oldestKey = cache.keys().next().value;
       if (oldestKey === undefined) break;
+      const oldest = cache.get(oldestKey);
       cache.delete(oldestKey);
+      if (oldest) cacheWeight -= oldest.weight;
     }
-    cache.set(snapshot.key, compiled);
+    cache.set(snapshot.key, { validator: compiled, weight: snapshot.cacheWeight });
+    cacheWeight += snapshot.cacheWeight;
     return compiled;
   };
 }
@@ -583,8 +795,8 @@ function createJsonSchemaCompilationCache(): SchemaValidator["compileJsonSchema"
 /**
  * Build a zod-backed `SchemaValidator` instance.
  *
- * Adapter instances snapshot schemas into plain JSON and retain at most 128
- * compiled validators in an LRU cache. Each unique validator owns an isolated
+ * Adapter instances snapshot schemas into plain JSON and retain validators in
+ * an entry- and weight-bounded LRU cache. Each unique validator owns an isolated
  * Ajv compiler, so unrelated `$id` values cannot collide or accumulate in a
  * process-wide registry. It is therefore safe to call this once at extension setup and pass the returned value to
  * `ctx.provide("SchemaValidator", …)`. Tests that need to register the
