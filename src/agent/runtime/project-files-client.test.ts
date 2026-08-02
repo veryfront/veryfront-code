@@ -203,6 +203,26 @@ Deno.test("getRuntimeProjectFiles follows API pagination until no next cursor re
   assertEquals(getRequestedUrl(fetchSpy, 1).searchParams.get("cursor"), "cursor-2");
 });
 
+Deno.test("getRuntimeProjectFiles stops pagination before retaining an oversized listing", async () => {
+  const fetchSpy = mockFetchResponses(
+    jsonResponse({
+      data: [{ path: "a.ts" }],
+      page_info: { next: "cursor-2" },
+    }),
+    jsonResponse({
+      data: [{ path: "b.ts" }],
+      page_info: { next: "cursor-3" },
+    }),
+  );
+
+  await assertRejects(
+    () => getRuntimeProjectFiles({ ...baseOptions, fetch: fetchSpy, maximumEntries: 1 }),
+    RangeError,
+    "may contain at most 1 entries",
+  );
+  assertEquals(fetchSpy.calls.length, 2);
+});
+
 Deno.test("getRuntimeProjectFiles throws auth errors for API HTTP 401 and 403", async () => {
   const unauthorizedFetch = mockFetchResponses(textResponse("Unauthorized", 401));
   const unauthorizedError = await assertRejects(() =>

@@ -236,6 +236,7 @@ async function listProjectSkillReferences(input: {
     projectId,
     authToken: input.context.authToken,
     branchId: input.context.branchId,
+    maximumEntries: SKILL_SUBDIR_MAX_ENTRIES,
   });
 
   return collectProjectSkillReferences({

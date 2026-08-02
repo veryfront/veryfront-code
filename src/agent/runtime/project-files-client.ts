@@ -56,6 +56,8 @@ export type RuntimeProjectFilesApiOptions = {
   projectId: string;
   authToken: string;
   branchId?: string | null;
+  /** Stop pagination before retaining more than this many entries. */
+  maximumEntries?: number;
 };
 
 /** Options accepted by runtime get project file. */
@@ -150,6 +152,12 @@ export async function getRuntimeProjectFile(
 export async function getRuntimeProjectFiles(
   options: RuntimeProjectFilesClientOptions & RuntimeProjectFilesApiOptions,
 ): Promise<RuntimeProjectFileListItem[]> {
+  if (
+    options.maximumEntries !== undefined &&
+    (!Number.isSafeInteger(options.maximumEntries) || options.maximumEntries <= 0)
+  ) {
+    throw new RangeError("Project file maximumEntries must be a positive safe integer");
+  }
   return traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFiles", async () => {
     const files: RuntimeProjectFileListItem[] = [];
     let cursor: string | null = null;
@@ -178,6 +186,14 @@ export async function getRuntimeProjectFiles(
         });
       }
 
+      if (
+        options.maximumEntries !== undefined &&
+        files.length + parsed.data.data.length > options.maximumEntries
+      ) {
+        throw new RangeError(
+          `Project file listing may contain at most ${options.maximumEntries} entries`,
+        );
+      }
       files.push(...parsed.data.data);
       cursor = parsed.data.page_info.next;
     } while (cursor);
