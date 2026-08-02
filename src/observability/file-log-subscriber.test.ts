@@ -679,6 +679,82 @@ describe("observability/file-log-subscriber", () => {
       await sub.close();
     });
 
+    it("waits for writes queued during an active flush before a later flush resolves", async () => {
+      const sub = new FileLogSubscriber(makeConfig({ path: "ignored.log" }));
+      let signalFirstSyncStarted!: () => void;
+      let releaseFirstSync!: () => void;
+      let signalWriteStarted!: () => void;
+      let releaseWrite!: () => void;
+      const firstSyncStarted = new Promise<void>((resolve) => {
+        signalFirstSyncStarted = resolve;
+      });
+      const firstSyncGate = new Promise<void>((resolve) => {
+        releaseFirstSync = resolve;
+      });
+      const writeStarted = new Promise<void>((resolve) => {
+        signalWriteStarted = resolve;
+      });
+      const writeGate = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      let syncCalls = 0;
+      const internals = sub as unknown as {
+        file: { sync(): Promise<void>; close(): void } | null;
+        writeEntry(entry: LogEntry): Promise<void>;
+      };
+      internals.file = {
+        sync() {
+          syncCalls++;
+          if (syncCalls === 1) {
+            signalFirstSyncStarted();
+            return firstSyncGate;
+          }
+          return Promise.resolve();
+        },
+        close() {},
+      };
+      internals.writeEntry = () => {
+        signalWriteStarted();
+        return writeGate;
+      };
+
+      const firstFlush = sub.flush();
+      await firstSyncStarted;
+      sub.getSubscriber()({
+        id: "queued-during-flush",
+        level: "info",
+        message: "queued during flush",
+        timestamp: Date.now(),
+        source: "test",
+      });
+      const laterFlush = sub.flush();
+
+      try {
+        releaseFirstSync();
+        await writeStarted;
+        const settlement = laterFlush.then(
+          () => "settled",
+          () => "settled",
+        );
+        assertEquals(
+          await Promise.race([
+            settlement,
+            delay(0).then(() => "pending"),
+          ]),
+          "pending",
+        );
+
+        releaseWrite();
+        await Promise.all([firstFlush, laterFlush]);
+        assertEquals(syncCalls, 2);
+      } finally {
+        releaseFirstSync();
+        releaseWrite();
+        await Promise.allSettled([firstFlush, laterFlush]);
+        await sub.close();
+      }
+    });
+
     it("closes and clears the file even when flushing rejects", async () => {
       const dir = await makeTempDir();
       const sub = new FileLogSubscriber(makeConfig({ path: `${dir}/close.log` }));

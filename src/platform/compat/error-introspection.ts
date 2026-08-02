@@ -1,16 +1,38 @@
 /**
  * Runtime-compatible, no-hook value introspection.
  *
- * The Node compatibility implementation exposes runtime internal-slot checks
- * across supported runtimes without consulting mutable global constructors.
+ * Node-compatible hosts expose internal-slot checks that do not consult
+ * mutable global constructors. Browser and edge imports must remain linkable
+ * even though those hosts do not provide `node:util/types`.
  */
-import {
-  isAsyncFunction as nativeAsyncFunctionBrandCheck,
-  isNativeError as nativeErrorBrandCheck,
-  isPromise as nativePromiseBrandCheck,
-  isProxy as nativeProxyBrandCheck,
-  isUint8Array as nativeUint8ArrayBrandCheck,
-} from "node:util/types";
+import { isBun, isDeno, isNode } from "./runtime.ts";
+
+interface NativeBrandChecks {
+  isAsyncFunction(value: unknown): boolean;
+  isNativeError(value: unknown): boolean;
+  isPromise(value: unknown): boolean;
+  isProxy(value: unknown): boolean;
+  isUint8Array(value: unknown): boolean;
+}
+
+const NODE_UTIL_TYPES_SPECIFIER = "node:util/types";
+let nativeBrandChecks: NativeBrandChecks | undefined;
+if (isBun || isDeno || isNode) {
+  try {
+    // Keep the Node builtin out of the static browser dependency graph while
+    // retaining hook-free brand checks in supported server runtimes.
+    nativeBrandChecks = await import(NODE_UTIL_TYPES_SPECIFIER) as NativeBrandChecks;
+  } catch (_) {
+    // An incomplete Node compatibility layer degrades to conservative checks.
+  }
+}
+
+const unavailableBrandCheck = (_value: unknown): boolean => false;
+const nativeAsyncFunctionBrandCheck = nativeBrandChecks?.isAsyncFunction ?? unavailableBrandCheck;
+const nativeErrorBrandCheck = nativeBrandChecks?.isNativeError ?? unavailableBrandCheck;
+const nativePromiseBrandCheck = nativeBrandChecks?.isPromise ?? unavailableBrandCheck;
+const nativeProxyBrandCheck = nativeBrandChecks?.isProxy ?? unavailableBrandCheck;
+const nativeUint8ArrayBrandCheck = nativeBrandChecks?.isUint8Array ?? unavailableBrandCheck;
 
 const createObject = Object.create;
 const defineProperty = Object.defineProperty;

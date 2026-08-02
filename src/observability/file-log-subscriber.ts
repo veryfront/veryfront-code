@@ -23,6 +23,12 @@ export interface FileLogConfig {
   format: "json" | "text";
 }
 
+interface FileLogFlushState {
+  readonly owner: symbol;
+  readonly queueGeneration: number;
+  readonly result: Promise<void>;
+}
+
 const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
   debug: 0,
   info: 1,
@@ -172,7 +178,8 @@ export class FileLogSubscriber {
   private pendingFailures: unknown[] = [];
   private pendingWrites = 0;
   private omittedFailureCount = 0;
-  private flushPromise: Promise<void> | null = null;
+  private queueGeneration = 0;
+  private activeFlush: FileLogFlushState | null = null;
   private closePromise: Promise<void> | null = null;
   private maxSizeBytes: number;
   private minLevel: number;
@@ -245,6 +252,7 @@ export class FileLogSubscriber {
   }
 
   private enqueue(entry: LogEntry): void {
+    this.queueGeneration++;
     if (this.pendingWrites >= MAX_FILE_LOG_PENDING_WRITES) {
       const error = new RangeError(
         `File log pending-write capacity of ${MAX_FILE_LOG_PENDING_WRITES} was reached`,
@@ -442,20 +450,36 @@ export class FileLogSubscriber {
   }
 
   flush(): Promise<void> {
-    if (this.flushPromise) return this.flushPromise;
+    const queueGeneration = this.queueGeneration;
+    const activeFlush = this.activeFlush;
+    if (activeFlush?.queueGeneration === queueGeneration) return activeFlush.result;
 
-    const attempt = this.performFlush();
-    const tracked = attempt.finally(() => {
-      if (this.flushPromise === tracked) this.flushPromise = null;
-    });
-    this.flushPromise = tracked;
-    return tracked;
+    const queueSnapshot = this.writeQueue;
+    const attempt = this.performFlush(queueSnapshot);
+    const owner = Symbol("file-log-flush");
+    const result = attempt.then(
+      () => {
+        if (this.activeFlush?.owner === owner) this.activeFlush = null;
+      },
+      (error) => {
+        if (this.activeFlush?.owner === owner) this.activeFlush = null;
+        throw error;
+      },
+    );
+    const barrier = result.catch(() => undefined);
+    const flushState = { owner, queueGeneration, result };
+    this.activeFlush = flushState;
+    // Writes accepted after this call wait for its durability sync. A later
+    // flush therefore captures a distinct queue snapshot instead of resolving
+    // with an older in-flight flush.
+    this.writeQueue = barrier;
+    return result;
   }
 
-  private async performFlush(): Promise<void> {
+  private async performFlush(queueSnapshot: Promise<void>): Promise<void> {
     const failures: unknown[] = [];
     try {
-      await this.writeQueue;
+      await queueSnapshot;
     } catch (error) {
       // Defensive compatibility for an already-rejected queue created by an
       // older owner or an injected adapter.
