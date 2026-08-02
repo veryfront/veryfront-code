@@ -19,6 +19,8 @@ export const SKILL_ALLOWED_TOOL_MAX_PATTERNS = 100;
 export const SKILL_ALLOWED_TOOL_PATTERN_MAX_LENGTH = 256;
 
 export const SKILL_SUBDIR_MAX_ENTRIES = 1_000;
+export const SKILL_SELECTOR_MAX_DEFINITIONS = SKILL_SUBDIR_MAX_ENTRIES;
+export const SKILL_SELECTOR_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES;
 // load_skill merges references/, resources/, and assets/ into one read-only
 // capability list, so its aggregate budget is three bounded subdirectories.
 export const SKILL_LOADABLE_REFERENCE_MAX_ENTRIES = SKILL_SUBDIR_MAX_ENTRIES * 3;

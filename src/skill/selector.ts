@@ -1,4 +1,11 @@
 import { CONFIG_INVALID } from "#veryfront/errors";
+import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
+import {
+  SKILL_ID_MAX_LENGTH,
+  SKILL_SELECTOR_MAX_DEFINITIONS,
+  SKILL_SELECTOR_MAX_ENTRIES,
+} from "./limits.ts";
+import { hasControlCharacters, isWellFormedUtf16 } from "./string-safety.ts";
 
 const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
@@ -74,7 +81,10 @@ function freezeSelectorPolicy(
     const entries: string[] = [];
     for (let index = 0; index < policy.entries.length; index += 1) {
       const entry = readOwnArrayElement(policy.entries, index);
-      if (entry.present) appendOwnArrayElement(entries, entry.value as string);
+      if (!entry.present) {
+        throw new NativeTypeError(`Skill selector array entry ${index} must be present`);
+      }
+      appendOwnArrayElement(entries, entry.value as string);
     }
     return freeze({
       kind: "allowlist",
@@ -125,7 +135,9 @@ function buildSnapshot<TDefinition>(
   const skillSourcePaths: Record<string, string> = {};
   for (let index = 0; index < definitions.length; index += 1) {
     const definition = readOwnArrayElement(definitions, index);
-    if (!definition.present) continue;
+    if (!definition.present) {
+      throw new NativeTypeError(`Skill selector definition ${index} must be present`);
+    }
     const value = definition.value as TDefinition;
     const id = getId(value);
     if (typeof id !== "string") {
@@ -150,7 +162,9 @@ function buildSnapshot<TDefinition>(
   const unresolvedSnapshot: UnresolvedSkillSelectorEntry[] = [];
   for (let index = 0; index < unresolvedEntries.length; index += 1) {
     const entry = readOwnArrayElement(unresolvedEntries, index);
-    if (!entry.present) continue;
+    if (!entry.present) {
+      throw new NativeTypeError(`Unresolved skill selector entry ${index} must be present`);
+    }
     appendOwnArrayElement(
       unresolvedSnapshot,
       freeze({ index: (entry.value as UnresolvedSkillSelectorEntry).index }),
@@ -170,13 +184,20 @@ function buildSnapshot<TDefinition>(
 export function resolveSkillSelector<TDefinition>(
   input: ResolveSkillSelectorInput<TDefinition>,
 ): ResolvedSkillSelectorSnapshot<TDefinition> {
-  if (!arrayIsArray(input.definitions)) {
+  if (!arrayIsArray(input.definitions) || isProxyWithoutHooks(input.definitions)) {
     throw new NativeTypeError("Skill selector definitions must be an array");
+  }
+  if (input.definitions.length > SKILL_SELECTOR_MAX_DEFINITIONS) {
+    throw new RangeError(
+      `Skill selector accepts at most ${SKILL_SELECTOR_MAX_DEFINITIONS} definitions`,
+    );
   }
   const visibleDefinitions: TDefinition[] = [];
   for (let index = 0; index < input.definitions.length; index += 1) {
     const definition = readOwnArrayElement(input.definitions, index);
-    if (!definition.present) continue;
+    if (!definition.present) {
+      throw new NativeTypeError(`Skill selector definition ${index} must be present`);
+    }
     const value = definition.value as TDefinition;
     if (input.isVisible(value)) appendOwnArrayElement(visibleDefinitions, value);
   }
@@ -198,15 +219,32 @@ export function resolveSkillSelector<TDefinition>(
     return createNoneSkillSelectorSnapshot();
   }
 
-  if (!arrayIsArray(input.selector)) {
+  if (!arrayIsArray(input.selector) || isProxyWithoutHooks(input.selector)) {
     throw new NativeTypeError("Skill selector allowlist must be an array");
+  }
+  if (input.selector.length > SKILL_SELECTOR_MAX_ENTRIES) {
+    throw new RangeError(
+      `Skill selector allowlist accepts at most ${SKILL_SELECTOR_MAX_ENTRIES} entries`,
+    );
   }
   const selectorEntries: string[] = [];
   for (let index = 0; index < input.selector.length; index += 1) {
     const entry = readOwnArrayElement(input.selector, index);
-    if (!entry.present) continue;
+    if (!entry.present) {
+      throw new NativeTypeError(`Skill selector entry ${index} must be present`);
+    }
     if (typeof entry.value !== "string") {
       throw new NativeTypeError(`Skill selector entry ${index} must be a string`);
+    }
+    if (
+      entry.value.length === 0 ||
+      entry.value.length > SKILL_ID_MAX_LENGTH ||
+      !isWellFormedUtf16(entry.value) ||
+      hasControlCharacters(entry.value)
+    ) {
+      throw new NativeTypeError(
+        `Skill selector entry ${index} must be a non-empty bounded identifier`,
+      );
     }
     appendOwnArrayElement(selectorEntries, entry.value);
   }

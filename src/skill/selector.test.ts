@@ -1,5 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { createNoneSkillSelectorSnapshot, resolveSkillSelector } from "./selector.ts";
+import {
+  SKILL_ID_MAX_LENGTH,
+  SKILL_SELECTOR_MAX_DEFINITIONS,
+  SKILL_SELECTOR_MAX_ENTRIES,
+} from "./limits.ts";
 
 function withInheritedArrayIndexSetter<T>(
   index: number,
@@ -206,4 +211,78 @@ Deno.test("skill selector rejects accessor entries under descriptor prototype po
   assertEquals(failure instanceof TypeError, true);
   assertEquals(definitionGetterCalls, 0);
   assertEquals(prototypeHookCalls, 0);
+});
+
+Deno.test("skill selector rejects sparse, malformed, proxied, and over-limit inputs", () => {
+  const definition = { id: "one" };
+  const base = {
+    getId: (candidate: typeof definition) => candidate.id,
+    isVisible: () => true,
+  };
+
+  const sparseDefinitions = new Array<typeof definition>(1);
+  const sparseSelector = new Array<string>(1);
+  for (
+    const operation of [
+      () => resolveSkillSelector({ ...base, definitions: sparseDefinitions, selector: true }),
+      () => resolveSkillSelector({ ...base, definitions: [definition], selector: sparseSelector }),
+      () =>
+        resolveSkillSelector({
+          ...base,
+          definitions: new Proxy([definition], {}),
+          selector: true,
+        }),
+      () =>
+        resolveSkillSelector({
+          ...base,
+          definitions: [definition],
+          selector: new Proxy(["one"], {}),
+        }),
+      () =>
+        resolveSkillSelector({
+          ...base,
+          definitions: [definition],
+          selector: ["a".repeat(SKILL_ID_MAX_LENGTH + 1)],
+        }),
+      () => resolveSkillSelector({ ...base, definitions: [definition], selector: ["bad\n"] }),
+    ]
+  ) {
+    let failure: unknown;
+    try {
+      operation();
+    } catch (error) {
+      failure = error;
+    }
+    assertEquals(failure instanceof TypeError, true);
+  }
+
+  let tooManyDefinitions: unknown;
+  try {
+    resolveSkillSelector({
+      ...base,
+      definitions: Array.from(
+        { length: SKILL_SELECTOR_MAX_DEFINITIONS + 1 },
+        (_, index) => ({ id: `${index}` }),
+      ),
+      selector: true,
+    });
+  } catch (error) {
+    tooManyDefinitions = error;
+  }
+  assertEquals(tooManyDefinitions instanceof RangeError, true);
+
+  let tooManySelectorEntries: unknown;
+  try {
+    resolveSkillSelector({
+      ...base,
+      definitions: [definition],
+      selector: Array.from(
+        { length: SKILL_SELECTOR_MAX_ENTRIES + 1 },
+        () => "one",
+      ),
+    });
+  } catch (error) {
+    tooManySelectorEntries = error;
+  }
+  assertEquals(tooManySelectorEntries instanceof RangeError, true);
 });
