@@ -198,9 +198,8 @@ export function useUpload(
   }, [tracked]);
   const mountedRef = React.useRef(true);
   const headersKey = stableHeadersKey(headers);
-  const headersRef = React.useRef(headers);
-  useIsomorphicLayoutEffect(() => {
-    headersRef.current = headers;
+  const headerEntries = React.useMemo(() => {
+    return Object.freeze(Object.entries(headers ?? {}));
   }, [headersKey]);
   const scope = React.useMemo(
     () => Symbol("chat-upload-scope"),
@@ -333,7 +332,7 @@ export function useUpload(
         const xhr = new XMLHttpRequest();
         operation.xhr = xhr;
         xhr.open("POST", api);
-        for (const [key, value] of Object.entries(headersRef.current ?? {})) {
+        for (const [key, value] of headerEntries) {
           xhr.setRequestHeader(key, value);
         }
         xhr.upload.onprogress = (event) => {
@@ -385,6 +384,7 @@ export function useUpload(
     [
       api,
       cancelOperation,
+      headerEntries,
       scope,
       settleOperation,
       updateOperation,

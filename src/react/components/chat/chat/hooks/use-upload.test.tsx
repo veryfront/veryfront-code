@@ -29,6 +29,7 @@ class PendingXMLHttpRequest {
   status = 0;
   aborted = false;
   abortError: unknown;
+  readonly requestHeaders = new Map<string, string>();
   url = "";
 
   constructor() {
@@ -38,7 +39,9 @@ class PendingXMLHttpRequest {
   open(_method: string, url: string): void {
     this.url = url;
   }
-  setRequestHeader(): void {}
+  setRequestHeader(name: string, value: string): void {
+    this.requestHeaders.set(name.toLowerCase(), value);
+  }
   send(): void {}
 
   abort(): void {
@@ -481,16 +484,22 @@ describe("useUpload", () => {
         }, [run, upload]);
         return null;
       };
-      const Capture = ({ api, run }: { api: string; run: boolean }): React.JSX.Element => {
-        latest = useUpload({ api });
+      const Capture = (
+        { api, authorization, run }: { api: string; authorization: string; run: boolean },
+      ): React.JSX.Element => {
+        latest = useUpload({ api, headers: { authorization } });
         return <Child upload={latest.upload} run={run} />;
       };
       const root = createRoot(document.getElementById("root")!);
-      flushSync(() => root.render(<Capture api="/old" run={false} />));
-      flushSync(() => root.render(<Capture api="/new" run />));
+      flushSync(() => root.render(<Capture api="/old" authorization="Bearer old" run={false} />));
+      flushSync(() => root.render(<Capture api="/new" authorization="Bearer new" run />));
 
       assertEquals(PendingXMLHttpRequest.instances.length, 1);
       assertEquals(PendingXMLHttpRequest.instances[0]?.url, "/new");
+      assertEquals(
+        PendingXMLHttpRequest.instances[0]?.requestHeaders.get("authorization"),
+        "Bearer new",
+      );
       assertEquals((latest as unknown as UseUploadResult).attachments.length, 1);
       flushSync(() => root.unmount());
     } finally {

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
@@ -13,6 +13,10 @@ const CLOUD_ENV_KEYS = [
   "VERYFRONT_SERVICE_LAYER",
   "VERYFRONT_API_BASE_URL",
 ] as const;
+
+const EXPLICIT_UNAUTHENTICATED = {
+  auth: { type: "none", allowUnauthenticated: true },
+} as const;
 
 function clearCloudEnv(): void {
   for (const key of CLOUD_ENV_KEYS) {
@@ -50,24 +54,49 @@ describe("createUploadHandler", () => {
     clearCloudEnv();
   });
 
-  it("warns once when registered without explicit auth", () => {
-    const originalWarn = serverLogger.warn;
-    const warnings: string[] = [];
-    serverLogger.warn = (message: string) => {
-      warnings.push(message);
-    };
+  it("requires an explicit authentication policy", () => {
+    assert(
+      (() => {
+        try {
+          const constructWithoutConfig = createUploadHandler as unknown as (
+            store: RagStore,
+          ) => void;
+          constructWithoutConfig(createStubStore());
+          return false;
+        } catch (error) {
+          return error instanceof Error &&
+            error.message.includes("createUploadHandler requires auth") &&
+            error.message.includes("allowUnauthenticated");
+        }
+      })(),
+      "handler construction must fail closed when auth is omitted",
+    );
+  });
 
-    try {
-      createUploadHandler(createStubStore());
-      createUploadHandler(createStubStore());
-    } finally {
-      serverLogger.warn = originalWarn;
-    }
+  it("allows unauthenticated routes only when explicitly requested", () => {
+    const handlers = createUploadHandler(createStubStore(), EXPLICIT_UNAUTHENTICATED);
+    assert(typeof handlers.POST === "function");
+  });
 
-    assertEquals(warnings.length, 1);
-    assertStringIncludes(warnings[0] ?? "", "createUploadHandler");
-    assertStringIncludes(warnings[0] ?? "", "auth");
-    assertStringIncludes(warnings[0] ?? "", "allowUnauthenticated");
+  it("denies an authorize callback that accidentally returns undefined", async () => {
+    let listCalls = 0;
+    const handlers = createUploadHandler(
+      createStubStore({
+        async listDocuments() {
+          listCalls++;
+          return [];
+        },
+      }),
+      {
+        auth: {
+          authorize: (() => undefined) as unknown as () => boolean,
+        },
+      },
+    );
+
+    const response = await handlers.GET(new Request("http://test/uploads"));
+    assertEquals(response.status, 401);
+    assertEquals(listCalls, 0);
   });
 
   it("rejects upload routes before store access when auth denies", async () => {
@@ -249,7 +278,7 @@ describe("createUploadHandler", () => {
 
     const calls: Array<{ method: string; url: string; body?: unknown }> = [];
     const store = createStubStore();
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -321,7 +350,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -374,7 +403,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { DELETE } = createUploadHandler(store);
+    const { DELETE } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -411,7 +440,7 @@ describe("createUploadHandler", () => {
         }];
       },
     });
-    const { GET } = createUploadHandler(store);
+    const { GET } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -485,7 +514,7 @@ describe("createUploadHandler", () => {
         removed.push(id);
       },
     });
-    const { DELETE } = createUploadHandler(store);
+    const { DELETE } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async (input: string | URL | Request, init?: RequestInit) => {
       const request = input instanceof Request ? input : new Request(input, init);
@@ -508,7 +537,7 @@ describe("createUploadHandler", () => {
 
   it("does not use cloud uploads without bootstrap", async () => {
     const store = createStubStore();
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     await withMockFetch(async () => {
       throw new Error("fetch should not be called");
@@ -538,7 +567,7 @@ describe("createUploadHandler", () => {
         return "doc-xss";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Use a filename with angle brackets (the key XSS vector).
     // Deno's FormData mangles filenames with = and control chars,
@@ -575,7 +604,7 @@ describe("createUploadHandler", () => {
         return "doc-amp";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Deno's FormData truncates filenames at & so we test with
     // a filename where & appears after a safe prefix
@@ -605,7 +634,7 @@ describe("createUploadHandler", () => {
         return "doc-path";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const formData = new FormData();
     formData.append(
@@ -629,7 +658,7 @@ describe("createUploadHandler", () => {
         return "doc-empty";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Filename of only angle brackets — sanitization removes everything
     const formData = new FormData();
@@ -660,7 +689,7 @@ describe("createUploadHandler", () => {
         return "doc-untitled";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     // Filename of only stripped characters (no extension)
     const formData = new FormData();
@@ -689,7 +718,7 @@ describe("createUploadHandler", () => {
         return "doc-normal";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const formData = new FormData();
     formData.append(
@@ -717,7 +746,7 @@ describe("createUploadHandler", () => {
         return "doc-unicode";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const formData = new FormData();
     formData.append(
@@ -745,7 +774,7 @@ describe("createUploadHandler", () => {
         return "doc-long";
       },
     });
-    const { POST } = createUploadHandler(store);
+    const { POST } = createUploadHandler(store, EXPLICIT_UNAUTHENTICATED);
 
     const longName = "a".repeat(300) + ".txt";
     const formData = new FormData();
