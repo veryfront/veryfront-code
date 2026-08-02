@@ -1084,7 +1084,7 @@ describe("SecureFs", () => {
 
     await assertRejects(
       () => secureFs.readFileBytesWithinLimit!("assets/app.bin", 2),
-      TypeError,
+      RangeError,
       "exceeds 2 bytes",
     );
   });
