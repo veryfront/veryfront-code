@@ -28,6 +28,7 @@ const DEFAULT_MAX_CONCURRENT_TOKEN_RESOLUTIONS = 1_024;
 const MAX_CONFIGURED_CONCURRENT_TOKEN_FETCHES = 10_000;
 const MAX_CONFIGURED_QUEUED_TOKEN_FETCHES = 100_000;
 const MAX_CONFIGURED_CONCURRENT_TOKEN_RESOLUTIONS = 100_000;
+const MAX_TRACKED_KEY_GENERATIONS = 10_000;
 
 export interface OAuthConfig {
   apiBaseUrl: string;
@@ -88,6 +89,7 @@ export class TokenManager {
   private activeResolutions = 0;
   private invalidations = new Map<string, Promise<void>>();
   private keyGenerations = new Map<string, number>();
+  private nextKeyGeneration = 1;
   private globalGeneration = 0;
   private maintenancePromise: Promise<void> | null = null;
   private closePromise: Promise<void> | null = null;
@@ -345,8 +347,7 @@ export class TokenManager {
   }
 
   private async performClear(): Promise<void> {
-    this.globalGeneration++;
-    for (const cacheKey of this.pendingRequests.keys()) this.bumpGeneration(cacheKey);
+    this.advanceGlobalGeneration();
     const pending = [...this.pendingRequests.values()];
     for (const request of pending) {
       request.controller.abort(new TokenFetchSupersededError());
@@ -354,7 +355,6 @@ export class TokenManager {
     await Promise.allSettled(pending.map((request) => request.promise));
     this.negativeCache.clear();
     await this.cache.clear();
-    this.keyGenerations.clear();
   }
 
   async getStats(): Promise<{ hits: number; misses: number; size: number; type: string }> {
@@ -364,8 +364,8 @@ export class TokenManager {
   close(): Promise<void> {
     if (this.closePromise) return this.closePromise;
     this.closed = true;
+    this.advanceGlobalGeneration();
     const pending = [...this.pendingRequests.values()];
-    for (const cacheKey of this.pendingRequests.keys()) this.bumpGeneration(cacheKey);
     for (const request of pending) {
       request.controller.abort(new TokenFetchSupersededError());
     }
@@ -441,7 +441,27 @@ export class TokenManager {
   }
 
   private bumpGeneration(cacheKey: string): void {
-    this.keyGenerations.set(cacheKey, this.getGeneration(cacheKey) + 1);
+    if (
+      !this.keyGenerations.has(cacheKey) &&
+      this.keyGenerations.size >= MAX_TRACKED_KEY_GENERATIONS
+    ) {
+      // A global epoch advance makes every previously issued per-key epoch
+      // unreachable before the bounded map is reused.
+      this.advanceGlobalGeneration();
+    }
+    if (!Number.isSafeInteger(this.nextKeyGeneration)) {
+      this.advanceGlobalGeneration();
+    }
+    this.keyGenerations.set(cacheKey, this.nextKeyGeneration++);
+  }
+
+  private advanceGlobalGeneration(): void {
+    if (this.globalGeneration >= Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("OAuth token generation space is exhausted");
+    }
+    this.globalGeneration++;
+    this.keyGenerations.clear();
+    this.nextKeyGeneration = 1;
   }
 
   private async performInvalidation(cacheKey: string): Promise<void> {
@@ -453,7 +473,6 @@ export class TokenManager {
       await Promise.allSettled([pending.promise]);
     }
     await this.cache.delete(cacheKey);
-    this.keyGenerations.delete(cacheKey);
   }
 
   private readValidCachedToken(

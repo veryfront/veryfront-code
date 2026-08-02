@@ -28,6 +28,8 @@ async function mintJws(
   kind: JwsKind,
   overrides: Partial<{
     iss: string;
+    aud: string;
+    projectId: string;
     iat: number;
     exp: number;
     alg: string;
@@ -46,9 +48,9 @@ async function mintJws(
   const header = { alg: overrides.alg ?? "EdDSA", typ: "JWT" };
   const base = {
     iss: overrides.iss ?? "veryfront-api",
-    aud: "protected",
+    aud: overrides.aud ?? "protected",
     sub: "control-plane",
-    project_id: "proj-1",
+    project_id: overrides.projectId ?? "proj-1",
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
   };
@@ -67,11 +69,26 @@ async function mintJws(
   };
 }
 
-function requestWith(headers: Record<string, string>, url = CONTROL_PLANE_PATH): {
+function requestWith(
+  headers: Record<string, string>,
+  url = CONTROL_PLANE_PATH,
+  method = "POST",
+): {
   req: Request;
   url: URL;
 } {
-  return { req: new Request(url, { headers }), url: new URL(url) };
+  return { req: new Request(url, { method, headers }), url: new URL(url) };
+}
+
+function verifyRequest(
+  req: Request,
+  url: URL,
+  binding: { audience: string; expectedProjectId?: string } = {
+    audience: "protected",
+    expectedProjectId: "proj-1",
+  },
+): Promise<boolean> {
+  return isVerifiedInternalControlPlaneRequest(req, url, binding);
 }
 
 describe("proxy/control-plane-signature", () => {
@@ -94,20 +111,20 @@ describe("proxy/control-plane-signature", () => {
       { "x-token": "t", "x-veryfront-dispatch-jws": jws },
       "http://protected.preview.veryfront.com/some/page",
     );
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false when x-token is missing", async () => {
     const { jws, publicKeyPem } = await mintJws("control-plane");
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false when the verification key is not configured", async () => {
     const { jws } = await mintJws("control-plane");
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false when only a presence-only (non-JWS) header is set", async () => {
@@ -117,7 +134,7 @@ describe("proxy/control-plane-signature", () => {
       "x-token": "t",
       "x-veryfront-control-plane-jws": "signed-request",
     });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns true for a valid, fresh dispatch JWS on /channels/invoke", async () => {
@@ -127,7 +144,7 @@ describe("proxy/control-plane-signature", () => {
       { "x-token": "t", "x-veryfront-dispatch-jws": jws },
       "http://protected.preview.veryfront.com/channels/invoke",
     );
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), true);
+    assertEquals(await verifyRequest(req, url), true);
   });
 
   it("does not accept a dispatch JWS on a control-plane route", async () => {
@@ -137,14 +154,65 @@ describe("proxy/control-plane-signature", () => {
       "x-token": "t",
       "x-veryfront-dispatch-jws": jws,
     });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns true for a valid, fresh control-plane JWS", async () => {
     const { jws, publicKeyPem } = await mintJws("control-plane");
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), true);
+    assertEquals(await verifyRequest(req, url), true);
+  });
+
+  it("binds authentic signatures to the resolved project audience and id", async () => {
+    const { jws, publicKeyPem } = await mintJws("control-plane");
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const { req, url } = requestWith({
+      "x-token": "t",
+      "x-veryfront-control-plane-jws": jws,
+    });
+
+    assertEquals(await verifyRequest(req, url, { audience: "other" }), false);
+    assertEquals(
+      await verifyRequest(req, url, {
+        audience: "protected",
+        expectedProjectId: "other-project",
+      }),
+      false,
+    );
+  });
+
+  it("trusts only method/path pairs with guaranteed downstream verification", async () => {
+    const { jws, publicKeyPem } = await mintJws("control-plane");
+    Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
+    const headers = { "x-token": "t", "x-veryfront-control-plane-jws": jws };
+
+    for (
+      const [method, path] of [
+        ["POST", "/api/control-plane/agents/list"],
+        ["POST", "/api/control-plane/runs/r_1/execute"],
+        ["POST", "/api/control-plane/runs/r_1/stream"],
+        ["POST", "/api/control-plane/runs/r_1/resume"],
+        ["DELETE", "/api/control-plane/runs/r_1"],
+      ] as const
+    ) {
+      const { req, url } = requestWith(headers, `http://protected.test${path}`, method);
+      assertEquals(await verifyRequest(req, url), true, `${method} ${path}`);
+    }
+
+    for (
+      const [method, path] of [
+        ["GET", "/api/control-plane/runs/r_1/stream"],
+        ["POST", "/api/control-plane/runs/r_1"],
+        ["DELETE", "/api/control-plane/runs/r_1/extra"],
+        ["POST", "/api/control-plane/application-route"],
+        ["POST", "/internal/tasks/application-route"],
+        ["POST", "/internal/workflows/application-route"],
+      ] as const
+    ) {
+      const { req, url } = requestWith(headers, `http://protected.test${path}`, method);
+      assertEquals(await verifyRequest(req, url), false, `${method} ${path}`);
+    }
   });
 
   it("does not accept a control-plane JWS on /channels/invoke", async () => {
@@ -154,7 +222,7 @@ describe("proxy/control-plane-signature", () => {
       { "x-token": "t", "x-veryfront-control-plane-jws": jws },
       "http://protected.preview.veryfront.com/channels/invoke",
     );
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false for a signature minted by a different key", async () => {
@@ -172,14 +240,14 @@ describe("proxy/control-plane-signature", () => {
     });
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false for an unexpected issuer", async () => {
     const { jws, publicKeyPem } = await mintJws("control-plane", { iss: "evil" });
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false for an expired signature", async () => {
@@ -190,7 +258,7 @@ describe("proxy/control-plane-signature", () => {
     });
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false for a stale (too old) but unexpired signature", async () => {
@@ -201,14 +269,14 @@ describe("proxy/control-plane-signature", () => {
     });
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false for a non-EdDSA algorithm header", async () => {
     const { jws, publicKeyPem } = await mintJws("control-plane", { alg: "HS256" });
     Deno.env.set(PUBLIC_KEY_ENV, publicKeyPem);
     const { req, url } = requestWith({ "x-token": "t", "x-veryfront-control-plane-jws": jws });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 
   it("returns false for a malformed JWS", async () => {
@@ -218,6 +286,6 @@ describe("proxy/control-plane-signature", () => {
       "x-token": "t",
       "x-veryfront-control-plane-jws": "not.a.jws",
     });
-    assertEquals(await isVerifiedInternalControlPlaneRequest(req, url), false);
+    assertEquals(await verifyRequest(req, url), false);
   });
 });

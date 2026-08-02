@@ -24,6 +24,7 @@
 
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
+import { acquireExtensionTokenCacheStoreFromEnv } from "./cache/extension-store.ts";
 import {
   getReplayableRequestBodies,
   getUpstreamRetryCount,
@@ -202,7 +203,8 @@ const { createAuthProvider } = await importFirstPartyExtensionModule<AuthJwtExte
 register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler
-const cache = await createCacheFromEnv();
+const extensionStore = await acquireExtensionTokenCacheStoreFromEnv();
+const cache = await createCacheFromEnv({ extensionStore });
 const routingInvalidationLogger = {
   debug: (msg: string, extra?: Record<string, unknown>) => proxyLogger.debug(msg, extra),
   info: (msg: string, extra?: Record<string, unknown>) => proxyLogger.info(msg, extra),

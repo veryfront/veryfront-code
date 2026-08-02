@@ -146,7 +146,9 @@ export async function createCacheFromEnv(
       logger.debug("[Cache] Using explicitly activated TokenCacheStore extension");
       const store = extensionStore?.store ?? requireTokenCacheStore();
       return new TracingTokenCache(store, {
-        closeInner: extensionStore?.kind !== "borrowed",
+        // Registry resolution is borrowed by default. Only an explicit
+        // composition descriptor may transfer created-store ownership.
+        closeInner: extensionStore?.kind === "created",
       });
     },
     { "cache.type": cacheType },

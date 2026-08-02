@@ -20,12 +20,14 @@ class SpyCache implements TokenCache {
   setCount = 0;
   getGate?: Promise<void>;
   onGet?: () => void;
+  snapshotGetBeforeGate = false;
 
   async get(key: string): Promise<TokenCacheEntry | null> {
     this.getCount++;
     this.onGet?.();
+    const snapshot = this.snapshotGetBeforeGate ? this.store.get(key) ?? null : undefined;
     if (this.getGate) await this.getGate;
-    return this.store.get(key) ?? null;
+    return this.snapshotGetBeforeGate ? snapshot! : this.store.get(key) ?? null;
   }
 
   async set(key: string, entry: TokenCacheEntry): Promise<void> {
@@ -612,6 +614,44 @@ describe("TokenManager", () => {
     await assertRejects(() => stale, TokenFetchSupersededError);
     await clear;
     assertEquals(fetchCount, 0);
+    assertEquals(await manager.getToken("production", "project"), "test-token-1");
+    await manager.close();
+  });
+
+  it("does not reuse a per-key generation after invalidation overlaps a stale cache read", async () => {
+    const gate = Promise.withResolvers<void>();
+    const started = Promise.withResolvers<void>();
+    const cache = new SpyCache();
+    cache.seed(JSON.stringify(["production", "project", "project"]), {
+      token: "stale-cached-token",
+      expiresAt: Date.now() + 60 * 60 * 1_000,
+      scope: "production",
+      projectSlug: "project",
+    });
+    cache.snapshotGetBeforeGate = true;
+    cache.getGate = gate.promise;
+    cache.onGet = () => started.resolve();
+    const manager = new TokenManager(
+      {
+        apiBaseUrl: `http://localhost:${serverPort}`,
+        apiClientId: "id",
+        apiClientSecret: "secret",
+        previewApiClientId: "pid",
+        previewApiClientSecret: "psecret",
+      },
+      { cache },
+    );
+
+    const staleRead = manager.getToken("production", "project");
+    await started.promise;
+    await manager.invalidateToken("production", "project");
+    gate.resolve();
+
+    await assertRejects(() => staleRead, TokenFetchSupersededError);
+    assertEquals(fetchCount, 0);
+    cache.getGate = undefined;
+    cache.onGet = undefined;
+    cache.snapshotGetBeforeGate = false;
     assertEquals(await manager.getToken("production", "project"), "test-token-1");
     await manager.close();
   });

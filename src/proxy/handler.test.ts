@@ -93,7 +93,13 @@ function base64urlBytes(bytes: Uint8Array): string {
  * internal control-plane requests (isVerifiedInternalControlPlaneRequest).
  */
 async function mintControlPlaneJws(
-  overrides: Partial<{ iss: string; iat: number; exp: number }> = {},
+  overrides: Partial<{
+    iss: string;
+    aud: string;
+    projectId: string;
+    iat: number;
+    exp: number;
+  }> = {},
 ): Promise<{ jws: string; publicKeyPem: string }> {
   const keyPair = await crypto.subtle.generateKey("Ed25519", true, [
     "sign",
@@ -106,10 +112,10 @@ async function mintControlPlaneJws(
   const header = { alg: "EdDSA", typ: "JWT" };
   const claims = {
     iss: overrides.iss ?? "veryfront-api",
-    aud: "protected-project",
+    aud: overrides.aud ?? "protected-project",
     sub: "control-plane",
     surface: "channels",
-    project_id: "proj-123",
+    project_id: overrides.projectId ?? "proj-123",
     request_hash: "n/a",
     iat: overrides.iat ?? now,
     exp: overrides.exp ?? now + 60,
@@ -2928,6 +2934,7 @@ describe("Proxy Handler", () => {
         const req = new Request(
           "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
           {
+            method: "POST",
             headers: {
               host: "protected-project.preview.veryfront.com",
               "x-token": "project-agent-token",
@@ -2951,6 +2958,96 @@ describe("Proxy Handler", () => {
         } else {
           Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
         }
+        await server.shutdown();
+      }
+    });
+
+    it("fails closed when an authentic control-plane signature names another project id", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "protected-project",
+            environments: [{
+              id: "env-1",
+              name: "preview",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+        return createNotFoundResponse();
+      });
+
+      const previousKey = Deno.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+      try {
+        const { jws, publicKeyPem } = await mintControlPlaneJws({
+          projectId: "another-project",
+        });
+        Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", publicKeyPem);
+        const handler = createHandler(port);
+        const ctx = await handler.processRequest(
+          new Request(
+            "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
+            {
+              method: "POST",
+              headers: {
+                host: "protected-project.preview.veryfront.com",
+                "x-token": "wrong-project-token",
+                "x-veryfront-control-plane-jws": jws,
+              },
+            },
+          ),
+        );
+
+        assertEquals(ctx.error?.status, 401);
+        assertEquals(ctx.token, undefined);
+        await handler.close();
+      } finally {
+        if (previousKey === undefined) {
+          Deno.env.delete("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+        } else {
+          Deno.env.set("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY", previousKey);
+        }
+        await server.shutdown();
+      }
+    });
+
+    it("reserves unrecognized internal namespaces before token or metadata resolution", async () => {
+      let upstreamHits = 0;
+      const { server, port } = createMockServer((_req: Request) => {
+        upstreamHits += 1;
+        return createNotFoundResponse();
+      });
+      const handler = createHandler(port);
+
+      try {
+        for (
+          const [method, pathname] of [
+            ["POST", "/api/control-plane/application-route"],
+            ["POST", "/internal/tasks/application-route"],
+            ["POST", "/internal/workflows/application-route"],
+            ["GET", "/channels/invoke"],
+            ["POST", "/channels/invoke/application-route"],
+          ] as const
+        ) {
+          const ctx = await handler.processRequest(
+            new Request(`http://protected-project.preview.veryfront.com${pathname}`, {
+              method,
+              headers: {
+                host: "protected-project.preview.veryfront.com",
+                "x-token": "attacker-token",
+                "x-veryfront-control-plane-jws": "present-but-untrusted",
+              },
+            }),
+          );
+          assertEquals(ctx.error?.status, 404, pathname);
+          assertEquals(ctx.token, undefined, pathname);
+        }
+        assertEquals(upstreamHits, 0);
+      } finally {
+        await handler.close();
         await server.shutdown();
       }
     });
@@ -2995,6 +3092,7 @@ describe("Proxy Handler", () => {
         const req = new Request(
           "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
           {
+            method: "POST",
             headers: {
               host: "protected-project.preview.veryfront.com",
               "x-token": "attacker-supplied-token",

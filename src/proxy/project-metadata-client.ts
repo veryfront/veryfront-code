@@ -4,7 +4,7 @@ import {
 } from "#veryfront/utils/project-identity.ts";
 import { sanitizeUrlForSpan } from "#veryfront/utils/logger/redact.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
-import { cancelProxyResponseBody, readProxyResponseJson } from "./response-body.ts";
+import { readProxyResponseJson, settleProxyResponseBody } from "./response-body.ts";
 
 const DEFAULT_LOOKUP_TIMEOUT_MS = 10_000;
 const MAX_LOOKUP_TIMEOUT_MS = 30_000;
@@ -459,6 +459,7 @@ export function createProjectMetadataClient(
       Accept: "application/json",
     });
     injectContext(headers);
+    if (externalSignal?.aborted) throw abortReason(externalSignal);
     if (activeLookups >= maxInflight) {
       throw new ProxyLookupFailure(
         lookupType,
@@ -479,96 +480,97 @@ export function createProjectMetadataClient(
     if (externalSignal?.aborted) abortFromCaller();
     else externalSignal?.addEventListener("abort", abortFromCaller, { once: true });
 
-    try {
-      logger?.debug("Looking up proxy project metadata", {
-        lookupType,
-        url: url.toString(),
-      });
-      const fetchPromise = withSpan(
-        ProxySpanNames.HTTP_CLIENT_FETCH,
-        () => fetchImpl(url, { headers, signal: controller.signal }),
-        {
-          "http.method": "GET",
-          "http.url": sanitizeUrlForSpan(url.toString()),
-          "http.host": url.host,
-          "proxy.lookup_type": lookupType,
-        },
-      );
-      void fetchPromise.then(
-        (lateResponse) => {
-          if (controller.signal.aborted) {
-            void cancelProxyResponseBody(lateResponse);
-          }
-        },
-        () => {
-          // The awaited fetch path classifies this failure.
-        },
-      );
-      const response = await awaitAbortable(fetchPromise, controller.signal);
-
-      if (response.status === 404) {
-        await cancelProxyResponseBody(response);
-        return null;
-      }
-      if (response.status === 401 || response.status === 403) {
-        await cancelProxyResponseBody(response);
-        throw new ProxyLookupAuthError(lookupType, response.status);
-      }
-      if (!response.ok) {
-        await cancelProxyResponseBody(response);
-        const publicStatus = response.status === 429 ? 503 : 502;
-        throw new ProxyLookupFailure(
-          lookupType,
-          publicStatus,
-          `Proxy ${lookupType} metadata request was rejected`,
-        );
-      }
-
-      const contentType = response.headers.get("content-type")?.split(";")[0]?.trim()
-        .toLowerCase();
-      if (contentType !== "application/json") {
-        await cancelProxyResponseBody(response);
-        throw new ProxyLookupFailure(
-          lookupType,
-          502,
-          `Proxy ${lookupType} metadata returned an invalid content type`,
-        );
-      }
-
+    const producer = (async (): Promise<T | null> => {
       try {
-        return parse(
-          await readProxyResponseJson(
-            response,
-            MAX_METADATA_RESPONSE_BYTES,
-            controller.signal,
-          ),
+        logger?.debug("Looking up proxy project metadata", {
+          lookupType,
+          url: url.toString(),
+        });
+        const response = await withSpan(
+          ProxySpanNames.HTTP_CLIENT_FETCH,
+          () => fetchImpl(url, { headers, signal: controller.signal }),
+          {
+            "http.method": "GET",
+            "http.url": sanitizeUrlForSpan(url.toString()),
+            "http.host": url.host,
+            "proxy.lookup_type": lookupType,
+          },
         );
+
+        if (controller.signal.aborted) {
+          await settleProxyResponseBody(response);
+          throw abortReason(controller.signal);
+        }
+
+        if (response.status === 404) {
+          await settleProxyResponseBody(response);
+          return null;
+        }
+        if (response.status === 401 || response.status === 403) {
+          await settleProxyResponseBody(response);
+          throw new ProxyLookupAuthError(lookupType, response.status);
+        }
+        if (!response.ok) {
+          await settleProxyResponseBody(response);
+          const publicStatus = response.status === 429 ? 503 : 502;
+          throw new ProxyLookupFailure(
+            lookupType,
+            publicStatus,
+            `Proxy ${lookupType} metadata request was rejected`,
+          );
+        }
+
+        const contentType = response.headers.get("content-type")?.split(";")[0]?.trim()
+          .toLowerCase();
+        if (contentType !== "application/json") {
+          await settleProxyResponseBody(response);
+          throw new ProxyLookupFailure(
+            lookupType,
+            502,
+            `Proxy ${lookupType} metadata returned an invalid content type`,
+          );
+        }
+
+        try {
+          return parse(
+            await readProxyResponseJson(
+              response,
+              MAX_METADATA_RESPONSE_BYTES,
+              controller.signal,
+            ),
+          );
+        } catch (error) {
+          if (controller.signal.aborted) throw abortReason(controller.signal);
+          if (error instanceof ProxyLookupFailure) throw error;
+          throw new ProxyLookupFailure(
+            lookupType,
+            502,
+            `Proxy ${lookupType} metadata returned an invalid response`,
+            { cause: error },
+          );
+        }
       } catch (error) {
+        if (error instanceof ProxyLookupAuthError || error instanceof ProxyLookupFailure) {
+          throw error;
+        }
+        if (externalSignal?.aborted) throw abortReason(externalSignal);
         if (controller.signal.aborted) throw abortReason(controller.signal);
-        if (error instanceof ProxyLookupFailure) throw error;
         throw new ProxyLookupFailure(
           lookupType,
           502,
-          `Proxy ${lookupType} metadata returned an invalid response`,
+          `Proxy ${lookupType} metadata request failed`,
           { cause: error },
         );
       }
-    } catch (error) {
-      if (error instanceof ProxyLookupAuthError || error instanceof ProxyLookupFailure) {
-        throw error;
-      }
-      if (externalSignal?.aborted) throw abortReason(externalSignal);
-      if (controller.signal.aborted) throw abortReason(controller.signal);
-      throw new ProxyLookupFailure(
-        lookupType,
-        502,
-        `Proxy ${lookupType} metadata request failed`,
-        { cause: error },
-      );
+    })().finally(() => {
+      activeLookups--;
+    });
+
+    try {
+      return await awaitAbortable(producer, controller.signal);
     } finally {
       clearTimeout(timeoutId);
       externalSignal?.removeEventListener("abort", abortFromCaller);
-      activeLookups--;
     }
   }
 

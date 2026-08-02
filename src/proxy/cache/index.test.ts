@@ -118,6 +118,12 @@ describe("proxy cache factory", () => {
     });
     await borrowedCache.close();
     assertEquals(borrowed.closed, false);
+
+    const registered = new FakeTokenCache();
+    register<TokenCache>("TokenCacheStore", registered);
+    const registryCache = await createCacheFromEnv();
+    await registryCache.close();
+    assertEquals(registered.closed, false);
   });
 
   it("rejects unknown cache types and obsolete inline Extension options", async () => {

@@ -595,6 +595,8 @@ export async function listRuntimeAgents(
 export async function verifyDispatchJwsSignature(
   jws: string,
   options: {
+    audience?: string;
+    expectedProjectId?: string;
     publicKeyPem: string;
     maxAgeSeconds: number;
   },
@@ -612,6 +614,8 @@ export async function verifyDispatchJwsSignature(
 export async function verifyControlPlaneJwsSignature(
   jws: string,
   options: {
+    audience?: string;
+    expectedProjectId?: string;
     publicKeyPem: string;
     maxAgeSeconds: number;
   },
@@ -627,6 +631,8 @@ async function verifySignedRequestJwsSignature(
   jws: string,
   parseClaims: (encodedPayload: string) => SignedRequestClaims,
   options: {
+    audience?: string;
+    expectedProjectId?: string;
     publicKeyPem: string;
     maxAgeSeconds: number;
   },
@@ -659,6 +665,13 @@ async function verifySignedRequestJwsSignature(
     if (!verified) return false;
 
     if (claims.iss !== "veryfront-api") return false;
+    if (options.audience !== undefined && claims.aud !== options.audience) return false;
+    if (
+      options.expectedProjectId !== undefined &&
+      claims.project_id !== options.expectedProjectId
+    ) {
+      return false;
+    }
     if (
       !Number.isSafeInteger(claims.iat) ||
       !Number.isSafeInteger(claims.exp) ||

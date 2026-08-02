@@ -19,11 +19,10 @@ import {
   RELEASE_ASSET_IMMUTABLE_MAX_AGE_SECONDS,
   RELEASE_ASSET_MAX_SIZE_BYTES,
 } from "#veryfront/release-assets/constants.ts";
-import { awaitAbortable } from "#veryfront/utils/abort.ts";
 import { computeHashBytes } from "#veryfront/utils/hash-utils.ts";
 import { PermitSemaphore } from "#veryfront/utils/permit-semaphore.ts";
 import { waitForSharedPromise } from "#veryfront/utils/singleflight.ts";
-import { cancelProxyResponseBody, readProxyResponseBytes } from "./response-body.ts";
+import { readProxyResponseBytes, settleProxyResponseBody } from "./response-body.ts";
 
 const ASSET_PATH_PREFIX = "/_vf/assets/";
 const ASSET_PATH_RE = /^\/_vf\/assets\/([0-9a-f]{64})\.(js|css)$/;
@@ -223,36 +222,24 @@ async function loadReleaseAsset(
   if (!admitted) throw new ReleaseAssetOverloadedError();
 
   try {
-    const fetchPromise = doFetch(upstreamUrl, { signal });
-    let response: Response;
-    try {
-      response = await awaitAbortable(fetchPromise, signal);
-    } catch (error) {
-      if (signal.aborted) {
-        void fetchPromise.then(
-          (lateResponse) => {
-            void cancelProxyResponseBody(lateResponse);
-          },
-          () => {
-            // The original fetch failure is handled by the awaited path.
-          },
-        );
-      }
-      throw error;
+    const response = await doFetch(upstreamUrl, { signal });
+    if (signal.aborted) {
+      await settleProxyResponseBody(response);
+      throw signal.reason ?? new ReleaseAssetNoConsumersError();
     }
 
     if (response.status === 404) {
-      await cancelProxyResponseBody(response);
+      await settleProxyResponseBody(response);
       throw new ReleaseAssetNotFoundError();
     }
     if (!response.ok) {
-      await cancelProxyResponseBody(response);
+      await settleProxyResponseBody(response);
       throw new ReleaseAssetUpstreamError();
     }
 
     const upstreamContentType = response.headers.get("content-type")?.split(";")[0]?.trim();
     if (!isAllowedReleaseAssetContentType(upstreamContentType)) {
-      await cancelProxyResponseBody(response);
+      await settleProxyResponseBody(response);
       throw new ReleaseAssetUpstreamError();
     }
 
@@ -261,9 +248,9 @@ async function loadReleaseAsset(
       RELEASE_ASSET_MAX_SIZE_BYTES,
       signal,
     );
-    if (
-      await awaitAbortable(computeHashBytes(bytes), signal) !== hash
-    ) {
+    const computedHash = await computeHashBytes(bytes);
+    if (signal.aborted) throw signal.reason ?? new ReleaseAssetNoConsumersError();
+    if (computedHash !== hash) {
       throw new ReleaseAssetUpstreamError();
     }
 

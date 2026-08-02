@@ -313,13 +313,14 @@ describe("proxy release asset handler", () => {
 
   it("abandons and replaces an active load after its sole caller aborts", async () => {
     const source = "export const replacement = true;";
+    const abandonedResponse = Promise.withResolvers<Response>();
     let calls = 0;
     const abandonedSignals: AbortSignal[] = [];
     const fetchImpl = makeFetch((_url, init) => {
       calls++;
       if (calls === 1) {
         if (init?.signal) abandonedSignals.push(init.signal);
-        return new Promise<Response>(() => {});
+        return abandonedResponse.promise;
       }
       return new Response(source, {
         headers: { "Content-Type": "text/javascript" },
@@ -343,6 +344,12 @@ describe("proxy release asset handler", () => {
       200,
     );
     assertEquals(calls, 2);
+
+    // The abandoned producer retains its permit until the hostile fetch
+    // actually settles; resolve it so this process-global admission pool is
+    // clean for subsequent tests.
+    abandonedResponse.resolve(new Response(null, { status: 499 }));
+    await flushAsyncWork();
   });
 
   it("cancels a late response when an abandoned upstream fetch ignores abort", async () => {
@@ -379,6 +386,130 @@ describe("proxy release asset handler", () => {
     );
     await flushAsyncWork();
     assertEquals(bodyCancelled, true);
+  });
+
+  it("retains every cold-load permit until abort-ignoring producers settle", async () => {
+    const sources = Array.from(
+      { length: 5 },
+      (_, index) => `export const hostileProducer${index} = ${index};`,
+    );
+    const urls = await Promise.all(sources.map((source) => assetUrl(source, "js")));
+    const lateResponses = Array.from(
+      { length: 4 },
+      () => Promise.withResolvers<Response>(),
+    );
+    let calls = 0;
+    const fetchImpl = makeFetch(() => {
+      const call = calls++;
+      if (call < lateResponses.length) return lateResponses[call]!.promise;
+      return new Response(sources[4], {
+        headers: { "Content-Type": "text/javascript" },
+      });
+    });
+
+    const timedOut = urls.slice(0, 4).map((url) =>
+      handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 5 })
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 4);
+    assertEquals((await Promise.all(timedOut)).map((response) => response?.status), [
+      504,
+      504,
+      504,
+      504,
+    ]);
+
+    // A new caller may wait for capacity, but it must not start a fifth
+    // producer while the four aborted fetches remain unresolved.
+    assertEquals(
+      (await handle(urls[4]!, {
+        apiBaseUrl: API_BASE,
+        fetchImpl,
+        timeoutMs: 1,
+      }))?.status,
+      504,
+    );
+    assertEquals(calls, 4);
+
+    for (const late of lateResponses) {
+      late.resolve(new Response(null, { status: 499 }));
+    }
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    assertEquals(
+      (await handle(urls[4]!, {
+        apiBaseUrl: API_BASE,
+        fetchImpl,
+        timeoutMs: 100,
+      }))?.status,
+      200,
+    );
+    assertEquals(calls, 5);
+  });
+
+  it("retains cold-load permits until hostile body cancellation settles", async () => {
+    const sources = Array.from(
+      { length: 5 },
+      (_, index) => `export const hostileBody${index} = ${index};`,
+    );
+    const urls = await Promise.all(sources.map((source) => assetUrl(source, "js")));
+    const cancellationGates = Array.from(
+      { length: 4 },
+      () => Promise.withResolvers<void>(),
+    );
+    let calls = 0;
+    const fetchImpl = makeFetch(() => {
+      const call = calls++;
+      if (call >= cancellationGates.length) {
+        return new Response(sources[4], {
+          headers: { "Content-Type": "text/javascript" },
+        });
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          cancel() {
+            return cancellationGates[call]!.promise;
+          },
+        }),
+        { headers: { "Content-Type": "text/javascript" } },
+      );
+    });
+
+    const timedOut = urls.slice(0, 4).map((url) =>
+      handle(url, { apiBaseUrl: API_BASE, fetchImpl, timeoutMs: 5 })
+    );
+    await flushAsyncWork();
+    assertEquals(calls, 4);
+    assertEquals((await Promise.all(timedOut)).map((response) => response?.status), [
+      504,
+      504,
+      504,
+      504,
+    ]);
+    assertEquals(
+      (await handle(urls[4]!, {
+        apiBaseUrl: API_BASE,
+        fetchImpl,
+        timeoutMs: 1,
+      }))?.status,
+      504,
+    );
+    assertEquals(calls, 4);
+
+    for (const gate of cancellationGates) gate.resolve();
+    await flushAsyncWork();
+    await flushAsyncWork();
+
+    assertEquals(
+      (await handle(urls[4]!, {
+        apiBaseUrl: API_BASE,
+        fetchImpl,
+        timeoutMs: 100,
+      }))?.status,
+      200,
+    );
+    assertEquals(calls, 5);
   });
 
   it("rejects oversized upstream bodies before buffering declared bytes", async () => {

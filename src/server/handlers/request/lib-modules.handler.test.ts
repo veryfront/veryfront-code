@@ -151,13 +151,13 @@ function configThatThrowsDuringSnapshotResolution(failure: unknown): VeryfrontCo
   return config;
 }
 
-function getPattern(handler: LibModulesHandler, method: string): RegExp {
+function getPattern(handler: LibModulesHandler): RegExp {
   const patterns = handler.metadata.patterns;
   if (!patterns?.length) throw new Error("No patterns defined");
 
-  const pattern = patterns.find((p) => p.method === method)?.pattern;
+  const pattern = patterns[0]?.pattern;
   if (!(pattern instanceof RegExp)) {
-    throw new Error(`Pattern for method ${method} not found or not a RegExp`);
+    throw new Error("Handler pattern not found or not a RegExp");
   }
 
   return pattern;
@@ -176,14 +176,15 @@ describe("LibModulesHandler", () => {
       assertEquals(typeof handler.metadata.priority, "number");
     });
 
-    it("should have two patterns (GET and HEAD)", () => {
+    it("owns the namespace for every method", () => {
       const handler = createHandler();
       assertExists(handler.metadata.patterns);
-      assertEquals(handler.metadata.patterns?.length, 2);
+      assertEquals(handler.metadata.patterns?.length, 1);
+      assertEquals(handler.metadata.patterns?.[0]?.method, undefined);
     });
 
     it("should match GET requests to /_veryfront/lib/", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
       assertEquals(pattern.test("/_veryfront/lib/components/chat.js"), true);
@@ -191,12 +192,12 @@ describe("LibModulesHandler", () => {
     });
 
     it("should match HEAD requests to /_veryfront/lib/", () => {
-      const pattern = getPattern(createHandler(), "HEAD");
+      const pattern = getPattern(createHandler());
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
     });
 
     it("should not match other paths", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/api/users"), false);
       assertEquals(pattern.test("/veryfront/lib/chat/react.js"), false);
@@ -232,14 +233,14 @@ describe("LibModulesHandler", () => {
 
   describe("URL pattern matching", () => {
     it("should match lib module path prefix", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/_veryfront/lib/"), true);
       assertEquals(pattern.test("/_veryfront/lib/anything"), true);
     });
 
     it("should not match paths without /_veryfront/lib/ prefix", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/veryfront/lib/agent/react.js"), false);
       assertEquals(pattern.test("/_veryfront/agent/react.js"), false);
@@ -247,7 +248,7 @@ describe("LibModulesHandler", () => {
     });
 
     it("should be case sensitive", () => {
-      const pattern = getPattern(createHandler(), "GET");
+      const pattern = getPattern(createHandler());
 
       assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
       assertEquals(pattern.test("/_VERYFRONT/lib/agent/react.js"), false);
@@ -270,6 +271,20 @@ describe("LibModulesHandler", () => {
       const handler = createHandler();
       assertExists(handler.metadata);
       assertExists(handler.handle);
+    });
+
+    it("rejects unsupported methods without falling through", async () => {
+      const result = await createHandler().handle(
+        new Request("http://localhost/_veryfront/lib/chat.js", { method: "POST" }),
+        createContext(createAdapter()),
+      );
+
+      assertEquals(result.continue, false);
+      assertExists(result.response);
+      assertEquals(result.response.status, 405);
+      assertEquals(result.response.headers.get("allow"), "GET, HEAD");
+      assertEquals(result.response.headers.get("cache-control"), "no-store");
+      assertEquals(await result.response.text(), "Method not allowed");
     });
   });
 
