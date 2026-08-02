@@ -8,6 +8,11 @@ import {
   type ToolExecutionContext,
 } from "#veryfront/tool";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
+import {
+  bindToolExecutionIdentityContext,
+  type ConfirmedToolExecutionIdentity,
+  resolveToolExecutionIdentity,
+} from "../runtime/tool-execution-identity.ts";
 
 /** Options accepted by live studio MCP tools. */
 export type LiveStudioMcpToolsOptions = {
@@ -21,10 +26,32 @@ export type LiveStudioMcpToolsOptions = {
   loadRemoteTools?: typeof loadRemoteToolsFromSource;
 };
 
-type StudioMcpState = {
-  projectId: string | null;
+type StudioMcpIdentity = ConfirmedToolExecutionIdentity;
+
+type StudioMcpState = StudioMcpIdentity & {
   tools: HostToolSet;
 };
+
+type PendingStudioMcpState = StudioMcpIdentity & {
+  generation: number;
+  promise: Promise<StudioMcpState>;
+};
+
+function studioMcpIdentitiesEqual(
+  left: StudioMcpIdentity,
+  right: StudioMcpIdentity,
+): boolean {
+  return left.authToken === right.authToken && left.projectId === right.projectId;
+}
+
+function createStudioMcpIdentityContext(
+  identity: StudioMcpIdentity,
+): ToolExecutionContext {
+  return {
+    authToken: identity.authToken,
+    ...(identity.projectId === null ? {} : { projectId: identity.projectId }),
+  };
+}
 
 /** Builds studio MCP headers. */
 export function buildStudioMcpHeaders(
@@ -53,16 +80,33 @@ async function loadStudioMcpState(input: {
   createRemoteToolSource: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   loadRemoteTools: typeof loadRemoteToolsFromSource;
 }): Promise<StudioMcpState> {
+  const boundIdentity = {
+    authToken: input.authToken,
+    projectId: input.projectId,
+  };
   const source = input.createRemoteToolSource({
     id: input.sourceId,
     endpoint: input.url,
-    headers: buildStudioMcpHeaders(input.authToken, input.projectId, input.conversationId),
+    headers: (context) => {
+      const identity = resolveToolExecutionIdentity(
+        context,
+        boundIdentity.authToken,
+        () => boundIdentity.projectId,
+        "Studio execution context",
+      );
+      return buildStudioMcpHeaders(
+        identity.authToken,
+        identity.projectId,
+        input.conversationId,
+      );
+    },
   });
 
   return {
+    authToken: input.authToken,
     projectId: input.projectId,
     tools: await input.loadRemoteTools(source, {
-      context: input.projectId ? { projectId: input.projectId } : undefined,
+      context: createStudioMcpIdentityContext(boundIdentity),
     }),
   };
 }
@@ -85,46 +129,67 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
   const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
   const loadRemoteTools = input.loadRemoteTools ?? loadRemoteToolsFromSource;
   let studioState: StudioMcpState | null = null;
-  let pendingState: { promise: Promise<StudioMcpState> } | null = null;
+  let pendingStates: PendingStudioMcpState[] = [];
+  let latestRequestedIdentity: StudioMcpIdentity | null = null;
+  let generation = 0;
 
-  const loadState = async (projectId: string | null): Promise<StudioMcpState> => {
-    if (studioState && studioState.projectId === projectId) {
+  const getFallbackIdentity = (): StudioMcpIdentity =>
+    resolveToolExecutionIdentity(
+      undefined,
+      input.authToken,
+      input.getProjectId,
+      "Studio execution context",
+    );
+
+  const loadState = async (identity: StudioMcpIdentity): Promise<StudioMcpState> => {
+    const requestGeneration = generation;
+    latestRequestedIdentity = identity;
+
+    if (studioState && studioMcpIdentitiesEqual(studioState, identity)) {
       return studioState;
     }
 
-    if (pendingState) {
-      const loadedState = await pendingState.promise;
-      if (loadedState.projectId === projectId) {
-        return loadedState;
-      }
+    let pendingState = pendingStates.find((candidate) =>
+      candidate.generation === requestGeneration &&
+      studioMcpIdentitiesEqual(candidate, identity)
+    );
+    let createdPendingState = false;
+
+    if (!pendingState) {
+      pendingState = {
+        ...identity,
+        generation: requestGeneration,
+        promise: loadStudioMcpState({
+          ...identity,
+          conversationId: input.conversationId,
+          url: studioMcpUrl,
+          sourceId,
+          createRemoteToolSource,
+          loadRemoteTools,
+        }),
+      };
+      pendingStates.push(pendingState);
+      createdPendingState = true;
     }
 
-    const nextState = {
-      promise: loadStudioMcpState({
-        authToken: input.authToken,
-        projectId,
-        conversationId: input.conversationId,
-        url: studioMcpUrl,
-        sourceId,
-        createRemoteToolSource,
-        loadRemoteTools,
-      }),
-    };
-
-    pendingState = nextState;
-
     try {
-      const loadedState = await nextState.promise;
-      studioState = loadedState;
+      const loadedState = await pendingState.promise;
+      if (
+        generation === requestGeneration &&
+        latestRequestedIdentity &&
+        studioMcpIdentitiesEqual(latestRequestedIdentity, loadedState)
+      ) {
+        studioState = loadedState;
+      }
       return loadedState;
     } finally {
-      if (pendingState === nextState) {
-        pendingState = null;
+      if (createdPendingState) {
+        pendingStates = pendingStates.filter((candidate) => candidate !== pendingState);
       }
     }
   };
 
-  const initialState = await loadState(input.getProjectId() ?? null);
+  const initialState = await loadState(getFallbackIdentity());
   const wrappedTools: HostToolSet = {};
 
   for (const [toolName, toolDefinition] of Object.entries(initialState.tools)) {
@@ -136,7 +201,13 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
     wrappedTools[toolName] = {
       ...toolDefinition,
       execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
-        const liveState = await loadState(input.getProjectId() ?? null);
+        const identity = resolveToolExecutionIdentity(
+          execOptions,
+          input.authToken,
+          input.getProjectId,
+          "Studio execution context",
+        );
+        const liveState = await loadState(identity);
         const liveTool = liveState.tools[toolName];
 
         if (!liveTool || typeof liveTool.execute !== "function") {
@@ -145,7 +216,14 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
           });
         }
 
-        return liveTool.execute(toolInput, execOptions);
+        return liveTool.execute(
+          toolInput,
+          bindToolExecutionIdentityContext(
+            execOptions,
+            identity,
+            "Studio execution context",
+          ),
+        );
       },
     };
   }
@@ -153,7 +231,10 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
   return {
     tools: wrappedTools,
     close: async () => {
+      generation += 1;
+      latestRequestedIdentity = null;
       studioState = null;
+      pendingStates = [];
     },
   };
 }

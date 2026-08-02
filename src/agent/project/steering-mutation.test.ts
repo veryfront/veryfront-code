@@ -112,7 +112,22 @@ Deno.test("getProjectSteeringMutation ignores mutations for other projects", () 
 Deno.test("isSuccessfulProjectSteeringMutationResult rejects errored tool results", () => {
   assertEquals(isSuccessfulProjectSteeringMutationResult({ isError: true }), false);
   assertEquals(
+    isSuccessfulProjectSteeringMutationResult({ error: "tool_error", message: "failed" }),
+    false,
+  );
+  assertEquals(
+    isSuccessfulProjectSteeringMutationResult({ output: { isError: true } }),
+    false,
+  );
+  assertEquals(isSuccessfulProjectSteeringMutationResult({ success: false }), false);
+  assertEquals(
     isSuccessfulProjectSteeringMutationResult({ structuredContent: { success: false } }),
+    false,
+  );
+  assertEquals(
+    isSuccessfulProjectSteeringMutationResult({
+      structuredContent: { success: true, error: "tool_error" },
+    }),
     false,
   );
   assertEquals(
@@ -120,4 +135,17 @@ Deno.test("isSuccessfulProjectSteeringMutationResult rejects errored tool result
     true,
   );
   assertEquals(isSuccessfulProjectSteeringMutationResult("plain result"), true);
+});
+
+Deno.test("isSuccessfulProjectSteeringMutationResult never invokes accessors", () => {
+  let accessorCalls = 0;
+  const result = {
+    get structuredContent(): unknown {
+      accessorCalls += 1;
+      return { success: true };
+    },
+  };
+
+  assertEquals(isSuccessfulProjectSteeringMutationResult(result), false);
+  assertEquals(accessorCalls, 0);
 });

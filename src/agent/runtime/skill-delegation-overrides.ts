@@ -1,4 +1,11 @@
 /** Delegation overrides from the active loaded skill. */
+import {
+  isValidRuntimeSkillModel,
+  MAX_RUNTIME_SKILL_STEPS,
+  MAX_RUNTIME_SKILL_THINKING_TOKENS,
+} from "./skill-metadata.ts";
+import { readToolResultOwnDataProperty } from "#veryfront/tool/result.ts";
+
 export type SkillDelegationOverrides = {
   model?: string;
   thinking?: false | number;
@@ -11,8 +18,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function getPositiveInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+function getPositiveInteger(value: unknown, max = Number.MAX_SAFE_INTEGER): number | undefined {
+  return typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value > 0 &&
+      value <= max
+    ? value
+    : undefined;
 }
 
 /** Extract active skill delegation overrides from a load_skill result. */
@@ -21,19 +33,22 @@ export function extractSkillDelegationOverrides(result: unknown): SkillDelegatio
     return {};
   }
 
-  const model = typeof result.model === "string" && result.model.trim().length > 0
-    ? result.model.trim()
-    : undefined;
-  const thinking = result.thinking === false
-    ? result.thinking
-    : getPositiveInteger(result.thinking);
-  const maxSteps = getPositiveInteger(result.maxSteps);
+  const rawModel = readToolResultOwnDataProperty(result, "model");
+  const rawThinking = readToolResultOwnDataProperty(result, "thinking");
+  const model = isValidRuntimeSkillModel(rawModel) ? rawModel : undefined;
+  const thinking = rawThinking === false
+    ? rawThinking
+    : getPositiveInteger(rawThinking, MAX_RUNTIME_SKILL_THINKING_TOKENS);
+  const maxSteps = getPositiveInteger(
+    readToolResultOwnDataProperty(result, "maxSteps"),
+    MAX_RUNTIME_SKILL_STEPS,
+  );
 
-  return {
+  return Object.freeze({
     ...(model ? { model } : {}),
     ...(thinking !== undefined ? { thinking } : {}),
     ...(maxSteps !== undefined ? { maxSteps } : {}),
-  };
+  });
 }
 
 function isBlankString(value: unknown): value is string {

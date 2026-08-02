@@ -1,7 +1,15 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import { INPUT_VALIDATION_FAILED } from "#veryfront/errors";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool } from "#veryfront/tool/types.ts";
+import {
+  SKILL_ID_MAX_LENGTH,
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES,
+  SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
+  SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
+import { matchesAllowedTool } from "#veryfront/skill/allowed-tools.ts";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema/zod-json-schema.ts";
 import {
   LOAD_SKILL_CONTINUE_SAME_TURN,
@@ -21,18 +29,17 @@ import type {
   RuntimeProjectSkillLoader,
 } from "./project-skill-loader.ts";
 import {
-  buildRuntimeLoadedSkillResponse,
-  normalizeRuntimeSkillReferencePath,
+  buildStrictRuntimeLoadedSkillResponse,
+  normalizeStrictRuntimeSkillReferencePath,
   type RuntimeLoadedSkillResponse,
   type RuntimeLoadedSkillResponseMessages,
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
 import type { ResolvedSkillSelectorPolicy } from "#veryfront/skill/selector.ts";
-import { narrowPolicyAfterSubmittedForm } from "./skill-policy-enforcement.ts";
 
-/** Legacy continuation-note fallback used when runtime tool inventory is unavailable. */
+/** Fail-closed continuation note used when no delegation tool is known available. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
-  `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools. ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING} ${LOAD_SKILL_TOOL_INTERSECTION}`;
+  `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_TOOL_INTERSECTION}`;
 
 /** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
@@ -105,15 +112,239 @@ function buildUnavailableCurrentRunToolsDelegationNote(
   return "";
 }
 
+function getEffectiveAvailableToolNames(
+  response: RuntimeLoadedSkillResponse,
+  availableToolNames: readonly string[] | undefined,
+): string[] {
+  const allowedTools = response.allowedTools;
+  if (availableToolNames === undefined) return [];
+  if (allowedTools === undefined) return [...availableToolNames];
+  return availableToolNames.filter((toolName) =>
+    allowedTools.some((pattern) => matchesAllowedTool(toolName, pattern))
+  );
+}
+
+function rememberBoundedRecordValue<T>(
+  record: Record<string, T>,
+  key: string,
+  value: T,
+  maxEntries: number,
+): void {
+  const keys = Object.keys(record);
+  const keyIsEnumerable = keys.includes(key);
+  let removalsNeeded = Math.max(
+    0,
+    keys.length + (keyIsEnumerable ? 0 : 1) - maxEntries,
+  );
+  for (const oldestKey of keys) {
+    if (removalsNeeded === 0) break;
+    if (oldestKey === key) continue;
+    if (!Reflect.deleteProperty(record, oldestKey)) {
+      throw new TypeError("Runtime skill load cache could not evict its oldest entry");
+    }
+    removalsNeeded -= 1;
+  }
+  if (removalsNeeded !== 0) {
+    throw new RangeError("Runtime skill load cache cannot satisfy its aggregate entry limit");
+  }
+  Object.defineProperty(record, key, {
+    configurable: true,
+    enumerable: true,
+    value,
+    writable: true,
+  });
+}
+
+type RuntimeSkillReferenceAuthorization = Readonly<{
+  references: readonly string[];
+  requiresActiveSkillContext: boolean;
+  has(reference: string): boolean;
+}>;
+
+type RuntimeSkillPrivateArrayScope = Readonly<{
+  identity: unknown;
+  reusable: boolean;
+  values: readonly unknown[] | null;
+}>;
+
+type RuntimeSkillPrivateScalarScope = Readonly<{
+  reusable: boolean;
+  value: unknown;
+}>;
+
+type RuntimeSkillPrivateLoaderScope = Readonly<{
+  identity: unknown;
+  listProjectSkillReferences: RuntimeSkillPrivateScalarScope;
+  loadProjectSkill: RuntimeSkillPrivateScalarScope;
+  loadProjectSkillReference: RuntimeSkillPrivateScalarScope;
+  reusable: boolean;
+}>;
+
+type RuntimeSkillPrivateRecordScope = Readonly<{
+  entries: readonly (readonly [string, unknown])[] | null;
+  identity: unknown;
+  reusable: boolean;
+}>;
+
+type RuntimeSkillPrivateAuthorityScope = Readonly<{
+  authToken: RuntimeSkillPrivateScalarScope;
+  agentId: RuntimeSkillPrivateScalarScope;
+  projectId: RuntimeSkillPrivateScalarScope;
+  branchId: RuntimeSkillPrivateScalarScope;
+  skillsDir: RuntimeSkillPrivateScalarScope;
+  projectSkillLoader: RuntimeSkillPrivateLoaderScope;
+  skillSourcePaths: RuntimeSkillPrivateRecordScope;
+  availableSkillIds: RuntimeSkillPrivateArrayScope;
+  builtinSkillIds: RuntimeSkillPrivateArrayScope;
+  availableToolNames: RuntimeSkillPrivateArrayScope;
+  loadedSkillResponses: unknown;
+  loadedSkillReferenceResponses: unknown;
+}>;
+
+type RuntimeSkillPrivateAuthorityGuard = Readonly<{
+  scopeEpoch: number;
+  scope: RuntimeSkillPrivateAuthorityScope;
+}>;
+
+type RuntimeSkillPrivatePublicationGuard = Readonly<{
+  key: string;
+  kind: "body" | "reference";
+  version: number;
+}>;
+
+type RuntimeSkillPrivateAuthorityCommit<T> = Readonly<{
+  guard: RuntimeSkillPrivateAuthorityGuard;
+  value: T;
+}>;
+
+type RuntimeSkillPrivateAuthorityController = Readonly<{
+  begin(): RuntimeSkillPrivateAuthorityGuard;
+  captureBody(key: string): RuntimeSkillPrivatePublicationGuard;
+  captureReference(key: string): RuntimeSkillPrivatePublicationGuard;
+  isCurrent(guard: RuntimeSkillPrivateAuthorityGuard): boolean;
+  commit<T>(
+    guard: RuntimeSkillPrivateAuthorityGuard,
+    target: RuntimeSkillPrivatePublicationGuard,
+    dependencies: readonly RuntimeSkillPrivatePublicationGuard[],
+    publish: () => T,
+  ): RuntimeSkillPrivateAuthorityCommit<T> | null;
+}>;
+
+const RUNTIME_SKILL_PRIVATE_AUTHORITY_MAX_ATTEMPTS = 3;
+const RUNTIME_SKILL_ID_PATTERN = /^[a-zA-Z0-9_-]+(?:\.md)?$/;
+
+function createReferenceAuthorization(
+  references: readonly string[] | undefined,
+  requiresActiveSkillContext = false,
+): RuntimeSkillReferenceAuthorization {
+  const snapshot = Object.freeze([...(references ?? [])]);
+  const referenceSet = new Set(snapshot);
+  return Object.freeze({
+    references: snapshot,
+    requiresActiveSkillContext,
+    has: (reference: string) => referenceSet.has(reference),
+  });
+}
+
+function rememberBoundedPrivateValue<T>(
+  store: Map<string, T>,
+  key: string,
+  value: T,
+  maxEntries = SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+): void {
+  store.delete(key);
+  store.set(key, value);
+  while (store.size > maxEntries) {
+    const oldestKey = store.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      throw new RangeError("Runtime skill private cache cannot satisfy its entry limit");
+    }
+    store.delete(oldestKey);
+  }
+}
+
+function compactLoadedSkillResponse(
+  response: RuntimeLoadedSkillResponse,
+): RuntimeLoadedSkillResponse {
+  const copy = copyLoadedSkillResponse(response);
+  return {
+    ...copy,
+    instructions: "",
+    nextStep: "",
+  };
+}
+
+function buildPublicLoadedSkillMarker(
+  response: RuntimeLoadedSkillResponse,
+): RuntimeLoadedSkillResponse {
+  return {
+    skillId: response.skillId,
+    instructions: "",
+    nextStep: "",
+    ...(response.references === undefined ? {} : { references: [...response.references] }),
+  };
+}
+
+function copyLoadedSkillResponse(
+  response: RuntimeLoadedSkillResponse,
+): RuntimeLoadedSkillResponse {
+  return {
+    ...response,
+    ...(response.allowedTools === undefined ? {} : { allowedTools: [...response.allowedTools] }),
+    ...(response.delegationTools === undefined
+      ? {}
+      : { delegationTools: [...response.delegationTools] }),
+    ...(response.unavailableCurrentRunTools === undefined
+      ? {}
+      : { unavailableCurrentRunTools: [...response.unavailableCurrentRunTools] }),
+    ...(response.references === undefined ? {} : { references: [...response.references] }),
+  };
+}
+
+function rememberTrustedLoadedSkillResponse(
+  authorizationStore: Map<string, RuntimeSkillReferenceAuthorization>,
+  trustedResponseStore: Map<string, RuntimeLoadedSkillResponse>,
+  loadedSkillResponses: Record<string, RuntimeLoadedSkillResponse>,
+  key: string,
+  response: RuntimeLoadedSkillResponse,
+  rememberPublicMarker = true,
+): RuntimeLoadedSkillResponse {
+  const trustedResponse = compactLoadedSkillResponse(response);
+  rememberBoundedPrivateValue(
+    authorizationStore,
+    key,
+    createReferenceAuthorization(trustedResponse.references),
+  );
+  rememberBoundedPrivateValue(trustedResponseStore, key, trustedResponse);
+  if (rememberPublicMarker) {
+    rememberBoundedRecordValue(
+      loadedSkillResponses,
+      key,
+      buildPublicLoadedSkillMarker(response),
+      SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES,
+    );
+  }
+  return trustedResponse;
+}
+
 /** Context for runtime load skill tool. */
 export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
   /** Agent identity used to enforce owner-scoped skill visibility. */
   agentId?: string;
+  /**
+   * Authoritative completed catalog snapshot when defined. An empty array
+   * means the catalog was available but exposed no loadable skills. Omit this
+   * field only when the catalog was unavailable or was not evaluated, which
+   * permits direct builtin fallback.
+   */
   availableSkillIds?: readonly string[];
   skillSelectorPolicy?: ResolvedSkillSelectorPolicy;
   availableToolNames?: readonly string[];
   loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>;
-  loadedSkillReferenceResponses?: Record<string, RuntimeLoadSkillReferenceFileOutput>;
+  loadedSkillReferenceResponses?: Record<
+    string,
+    true | RuntimeLoadSkillReferenceFileOutput
+  >;
 };
 
 /** Public API contract for runtime load skill builtin store. */
@@ -190,21 +421,120 @@ function getBuiltinStore(options: RuntimeLoadSkillToolOptions): RuntimeLoadSkill
   };
 }
 
-function getResponseMessages(
-  options: RuntimeLoadSkillToolOptions,
-): RuntimeLoadedSkillResponseMessages {
+function readRuntimeLoadSkillDataProperty(
+  value: unknown,
+  key: PropertyKey,
+  label: string,
+): unknown {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    throw new TypeError(`${label} must be an object`);
+  }
+  let descriptor: PropertyDescriptor | undefined;
+  try {
+    descriptor = Object.getOwnPropertyDescriptor(value, key);
+  } catch {
+    throw new TypeError(`${label}.${String(key)} must be a data property`);
+  }
+  if (descriptor === undefined) return undefined;
+  if (!("value" in descriptor)) {
+    throw new TypeError(`${label}.${String(key)} must be a data property`);
+  }
+  return descriptor.value;
+}
+
+function snapshotRuntimeLoadSkillAvailableToolNames(
+  value: unknown,
+): readonly string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new TypeError("Runtime load skill availableToolNames must be an array");
+  }
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
+    throw new TypeError("Runtime load skill availableToolNames length must be a data property");
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new TypeError("Runtime load skill availableToolNames length must be a data property");
+  }
+  if (length > SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES) {
+    throw new RangeError(
+      `Runtime load skill accepts at most ${SKILL_RUNTIME_AVAILABLE_TOOL_MAX_ENTRIES} available tool names`,
+    );
+  }
+
+  const snapshot: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, index);
+    } catch {
+      throw new TypeError(
+        `Runtime load skill available tool name ${index} must be a data property`,
+      );
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(
+        `Runtime load skill available tool name ${index} must be a data property`,
+      );
+    }
+    snapshot.push(descriptor.value);
+  }
+  return Object.freeze(snapshot);
+}
+
+function snapshotRuntimeLoadSkillResponseMessages(
+  messages: unknown,
+  availableToolNames: readonly string[] | undefined,
+): {
+  configuredDelegationNote: string | undefined;
+  messages: RuntimeLoadedSkillResponseMessages;
+} {
+  if (messages !== undefined && (!messages || typeof messages !== "object")) {
+    throw new TypeError("Runtime load skill messages must be an object");
+  }
+  const allowedToolsNote = messages === undefined
+    ? undefined
+    : readRuntimeLoadSkillDataProperty(messages, "allowedToolsNote", "Runtime load skill messages");
+  const noCurrentRunToolsNote = messages === undefined
+    ? undefined
+    : readRuntimeLoadSkillDataProperty(
+      messages,
+      "noCurrentRunToolsNote",
+      "Runtime load skill messages",
+    );
+  const configuredDelegationNote = messages === undefined
+    ? undefined
+    : readRuntimeLoadSkillDataProperty(
+      messages,
+      "unavailableCurrentRunToolsDelegationNote",
+      "Runtime load skill messages",
+    );
+  const overrideNote = messages === undefined
+    ? undefined
+    : readRuntimeLoadSkillDataProperty(messages, "overrideNote", "Runtime load skill messages");
+  const referenceNote = messages === undefined
+    ? undefined
+    : readRuntimeLoadSkillDataProperty(messages, "referenceNote", "Runtime load skill messages");
+
   return {
-    allowedToolsNote: options.messages?.allowedToolsNote ??
-      DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.allowedToolsNote,
-    noCurrentRunToolsNote: options.messages?.noCurrentRunToolsNote ??
-      DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.noCurrentRunToolsNote,
-    unavailableCurrentRunToolsDelegationNote:
-      options.messages?.unavailableCurrentRunToolsDelegationNote ??
-        buildUnavailableCurrentRunToolsDelegationNote(options.context.availableToolNames),
-    overrideNote: options.messages?.overrideNote ??
-      DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.overrideNote,
-    referenceNote: options.messages?.referenceNote ??
-      DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.referenceNote,
+    configuredDelegationNote: configuredDelegationNote as string | undefined,
+    messages: {
+      allowedToolsNote: (allowedToolsNote as string | undefined) ??
+        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.allowedToolsNote,
+      noCurrentRunToolsNote: (noCurrentRunToolsNote as string | undefined) ??
+        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.noCurrentRunToolsNote,
+      unavailableCurrentRunToolsDelegationNote: (configuredDelegationNote as string | undefined) ??
+        buildUnavailableCurrentRunToolsDelegationNote(availableToolNames),
+      overrideNote: (overrideNote as string | undefined) ??
+        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.overrideNote,
+      referenceNote: (referenceNote as string | undefined) ??
+        DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES.referenceNote,
+    },
   };
 }
 
@@ -214,15 +544,59 @@ function buildLoadedSkillResponse(input: {
   instructions: string;
   references?: readonly string[];
 }): RuntimeLoadedSkillResponse {
-  return buildRuntimeLoadedSkillResponse({
+  const configuredNextStep = readRuntimeLoadSkillDataProperty(
+    input.options,
+    "nextStep",
+    "Runtime load skill options",
+  ) as string | undefined;
+  const messagesInput = readRuntimeLoadSkillDataProperty(
+    input.options,
+    "messages",
+    "Runtime load skill options",
+  );
+  const availableToolNames = snapshotRuntimeLoadSkillAvailableToolNames(
+    readRuntimeLoadSkillDataProperty(
+      input.options.context,
+      "availableToolNames",
+      "Runtime load skill context",
+    ),
+  );
+  const logger = readRuntimeLoadSkillDataProperty(
+    input.options,
+    "logger",
+    "Runtime load skill options",
+  ) as RuntimeSkillMetadataLogger | undefined;
+  const { configuredDelegationNote, messages: responseMessages } =
+    snapshotRuntimeLoadSkillResponseMessages(messagesInput, availableToolNames);
+  const preliminaryResponse = buildStrictRuntimeLoadedSkillResponse({
     skillId: input.skillId,
     instructions: input.instructions,
-    nextStep: input.options.nextStep ??
-      buildRuntimeLoadSkillContinuationNote(input.options.context.availableToolNames),
-    messages: getResponseMessages(input.options),
+    nextStep: configuredNextStep ?? "",
+    messages: responseMessages,
     references: input.references,
-    availableToolNames: input.options.context.availableToolNames,
-    logger: input.options.logger,
+    availableToolNames,
+  });
+  const effectiveAvailableToolNames = getEffectiveAvailableToolNames(
+    preliminaryResponse,
+    availableToolNames,
+  );
+  const nextStep = configuredNextStep ??
+    buildRuntimeLoadSkillContinuationNote(effectiveAvailableToolNames);
+  const generatedDelegationNote = buildUnavailableCurrentRunToolsDelegationNote(
+    effectiveAvailableToolNames,
+  );
+  return buildStrictRuntimeLoadedSkillResponse({
+    skillId: input.skillId,
+    instructions: input.instructions,
+    nextStep,
+    messages: {
+      ...responseMessages,
+      unavailableCurrentRunToolsDelegationNote: configuredDelegationNote ??
+        generatedDelegationNote,
+    },
+    references: input.references,
+    availableToolNames,
+    logger,
   });
 }
 
@@ -230,25 +604,14 @@ function buildAlreadyLoadedSkillResponse(
   skillId: string,
   response: RuntimeLoadedSkillResponse,
 ): RuntimeLoadedSkillResponse {
-  const finishAllowedTools = narrowPolicyAfterSubmittedForm(skillId, response.allowedTools);
-
   return {
-    ...response,
+    ...copyLoadedSkillResponse(response),
     instructions:
       `Skill "${skillId}" is already loaded in this turn. Do not call load_skill for "${skillId}" again. ` +
       "Continue from the existing user request and any submitted tool results, then produce the next useful response now. " +
       "If a form_input result already exists, treat it as final for this turn and do not call form_input again.",
     nextStep:
       "Continue now. Do not reload this skill or restart intake; use the existing context and finish the current turn.",
-    ...(finishAllowedTools
-      ? {
-        allowedTools: finishAllowedTools,
-        note: finishAllowedTools.length > 0
-          ? response.note
-          : "IMPORTANT: Intake is complete for this turn. Do not call form_input again; finish with the existing context.",
-      }
-      : {}),
-    references: response.references,
   };
 }
 
@@ -256,8 +619,7 @@ function buildMissingSkillError(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
 ): RuntimeLoadSkillErrorOutput {
-  const knownIds = new Set(getKnownRuntimeSkillIds(options) ?? []);
-  const available = [...knownIds].sort().join(", ");
+  const available = getKnownRuntimeSkillIds(options)?.join(", ") || "none";
   return {
     error: `Skill not found: ${skillId}. Available skills: ${available}`,
   };
@@ -280,11 +642,13 @@ function buildRuntimeSkillCacheKey(
   context: RuntimeLoadSkillToolContext,
   skillId: string,
 ): string {
+  const skillSourcePaths = readOwnDataProperty(context, "skillSourcePaths");
   return JSON.stringify([
     skillId,
-    context.projectId ?? null,
-    context.branchId ?? null,
-    context.skillSourcePaths?.[skillId] ?? null,
+    readOwnDataProperty(context, "agentId") ?? null,
+    readOwnDataProperty(context, "projectId") ?? null,
+    readOwnDataProperty(context, "branchId") ?? null,
+    readOwnDataProperty(skillSourcePaths, skillId) ?? null,
   ]);
 }
 
@@ -299,57 +663,722 @@ function buildRuntimeSkillReferenceCacheKey(
   ]);
 }
 
+function readOwnDataProperty(value: unknown, key: PropertyKey): unknown {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function hasOwnDataProperty(value: unknown, key: PropertyKey): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  try {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    return descriptor !== undefined && "value" in descriptor;
+  } catch {
+    return false;
+  }
+}
+
+function snapshotRuntimeSkillPrivateArrayScope(
+  value: unknown,
+): RuntimeSkillPrivateArrayScope {
+  if (!Array.isArray(value)) {
+    return Object.freeze({
+      identity: value,
+      reusable: value === undefined || value === null,
+      values: null,
+    });
+  }
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
+    return Object.freeze({ identity: value, reusable: false, values: null });
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (
+    !Number.isSafeInteger(length) ||
+    length < 0 ||
+    length > SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES
+  ) {
+    return Object.freeze({ identity: value, reusable: false, values: null });
+  }
+
+  const values: unknown[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, index);
+    } catch {
+      return Object.freeze({ identity: value, reusable: false, values: null });
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      return Object.freeze({ identity: value, reusable: false, values: null });
+    }
+    values.push(descriptor.value);
+  }
+  return Object.freeze({
+    identity: value,
+    reusable: true,
+    values: Object.freeze(values),
+  });
+}
+
+function snapshotRuntimeSkillPrivateScalarScope(
+  value: unknown,
+  key: PropertyKey,
+): RuntimeSkillPrivateScalarScope {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) {
+    return Object.freeze({ reusable: false, value: undefined });
+  }
+  let current: object | null = value;
+  for (let depth = 0; depth < 16; depth += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(current, key);
+    } catch {
+      return Object.freeze({ reusable: false, value: undefined });
+    }
+    if (descriptor !== undefined) {
+      return "value" in descriptor
+        ? Object.freeze({ reusable: true, value: descriptor.value })
+        : Object.freeze({ reusable: false, value: undefined });
+    }
+    try {
+      current = Object.getPrototypeOf(current);
+    } catch {
+      return Object.freeze({ reusable: false, value: undefined });
+    }
+    if (current === null) {
+      return Object.freeze({ reusable: true, value: undefined });
+    }
+  }
+  return Object.freeze({ reusable: false, value: undefined });
+}
+
+function hasSameRuntimeSkillPrivateScalarScope(
+  left: RuntimeSkillPrivateScalarScope,
+  right: RuntimeSkillPrivateScalarScope,
+): boolean {
+  return left.reusable && right.reusable && Object.is(left.value, right.value);
+}
+
+function snapshotRuntimeSkillPrivateArrayPropertyScope(
+  value: unknown,
+  key: PropertyKey,
+): RuntimeSkillPrivateArrayScope {
+  const property = snapshotRuntimeSkillPrivateScalarScope(value, key);
+  return property.reusable
+    ? snapshotRuntimeSkillPrivateArrayScope(property.value)
+    : Object.freeze({ identity: property.value, reusable: false, values: null });
+}
+
+function hasSameRuntimeSkillPrivateArrayScope(
+  left: RuntimeSkillPrivateArrayScope,
+  right: RuntimeSkillPrivateArrayScope,
+): boolean {
+  if (left.identity !== right.identity) return false;
+  if (!left.reusable || !right.reusable) return false;
+  if (left.values === null || right.values === null) {
+    return left.values === right.values;
+  }
+  return left.values.length === right.values.length &&
+    left.values.every((value, index) => value === right.values?.[index]);
+}
+
+function snapshotRuntimeSkillPrivateRecordScope(
+  value: unknown,
+): RuntimeSkillPrivateRecordScope {
+  if (value === undefined || value === null) {
+    return Object.freeze({ entries: null, identity: value, reusable: true });
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return Object.freeze({ entries: null, identity: value, reusable: false });
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return Object.freeze({ entries: null, identity: value, reusable: false });
+  }
+  const keys = Object.keys(descriptors).sort();
+  if (keys.length > SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES) {
+    return Object.freeze({ entries: null, identity: value, reusable: false });
+  }
+
+  const entries: Array<readonly [string, unknown]> = [];
+  for (const key of keys) {
+    const descriptor = descriptors[key];
+    if (!descriptor || !("value" in descriptor)) {
+      return Object.freeze({ entries: null, identity: value, reusable: false });
+    }
+    entries.push(Object.freeze([key, descriptor.value] as const));
+  }
+  return Object.freeze({
+    entries: Object.freeze(entries),
+    identity: value,
+    reusable: true,
+  });
+}
+
+function snapshotRuntimeSkillPrivateRecordPropertyScope(
+  value: unknown,
+  key: PropertyKey,
+): RuntimeSkillPrivateRecordScope {
+  const property = snapshotRuntimeSkillPrivateScalarScope(value, key);
+  return property.reusable
+    ? snapshotRuntimeSkillPrivateRecordScope(property.value)
+    : Object.freeze({ entries: null, identity: property.value, reusable: false });
+}
+
+function hasSameRuntimeSkillPrivateRecordScope(
+  left: RuntimeSkillPrivateRecordScope,
+  right: RuntimeSkillPrivateRecordScope,
+): boolean {
+  if (left.identity !== right.identity || !left.reusable || !right.reusable) return false;
+  if (left.entries === null || right.entries === null) {
+    return left.entries === right.entries;
+  }
+  return left.entries.length === right.entries.length &&
+    left.entries.every((entry, index) => {
+      const other = right.entries?.[index];
+      return other !== undefined && entry[0] === other[0] && entry[1] === other[1];
+    });
+}
+
+function snapshotRuntimeSkillPrivateLoaderMethod(
+  loader: unknown,
+  key: keyof RuntimeProjectSkillLoader,
+): RuntimeSkillPrivateScalarScope {
+  let current = loader;
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (!current || (typeof current !== "object" && typeof current !== "function")) break;
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(current, key);
+    } catch {
+      return Object.freeze({ reusable: false, value: undefined });
+    }
+    if (descriptor !== undefined) {
+      return "value" in descriptor
+        ? Object.freeze({ reusable: true, value: descriptor.value })
+        : Object.freeze({ reusable: false, value: undefined });
+    }
+    try {
+      current = Object.getPrototypeOf(current);
+    } catch {
+      return Object.freeze({ reusable: false, value: undefined });
+    }
+  }
+  return Object.freeze({ reusable: false, value: undefined });
+}
+
+function snapshotRuntimeSkillPrivateLoaderScope(
+  options: RuntimeLoadSkillToolOptions,
+): RuntimeSkillPrivateLoaderScope {
+  const property = snapshotRuntimeSkillPrivateScalarScope(options, "projectSkillLoader");
+  const loader = property.value;
+  if (
+    !property.reusable ||
+    !loader ||
+    (typeof loader !== "object" && typeof loader !== "function")
+  ) {
+    const invalid = Object.freeze({ reusable: false, value: undefined });
+    return Object.freeze({
+      identity: loader,
+      listProjectSkillReferences: invalid,
+      loadProjectSkill: invalid,
+      loadProjectSkillReference: invalid,
+      reusable: false,
+    });
+  }
+  const listProjectSkillReferences = snapshotRuntimeSkillPrivateLoaderMethod(
+    loader,
+    "listProjectSkillReferences",
+  );
+  const loadProjectSkill = snapshotRuntimeSkillPrivateLoaderMethod(loader, "loadProjectSkill");
+  const loadProjectSkillReference = snapshotRuntimeSkillPrivateLoaderMethod(
+    loader,
+    "loadProjectSkillReference",
+  );
+  return Object.freeze({
+    identity: loader,
+    listProjectSkillReferences,
+    loadProjectSkill,
+    loadProjectSkillReference,
+    reusable: listProjectSkillReferences.reusable &&
+      loadProjectSkill.reusable &&
+      loadProjectSkillReference.reusable,
+  });
+}
+
+function hasSameRuntimeSkillPrivateLoaderScope(
+  left: RuntimeSkillPrivateLoaderScope,
+  right: RuntimeSkillPrivateLoaderScope,
+): boolean {
+  return left.reusable && right.reusable && left.identity === right.identity &&
+    hasSameRuntimeSkillPrivateScalarScope(
+      left.listProjectSkillReferences,
+      right.listProjectSkillReferences,
+    ) &&
+    hasSameRuntimeSkillPrivateScalarScope(left.loadProjectSkill, right.loadProjectSkill) &&
+    hasSameRuntimeSkillPrivateScalarScope(
+      left.loadProjectSkillReference,
+      right.loadProjectSkillReference,
+    );
+}
+
+function getOrCreateRuntimeCacheRecord<T>(
+  context: RuntimeLoadSkillToolContext,
+  key: "loadedSkillResponses" | "loadedSkillReferenceResponses",
+): Record<string, T> {
+  const existing = readOwnDataProperty(context, key);
+  if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+    return existing as Record<string, T>;
+  }
+
+  const record: Record<string, T> = {};
+  try {
+    Object.defineProperty(context, key, {
+      configurable: true,
+      enumerable: true,
+      value: record,
+      writable: true,
+    });
+  } catch {
+    throw new TypeError(`Runtime skill ${key} cache must be a writable data property`);
+  }
+  return record;
+}
+
+function snapshotRuntimeSkillPrivateAuthorityScope(
+  options: RuntimeLoadSkillToolOptions,
+  loadedSkillResponses: unknown = readOwnDataProperty(
+    options.context,
+    "loadedSkillResponses",
+  ),
+  loadedSkillReferenceResponses: unknown = readOwnDataProperty(
+    options.context,
+    "loadedSkillReferenceResponses",
+  ),
+): RuntimeSkillPrivateAuthorityScope {
+  const context = options.context;
+  return Object.freeze({
+    authToken: snapshotRuntimeSkillPrivateScalarScope(context, "authToken"),
+    agentId: snapshotRuntimeSkillPrivateScalarScope(context, "agentId"),
+    projectId: snapshotRuntimeSkillPrivateScalarScope(context, "projectId"),
+    branchId: snapshotRuntimeSkillPrivateScalarScope(context, "branchId"),
+    skillsDir: snapshotRuntimeSkillPrivateScalarScope(options, "skillsDir"),
+    projectSkillLoader: snapshotRuntimeSkillPrivateLoaderScope(options),
+    skillSourcePaths: snapshotRuntimeSkillPrivateRecordPropertyScope(
+      context,
+      "skillSourcePaths",
+    ),
+    availableSkillIds: snapshotRuntimeSkillPrivateArrayPropertyScope(
+      context,
+      "availableSkillIds",
+    ),
+    builtinSkillIds: snapshotRuntimeSkillPrivateArrayPropertyScope(
+      options,
+      "builtinSkillIds",
+    ),
+    availableToolNames: snapshotRuntimeSkillPrivateArrayPropertyScope(
+      context,
+      "availableToolNames",
+    ),
+    loadedSkillResponses,
+    loadedSkillReferenceResponses,
+  });
+}
+
+function hasSameRuntimeSkillPrivateAuthorityScope(
+  left: RuntimeSkillPrivateAuthorityScope,
+  right: RuntimeSkillPrivateAuthorityScope,
+): boolean {
+  return hasSameRuntimeSkillPrivateScalarScope(left.authToken, right.authToken) &&
+    hasSameRuntimeSkillPrivateScalarScope(left.agentId, right.agentId) &&
+    hasSameRuntimeSkillPrivateScalarScope(left.projectId, right.projectId) &&
+    hasSameRuntimeSkillPrivateScalarScope(left.branchId, right.branchId) &&
+    hasSameRuntimeSkillPrivateScalarScope(left.skillsDir, right.skillsDir) &&
+    hasSameRuntimeSkillPrivateLoaderScope(left.projectSkillLoader, right.projectSkillLoader) &&
+    hasSameRuntimeSkillPrivateRecordScope(left.skillSourcePaths, right.skillSourcePaths) &&
+    hasSameRuntimeSkillPrivateArrayScope(left.availableSkillIds, right.availableSkillIds) &&
+    hasSameRuntimeSkillPrivateArrayScope(left.builtinSkillIds, right.builtinSkillIds) &&
+    hasSameRuntimeSkillPrivateArrayScope(left.availableToolNames, right.availableToolNames) &&
+    left.loadedSkillResponses === right.loadedSkillResponses &&
+    left.loadedSkillReferenceResponses === right.loadedSkillReferenceResponses;
+}
+
+function hasSameRuntimeSkillPrivateAttemptArrayScope(
+  left: RuntimeSkillPrivateArrayScope,
+  right: RuntimeSkillPrivateArrayScope,
+): boolean {
+  if (left.identity !== right.identity || left.reusable !== right.reusable) return false;
+  if (left.values === null || right.values === null) {
+    return left.values === right.values;
+  }
+  return left.values.length === right.values.length &&
+    left.values.every((value, index) => Object.is(value, right.values?.[index]));
+}
+
+function hasSameRuntimeSkillPrivateAttemptScalarScope(
+  left: RuntimeSkillPrivateScalarScope,
+  right: RuntimeSkillPrivateScalarScope,
+): boolean {
+  return left.reusable === right.reusable && Object.is(left.value, right.value);
+}
+
+function hasSameRuntimeSkillPrivateAttemptRecordScope(
+  left: RuntimeSkillPrivateRecordScope,
+  right: RuntimeSkillPrivateRecordScope,
+): boolean {
+  if (left.identity !== right.identity || left.reusable !== right.reusable) return false;
+  if (left.entries === null || right.entries === null) {
+    return left.entries === right.entries;
+  }
+  return left.entries.length === right.entries.length &&
+    left.entries.every((entry, index) => {
+      const other = right.entries?.[index];
+      return other !== undefined && entry[0] === other[0] && Object.is(entry[1], other[1]);
+    });
+}
+
+function hasSameRuntimeSkillPrivateAttemptLoaderScope(
+  left: RuntimeSkillPrivateLoaderScope,
+  right: RuntimeSkillPrivateLoaderScope,
+): boolean {
+  return left.identity === right.identity && left.reusable === right.reusable &&
+    hasSameRuntimeSkillPrivateAttemptScalarScope(
+      left.listProjectSkillReferences,
+      right.listProjectSkillReferences,
+    ) &&
+    hasSameRuntimeSkillPrivateAttemptScalarScope(
+      left.loadProjectSkill,
+      right.loadProjectSkill,
+    ) &&
+    hasSameRuntimeSkillPrivateAttemptScalarScope(
+      left.loadProjectSkillReference,
+      right.loadProjectSkillReference,
+    );
+}
+
+function hasSameRuntimeSkillPrivateAttemptScope(
+  left: RuntimeSkillPrivateAuthorityScope,
+  right: RuntimeSkillPrivateAuthorityScope,
+): boolean {
+  return hasSameRuntimeSkillPrivateAttemptScalarScope(left.authToken, right.authToken) &&
+    hasSameRuntimeSkillPrivateAttemptScalarScope(left.agentId, right.agentId) &&
+    hasSameRuntimeSkillPrivateAttemptScalarScope(left.projectId, right.projectId) &&
+    hasSameRuntimeSkillPrivateAttemptScalarScope(left.branchId, right.branchId) &&
+    hasSameRuntimeSkillPrivateAttemptScalarScope(left.skillsDir, right.skillsDir) &&
+    hasSameRuntimeSkillPrivateAttemptLoaderScope(
+      left.projectSkillLoader,
+      right.projectSkillLoader,
+    ) &&
+    hasSameRuntimeSkillPrivateAttemptRecordScope(
+      left.skillSourcePaths,
+      right.skillSourcePaths,
+    ) &&
+    hasSameRuntimeSkillPrivateAttemptArrayScope(
+      left.availableSkillIds,
+      right.availableSkillIds,
+    ) &&
+    hasSameRuntimeSkillPrivateAttemptArrayScope(
+      left.builtinSkillIds,
+      right.builtinSkillIds,
+    ) &&
+    hasSameRuntimeSkillPrivateAttemptArrayScope(
+      left.availableToolNames,
+      right.availableToolNames,
+    ) &&
+    left.loadedSkillResponses === right.loadedSkillResponses &&
+    left.loadedSkillReferenceResponses === right.loadedSkillReferenceResponses;
+}
+
+type RuntimeLoadedSkillMarker = Readonly<{
+  skillId: string;
+  hasAdvertisedReferences: boolean;
+}>;
+
+function snapshotLoadedSkillMarker(
+  response: unknown,
+  expectedSkillId: string,
+): RuntimeLoadedSkillMarker | undefined {
+  const skillId = readOwnDataProperty(response, "skillId");
+  if (skillId !== expectedSkillId) return undefined;
+  const references = readOwnDataProperty(response, "references");
+  const referenceLength = Array.isArray(references)
+    ? readOwnDataProperty(references, "length")
+    : undefined;
+  return Object.freeze({
+    skillId,
+    hasAdvertisedReferences: typeof referenceLength === "number" && referenceLength > 0,
+  });
+}
+
+function isScopedRuntimeSkillCacheKey(cacheKey: string, skillId: string): boolean {
+  try {
+    const parsed = JSON.parse(cacheKey);
+    return Array.isArray(parsed) &&
+      (parsed.length === 4 || parsed.length === 5) &&
+      parsed[0] === skillId;
+  } catch {
+    return false;
+  }
+}
+
+function snapshotLoadedSkillMarkers(
+  context: RuntimeLoadSkillToolContext,
+  skillIds: readonly string[],
+): readonly RuntimeLoadedSkillMarker[] {
+  const record = readOwnDataProperty(context, "loadedSkillResponses");
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
+    return [];
+  }
+
+  let descriptors: PropertyDescriptorMap;
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(record);
+  } catch {
+    return [];
+  }
+
+  const markers: RuntimeLoadedSkillMarker[] = [];
+  for (const expectedSkillId of skillIds) {
+    const currentCacheKey = buildRuntimeSkillCacheKey(context, expectedSkillId);
+    const currentDescriptor = descriptors[currentCacheKey];
+    if (currentDescriptor && "value" in currentDescriptor) {
+      const marker = snapshotLoadedSkillMarker(currentDescriptor.value, expectedSkillId);
+      if (marker) {
+        markers.push(marker);
+        continue;
+      }
+    }
+
+    for (const [cacheKey, descriptor] of Object.entries(descriptors)) {
+      if (
+        cacheKey === currentCacheKey ||
+        isScopedRuntimeSkillCacheKey(cacheKey, expectedSkillId) ||
+        !descriptor.enumerable ||
+        !("value" in descriptor)
+      ) {
+        continue;
+      }
+      const marker = snapshotLoadedSkillMarker(descriptor.value, expectedSkillId);
+      if (!marker) continue;
+      markers.push(marker);
+      break;
+    }
+  }
+  return Object.freeze(markers);
+}
+
+function hasLoadedSkillResponseMarker(
+  loadedSkillResponses: Record<string, RuntimeLoadedSkillResponse>,
+  cacheKey: string,
+): boolean {
+  return hasOwnDataProperty(loadedSkillResponses, cacheKey);
+}
+
+function executionContextAdvertisesReference(
+  context: ToolExecutionContext | undefined,
+  skillId: string,
+  file: string,
+  normalizedFile: string,
+): boolean {
+  if (
+    file !== normalizedFile ||
+    readOwnDataProperty(context, "activeSkillId") !== skillId
+  ) {
+    return false;
+  }
+
+  const availability = readOwnDataProperty(context, "activeSkillToolAvailability");
+  const references = readOwnDataProperty(availability, "references");
+  if (!Array.isArray(references)) {
+    return false;
+  }
+
+  try {
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(references, "length");
+    const length = lengthDescriptor && "value" in lengthDescriptor
+      ? lengthDescriptor.value
+      : undefined;
+    if (
+      typeof length !== "number" ||
+      !Number.isSafeInteger(length) ||
+      length < 0 ||
+      length > SKILL_LOADABLE_REFERENCE_MAX_ENTRIES
+    ) {
+      return false;
+    }
+
+    let isAdvertised = false;
+    for (let index = 0; index < length; index += 1) {
+      const descriptor = Object.getOwnPropertyDescriptor(references, index);
+      const reference = descriptor && "value" in descriptor ? descriptor.value : undefined;
+      if (
+        typeof reference !== "string" ||
+        normalizeStrictRuntimeSkillReferencePath(reference) !== reference
+      ) {
+        return false;
+      }
+      isAdvertised ||= reference === normalizedFile;
+    }
+    return isAdvertised;
+  } catch {
+    return false;
+  }
+}
+
+function hasClaimedProjectSkill(
+  context: RuntimeLoadSkillToolContext,
+  skillId: string,
+): boolean {
+  const sourcePaths = snapshotRuntimeSkillPrivateRecordPropertyScope(
+    context,
+    "skillSourcePaths",
+  );
+  if (!sourcePaths.reusable) {
+    return true;
+  }
+  return sourcePaths.entries?.some(([key]) => key === skillId) ?? false;
+}
+
 function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions): string {
   if (options.description) {
     return options.description;
   }
 
-  if (options.context.availableSkillIds === undefined && !options.builtinSkillIds) {
+  const knownIds = getKnownRuntimeSkillIds(options);
+  if (knownIds === null) {
     return RUNTIME_LOAD_SKILL_DESCRIPTION;
   }
 
-  const knownIds = new Set(getKnownRuntimeSkillIds(options) ?? []);
-  const available = [...knownIds].sort().join(", ") || "none";
+  const available = knownIds.join(", ") || "none";
 
   return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Available skill IDs: ${available}. Do not invent skill IDs. Only call load_skill with one of these IDs.`;
 }
 
-function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] | null {
-  if (options.context.availableSkillIds !== undefined) {
-    return [...new Set(options.context.availableSkillIds)].sort();
+function snapshotRuntimeSkillIdInventory(
+  value: unknown,
+  label: "availableSkillIds" | "builtinSkillIds",
+): string[] {
+  if (!Array.isArray(value)) {
+    throw new TypeError(`Runtime load skill ${label} must be an array`);
+  }
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  try {
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  } catch {
+    throw new TypeError(`Runtime load skill ${label} length must be a data property`);
+  }
+  const length = lengthDescriptor && "value" in lengthDescriptor
+    ? lengthDescriptor.value
+    : undefined;
+  if (!Number.isSafeInteger(length) || length < 0) {
+    throw new TypeError(`Runtime load skill ${label} length must be a data property`);
+  }
+  if (length > SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES) {
+    throw new RangeError(
+      `Runtime load skill accepts at most ${SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES} ${label} entries`,
+    );
   }
 
-  if (!options.builtinSkillIds) {
-    return null;
+  const snapshot: string[] = [];
+  for (let index = 0; index < length; index += 1) {
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, index);
+    } catch {
+      throw new TypeError(
+        `Runtime load skill ${label} entry ${index} must be a data property`,
+      );
+    }
+    if (!descriptor || !("value" in descriptor)) {
+      throw new TypeError(
+        `Runtime load skill ${label} entry ${index} must be a data property`,
+      );
+    }
+    const skillId = descriptor.value;
+    if (
+      typeof skillId !== "string" ||
+      skillId.length === 0 ||
+      skillId.length > SKILL_ID_MAX_LENGTH ||
+      !RUNTIME_SKILL_ID_PATTERN.test(skillId)
+    ) {
+      throw new TypeError(
+        `Runtime load skill ${label} entry ${index} must be a valid bounded skill ID`,
+      );
+    }
+    snapshot.push(skillId);
   }
-
-  return [
-    ...new Set([
-      ...(options.context.availableSkillIds ?? []),
-      ...(options.builtinSkillIds ?? []),
-    ]),
-  ].sort();
+  return [...new Set(snapshot)].sort();
 }
 
-function getLoadedRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] {
+function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] | null {
+  const availableSkillIds = snapshotRuntimeSkillPrivateScalarScope(
+    options.context,
+    "availableSkillIds",
+  );
+  if (!availableSkillIds.reusable) {
+    throw new TypeError("Runtime load skill availableSkillIds must be a data property");
+  }
+  if (availableSkillIds.value !== undefined) {
+    return snapshotRuntimeSkillIdInventory(
+      availableSkillIds.value,
+      "availableSkillIds",
+    );
+  }
+
+  const builtinSkillIds = snapshotRuntimeSkillPrivateScalarScope(
+    options,
+    "builtinSkillIds",
+  );
+  if (!builtinSkillIds.reusable) {
+    throw new TypeError("Runtime load skill builtinSkillIds must be a data property");
+  }
+  if (builtinSkillIds.value === undefined) {
+    return null;
+  }
+  return snapshotRuntimeSkillIdInventory(builtinSkillIds.value, "builtinSkillIds");
+}
+
+function getLoadedRuntimeSkillIds(
+  markers: readonly RuntimeLoadedSkillMarker[],
+): string[] {
   return [
     ...new Set(
-      Object.values(options.context.loadedSkillResponses ?? {})
-        .map((response) => response.skillId)
-        .filter((skillId): skillId is string => typeof skillId === "string" && skillId.length > 0),
+      markers.map((marker) => marker.skillId),
     ),
   ].sort();
 }
 
 function getReferenceableLoadedRuntimeSkillIds(
+  markers: readonly RuntimeLoadedSkillMarker[],
   options: RuntimeLoadSkillToolOptions,
+  authorizationStore: ReadonlyMap<string, RuntimeSkillReferenceAuthorization>,
 ): string[] {
   return [
     ...new Set(
-      Object.values(options.context.loadedSkillResponses ?? {})
-        .filter((response) => (response.references?.length ?? 0) > 0)
-        .map((response) => response.skillId)
-        .filter((skillId): skillId is string => typeof skillId === "string" && skillId.length > 0),
+      markers
+        .filter((marker) =>
+          marker.hasAdvertisedReferences ||
+          (authorizationStore.get(buildRuntimeSkillCacheKey(options.context, marker.skillId))
+              ?.references.length ?? 0) > 0
+        )
+        .map((marker) => marker.skillId),
     ),
   ].sort();
 }
@@ -383,7 +1412,10 @@ function normalizeRuntimeLoadSkillInputSkillId(
   return skillId;
 }
 
-function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) {
+function buildRuntimeLoadSkillInputSchema(
+  options: RuntimeLoadSkillToolOptions,
+  authorizationStore: ReadonlyMap<string, RuntimeSkillReferenceAuthorization>,
+) {
   const knownIds = getKnownRuntimeSkillIds(options);
   if (!knownIds) {
     return runtimeLoadSkillToolInputSchema;
@@ -402,9 +1434,16 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
   }
 
   const knownIdSet = new Set(knownIds);
-  const loadedIds = getLoadedRuntimeSkillIds(options).filter((skillId) => knownIdSet.has(skillId));
+  const loadedMarkers = snapshotLoadedSkillMarkers(options.context, knownIds);
+  const loadedIds = getLoadedRuntimeSkillIds(loadedMarkers).filter((skillId) =>
+    knownIdSet.has(skillId)
+  );
   const loadedIdSet = new Set(loadedIds);
-  const referenceableLoadedIds = getReferenceableLoadedRuntimeSkillIds(options)
+  const referenceableLoadedIds = getReferenceableLoadedRuntimeSkillIds(
+    loadedMarkers,
+    options,
+    authorizationStore,
+  )
     .filter((skillId) => knownIdSet.has(skillId));
   const unloadedIds = knownIds.filter((skillId) => !loadedIdSet.has(skillId));
 
@@ -500,74 +1539,279 @@ function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) 
 
 async function loadRuntimeSkillReferenceFile(
   options: RuntimeLoadSkillToolOptions,
+  builtinStore: RuntimeLoadSkillBuiltinStore,
+  privateAuthority: RuntimeSkillPrivateAuthorityController,
+  authorizationStore: Map<string, RuntimeSkillReferenceAuthorization>,
+  trustedResponseStore: Map<string, RuntimeLoadedSkillResponse>,
+  trustedReferenceStore: Map<string, true>,
+  loadedSkillResponses: Record<string, RuntimeLoadedSkillResponse>,
+  loadedSkillReferenceResponses: Record<string, true | RuntimeLoadSkillReferenceFileOutput>,
   skillId: string,
   file: string,
+  executionContext?: ToolExecutionContext,
 ): Promise<RuntimeLoadSkillReferenceFileOutput | RuntimeLoadSkillErrorOutput> {
-  const normalizedFile = normalizeRuntimeSkillReferencePath(file);
+  const normalizedFile = normalizeStrictRuntimeSkillReferencePath(file);
   if (!normalizedFile) {
     return { error: `Invalid reference file path: ${file}` };
   }
 
-  const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
-  const loadedSkillResponse = options.context.loadedSkillResponses?.[loadedSkillKey];
-  if (!loadedSkillResponse) {
-    return {
-      error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
-        `Call load_skill with only {"skillId":"${skillId}"} first, then request one of the listed reference files.`,
-    };
+  authorityAttempts:
+  for (
+    let attempt = 0;
+    attempt < RUNTIME_SKILL_PRIVATE_AUTHORITY_MAX_ATTEMPTS;
+    attempt += 1
+  ) {
+    let authorityGuard = privateAuthority.begin();
+    const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
+    const hasLoadedSkillResponse = hasLoadedSkillResponseMarker(
+      loadedSkillResponses,
+      loadedSkillKey,
+    );
+    const cachedAuthorization = authorizationStore.get(loadedSkillKey);
+    const resumedReferenceIsAdvertised: boolean = !hasLoadedSkillResponse &&
+      executionContextAdvertisesReference(
+        executionContext,
+        skillId,
+        file,
+        normalizedFile,
+      );
+    const reusableCachedAuthorization: RuntimeSkillReferenceAuthorization | undefined =
+      cachedAuthorization &&
+        (!cachedAuthorization.requiresActiveSkillContext || resumedReferenceIsAdvertised)
+        ? cachedAuthorization
+        : undefined;
+    if (
+      !reusableCachedAuthorization &&
+      !hasLoadedSkillResponse &&
+      !resumedReferenceIsAdvertised
+    ) {
+      return {
+        error: `Skill "${skillId}" must be loaded before reference file "${normalizedFile}". ` +
+          `Call load_skill with only {"skillId":"${skillId}"} first, then request one of the listed reference files.`,
+      };
+    }
+
+    let authorization: RuntimeSkillReferenceAuthorization | undefined = reusableCachedAuthorization;
+    if (!authorization) {
+      const requiresActiveSkillContext = !hasLoadedSkillResponse && resumedReferenceIsAdvertised;
+      const bodyPublication = privateAuthority.captureBody(loadedSkillKey);
+      const projectSkill = await loadRuntimeSkillBody(options, skillId, executionContext);
+      throwIfLoadSkillAborted(executionContext);
+      if (!privateAuthority.isCurrent(authorityGuard)) {
+        continue;
+      }
+
+      let responseToRemember: RuntimeLoadedSkillResponse | undefined;
+      if (projectSkill) {
+        responseToRemember = buildLoadedSkillResponse({
+          options,
+          skillId,
+          instructions: projectSkill.instructions,
+          references: projectSkill.references,
+        });
+        if (!privateAuthority.isCurrent(authorityGuard)) {
+          continue;
+        }
+        authorization = createReferenceAuthorization(
+          responseToRemember.references,
+          requiresActiveSkillContext,
+        );
+      } else {
+        const projectSkillIsClaimed = hasClaimedProjectSkill(options.context, skillId);
+        if (!privateAuthority.isCurrent(authorityGuard)) {
+          continue;
+        }
+        if (!projectSkillIsClaimed) {
+          const localContent = builtinStore.readSkill(options.skillsDir, skillId);
+          throwIfLoadSkillAborted(executionContext);
+          if (!privateAuthority.isCurrent(authorityGuard)) {
+            continue;
+          }
+          if (localContent !== null) {
+            const references = builtinStore.listReferences(options.skillsDir, skillId);
+            throwIfLoadSkillAborted(executionContext);
+            if (!privateAuthority.isCurrent(authorityGuard)) {
+              continue;
+            }
+            responseToRemember = buildLoadedSkillResponse({
+              options,
+              skillId,
+              instructions: localContent,
+              references,
+            });
+            if (!privateAuthority.isCurrent(authorityGuard)) {
+              continue;
+            }
+          }
+        }
+        authorization = createReferenceAuthorization(
+          responseToRemember?.references,
+          requiresActiveSkillContext,
+        );
+      }
+
+      const authorizationToRemember = authorization;
+      const published = privateAuthority.commit(
+        authorityGuard,
+        bodyPublication,
+        [],
+        () => {
+          if (responseToRemember) {
+            rememberTrustedLoadedSkillResponse(
+              authorizationStore,
+              trustedResponseStore,
+              loadedSkillResponses,
+              loadedSkillKey,
+              responseToRemember,
+              hasLoadedSkillResponse,
+            );
+          }
+          rememberBoundedPrivateValue(
+            authorizationStore,
+            loadedSkillKey,
+            authorizationToRemember,
+          );
+          return authorizationToRemember;
+        },
+      );
+      if (!published) {
+        continue;
+      }
+      authorityGuard = published.guard;
+      authorization = published.value;
+    }
+    if (!authorization.has(normalizedFile)) {
+      const availableReferences = authorization.references.length > 0
+        ? authorization.references.join(", ")
+        : "none";
+      return {
+        error: `Reference file not advertised by loaded skill "${skillId}": ${normalizedFile}. ` +
+          `Available references: ${availableReferences}`,
+      };
+    }
+
+    const referenceKey = buildRuntimeSkillReferenceCacheKey(
+      options.context,
+      skillId,
+      normalizedFile,
+    );
+    if (trustedReferenceStore.has(referenceKey)) {
+      return buildAlreadyLoadedSkillReferenceResponse(skillId, normalizedFile);
+    }
+
+    const bodyDependency = privateAuthority.captureBody(loadedSkillKey);
+    const referencePublication = privateAuthority.captureReference(referenceKey);
+    const projectFileContent = await options.projectSkillLoader.loadProjectSkillReference(
+      options.context,
+      skillId,
+      normalizedFile,
+      executionContext?.abortSignal,
+    );
+    throwIfLoadSkillAborted(executionContext);
+    if (!privateAuthority.isCurrent(authorityGuard)) {
+      continue;
+    }
+    if (projectFileContent !== null) {
+      const response = { skillId, file: normalizedFile, content: projectFileContent };
+      const published = privateAuthority.commit(
+        authorityGuard,
+        referencePublication,
+        [bodyDependency],
+        () => {
+          rememberBoundedRecordValue(
+            loadedSkillReferenceResponses,
+            referenceKey,
+            true,
+            SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
+          );
+          rememberBoundedPrivateValue(
+            trustedReferenceStore,
+            referenceKey,
+            true,
+            SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
+          );
+          return response;
+        },
+      );
+      if (!published) {
+        continue;
+      }
+      return published.value;
+    }
+
+    const projectSkillIsClaimed = hasClaimedProjectSkill(options.context, skillId);
+    if (!privateAuthority.isCurrent(authorityGuard)) {
+      continue;
+    }
+    if (projectSkillIsClaimed) {
+      return { error: `Project skill reference not found: ${skillId}/${normalizedFile}` };
+    }
+
+    const localContent = builtinStore.readReferenceFile(
+      options.skillsDir,
+      skillId,
+      normalizedFile,
+    );
+    throwIfLoadSkillAborted(executionContext);
+    if (!privateAuthority.isCurrent(authorityGuard)) {
+      continue authorityAttempts;
+    }
+    if (localContent !== null) {
+      const response = { skillId, file: normalizedFile, content: localContent };
+      const published = privateAuthority.commit(
+        authorityGuard,
+        referencePublication,
+        [bodyDependency],
+        () => {
+          rememberBoundedRecordValue(
+            loadedSkillReferenceResponses,
+            referenceKey,
+            true,
+            SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
+          );
+          rememberBoundedPrivateValue(
+            trustedReferenceStore,
+            referenceKey,
+            true,
+            SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES,
+          );
+          return response;
+        },
+      );
+      if (!published) {
+        continue;
+      }
+      return published.value;
+    }
+
+    return { error: `Reference file not found: ${skillId}/${normalizedFile}` };
   }
 
-  const advertisedReferences = loadedSkillResponse.references ?? [];
-  if (!advertisedReferences.includes(normalizedFile)) {
-    const availableReferences = advertisedReferences.length > 0
-      ? advertisedReferences.join(", ")
-      : "none";
-    return {
-      error: `Reference file not advertised by loaded skill "${skillId}": ${normalizedFile}. ` +
-        `Available references: ${availableReferences}`,
-    };
-  }
-
-  const loadedSkillReferenceResponses = options.context.loadedSkillReferenceResponses ??= {};
-  const referenceKey = buildRuntimeSkillReferenceCacheKey(
-    options.context,
-    skillId,
-    normalizedFile,
-  );
-  if (loadedSkillReferenceResponses[referenceKey]) {
-    return buildAlreadyLoadedSkillReferenceResponse(skillId, normalizedFile);
-  }
-
-  const projectFileContent = await options.projectSkillLoader.loadProjectSkillReference(
-    options.context,
-    skillId,
-    normalizedFile,
-  );
-  if (projectFileContent) {
-    const response = { skillId, file: normalizedFile, content: projectFileContent };
-    loadedSkillReferenceResponses[referenceKey] = response;
-    return response;
-  }
-
-  const localContent = getBuiltinStore(options).readReferenceFile(
-    options.skillsDir,
-    skillId,
-    normalizedFile,
-  );
-  if (localContent) {
-    const response = { skillId, file: normalizedFile, content: localContent };
-    loadedSkillReferenceResponses[referenceKey] = response;
-    return response;
-  }
-
-  return { error: `Reference file not found: ${skillId}/${normalizedFile}` };
+  return {
+    error:
+      `Skill authorization context changed repeatedly while loading "${skillId}". Request was not completed.`,
+  };
 }
 
 async function loadRuntimeSkillBody(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
+  executionContext?: ToolExecutionContext,
 ): Promise<RuntimeLoadedProjectSkill | null> {
-  return await options.projectSkillLoader.loadProjectSkill(options.context, skillId);
+  return await options.projectSkillLoader.loadProjectSkill(
+    options.context,
+    skillId,
+    executionContext?.abortSignal,
+  );
+}
+
+function throwIfLoadSkillAborted(executionContext: ToolExecutionContext | undefined): void {
+  const signal = executionContext?.abortSignal;
+  if (signal?.aborted) {
+    throw signal.reason === undefined
+      ? new DOMException("The operation was aborted", "AbortError")
+      : signal.reason;
+  }
 }
 
 /** Create runtime load skill tool. */
@@ -575,11 +1819,230 @@ export function createRuntimeLoadSkillTool(
   options: RuntimeLoadSkillToolOptions,
 ): Tool<RuntimeLoadSkillToolInput, RuntimeLoadSkillToolOutput> {
   const builtinStore = getBuiltinStore(options);
+  const authorizationStore = new Map<string, RuntimeSkillReferenceAuthorization>();
+  const trustedResponseStore = new Map<string, RuntimeLoadedSkillResponse>();
+  const trustedReferenceStore = new Map<string, true>();
+  const bodyPublicationVersions = new Map<string, number>();
+  const referencePublicationVersions = new Map<string, number>();
+  let authorityScope: RuntimeSkillPrivateAuthorityScope | undefined;
+  // This per-tool epoch orders runtime-observed complete-scope transitions.
+  // Descriptor rechecks also catch direct mutations whose final scope differs;
+  // they intentionally do not claim to observe an otherwise invisible direct ABA.
+  let authorityScopeEpoch = 0;
+  // Per-key versions arbitrate same-skill publications without invalidating
+  // stable work for unrelated skills in the same complete authority scope.
+  let authorityPublicationSequence = 0;
 
-  async function execute({ skillId, file }: RuntimeLoadSkillToolInput) {
+  function nextAuthorityPublicationVersion(): number {
+    if (authorityPublicationSequence >= Number.MAX_SAFE_INTEGER) {
+      throw new RangeError("Runtime skill authority publication sequence is exhausted");
+    }
+    authorityPublicationSequence += 1;
+    return authorityPublicationSequence;
+  }
+
+  function clearPrivateAuthorityStores(): void {
+    authorizationStore.clear();
+    trustedResponseStore.clear();
+    trustedReferenceStore.clear();
+    bodyPublicationVersions.clear();
+    referencePublicationVersions.clear();
+  }
+
+  function refreshPrivateAuthorityScope(
+    loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>,
+    loadedSkillReferenceResponses?: Record<
+      string,
+      true | RuntimeLoadSkillReferenceFileOutput
+    >,
+  ): RuntimeSkillPrivateAuthorityGuard {
+    const nextScope = snapshotRuntimeSkillPrivateAuthorityScope(
+      options,
+      loadedSkillResponses,
+      loadedSkillReferenceResponses,
+    );
+    if (
+      authorityScope !== undefined &&
+      hasSameRuntimeSkillPrivateAuthorityScope(authorityScope, nextScope)
+    ) {
+      return Object.freeze({ scope: authorityScope, scopeEpoch: authorityScopeEpoch });
+    }
+    authorityScopeEpoch += 1;
+    clearPrivateAuthorityStores();
+    authorityScope = nextScope;
+    return Object.freeze({ scope: nextScope, scopeEpoch: authorityScopeEpoch });
+  }
+
+  function isPrivateAuthorityGuardCurrent(
+    guard: RuntimeSkillPrivateAuthorityGuard,
+    loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>,
+    loadedSkillReferenceResponses?: Record<
+      string,
+      true | RuntimeLoadSkillReferenceFileOutput
+    >,
+  ): boolean {
+    if (guard.scopeEpoch !== authorityScopeEpoch) {
+      return false;
+    }
+    const currentScope = snapshotRuntimeSkillPrivateAuthorityScope(
+      options,
+      loadedSkillResponses,
+      loadedSkillReferenceResponses,
+    );
+    return hasSameRuntimeSkillPrivateAttemptScope(guard.scope, currentScope);
+  }
+
+  function getPrivatePublicationStore(
+    kind: RuntimeSkillPrivatePublicationGuard["kind"],
+  ): Map<string, number> {
+    return kind === "body" ? bodyPublicationVersions : referencePublicationVersions;
+  }
+
+  function getPrivatePublicationLimit(
+    kind: RuntimeSkillPrivatePublicationGuard["kind"],
+  ): number {
+    return kind === "body"
+      ? SKILL_RUNTIME_LOADED_SKILL_CACHE_MAX_ENTRIES
+      : SKILL_RUNTIME_LOADED_REFERENCE_CACHE_MAX_ENTRIES;
+  }
+
+  function capturePrivatePublication(
+    kind: RuntimeSkillPrivatePublicationGuard["kind"],
+    key: string,
+  ): RuntimeSkillPrivatePublicationGuard {
+    const store = getPrivatePublicationStore(kind);
+    let version = store.get(key);
+    if (version === undefined) {
+      version = nextAuthorityPublicationVersion();
+      rememberBoundedPrivateValue(
+        store,
+        key,
+        version,
+        getPrivatePublicationLimit(kind),
+      );
+    }
+    return Object.freeze({ key, kind, version });
+  }
+
+  function isPrivatePublicationCurrent(
+    guard: RuntimeSkillPrivatePublicationGuard,
+  ): boolean {
+    return getPrivatePublicationStore(guard.kind).get(guard.key) === guard.version;
+  }
+
+  function commitPrivateAuthority<T>(
+    guard: RuntimeSkillPrivateAuthorityGuard,
+    target: RuntimeSkillPrivatePublicationGuard,
+    dependencies: readonly RuntimeSkillPrivatePublicationGuard[],
+    publish: () => T,
+    loadedSkillResponses?: Record<string, RuntimeLoadedSkillResponse>,
+    loadedSkillReferenceResponses?: Record<
+      string,
+      true | RuntimeLoadSkillReferenceFileOutput
+    >,
+  ): RuntimeSkillPrivateAuthorityCommit<T> | null {
+    if (
+      !isPrivateAuthorityGuardCurrent(
+        guard,
+        loadedSkillResponses,
+        loadedSkillReferenceResponses,
+      ) ||
+      !isPrivatePublicationCurrent(target) ||
+      dependencies.some((dependency) => !isPrivatePublicationCurrent(dependency))
+    ) {
+      return null;
+    }
+
+    let value: T;
+    let committedTarget: RuntimeSkillPrivatePublicationGuard;
+    try {
+      const committedVersion = nextAuthorityPublicationVersion();
+      rememberBoundedPrivateValue(
+        getPrivatePublicationStore(target.kind),
+        target.key,
+        committedVersion,
+        getPrivatePublicationLimit(target.kind),
+      );
+      committedTarget = Object.freeze({ ...target, version: committedVersion });
+      value = publish();
+    } catch (error) {
+      authorityScopeEpoch += 1;
+      clearPrivateAuthorityStores();
+      authorityScope = undefined;
+      throw error;
+    }
+    if (
+      !isPrivateAuthorityGuardCurrent(
+        guard,
+        loadedSkillResponses,
+        loadedSkillReferenceResponses,
+      ) ||
+      !isPrivatePublicationCurrent(committedTarget) ||
+      dependencies.some((dependency) => !isPrivatePublicationCurrent(dependency))
+    ) {
+      return null;
+    }
+    return Object.freeze({ guard, value });
+  }
+
+  function bindPrivateAuthority(
+    loadedSkillResponses: Record<string, RuntimeLoadedSkillResponse>,
+    loadedSkillReferenceResponses: Record<
+      string,
+      true | RuntimeLoadSkillReferenceFileOutput
+    >,
+  ): RuntimeSkillPrivateAuthorityController {
+    return Object.freeze({
+      begin: () =>
+        refreshPrivateAuthorityScope(
+          loadedSkillResponses,
+          loadedSkillReferenceResponses,
+        ),
+      captureBody: (key) => capturePrivatePublication("body", key),
+      captureReference: (key) => capturePrivatePublication("reference", key),
+      isCurrent: (guard) =>
+        isPrivateAuthorityGuardCurrent(
+          guard,
+          loadedSkillResponses,
+          loadedSkillReferenceResponses,
+        ),
+      commit: <T>(
+        guard: RuntimeSkillPrivateAuthorityGuard,
+        target: RuntimeSkillPrivatePublicationGuard,
+        dependencies: readonly RuntimeSkillPrivatePublicationGuard[],
+        publish: () => T,
+      ) =>
+        commitPrivateAuthority(
+          guard,
+          target,
+          dependencies,
+          publish,
+          loadedSkillResponses,
+          loadedSkillReferenceResponses,
+        ),
+    });
+  }
+
+  async function execute(
+    { skillId, file }: RuntimeLoadSkillToolInput,
+    executionContext?: ToolExecutionContext,
+  ) {
+    throwIfLoadSkillAborted(executionContext);
+    const loadedSkillResponses = getOrCreateRuntimeCacheRecord<RuntimeLoadedSkillResponse>(
+      options.context,
+      "loadedSkillResponses",
+    );
+    const loadedSkillReferenceResponses = getOrCreateRuntimeCacheRecord<
+      true | RuntimeLoadSkillReferenceFileOutput
+    >(options.context, "loadedSkillReferenceResponses");
+    const privateAuthority = bindPrivateAuthority(
+      loadedSkillResponses,
+      loadedSkillReferenceResponses,
+    );
+    privateAuthority.begin();
     let parsed: RuntimeLoadSkillToolInput;
     try {
-      parsed = buildRuntimeLoadSkillInputSchema(options).parse(
+      parsed = buildRuntimeLoadSkillInputSchema(options, authorizationStore).parse(
         file === undefined ? { skillId } : { skillId, file },
       );
     } catch (error) {
@@ -592,42 +2055,135 @@ export function createRuntimeLoadSkillTool(
     skillId = normalizeRuntimeLoadSkillInputSkillId(options, parsed.skillId);
     file = parsed.file;
 
+    const knownSkillIds = getKnownRuntimeSkillIds(options);
+    if (knownSkillIds !== null && !knownSkillIds.includes(skillId)) {
+      return buildMissingSkillError(options, skillId);
+    }
+
     if (file) {
-      return await loadRuntimeSkillReferenceFile(options, skillId, file);
-    }
-
-    const loadedSkillResponses = options.context.loadedSkillResponses ??= {};
-    const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
-    const loadedResponse = loadedSkillResponses[loadedSkillKey];
-    if (loadedResponse) {
-      return buildAlreadyLoadedSkillResponse(skillId, loadedResponse);
-    }
-
-    const projectSkill = await loadRuntimeSkillBody(options, skillId);
-    if (projectSkill) {
-      const response = buildLoadedSkillResponse({
+      return await loadRuntimeSkillReferenceFile(
         options,
+        builtinStore,
+        privateAuthority,
+        authorizationStore,
+        trustedResponseStore,
+        trustedReferenceStore,
+        loadedSkillResponses,
+        loadedSkillReferenceResponses,
         skillId,
-        instructions: projectSkill.instructions,
-        references: projectSkill.references,
-      });
-      loadedSkillResponses[loadedSkillKey] = response;
-      return response;
+        file,
+        executionContext,
+      );
     }
 
-    const localContent = builtinStore.readSkill(options.skillsDir, skillId);
-    if (localContent) {
-      const response = buildLoadedSkillResponse({
-        options,
-        skillId,
-        instructions: localContent,
-        references: builtinStore.listReferences(options.skillsDir, skillId),
-      });
-      loadedSkillResponses[loadedSkillKey] = response;
-      return response;
+    for (
+      let attempt = 0;
+      attempt < RUNTIME_SKILL_PRIVATE_AUTHORITY_MAX_ATTEMPTS;
+      attempt += 1
+    ) {
+      const authorityGuard = privateAuthority.begin();
+      const loadedSkillKey = buildRuntimeSkillCacheKey(options.context, skillId);
+      const trustedResponse = trustedResponseStore.get(loadedSkillKey);
+      if (trustedResponse) {
+        return buildAlreadyLoadedSkillResponse(skillId, trustedResponse);
+      }
+
+      const bodyPublication = privateAuthority.captureBody(loadedSkillKey);
+      const projectSkill = await loadRuntimeSkillBody(options, skillId, executionContext);
+      throwIfLoadSkillAborted(executionContext);
+      if (!privateAuthority.isCurrent(authorityGuard)) {
+        continue;
+      }
+      if (projectSkill) {
+        const response = buildLoadedSkillResponse({
+          options,
+          skillId,
+          instructions: projectSkill.instructions,
+          references: projectSkill.references,
+        });
+        if (!privateAuthority.isCurrent(authorityGuard)) {
+          continue;
+        }
+        const published = privateAuthority.commit(
+          authorityGuard,
+          bodyPublication,
+          [],
+          () => {
+            rememberTrustedLoadedSkillResponse(
+              authorizationStore,
+              trustedResponseStore,
+              loadedSkillResponses,
+              loadedSkillKey,
+              response,
+            );
+            return response;
+          },
+        );
+        if (!published) {
+          continue;
+        }
+        return published.value;
+      }
+
+      const projectSkillIsClaimed = hasClaimedProjectSkill(options.context, skillId);
+      if (!privateAuthority.isCurrent(authorityGuard)) {
+        continue;
+      }
+      if (projectSkillIsClaimed) {
+        return {
+          error:
+            `Project skill "${skillId}" is unavailable or no longer satisfies its validated catalog contract.`,
+        };
+      }
+
+      const localContent = builtinStore.readSkill(options.skillsDir, skillId);
+      throwIfLoadSkillAborted(executionContext);
+      if (!privateAuthority.isCurrent(authorityGuard)) {
+        continue;
+      }
+      if (localContent !== null) {
+        const references = builtinStore.listReferences(options.skillsDir, skillId);
+        throwIfLoadSkillAborted(executionContext);
+        if (!privateAuthority.isCurrent(authorityGuard)) {
+          continue;
+        }
+        const response = buildLoadedSkillResponse({
+          options,
+          skillId,
+          instructions: localContent,
+          references,
+        });
+        if (!privateAuthority.isCurrent(authorityGuard)) {
+          continue;
+        }
+        const published = privateAuthority.commit(
+          authorityGuard,
+          bodyPublication,
+          [],
+          () => {
+            rememberTrustedLoadedSkillResponse(
+              authorizationStore,
+              trustedResponseStore,
+              loadedSkillResponses,
+              loadedSkillKey,
+              response,
+            );
+            return response;
+          },
+        );
+        if (!published) {
+          continue;
+        }
+        return published.value;
+      }
+
+      return buildMissingSkillError(options, skillId);
     }
 
-    return buildMissingSkillError(options, skillId);
+    return {
+      error:
+        `Skill authorization context changed repeatedly while loading "${skillId}". Request was not completed.`,
+    };
   }
 
   return {
@@ -636,7 +2192,8 @@ export function createRuntimeLoadSkillTool(
     description: buildRuntimeLoadSkillDescription(options),
     inputSchema: runtimeLoadSkillToolInputSchema,
     get inputSchemaJson() {
-      return zodToJsonSchema(buildRuntimeLoadSkillInputSchema(options));
+      refreshPrivateAuthorityScope();
+      return zodToJsonSchema(buildRuntimeLoadSkillInputSchema(options, authorizationStore));
     },
     execute,
   };

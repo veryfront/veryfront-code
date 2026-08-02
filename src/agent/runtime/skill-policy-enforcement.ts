@@ -4,13 +4,29 @@ import { serverLogger } from "#veryfront/utils";
 import {
   isToolAllowedBySkill,
   type SkillToolAvailability,
-  validateAllowedToolPatterns,
+  snapshotAllowedToolPatterns,
 } from "#veryfront/skill/allowed-tools.ts";
+import {
+  SKILL_ALLOWED_TOOL_MAX_PATTERNS,
+  SKILL_DOCUMENT_MAX_CHARACTERS,
+  SKILL_ID_MAX_LENGTH,
+  SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  SKILL_SUBDIR_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
+import { SKILL_READABLE_DIRS } from "#veryfront/skill/types.ts";
+import { hasControlCharacters, isWellFormedUtf16 } from "#veryfront/skill/string-safety.ts";
+import {
+  hasToolExecutionErrorMarker,
+  readToolResultOwnDataProperty,
+  UNREADABLE_TOOL_RESULT_PROPERTY,
+} from "#veryfront/tool/result.ts";
 import { isToolResultPart } from "./tool-result-continuation.ts";
+import { normalizeStrictRuntimeSkillReferencePath } from "./skill-metadata.ts";
 import {
   extractSkillDelegationOverrides,
   type SkillDelegationOverrides,
 } from "./skill-delegation-overrides.ts";
+import { isGenuineUserTurnMessage } from "./runtime-message-origin.ts";
 
 const logger = serverLogger.component("agent");
 
@@ -19,16 +35,98 @@ export const FORM_INPUT_TOOL_ID = "form_input";
 export const INVOKE_AGENT_TOOL_ID = "invoke_agent";
 export const SUBMITTED_FORM_INPUT_CONTEXT_KEY = "hasSubmittedFormInputResult";
 
-export const INACTIVE_SKILL_TOOL_AVAILABILITY: SkillToolAvailability = {
-  hasActiveSkill: false,
-  references: [],
-  scripts: [],
-};
+const EMPTY_SKILL_FILE_LIST = Object.freeze([]) as readonly string[];
 
-const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS = new Set([
+export const INACTIVE_SKILL_TOOL_AVAILABILITY: SkillToolAvailability = Object.freeze({
+  hasActiveSkill: false,
+  references: EMPTY_SKILL_FILE_LIST,
+  scripts: EMPTY_SKILL_FILE_LIST,
+});
+
+const POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS: ReadonlySet<string> = new Set([
   FORM_INPUT_TOOL_ID,
-  LOAD_SKILL_TOOL_ID,
 ]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  try {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  } catch {
+    return false;
+  }
+}
+
+function getBoundedArrayLength(value: unknown, maxEntries: number): number | null {
+  try {
+    if (!Array.isArray(value)) return null;
+  } catch {
+    return null;
+  }
+  const length = readToolResultOwnDataProperty(value, "length");
+  return typeof length === "number" &&
+      Number.isSafeInteger(length) &&
+      length >= 0 &&
+      length <= maxEntries
+    ? length
+    : null;
+}
+
+function getActiveSkillReferenceSnapshot(
+  activeSkillId: string | undefined,
+  availability: SkillToolAvailability | undefined,
+): string[] {
+  if (
+    !activeSkillId ||
+    !isRecord(availability) ||
+    readToolResultOwnDataProperty(availability, "hasActiveSkill") !== true
+  ) {
+    return [];
+  }
+  const references = readToolResultOwnDataProperty(availability, "references");
+  const referenceCount = getBoundedArrayLength(
+    references,
+    SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+  );
+  if (referenceCount === null) return [];
+
+  const snapshot: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < referenceCount; index += 1) {
+    const reference = readToolResultOwnDataProperty(references, index);
+    if (
+      typeof reference !== "string" ||
+      normalizeStrictRuntimeSkillReferencePath(reference) !== reference ||
+      !SKILL_READABLE_DIRS.some((directory) => reference.startsWith(`${directory}/`))
+    ) {
+      return [];
+    }
+    if (!seen.has(reference)) {
+      seen.add(reference);
+      snapshot.push(reference);
+    }
+  }
+  return snapshot;
+}
+
+function isSkillActivationResult(result: unknown): result is Record<string, unknown> {
+  if (!isRecord(result) || hasToolExecutionErrorMarker(result)) return false;
+  const skillId = readToolResultOwnDataProperty(result, "skillId");
+  const instructions = readToolResultOwnDataProperty(result, "instructions");
+  return typeof skillId === "string" &&
+    skillId.length > 0 &&
+    skillId.length <= SKILL_ID_MAX_LENGTH &&
+    isWellFormedUtf16(skillId) &&
+    !hasControlCharacters(skillId) &&
+    typeof instructions === "string" &&
+    instructions.length <= SKILL_DOCUMENT_MAX_CHARACTERS &&
+    isWellFormedUtf16(instructions);
+}
+
+export type ActiveSkillState = {
+  activeSkillId: string | undefined;
+  activeSkillPolicy: string[] | undefined;
+  activeSkillToolAvailability: SkillToolAvailability;
+  activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+};
 
 function getSkillActivationRequiredError(toolName: string): string {
   return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
@@ -37,60 +135,56 @@ function getSkillActivationRequiredError(toolName: string): string {
 
 export function hydrateActiveSkillStateFromMessages(
   messages: readonly Message[],
-): {
-  activeSkillId: string | undefined;
-  activeSkillPolicy: string[] | undefined;
-  activeSkillToolAvailability: SkillToolAvailability | undefined;
-  activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
-} {
-  let activeSkillId: string | undefined;
-  let activeSkillPolicy: string[] | undefined;
-  let activeSkillToolAvailability: SkillToolAvailability = INACTIVE_SKILL_TOOL_AVAILABILITY;
-  let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+): ActiveSkillState {
+  let state: ActiveSkillState = {
+    activeSkillId: undefined,
+    activeSkillPolicy: undefined,
+    activeSkillToolAvailability: INACTIVE_SKILL_TOOL_AVAILABILITY,
+    activeSkillDelegationOverrides: undefined,
+  };
 
   for (const message of messages) {
     for (const part of message.parts) {
       if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
-      activeSkillId = extractSkillId(part.result);
-      activeSkillPolicy = extractSkillPolicy(part.result);
-      activeSkillToolAvailability = extractSkillToolAvailability(part.result) ??
-        INACTIVE_SKILL_TOOL_AVAILABILITY;
-      activeSkillDelegationOverrides = extractSkillDelegationOverrides(part.result);
+      state = applySkillActivationResult(state, part.result);
     }
   }
 
-  return {
-    activeSkillId,
-    activeSkillPolicy,
-    activeSkillToolAvailability,
-    activeSkillDelegationOverrides,
-  };
+  return state;
 }
 
 export function extractSkillId(result: unknown): string | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const skillResult = result as { skillId?: unknown };
-  return typeof skillResult.skillId === "string" ? skillResult.skillId : undefined;
+  if (!isRecord(result)) return undefined;
+  const skillId = readToolResultOwnDataProperty(result, "skillId");
+  return typeof skillId === "string" ? skillId : undefined;
 }
 
 export function extractSkillPolicy(result: unknown): string[] | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const skillResult = result as { allowedTools?: unknown };
-
-  if (!("allowedTools" in skillResult) || skillResult.allowedTools === undefined) {
-    return undefined;
-  }
-
-  const raw = skillResult.allowedTools;
-  if (!Array.isArray(raw) || !raw.every((v) => typeof v === "string")) {
+  if (!isRecord(result)) return undefined;
+  const field = readToolResultOwnDataProperty(result, "allowedTools");
+  if (field === undefined) return undefined;
+  const patternCount = getBoundedArrayLength(field, SKILL_ALLOWED_TOOL_MAX_PATTERNS);
+  if (field === UNREADABLE_TOOL_RESULT_PROPERTY || patternCount === null) {
     logger.warn(
       "load_skill returned invalid allowedTools; falling back to empty policy (no tools)",
     );
     return [];
   }
 
+  const patterns: string[] = [];
+  for (let index = 0; index < patternCount; index += 1) {
+    const pattern = readToolResultOwnDataProperty(field, index);
+    if (typeof pattern !== "string") {
+      logger.warn(
+        "load_skill returned invalid allowedTools; falling back to empty policy (no tools)",
+      );
+      return [];
+    }
+    patterns.push(pattern);
+  }
+
   try {
-    return validateAllowedToolPatterns(raw);
+    return snapshotAllowedToolPatterns(patterns);
   } catch (error) {
     logger.warn(
       "load_skill returned invalid tool patterns; falling back to empty policy (no tools)",
@@ -100,32 +194,80 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
   }
 }
 
-function extractStringArrayField(result: Record<string, unknown>, field: string): string[] {
-  const raw = result[field];
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((value): value is string => typeof value === "string");
+function extractStringArrayField(
+  result: Record<string, unknown>,
+  field: string,
+  allowedDirectories: readonly string[],
+  maxEntries: number,
+): readonly string[] {
+  const raw = readToolResultOwnDataProperty(result, field);
+  const entryCount = getBoundedArrayLength(raw, maxEntries);
+  if (entryCount === null) {
+    return EMPTY_SKILL_FILE_LIST;
+  }
+
+  const snapshot: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < entryCount; index += 1) {
+    const value = readToolResultOwnDataProperty(raw, index);
+    if (
+      typeof value !== "string" ||
+      normalizeStrictRuntimeSkillReferencePath(value) !== value ||
+      !allowedDirectories.some((directory) => value.startsWith(`${directory}/`))
+    ) {
+      return EMPTY_SKILL_FILE_LIST;
+    }
+    if (!seen.has(value)) {
+      seen.add(value);
+      snapshot.push(value);
+    }
+  }
+  return Object.freeze(snapshot);
 }
 
 export function extractSkillToolAvailability(
   result: unknown,
 ): SkillToolAvailability | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const skillResult = result as Record<string, unknown>;
-  if (typeof skillResult.error === "string") return undefined;
+  if (!isSkillActivationResult(result)) return undefined;
 
-  const looksLikeLoadedSkill = typeof skillResult.instructions === "string" ||
-    typeof skillResult.skillId === "string" ||
-    "allowedTools" in skillResult ||
-    "references" in skillResult ||
-    "scripts" in skillResult;
-
-  if (!looksLikeLoadedSkill) return undefined;
-
-  return {
+  return Object.freeze({
     hasActiveSkill: true,
-    references: extractStringArrayField(skillResult, "references"),
-    scripts: extractStringArrayField(skillResult, "scripts"),
-  };
+    references: extractStringArrayField(
+      result,
+      "references",
+      SKILL_READABLE_DIRS,
+      SKILL_LOADABLE_REFERENCE_MAX_ENTRIES,
+    ),
+    scripts: extractStringArrayField(
+      result,
+      "scripts",
+      ["scripts"],
+      SKILL_SUBDIR_MAX_ENTRIES,
+    ),
+  });
+}
+
+/** Apply only a validated body-load response; reference/error results preserve state. */
+export function applySkillActivationResult(
+  current: ActiveSkillState,
+  result: unknown,
+): ActiveSkillState {
+  if (!isSkillActivationResult(result)) return current;
+
+  try {
+    return {
+      activeSkillId: extractSkillId(result),
+      activeSkillPolicy: extractSkillPolicy(result),
+      activeSkillToolAvailability: extractSkillToolAvailability(result) ??
+        INACTIVE_SKILL_TOOL_AVAILABILITY,
+      activeSkillDelegationOverrides: extractSkillDelegationOverrides(result),
+    };
+  } catch (error) {
+    logger.warn("load_skill returned an unreadable activation result; preserving prior policy", {
+      error,
+    });
+    return current;
+  }
 }
 
 function parseToolResultJson(result: string): unknown {
@@ -136,26 +278,27 @@ function parseToolResultJson(result: string): unknown {
   }
 }
 
-function containsSubmittedFormInputResult(result: unknown, depth = 0): boolean {
+export function isSubmittedFormInputResult(result: unknown): boolean {
   const normalized = typeof result === "string" ? parseToolResultJson(result) : result;
-  if (!normalized || typeof normalized !== "object" || depth > 3) {
-    return false;
-  }
-  if ((normalized as { submitted?: unknown }).submitted === true) {
-    return true;
-  }
-  return Object.values(normalized).some((value) =>
-    containsSubmittedFormInputResult(value, depth + 1)
-  );
-}
+  if (!isRecord(normalized) || hasToolExecutionErrorMarker(normalized)) return false;
+  const submitted = readToolResultOwnDataProperty(normalized, "submitted");
+  if (submitted === UNREADABLE_TOOL_RESULT_PROPERTY) return false;
+  if (submitted !== undefined) return submitted === true;
 
-function isSubmittedFormInputResult(result: unknown): boolean {
-  return containsSubmittedFormInputResult(result);
+  for (const wrapperName of ["response", "output"]) {
+    const wrapper = readToolResultOwnDataProperty(normalized, wrapperName);
+    if (!isRecord(wrapper) || hasToolExecutionErrorMarker(wrapper)) continue;
+    const wrappedSubmitted = readToolResultOwnDataProperty(wrapper, "submitted");
+    if (wrappedSubmitted !== UNREADABLE_TOOL_RESULT_PROPERTY && wrappedSubmitted !== undefined) {
+      return wrappedSubmitted === true;
+    }
+  }
+  return false;
 }
 
 function latestUserMessageIndex(messages: readonly Message[]): number {
   for (let index = messages.length - 1; index >= 0; index--) {
-    if (messages[index]?.role === "user") {
+    if (messages[index] && isGenuineUserTurnMessage(messages[index]!)) {
       return index;
     }
   }
@@ -179,6 +322,10 @@ export function filterToolsAfterSubmittedFormInput(
   tools: readonly ToolDefinition[],
   messages: readonly Message[],
   runtimeContext?: Record<string, unknown>,
+  activeSkill?: {
+    id?: string;
+    toolAvailability?: SkillToolAvailability;
+  },
 ): ToolDefinition[] {
   const hasSubmittedFormInput = hasSubmittedFormInputResult(messages) ||
     runtimeContext?.[SUBMITTED_FORM_INPUT_CONTEXT_KEY] === true;
@@ -186,13 +333,38 @@ export function filterToolsAfterSubmittedFormInput(
     return [...tools];
   }
 
-  return tools.filter((tool) => !POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name));
+  const activeSkillReferences = getActiveSkillReferenceSnapshot(
+    activeSkill?.id,
+    activeSkill?.toolAvailability,
+  );
+  return tools.flatMap((tool) => {
+    if (POST_SUBMITTED_FORM_INPUT_BLOCKED_TOOL_IDS.has(tool.name)) {
+      return [];
+    }
+    if (tool.name !== LOAD_SKILL_TOOL_ID) {
+      return [tool];
+    }
+    if (!activeSkill?.id || activeSkillReferences.length === 0) {
+      return [];
+    }
+    return [{
+      ...tool,
+      parameters: {
+        type: "object",
+        properties: {
+          skillId: { type: "string", enum: [activeSkill.id] },
+          file: { type: "string", enum: activeSkillReferences },
+        },
+        required: ["skillId", "file"],
+        additionalProperties: false,
+      },
+    }];
+  });
 }
 
 export function removeFormInputAfterSubmission(
   toolName: string,
   result: unknown,
-  activeSkillId: string | undefined,
   activeSkillPolicy: string[] | undefined,
 ): string[] | undefined {
   if (
@@ -202,48 +374,17 @@ export function removeFormInputAfterSubmission(
     return activeSkillPolicy;
   }
 
-  return narrowPolicyAfterSubmittedForm(activeSkillId, activeSkillPolicy);
+  return narrowPolicyAfterSubmittedForm(activeSkillPolicy);
 }
 
 export function narrowPolicyAfterSubmittedForm(
-  activeSkillId: string | undefined,
   activeSkillPolicy: string[] | undefined,
 ): string[] | undefined {
-  if (!activeSkillPolicy) return activeSkillPolicy;
+  if (activeSkillPolicy === undefined) return undefined;
 
-  if (activeSkillId === "research") {
-    return activeSkillPolicy.filter((allowedToolName) =>
-      [
-        "studio_suggestions",
-        "web_search",
-        "web_fetch",
-        "create_file",
-        "update_file",
-      ].includes(allowedToolName)
-    );
-  }
-
-  if (
-    activeSkillId === "create-agent" ||
-    activeSkillId === "create-agentic-workflow"
-  ) {
-    return activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID);
-  }
-
-  if (activeSkillId === "plan") {
-    return activeSkillPolicy.filter((allowedToolName) =>
-      [
-        "studio_suggestions",
-        "list_files",
-        "get_file",
-        "search_files",
-        "create_file",
-        "update_file",
-      ].includes(allowedToolName)
-    );
-  }
-
-  return activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID);
+  return snapshotAllowedToolPatterns(
+    activeSkillPolicy.filter((allowedToolName) => allowedToolName !== FORM_INPUT_TOOL_ID),
+  );
 }
 
 export type SkillPolicyResult =
@@ -253,7 +394,42 @@ export type SkillPolicyResult =
 export type SkillPolicyOptions = {
   hasSubmittedFormInput?: boolean;
   skillToolAvailability?: SkillToolAvailability;
+  activeSkillId?: string;
+  toolInput?: Record<string, unknown>;
 };
+
+function isActiveSkillReferenceLoad(options: SkillPolicyOptions): boolean {
+  if (
+    !options.activeSkillId ||
+    !isRecord(options.toolInput) ||
+    !isRecord(options.skillToolAvailability) ||
+    readToolResultOwnDataProperty(options.skillToolAvailability, "hasActiveSkill") !== true
+  ) {
+    return false;
+  }
+  const skillId = readToolResultOwnDataProperty(options.toolInput, "skillId");
+  const file = readToolResultOwnDataProperty(options.toolInput, "file");
+  if (
+    skillId !== options.activeSkillId ||
+    typeof file !== "string" ||
+    normalizeStrictRuntimeSkillReferencePath(file) !== file
+  ) {
+    return false;
+  }
+
+  return getActiveSkillReferenceSnapshot(
+    options.activeSkillId,
+    options.skillToolAvailability,
+  ).includes(file);
+}
+
+/** Identify a valid skill-body activation call without confusing reference reads for activation. */
+export function isSkillBodyLoadRequest(toolName: string, input: unknown): boolean {
+  if (toolName !== LOAD_SKILL_TOOL_ID || !isRecord(input)) return false;
+  const skillId = readToolResultOwnDataProperty(input, "skillId");
+  const file = readToolResultOwnDataProperty(input, "file");
+  return typeof skillId === "string" && skillId.length > 0 && file === undefined;
+}
 
 export function enforceSkillPolicy(
   toolName: string,
@@ -273,6 +449,18 @@ export function enforceSkillPolicy(
       allowed: false,
       error:
         `Tool "${toolName}" cannot run after a submitted form_input result exists. Continue with the submitted values.`,
+    };
+  }
+
+  if (
+    options.hasSubmittedFormInput === true &&
+    toolName === LOAD_SKILL_TOOL_ID &&
+    !isActiveSkillReferenceLoad(options)
+  ) {
+    return {
+      allowed: false,
+      error:
+        `Tool "${toolName}" cannot load or switch skill bodies after form_input was submitted. Only an advertised reference file from the active skill may be loaded.`,
     };
   }
 
