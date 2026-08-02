@@ -64,8 +64,18 @@ export function assertCanonicalEvalString(
   }
 }
 
+function isEvalArray(value: unknown): value is unknown[] {
+  // Array.isArray throws on revoked proxies; report those as non-arrays so the
+  // caller raises its structured validation error instead of a raw TypeError.
+  try {
+    return ArrayIsArray(value);
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeEvalStringList(value: unknown, label: string): string[] {
-  if (!Array.isArray(value)) {
+  if (!isEvalArray(value)) {
     throw createEvalValidationError(`${label} must be an array of strings`);
   }
 
@@ -110,7 +120,7 @@ export function normalizeEvalExamples(
   examples: readonly EvalExampleInput[],
   source: string,
 ): EvalExample[] {
-  if (!Array.isArray(examples)) {
+  if (!isEvalArray(examples)) {
     throw createEvalValidationError(`${source} must be an array of eval examples`);
   }
 
