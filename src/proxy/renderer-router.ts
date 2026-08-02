@@ -19,11 +19,14 @@ const MAX_TARGETS = 4_096;
 const MAX_STATIC_TARGETS_CODE_UNITS = 64 * 1_024;
 const MAX_DISCOVERY_HOST_CODE_UNITS = 253;
 const MAX_FALLBACK_URL_CODE_UNITS = 4_096;
-const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
-const FNV_PRIME = 0x100000001b3n;
+// Decimal BigInt literals, matching the FNV-1a constants in
+// src/cache/keys/utils.ts. Hexadecimal BigInt literals are not modelled by
+// CodeQL's abstract interpreter, which reports them as undefined operands.
+const FNV_OFFSET_BASIS = 14695981039346656037n;
+const FNV_PRIME = 1099511628211n;
 const JUMP_HASH_MULTIPLIER = 2_862_933_555_777_941_757n;
 const JUMP_HASH_SCALE = 2_147_483_648;
-const UINT64_MODULUS = 0x1_0000_0000_0000_0000n;
+const UINT64_MODULUS = 1n << 64n;
 
 const logger = proxyLogger.child({ module: "renderer-router" });
 const EMPTY_TARGETS: readonly string[] = Object.freeze([]);
