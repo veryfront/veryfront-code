@@ -32,6 +32,7 @@ async function withInternalCredentials<T>(
 function fetchFromMockApi(
   port: number,
   credentials?: { username: string; password: string },
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
   return withInternalCredentials(
     credentials?.username,
@@ -42,6 +43,7 @@ function fetchFromMockApi(
         "my-project",
         "env-123",
         "test-token",
+        signal,
       ),
   );
 }
@@ -111,6 +113,45 @@ describe("project-env/fetcher", () => {
 
     try {
       await assertRejects(() => fetchFromMockApi(port));
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("normalizes project authorization failures without exposing upstream status", async () => {
+    const { server, port } = createMockServer(() => {
+      return new Response("tenant-specific upstream detail", { status: 403 });
+    });
+
+    try {
+      const error = await assertRejects(() => fetchFromMockApi(port));
+      assertEquals((error as { slug?: string }).slug, "permission-denied");
+      assertEquals(
+        (error as Error).message,
+        "Project credential is not authorized for the requested environment",
+      );
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("rejects management redirects without following them", async () => {
+    const paths: string[] = [];
+    const { server, port } = createMockServer((req: Request) => {
+      const url = new URL(req.url);
+      paths.push(url.pathname);
+      if (url.pathname === "/redirect-target") {
+        return Response.json({ data: [{ key: "LEAK", value: "followed" }] });
+      }
+      return new Response(null, {
+        status: 302,
+        headers: { location: `http://127.0.0.1:${port}/redirect-target` },
+      });
+    });
+
+    try {
+      await assertRejects(() => fetchFromMockApi(port));
+      assertEquals(paths, ["/projects/my-project/environment-variables"]);
     } finally {
       await server.shutdown();
     }
@@ -192,6 +233,39 @@ describe("project-env/fetcher", () => {
     }
   });
 
+  it("rejects internal redirects without following them or falling back", async () => {
+    const paths: string[] = [];
+    const { server, port } = createMockServer((req: Request) => {
+      const url = new URL(req.url);
+      paths.push(url.pathname);
+      if (url.pathname === "/projects/my-project/environment-variables") {
+        return Response.json({ data: [] });
+      }
+      if (url.pathname === "/internal/project-environment-variables") {
+        return new Response(null, {
+          status: 302,
+          headers: { location: `http://127.0.0.1:${port}/redirect-target` },
+        });
+      }
+      return Response.json({ data: [{ key: "LEAK", value: "followed" }] });
+    });
+
+    try {
+      await assertRejects(() =>
+        fetchFromMockApi(port, {
+          username: "runtime-user",
+          password: "runtime-pass",
+        })
+      );
+      assertEquals(paths, [
+        "/projects/my-project/environment-variables",
+        "/internal/project-environment-variables",
+      ]);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
   it("does not use internal credentials when project authorization is denied", async () => {
     let requestCount = 0;
     const { server, port } = createMockServer((req: Request) => {
@@ -210,6 +284,63 @@ describe("project-env/fetcher", () => {
       );
       assertEquals(requestCount, 1);
     } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("does not call the internal endpoint after management authorization times out", async () => {
+    const paths: string[] = [];
+    const { server, port } = createMockServer(async (req: Request) => {
+      paths.push(new URL(req.url).pathname);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return Response.json({ data: [] });
+    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(new Error("management timeout")), 10);
+
+    try {
+      await assertRejects(() =>
+        fetchFromMockApi(
+          port,
+          { username: "runtime-user", password: "runtime-pass" },
+          controller.signal,
+        )
+      );
+      assertEquals(paths, ["/projects/my-project/environment-variables"]);
+    } finally {
+      clearTimeout(timeoutId);
+      await server.shutdown();
+    }
+  });
+
+  it("does not fall back after the internal request times out", async () => {
+    const paths: string[] = [];
+    const { server, port } = createMockServer(async (req: Request) => {
+      const path = new URL(req.url).pathname;
+      paths.push(path);
+      if (path === "/projects/my-project/environment-variables") {
+        return Response.json({ data: [] });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return Response.json({ data: [{ key: "API_KEY", value: "late" }] });
+    });
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(new Error("internal timeout")), 10);
+
+    try {
+      await assertRejects(() =>
+        fetchFromMockApi(
+          port,
+          { username: "runtime-user", password: "runtime-pass" },
+          controller.signal,
+        )
+      );
+      assertEquals(paths, [
+        "/projects/my-project/environment-variables",
+        "/internal/project-environment-variables",
+      ]);
+    } finally {
+      clearTimeout(timeoutId);
       await server.shutdown();
     }
   });

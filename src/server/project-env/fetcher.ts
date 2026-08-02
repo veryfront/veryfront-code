@@ -5,7 +5,7 @@
  */
 
 import { encodeBase64, getBaseLogger } from "#veryfront/utils";
-import { NETWORK_ERROR } from "#veryfront/errors";
+import { AUTHENTICATION_REQUIRED, NETWORK_ERROR, PERMISSION_DENIED } from "#veryfront/errors";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const baseLogger = getBaseLogger("PROJECT-ENV");
@@ -32,6 +32,7 @@ async function fetchEnvironmentVariables(
   authorization: string,
   projectSlug: string,
   environmentId: string,
+  signal?: AbortSignal,
   headers: HeadersInit = {},
 ): Promise<Response> {
   try {
@@ -41,6 +42,8 @@ async function fetchEnvironmentVariables(
         Accept: "application/json",
         ...headers,
       },
+      redirect: "error",
+      signal,
     });
   } catch (error) {
     logger.error("Env var fetch network error", {
@@ -50,6 +53,22 @@ async function fetchEnvironmentVariables(
     });
     throw error;
   }
+}
+
+function projectAuthorizationError(status: number): Error {
+  if (status === 401) {
+    return AUTHENTICATION_REQUIRED.create({
+      detail: "Project credential was rejected",
+    });
+  }
+  if (status === 403 || status === 404) {
+    return PERMISSION_DENIED.create({
+      detail: "Project credential is not authorized for the requested environment",
+    });
+  }
+  return NETWORK_ERROR.create({
+    detail: "Project environment authorization request failed",
+  });
 }
 
 /**
@@ -69,6 +88,7 @@ export async function fetchProjectEnvVars(
   projectSlug: string,
   environmentId: string,
   token: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, string>> {
   const managementUrl = `${apiBaseUrl}/projects/${
     encodeURIComponent(projectSlug)
@@ -79,12 +99,12 @@ export async function fetchProjectEnvVars(
     encodeURIComponent(environmentId)
   }&project_slug=${encodeURIComponent(projectSlug)}`;
 
-  const internalAuthorization = getInternalAuthorization();
   let response = await fetchEnvironmentVariables(
     managementUrl,
     `Bearer ${token}`,
     projectSlug,
     environmentId,
+    signal,
   );
 
   if (!response.ok) {
@@ -94,11 +114,12 @@ export async function fetchProjectEnvVars(
       environmentId,
       status: response.status,
     });
-    throw NETWORK_ERROR.create({
-      detail: `Project credential cannot access requested environment: ${response.status}`,
-    });
+    throw projectAuthorizationError(response.status);
   }
 
+  // Do not even materialize the host credential until the tenant credential
+  // has proved access to this canonical project/environment pair.
+  const internalAuthorization = getInternalAuthorization();
   if (internalAuthorization) {
     await response.body?.cancel();
     response = await fetchEnvironmentVariables(
@@ -106,6 +127,7 @@ export async function fetchProjectEnvVars(
       internalAuthorization,
       projectSlug,
       environmentId,
+      signal,
       { "x-project-slug": projectSlug },
     );
   }
@@ -117,7 +139,7 @@ export async function fetchProjectEnvVars(
       environmentId,
       status: response.status,
     });
-    throw NETWORK_ERROR.create({ detail: `Failed to fetch env vars: ${response.status}` });
+    throw NETWORK_ERROR.create({ detail: "Internal project environment request failed" });
   }
 
   try {

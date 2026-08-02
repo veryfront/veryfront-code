@@ -7,6 +7,16 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, reject, resolve };
+}
+
 function scope(overrides: Partial<ProjectEnvironmentScope> = {}): ProjectEnvironmentScope {
   return {
     projectSlug: "project-a",
@@ -167,6 +177,215 @@ describe("project-env/cache", () => {
     await cache.get(scope({ token: "token-b" }));
 
     assertEquals(fetchCount, 4);
+  });
+
+  it("rejects invalidated in-flight work and never commits its old result", async () => {
+    const oldFetch = deferred<Record<string, string>>();
+    const started = deferred<void>();
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        started.resolve();
+        return await oldFetch.promise;
+      }
+      return { VALUE: "fresh" };
+    });
+
+    const oldWaiter = cache.get(scope());
+    await started.promise;
+    cache.invalidate("env-shared");
+
+    await assertRejects(
+      () => oldWaiter,
+      Error,
+      "Project environment fetch was invalidated",
+    );
+    assertEquals(await cache.get(scope()), { VALUE: "fresh" });
+
+    oldFetch.resolve({ VALUE: "stale" });
+    await delay(0);
+    assertEquals(await cache.get(scope()), { VALUE: "fresh" });
+    assertEquals(fetchCount, 2);
+  });
+
+  it("rejects all in-flight work after global invalidation", async () => {
+    const oldFetch = deferred<Record<string, string>>();
+    const started = deferred<void>();
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount++;
+      if (fetchCount === 1) {
+        started.resolve();
+        return await oldFetch.promise;
+      }
+      return { VALUE: "fresh" };
+    });
+
+    const oldWaiter = cache.get(scope());
+    await started.promise;
+    cache.invalidate();
+
+    await assertRejects(
+      () => oldWaiter,
+      Error,
+      "Project environment fetch was invalidated",
+    );
+    assertEquals(await cache.get(scope()), { VALUE: "fresh" });
+
+    oldFetch.resolve({ VALUE: "stale" });
+    await delay(0);
+    assertEquals(await cache.get(scope()), { VALUE: "fresh" });
+    assertEquals(fetchCount, 2);
+  });
+
+  it("invalidating one environment leaves other in-flight work intact", async () => {
+    const envAFetch = deferred<Record<string, string>>();
+    const envBFetch = deferred<Record<string, string>>();
+    let started = 0;
+    const bothStarted = deferred<void>();
+    const cache = new EnvironmentVariableCache(async (input) => {
+      started++;
+      if (started === 2) bothStarted.resolve();
+      return await (input.environmentId === "env-a" ? envAFetch.promise : envBFetch.promise);
+    });
+
+    const envAWaiter = cache.get(scope({ environmentId: "env-a" }));
+    const envBWaiter = cache.get(scope({ environmentId: "env-b" }));
+    await bothStarted.promise;
+    cache.invalidate("env-a");
+
+    await assertRejects(
+      () => envAWaiter,
+      Error,
+      "Project environment fetch was invalidated",
+    );
+    envBFetch.resolve({ VALUE: "env-b" });
+    assertEquals(await envBWaiter, { VALUE: "env-b" });
+
+    envAFetch.resolve({ VALUE: "old-env-a" });
+    await delay(0);
+    assertEquals(await cache.get(scope({ environmentId: "env-b" })), {
+      VALUE: "env-b",
+    });
+  });
+
+  it("clears timed-out in-flight capacity so a retry can succeed", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async () => {
+        fetchCount++;
+        if (fetchCount === 1) return await new Promise<Record<string, string>>(() => {});
+        return { VALUE: "recovered" };
+      },
+      60_000,
+      100,
+      { fetchTimeoutMs: 10, maxInflight: 1 },
+    );
+
+    await assertRejects(
+      () => cache.get(scope()),
+      Error,
+      "Project environment fetch timed out",
+    );
+    assertEquals(await cache.get(scope()), { VALUE: "recovered" });
+    assertEquals(fetchCount, 2);
+  });
+
+  it("clears rejected in-flight work so a retry can succeed", async () => {
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(async () => {
+      fetchCount++;
+      if (fetchCount === 1) throw new Error("temporary failure");
+      return { VALUE: "recovered" };
+    });
+
+    await assertRejects(() => cache.get(scope()), Error, "temporary failure");
+    assertEquals(await cache.get(scope()), { VALUE: "recovered" });
+    assertEquals(fetchCount, 2);
+  });
+
+  it("rejects excess global work without invoking the fetcher and recovers capacity", async () => {
+    const firstFetch = deferred<Record<string, string>>();
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async (input) => {
+        fetchCount++;
+        if (input.projectSlug === "project-a") return await firstFetch.promise;
+        return { OWNER: input.projectSlug };
+      },
+      60_000,
+      100,
+      { maxInflight: 1, maxInflightPerProject: 1 },
+    );
+
+    const first = cache.get(scope());
+    await delay(0);
+    const overload = await assertRejects(() =>
+      cache.get(scope({
+        projectSlug: "project-b",
+        projectId: "project-id-b",
+        token: "token-b",
+      }))
+    );
+    assertEquals((overload as { slug?: string }).slug, "service-overloaded");
+    assertEquals(fetchCount, 1);
+
+    firstFetch.resolve({ OWNER: "project-a" });
+    assertEquals(await first, { OWNER: "project-a" });
+    assertEquals(
+      await cache.get(scope({
+        projectSlug: "project-b",
+        projectId: "project-id-b",
+        token: "token-b",
+      })),
+      { OWNER: "project-b" },
+    );
+    assertEquals(fetchCount, 2);
+  });
+
+  it("bounds distinct in-flight work per project while preserving exact deduplication", async () => {
+    const firstFetch = deferred<Record<string, string>>();
+    let fetchCount = 0;
+    const cache = new EnvironmentVariableCache(
+      async () => {
+        fetchCount++;
+        return await firstFetch.promise;
+      },
+      60_000,
+      100,
+      { maxInflight: 10, maxInflightPerProject: 1 },
+    );
+
+    const first = cache.get(scope());
+    const deduplicated = cache.get(scope());
+    await delay(0);
+    const overload = await assertRejects(() => cache.get(scope({ environmentId: "env-other" })));
+    assertEquals((overload as { slug?: string }).slug, "service-overloaded");
+    assertEquals(fetchCount, 1);
+
+    firstFetch.resolve({ VALUE: "same" });
+    assertEquals(await Promise.all([first, deduplicated]), [
+      { VALUE: "same" },
+      { VALUE: "same" },
+    ]);
+  });
+
+  it("cleans the cache-owned deadline after a successful fetch", async () => {
+    let fetchSignal: AbortSignal | undefined;
+    const cache = new EnvironmentVariableCache(
+      async (_input, signal) => {
+        fetchSignal = signal;
+        return { VALUE: "done" };
+      },
+      60_000,
+      100,
+      { fetchTimeoutMs: 10 },
+    );
+
+    assertEquals(await cache.get(scope()), { VALUE: "done" });
+    await delay(20);
+    assertEquals(fetchSignal?.aborted, false);
   });
 
   it("keeps the scoped cache bounded", async () => {

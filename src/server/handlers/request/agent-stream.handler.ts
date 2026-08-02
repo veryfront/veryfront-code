@@ -102,12 +102,13 @@ const STUDIO_RUNTIME_REMOTE_TOOL_NAMES = new Set<string>(
 
 // Per-environment env var cache shared across all agent stream requests (60s TTL)
 const _agentEnvVarCache = new EnvironmentVariableCache(
-  ({ environmentId, token, projectSlug }) => {
+  ({ environmentId, token, projectSlug }, signal) => {
     return fetchProjectEnvVars(
       resolveVeryfrontApiBaseUrlFromHostEnv(),
       projectSlug,
       environmentId,
       token,
+      signal,
     );
   },
 );
