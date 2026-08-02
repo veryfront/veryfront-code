@@ -251,12 +251,17 @@ export function snapshotClientRouteHead(
   let hasStructuredPayload = false;
   const hydrationDataScript = targetDocument.getElementById("veryfront-hydration-data");
   if (hydrationDataScript?.textContent) {
-    const hydrationData = JSON.parse(hydrationDataScript.textContent) as {
-      managedHeadPayload?: unknown;
-    };
-    if (typeof hydrationData.managedHeadPayload === "string") {
-      descriptors.push(...deserializeManagedHeadPayload(hydrationData.managedHeadPayload));
-      hasStructuredPayload = true;
+    try {
+      const hydrationData = JSON.parse(hydrationDataScript.textContent) as {
+        managedHeadPayload?: unknown;
+      };
+      if (typeof hydrationData.managedHeadPayload === "string") {
+        descriptors.push(...deserializeManagedHeadPayload(hydrationData.managedHeadPayload));
+        hasStructuredPayload = true;
+      }
+    } catch {
+      // A partial or corrupt hydration payload cannot own head state. The
+      // provenance fallback below remains safe to snapshot.
     }
   }
 

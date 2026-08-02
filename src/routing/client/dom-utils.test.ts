@@ -68,6 +68,20 @@ describe("DOM Utils", () => {
         dom.window.close();
       }
     });
+
+    it("falls back to shell provenance when hydration JSON is malformed", () => {
+      const dom = new JSDOM(`<!doctype html><html><head>
+        <title data-vf-shell-head="true">Fallback title</title>
+        <script id="veryfront-hydration-data" type="application/json">{"managedHead</script>
+      </head><body><div id="root"></div></body></html>`);
+      try {
+        assertEquals(snapshotClientRouteHead(dom.window.document), [
+          { tagName: "title", attributes: [], content: "Fallback title" },
+        ]);
+      } finally {
+        dom.window.close();
+      }
+    });
   });
 
   describe("isInternalLink", () => {
@@ -378,7 +392,7 @@ describe("DOM Utils", () => {
       }
     });
 
-    it("replaces an unowned singleton so route metadata is authoritative", () => {
+    it("adds route metadata without mutating an unowned singleton", () => {
       const mocks = setupMockDocument();
       try {
         const attributes = new Map<string, string>([
@@ -398,8 +412,9 @@ describe("DOM Utils", () => {
 
         updateMetaTags({ description: "Route description" });
 
-        assertEquals(mocks.headElements.includes(thirdPartyMeta), false);
-        assertEquals(mocks.headElements.length, 1);
+        assertEquals(mocks.headElements.includes(thirdPartyMeta), true);
+        assertEquals(thirdPartyMeta.getAttribute("content"), "Third-party description");
+        assertEquals(mocks.headElements.length, 2);
         const routeMeta = mocks.headElements.find((element) =>
           element.getAttribute("data-vf-route-head") === "true"
         );
