@@ -220,13 +220,26 @@ describe("model-tool-converter", () => {
     assertEquals("web_fetch" in result!, true);
   });
 
-  it("does not add provider-native web_search for non-anthropic models", () => {
+  it("adds provider-native web_search for direct OpenAI models", () => {
     const result = convertToolsToRuntimeTools([], {
-      model: "openai/gpt-4o-mini",
+      model: "openai/gpt-4.1",
       providerTools: ["web_search"],
     });
 
-    assertEquals(result, undefined);
+    assertEquals(result !== undefined, true);
+    assertEquals((result?.web_search as { type?: unknown }).type, "provider");
+    assertEquals((result?.web_search as { id?: unknown }).id, "openai.web_search");
+  });
+
+  it("adds provider-native web_search for veryfront-cloud OpenAI models", () => {
+    const result = convertToolsToRuntimeTools([], {
+      model: "veryfront-cloud/openai/gpt-4.1",
+      providerTools: ["web_search"],
+    });
+
+    assertEquals(result !== undefined, true);
+    assertEquals((result?.web_search as { type?: unknown }).type, "provider");
+    assertEquals((result?.web_search as { id?: unknown }).id, "openai.web_search");
   });
 
   it("does not add provider-native web_fetch for non-anthropic models", () => {
@@ -238,7 +251,7 @@ describe("model-tool-converter", () => {
     assertEquals(result, undefined);
   });
 
-  it("preserves an explicit local tool named web_search for non-Anthropic models", () => {
+  it("preserves an explicit local tool named web_search for unsupported providers", () => {
     const tools: ToolDefinition[] = [
       {
         name: "web_search",
@@ -248,7 +261,7 @@ describe("model-tool-converter", () => {
     ];
 
     const result = convertToolsToRuntimeTools(tools, {
-      model: "openai/gpt-5.2",
+      model: "google/gemini-3.5-flash",
       providerTools: ["web_search"],
     });
 

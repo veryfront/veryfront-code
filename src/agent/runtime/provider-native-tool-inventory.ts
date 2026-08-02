@@ -5,6 +5,8 @@ const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
   "web_search",
 ] as const;
 
+const OPENAI_PROVIDER_NATIVE_TOOL_NAMES = ["web_search"] as const;
+
 /** Options accepted by provider native tool inventory. */
 export interface ProviderNativeToolInventoryOptions {
   model?: string;
@@ -32,7 +34,9 @@ function resolveHostedProvider(model?: string): string | undefined {
   return provider;
 }
 
-function resolveProvider(options?: ProviderNativeToolInventoryOptions): string | undefined {
+export function resolveProviderNativeToolProvider(
+  options?: ProviderNativeToolInventoryOptions,
+): string | undefined {
   if (options?.provider && options.provider.length > 0) {
     return options.provider;
   }
@@ -44,9 +48,11 @@ function resolveProvider(options?: ProviderNativeToolInventoryOptions): string |
 export function getProviderNativeToolNames(
   options?: ProviderNativeToolInventoryOptions,
 ): string[] {
-  switch (resolveProvider(options)) {
+  switch (resolveProviderNativeToolProvider(options)) {
     case "anthropic":
       return [...ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES];
+    case "openai":
+      return [...OPENAI_PROVIDER_NATIVE_TOOL_NAMES];
     default:
       return [];
   }
