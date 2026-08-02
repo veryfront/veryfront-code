@@ -9,7 +9,8 @@
 
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveHostAddresses } from "#veryfront/platform/compat/dns.ts";
-import { getDenoRuntime } from "#veryfront/platform/compat/runtime.ts";
+import { getDenoRuntime, isBun, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { fetchWithPinnedAddresses } from "#veryfront/platform/compat/http/pinned-fetch.ts";
 
 export const WORKER_INTERNAL_EGRESS_OVERRIDE_ENV = "VERYFRONT_WORKER_ALLOW_INTERNAL_EGRESS";
 
@@ -923,6 +924,19 @@ const HOP_BY_HOP_HEADERS = [
   "upgrade",
 ] as const;
 
+// Fetch only strips a small set of credentials automatically. Provider SDKs
+// also use API-key headers, so the guard must remove those before a
+// cross-origin redirect can be followed.
+const CROSS_ORIGIN_CREDENTIAL_HEADERS = [
+  "authorization",
+  "cookie",
+  "proxy-authorization",
+  "x-api-key",
+  "api-key",
+  "x-auth-token",
+  "x-goog-api-key",
+] as const;
+
 function stripHopByHopHeaders(headers: Headers): void {
   for (const name of HOP_BY_HOP_HEADERS) headers.delete(name);
 }
@@ -1076,6 +1090,7 @@ export async function guardedEgressFetch(
     let tunnel: PinnedSocksTunnel | undefined;
     let client: Deno.HttpClient | undefined;
     let response: Response;
+    let pinnedResponse: Response | undefined;
     const isNetworkRequest = hostname !== null &&
       (parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:");
     const requestInit: RequestInit = {
@@ -1104,17 +1119,26 @@ export async function guardedEgressFetch(
             : parsedUrl.protocol === "https:"
             ? 443
             : 80;
-          tunnel = startPinnedSocksTunnel(hostname, addresses, port, getRuntime());
-          client = tunnel.client;
+          if ((isNode || isBun) && deps.runtime === undefined) {
+            pinnedResponse = await waitForOperation(
+              fetchWithPinnedAddresses(parsedUrl, addresses, requestInit),
+              requestInit.signal ?? undefined,
+            );
+          } else {
+            tunnel = startPinnedSocksTunnel(hostname, addresses, port, getRuntime());
+            client = tunnel.client;
+          }
         }
       }
 
-      const pendingResponse = Promise.resolve().then(() =>
-        doFetch(url, {
-          ...requestInit,
-          ...(client ? { client } : {}),
-        })
-      );
+      const pendingResponse = pinnedResponse
+        ? Promise.resolve(pinnedResponse)
+        : Promise.resolve().then(() =>
+          doFetch(url, {
+            ...requestInit,
+            ...(client ? { client } : {}),
+          })
+        );
       try {
         response = await waitForOperation(pendingResponse, requestInit.signal ?? undefined);
       } catch (error) {
@@ -1173,9 +1197,7 @@ export async function guardedEgressFetch(
     // platform fetch this guard replaces, so a redirect target cannot receive
     // the caller's Authorization/Cookie.
     if (nextUrl.origin !== new URL(url).origin) {
-      headers.delete("authorization");
-      headers.delete("cookie");
-      headers.delete("proxy-authorization");
+      for (const header of CROSS_ORIGIN_CREDENTIAL_HEADERS) headers.delete(header);
     }
     url = nextUrl.href;
     didRedirect = true;

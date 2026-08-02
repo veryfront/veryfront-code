@@ -655,7 +655,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }
   });
 
-  it("does not persist a module whose lazy dependency failed to prefetch", async () => {
+  it("rejects and does not persist a module whose lazy dependency failed to prefetch", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-degraded-artifact-" });
     const originalFetch = globalThis.fetch;
     const parentUrl = "https://93.184.216.34/degraded-parent.js";
@@ -685,13 +685,11 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
       const source = `import { load } from "${parentUrl}"; export { load };`;
       const options = { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } };
 
-      const first = await cacheHttpImportsToLocal(source, options);
-      const firstPath = first.code.match(/file:\/\/([^"']+\.mjs)/)?.[1];
-      assert(firstPath, "Expected the render to keep working with a local parent module");
+      await assertRejects(() => cacheHttpImportsToLocal(source, options), Error, "Failed to fetch");
       assertEquals(parentFetches, 1);
       assertEquals(distributed.size, 0);
 
-      await cacheHttpImportsToLocal(source, options);
+      await assertRejects(() => cacheHttpImportsToLocal(source, options), Error, "Failed to fetch");
       assertEquals(parentFetches, 2);
       assertEquals(distributed.size, 0);
     } finally {
@@ -902,7 +900,7 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     });
   });
 
-  it("does not publish a partial manifest when one bundle is degraded", async () => {
+  it("rejects instead of publishing a partial manifest", async () => {
     const healthyUrl = "https://93.184.216.34/healthy-manifest-entry.js";
     const parentUrl = "https://93.184.216.34/degraded-manifest-entry.js";
     const childUrl = "https://93.184.216.34/unavailable-lazy-entry.js";
@@ -922,16 +920,19 @@ describe("HTTP Bundle Cache", { sanitizeResources: false, sanitizeOps: false }, 
     }) as typeof fetch;
 
     await withIsolatedHttpCache("vf-partial-manifest-", mockFetch, async (tempDir) => {
-      const result = await cacheHttpImportsToLocal(
-        [
-          `import { healthy } from "${healthyUrl}";`,
-          `import { load } from "${parentUrl}";`,
-          "export { healthy, load };",
-        ].join("\n"),
-        { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+      await assertRejects(
+        () =>
+          cacheHttpImportsToLocal(
+            [
+              `import { healthy } from "${healthyUrl}";`,
+              `import { load } from "${parentUrl}";`,
+              "export { healthy, load };",
+            ].join("\n"),
+            { cacheDir: tempDir, importMap: { imports: {}, scopes: {} } },
+          ),
+        Error,
+        "Failed to fetch",
       );
-
-      assertEquals(result.bundleManifestId, undefined);
     });
   });
 

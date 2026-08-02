@@ -104,7 +104,6 @@ function createMcpServerToolSource(server: AgentHttpMcpServerConfig): RemoteTool
     id: server.id,
     endpoint: (context) => resolveValue(server.transport.url, context),
     headers: (context) => resolveHeaders(server.auth, context),
-    ...(server.fetch ? { fetch: server.fetch } : {}),
   });
 
   return wrapRemoteToolSourceWithMcpPolicy(source, server.toolPolicy, {

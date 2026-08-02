@@ -1,6 +1,6 @@
 import { createError, toError } from "#veryfront/errors";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
-import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
+import { createOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
@@ -50,7 +50,9 @@ function autoInitializeFromEnv(): void {
         return provider.createEmbedding(id, {
           credential: config.apiKey,
           baseURL: config.baseURL,
-          fetch: guardedOutboundFetch,
+          fetch: createOriginBoundOutboundFetch(
+            config.baseURL ?? "https://api.openai.com/v1",
+          ),
         });
       }
       throw toError(

@@ -5,6 +5,7 @@ import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 import {
   getVeryfrontCloudBootstrap,
+  getVeryfrontCloudHostBootstrap,
   getVeryfrontCloudProjectSlug,
 } from "#veryfront/platform/cloud/resolver.ts";
 import {
@@ -20,6 +21,8 @@ const META_SUFFIX = ".meta.json";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 128 * 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_BYTES = 64 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 128 * 1024 * 1024;
 const ERROR_RESPONSE_BYTES = 8 * 1024;
 
 const getUploadCreateResponseSchema = defineSchema((v) =>
@@ -100,6 +103,8 @@ export interface VeryfrontCloudBlobStorageConfig {
   requestTimeoutMs?: number;
   /** Maximum decoded API or signed-download response body size. */
   maxResponseBytes?: number;
+  /** Maximum bytes accepted for one blob upload, including streamed input. */
+  maxUploadBytes?: number;
 }
 
 interface ResolvedConfig {
@@ -112,6 +117,7 @@ interface ResolvedConfig {
   now: () => Date;
   requestTimeoutMs: number;
   maxResponseBytes: number;
+  maxUploadBytes: number;
 }
 
 function requirePositiveInteger(value: number, name: string, maximum: number): number {
@@ -137,8 +143,17 @@ async function readResponseBytes(
   maximumBytes: number,
   signal: AbortSignal,
 ): Promise<Uint8Array> {
-  const reader = response.body?.getReader();
-  if (!reader) return new Uint8Array();
+  if (!response.body) return new Uint8Array();
+  return await readStreamBytes(response.body, maximumBytes, signal, "Blob response");
+}
+
+async function readStreamBytes(
+  stream: ReadableStream<Uint8Array>,
+  maximumBytes: number,
+  signal: AbortSignal,
+  label: string,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
   let complete = false;
@@ -146,7 +161,10 @@ async function readResponseBytes(
     await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
       const onAbort = () => reject(signal.reason);
       signal.addEventListener("abort", onAbort, { once: true });
-      if (signal.aborted) onAbort();
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
       reader.read().then(resolve, reject).finally(() =>
         signal.removeEventListener("abort", onAbort)
       );
@@ -160,13 +178,13 @@ async function readResponseBytes(
         break;
       }
       if (length > maximumBytes - value.byteLength) {
-        throw new RangeError(`Blob response exceeds ${maximumBytes} bytes`);
+        throw new RangeError(`${label} exceeds ${maximumBytes} bytes`);
       }
       chunks.push(value);
       length += value.byteLength;
     }
   } finally {
-    if (!complete) void reader.cancel().catch(() => {});
+    if (!complete) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
   const bytes = new Uint8Array(length);
@@ -244,23 +262,45 @@ async function attachSignedUrl(
 
 async function normalizeUploadBody(
   data: string | Uint8Array | Blob | ReadableStream,
+  maximumBytes: number,
+  signal: AbortSignal,
 ): Promise<{ body: BodyInit; size: number }> {
+  const assertWithinLimit = (size: number): void => {
+    if (size > maximumBytes) {
+      throw INVALID_ARGUMENT.create({
+        detail: `Veryfront Cloud blob upload exceeds ${maximumBytes} bytes`,
+      });
+    }
+  };
+
+  signal.throwIfAborted();
   if (typeof data === "string") {
     const bytes = new TextEncoder().encode(data);
+    assertWithinLimit(bytes.byteLength);
     return { body: bytes, size: bytes.byteLength };
   }
 
   if (data instanceof Uint8Array) {
     const bytes = Uint8Array.from(data);
+    assertWithinLimit(bytes.byteLength);
     return { body: bytes, size: bytes.byteLength };
   }
 
   if (data instanceof Blob) {
+    assertWithinLimit(data.size);
     return { body: data, size: data.size };
   }
 
   if (data instanceof ReadableStream) {
-    const bytes = new Uint8Array(await new Response(data).arrayBuffer());
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = await readStreamBytes(data, maximumBytes, signal, "Blob upload");
+    } catch (error) {
+      if (error instanceof RangeError) {
+        throw INVALID_ARGUMENT.create({ detail: error.message, cause: error });
+      }
+      throw error;
+    }
     return { body: bytes, size: bytes.byteLength };
   }
 
@@ -281,68 +321,78 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     options: StoreBlobOptions = {},
   ): Promise<BlobRef> {
     const resolved = this.resolveConfig();
-    const id = options.id ?? crypto.randomUUID();
-    const mimeType = options.mimeType ?? "application/octet-stream";
-    const { body, size } = await normalizeUploadBody(data);
-    const createdAt = resolved.now();
-    const ttl = options.ttl ?? resolved.defaultTtl;
-    const expiresAt = ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
-
-    const blobRef: BlobRef = {
-      __kind: "blob",
-      id,
-      size,
-      mimeType,
-      createdAt,
-      expiresAt,
-      metadata: options.metadata,
-    };
-
-    const metadataPayload = BlobMetadataSchema.parse({
-      version: 1,
-      id,
-      size,
-      mimeType,
-      createdAt: createdAt.toISOString(),
-      expiresAt: expiresAt?.toISOString(),
-      metadata: options.metadata,
-    });
-
-    const dataPath = this.getDataPath(id, resolved.prefix);
-    const metadataPath = this.getMetadataPath(id, resolved.prefix);
-    const metadataBytes = new TextEncoder().encode(JSON.stringify(metadataPayload));
-
-    await this.uploadFile(dataPath, mimeType, size, body, resolved);
-
+    const scope = createRequestScope(resolved.requestTimeoutMs);
     try {
-      await this.uploadFile(
-        metadataPath,
-        "application/json",
-        metadataBytes.byteLength,
-        metadataBytes,
-        resolved,
+      const id = options.id ?? crypto.randomUUID();
+      const mimeType = options.mimeType ?? "application/octet-stream";
+      const { body, size } = await normalizeUploadBody(
+        data,
+        resolved.maxUploadBytes,
+        scope.signal,
       );
-    } catch (error) {
-      logger.warn("Failed to upload blob metadata sidecar, cleaning up primary upload", {
+      const createdAt = resolved.now();
+      const ttl = options.ttl ?? resolved.defaultTtl;
+      const expiresAt = ttl ? new Date(createdAt.getTime() + ttl * 1000) : undefined;
+
+      const blobRef: BlobRef = {
+        __kind: "blob",
         id,
-        dataPath,
-        error: error instanceof Error ? error.message : String(error),
+        size,
+        mimeType,
+        createdAt,
+        expiresAt,
+        metadata: options.metadata,
+      };
+
+      const metadataPayload = BlobMetadataSchema.parse({
+        version: 1,
+        id,
+        size,
+        mimeType,
+        createdAt: createdAt.toISOString(),
+        expiresAt: expiresAt?.toISOString(),
+        metadata: options.metadata,
       });
 
+      const dataPath = this.getDataPath(id, resolved.prefix);
+      const metadataPath = this.getMetadataPath(id, resolved.prefix);
+      const metadataBytes = new TextEncoder().encode(JSON.stringify(metadataPayload));
+
+      await this.uploadFile(dataPath, mimeType, size, body, resolved, scope.signal);
+
       try {
-        await this.deleteUpload(dataPath, resolved);
-      } catch (cleanupError) {
-        logger.warn("Failed to clean up primary upload after metadata failure", {
+        await this.uploadFile(
+          metadataPath,
+          "application/json",
+          metadataBytes.byteLength,
+          metadataBytes,
+          resolved,
+          scope.signal,
+        );
+      } catch (error) {
+        logger.warn("Failed to upload blob metadata sidecar, cleaning up primary upload", {
           id,
           dataPath,
-          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          error: error instanceof Error ? error.message : String(error),
         });
+
+        try {
+          await this.deleteUpload(dataPath, resolved);
+        } catch (cleanupError) {
+          logger.warn("Failed to clean up primary upload after metadata failure", {
+            id,
+            dataPath,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        }
+
+        throw error;
       }
 
-      throw error;
+      return blobRef;
+    } finally {
+      scope.dispose();
     }
-
-    return blobRef;
   }
 
   async getStream(id: string): Promise<ReadableStream | null> {
@@ -441,14 +491,19 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
 
   private resolveConfig(): ResolvedConfig {
     const bootstrap = getVeryfrontCloudBootstrap();
-    const apiBaseUrl = this.config.apiBaseUrl ?? bootstrap.apiBaseUrl;
+    const hostBootstrap = getVeryfrontCloudHostBootstrap();
     if (this.config.apiBaseUrl && !this.config.apiToken) {
       throw CONFIG_INVALID.create({
         detail:
           "VeryfrontCloudBlobStorage apiBaseUrl requires an explicit apiToken. A caller-selected endpoint cannot use request- or host-owned credentials.",
       });
     }
-    const apiToken = this.config.apiToken ?? bootstrap.apiToken;
+    const connection = this.config.apiBaseUrl && this.config.apiToken
+      ? { apiBaseUrl: this.config.apiBaseUrl, apiToken: this.config.apiToken }
+      : this.config.apiToken
+      ? { apiBaseUrl: hostBootstrap.apiBaseUrl, apiToken: this.config.apiToken }
+      : { apiBaseUrl: bootstrap.apiBaseUrl, apiToken: bootstrap.apiToken };
+    const { apiBaseUrl, apiToken } = connection;
     const projectSlug = this.config.projectSlug ?? getVeryfrontCloudProjectSlug();
 
     if (!apiToken) {
@@ -483,6 +538,11 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         "maxResponseBytes",
         MAX_RESPONSE_BYTES,
       ),
+      maxUploadBytes: requirePositiveInteger(
+        this.config.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES,
+        "maxUploadBytes",
+        MAX_UPLOAD_BYTES,
+      ),
     };
   }
 
@@ -502,6 +562,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     size: number,
     body: BodyInit,
     resolved: ResolvedConfig,
+    signal?: AbortSignal,
   ): Promise<void> {
     const upload = UploadCreateResponseSchema.parse(
       await this.requestJson(
@@ -515,6 +576,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
             content_type: mimeType,
             size,
           }),
+          signal,
         },
       ),
     );
@@ -522,7 +584,9 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
     const headers = new Headers(upload.required_headers);
     if (!headers.has("Content-Type")) headers.set("Content-Type", mimeType);
 
-    const scope = createRequestScope(resolved.requestTimeoutMs);
+    const scope = signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
+    const requestSignal = signal ?? scope?.signal;
+    if (!requestSignal) throw new TypeError("Blob upload request signal is unavailable");
     let response: Response;
     try {
       response = await guardedOutboundFetch(upload.file_upload_url, {
@@ -530,11 +594,11 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
         headers,
         body,
         redirect: "error",
-        signal: scope.signal,
+        signal: requestSignal,
       });
 
       if (!response.ok) {
-        const errorBody = await readErrorBody(response, scope.signal);
+        const errorBody = await readErrorBody(response, requestSignal);
         throw API_ERROR.create({
           detail:
             `Veryfront Cloud upload failed for "${path}": ${response.status} ${response.statusText}${
@@ -544,7 +608,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       }
       void response.body?.cancel().catch(() => {});
     } finally {
-      scope.dispose();
+      scope?.dispose();
     }
   }
 
@@ -659,16 +723,19 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       body?: BodyInit;
       allowNotFound?: boolean;
       expectEmptyBody?: boolean;
+      signal?: AbortSignal;
     } = {},
   ): Promise<unknown | null> {
     const headers = new Headers(options.headers);
     headers.set("Authorization", `Bearer ${resolved.apiToken}`);
 
-    const scope = createRequestScope(resolved.requestTimeoutMs);
+    const scope = options.signal ? undefined : createRequestScope(resolved.requestTimeoutMs);
+    const signal = options.signal ?? scope?.signal;
+    if (!signal) throw new TypeError("Blob request signal is unavailable");
     try {
       const response = await guardedOutboundFetch(
         joinUrl(resolved.apiBaseUrl, path),
-        { method, headers, body: options.body, redirect: "error", signal: scope.signal },
+        { method, headers, body: options.body, redirect: "error", signal },
         {
           authorizeUrl: (target) => {
             if (target.origin !== new URL(resolved.apiBaseUrl).origin) {
@@ -686,7 +753,7 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
       }
 
       if (!response.ok) {
-        const errorBody = await readErrorBody(response, scope.signal);
+        const errorBody = await readErrorBody(response, signal);
         throw API_ERROR.create({
           detail:
             `Veryfront Cloud request failed: ${method} ${path} -> ${response.status} ${response.statusText}${
@@ -702,11 +769,11 @@ export class VeryfrontCloudBlobStorage implements BlobStorage {
 
       return JSON.parse(
         new TextDecoder().decode(
-          await readResponseBytes(response, resolved.maxResponseBytes, scope.signal),
+          await readResponseBytes(response, resolved.maxResponseBytes, signal),
         ),
       );
     } finally {
-      scope.dispose();
+      scope?.dispose();
     }
   }
 }

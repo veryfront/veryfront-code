@@ -1,4 +1,7 @@
-import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
+import {
+  getVeryfrontCloudBootstrap,
+  getVeryfrontCloudHostBootstrap,
+} from "#veryfront/platform/cloud/resolver.ts";
 import {
   requestWithRetry,
   type RetryConfig,
@@ -419,11 +422,7 @@ export class VeryfrontRunsClient {
     });
   }
 
-  private resolveApiUrl(): string {
-    return this.config.apiUrl ?? getVeryfrontCloudBootstrap().apiBaseUrl;
-  }
-
-  private resolveAuthToken(): string {
+  private resolveConnection(): { apiUrl: string; authToken: string } {
     if (this.config.apiUrl && !this.config.authToken) {
       throw API_CLIENT_ERROR.create({
         detail:
@@ -431,10 +430,21 @@ export class VeryfrontRunsClient {
         status: 401,
       });
     }
-    const token = this.requestToken ?? this.config.authToken ??
-      getVeryfrontCloudBootstrap().apiToken;
-    if (token) {
-      return token;
+    if (this.config.apiUrl && this.config.authToken) {
+      return { apiUrl: this.config.apiUrl, authToken: this.config.authToken };
+    }
+
+    const host = getVeryfrontCloudHostBootstrap();
+    if (this.config.authToken) {
+      return { apiUrl: host.apiBaseUrl, authToken: this.config.authToken };
+    }
+    if (this.requestToken) {
+      return { apiUrl: host.apiBaseUrl, authToken: this.requestToken };
+    }
+
+    const bootstrap = getVeryfrontCloudBootstrap();
+    if (bootstrap.apiToken) {
+      return { apiUrl: bootstrap.apiBaseUrl, authToken: bootstrap.apiToken };
     }
     throw API_CLIENT_ERROR.create({
       detail:
@@ -465,11 +475,11 @@ export class VeryfrontRunsClient {
       body?: Record<string, unknown>;
     } = {},
   ): Promise<T> {
-    const apiUrl = this.resolveApiUrl();
+    const { apiUrl, authToken } = this.resolveConnection();
     const apiOrigin = new URL(apiUrl).origin;
     const raw = await requestWithRetry(
       `${apiUrl}${path}`,
-      this.resolveAuthToken(),
+      authToken,
       this.retryConfig,
       {
         method: options.method,
