@@ -997,6 +997,11 @@ export interface GuardedEgressFetchDeps {
   fetchImpl?: typeof fetch;
   /** Egress options applied to the initial URL and every redirect hop. */
   options?: WorkerEgressGuardOptions;
+  /**
+   * Optional caller-owned policy applied to the initial URL and every
+   * redirect destination before a connection is opened.
+   */
+  authorizeUrl?: (url: URL) => void | Promise<void>;
   /** Captured runtime primitives used to establish the DNS-pinned tunnel. */
   runtime?: Partial<PinnedEgressRuntime>;
 }
@@ -1066,6 +1071,7 @@ export async function guardedEgressFetch(
 
   for (let hop = 0;; hop++) {
     const parsedUrl = new URL(url);
+    await deps.authorizeUrl?.(parsedUrl);
     const hostname = getUrlHostname(parsedUrl);
     let tunnel: PinnedSocksTunnel | undefined;
     let client: Deno.HttpClient | undefined;

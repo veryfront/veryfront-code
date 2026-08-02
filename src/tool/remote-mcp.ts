@@ -5,6 +5,7 @@ import type { JsonSchema } from "./schema/json-schema.ts";
 import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
+import { guardedOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 
 /** Default timeout for a single outbound remote MCP request. */
 const REMOTE_MCP_REQUEST_TIMEOUT_MS = 30_000;
@@ -678,12 +679,14 @@ async function postJsonRpc(
   const requestScope = createRequestSignalScope(callerSignal);
 
   try {
-    const response = await fetchImpl(endpoint, {
+    const response = await guardedOutboundFetch(endpoint, {
       method: "POST",
       headers,
       body: serializedBody,
       signal: requestScope.signal,
       redirect: "error",
+    }, {
+      fetchImpl,
     });
 
     if (!response.ok) {

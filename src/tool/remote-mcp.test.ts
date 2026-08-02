@@ -27,6 +27,25 @@ describe("tool/remote-mcp", () => {
     );
   });
 
+  it("rejects internal MCP endpoints before invoking the configured transport", async () => {
+    let calls = 0;
+    const source = createRemoteMCPToolSource({
+      id: "private",
+      endpoint: "http://169.254.169.254/latest/meta-data",
+      fetch: () => {
+        calls++;
+        return Promise.resolve(Response.json({}));
+      },
+    });
+
+    await assertRejects(
+      () => source.listTools(),
+      Error,
+      "internal host",
+    );
+    assertEquals(calls, 0);
+  });
+
   it("lists tools from a remote MCP server using the standard JSON-RPC contract", async () => {
     let requestUrl = "";
     let requestMethod = "";
@@ -269,7 +288,7 @@ describe("tool/remote-mcp", () => {
   it("normalizes OAuth invalid_grant refresh failures into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://api.example.com/mcp",
+      endpoint: "https://93.184.216.34/mcp",
       headers: { Authorization: "Bearer remote-token" },
     });
 
@@ -296,7 +315,7 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -304,7 +323,7 @@ describe("tool/remote-mcp", () => {
   it("normalizes JSON-RPC invalid_grant errors into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://api.example.com/mcp",
+      endpoint: "https://93.184.216.34/mcp",
     });
 
     const result = await withMockFetch(
@@ -324,7 +343,7 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -332,7 +351,7 @@ describe("tool/remote-mcp", () => {
   it("normalizes HTTP invalid_grant failures into reconnect-required tool output", async () => {
     const source = createRemoteMCPToolSource({
       id: "veryfront-mcp",
-      endpoint: "https://api.example.com/mcp",
+      endpoint: "https://93.184.216.34/mcp",
     });
 
     const result = await withMockFetch(
@@ -348,7 +367,7 @@ describe("tool/remote-mcp", () => {
       error: "reconnect_required",
       code: "OAUTH_TOKEN_EXPIRED",
       integration: "calendar",
-      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      connectUrl: "https://93.184.216.34/oauth/connect/calendar?projectId=project-1",
       message: "Calendar needs to be reconnected before this tool can run.",
     });
   });
@@ -825,7 +844,10 @@ describe("tool/remote-mcp", () => {
     });
 
     await redirectSafeSource.listTools();
-    assertEquals(redirectMode, "error");
+    // The guarded transport must observe redirects itself so it can reject the
+    // destination before fetch follows it. The caller-visible mode remains
+    // `error`: any redirect response is rejected by guardedOutboundFetch.
+    assertEquals(redirectMode, "manual");
   });
 
   it("rejects cyclic outbound arguments before invoking the remote fetch", async () => {
