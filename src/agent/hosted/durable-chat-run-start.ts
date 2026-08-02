@@ -41,6 +41,7 @@ export type HostedDurableRunLogger = {
 export type HostedDurableRunStartExecutionInput<TExecution> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  rawRequest: Request;
 };
 
 /** Input payload for hosted durable run start cleanup. */
@@ -179,10 +180,11 @@ async function executeHostedDurableChatRunStart<TExecution>(
   const detachedStartResponse = await executeAgUiDetachedStart(
     {
       sessionManager: input.tracker.sessionManager,
-      startDetachedExecution: async ({ abortSignal }) => {
+      startDetachedExecution: async ({ abortSignal, rawRequest }) => {
         const detachedExecution = input.startDetachedExecution({
           execution,
           abortSignal,
+          rawRequest,
         });
         input.tracker.registerExecution(durableRootRun.runId, detachedExecution);
         await detachedExecution;

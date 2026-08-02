@@ -25,6 +25,7 @@ import {
   type HostedRuntimeSourceIdentity,
   snapshotHostedRuntimeSourceIdentity,
 } from "../hosted/runtime-source-binding.ts";
+import { getSanitizedHostedRunEventWriterRequest } from "../hosted/child-run-event-writer-token.ts";
 
 /** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
@@ -66,6 +67,7 @@ export type AgentServiceStreamExecutionInput<TExecution extends object> =
 export type HostedAgentServiceDetachedExecutionInput<TExecution extends object> = {
   execution: TExecution;
   abortSignal: AbortSignal;
+  rawRequest: Request;
 };
 
 /** Input payload for agent service detached execution. */
@@ -285,10 +287,12 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     request: Request;
     requestOrCtx?: unknown;
   }): Promise<Response> {
+    const rawRequest = getSanitizedHostedRunEventWriterRequest(input.req, input.request);
+    const requestOrCtx = input.requestOrCtx instanceof Request ? rawRequest : input.requestOrCtx;
     return executeHostedDurableChatRun({
       req: input.req,
-      rawRequest: input.request,
-      requestOrCtx: input.requestOrCtx,
+      rawRequest,
+      requestOrCtx,
       tracker: options.tracker,
       prepareExecution: options.prepareExecution,
       startDetachedExecution: options.startDetachedExecution,

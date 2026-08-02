@@ -38,8 +38,13 @@ type CapabilityState = {
   fetch: Fetch;
 };
 
+type VerifiedRequestWriterState = {
+  token: string;
+  sanitizedRequest: Request;
+};
+
 const capabilityState = new WeakMap<HostedRunEventWriterCapability, CapabilityState>();
-const requestRunEventWriterTokens = new WeakMap<object, string>();
+const requestRunEventWriterState = new WeakMap<object, VerifiedRequestWriterState>();
 const capabilityStorage = new AsyncLocalStorage<HostedRunEventWriterCapability | undefined>();
 
 function isNoStoreResponse(response: Response): boolean {
@@ -124,9 +129,21 @@ async function exchangeChildRunEventWriterToken(
   }
 }
 
-/** Retain a verified ingress credential without adding it to the parsed request contract. */
-export function registerHostedRunEventWriterToken(request: object, token: string): void {
-  requestRunEventWriterTokens.set(request, token);
+/** Retain verified ingress authority without adding it to the parsed request contract. */
+export function registerHostedRunEventWriterToken(
+  request: object,
+  token: string,
+  sanitizedRequest: Request,
+): void {
+  requestRunEventWriterState.set(request, { token, sanitizedRequest });
+}
+
+/** Return the credential-free request associated with a verified parsed request. */
+export function getSanitizedHostedRunEventWriterRequest(
+  request: object,
+  fallback: Request,
+): Request {
+  return requestRunEventWriterState.get(request)?.sanitizedRequest ?? fallback;
 }
 
 /** Create the opaque exact-run capability associated with a verified parsed request. */
@@ -134,7 +151,7 @@ export function createHostedRunEventWriterCapabilityForRequest(
   request: object,
   input: Omit<Parameters<typeof createHostedRunEventWriterCapability>[0], "runEventAppendToken">,
 ): HostedRunEventWriterCapability | undefined {
-  const token = requestRunEventWriterTokens.get(request);
+  const token = requestRunEventWriterState.get(request)?.token;
   return token
     ? createHostedRunEventWriterCapability({ ...input, runEventAppendToken: token })
     : undefined;

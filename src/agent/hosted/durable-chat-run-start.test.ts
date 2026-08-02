@@ -67,16 +67,18 @@ describe("agent/hosted-durable-chat-run-start", () => {
     let prepared = false;
     let started = false;
 
+    const rawRequest = createRequest();
     const response = await executeHostedDurableChatRun({
       req: createParsedRequest(),
-      rawRequest: createRequest(),
+      rawRequest,
       tracker,
       prepareExecution: async () => {
         prepared = true;
         return preparedExecution;
       },
-      startDetachedExecution: async ({ execution }) => {
+      startDetachedExecution: async ({ execution, rawRequest: detachedRawRequest }) => {
         assertEquals(execution, preparedExecution);
+        assertEquals(detachedRawRequest, rawRequest);
         started = true;
       },
     });
