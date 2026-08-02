@@ -265,11 +265,12 @@ describe("createProject", () => {
       assertEquals(result.createdPaths.includes("lib/token-store.ts"), true);
       assertEquals(result.createdPaths.includes("lib/oauth.ts"), true);
 
-      const [tokenStore, oauth, initRoute, callbackRoute] = await Promise.all([
+      const [tokenStore, oauth, initRoute, callbackRoute, statusRoute] = await Promise.all([
         Deno.readTextFile(join(projectDir, "lib/token-store.ts")),
         Deno.readTextFile(join(projectDir, "lib/oauth.ts")),
         Deno.readTextFile(join(projectDir, "app/api/auth/github/route.ts")),
         Deno.readTextFile(join(projectDir, "app/api/auth/github/callback/route.ts")),
+        Deno.readTextFile(join(projectDir, "app/api/integrations/status/route.ts")),
       ]);
       assertStringIncludes(tokenStore, "createDefaultTokenStore");
       assertStringIncludes(tokenStore, "getDefaultTokenStore");
@@ -282,6 +283,12 @@ describe("createProject", () => {
         callbackRoute,
         'import { tokenStore } from "../../../../../lib/token-store.ts";',
       );
+      assertStringIncludes(
+        statusRoute,
+        'import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";',
+      );
+      assertStringIncludes(statusRoute, "const userId = requireUserIdFromRequest(req);");
+      assertEquals(statusRoute.includes('"current-user"'), false);
     } finally {
       await remove(parentDir, { recursive: true }).catch(() => {});
     }

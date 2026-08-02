@@ -147,16 +147,16 @@ function generateIntegrationsStatusRoute(integrations: ResolvedIntegration[]): s
  * This file is auto-generated based on the integrations you selected.
  */
 
-import { tokenStore } from "../../../../lib/token-store";
+import { tokenStore } from "../../../../lib/token-store.ts";
+import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";
 
 // Integrations configured for this project
 const INTEGRATIONS = [
 ${integrationEntries}
 ];
 
-export async function GET(_req: Request) {
-  // Get actual user ID from session in production
-  const userId = "current-user";
+export async function GET(req: Request): Promise<Response> {
+  const userId = requireUserIdFromRequest(req);
 
   const statuses = await Promise.all(
     INTEGRATIONS.map(async (integration) => {
