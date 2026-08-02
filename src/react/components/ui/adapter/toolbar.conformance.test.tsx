@@ -101,6 +101,19 @@ async function waitFor(condition: () => boolean, timeoutMs = 3000): Promise<void
 
 function runToolbarConformance(label: string, Wrap: React.FC<{ children: React.ReactNode }>): void {
   describe(`Toolbar adapter conformance: ${label}`, () => {
+    it("keeps items untabbable during SSR", () => {
+      const html = renderToString(
+        <Wrap>
+          <Toolbar>
+            <ToolbarButton>A</ToolbarButton>
+          </Toolbar>
+        </Wrap>,
+      );
+      const document = new JSDOM(html).window.document;
+      assert(document.querySelector<HTMLElement>('[role="toolbar"]')!.tabIndex === 0);
+      assert(document.querySelector<HTMLElement>("[data-toolbar-item]")!.tabIndex === -1);
+    });
+
     it("renders role=toolbar with one roving tab stop; items click", () => {
       let clicked = false;
       const { host, unmount } = render(
@@ -445,6 +458,7 @@ const altToolbar: ToolbarParts = {
           (activeElement === root.ownerDocument.body && root.ownerDocument.hasFocus()));
       const active = items.find((item) => item === activeElement || item.tabIndex === 0) ??
         items[0];
+      root.tabIndex = active ? -1 : 0;
       altScopedItems(root).forEach((item) => item.tabIndex = item === active ? 0 : -1);
       if (focusBecameDisabled && active) {
         lastFocusedItemRef.current = active;
@@ -480,6 +494,7 @@ const altToolbar: ToolbarParts = {
       <div
         ref={composedRef}
         role="toolbar"
+        tabIndex={0}
         data-orientation={orientation}
         data-alt-toolbar=""
         onKeyDown={move}
@@ -507,6 +522,7 @@ const altToolbar: ToolbarParts = {
         {...(asChild ? {} : { type: "button" as const })}
         ref={ref}
         data-toolbar-item=""
+        tabIndex={-1}
         {...props}
       />
     );

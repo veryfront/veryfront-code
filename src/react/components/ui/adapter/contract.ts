@@ -59,7 +59,8 @@ export interface DisclosureParts {
   /**
    * Toggles the region; `asChild` merges onto the consumer's element. An
    * effectively disabled composed trigger must prevent activation and suppress
-   * both wrapper and child click handlers.
+   * both wrapper and child click handlers. It must publish the effective state
+   * as `data-state="open" | "closed"` so public skins remain adapter-independent.
    */
   Trigger: React.FC<
     & Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "aria-controls">

@@ -117,12 +117,14 @@ function runDisclosureConformance(
         const trigger = host.querySelector("button")!;
         assert(trigger, "renders a trigger button");
         assert(trigger.getAttribute("aria-expanded") === "false", "closed by default");
+        assert(trigger.getAttribute("data-state") === "closed", "publishes closed state");
         const content = host.querySelector<HTMLElement>("[data-vf-content]")!;
         assert(content.hidden, "content retained but hidden while closed");
         assert(trigger.getAttribute("aria-controls") === content.id, "trigger controls content");
 
         click(trigger);
         assert(trigger.getAttribute("aria-expanded") === "true", "expanded after click");
+        assert(trigger.getAttribute("data-state") === "open", "publishes open state");
         assert(!content.hidden, "content revealed while open");
 
         click(trigger);
@@ -626,6 +628,7 @@ const altDisclosure: DisclosureParts = {
         ref={ref}
         id={realizedId}
         aria-expanded={ctx?.open ?? false}
+        data-state={ctx?.open ? "open" : "closed"}
         aria-controls={ariaControls === null ? undefined : ariaControls ?? ctx?.contentId}
         disabled={isDisabled}
         aria-disabled={asChild && isDisabled ? true : undefined}
