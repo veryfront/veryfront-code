@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { fromError } from "#veryfront/errors/legacy-error-codec.ts";
 import type { AgentContext, AgentResponse } from "../../types.ts";
 import {
   COMMON_BLOCKED_PATTERNS,

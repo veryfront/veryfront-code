@@ -276,7 +276,8 @@ describe("routing/registry/RouteRegistry", () => {
       assertEquals(body.type?.includes("config-not-found"), true);
       assertEquals(body.category, "CONFIG");
       assertEquals(body.detail, "Test config error");
-      assertEquals(body.suggestion?.includes("vf init"), true);
+      assertEquals(body.suggestion?.includes("veryfront.config.ts"), true);
+      assertEquals(body.suggestion?.includes("vf init"), false);
     });
 
     it("should return null on empty registry", async () => {

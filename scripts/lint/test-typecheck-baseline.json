@@ -33,8 +33,6 @@
   "src/config/env.test.ts",
   "src/embedding/chunk.test.ts",
   "src/embedding/rag-store.test.ts",
-  "src/errors/middleware/wrap-unknown.test.ts",
-  "src/errors/tracing.test.ts",
   "src/eval/judges.test.ts",
   "src/mcp/elicitation.test.ts",
   "src/mcp/server.test.ts",

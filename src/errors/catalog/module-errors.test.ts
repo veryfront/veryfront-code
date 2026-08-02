@@ -7,7 +7,6 @@ describe("errors/catalog/module-errors", () => {
   describe("MODULE_ERROR_CATALOG", () => {
     it("should contain all module error slugs", () => {
       const expectedSlugs = [
-        "cache-path-mismatch",
         "module-not-found",
         "import-resolution-error",
         "circular-dependency",
@@ -36,14 +35,8 @@ describe("errors/catalog/module-errors", () => {
       }
     });
 
-    it("should have 7 entries", () => {
-      assertEquals(Object.keys(MODULE_ERROR_CATALOG).length, 7);
-    });
-
-    it("cache-path-mismatch should have an example with curl command", () => {
-      const solution = MODULE_ERROR_CATALOG["cache-path-mismatch"];
-      assertEquals(typeof solution?.example, "string");
-      assertEquals(solution?.example?.includes("curl"), true);
+    it("should have 6 entries", () => {
+      assertEquals(Object.keys(MODULE_ERROR_CATALOG).length, 6);
     });
 
     it("module-not-found should have an example with import map", () => {

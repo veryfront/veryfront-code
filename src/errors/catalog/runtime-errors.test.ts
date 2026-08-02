@@ -52,5 +52,20 @@ describe("errors/catalog/runtime-errors", () => {
       assertEquals(typeof solution.example, "string");
       assertEquals(solution.example?.includes("layout") ?? false, true);
     });
+
+    it("layout-not-found should name supported router layout paths", () => {
+      const solution = RUNTIME_ERROR_CATALOG["layout-not-found"]!;
+      assertEquals(solution.steps?.includes("Create app/layout.tsx in App Router"), true);
+      assertEquals(
+        solution.steps?.includes(
+          "Or create pages/layout.tsx or pages/layout.mdx for Pages Router",
+        ),
+        true,
+      );
+      assertEquals(
+        solution.steps?.some((step) => step.includes("layouts/default.mdx")) ?? false,
+        false,
+      );
+    });
   });
 });

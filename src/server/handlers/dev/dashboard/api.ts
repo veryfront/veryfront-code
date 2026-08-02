@@ -1,5 +1,12 @@
 import { getMCPRegistry, getMCPStats } from "#veryfront/mcp";
-import { ERROR_CATALOG, getErrorMessage, REQUEST_ERROR } from "#veryfront/errors";
+import {
+  ERROR_CATALOG,
+  ERROR_REGISTRY,
+  type ErrorCategory,
+  type ErrorSlug,
+  getErrorMessage,
+  REQUEST_ERROR,
+} from "#veryfront/errors";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
@@ -538,25 +545,29 @@ function getStageDescription(name: string): string {
   return descriptions[name] ?? name;
 }
 
-function getCategoryFromCode(code: string): string {
-  const num = parseInt(code.replace("VF", ""), 10);
-  if (num < 100) return "config";
-  if (num < 200) return "build";
-  if (num < 300) return "runtime";
-  if (num < 400) return "route";
-  if (num < 500) return "module";
-  if (num < 600) return "server";
-  if (num < 700) return "rsc";
-  if (num < 800) return "dev";
-  if (num < 900) return "deployment";
-  return "general";
+const DASHBOARD_ERROR_CATEGORIES = {
+  CONFIG: "config",
+  BUILD: "build",
+  RUNTIME: "runtime",
+  ROUTE: "route",
+  MODULE: "module",
+  SERVER: "server",
+  BOUNDARY: "rsc",
+  DEV: "dev",
+  DEPLOY: "deployment",
+  AGENT: "agent",
+  GENERAL: "general",
+} as const satisfies Record<ErrorCategory, string>;
+
+function getCategoryFromSlug(slug: ErrorSlug): string {
+  return DASHBOARD_ERROR_CATEGORIES[ERROR_REGISTRY[slug].category];
 }
 
 function handleGetErrors(): Response {
   const errors = Object.entries(ERROR_CATALOG).map(([code, solution]) => ({
     code,
     title: solution.title,
-    category: getCategoryFromCode(code),
+    category: getCategoryFromSlug(solution.slug),
     message: solution.message,
     steps: solution.steps,
     docsUrl: solution.docs,

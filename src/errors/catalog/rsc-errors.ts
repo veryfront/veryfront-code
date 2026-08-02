@@ -1,7 +1,7 @@
 import type { PartialErrorCatalog } from "./types.ts";
 import { createErrorSolution, createSimpleError } from "./factory.ts";
 
-export const RSC_ERROR_CATALOG: PartialErrorCatalog = {
+export const RSC_ERROR_CATALOG: PartialErrorCatalog = Object.freeze({
   "client-boundary-violation": createErrorSolution("client-boundary-violation", {
     title: "Client/Server boundary violation",
     message: "Server-only code used in Client Component.",
@@ -10,16 +10,22 @@ export const RSC_ERROR_CATALOG: PartialErrorCatalog = {
       "Use 'use server' for server actions",
       "Split component into server and client parts",
     ],
-    example: `// ✓ Correct pattern
-import { db } from './database'
+    example: `// ServerComponent.tsx
+import { ClientComponent } from './ClientComponent.tsx'
+import { db } from './database.ts'
+
 export default async function ServerComponent() {
   const data = await db.query('...')
   return <ClientComponent data={data} />
 }
 
-'use client'
-export default function ClientComponent({ data }) {
-  return <div>{data}</div>
+// ClientComponent.tsx
+'use client';
+
+import type { User } from './types.ts'
+
+export function ClientComponent({ data }: { data: User[] }) {
+  return <ul>{data.map((user) => <li key={user.id}>{user.name}</li>)}</ul>
 }`,
   }),
 
@@ -79,4 +85,4 @@ import React from 'react'`,
       "Check for circular references",
     ],
   ),
-};
+});
