@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 export const MAX_DEV_UI_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 const MAX_ERROR_DETAIL_CHARACTERS = 2_000;
+const MAX_DEV_UI_JSON_RESPONSE_READS = 4_096;
 
 export type JsonObject = Record<string, unknown>;
 
@@ -114,8 +115,13 @@ export async function requestJson<T>(
   if (responseLabel.length === 0) throw new TypeError("JSON response label must not be empty");
 
   const maxResponseBytes = options.maxResponseBytes ?? MAX_DEV_UI_JSON_RESPONSE_BYTES;
-  if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0) {
-    throw new TypeError("JSON response byte limit must be a positive safe integer");
+  if (
+    !Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0 ||
+    maxResponseBytes > MAX_DEV_UI_JSON_RESPONSE_BYTES
+  ) {
+    throw new TypeError(
+      `JSON response byte limit must be a positive integer at most ${MAX_DEV_UI_JSON_RESPONSE_BYTES}`,
+    );
   }
 
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
@@ -154,15 +160,27 @@ async function readBoundedUtf8Body(
 ): Promise<string> {
   if (response.body === null) return "";
 
-  const chunks: Uint8Array[] = [];
+  const bytes = new Uint8Array(maxResponseBytes);
   let totalBytes = 0;
+  let reads = 0;
   const reader = response.body.getReader();
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      totalBytes += value.byteLength;
-      if (totalBytes > maxResponseBytes) {
+      reads += 1;
+      if (reads > MAX_DEV_UI_JSON_RESPONSE_READS) {
+        try {
+          await reader.cancel(`${responseLabel} response exceeded its stream read limit`);
+        } catch {
+          // The explicit read-work failure remains authoritative if cancellation also fails.
+        }
+        throw new RangeError(
+          `${responseLabel} response exceeds ${MAX_DEV_UI_JSON_RESPONSE_READS} stream reads`,
+        );
+      }
+      if (value.byteLength === 0) continue;
+      if (value.byteLength > maxResponseBytes - totalBytes) {
         try {
           await reader.cancel(`${responseLabel} response exceeded its byte limit`);
         } catch {
@@ -170,20 +188,15 @@ async function readBoundedUtf8Body(
         }
         throw new RangeError(`${responseLabel} response exceeds ${maxResponseBytes} bytes`);
       }
-      chunks.push(value);
+      bytes.set(value, totalBytes);
+      totalBytes += value.byteLength;
     }
   } finally {
     reader.releaseLock();
   }
 
-  const bytes = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(0, totalBytes));
   } catch (cause) {
     throw new TypeError(`${responseLabel} returned invalid UTF-8`, { cause });
   }

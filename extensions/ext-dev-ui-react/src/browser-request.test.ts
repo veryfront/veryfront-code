@@ -93,6 +93,35 @@ describe("requestJson", () => {
       "invalid UTF-8",
     );
   });
+
+  it("fails closed and cancels streams that exceed the bounded read-work budget", async () => {
+    for (const chunk of [new Uint8Array(), new TextEncoder().encode(" ")]) {
+      let cancelled = false;
+      let reads = 0;
+      const body = new ReadableStream<Uint8Array>({
+        pull(controller) {
+          reads += 1;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+
+      await assertRejects(
+        () =>
+          requestJson("https://local.test/api", {
+            responseLabel: "Adversarial stream",
+            admit: (value) => value,
+            fetchImpl: () => Promise.resolve(new Response(body)),
+          }),
+        RangeError,
+        "exceeds 4096 stream reads",
+      );
+      assert(cancelled);
+      assert(reads <= 4_098);
+    }
+  });
 });
 
 describe("LatestRequestOwner", () => {
