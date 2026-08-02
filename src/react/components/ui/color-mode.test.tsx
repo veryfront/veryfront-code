@@ -1,6 +1,6 @@
 import * as React from "react";
 import { flushSync } from "react-dom";
-import { createRoot, hydrateRoot } from "react-dom/client";
+import { createRoot, hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { JSDOM } from "npm:jsdom@28.0.0";
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
@@ -103,6 +103,18 @@ function ToggleFixture(): React.ReactElement {
   );
 }
 
+/**
+ * Unmount and drain the scheduler task React leaves behind.
+ *
+ * React's scheduler holds a `setImmediate` until it next runs. It completes on
+ * its own, but the test has to yield once more or Deno's leak sanitizer sees
+ * the timer still pending.
+ */
+async function unmount(root: Root): Promise<void> {
+  flushSync(() => root.unmount());
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("react/components/ui/color-mode", () => {
   it("escapes storage keys before embedding them in the inline color-mode script", () => {
     const storageKey = `vf";</script><script>alert(1)</script>//`;
@@ -151,7 +163,7 @@ describe("react/components/ui/color-mode", () => {
       await waitFor(() => document.documentElement.classList.contains("light"));
       assertEquals(document.documentElement.style.colorScheme, "light");
 
-      root.unmount();
+      await unmount(root);
     } finally {
       restore();
     }
@@ -186,7 +198,7 @@ describe("react/components/ui/color-mode", () => {
       assertEquals(document.querySelector("button")?.getAttribute("data-mode"), "dark");
       assertEquals(document.documentElement.style.colorScheme, "dark");
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       restore();
     }
@@ -217,7 +229,7 @@ describe("react/components/ui/color-mode", () => {
       await waitFor(() => document.querySelector("button")?.getAttribute("data-mode") === "dark");
       assertEquals(document.documentElement.style.colorScheme, "dark");
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       restore();
     }
@@ -255,7 +267,7 @@ describe("react/components/ui/color-mode", () => {
       await waitFor(() => document.querySelector("button")?.getAttribute("data-mode") === "dark");
       assertEquals(recoverableErrors, []);
 
-      flushSync(() => root.unmount());
+      await unmount(root);
     } finally {
       restore();
     }
