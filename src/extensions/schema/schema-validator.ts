@@ -148,6 +148,44 @@ export interface ValidationFailure {
 /** Discriminated union of validation outcomes. */
 export type ValidationResult<T> = ValidationSuccess<T> | ValidationFailure;
 
+/** Stable validation issue copied from a JSON Schema validator result. */
+export interface JsonSchemaValidationIssue {
+  /** JSON Pointer to the invalid value. */
+  instancePath: string;
+  /** JSON Pointer to the failed schema keyword. */
+  schemaPath: string;
+  /** JSON Schema keyword that failed. */
+  keyword: string;
+  /** Keyword-specific diagnostic values. */
+  params: Readonly<Record<string, unknown>>;
+  /** Human-readable validator diagnostic, when available. */
+  message?: string;
+}
+
+/** Successful validation of an input against a compiled JSON Schema. */
+export interface JsonSchemaValidationSuccess<T = unknown> {
+  success: true;
+  /** The accepted input. Validators must not mutate this value. */
+  value: T;
+}
+
+/** Failed validation of an input against a compiled JSON Schema. */
+export interface JsonSchemaValidationFailure {
+  success: false;
+  /** Validator issues copied before a subsequent validation can replace them. */
+  errors: readonly JsonSchemaValidationIssue[];
+}
+
+/** Result returned by a compiled JSON Schema validator. */
+export type JsonSchemaValidationResult<T = unknown> =
+  | JsonSchemaValidationSuccess<T>
+  | JsonSchemaValidationFailure;
+
+/** Compiled, reusable JSON Schema validation function. */
+export type JsonSchemaValidationFunction<T = unknown> = (
+  input: unknown,
+) => JsonSchemaValidationResult<T> | PromiseLike<JsonSchemaValidationResult<T>>;
+
 /**
  * Namespace for `coerce.*` constructors — accepts input in any form and
  * coerces to the target type before validation.
@@ -230,6 +268,16 @@ export interface SchemaValidator {
    * earlier revisions of this contract.
    */
   validate<T>(schema: Schema<T>, data: unknown): ValidationResult<T>;
+
+  /**
+   * Compile a JSON Schema into a reusable, non-mutating validator.
+   *
+   * This capability is optional so existing third-party `SchemaValidator`
+   * implementations remain source-compatible. Framework features that accept
+   * raw JSON Schema fail clearly when the registered adapter does not provide
+   * it.
+   */
+  compileJsonSchema?<T = unknown>(schema: JsonSchema): JsonSchemaValidationFunction<T>;
 
   /**
    * Convert an opaque `Schema<T>` to a JSON Schema document.

@@ -80,7 +80,6 @@
   "src/server/build-service-worker.test.ts",
   "src/server/handlers/response/cors.test.ts",
   "src/server/shared/renderer/adapter.test.ts",
-  "src/tool/factory.test.ts",
   "src/transforms/import-rewriter/strategies/import-map-strategy.test.ts",
   "src/transforms/md/compiler/md-compiler.test.ts",
   "src/transforms/mdx/compiler/index.test.ts",
