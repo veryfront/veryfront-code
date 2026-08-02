@@ -153,6 +153,12 @@ function createDeps(
       logs: null,
       duration_ms: 10,
     }),
+    executeDependencyArtifactBuild: async () => ({
+      success: true,
+      result: { state: "ready", assetCount: 2 },
+      logs: null,
+      duration_ms: 11,
+    }),
     executeStyleArtifactBuild: async () => ({
       success: true,
       result: {
@@ -583,6 +589,63 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       duration_ms: 12,
     });
     assertEquals(receivedConfig, { environment_name: "preview" });
+    assertEquals(attemptedProjectDiscovery, false);
+  });
+
+  it("dispatches dependency artifact builds without project discovery", async () => {
+    let receivedConfig: Record<string, unknown> | undefined;
+    let attemptedProjectDiscovery = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        attemptedProjectDiscovery = true;
+        return createEmptyDiscoveryResult();
+      },
+      executeDependencyArtifactBuild: async (input) => {
+        receivedConfig = input.request.config;
+        return {
+          success: true,
+          result: { state: "ready", assetCount: 2 },
+          logs: null,
+          duration_ms: 11,
+        };
+      },
+    }));
+    const config = {
+      artifact_id: "11111111-1111-4111-8111-111111111111",
+      attempt_count: 1,
+      identity: {
+        origin_key: "npm:public",
+        package_name: "fixture-package",
+        exact_version: "1.2.3",
+        subpath: "",
+        target: "es2022",
+        profile: "standard-v1",
+      },
+      policy: { decision: "allow" },
+    };
+    const body = {
+      runId: "run_dependency_artifact_1",
+      kind: "task",
+      target: "task:dependency-artifact-build",
+      projectId: "proj-1",
+      config,
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { state: "ready", assetCount: 2 },
+      logs: null,
+      duration_ms: 11,
+    });
+    assertEquals(receivedConfig, config);
     assertEquals(attemptedProjectDiscovery, false);
   });
 

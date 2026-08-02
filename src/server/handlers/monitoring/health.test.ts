@@ -1,6 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
+import { DEPENDENCY_ARTIFACT_BUILD_CAPABILITY } from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { HandlerContext } from "../types.ts";
 import { HealthHandler, isServerInitialized, setServerInitialized } from "./health.handler.ts";
 
 describe("server/handlers/monitoring/health", () => {
@@ -49,6 +51,21 @@ describe("server/handlers/monitoring/health", () => {
         if (typeof pattern === "string") continue;
         assertEquals(pattern.exact, true);
       }
+    });
+
+    it("advertises the dependency artifact builder task capability", async () => {
+      const handler = new HealthHandler();
+      const ctx = {
+        adapter: { fs: { stat: async () => null } },
+        projectDir: "/project",
+        securityConfig: undefined,
+      } as unknown as HandlerContext;
+
+      const result = await handler.handle(new Request("https://example.com/_health"), ctx);
+
+      assertExists(result.response);
+      const body = await result.response.json() as { capabilities?: string[] };
+      assertEquals(body.capabilities, [DEPENDENCY_ARTIFACT_BUILD_CAPABILITY]);
     });
   });
 });

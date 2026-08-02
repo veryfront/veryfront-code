@@ -227,6 +227,20 @@ export const getReleaseAssetUploadResponseSchema = defineSchema((v) =>
   })
 );
 
+export const getDependencyArtifactAssetUploadResponseSchema = defineSchema((v) =>
+  v.object({
+    stored: v.literal(true),
+    existed: v.boolean(),
+  })
+);
+
+export const getDependencyArtifactBuildResultResponseSchema = defineSchema((v) =>
+  v.object({
+    accepted: v.literal(true),
+    state: v.enum(["ready", "failed"] as const),
+  })
+);
+
 export const getReleaseAssetManifestStateResponseSchema = defineSchema((v) =>
   v.object({
     state: v.enum(
@@ -321,6 +335,12 @@ export type ReleaseAssetManifestBuildResponse = InferSchema<
 >;
 export type ReleaseAssetUploadResponse = InferSchema<
   ReturnType<typeof getReleaseAssetUploadResponseSchema>
+>;
+export type DependencyArtifactAssetUploadResponse = InferSchema<
+  ReturnType<typeof getDependencyArtifactAssetUploadResponseSchema>
+>;
+export type DependencyArtifactBuildResultResponse = InferSchema<
+  ReturnType<typeof getDependencyArtifactBuildResultResponseSchema>
 >;
 export type ReleaseAssetManifestStateResponse = InferSchema<
   ReturnType<typeof getReleaseAssetManifestStateResponseSchema>

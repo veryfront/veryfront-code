@@ -87,6 +87,7 @@ import {
   type ReleaseAssetRouteEntry,
 } from "./manifest-schema.ts";
 import type { CompileProjectCssResult } from "./css-compile.ts";
+import { materializeReleaseDependencyGraph } from "./dependency-artifact-graph.ts";
 
 const logger = serverLogger.component("release-asset-build");
 
@@ -1599,9 +1600,7 @@ async function finalizeDependencyModules(
 
   const finalized = new Map<string, PreparedAsset>();
   const fallbackUrls = new Map<string, string>();
-  const skippedCycles = new Set<string>();
   const recordedCycleGaps = new Set<string>();
-  const visiting: string[] = [];
 
   function resolveDependencyImport(
     specifier: string,
@@ -1616,11 +1615,9 @@ async function finalizeDependencyModules(
     return bySpecifier.get(normalizeDependencySpecifier(specifier)) ?? null;
   }
 
-  function recordDependencyCycle(cycleKeys: string[]): void {
+  function recordDependencyCycle(cycleKeys: readonly string[]): void {
     // Separate content-hashed ESM files cannot represent cyclic imports without
     // release-scoped aliases or bundling, so keep only that component on source URL fallback.
-    for (const key of cycleKeys) skippedCycles.add(key);
-
     const gap = `dependency-cycle:${cycleKeys.join("->")}`;
     if (!recordedCycleGaps.has(gap)) {
       recordedCycleGaps.add(gap);
@@ -1628,89 +1625,66 @@ async function finalizeDependencyModules(
     }
   }
 
-  function cycleFallbackFor(dependency: DependencyModule): string | null {
-    if (!skippedCycles.has(dependency.manifestKey)) return null;
-    return dependencyFallbackUrl(dependency);
-  }
-
-  async function finalize(manifestKey: string): Promise<PreparedAsset | null> {
-    const existing = finalized.get(manifestKey);
-    if (existing) return existing;
-    if (visiting.includes(manifestKey)) {
-      recordDependencyCycle([...visiting.slice(visiting.indexOf(manifestKey)), manifestKey]);
-      return null;
-    }
-    if (skippedCycles.has(manifestKey)) return null;
-
-    const dependency = dependencyModules.get(manifestKey);
-    if (!dependency) return null;
-
-    visiting.push(manifestKey);
-    try {
-      const imports = await parseImports(dependency.code);
-      for (const imp of imports) {
-        if (!imp.n) continue;
-        const filePath = resolveLocalDependencyPath(imp.n, dependency.sourcePath);
-        if (filePath && !byFilePath.has(filePath)) {
-          throw new Error(`Unresolved vendored file dependency: ${imp.n}`);
-        }
-        const child = resolveDependencyImport(imp.n, dependency);
-        if (!child) continue;
-        if (child.manifestKey === manifestKey) {
-          recordDependencyCycle([manifestKey, manifestKey]);
-          continue;
-        }
-        await finalize(child.manifestKey);
+  const graphModules = new Map(
+    [...dependencyModules].map(([manifestKey, dependency]) =>
+      [
+        manifestKey,
+        {
+          id: manifestKey,
+          code: dependency.code,
+          contentType: RELEASE_ASSET_CONTENT_TYPES.js,
+        },
+      ] as const
+    ),
+  );
+  const materialized = await materializeReleaseDependencyGraph({
+    modules: graphModules,
+    maxAssetBytes: RELEASE_ASSET_MAX_SIZE_BYTES,
+    resolveImport(specifier, parent) {
+      const dependency = dependencyModules.get(parent.id);
+      if (!dependency) return { kind: "invalid", failureCode: "graph_incomplete" };
+      const filePath = resolveLocalDependencyPath(specifier, dependency.sourcePath);
+      if (filePath && !byFilePath.has(filePath)) {
+        throw new Error(`Unresolved vendored file dependency: ${specifier}`);
       }
-
-      if (skippedCycles.has(manifestKey)) return null;
-
-      const rewritten = await replaceSpecifiers(dependency.code, (specifier) => {
-        const child = resolveDependencyImport(specifier, dependency);
-        if (!child) return null;
-        const asset = finalized.get(child.manifestKey);
-        if (asset) return releaseAssetUrl(asset.contentHash, "js");
-        return cycleFallbackFor(child);
-      });
-      await assertFinalModuleImports(rewritten, { allowHttp: false });
-
-      const entry = await addPreparedJavaScriptAsset(
-        `__dependencies__/${manifestKey}`,
-        rewritten,
-        uploadQueue,
-        pendingBytes,
-      );
-      if (!entry) {
-        throw new Error(`Vendored dependency exceeds release asset size limit: ${manifestKey}`);
+      const child = resolveDependencyImport(specifier, dependency);
+      return child ? { kind: "module", moduleId: child.manifestKey } : { kind: "external" };
+    },
+    cycleFallbackUrl(module) {
+      const dependency = dependencyModules.get(module.id);
+      const fallbackUrl = dependency ? dependencyFallbackUrl(dependency) : null;
+      if (!fallbackUrl) {
+        throw new Error(`Unrepresentable vendored dependency cycle: ${module.id}`);
       }
-      for (const specifier of dependency.specifiers) {
-        setDependencyModuleAlias(
-          bySpecifier,
-          normalizeDependencySpecifier(specifier),
-          dependency,
-        );
-      }
-      finalized.set(manifestKey, entry);
-      return entry;
-    } finally {
-      visiting.pop();
+      return fallbackUrl;
+    },
+    onCycle: recordDependencyCycle,
+    assetSizeErrorMessage: (module) =>
+      `Vendored dependency exceeds release asset size limit: ${module.id}`,
+  });
+
+  for (const asset of materialized.assets) {
+    await assertFinalModuleImports(new TextDecoder().decode(asset.bytes), {
+      allowHttp: false,
+    });
+    const entry: PreparedAsset = {
+      logicalPath: `__dependencies__/${asset.sourceId}`,
+      contentHash: asset.contentHash,
+      size: asset.size,
+      contentType: asset.contentType,
+    };
+    finalized.set(asset.sourceId, entry);
+    if (rememberPendingAsset(pendingBytes, entry, asset.bytes)) {
+      uploadQueue.push(entry);
     }
   }
 
-  try {
-    for (const manifestKey of dependencyModules.keys()) await finalize(manifestKey);
-  } finally {
-    visiting.length = 0;
-  }
-
-  for (const manifestKey of skippedCycles) {
+  for (const manifestKey of materialized.skippedCycleIds) {
     const dependency = dependencyModules.get(manifestKey);
     if (!dependency) continue;
 
     const fallbackUrl = dependencyFallbackUrl(dependency);
-    if (!fallbackUrl) {
-      throw new Error(`Unrepresentable vendored dependency cycle: ${manifestKey}`);
-    }
+    if (!fallbackUrl) throw new Error(`Unrepresentable vendored dependency cycle: ${manifestKey}`);
 
     addDependencyUrlAliases(fallbackUrls, dependency, fallbackUrl);
   }

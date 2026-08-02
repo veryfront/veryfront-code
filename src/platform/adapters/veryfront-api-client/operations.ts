@@ -1,4 +1,8 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { computeHashBytes, logger as baseLogger } from "#veryfront/utils";
+import type {
+  DependencyArtifactBuildResultBody,
+  DependencyArtifactContentType,
+} from "#veryfront/release-assets/dependency-artifact-contracts.ts";
 import {
   createCanonicalVeryfrontApiTransport,
   type TransportRequestInit,
@@ -7,7 +11,11 @@ import {
 } from "../veryfront-api-transport.ts";
 import { API_CLIENT_ERROR, VeryfrontError } from "./types.ts";
 import {
+  type DependencyArtifactAssetUploadResponse,
+  type DependencyArtifactBuildResultResponse,
   getBranchFileDetailSchema,
+  getDependencyArtifactAssetUploadResponseSchema,
+  getDependencyArtifactBuildResultResponseSchema,
   getEnvironmentFileDetailSchema,
   getListBranchFilesResponseSchema,
   getListEnvironmentFilesResponseSchema,
@@ -710,6 +718,60 @@ export class VeryfrontAPIOperations {
         }),
       }),
     );
+  }
+
+  // ===========================================================================
+  // Dependency artifact build operations
+  // ===========================================================================
+
+  async uploadDependencyArtifactAsset(
+    artifactId: string,
+    attemptCount: number,
+    contentHash: string,
+    contentType: DependencyArtifactContentType,
+    bytes: Uint8Array<ArrayBuffer>,
+  ): Promise<DependencyArtifactAssetUploadResponse> {
+    if (await computeHashBytes(bytes) !== contentHash) {
+      throw API_CLIENT_ERROR.create({
+        detail: "Dependency artifact content hash does not match the upload body",
+        status: 400,
+      });
+    }
+    const url = `/dependency-artifacts/${
+      encodeURIComponent(artifactId)
+    }/attempts/${attemptCount}/assets/${contentHash}`;
+    logger.debug("uploadDependencyArtifactAsset", {
+      attemptCount,
+      contentHash,
+      contentType,
+      size: bytes.byteLength,
+    });
+    const raw = await this.request(url, {
+      method: "PUT",
+      headers: { "Content-Type": contentType },
+      body: bytes as BodyInit,
+    });
+    return getDependencyArtifactAssetUploadResponseSchema().parse(raw);
+  }
+
+  async reportDependencyArtifactBuildResult(
+    artifactId: string,
+    attemptCount: number,
+    result: DependencyArtifactBuildResultBody,
+  ): Promise<DependencyArtifactBuildResultResponse> {
+    const url = `/dependency-artifacts/${
+      encodeURIComponent(artifactId)
+    }/attempts/${attemptCount}/result`;
+    logger.debug("reportDependencyArtifactBuildResult", {
+      attemptCount,
+      outcome: result.outcome,
+    });
+    const raw = await this.request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(result),
+    });
+    return getDependencyArtifactBuildResultResponseSchema().parse(raw);
   }
 
   // ===========================================================================
