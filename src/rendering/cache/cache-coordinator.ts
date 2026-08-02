@@ -9,9 +9,24 @@ import {
   isHtmlNonceCacheCompatible,
   sealHtmlNonceForCache,
 } from "#veryfront/html/nonce-injection.ts";
+import { cloneCachePayload, parseCachePayload } from "./cache-payload.ts";
+import { MAX_CACHE_TTL_MILLISECONDS } from "#veryfront/cache/backends/ttl.ts";
 
 /** Default TTL for cache entries (5 minutes) */
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1_000;
+
+function validateDurations(ttlMs: number, staleMs: number): void {
+  if (!Number.isFinite(ttlMs) || ttlMs < 0 || ttlMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Cache coordinator ttlMs must be between 0 and ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+  if (!Number.isFinite(staleMs) || staleMs < 0 || staleMs > MAX_CACHE_TTL_MILLISECONDS) {
+    throw new RangeError(
+      `Cache coordinator staleMs must be between 0 and ${MAX_CACHE_TTL_MILLISECONDS}`,
+    );
+  }
+}
 
 export interface CacheCoordinatorOptions {
   store?: CacheStore;
@@ -58,8 +73,11 @@ export class CacheCoordinator {
   private readonly cachePrefix: string;
 
   constructor(options: CacheCoordinatorOptions = {}) {
-    this.ttlMs = options.ttlMs ?? this.defaultTtlMs;
-    this.staleMs = options.staleMs ?? 0;
+    const ttlMs = options.ttlMs ?? this.defaultTtlMs;
+    const staleMs = options.staleMs ?? 0;
+    validateDurations(ttlMs, staleMs);
+    this.ttlMs = ttlMs;
+    this.staleMs = staleMs;
     this.projectId = options.projectId;
     this.contentSourceId = options.contentSourceId;
 
@@ -101,7 +119,14 @@ export class CacheCoordinator {
       "cache.checkCache",
       async () => {
         const lookupStart = performance.now();
-        const cached = await this.store.get(key);
+        const stored = await this.store.get(key);
+        const cached = stored === undefined ? undefined : parseCachePayload(stored);
+
+        // A stored value that fails validation is unusable; drop it so the next
+        // render repopulates the key instead of replaying corrupt data.
+        if (stored !== undefined && cached === undefined) {
+          await this.store.delete(key);
+        }
 
         if (!cached) {
           const lookupDurationMs = roundDurationMs(performance.now() - lookupStart);
@@ -196,7 +221,7 @@ export class CacheCoordinator {
           staleUntil: this.ttlMs && this.staleMs > 0 ? now + this.ttlMs + this.staleMs : undefined,
         };
 
-        await this.store.set(key, payload);
+        await this.store.set(key, cloneCachePayload(payload));
       },
       { "cache.slug": slug, "cache.key": key, "cache.projectId": this.projectId ?? "unknown" },
     );

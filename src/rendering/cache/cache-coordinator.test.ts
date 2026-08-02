@@ -1,11 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { scaleMs } from "#veryfront/testing/timing.ts";
 import type { RenderResult } from "../orchestrator/types.ts";
 import { CacheCoordinator } from "./cache-coordinator.ts";
 import { wrapInHTMLShell } from "#veryfront/html/html-shell-generator.ts";
 import { getProdHydrationModulePath } from "#veryfront/html/hydration-script-builder/prod-scripts.ts";
+import { serializeCachePayload } from "./cache-payload.ts";
+import type { CachePayload, CacheStore } from "./types.ts";
 
 function makeResult(html: string): RenderResult {
   return {
@@ -16,6 +18,10 @@ function makeResult(html: string): RenderResult {
     stream: null,
     ssrHash: "hash",
   };
+}
+
+function setFrontmatter(result: RenderResult, value: unknown): void {
+  result.frontmatter = value as RenderResult["frontmatter"];
 }
 
 function delay(ms: number): Promise<void> {
@@ -48,6 +54,82 @@ async function withStoreTtlEnabled(fn: () => Promise<void>): Promise<void> {
 }
 
 describe("CacheCoordinator", () => {
+  it("rejects invalid TTL/stale durations", () => {
+    for (const ttlMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new CacheCoordinator({ ttlMs }), RangeError, "ttlMs");
+    }
+    for (const staleMs of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      assertThrows(() => new CacheCoordinator({ staleMs }), RangeError, "staleMs");
+    }
+  });
+
+  it("evicts malformed store values and treats them as misses", async () => {
+    let deletedKey: string | undefined;
+    const store: CacheStore = {
+      get: () => Promise.resolve({} as CachePayload),
+      set: () => Promise.resolve(),
+      delete: (key) => {
+        deletedKey = key;
+        return Promise.resolve();
+      },
+      clear: () => Promise.resolve(),
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({ store, projectId: "project" });
+
+    const lookup = await coordinator.checkCache("malformed");
+
+    assertEquals(lookup.cacheStatus, "miss");
+    assertEquals(lookup.cachedResult, undefined);
+    assertEquals(deletedKey, "project:draft:malformed");
+  });
+
+  it("preserves Date frontmatter across a serializing store round-trip", async () => {
+    let stored: CachePayload | undefined;
+    const serializedStore: CacheStore = {
+      get: () => Promise.resolve(stored),
+      set: (_key, value) => {
+        stored = JSON.parse(serializeCachePayload(value)) as CachePayload;
+        return Promise.resolve();
+      },
+      delete: () => {
+        stored = undefined;
+        return Promise.resolve();
+      },
+      clear: () => {
+        stored = undefined;
+        return Promise.resolve();
+      },
+      destroy: () => Promise.resolve(),
+    };
+    const coordinator = new CacheCoordinator({
+      store: serializedStore,
+      ttlMs: 10_000,
+      projectId: "date-project",
+    });
+    const result = makeResult("<html>dated</html>");
+    const publicationDate = new Date("2026-07-24T08:30:00.000Z");
+    setFrontmatter(result, {
+      date: publicationDate,
+      metadata: {
+        revisedAt: new Date("2026-07-25T09:45:00.000Z"),
+      },
+    });
+
+    await coordinator.persistResult(result, "dated");
+    const lookup = await coordinator.checkCache("dated");
+
+    assertEquals(lookup.cacheStatus, "hit");
+    assertEquals(lookup.cachedResult?.frontmatter as unknown, {
+      date: new Date("2026-07-24T08:30:00.000Z"),
+      metadata: {
+        revisedAt: new Date("2026-07-25T09:45:00.000Z"),
+      },
+    });
+    assertEquals((lookup.cachedResult?.frontmatter.date as unknown) === publicationDate, false);
+    await coordinator.destroy();
+  });
+
   it("returns cached result on second lookup", async () => {
     const coordinator = new CacheCoordinator({ ttlMs: 10_000 });
     const slug = "home";
