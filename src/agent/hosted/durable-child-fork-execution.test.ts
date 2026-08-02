@@ -1086,7 +1086,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     assertEquals(serializedFailure.includes(CHILD_RUN_EVENT_TOKEN), false);
   });
 
-  it("returns the sanitized setup failure after rejecting observers and failed finalization", async () => {
+  it("rejects with a sanitized error after setup-failure finalization is rejected", async () => {
     let finalizationAttempts = 0;
     let executed = false;
     const observedLifecycleErrors: unknown[] = [];
@@ -1096,7 +1096,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
       fetch: () => Promise.reject(new Error(`secret ${PARENT_RUN_EVENT_TOKEN}`)),
     });
-    const result = await runWithHostedRunEventWriterCapability(
+    const execution = runWithHostedRunEventWriterCapability(
       runEventWriterCapability,
       () =>
         executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>(
@@ -1150,9 +1150,17 @@ describe("agent/hosted-durable-child-fork-execution", () => {
             },
             onLifecycleError: (error) => {
               observedLifecycleErrors.push(error);
+              if (error instanceof HostedChildRunFinalizationError) {
+                return Promise.reject(new Error("finalization observer failed"));
+              }
             },
           },
         ),
+    );
+    const error = await assertRejects(
+      () => execution,
+      HostedChildRunFinalizationError,
+      "Unable to finalize durable child run after setup failure",
     );
 
     assertEquals(executed, false);
@@ -1174,15 +1182,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       false,
     );
     assertEquals(JSON.stringify(observedLifecycleErrors).includes(CHILD_RUN_EVENT_TOKEN), false);
-    assertEquals(result.status, "setup_failed");
-    assertEquals(JSON.stringify(result).includes(PARENT_RUN_EVENT_TOKEN), false);
-    assertEquals(JSON.stringify(result).includes(CHILD_RUN_EVENT_TOKEN), false);
-    if (result.status === "setup_failed") {
-      assertEquals(
-        result.failure.terminalErrorMessage,
-        "Unable to initialize durable child event persistence",
-      );
-    }
+    assertEquals(error instanceof HostedChildRunFinalizationError, true);
+    assertEquals(error instanceof Error && "cause" in error, false);
   });
 
   it("reports missing setup-failure terminal persistence as a finalization error", async () => {
@@ -1194,7 +1195,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
       fetch: () => Promise.reject(new Error(`secret ${PARENT_RUN_EVENT_TOKEN}`)),
     });
-    const result = await runWithHostedRunEventWriterCapability(
+    const execution = runWithHostedRunEventWriterCapability(
       runEventWriterCapability,
       () =>
         executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>(
@@ -1244,15 +1245,17 @@ describe("agent/hosted-durable-child-fork-execution", () => {
           },
         ),
     );
+    const error = await assertRejects(
+      () => execution,
+      HostedChildRunFinalizationError,
+      "Unable to finalize durable child run after setup failure",
+    );
 
     assertEquals(executed, false);
     assertEquals(observedLifecycleErrors.length, 1);
     assertEquals(observedLifecycleErrors[0] instanceof HostedChildRunFinalizationError, true);
-    assertEquals(result.status, "setup_failed");
-    assertEquals(
-      JSON.stringify({ result, observedLifecycleErrors }).includes(PARENT_RUN_EVENT_TOKEN),
-      false,
-    );
+    assertEquals(error instanceof HostedChildRunFinalizationError, true);
+    assertEquals(JSON.stringify(observedLifecycleErrors).includes(PARENT_RUN_EVENT_TOKEN), false);
   });
 
   it("cancels exactly once when writer-token exchange is aborted after bootstrap", async () => {
@@ -1271,7 +1274,7 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       },
     });
 
-    const result = await runWithHostedRunEventWriterCapability(
+    const execution = runWithHostedRunEventWriterCapability(
       capability,
       () =>
         executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>({
@@ -1327,15 +1330,15 @@ describe("agent/hosted-durable-child-fork-execution", () => {
           },
         }),
     );
+    const error = await assertRejects(
+      () => execution,
+      HostedChildRunFinalizationError,
+      "Unable to finalize durable child run after setup failure",
+    );
 
     assertEquals(executed, false);
     assertEquals(cancellationAttempts, 1);
-    assertEquals(result.status, "terminal_failed");
-    if (result.status === "terminal_failed") {
-      assertEquals(result.failure.status, "cancelled");
-      assertEquals(result.failure.terminalErrorCode, "CANCELLED");
-      assertEquals(result.failure.terminalErrorMessage, "Child run cancelled");
-    }
+    assertEquals(error instanceof HostedChildRunFinalizationError, true);
     assertEquals(observedLifecycleErrors.length, 2);
     assertEquals(
       observedLifecycleErrors[0] instanceof HostedChildRunEventWriterTokenExchangeError &&
@@ -1344,11 +1347,11 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     );
     assertEquals(observedLifecycleErrors[1] instanceof HostedChildRunFinalizationError, true);
     assertEquals(
-      JSON.stringify({ result, observedLifecycleErrors }).includes(PARENT_RUN_EVENT_TOKEN),
+      JSON.stringify(observedLifecycleErrors).includes(PARENT_RUN_EVENT_TOKEN),
       false,
     );
     assertEquals(
-      JSON.stringify({ result, observedLifecycleErrors }).includes(CHILD_RUN_EVENT_TOKEN),
+      JSON.stringify(observedLifecycleErrors).includes(CHILD_RUN_EVENT_TOKEN),
       false,
     );
   });

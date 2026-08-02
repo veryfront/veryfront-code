@@ -860,11 +860,13 @@ export async function executeHostedDurableChildFork<
         await lifecycleAdapter.failed(terminalState);
       }
     } catch {
+      const finalizationError = new HostedChildRunFinalizationError();
       try {
-        await input.onLifecycleError?.(new HostedChildRunFinalizationError());
+        await input.onLifecycleError?.(finalizationError);
       } catch {
-        // The structured terminal result remains authoritative and sanitized.
+        // Terminal persistence failure remains authoritative and sanitized.
       }
+      throw finalizationError;
     }
 
     const failure = {
