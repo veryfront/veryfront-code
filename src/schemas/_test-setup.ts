@@ -13,6 +13,10 @@ import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
-if (!tryResolve<SchemaValidator>("SchemaValidator")) {
-  register<SchemaValidator>("SchemaValidator", createZodAdapter());
+export function ensureTestSchemaValidator(): void {
+  if (!tryResolve<SchemaValidator>("SchemaValidator")) {
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
+  }
 }
+
+ensureTestSchemaValidator();

@@ -17,7 +17,7 @@ interface AssertImpl {
     errorClassOrMsg?: ErrorClass | string,
     msgIncludesOrMsg?: string,
     msg?: string,
-  ): void;
+  ): unknown;
   assertRejects(
     fn: () => Promise<unknown>,
     errorClassOrMsg?: ErrorClass | string,
@@ -140,7 +140,7 @@ function createNodeAssertImpl(): AssertImpl {
       errorClassOrMsg?: ErrorClass | string,
       msgIncludesOrMsg?: string,
       _msg?: string,
-    ): void {
+    ): unknown {
       let threw = false;
       let error: unknown;
 
@@ -158,6 +158,7 @@ function createNodeAssertImpl(): AssertImpl {
         msgIncludesOrMsg,
         "Expected function to throw",
       );
+      return error;
     },
 
     async assertRejects(
@@ -295,8 +296,8 @@ export function assertThrows(
   errorClassOrMsg?: ErrorClass | string,
   msgIncludesOrMsg?: string,
   msg?: string,
-): void {
-  impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
+): unknown {
+  return impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
 }
 
 /** Assert that an async function rejects. */
