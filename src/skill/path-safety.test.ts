@@ -429,20 +429,6 @@ describe("src/skill/path-safety", () => {
       assertEquals(await settlesWithin(validation), true);
     });
 
-    it("preserves adapter-relative roots while checking symlink segments", async () => {
-      const adapter = createSkillTestAdapter({
-        "skills/test/references/guide.md": "Guide",
-      });
-      const validated = await validateSkillPath(
-        "skills/test",
-        "references/guide.md",
-        ["references"],
-        adapter,
-      );
-
-      assertEquals(validated, "skills/test/references/guide.md");
-    });
-
     it("should reject symlinked files in local skills", async () => {
       const tempDir = await makeTempDir({ prefix: "vf-skill-path-" });
       const skillRoot = join(tempDir, "skill");
@@ -553,16 +539,25 @@ describe("src/skill/path-safety", () => {
       ]);
     });
 
-    it("rejects traversal in the requested subdirectory before enumeration", async () => {
-      const adapter = createSkillTestAdapter({
-        "/project/skills/outside/secret.md": "secret",
-      });
+    it("rejects non-canonical subdirectory paths before adapter access", async () => {
+      let adapterCalls = 0;
+      const adapter = createSkillTestAdapter({});
 
-      await assertRejects(
-        () => listSkillSubdir("/project/skills/test", "../outside", adapter),
-        Error,
-        "subdirectory",
-      );
+      for (const subdir of ["", ".", "..", "../secrets", "references/nested", "bad\\path"]) {
+        await assertRejects(
+          () =>
+            listSkillSubdir("/project/skills/test", subdir, {
+              ...adapter,
+              exists() {
+                adapterCalls += 1;
+                return Promise.resolve(true);
+              },
+            }),
+          Error,
+          "subdirectory",
+        );
+      }
+      assertEquals(adapterCalls, 0);
     });
 
     it("rejects unsafe adapter entry names", async () => {
@@ -782,7 +777,9 @@ describe("src/skill/path-safety", () => {
     });
 
     it("rejects unsafe adapter entry names and symlinks", async () => {
-      const adapter = createSkillTestAdapter({});
+      const adapter = createSkillTestAdapter({
+        "/project/skills/test/references/ok.md": "ok",
+      });
       for (const name of ["", ".", "..", "../secret.md", "bad\\name.md", "bad\nname.md"]) {
         await assertRejects(
           () =>
@@ -819,6 +816,26 @@ describe("src/skill/path-safety", () => {
           }),
         Error,
         "symlink",
+      );
+
+      await assertRejects(
+        () =>
+          listSkillSubdir("/project/skills/test", "references", {
+            ...adapter,
+            exists: () => Promise.resolve(true),
+            async *readDir() {
+              for (let index = 0; index < 2; index++) {
+                yield {
+                  name: "duplicate.md",
+                  isFile: true,
+                  isDirectory: false,
+                  isSymlink: false,
+                };
+              }
+            },
+          }),
+        TypeError,
+        "duplicate entry name",
       );
     });
   });

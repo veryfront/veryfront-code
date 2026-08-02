@@ -709,6 +709,7 @@ async function listSkillSubdirWithLimits(
   );
 
   const files: string[] = [];
+  const names = new Set<string>();
   const entries = fsAdapter ? fsAdapter.readDir(dirPath) : readDir(dirPath);
   let entryCount = 0;
 
@@ -721,6 +722,10 @@ async function listSkillSubdirWithLimits(
     }
     const entry = captureDirectoryEntry(rawEntry);
     assertSafeDirectoryEntryName(entry.name);
+    if (apply(setHas, names, [entry.name]) as boolean) {
+      throw new TypeError("Skill subdirectory contains a duplicate entry name");
+    }
+    apply(setAdd, names, [entry.name]);
     if (entry.isSymlink) {
       throw toError(
         createError({
