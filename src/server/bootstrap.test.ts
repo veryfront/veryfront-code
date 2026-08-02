@@ -28,8 +28,10 @@ import type { TracingExporter } from "veryfront/extensions/observability";
 import type { NodeWebSocketServer } from "#veryfront/extensions/websocket";
 import { NodeWebSocketServerProviderName } from "#veryfront/extensions/websocket";
 import {
+  type FileLogHandle,
   orchestrateOrDisposeFS,
   resolveNodeWebSocketServerProviderForBootstrap,
+  teardownFileLog,
   validateProductionEnvironmentForTests,
   wireTracingShim,
 } from "./bootstrap.ts";
@@ -305,5 +307,49 @@ describe("validateProductionEnvironmentForTests()", () => {
       true,
     );
     assertEquals(warnings.some((message) => message.includes("%s")), false);
+  });
+});
+
+describe("teardownFileLog()", () => {
+  function createHandle(
+    close: () => Promise<void>,
+    unsubscribe: () => void = () => {},
+  ): FileLogHandle {
+    return { subscriber: { close }, unsubscribe } as unknown as FileLogHandle;
+  }
+
+  it("does not propagate a rejecting subscriber close", async () => {
+    let unsubscribed = 0;
+    const handle = createHandle(
+      () => Promise.reject(new Error("retained file-log write failure")),
+      () => {
+        unsubscribed += 1;
+      },
+    );
+
+    await teardownFileLog(handle);
+
+    assertEquals(unsubscribed, 1);
+  });
+
+  it("still closes the subscriber when unsubscribe throws", async () => {
+    let closed = 0;
+    const handle = createHandle(
+      () => {
+        closed += 1;
+        return Promise.resolve();
+      },
+      () => {
+        throw new Error("unsubscribe failed");
+      },
+    );
+
+    await teardownFileLog(handle);
+
+    assertEquals(closed, 1);
+  });
+
+  it("ignores a missing handle", async () => {
+    await teardownFileLog(null);
   });
 });
