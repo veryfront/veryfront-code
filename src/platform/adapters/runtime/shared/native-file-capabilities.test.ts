@@ -112,6 +112,26 @@ describe("native filesystem capabilities", () => {
     }
   });
 
+  it("accepts a canonical candidate beneath a symlinked containment root", async () => {
+    if (Deno.build.os === "windows") return;
+    const workspace = await Deno.makeTempDir({ prefix: "vf-native-snapshot-root-" });
+    const physicalRoot = `${workspace}/physical`;
+    const linkedRoot = `${workspace}/linked`;
+    try {
+      await Deno.mkdir(physicalRoot);
+      await Deno.writeFile(`${physicalRoot}/asset.bin`, new Uint8Array([1, 2, 3]));
+      await Deno.symlink(physicalRoot, linkedRoot);
+      const canonicalCandidate = await Deno.realPath(`${linkedRoot}/asset.bin`);
+
+      assertEquals(
+        [...await readNodeFileSnapshotWithinLimit(canonicalCandidate, linkedRoot, 3)],
+        [1, 2, 3],
+      );
+    } finally {
+      await Deno.remove(workspace, { recursive: true });
+    }
+  });
+
   it("rejects metadata oversize without reading and always closes the handle", async () => {
     const stat = snapshotStat({ size: 4n });
     let reads = 0;
