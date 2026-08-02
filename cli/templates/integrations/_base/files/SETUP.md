@@ -640,19 +640,45 @@ Enable debug logging:
 DEBUG=veryfront:oauth veryfront dev
 ```
 
-### Token Storage
+### Token storage
 
-By default, tokens are stored in memory. For production:
+The generated token-store proxy uses in-memory storage only in an explicit
+development or test environment. For production:
 
-1. Implement `TokenStore` interface in `lib/token-store.ts`
-2. Use Redis, database, or encrypted file storage
-3. Handle token refresh automatically
+1. Select a storage extension that provides a durable
+   `RefreshCapableTokenStore`.
+2. Configure it with `configureTokenStore()` before the first OAuth request.
+3. Ensure the extension encrypts tokens, atomically consumes OAuth state,
+   implements compare-and-set, and uses a bounded, crash-recoverable
+   distributed lease for refresh locking.
+
+```typescript
+// lib/configure-oauth-storage.ts (import once during application startup)
+import type { RefreshCapableTokenStore } from "veryfront/oauth";
+import { configureTokenStore } from "./token-store.ts";
+import { createApplicationOAuthTokenStore } from "./storage/oauth.ts";
+
+const oauthStore: RefreshCapableTokenStore = createApplicationOAuthTokenStore();
+configureTokenStore(oauthStore);
+```
+
+`createApplicationOAuthTokenStore` is the factory exported by your selected
+storage extension. Veryfront core does not select or import the backend.
+
+### Authenticated tool context
+
+Generated integration tools resolve the token owner from `context.userId`.
+Pass the authenticated user through `ToolExecutionContext` whenever an agent or
+workflow invokes a tool. Production execution fails closed when the context has
+no authenticated user id. For local development, set
+`VERYFRONT_DEV_USER_ID` when you need a stable test identity.
 
 ## Production Checklist
 
 - [ ] Update all redirect URIs to production domain
-- [ ] Implement persistent token storage
-- [ ] Set up token encryption
+- [ ] Configure an extension-owned `RefreshCapableTokenStore`
+- [ ] Verify token encryption and distributed refresh locking
+- [ ] Pass authenticated user ids through every tool execution context
 - [ ] Configure rate limiting
 - [ ] Add error monitoring (Sentry)
 - [ ] Test OAuth flows end-to-end

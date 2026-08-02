@@ -22,8 +22,8 @@ sheets/
 └── files/
     ├── _env.example                        # Environment variables template
     ├── lib/
-    │   ├── oauth.ts                        # OAuth 2.0 helpers
-    │   ├── token-store.ts                  # Token storage (in-memory for dev)
+    │   ├── token-store.ts                  # Shared refresh-capable OAuth storage
+    │   ├── user-id.ts                      # Authenticated user resolution
     │   └── sheets-client.ts                # Google Sheets API client
     ├── app/api/auth/sheets/
     │   ├── route.ts                        # OAuth initiation endpoint
@@ -83,12 +83,16 @@ The integration requests these scopes:
 
 ## API Client Usage
 
-### Create Client
+### Create a client for a tool execution
 
 ```typescript
+import type { ToolExecutionContext } from "veryfront/tool";
 import { createSheetsClient } from "./lib/sheets-client.ts";
+import { requireUserIdFromContext } from "./lib/user-id.ts";
 
-const client = createSheetsClient("user-id");
+function createClient(context: ToolExecutionContext) {
+  return createSheetsClient(requireUserIdFromContext(context));
+}
 ```
 
 ### List Spreadsheets
@@ -316,29 +320,48 @@ await client.deleteSheet("spreadsheet-id", sheetId);
 
 ## Production Considerations
 
-### Token Storage
+### Configure token storage
 
-The default implementation uses in-memory storage. For production:
+The generated token-store proxy uses in-memory storage only in an explicit
+development or test environment. Configure an extension-owned
+`RefreshCapableTokenStore` before the first OAuth request in production:
 
 ```typescript
-import { createTokenStore } from "./lib/token-store.ts";
+// lib/configure-oauth-storage.ts (import once during application startup)
+import type { RefreshCapableTokenStore } from "veryfront/oauth";
+import { configureTokenStore } from "./token-store.ts";
+import { createApplicationOAuthTokenStore } from "./storage/oauth.ts";
 
-const tokenStore = createTokenStore({
-  get: async (key) => await db.get(key),
-  set: async (key, value) => await db.set(key, value),
-  delete: async (key) => await db.delete(key),
+const oauthStore: RefreshCapableTokenStore = createApplicationOAuthTokenStore();
+configureTokenStore(oauthStore);
+```
+
+The storage extension must persist state and tokens across workers, implement
+atomic compare-and-set, and provide a bounded, crash-recoverable distributed
+lease for token refresh locking. It must also consume OAuth state atomically
+with a short expiration time.
+
+### Pass authenticated tool context
+
+Generated Sheets tools resolve the token owner from `context.userId`. Pass the
+authenticated user through the `ToolExecutionContext` when invoking a tool:
+
+```typescript
+import { tool } from "veryfront/tool";
+import { requireUserIdFromContext } from "./lib/user-id.ts";
+
+export default tool({
+  id: "example-sheets-tool",
+  execute: async (_input, context) => {
+    const userId = requireUserIdFromContext(context);
+    const client = createSheetsClient(userId);
+    return await client.listSpreadsheets();
+  },
 });
 ```
 
-### User Authentication
-
-Replace `DEFAULT_USER_ID` with actual user session management:
-
-```typescript
-// Get user from session
-const userId = await getSessionUserId(request);
-const client = createSheetsClient(userId);
-```
+Production execution fails closed when the context has no authenticated user
+id. Development can set `VERYFRONT_DEV_USER_ID` for local testing.
 
 ### Error Handling
 

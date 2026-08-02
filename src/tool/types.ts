@@ -80,6 +80,8 @@ export interface ToolExecutionContext {
   toolCallId?: string;
   /** Project identity used by integration token resolution */
   projectId?: string;
+  /** Authenticated application user used to scope integration tokens */
+  userId?: string;
   /** Project slug/reference for project-local platform API tools */
   projectSlug?: string;
   /** Request-scoped Veryfront auth token for project-local platform API tools */

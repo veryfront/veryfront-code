@@ -1,29 +1,28 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createDocsClient, type Request } from "../../lib/docs-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createDocsClient, type Request } from "../lib/docs-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "update-document",
   description:
     "Update a Google Docs document using batch requests. Supports inserting text, deleting content, replacing text, and more.",
-  inputSchema: defineSchema((v) => v
-    .object({
-      documentId: v.string().describe("The ID of the document to update"),
-      requests: v
-        .array(v.any())
-        .describe(
-          "Array of batch update requests. See Google Docs API documentation for request types: insertText, deleteContentRange, replaceAllText, etc.",
-        ),
-    })
-    .or(
+  inputSchema: defineSchema((v) =>
+    v.union([
+      v.object({
+        documentId: v.string().describe("The ID of the document to update"),
+        requests: v
+          .array(v.any())
+          .describe(
+            "Array of batch update requests. See Google Docs API documentation for request types: insertText, deleteContentRange, replaceAllText, etc.",
+          ),
+      }),
       v.object({
         documentId: v.string().describe("The ID of the document to update"),
         operation: v
           .object({
             type: v
-              .enum(["insertText", "deleteContent", "replaceAllText"])
+              .enum(["insertText", "deleteContent", "replaceAllText"] as const)
               .describe("Type of operation to perform"),
             insertText: v
               .object({
@@ -50,14 +49,16 @@ export default tool({
           })
           .describe("Simple operation to perform"),
       }),
-    ))(),
-  async execute(input): Promise<{
+    ])
+  )(),
+  async execute(input, context): Promise<{
     documentId: string;
     success: true;
     replies: unknown;
     writeControl?: unknown;
   }> {
-    const client = createDocsClient(DEFAULT_USER_ID);
+    const userId = requireUserIdFromContext(context);
+    const client = createDocsClient(userId);
 
     if (!("operation" in input)) {
       const { documentId, requests } = input;
@@ -102,9 +103,6 @@ export default tool({
         );
         return { documentId: result.documentId, success: true, replies: result.replies };
       }
-
-      default:
-        throw new Error(`Unknown operation type: ${operation.type}`);
     }
   },
 });

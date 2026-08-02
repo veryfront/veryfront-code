@@ -1,8 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createSheetsClient } from "../../lib/sheets-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createSheetsClient } from "../lib/sheets-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 
 export default tool({
   id: "append-rows",
@@ -15,16 +14,18 @@ export default tool({
         "A1 notation range/table to append to (e.g., 'Sheet1!A:C')",
       ),
       values: v.array(v.array(v.any())).describe("2D array of rows to append"),
-      valueInputOption: v.enum(["RAW", "USER_ENTERED"]).default("USER_ENTERED"),
-      insertDataOption: v.enum(["OVERWRITE", "INSERT_ROWS"]).default(
+      valueInputOption: v.enum(["RAW", "USER_ENTERED"] as const).default("USER_ENTERED"),
+      insertDataOption: v.enum(["OVERWRITE", "INSERT_ROWS"] as const).default(
         "INSERT_ROWS",
       ),
     })
   )(),
   execute(
     { spreadsheetId, range, values, valueInputOption, insertDataOption },
+    context,
   ) {
-    return createSheetsClient(DEFAULT_USER_ID).appendRange({
+    const userId = requireUserIdFromContext(context);
+    return createSheetsClient(userId).appendRange({
       spreadsheetId,
       range,
       values,

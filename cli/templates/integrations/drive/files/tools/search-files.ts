@@ -1,48 +1,50 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { createDriveClient } from "../../lib/drive-client.ts";
-
-const DEFAULT_USER_ID = "demo-user";
+import { createDriveClient } from "../lib/drive-client.ts";
+import { requireUserIdFromContext } from "../lib/user-id.ts";
 const FOLDER_MIME_TYPE = "application/vnd.google-apps.folder";
 
 export default tool({
   id: "search-files",
   description:
     "Search for files and folders in Google Drive using queries. Supports searching by name, content, type, and more. Use Drive query syntax (e.g., \"name contains 'report'\", \"mimeType='application/pdf'\").",
-  inputSchema: defineSchema((v) => v.object({
-    query: v
-      .string()
-      .describe(
-        "Search query using Drive query syntax. Examples: \"name contains 'report'\", \"mimeType='application/pdf'\", \"fullText contains 'budget'\"",
-      ),
-    pageSize: v
-      .number()
-      .min(1)
-      .max(1000)
-      .default(100)
-      .describe("Maximum number of files to return"),
-    pageToken: v
-      .string()
-      .optional()
-      .describe("Token for pagination to get next page of results"),
-    orderBy: v
-      .enum([
-        "createdTime",
-        "folder",
-        "modifiedByMeTime",
-        "modifiedTime",
-        "name",
-        "quotaBytesUsed",
-        "recency",
-        "sharedWithMeTime",
-        "starred",
-        "viewedByMeTime",
-      ])
-      .optional()
-      .describe("Field to sort results by"),
-  }))(),
-  async execute({ query, pageSize, pageToken, orderBy }) {
-    const client = createDriveClient(DEFAULT_USER_ID);
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v
+        .string()
+        .describe(
+          "Search query using Drive query syntax. Examples: \"name contains 'report'\", \"mimeType='application/pdf'\", \"fullText contains 'budget'\"",
+        ),
+      pageSize: v
+        .number()
+        .min(1)
+        .max(1000)
+        .default(100)
+        .describe("Maximum number of files to return"),
+      pageToken: v
+        .string()
+        .optional()
+        .describe("Token for pagination to get next page of results"),
+      orderBy: v
+        .enum([
+          "createdTime",
+          "folder",
+          "modifiedByMeTime",
+          "modifiedTime",
+          "name",
+          "quotaBytesUsed",
+          "recency",
+          "sharedWithMeTime",
+          "starred",
+          "viewedByMeTime",
+        ])
+        .optional()
+        .describe("Field to sort results by"),
+    })
+  )(),
+  async execute({ query, pageSize, pageToken, orderBy }, context) {
+    const userId = requireUserIdFromContext(context);
+    const client = createDriveClient(userId);
 
     const result = await client.searchFiles({
       query,

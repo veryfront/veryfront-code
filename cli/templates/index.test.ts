@@ -483,21 +483,73 @@ describe("cli/templates", () => {
     );
   });
 
-  it("integration templates do not use a shared current-user token key", async () => {
+  it("integration templates do not use hardcoded shared user ids", async () => {
     const integrationTemplates = new URL("./integrations/", import.meta.url);
     const offenders: string[] = [];
+    const forbiddenUserIds = [
+      '"current-user"',
+      "'current-user'",
+      '"demo-user"',
+      "'demo-user'",
+      "DEFAULT_USER_ID",
+      "CURRENT_USER_ID",
+    ];
 
     for (const file of await collectTemplateTsFiles(integrationTemplates)) {
       const source = await Deno.readTextFile(file);
-      if (source.includes('"current-user"') || source.includes("'current-user'")) {
-        offenders.push(file.pathname.replace(integrationTemplates.pathname, ""));
+      for (const userId of forbiddenUserIds) {
+        if (source.includes(userId)) {
+          offenders.push(
+            `${file.pathname.replace(integrationTemplates.pathname, "")}: ${userId}`,
+          );
+        }
       }
     }
 
     assertEquals(
       offenders,
       [],
-      `Integration templates must require a real user id. Offenders: ${offenders.join(", ")}`,
+      `Integration templates must resolve authenticated user ids from requests or tool contexts. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
+  it("Google workspace tools resolve authenticated users from execution context", async () => {
+    const integrations = [
+      { name: "drive", clientFactory: "createDriveClient" },
+      { name: "docs-google", clientFactory: "createDocsClient" },
+      { name: "sheets", clientFactory: "createSheetsClient" },
+    ];
+    const offenders: string[] = [];
+    let toolCount = 0;
+
+    for (const { name, clientFactory } of integrations) {
+      const toolsDirectory = new URL(`./integrations/${name}/files/tools/`, import.meta.url);
+      for (const file of await collectTemplateTsFiles(toolsDirectory)) {
+        const source = await Deno.readTextFile(file);
+        if (!source.includes(`${clientFactory}(`)) continue;
+
+        toolCount++;
+        if (
+          !source.includes(
+            'import { requireUserIdFromContext } from "../lib/user-id.ts";',
+          ) ||
+          !source.includes("requireUserIdFromContext(context)") ||
+          !source.includes(`${clientFactory}(userId)`)
+        ) {
+          offenders.push(`${name}/${file.pathname.split("/").at(-1)}`);
+        }
+      }
+    }
+
+    assertEquals(toolCount, 26, "Expected every Drive, Docs, and Sheets tool");
+    assertEquals(
+      offenders,
+      [],
+      `Google workspace tools must use authenticated tool execution context. Offenders: ${
+        offenders.join(", ")
+      }`,
     );
   });
 
