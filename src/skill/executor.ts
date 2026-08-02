@@ -158,7 +158,7 @@ export class LocalScriptExecutor implements SkillScriptExecutor {
     try {
       if (scriptContent !== undefined) {
         materializationRoot = await fs.makeTempDir({ prefix: "veryfront-skill-script-" });
-        executionPath = `${materializationRoot}/script`;
+        executionPath = `${materializationRoot}/script${extname(input.scriptPath)}`;
         await fs.writeTextFile(executionPath, scriptContent);
         await fs.chmod(executionPath, 0o700);
       }

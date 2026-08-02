@@ -157,6 +157,17 @@ describe("src/skill/executor", () => {
       assertEquals(result.stdout.includes("veryfront-skill-script-"), true);
     });
 
+    it("preserves the TypeScript media type for materialized adapter content", async () => {
+      const result = await new LocalScriptExecutor().execute({
+        scriptPath: "skills/adapter-only/scripts/run.ts",
+        scriptContent: 'const value: string = "adapter-typescript";\nconsole.log(value);',
+      });
+
+      assertEquals(result.exitCode, 0);
+      assertEquals(result.stderr, "");
+      assertEquals(result.stdout.trim(), "adapter-typescript");
+    });
+
     it("rejects a native script changed after framework validation", async () => {
       const root = await Deno.makeTempDir({ prefix: "vf-skill-executor-" });
       const scriptPath = `${root}/run.sh`;
