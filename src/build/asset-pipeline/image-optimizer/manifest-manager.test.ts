@@ -3,6 +3,7 @@ import { join } from "#veryfront/compat/path";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir, readTextFile } from "#veryfront/testing/deno-compat.ts";
+import { snapshotOptimizedImageMetadata } from "#veryfront/utils/optimized-image-manifest.ts";
 import { loadManifest, writeManifest } from "./manifest-manager.ts";
 import type { OptimizedImageMetadata } from "./types.ts";
 
@@ -49,6 +50,10 @@ describe("manifest-manager", () => {
       const loaded = await loadManifest(tmpDir);
       assertEquals(loaded.size, 1);
       assertEquals(loaded.get("logo.png"), manifest.get("logo.png"));
+      assertEquals(
+        snapshotOptimizedImageMetadata(loaded.get("logo.png"), "logo.png"),
+        manifest.get("logo.png"),
+      );
     } finally {
       await Deno.remove(tmpDir, { recursive: true });
     }
@@ -81,6 +86,9 @@ describe("manifest-manager", () => {
           { ...valid, engineIdentity: " test-image-engine@1" },
           { ...valid, quality: undefined },
           { ...valid, variants: [{ ...valid.variants[0], quality: 74 }] },
+          { ...valid, variants: [{ ...valid.variants[0], width: 399 }] },
+          { ...valid, unexpected: true },
+          { ...valid, variants: [{ ...valid.variants[0], unexpected: true }] },
         ]
       ) {
         await Deno.writeTextFile(
@@ -131,7 +139,7 @@ describe("manifest-manager", () => {
     }
   });
 
-  it("loads legacy entries without originalSize", async () => {
+  it("rejects entries without the runtime-required original size", async () => {
     const tmpDir = await makeTempDir();
     try {
       await Deno.writeTextFile(
@@ -156,14 +164,13 @@ describe("manifest-manager", () => {
         }),
       );
 
-      const loaded = await loadManifest(tmpDir);
-      assertEquals(loaded.get("logo.png")?.originalSize, undefined);
+      await assertRejects(() => loadManifest(tmpDir), TypeError, "malformed");
     } finally {
       await Deno.remove(tmpDir, { recursive: true });
     }
   });
 
-  it("normalizes exact duplicate variants emitted by the legacy generator", async () => {
+  it("rejects exact duplicate variants", async () => {
     const tmpDir = await makeTempDir();
     const variant = {
       format: "webp",
@@ -180,6 +187,7 @@ describe("manifest-manager", () => {
         JSON.stringify({
           "logo.png": {
             original: "logo.png",
+            originalSize: 2048,
             variants: [variant, { ...variant }],
             defaultFormat: "webp",
             aspectRatio: 2,
@@ -189,8 +197,7 @@ describe("manifest-manager", () => {
         }),
       );
 
-      const loaded = await loadManifest(tmpDir);
-      assertEquals(loaded.get("logo.png")?.variants, [variant]);
+      await assertRejects(() => loadManifest(tmpDir), TypeError, "malformed");
     } finally {
       await Deno.remove(tmpDir, { recursive: true });
     }
@@ -204,6 +211,7 @@ describe("manifest-manager", () => {
         JSON.stringify({
           "logo.png": {
             original: "logo.png",
+            originalSize: 2048,
             variants: [
               {
                 format: "webp",

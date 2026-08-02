@@ -14,8 +14,8 @@ export interface ImageOptimizationOptions {
 
 export interface OptimizedImageMetadata {
   original: string;
-  /** Source file size in bytes. Optional for manifests produced before this field existed. */
-  originalSize?: number;
+  /** Source file size in bytes. */
+  originalSize: number;
   variants: ImageVariant[];
   defaultFormat: ImageFormat;
   aspectRatio: number;
