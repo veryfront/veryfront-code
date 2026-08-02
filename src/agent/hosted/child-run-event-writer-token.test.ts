@@ -76,6 +76,31 @@ Deno.test("run event writer capability delegates parent to child to grandchild e
   );
 });
 
+Deno.test("run event writer capability preserves the configured API base path", async () => {
+  let requestUrl: string | undefined;
+  const capability = createHostedRunEventWriterCapability({
+    apiUrl: "https://api.example.test/v1",
+    runId: "run_parent",
+    runEventAppendToken: "parent-writer-token",
+    fetch: (input, init) => {
+      requestUrl = new Request(input, init).url;
+      return Promise.resolve(
+        Response.json(
+          { run_event_token: "child-writer-token" },
+          { headers: { "Cache-Control": "no-store" } },
+        ),
+      );
+    },
+  });
+
+  await capability.mintChildRunEventAppendToken("run_child");
+
+  assertEquals(
+    requestUrl,
+    "https://api.example.test/v1/runs/run_parent/children/run_child/event-writer-token",
+  );
+});
+
 Deno.test("exchangeHostedChildRunEventWriterToken rejects responses without no-store", async () => {
   await assertRejects(
     () =>

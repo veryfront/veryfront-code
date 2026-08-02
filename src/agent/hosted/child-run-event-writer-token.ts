@@ -1,5 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import {
+  createVeryfrontApiRequestUrlResolver,
+  type VeryfrontApiRequestUrlResolver,
+} from "#veryfront/platform/adapters/veryfront-api-url.ts";
+import {
   type ConversationRunChunkMirror,
   createHostedConversationRunChunkMirror,
   type HostedConversationRunChunkMirrorOptions,
@@ -32,6 +36,7 @@ export interface HostedRunEventWriterCapability {
 
 type CapabilityState = {
   apiUrl: string;
+  resolveApiUrl: VeryfrontApiRequestUrlResolver;
   runId: string;
   runEventAppendToken: string;
   timeoutMs: number;
@@ -89,11 +94,10 @@ async function exchangeChildRunEventWriterToken(
     abortSignal?.addEventListener("abort", onAbort, { once: true });
   }
   const timeoutId = setTimeout(() => cancel("timeout"), state.timeoutMs);
-  const url = new URL(
+  const url = state.resolveApiUrl(
     `/runs/${encodeURIComponent(state.runId)}/children/${
       encodeURIComponent(childRunId)
     }/event-writer-token`,
-    state.apiUrl,
   );
 
   try {
@@ -167,6 +171,7 @@ export function createHostedRunEventWriterCapability(input: {
 }): HostedRunEventWriterCapability {
   const state: CapabilityState = {
     apiUrl: input.apiUrl,
+    resolveApiUrl: createVeryfrontApiRequestUrlResolver(input.apiUrl),
     runId: input.runId,
     runEventAppendToken: input.runEventAppendToken,
     timeoutMs: input.timeoutMs ?? DEFAULT_CHILD_RUN_EVENT_WRITER_TOKEN_TIMEOUT_MS,
