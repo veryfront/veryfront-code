@@ -31,9 +31,9 @@ const model = resolveModel("veryfront-cloud/openai/gpt-5.4-nano");
 
 ### `registerModelProvider(name, factory)`
 
-Register a custom model provider factory for the current project.
+Register a custom model provider factory for the active project scope or application bootstrap.
 
-**Returns:** `void`
+**Returns:** `ModelProviderRegistrationDisposer`
 
 ### `resolveModel(modelString)`
 
@@ -85,7 +85,7 @@ Clear all registered model providers (for testing).
 | `hasModelProvider` | Check if a model provider is registered (project-scoped or shared). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L272) |
 | `markCurrentVeryfrontCloudBillingGroupUsed` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/context.ts#L35) |
 | `normalizeVeryfrontCloudModelId` | Normalizes Veryfront Cloud model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L198) |
-| `registerModelProvider` | Register a custom model provider factory for the current project. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L61) |
+| `registerModelProvider` | Register a custom model provider factory for the active project scope or application bootstrap. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L61) |
 | `resolveModel` | Resolve a "provider/model" string to a framework-compatible model runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/model-registry.ts#L228) |
 | `resolveVeryfrontCloudGatewayModelId` | Resolves Veryfront Cloud gateway model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L272) |
 | `resolveVeryfrontCloudModelId` | Resolves Veryfront Cloud model ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/veryfront-cloud/model-catalog.ts#L246) |

@@ -98,7 +98,8 @@ function getOpenAIEnvProviderName(baseURL: string | undefined): "openai" | "open
 }
 
 /**
- * Register a custom model provider factory.
+ * Register a custom model provider factory for the active project scope or
+ * application bootstrap.
  *
  * Registration inside a project source context is isolated to that context.
  * Registration during application bootstrap, outside a project context, is a
@@ -106,7 +107,13 @@ function getOpenAIEnvProviderName(baseURL: string | undefined): "openai" | "open
  *
  * @example
  * ```ts
- * registerModelProvider("custom", (id) => createCustomRuntime(id));
+ * const unregister = registerModelProvider(
+ *   "custom",
+ *   (id) => createCustomRuntime(id),
+ * );
+ *
+ * // Call during teardown when the registration is no longer needed.
+ * unregister();
  * ```
  */
 export function registerModelProvider(
