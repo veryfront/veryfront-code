@@ -1366,13 +1366,21 @@ describe("DOM Utils", () => {
       }
     });
 
-    it("should return empty content when root element not found", () => {
+    it("should return undefined content when root element not found", () => {
       const mocks = setupMockDOMParser();
       try {
         const html = '<div class="container">No root element</div>';
         const result = parsePageDataFromHTML(html);
 
-        assertEquals(result.content, "", "Should return empty content");
+        // A 200 without an app root (proxy interstitial, custom error page) has
+        // no route content to commit. Reporting it as an empty string would be
+        // indistinguishable from an intentionally empty route and would blank
+        // the live app on the next soft transition.
+        assertEquals(result.content, undefined, "Should report absent content");
+        // Skipping the transition is not enough: the router would still commit
+        // the navigation and leave the old page under the new URL. The
+        // destination belongs to the browser's document loader.
+        assertEquals(result.pageData.requiresFullDocumentNavigation, true);
       } finally {
         mocks.cleanup();
       }

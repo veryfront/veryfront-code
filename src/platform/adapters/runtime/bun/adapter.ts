@@ -17,7 +17,9 @@ export class BunAdapter implements RuntimeAdapter {
   readonly capabilities: RuntimeCapabilities = Object.freeze({
     typescript: true,
     jsx: true,
-    http2: true,
+    // `serve` wraps Bun.serve, which terminates HTTP/1.1 only. Flip this to
+    // true only alongside a named Bun version that serves HTTP/2.
+    http2: false,
     websocket: true,
     workers: true,
     fileWatching: true,

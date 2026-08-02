@@ -283,8 +283,29 @@ export function snapshotClientRouteHead(
   return aggregated.map(managedHeadDescriptorToTransportEntry);
 }
 
+/**
+ * Whether a destination has to be committed by the browser's document loader.
+ *
+ * Inline scripts never execute through an `innerHTML` transition and a soft
+ * commit would drop the browser's script ordering and CSP guarantees, so any
+ * scripted payload is handed to a full document navigation instead.
+ */
+export function routeRequiresDocumentNavigation(
+  data: {
+    html?: string;
+    managedHead?: ClientRouteHeadEntry[];
+    requiresFullDocumentNavigation?: boolean;
+  },
+): boolean {
+  return Boolean(
+    data.requiresFullDocumentNavigation ||
+      data.managedHead?.some((entry) => entry.tagName === "script") ||
+      (typeof data.html === "string" && /<script\b/i.test(data.html)),
+  );
+}
+
 export function parsePageDataFromHTML(html: string): {
-  content: string;
+  content: string | undefined;
   pageData: PageData;
   managedHead: ClientRouteHeadEntry[];
   dependencyPinningCacheKey?: string;
@@ -294,7 +315,10 @@ export function parsePageDataFromHTML(html: string): {
   const root = doc.getElementById("root");
   if (!root) logger.warn("[Veryfront] No root element found in HTML");
 
-  const content = root?.innerHTML ?? "";
+  // A response without an app root (proxy interstitial, custom error page)
+  // carries no route content. It stays `undefined` so consumers skip the
+  // transition; `""` is reserved for a route that is deliberately empty.
+  const content = root ? root.innerHTML ?? "" : undefined;
 
   const pageDataScript = doc.querySelector("script[data-veryfront-page]");
   let pageData: PageData = {};
@@ -330,8 +354,13 @@ export function parsePageDataFromHTML(html: string): {
 
   const managedHead = snapshotClientRouteHead(doc);
   if (
+    // A response without an app root is a whole page of its own (proxy
+    // interstitial, custom error page). Skipping the soft transition alone
+    // would leave the previous route mounted under the destination's URL, so
+    // the browser's document loader has to commit it.
+    !root ||
     managedHead.some((entry) => entry.tagName === "script") ||
-    (typeof root?.querySelector === "function" && root.querySelector("script"))
+    (typeof root.querySelector === "function" && root.querySelector("script"))
   ) {
     pageData = { ...pageData, requiresFullDocumentNavigation: true };
   }

@@ -1,7 +1,7 @@
 import { rendererLogger } from "#veryfront/utils";
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
 import { isFullHTMLDocument } from "#veryfront/html/html-detection.ts";
-import { parsePageDataFromHTML } from "./dom-utils.ts";
+import { parsePageDataFromHTML, routeRequiresDocumentNavigation } from "./dom-utils.ts";
 
 export type {
   ClientRouteHeadEntry,
@@ -171,7 +171,12 @@ export class PageLoader {
         managedHead: parsed.managedHead,
       };
     }
-    return data;
+    // Only the HTML path can inspect a parsed document for scripts. A route-data
+    // fragment carries them inline (structured data, analytics), so it is
+    // classified here rather than failing later in the soft transition.
+    return routeRequiresDocumentNavigation(data)
+      ? { ...data, requiresFullDocumentNavigation: true }
+      : data;
   }
 
   private async fetchAndParseHTML(path: string): Promise<RouteData> {

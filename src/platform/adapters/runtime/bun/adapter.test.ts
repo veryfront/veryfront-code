@@ -64,7 +64,7 @@ describe("BunAdapter", () => {
       assertExists(capabilities);
       assertEquals(capabilities.typescript, true);
       assertEquals(capabilities.jsx, true);
-      assertEquals(capabilities.http2, true);
+      assertEquals(capabilities.http2, false);
       assertEquals(capabilities.websocket, true);
       assertEquals(capabilities.workers, true);
       assertEquals(capabilities.fileWatching, true);

@@ -245,7 +245,12 @@ describe("browser-server-exports-strip", () => {
   });
 
   describe("import bindings", () => {
-    it("removes an unreferenced project import outright", async () => {
+    // The binding is hook-owned even though the module it comes from also runs
+    // client init. Dropping it costs those side effects; keeping a side-effect
+    // import would pull the module's server graph into the browser, which is
+    // what this stage exists to prevent. Contrast the ./client-metrics.ts cases
+    // below, where nothing in the hook ever touched the binding.
+    it("removes a hook-owned project import even when its module also runs client init", async () => {
       const code = [
         `import { loadOnStart } from "./client-init-and-data.ts";`,
         `export async function getServerData() { return loadOnStart(); }`,

@@ -128,6 +128,7 @@ Use the JSON envelope pattern for commands that support structured output.
   "error": {
     "code": "PERMISSION_ERROR",
     "slug": "deploy-not-authorized",
+    "registrySlug": "deploy-not-authorized",
     "message": "...",
     "context": {}
   }
@@ -135,6 +136,9 @@ Use the JSON envelope pattern for commands that support structured output.
 ```
 
 - Keep machine-readable output stable and schema-valid.
+- `slug` is the stable classification consumers key on. Router failures emit only
+  `invalid-arguments` or `command-failed` there; finer error-registry classification
+  goes in the optional additive `registrySlug`.
 - Do not mix human prose into JSON mode.
 - Redact sensitive values before writing logs, errors, or telemetry.
 - Put user-actionable messages in `message`. Put sanitized technical detail in structured fields.

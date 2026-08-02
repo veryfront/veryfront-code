@@ -54,6 +54,7 @@ import { buildStudioUrl } from "../studio/command.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 const PREVIEW_BRANCH_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const BRANCH_SUFFIX_LENGTH = 6;
 const PREVIEW_BRANCH_ERROR =
   "Preview branches must use 1-63 lowercase letters, numbers, or hyphens.";
 
@@ -273,6 +274,37 @@ export async function capturePushSourceSnapshot(
     files,
     gitSource: { ...gitSource, clean: gitSource.clean && filesTracked },
     sourceDigest,
+  };
+}
+
+/**
+ * Build a timestamped isolation branch name for pushes that are staged for review.
+ *
+ * The timestamp has one-second resolution, so it alone lets two pushes started in
+ * the same second share a branch and the second upload land on top of the first's
+ * staged work. The random suffix separates them. Both stay lowercase alphanumeric
+ * so the name is inside {@link PREVIEW_BRANCH_PATTERN} and can round-trip through
+ * preview DNS.
+ */
+export function generateBranchName(): string {
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, "").toLowerCase();
+  const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, BRANCH_SUFFIX_LENGTH);
+  return `push-${timestamp}-${suffix}`;
+}
+
+/**
+ * Push options for programmatic callers (TUI shortcuts) that stage work for review.
+ *
+ * These callers never prompt, so they must not target main: the branch is what makes
+ * "merge in Studio" true rather than an in-place overwrite of the project's main.
+ */
+export function createStagedPushOptions(projectSlug: string, projectDir: string): PushOptions {
+  return {
+    projectSlug,
+    projectDir,
+    branch: generateBranchName(),
+    force: true,
+    quiet: true,
   };
 }
 

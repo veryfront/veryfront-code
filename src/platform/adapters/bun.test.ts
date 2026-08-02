@@ -28,7 +28,7 @@ describe("bun.ts exports", () => {
     assertEquals(bunAdapter.capabilities.typescript, true);
     assertEquals(bunAdapter.capabilities.jsx, true);
     assertEquals(bunAdapter.capabilities.websocket, true);
-    assertEquals(bunAdapter.capabilities.http2, true);
+    assertEquals(bunAdapter.capabilities.http2, false);
 
     assertEquals(typeof bunAdapter.serve, "function");
   });

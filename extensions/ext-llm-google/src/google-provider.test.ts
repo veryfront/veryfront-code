@@ -3,6 +3,7 @@ import { assertEquals, assertRejects } from "@std/assert";
 
 import {
   ProviderOverloadedError,
+  ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
 } from "veryfront/provider/shared";
@@ -1533,7 +1534,7 @@ describe("ext-llm-google/google-provider", () => {
       assertEquals(err.retryable, true);
     });
 
-    it("classifies Google 429 RESOURCE_EXHAUSTED as ProviderRateLimitError (retryable)", async () => {
+    it("classifies a Google 429 RESOURCE_EXHAUSTED with no retry delay as ProviderQuotaError (non-retryable)", async () => {
       const runtime = createGoogleModelRuntime({
         apiKey: "k",
         baseURL: "https://example.google.test/v1beta",
@@ -1546,9 +1547,37 @@ describe("ext-llm-google/google-provider", () => {
       }, "gemini-1.5-pro");
       const err = await expectError(
         runtime.doGenerate({ prompt: [userPrompt] }),
+        ProviderQuotaError,
+      );
+      assertEquals(err.retryable, false);
+    });
+
+    it("classifies a Google 429 RESOURCE_EXHAUSTED carrying a retry delay as a retryable rate limit", async () => {
+      // A per-minute limit uses the same status as the daily quota; the
+      // RetryInfo delay is what says the request can succeed again shortly.
+      const runtime = createGoogleModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.google.test/v1beta",
+        fetch: () =>
+          Promise.resolve(
+            errorResponse(429, {
+              error: {
+                code: 429,
+                status: "RESOURCE_EXHAUSTED",
+                message: "Requests per minute exceeded",
+                details: [
+                  { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "23s" },
+                ],
+              },
+            }),
+          ),
+      }, "gemini-1.5-pro");
+      const err = await expectError(
+        runtime.doGenerate({ prompt: [userPrompt] }),
         ProviderRateLimitError,
       );
       assertEquals(err.retryable, true);
+      assertEquals(err.retryAfterMs, 23_000);
     });
   });
 

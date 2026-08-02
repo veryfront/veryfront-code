@@ -208,7 +208,11 @@ export function buildMergedTools(
     for (const toolName of sourceAllowedRemoteToolNames) {
       merged[toolName] = true;
     }
-    return { ...injectedTools, ...merged };
+    // Injected Studio tools win: an unmarked forwarded name keeps its
+    // wait-for-tool-result wrapper so the frontend handler still runs. Server
+    // authority is opted into by name via serverResolvedProjectTools, which
+    // filters the name out of injectedTools above.
+    return { ...merged, ...injectedTools };
   }
 
   const merged: Record<string, Tool | boolean> = {};
@@ -242,7 +246,7 @@ export function buildMergedTools(
     }
   }
 
-  const filtered = { ...injectedTools, ...merged };
+  const filtered = { ...merged, ...injectedTools };
   return Object.keys(filtered).length > 0 ? filtered : undefined;
 }
 

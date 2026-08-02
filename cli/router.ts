@@ -13,6 +13,7 @@ import { ensureCliSchemaValidator } from "./shared/default-contracts.ts";
 import {
   createErrorEnvelope,
   createSuccessEnvelope,
+  type ErrorEnvelope,
   isJsonMode,
   outputJson,
   setJsonMode,
@@ -130,12 +131,7 @@ function commandNameForJson(args: ParsedArgs): string {
 
 async function outputCliJsonError(
   command: string,
-  error: {
-    code: string;
-    slug: string;
-    message: string;
-    context?: Record<string, unknown>;
-  },
+  error: ErrorEnvelope["error"],
 ): Promise<void> {
   await outputJson(createErrorEnvelope(command, error));
 }
@@ -268,9 +264,8 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
       const isUsageError = vfError.exitCode === 2 || message.startsWith("Invalid ");
       await outputCliJsonError(commandNameForJson(args), {
         code: isUsageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
-        slug: vfError.slug !== "unknown-error"
-          ? vfError.slug
-          : (isUsageError ? "invalid-argument" : "command-failed"),
+        slug: isUsageError ? "invalid-arguments" : "command-failed",
+        registrySlug: vfError.slug,
         message: vfError.detail ?? message,
       });
     },

@@ -260,6 +260,11 @@ describe("styles-builder/tailwind-compiler", () => {
       assertEquals(result.title, "Plugin Not Available");
       assertEquals(result.message.includes("tailwindcss-animate"), true);
       assertEquals(result.suggestion.includes("explicitly registered provider"), true);
+      // The provider resolves plugins from a pinned allowlist, so the suggestion
+      // has to name the two specifier forms it accepts rather than only saying
+      // the load failed.
+      assertEquals(result.suggestion.includes("allowlist"), true);
+      assertEquals(result.suggestion.includes("exact"), true);
     });
 
     it("should format failed to load plugin error", () => {
@@ -272,6 +277,9 @@ describe("styles-builder/tailwind-compiler", () => {
       const result = formatCSSError("Invalid theme value for --color-primary");
       assertEquals(result.title, "Invalid CSS Theme");
       assertEquals(result.suggestion.includes("processor"), true);
+      // This branch only fires on a message that already names @theme, so the
+      // suggestion can show the concrete declaration shape.
+      assertEquals(result.suggestion.includes("@theme"), true);
     });
 
     it("should format @theme keyword error", () => {
@@ -283,6 +291,8 @@ describe("styles-builder/tailwind-compiler", () => {
       const result = formatCSSError("Unexpected token at line 5");
       assertEquals(result.title, "CSS Syntax Error");
       assertEquals(result.suggestion.includes("configured CSS processor"), true);
+      // Missing punctuation is plain-CSS advice that holds for any processor.
+      assertEquals(result.suggestion.includes("semicolons"), true);
     });
 
     it("should format expected token error", () => {

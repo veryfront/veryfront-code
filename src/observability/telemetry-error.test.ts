@@ -295,8 +295,79 @@ describe("observability/telemetry-error", () => {
 
     assertEquals(formatterCalls, 0);
     assertEquals(sanitized?.message, "application failure");
-    assertEquals(sanitized?.stack, undefined);
+    assertEquals(typeof sanitized?.stack, "string");
+    assertEquals(sanitized?.stack?.includes("application failure"), true);
     assertEquals(sanitized instanceof Error, true);
+  });
+
+  it("preserves a real thrown error's stack", () => {
+    function telemetryStackProbeFrame(): never {
+      throw new Error("stack round trip");
+    }
+
+    let thrown: unknown;
+    try {
+      telemetryStackProbeFrame();
+    } catch (error) {
+      thrown = error;
+    }
+
+    const sanitized = sanitizeErrorForTelemetry(thrown);
+
+    assertEquals(sanitized.message, "stack round trip");
+    assertEquals(typeof sanitized.stack, "string");
+    assertEquals(sanitized.stack?.includes("telemetryStackProbeFrame"), true);
+  });
+
+  it("bounds a real thrown error's stack", () => {
+    const source = new Error("bounded stack");
+    const nativeStack = source.stack ?? "";
+    Object.defineProperty(source, "message", {
+      configurable: true,
+      value: "bounded stack",
+      writable: true,
+    });
+
+    const sanitized = sanitizeErrorForTelemetry(source);
+
+    assertEquals(typeof sanitized.stack, "string");
+    assertEquals((sanitized.stack ?? "").length <= MAX_STRING_DISPLAY_LENGTH, true);
+    assertEquals(nativeStack.length > 0, true);
+  });
+
+  it("fails closed for a stack accessor it did not install", () => {
+    const source = new Error("hostile stack accessor");
+    let getterCalls = 0;
+    Object.defineProperty(source, "stack", {
+      configurable: true,
+      get() {
+        getterCalls += 1;
+        return "attacker controlled stack";
+      },
+    });
+
+    const sanitized = sanitizeErrorForTelemetry(source);
+
+    assertEquals(getterCalls, 0);
+    assertEquals(sanitized.message, "hostile stack accessor");
+    assertEquals(sanitized.stack, undefined);
+  });
+
+  it("skips the stack rather than let header formatting run a message accessor", () => {
+    const source = new Error("formatting trigger");
+    let messageCalls = 0;
+    Object.defineProperty(source, "message", {
+      configurable: true,
+      get(): never {
+        messageCalls += 1;
+        throw new Error("message accessor must not run");
+      },
+    });
+
+    const sanitized = sanitizeErrorForTelemetry(source);
+
+    assertEquals(messageCalls, 0);
+    assertEquals(sanitized.stack, undefined);
   });
 
   it("does not trust Error.isError when probing stack descriptor behavior", async () => {

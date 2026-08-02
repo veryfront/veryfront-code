@@ -990,6 +990,14 @@ function dropUnusedImportBindings(body: Node[], hookClosure: Set<string>): Node[
     const source = isNode(statement.source) ? statement.source.value : undefined;
     const isKnownDroppableSource = typeof source === "string" &&
       (source.startsWith("node:") || source === "veryfront" || source.startsWith("veryfront/"));
+    // Two different reasons to delete rather than reduce, and one to reduce.
+    // A node: or veryfront source is unsafe or pointless as a browser
+    // side-effect import whatever used it. A project-relative source is deleted
+    // only when the stripped hook owned every binding, because that module is
+    // reached solely through server-only code and a bare side-effect import
+    // would keep its whole transitive graph in the browser artifact. An import
+    // the hook never touched was already unused before this pass ran, so it
+    // keeps the legacy reduction and its side effects with it.
     if (isKnownDroppableSource || bindings.every((binding) => hookClosure.has(binding))) {
       return false;
     }

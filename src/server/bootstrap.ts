@@ -180,7 +180,7 @@ const DEFAULT_FILE_LOG_MAX_FILES = 5;
 const DEFAULT_FILE_LOG_LEVEL = "warn" as const;
 const DEFAULT_FILE_LOG_FORMAT = "json" as const;
 
-interface FileLogHandle {
+export interface FileLogHandle {
   subscriber: FileLogSubscriber;
   unsubscribe: () => void;
 }
@@ -208,10 +208,26 @@ function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | 
   return { subscriber, unsubscribe };
 }
 
-async function teardownFileLog(handle: FileLogHandle | null): Promise<void> {
+/**
+ * Detach the file log, absorbing teardown failures.
+ *
+ * `flush()`/`close()` reject so explicit callers can react to dropped log
+ * writes, but bootstrap only detaches a best-effort log sink. Propagating here
+ * would fail a config reload over a retained write error, or replace the real
+ * startup error on the failure path with the teardown rejection.
+ */
+export async function teardownFileLog(handle: FileLogHandle | null): Promise<void> {
   if (!handle) return;
-  handle.unsubscribe();
-  await handle.subscriber.close();
+  try {
+    handle.unsubscribe();
+  } catch (error) {
+    bootstrapLog.warn("[bootstrap] Failed to detach file log subscriber", { error });
+  }
+  try {
+    await handle.subscriber.close();
+  } catch (error) {
+    bootstrapLog.warn("[bootstrap] Failed to close file log subscriber", { error });
+  }
 }
 
 function combineDispose(

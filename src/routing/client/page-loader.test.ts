@@ -236,6 +236,89 @@ describe("routing/client/page-loader", () => {
       }
     });
 
+    it("flags a JSON fragment carrying inline scripts as a document navigation", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          Response.json({
+            html:
+              '<main>Post</main><script type="application/ld+json">{"@type":"Article"}</script>',
+            frontmatter: {},
+          }),
+        );
+
+      try {
+        // Inline scripts never execute through an innerHTML transition, so the
+        // route belongs to the browser's document loader.
+        const data = await new PageLoader().fetchPageData("/blog/post");
+        assertEquals(data.requiresFullDocumentNavigation, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("flags a JSON payload with managed head scripts as a document navigation", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () =>
+        Promise.resolve(
+          Response.json({
+            html: "<main>Post</main>",
+            managedHead: [{ tagName: "script", attributes: [["src", "/analytics.js"]] }],
+          }),
+        );
+
+      try {
+        const data = await new PageLoader().fetchPageData("/blog/post");
+        assertEquals(data.requiresFullDocumentNavigation, true);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("leaves script-free JSON routes on the soft transition path", async () => {
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = () =>
+        Promise.resolve(Response.json({ html: "<main>Post</main>", frontmatter: {} }));
+
+      try {
+        const data = await new PageLoader().fetchPageData("/blog/post");
+        assertEquals(data.requiresFullDocumentNavigation, undefined);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it("reports no route html when a 200 response carries no app root", async () => {
+      const originalFetch = globalThis.fetch;
+      const restoreDOMParser = installJSDOMParser();
+      // A proxy interstitial or custom error page: a 200 that is a complete
+      // document but never mounts the app.
+      const interstitial = `<!doctype html><html><head><title>Just a moment</title></head><body>
+          <div class="interstitial"><h1>Checking your browser</h1></div>
+        </body></html>`;
+      globalThis.fetch = (input: URL | RequestInfo) =>
+        Promise.resolve(
+          String(input).startsWith("/_veryfront/data")
+            ? new Response("Not Found", { status: 404 })
+            : new Response(interstitial, { headers: { "content-type": "text/html" } }),
+        );
+
+      try {
+        const data = await new PageLoader().fetchPageData("/about");
+
+        // Reporting absent content alone still lets the router commit the
+        // navigation and advance the URL over the old page. The destination has
+        // to reach the browser's document loader so the interstitial runs.
+        assertEquals(data.requiresFullDocumentNavigation, true);
+        // `html: ""` would be read downstream as an intentionally empty route
+        // and would clear the mounted app; absent html skips the transition.
+        assertEquals(data.html, undefined);
+      } finally {
+        globalThis.fetch = originalFetch;
+        restoreDOMParser();
+      }
+    });
+
     it("places the JSON suffix before query parameters and preserves application pins while off", async () => {
       const originalFetch = globalThis.fetch;
       let requestedUrl = "";

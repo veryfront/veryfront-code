@@ -252,11 +252,18 @@ The following settings emit `unsupported-setting` warnings and are silently drop
 
 The extension surfaces typed provider errors:
 
-| Error Class               | Trigger                                        | Retryable |
-| ------------------------- | ---------------------------------------------- | --------- |
-| `ProviderOverloadedError` | HTTP 503                                       | Yes       |
-| `ProviderRateLimitError`  | HTTP 429 `RESOURCE_EXHAUSTED` or rate limiting | Yes       |
-| `ProviderRequestError`    | Other HTTP errors                              | No        |
+| Error Class               | Trigger                                       | Retryable |
+| ------------------------- | --------------------------------------------- | --------- |
+| `ProviderOverloadedError` | HTTP 503                                      | Yes       |
+| `ProviderQuotaError`      | HTTP 429 `RESOURCE_EXHAUSTED`, no retry delay | No        |
+| `ProviderRateLimitError`  | HTTP 429 with `Retry-After` or `RetryInfo`    | Yes       |
+| `ProviderRequestError`    | Other HTTP errors                             | No        |
+
+Google returns `RESOURCE_EXHAUSTED` for both the daily quota and short-window
+per-minute limits. A retry delay — the `Retry-After` header or a
+`google.rpc.RetryInfo` entry in `error.details` — separates them: with one the
+error is a retryable rate limit carrying the delay, without one it is a hard
+quota error that cannot succeed again until the daily window resets.
 
 If the extension is not installed and a `google/*` model is requested:
 
