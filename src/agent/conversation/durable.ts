@@ -54,7 +54,7 @@ import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import {
   isModelCallContextRunEvent,
   ModelCallContextPersistenceError,
-} from "../hosted/model-call-context-run-event-recorder.ts";
+} from "./model-call-context-run-event.ts";
 export type {
   ActiveConversationRunStatus,
   AppendConversationRunEventsResponse,

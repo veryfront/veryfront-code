@@ -1,9 +1,10 @@
 import {
   assertValidModelCallContextRunEvent,
   isModelCallContextRunEvent,
-} from "../hosted/model-call-context-run-event-recorder.ts";
+} from "./model-call-context-run-event.ts";
+import { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 
-export const MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES = 240 * 1024;
+export { MAX_CONVERSATION_RUN_EVENT_PAYLOAD_BYTES } from "./run-event-limits.ts";
 const OMITTED_CONVERSATION_RUN_EVENT_TYPE = "CUSTOM";
 const MAX_SUMMARY_DEPTH = 4;
 const MAX_SUMMARY_ARRAY_ITEMS = 8;
