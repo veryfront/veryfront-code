@@ -198,12 +198,17 @@ export function createHostedRunEventWriterCapability(input: {
 /** Build a durable mirror from private capability state without exposing its credential. */
 export function createHostedConversationRunChunkMirrorFromCapability(
   capability: HostedRunEventWriterCapability | undefined,
-  input: Omit<HostedConversationRunChunkMirrorOptions, "authToken">,
+  input: Omit<HostedConversationRunChunkMirrorOptions, "apiUrl" | "authToken" | "runId">,
 ): ConversationRunChunkMirror | undefined {
   if (!capability) return undefined;
   const state = capabilityState.get(capability);
   if (!state) return undefined;
-  return createHostedConversationRunChunkMirror({ ...input, authToken: state.runEventAppendToken });
+  return createHostedConversationRunChunkMirror({
+    ...input,
+    apiUrl: state.apiUrl,
+    authToken: state.runEventAppendToken,
+    runId: state.runId,
+  });
 }
 
 /** Return the capability installed only while internal tool closures are assembled. */

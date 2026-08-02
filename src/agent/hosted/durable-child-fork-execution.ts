@@ -849,9 +849,15 @@ export async function executeHostedDurableChildFork<
         identifiers,
       });
       if (cancelled) {
-        await lifecycleAdapter.cancelled?.(terminalState);
+        if (!lifecycleAdapter.cancelled) {
+          throw new HostedChildRunFinalizationError();
+        }
+        await lifecycleAdapter.cancelled(terminalState);
       } else {
-        await lifecycleAdapter.failed?.(terminalState);
+        if (!lifecycleAdapter.failed) {
+          throw new HostedChildRunFinalizationError();
+        }
+        await lifecycleAdapter.failed(terminalState);
       }
     } catch {
       try {

@@ -174,9 +174,7 @@ export function createHostedDurableChildForkRunContext(
   const runEventWriterCapability = getActiveHostedRunEventWriterCapability();
   const durableRunMirror = input.durableChildRun
     ? createHostedConversationRunChunkMirrorFromCapability(runEventWriterCapability, {
-      apiUrl: input.apiUrl,
       conversationId: input.durableChildRun.childConversationId,
-      runId: input.durableChildRun.childRunId,
       latestEventId: input.durableChildRun.latestEventId,
       latestExternalEventSequence: input.durableChildRun.latestExternalEventSequence,
       instrumentation: input.instrumentation,

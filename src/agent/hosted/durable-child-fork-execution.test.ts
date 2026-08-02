@@ -1185,6 +1185,76 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     }
   });
 
+  it("reports missing setup-failure terminal persistence as a finalization error", async () => {
+    let executed = false;
+    const observedLifecycleErrors: unknown[] = [];
+    const runEventWriterCapability = createHostedRunEventWriterCapability({
+      apiUrl: API_URL,
+      runId: "run_parent_1",
+      runEventAppendToken: PARENT_RUN_EVENT_TOKEN,
+      fetch: () => Promise.reject(new Error(`secret ${PARENT_RUN_EVENT_TOKEN}`)),
+    });
+    const result = await runWithHostedRunEventWriterCapability(
+      runEventWriterCapability,
+      () =>
+        executeHostedDurableChildFork<DurableChildResult, ChildRunExecutionResult>(
+          {
+            authToken: AUTH_TOKEN,
+            apiUrl: API_URL,
+            forkInput: { description: "Inspect logs", prompt: "Find logs", context: {} },
+            executionOptions: { toolCallId: "tool-call-1" },
+            childAgentId: "invoke-agent-child",
+            parentConversationId: PARENT_CONVERSATION_ID,
+            parentRunId: "run_parent_1",
+            parentMessageId: PARENT_MESSAGE_ID,
+            getProjectId: () => PROJECT_ID,
+            defaultModel: "opus",
+            resolveModelId: (model) => `resolved-${model}`,
+            resolveProvider: () => "anthropic",
+            contextUnavailableMessage: "missing context",
+            setupFailedCode: "SETUP_FAILED",
+            executionFailedCode: "INVOKE_AGENT_FAILED",
+            executeLocal: () => {
+              executed = true;
+              return baseSuccessResult();
+            },
+            getExecutionSnapshot: () => null,
+            buildContextUnavailableResult: (message) => ({ status: "missing_context", message }),
+            buildSetupFailureResult: (failure) => ({ status: "setup_failed", failure }),
+            buildTerminalFailureResult: () => ({
+              status: "missing_context",
+              message: "unexpected",
+            }),
+            buildSuccessResult: (success) => ({ status: "completed", success }),
+            runtime: {
+              bootstrapChildRun: () =>
+                Promise.resolve({
+                  childConversationId: CHILD_CONVERSATION_ID,
+                  childRunId: "run_child_1",
+                  childMessageId: CHILD_MESSAGE_ID,
+                  latestEventId: 7,
+                  latestExternalEventSequence: 3,
+                  status: "running",
+                }),
+              createLifecycleAdapter: () => ({}),
+            },
+            onLifecycleError: (error) => {
+              observedLifecycleErrors.push(error);
+            },
+          },
+        ),
+    );
+
+    assertEquals(executed, false);
+    assertEquals(observedLifecycleErrors.length, 1);
+    assertEquals(observedLifecycleErrors[0] instanceof HostedChildRunFinalizationError, true);
+    assertEquals(result.status, "setup_failed");
+    assertEquals(
+      JSON.stringify({ result, observedLifecycleErrors }).includes(PARENT_RUN_EVENT_TOKEN),
+      false,
+    );
+  });
+
   it("cancels exactly once when writer-token exchange is aborted after bootstrap", async () => {
     const controller = new AbortController();
     let executed = false;

@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import {
+  createHostedConversationRunChunkMirrorFromCapability,
   createHostedRunEventWriterCapability,
   getActiveHostedRunEventWriterCapability,
   HostedChildRunEventWriterTokenExchangeError,
@@ -74,6 +75,66 @@ Deno.test("run event writer capability delegates parent to child to grandchild e
     JSON.stringify({ capability, childCapability, grandchildCapability }),
     '{"capability":{},"childCapability":{},"grandchildCapability":{}}',
   );
+});
+
+Deno.test("capability-backed mirrors ignore caller-supplied API and run identities", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+  const conversationId = "11111111-1111-4111-8111-111111111111";
+  try {
+    globalThis.fetch = ((input, init) => {
+      const request = new Request(input, init);
+      requests.push(request);
+      return Promise.resolve(
+        Response.json({
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+          appendedCount: 1,
+          run: {
+            runId: "run_trusted",
+            conversationId,
+            latestEventId: 1,
+            latestExternalEventSequence: 1,
+          },
+        }),
+      );
+    }) as typeof fetch;
+    const capability = createHostedRunEventWriterCapability({
+      apiUrl: "https://trusted.example.test",
+      runId: "run_trusted",
+      runEventAppendToken: "trusted-writer-token",
+    });
+    const mirror = createHostedConversationRunChunkMirrorFromCapability(
+      capability,
+      {
+        apiUrl: "https://attacker.example.test",
+        conversationId,
+        runId: "run_attacker",
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+      } as never,
+    );
+    if (!mirror) {
+      throw new Error("Expected a mirror for a valid writer capability");
+    }
+
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    await mirror.flush();
+    mirror.dispose();
+
+    assertEquals(requests.length, 1);
+    const request = requests[0];
+    if (!request) {
+      throw new Error("Expected one mirror append request");
+    }
+    assertEquals(
+      request.url,
+      `${"https://trusted.example.test"}/conversations/${conversationId}/runs/run_trusted/events`,
+    );
+    assertEquals(request.headers.get("Authorization"), "Bearer trusted-writer-token");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 Deno.test("run event writer capability preserves the configured API base path", async () => {

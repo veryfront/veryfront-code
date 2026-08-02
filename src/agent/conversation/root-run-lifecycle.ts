@@ -167,9 +167,7 @@ export async function prepareHostedConversationRootRunContext(
       },
       createMirror: (run) => {
         const mirrorOptions = {
-          apiUrl: input.apiUrl,
           conversationId: run.conversationId,
-          runId: run.runId,
           latestEventId: run.latestEventId,
           latestExternalEventSequence: run.latestExternalEventSequence,
           instrumentation: input.instrumentation,
@@ -179,7 +177,9 @@ export async function prepareHostedConversationRootRunContext(
           mirrorOptions,
         ) ?? createHostedConversationRunChunkMirror({
           ...mirrorOptions,
+          apiUrl: input.apiUrl,
           authToken: input.authToken,
+          runId: run.runId,
         });
 
         return durableRunMirror;
