@@ -28,12 +28,16 @@ describe("wrap-unknown", () => {
       assertEquals(wrapped.cause, error);
     });
 
-    it("should return VeryfrontError unchanged", () => {
-      const error = CONFIG_NOT_FOUND.create();
+    it("should detach a VeryfrontError from mutable caller-owned state", () => {
+      const context = { operation: "initial" };
+      const error = CONFIG_NOT_FOUND.create({ context });
       const wrapped = wrapUnknownError(error);
 
-      assertEquals(wrapped, error);
+      context.operation = "mutated";
+
+      assertEquals(wrapped === error, false);
       assertEquals(wrapped.slug, "config-not-found");
+      assertEquals(wrapped.context, undefined);
     });
 
     it("should safely replace hostile VeryfrontError proxies", () => {

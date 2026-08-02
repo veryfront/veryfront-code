@@ -53,7 +53,7 @@ export function wrapUnknownError(
 ): VeryfrontError {
   const detached = detachThrowableForBoundary(error);
   if (isVeryfrontErrorInstance(detached)) {
-    return isVeryfrontErrorInstance(error) ? error : detached;
+    return detached;
   }
 
   return UNKNOWN_ERROR.create({
