@@ -255,7 +255,7 @@ describe("RedisRuntimeProvider", () => {
     await assertRejects(
       () => ensureRedisRuntimeProvider(),
       Error,
-      "Install it with: deno add @veryfront/ext-redis",
+      "Install it with: deno add npm:@veryfront/ext-redis",
     );
   });
 });
