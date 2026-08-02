@@ -139,7 +139,7 @@ export async function getEntityInfo(
                 const relativePath = filePath
                   .replace(/^.*?\/pages\//, "pages/")
                   .replace(/^.*?\/components\//, "components/");
-                entityId = getEntityIdForPath(relativePath) ?? entityId;
+                entityId = getEntityIdForPath.call(underlyingAdapter, relativePath) ?? entityId;
               }
             }
           } catch (_) {
