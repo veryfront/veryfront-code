@@ -79,8 +79,8 @@ project scoping, or release scoping.
 Manifest fetchers are registered per release ID. Cache entries and in-flight
 requests are tied to the current fetcher owner, use collision-free tuple keys,
 time out after 10 seconds, and are aborted when ownership or cache generation
-changes. The global fallback fetcher exists for simple single-project and test
-setups; hosted runtimes should register a release-scoped fetcher.
+changes. A release without its own registered fetcher returns `null` and uses
+the existing release-scoped JIT path.
 
 ## Feature flags
 

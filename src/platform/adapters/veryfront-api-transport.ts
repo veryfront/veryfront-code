@@ -228,7 +228,33 @@ function combineRequestSignals(
 ): AbortSignal | undefined {
   if (!attemptSignal) return callerSignal;
   if (!callerSignal) return attemptSignal;
-  return AbortSignal.any([attemptSignal, callerSignal]);
+  if (typeof AbortSignal.any === "function") {
+    return AbortSignal.any([attemptSignal, callerSignal]);
+  }
+
+  const controller = new AbortController();
+  const abortFromAttempt = () => {
+    detach();
+    controller.abort(attemptSignal.reason);
+  };
+  const abortFromCaller = () => {
+    detach();
+    controller.abort(callerSignal.reason);
+  };
+  const detach = () => {
+    attemptSignal.removeEventListener("abort", abortFromAttempt);
+    callerSignal.removeEventListener("abort", abortFromCaller);
+  };
+
+  if (attemptSignal.aborted) {
+    abortFromAttempt();
+  } else if (callerSignal.aborted) {
+    abortFromCaller();
+  } else {
+    attemptSignal.addEventListener("abort", abortFromAttempt, { once: true });
+    callerSignal.addEventListener("abort", abortFromCaller, { once: true });
+  }
+  return controller.signal;
 }
 
 /** Canonical transport: span tracing, request metrics, API_CLIENT_ERROR mapping. */

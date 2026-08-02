@@ -545,6 +545,53 @@ describe("VeryfrontAPIOperations", () => {
       assertEquals(fetchCalls, 1);
     });
 
+    it("propagates caller cancellation when AbortSignal.any is unavailable", async () => {
+      const anyDescriptor = Object.getOwnPropertyDescriptor(AbortSignal, "any");
+      Object.defineProperty(AbortSignal, "any", {
+        configurable: true,
+        value: undefined,
+        writable: true,
+      });
+      try {
+        let observedSignal: AbortSignal | undefined;
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
+          observedSignal = init?.signal ?? undefined;
+          markStarted();
+          return new Promise<Response>((_resolve, reject) => {
+            observedSignal?.addEventListener(
+              "abort",
+              () => reject(observedSignal?.reason),
+              { once: true },
+            );
+          });
+        }) as typeof fetch;
+        const transport = createVeryfrontApiTransport<unknown>({
+          baseUrl: "https://api.example.com",
+          getToken: () => "token",
+          retry: { maxRetries: 0, initialDelay: 0, maxDelay: 0 },
+        });
+        const controller = new AbortController();
+        const cancellation = new Error("compat cancellation");
+        const request = transport.request("/cancelled", { signal: controller.signal });
+        await started;
+
+        controller.abort(cancellation);
+
+        assertEquals(observedSignal?.reason, cancellation);
+        await assertRejects(() => request, Error, "compat cancellation");
+      } finally {
+        if (anyDescriptor === undefined) {
+          Reflect.deleteProperty(AbortSignal, "any");
+        } else {
+          Object.defineProperty(AbortSignal, "any", anyDescriptor);
+        }
+      }
+    });
+
     it("reserves worst-case JSON escape bytes outside the non-value response budget", async () => {
       const body = '{"content":"\\u0000\\u0000"}';
       assertEquals(new TextEncoder().encode(body).byteLength, 26);
