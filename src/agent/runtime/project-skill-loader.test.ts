@@ -1,4 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import {
+  SKILL_DOCUMENT_MAX_CHARACTERS,
+  SKILL_SUBDIR_MAX_ENTRIES,
+} from "#veryfront/skill/limits.ts";
+import { createSkillOperationBudget } from "#veryfront/skill/operation-budget.ts";
 import { createRuntimeProjectSkillLoader } from "./project-skill-loader.ts";
 import type {
   RuntimeGetProjectFileOptions,
@@ -65,7 +70,7 @@ Deno.test("runtime project skill loader returns empty results without project co
 });
 
 Deno.test("runtime project skill loader loads directory skills with normalized sorted references", async () => {
-  const { loader } = createLoader({
+  const { loader, filesCalls } = createLoader({
     getProjectFile: async ({ path }) =>
       path === "skills/research/SKILL.md" ? { path, content: "# Research" } : null,
     getProjectFiles: async () => [
@@ -80,6 +85,39 @@ Deno.test("runtime project skill loader loads directory skills with normalized s
     instructions: "# Research",
     references: ["references/checklists/checklist.md", "references/zeta.md"],
   });
+  assertEquals(filesCalls[0]?.pathPrefix, "skills/research/references");
+  assertEquals(filesCalls[0]?.maximumEntries, SKILL_SUBDIR_MAX_ENTRIES);
+});
+
+Deno.test("runtime project skill loader bounds every remote document read", async () => {
+  const { loader, fileCalls } = createLoader({
+    getProjectFile: async ({ path }) =>
+      path === "skills/research/SKILL.md"
+        ? { path, content: "# Research" }
+        : path === "skills/research/references/guide.md"
+        ? { path, content: "# Guide" }
+        : null,
+  });
+  const controller = new AbortController();
+  const budget = createSkillOperationBudget({
+    abortSignal: controller.signal,
+    timeoutMs: 5_000,
+  });
+
+  await loader.loadProjectSkill(PROJECT_CONTEXT, "research", { budget });
+  await loader.loadProjectSkillReference(
+    PROJECT_CONTEXT,
+    "research",
+    "references/guide.md",
+    { budget },
+  );
+
+  assertEquals(fileCalls.length, 3);
+  for (const call of fileCalls) {
+    assertEquals(call.maximumContentCharacters, SKILL_DOCUMENT_MAX_CHARACTERS);
+    assertEquals(call.abortSignal, controller.signal);
+    assertEquals(typeof call.timeoutMs, "number");
+  }
 });
 
 Deno.test("runtime project skill loader isolates references to the selected skill source path", async () => {
@@ -255,7 +293,7 @@ Deno.test("loadProjectSkillReference reads reference files from the catalog skil
 });
 
 Deno.test("listProjectSkillReferences lists references under the catalog skill dir", async () => {
-  const { loader } = createLoader({
+  const { loader, filesCalls } = createLoader({
     getProjectFiles: () =>
       Promise.resolve([
         { path: "agents/researcher/skills/cite/references/styles.md" },
@@ -270,6 +308,10 @@ Deno.test("listProjectSkillReferences lists references under the catalog skill d
   );
 
   assertEquals(references, ["references/journals.md", "references/styles.md"]);
+  assertEquals(
+    filesCalls[0]?.pathPrefix,
+    "agents/researcher/skills/cite/references",
+  );
 });
 
 Deno.test("loader falls back to steering-path probing without a catalog entry", async () => {
