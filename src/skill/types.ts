@@ -241,25 +241,28 @@ export interface SkillScriptExecutorInput {
   /**
    * Already-validated script content. When omitted with
    * `validatedSourceRoot`, the executor bounded-reads the contained script and
-   * binds that decoded content to the same filesystem identity before local
-   * execution or cloud upload.
+   * binds that decoded content to the same filesystem identity. Local
+   * execution runs a private temporary materialization of this exact content;
+   * cloud execution uploads the same validated snapshot.
    */
   scriptContent?: string;
   args?: string[];
   /** Passed as structured environment data, never embedded in a shell command. */
   env?: Record<string, string>;
   /**
-   * Local execution working directory. Cloud execution maps this intent to a
-   * fresh remote directory containing only the selected uploaded script.
+   * Local execution working directory. Supplied content without an explicit
+   * working directory runs inside its private materialization directory. Cloud
+   * execution maps this intent to a fresh remote directory containing only the
+   * selected uploaded script.
    */
   cwd?: string;
   /**
    * Canonical source-containment root supplied after framework path validation.
    * Local execution uses it for strict resource limits and final containment,
-   * content, and filesystem-identity checks before executing the original
-   * validated path. Cloud execution applies the same containment and identity
-   * checks before reading omitted `scriptContent`. Omit it for generic executor
-   * calls that do not carry that validation contract.
+   * content, and filesystem-identity checks before executing a private snapshot.
+   * Cloud execution applies the same containment and identity checks before
+   * reading omitted `scriptContent`. Omit it for generic executor calls that do
+   * not carry that validation contract.
    */
   validatedSourceRoot?: string;
   timeoutMs?: number;

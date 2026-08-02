@@ -149,30 +149,54 @@ export function detectRuntime(scriptPath: string): { command: string; args: stri
  */
 export class LocalScriptExecutor implements SkillScriptExecutor {
   async execute(input: SkillScriptExecutorInput): Promise<SkillScriptResult> {
-    await resolveValidatedScriptContent(input);
+    const scriptContent = await resolveValidatedScriptContent(input);
     const timeoutMs = resolveTimeoutMs(input.timeoutMs);
-    const { command, args: runtimeArgs } = detectRuntime(input.scriptPath);
-    const allArgs = [...runtimeArgs, ...(input.args ?? [])];
+    const fs = createFileSystem();
+    let executionPath = input.scriptPath;
+    let materializationRoot: string | undefined;
 
-    // Remove the script path from args if it's already the command
-    const finalArgs = command === input.scriptPath ? (input.args ?? []) : allArgs;
+    try {
+      if (scriptContent !== undefined) {
+        materializationRoot = await fs.makeTempDir({ prefix: "veryfront-skill-script-" });
+        executionPath = `${materializationRoot}/script`;
+        await fs.writeTextFile(executionPath, scriptContent);
+        await fs.chmod(executionPath, 0o700);
+      }
 
-    const result = await runCommand(command, {
-      args: finalArgs,
-      cwd: input.cwd,
-      env: input.env,
-      capture: true,
-      timeoutMs,
-      signal: input.abortSignal,
-      maxOutputBytes: SKILL_SCRIPT_MAX_OUTPUT_BYTES,
-      terminateProcessTreeOnExit: true,
-    });
+      const { command: detectedCommand, args: detectedArgs } = detectRuntime(input.scriptPath);
+      const command = detectedCommand === input.scriptPath ? executionPath : detectedCommand;
+      const runtimeArgs = detectedArgs.map((arg) => arg === input.scriptPath ? executionPath : arg);
+      const allArgs = [...runtimeArgs, ...(input.args ?? [])];
 
-    return {
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      exitCode: result.code,
-    };
+      // Directly executable scripts use the materialized path as the command,
+      // so their caller-supplied arguments must not be prefixed with a path.
+      const finalArgs = detectedCommand === input.scriptPath ? (input.args ?? []) : allArgs;
+
+      const result = await runCommand(command, {
+        args: finalArgs,
+        cwd: input.cwd ?? materializationRoot,
+        env: input.env,
+        capture: true,
+        timeoutMs,
+        signal: input.abortSignal,
+        maxOutputBytes: SKILL_SCRIPT_MAX_OUTPUT_BYTES,
+        terminateProcessTreeOnExit: true,
+      });
+
+      return {
+        stdout: result.stdout ?? "",
+        stderr: result.stderr ?? "",
+        exitCode: result.code,
+      };
+    } finally {
+      if (materializationRoot !== undefined) {
+        try {
+          await fs.remove(materializationRoot, { recursive: true });
+        } catch (error) {
+          logger.warn("[skill/executor] Failed to remove materialized local script", error);
+        }
+      }
+    }
   }
 }
 

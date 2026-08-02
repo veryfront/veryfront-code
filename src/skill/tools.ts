@@ -558,7 +558,7 @@ export function createExecuteSkillScriptTool(
           scriptContent,
           args: input.args,
           env: input.env,
-          cwd: skill.rootPath,
+          cwd: skill.fsAdapter === undefined ? skill.rootPath : undefined,
           validatedSourceRoot: skill.fsAdapter === undefined ? skill.rootPath : undefined,
           timeoutMs: budget.remainingMs(),
           abortSignal,

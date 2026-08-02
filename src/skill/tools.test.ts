@@ -506,6 +506,24 @@ Do work.`,
     }
   });
 
+  it("execute_skill_script runs adapter content without a host filesystem path", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/scripts/run.sh": "echo adapter-script",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const result = await createExecuteSkillScriptTool({
+      executor: new LocalScriptExecutor(),
+    }).execute({
+      skillId: "my-skill",
+      script: "scripts/run.sh",
+    });
+
+    assertEquals(result.exitCode, 0);
+    assertEquals(result.stderr, "");
+    assertEquals(result.stdout.trim(), "adapter-script");
+  });
+
   it("execute_skill_script snapshots only validated executor result fields", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/scripts/run.sh": "echo run",

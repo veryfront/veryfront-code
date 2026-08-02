@@ -126,6 +126,37 @@ describe("src/skill/executor", () => {
       assertEquals(result.stderr.includes("timed out"), true);
     });
 
+    it("executes supplied adapter content instead of the host script path", async () => {
+      const hostRoot = await Deno.makeTempDir({ prefix: "vf-skill-host-script-" });
+      const hostScriptPath = `${hostRoot}/run.sh`;
+      try {
+        await Deno.writeTextFile(hostScriptPath, "echo host-content");
+
+        const result = await new LocalScriptExecutor().execute({
+          scriptPath: hostScriptPath,
+          scriptContent: "echo adapter-content",
+        });
+
+        assertEquals(result.exitCode, 0);
+        assertEquals(result.stderr, "");
+        assertEquals(result.stdout.trim(), "adapter-content");
+      } finally {
+        await Deno.remove(hostRoot, { recursive: true });
+      }
+    });
+
+    it("executes supplied adapter content when its path is not on the host", async () => {
+      const result = await new LocalScriptExecutor().execute({
+        scriptPath: "skills/adapter-only/scripts/run.sh",
+        scriptContent: 'printf "adapter-only:%s" "$PWD"',
+      });
+
+      assertEquals(result.exitCode, 0);
+      assertEquals(result.stderr, "");
+      assertEquals(result.stdout.startsWith("adapter-only:"), true);
+      assertEquals(result.stdout.includes("veryfront-skill-script-"), true);
+    });
+
     it("rejects a native script changed after framework validation", async () => {
       const root = await Deno.makeTempDir({ prefix: "vf-skill-executor-" });
       const scriptPath = `${root}/run.sh`;
